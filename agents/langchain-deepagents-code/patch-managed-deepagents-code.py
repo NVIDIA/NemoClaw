@@ -751,6 +751,7 @@ def _run_single_hook(command, event, payload_bytes) -> None:
 NON_INTERACTIVE_PATCH = r'''
 import logging as _nemoclaw_logging
 import re as _nemoclaw_re
+import uuid as _nemoclaw_uuid
 
 # NemoClaw-managed Deep Agents Code hardening v2.
 _NEMOCLAW_KNOWN_PROVIDER_ERRORS = (
@@ -760,19 +761,72 @@ _NEMOCLAW_KNOWN_PROVIDER_ERRORS = (
     (_nemoclaw_re.compile(r"ConnectionError|connection\s*refused|ConnectionRefused", _nemoclaw_re.IGNORECASE), "upstream_connection", True),
 )
 
+_NEMOCLAW_MANAGED_STATE_DB = "/sandbox/.deepagents/.state/sessions.db"
+
 
 def _nemoclaw_classify_non_interactive_error(exc):
-    exc_type_name = type(exc).__name__
-    for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
-        if pattern.search(exc_type_name):
-            return (category, retryable)
-    try:
-        exc_str = str(exc)
-    except Exception:
+    """Classify a non-interactive error by examining the exception and its cause chain.
+
+    Walks __cause__ and __context__ so that a generic RemoteException whose
+    chained cause is a provider error (e.g. ResourceExhausted) is still
+    classified correctly.
+    """
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        exc_type_name = type(current).__name__
+        for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
+            if pattern.search(exc_type_name):
+                return (category, retryable)
+        try:
+            exc_str = str(current)
+        except Exception:
+            exc_str = ""
+        for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
+            if exc_str and pattern.search(exc_str):
+                return (category, retryable)
+        # Prefer explicit cause; fall back to implicit context.
+        next_exc = getattr(current, "__cause__", None)
+        if next_exc is None:
+            next_exc = getattr(current, "__context__", None)
+        current = next_exc
+    return None
+
+
+def _nemoclaw_classify_from_persisted_errors():
+    """Read recent error entries from the managed LangGraph checkpoint DB.
+
+    LangGraph serializes remote exceptions and strips provider-specific causes.
+    The checkpoint DB retains the original error text in __error__ channel writes.
+    This function reads those entries to recover the real provider failure class.
+    Returns the classification tuple or None.
+    """
+    import os as _os
+    if not _os.path.isfile(_NEMOCLAW_MANAGED_STATE_DB):
         return None
-    for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
-        if pattern.search(exc_str):
-            return (category, retryable)
+    try:
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(_NEMOCLAW_MANAGED_STATE_DB, timeout=2)
+        conn.execute("PRAGMA query_only = ON")
+        try:
+            cursor = conn.execute(
+                "SELECT value FROM checkpoint_writes "
+                "WHERE channel = '__error__' "
+                "ORDER BY rowid DESC LIMIT 5"
+            )
+            for (value,) in cursor:
+                if not isinstance(value, (str, bytes)):
+                    continue
+                text = value if isinstance(value, str) else value.decode("utf-8", errors="replace")
+                for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
+                    if pattern.search(text):
+                        return (category, retryable)
+        finally:
+            conn.close()
+    except Exception:
+        # DB access failure is not actionable -- fall through silently.
+        pass
     return None
 
 
@@ -800,12 +854,21 @@ async def run_non_interactive(*args, **kwargs):
         return await _nemoclaw_original_run_non_interactive(*args, **kwargs)
     except Exception as exc:
         _logger = _nemoclaw_logging.getLogger("nemoclaw.managed.non_interactive")
+        _corr_id = str(_nemoclaw_uuid.uuid4())
         classified = _nemoclaw_classify_non_interactive_error(exc)
+        if classified is None:
+            classified = _nemoclaw_classify_from_persisted_errors()
         if classified:
             category, retryable = classified
-            _logger.warning("managed non-interactive error: category=%s retryable=%s exc_id=%s", category, retryable, hex(id(exc)))
+            _logger.warning(
+                "managed non-interactive error: category=%s retryable=%s correlation_id=%s",
+                category, retryable, _corr_id,
+            )
         else:
-            _logger.warning("managed non-interactive error: category=unknown retryable=false exc_id=%s", hex(id(exc)))
+            _logger.warning(
+                "managed non-interactive error: category=unknown retryable=false correlation_id=%s",
+                _corr_id,
+            )
         raise
 
 
