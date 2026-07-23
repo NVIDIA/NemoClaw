@@ -4,6 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { NvidiaPlatform } from "../inference/nim.js";
+import {
+  isNvidiaDisplayClassPciDevice,
+  isStationGb300ProductName,
+} from "./station-qualification.js";
 import type {
   QualificationStatus,
   ReadinessCapability,
@@ -13,7 +17,6 @@ import type {
   ReadinessState,
 } from "./types.js";
 
-const STATION_PRODUCT_PATTERN = /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu;
 const IDENTITY_FILE_MAX_BYTES = 4096;
 
 export type StationProfile =
@@ -166,9 +169,7 @@ function stationHasGb300PciGpu(
       const devicePath = path.join(pciDevicesPath, entry);
       const vendor = readOptional(readFile, path.join(devicePath, "vendor"));
       const pciClass = readOptional(readFile, path.join(devicePath, "class"));
-      if (vendor?.toLowerCase() === "0x10de" && /^0x03[0-9a-f]{4}$/iu.test(pciClass ?? "")) {
-        matches += 1;
-      }
+      if (isNvidiaDisplayClassPciDevice(vendor, pciClass)) matches += 1;
     }
     return matches > 0;
   } catch {
@@ -255,7 +256,7 @@ export function projectPlatformQualification(
         : "absent";
   const stationIdentity = input.nvidiaPlatform === "station";
   const stationProduct = input.productName
-    ? STATION_PRODUCT_PATTERN.test(input.productName)
+    ? isStationGb300ProductName(input.productName)
     : undefined;
   const knownStationProfile =
     input.stationProfile !== undefined &&

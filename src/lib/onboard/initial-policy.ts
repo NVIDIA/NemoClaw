@@ -13,6 +13,10 @@ import {
   type BaselineExclusionRequest,
 } from "../policy/baseline-exclusion";
 import {
+  isNvidiaDisplayClassPciDevice,
+  isStationGb300ProductName,
+} from "../readiness/station-qualification";
+import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -39,8 +43,6 @@ const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"]
 const SYSFS_PATH = "/sys";
 const DMI_PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name";
 const PCI_BDF_PATTERN = /^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/iu;
-const NVIDIA_PCI_VENDOR = "0x10de";
-const DISPLAY_PCI_CLASS_PATTERN = /^0x03[0-9a-f]{4}$/iu;
 const STATION_GB300_SHARED_SYSFS_RELATIVE_PATHS = [
   "devices/system/cpu",
   "devices/system/memory",
@@ -71,9 +73,7 @@ type DirectGpuPolicyOptions = {
   sysfsReadOnlyPaths?: readonly string[];
 };
 
-export function isStationGb300ProductName(productName: string): boolean {
-  return /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu.test(productName.trim());
-}
+export { isStationGb300ProductName };
 
 function readTrimmedFile(filePath: string): string | null {
   try {
@@ -102,7 +102,7 @@ export function discoverStationGb300SysfsReadOnlyPaths(
     const pciDeviceRoot = path.join(pciDevicesRoot, pciDeviceName);
     const vendor = readTrimmedFile(path.join(pciDeviceRoot, "vendor"))?.toLowerCase();
     const pciClass = readTrimmedFile(path.join(pciDeviceRoot, "class"));
-    if (vendor === NVIDIA_PCI_VENDOR && pciClass && DISPLAY_PCI_CLASS_PATTERN.test(pciClass)) {
+    if (isNvidiaDisplayClassPciDevice(vendor, pciClass)) {
       readOnlyPaths.push(`${SYSFS_PATH}/bus/pci/devices/${pciDeviceName}`);
     }
   }

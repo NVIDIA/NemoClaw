@@ -7,6 +7,10 @@ import {
   type PlatformQualificationInput,
   projectPlatformQualification,
 } from "./platform-qualification";
+import {
+  isNvidiaDisplayClassPciDevice,
+  isStationGb300ProductName,
+} from "./station-qualification";
 
 function input(overrides: Partial<PlatformQualificationInput> = {}): PlatformQualificationInput {
   return {
@@ -31,6 +35,16 @@ function capability(result: ReturnType<typeof projectPlatformQualification>, id:
 
 function qualification(result: ReturnType<typeof projectPlatformQualification>, id: string) {
   return result.qualifications.find((entry) => entry.id === id)?.status;
+}
+
+function stationFixtureReadFile(path: string): string {
+  const values = new Map([
+    ["product_name", "NVIDIA DGX Station GB300\n"],
+    ["vendor", "0x10DE\n"],
+    ["device", "0xffff\n"],
+    ["class", "0x030000\n"],
+  ]);
+  return values.get(path.split("/").at(-1) ?? "") ?? "";
 }
 
 describe("platform readiness qualification (#7410)", () => {
@@ -137,18 +151,20 @@ describe("platform readiness qualification (#7410)", () => {
     );
   });
 
-  it("agrees with Station preparation product matching", () => {
+  it("uses the shared Station product qualification contract", () => {
+    const productName = "Custom Station GB300 platform";
     const result = projectPlatformQualification(
       input({
         architecture: "arm64",
         hasNvidiaGpu: true,
         nvidiaPlatform: "station",
-        productName: "Custom Station GB300 platform",
+        productName,
         stationProfile: "generic-ubuntu",
         stationGb300PciGpu: true,
       }),
     );
 
+    expect(isStationGb300ProductName(productName)).toBe(true);
     expect(qualification(result, "host.platform.dgx_station")).toBe("qualified");
   });
 
@@ -170,12 +186,7 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it("collects only bounded identity reads and never invokes host preparation", () => {
-    const readFile = vi.fn((path: string) => {
-      if (path.endsWith("product_name")) return "NVIDIA DGX Station GB300\n";
-      if (path.endsWith("vendor")) return "0x10de\n";
-      if (path.endsWith("class")) return "0x030200\n";
-      return "";
-    });
+    const readFile = vi.fn(stationFixtureReadFile);
     const readdir = vi.fn(() => ["0000:01:00.0"]);
     const stat = vi.fn(() => ({ isFile: () => true, isSymbolicLink: () => false, size: 256 }));
 
@@ -201,14 +212,8 @@ describe("platform readiness qualification (#7410)", () => {
   it.each([
     [["0000:01:00.0"], "one"],
     [["0000:01:00.0", "0000:02:00.0"], "multiple"],
-  ] as const)("accepts %s Station NVIDIA display-class devices as preparation", (devices) => {
-    const readFile = vi.fn((path: string) => {
-      if (path.endsWith("product_name")) return "NVIDIA DGX Station GB300\n";
-      if (path.endsWith("vendor")) return "0x10DE\n";
-      if (path.endsWith("device")) return "0xffff\n";
-      if (path.endsWith("class")) return "0x030000\n";
-      return "";
-    });
+  ] as const)("accepts %s Station NVIDIA display-class devices as preparation", (devices, _count) => {
+    const readFile = vi.fn(stationFixtureReadFile);
 
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
@@ -219,6 +224,7 @@ describe("platform readiness qualification (#7410)", () => {
       stat: () => ({ isFile: () => true, isSymbolicLink: () => false, size: 256 }),
     });
 
+    expect(isNvidiaDisplayClassPciDevice("0x10DE", "0x030000")).toBe(true);
     expect(identity.stationGb300PciGpu).toBe(true);
     expect(
       qualification(
