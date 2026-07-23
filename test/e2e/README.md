@@ -62,6 +62,18 @@ no alternate checkout SHA is requested. PR-gate dispatches therefore remain on
 standard runners even though they use the trusted workflow definition from
 `main`.
 
+Exact-head PR-gate dispatches use a bounded swap fallback for the hosted
+Hermes image-building lanes that remain on those standard runners. The live
+Vitest helper activates the fallback only when GitHub Actions supplies a
+validated lowercase 40-hex checkout SHA. It reuses at least 32 GiB of active
+swap when available; otherwise, it creates one fixed 32 GiB swap file under
+`/mnt` before agent-turn latency, Hermes inference switch and shields, the
+Hermes Bedrock and stable MCP shards, or the `hermes-e2e`, `hermes-dashboard`,
+and Hermes security-posture tests. Setup failure stops before Vitest. Scheduled
+and ordinary manual `main` runs, larger-runner executions, rebuild lanes with
+workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
+shards do not use this fallback.
+
 The eligible set is limited to the measured or repeatedly interrupted heavy
 lanes:
 

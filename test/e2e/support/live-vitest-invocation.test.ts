@@ -8,8 +8,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildLiveVitestArgs,
+  HERMES_E2E_SWAP_BYTES,
+  HERMES_E2E_SWAP_FILE,
   LIVE_VITEST_PROJECT,
   type LiveVitestSpawner,
+  needsHermesE2ESwap,
   RISK_SIGNAL_REPORTER,
   runLiveVitestCommand,
   validateLiveProject,
@@ -19,6 +22,7 @@ import {
 
 const LIVE_VITEST_TOOL = path.resolve("tools/e2e/live-vitest-invocation.mts");
 const TSX = path.resolve("node_modules", ".bin", "tsx");
+const EXACT_HEAD_SHA = "a".repeat(40);
 
 describe("validateLiveProject (#6961)", () => {
   it("accepts the live project and defaults to it", () => {
@@ -243,5 +247,232 @@ describe("runLiveVitestCommand (#6961)", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('expected "run"');
+  });
+});
+
+describe("runLiveVitestCommand Hermes resource setup (#7145)", () => {
+  it("provisions bounded idempotent swap before a hosted Hermes build", () => {
+    const calls: Array<Parameters<LiveVitestSpawner>> = [];
+    const spawn: LiveVitestSpawner = (...args) => {
+      calls.push(args);
+      return { status: 0 };
+    };
+
+    expect(
+      runLiveVitestCommand(
+        ["run", "--test-path", "test/e2e/live/hermes-inference-switch.test.ts"],
+        spawn,
+        {
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_E2E_EXPECTED_SHA: EXACT_HEAD_SHA,
+        },
+      ),
+    ).toBe(0);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[0]).toBe("/usr/bin/sudo");
+    expect(HERMES_E2E_SWAP_BYTES).toBe(34_359_738_368);
+    expect(HERMES_E2E_SWAP_FILE).toBe("/mnt/nemoclaw-hermes-e2e.swap");
+    expect(calls[0]?.[1].slice(0, 9)).toEqual([
+      "-n",
+      "/usr/bin/env",
+      "-i",
+      "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+      "LC_ALL=C",
+      "/bin/bash",
+      "--noprofile",
+      "--norc",
+      "-c",
+    ]);
+    expect(calls[0]?.[1].slice(10)).toEqual([
+      "nemoclaw-hermes-e2e-swap",
+      HERMES_E2E_SWAP_FILE,
+      String(HERMES_E2E_SWAP_BYTES),
+    ]);
+    const script = calls[0]?.[1][9] ?? "";
+    expect(
+      spawnSync("/bin/bash", ["--noprofile", "--norc", "-n"], {
+        input: script,
+      }).status,
+    ).toBe(0);
+    expect(script).toContain("if (( active_swap_bytes >= swap_size_bytes )); then");
+    expect(script).toContain(
+      'active_swap_names="$(swapon --show --noheadings --raw --output NAME)"',
+    );
+    expect(script).toContain('if [[ "$active_swap_name" == "$swap_file" ]]; then');
+    expect(script).toContain(
+      'if (( fixed_swap_active == 1 )); then\n  swapoff "$swap_file"\nfi\nrm -f -- "$swap_file"',
+    );
+    expect(script).toContain(
+      'if cleanup_swap_names="$(swapon --show --noheadings --raw --output NAME 2>/dev/null)"; then',
+    );
+    expect(script).toContain('if swapoff "$swap_file" 2>/dev/null; then');
+    expect(script).toContain("Preserving active Hermes E2E swap after setup failure");
+    expect(script).toContain("Preserving Hermes E2E swap because active swap could not be queried");
+    expect(script).not.toContain('swapoff "$swap_file" 2>/dev/null || true');
+    expect(script).not.toContain("swap_enabled");
+    expect(script).toContain('fallocate -l "$swap_size_bytes" "$swap_file"');
+    expect(script).toContain("if (( active_swap_bytes < swap_size_bytes )); then");
+    expect(calls[1]?.[0]).toBe("npx");
+  });
+
+  it("fails closed before Vitest when Hermes swap provisioning fails", () => {
+    const calls: string[] = [];
+    const spawn: LiveVitestSpawner = (command) => {
+      calls.push(command);
+      return { status: 23 };
+    };
+
+    expect(
+      runLiveVitestCommand(
+        ["run", "--test-path", "test/e2e/live/hermes-shields-config.test.ts"],
+        spawn,
+        {
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_E2E_EXPECTED_SHA: EXACT_HEAD_SHA,
+        },
+      ),
+    ).toBe(23);
+    expect(calls).toEqual(["/usr/bin/sudo"]);
+  });
+
+  it.each([
+    ["scheduled main", undefined],
+    ["manual main without a checkout SHA", ""],
+    ["a malformed checkout SHA", "A".repeat(40)],
+  ])("does not provision swap for %s", (_label, expectedSha) => {
+    const calls: string[] = [];
+    const spawn: LiveVitestSpawner = (command) => {
+      calls.push(command);
+      return { status: 0 };
+    };
+
+    expect(
+      runLiveVitestCommand(
+        ["run", "--test-path", "test/e2e/live/hermes-inference-switch.test.ts"],
+        spawn,
+        {
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_E2E_EXPECTED_SHA: expectedSha,
+        },
+      ),
+    ).toBe(0);
+    expect(calls).toEqual(["npx"]);
+  });
+});
+
+describe("needsHermesE2ESwap (#7145)", () => {
+  const exactHeadEnv = {
+    GITHUB_ACTIONS: "true",
+    NEMOCLAW_E2E_EXPECTED_SHA: EXACT_HEAD_SHA,
+  };
+
+  it.each([
+    ["Hermes inference switch", "test/e2e/live/hermes-inference-switch.test.ts", {}],
+    ["Hermes shields", "test/e2e/live/hermes-shields-config.test.ts", {}],
+    ["agent turn latency", "test/e2e/live/agent-turn-latency.test.ts", {}],
+    [
+      "Hermes Bedrock",
+      "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+      { NEMOCLAW_AGENT: "hermes" },
+    ],
+    [
+      "Hermes E2E",
+      "test/e2e/live/hermes-e2e.test.ts",
+      { E2E_TARGET_ID: "hermes-e2e", NEMOCLAW_AGENT: "hermes" },
+    ],
+    [
+      "Hermes dashboard",
+      "test/e2e/live/hermes-e2e.test.ts",
+      { E2E_TARGET_ID: "hermes-dashboard", NEMOCLAW_AGENT: "hermes" },
+    ],
+    [
+      "Hermes security posture",
+      "test/e2e/live/hermes-e2e.test.ts",
+      { E2E_TARGET_ID: "security-posture", NEMOCLAW_AGENT: "hermes" },
+    ],
+    [
+      "Hermes MCP",
+      "test/e2e/live/mcp-bridge.test.ts",
+      { E2E_TARGET_ID: "mcp-bridge", NEMOCLAW_MCP_BRIDGE_AGENT: "hermes" },
+    ],
+  ])("selects the exact-head hosted %s build", (_label, testPath, env) => {
+    expect(needsHermesE2ESwap(testPath, { ...exactHeadEnv, ...env })).toBe(true);
+  });
+
+  it.each([
+    [
+      "a non-GitHub runner",
+      "test/e2e/live/hermes-inference-switch.test.ts",
+      { GITHUB_ACTIONS: "" },
+    ],
+    [
+      "a scheduled main run",
+      "test/e2e/live/hermes-inference-switch.test.ts",
+      { NEMOCLAW_E2E_EXPECTED_SHA: undefined },
+    ],
+    [
+      "a manual main run without a checkout SHA",
+      "test/e2e/live/hermes-inference-switch.test.ts",
+      { NEMOCLAW_E2E_EXPECTED_SHA: "" },
+    ],
+    [
+      "a main larger-runner execution",
+      "test/e2e/live/hermes-inference-switch.test.ts",
+      { NEMOCLAW_E2E_EXPECTED_SHA: "" },
+    ],
+    [
+      "an uppercase checkout SHA",
+      "test/e2e/live/hermes-inference-switch.test.ts",
+      { NEMOCLAW_E2E_EXPECTED_SHA: "A".repeat(40) },
+    ],
+    [
+      "the OpenClaw Bedrock shard",
+      "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+      { GITHUB_ACTIONS: "true", NEMOCLAW_AGENT: "openclaw" },
+    ],
+    [
+      "the OpenClaw security posture shard",
+      "test/e2e/live/hermes-e2e.test.ts",
+      {
+        E2E_TARGET_ID: "security-posture",
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_AGENT: "openclaw",
+      },
+    ],
+    [
+      "an unlisted Hermes target sharing the test file",
+      "test/e2e/live/hermes-e2e.test.ts",
+      { E2E_TARGET_ID: "future-hermes-job", NEMOCLAW_AGENT: "hermes" },
+    ],
+    [
+      "a non-Hermes MCP shard",
+      "test/e2e/live/mcp-bridge.test.ts",
+      {
+        E2E_TARGET_ID: "mcp-bridge",
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_MCP_BRIDGE_AGENT: "deepagents",
+      },
+    ],
+    [
+      "the explicit-only MCP dev lane",
+      "test/e2e/live/mcp-bridge.test.ts",
+      {
+        E2E_TARGET_ID: "mcp-bridge-dev",
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_MCP_BRIDGE_AGENT: "hermes",
+      },
+    ],
+    [
+      "a rebuild lane with workflow-managed swap",
+      "test/e2e/live/rebuild-hermes.test.ts",
+      { GITHUB_ACTIONS: "true", NEMOCLAW_AGENT: "hermes" },
+    ],
+    [
+      "a self-hosted Hermes lane",
+      "test/e2e/live/hermes-slack-e2e.test.ts",
+      { GITHUB_ACTIONS: "true", NEMOCLAW_AGENT: "hermes" },
+    ],
+  ])("does not select %s", (_label, testPath, env) => {
+    expect(needsHermesE2ESwap(testPath, { ...exactHeadEnv, ...env })).toBe(false);
   });
 });
