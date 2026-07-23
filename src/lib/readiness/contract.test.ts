@@ -5,7 +5,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with { type: "json" };
+import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with {
+  type: "json",
+};
 import { checkSystemReadinessSchemaVersion } from "./compatibility.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -16,9 +18,10 @@ async function readJson(path: string): Promise<unknown> {
 }
 
 function isRfc3339DateTime(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(
-    value,
-  );
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(
+      value,
+    );
   const [, yearText = "0", monthText = "0", dayText = "0"] = match ?? [];
   const year = Number(yearText);
   const month = Number(monthText);
@@ -39,15 +42,16 @@ async function createValidator() {
 }
 
 describe("system readiness contract", () => {
-  it.each(["supported", "incompatible", "inconclusive"])(
-    "validates the %s golden fixture (#7409)",
-    async (name) => {
-      const validate = await createValidator();
-      const fixture = await readJson(`${fixtureRoot}/${name}.json`);
+  it.each([
+    "supported",
+    "incompatible",
+    "inconclusive",
+  ])("validates the %s golden fixture (#7409)", async (name) => {
+    const validate = await createValidator();
+    const fixture = await readJson(`${fixtureRoot}/${name}.json`);
 
-      expect(validate(fixture), JSON.stringify(validate.errors)).toBe(true);
-    },
-  );
+    expect(validate(fixture), JSON.stringify(validate.errors)).toBe(true);
+  });
 
   it("accepts optional fields in schema major 1 (#7409)", async () => {
     const validate = await createValidator();
