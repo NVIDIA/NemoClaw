@@ -57,12 +57,6 @@ function telemetrySteps(workflow: Workflow, jobId: string): WorkflowStep[] {
   );
 }
 
-function matrixValues(workflow: Workflow, jobId: string, key: string): unknown[] {
-  const matrix = workflow.jobs[jobId]!.strategy!.matrix!;
-  const direct = matrix[key];
-  return Array.isArray(direct) ? direct : (matrix.include?.map((entry) => entry[key]) ?? []);
-}
-
 describe("runner comparison E2E workflow boundary (#7145)", () => {
   it("accepts 12 routed workflow lane identities / 13 concrete job executions", () => {
     const workflow = loadWorkflow();
@@ -70,12 +64,17 @@ describe("runner comparison E2E workflow boundary (#7145)", () => {
     expect(validateRunnerComparisonWorkflowBoundary(workflow)).toEqual([]);
     expect(JOBS.flatMap((jobId) => telemetrySteps(workflow, jobId))).toHaveLength(JOBS.length * 2);
 
-    const mcpLanes = matrixValues(workflow, "mcp-bridge", "agent").filter((agent) =>
+    const mcpAgents = workflow.jobs["mcp-bridge"]!.strategy!.matrix!.agent as unknown[];
+    expect(mcpAgents).toEqual(["openclaw", "hermes", "deepagents"]);
+    const mcpLanes = mcpAgents.filter((agent) =>
       ["hermes", "deepagents"].includes(String(agent)),
     ).length;
+    const inferenceSwitchModes = workflow.jobs[
+      "hermes-inference-switch"
+    ]!.strategy!.matrix!.include?.map((entry) => entry.mode);
+    expect(inferenceSwitchModes).toEqual(["hosted", "anthropic"]);
     const routedLanes = JOBS.length - 1 + mcpLanes;
-    const concreteExecutions =
-      routedLanes - 1 + matrixValues(workflow, "hermes-inference-switch", "mode").length;
+    const concreteExecutions = routedLanes - 1 + inferenceSwitchModes!.length;
     expect(routedLanes).toBe(12);
     expect(concreteExecutions).toBe(13);
   });
