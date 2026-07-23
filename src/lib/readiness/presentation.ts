@@ -14,6 +14,16 @@ import type {
 
 const MAX_SUMMARY_LENGTH = 512;
 const MAX_EVIDENCE_LENGTH = 1024;
+const SOURCE_REVISION_PATTERN = /^[0-9a-f]{40,64}$/;
+const ENVIRONMENT_DETAIL_KEYS = new Set([
+  "env",
+  "environment",
+  "environmentdump",
+  "environmentvariables",
+  "envvars",
+  "processenv",
+  "processenvironment",
+]);
 
 function bounded(value: string, maxLength: number): string {
   return String(redactForLog(value))
@@ -23,6 +33,11 @@ function bounded(value: string, maxLength: number): string {
 
 function scalar(value: EvidenceScalar): EvidenceScalar {
   return typeof value === "string" ? bounded(value, MAX_EVIDENCE_LENGTH) : value;
+}
+
+function isEnvironmentDetail(key: string): boolean {
+  const segments = key.split(/[._-]/).filter(Boolean);
+  return segments.some((segment) => ENVIRONMENT_DETAIL_KEYS.has(segment.toLowerCase()));
 }
 
 function observation(entry: ReadinessObservation): ReadinessObservation {
@@ -71,11 +86,7 @@ function evidence(entry: ReadinessEvidence): ReadinessEvidence {
       ? {
           details: Object.fromEntries(
             Object.entries(redactedDetails)
-              .filter(
-                ([key]) =>
-                  !/(?:^|[._-])(?:env|environment)(?:$|[._-])/i.test(key) &&
-                  !/(?:processEnv|processEnvironment)/i.test(key),
-              )
+              .filter(([key]) => !isEnvironmentDetail(key))
               .slice(0, 16)
               .map(([key, value]) => [key, scalar(value)]),
           ),
@@ -94,7 +105,8 @@ export function createPublicReadinessReport(
     mutated: false,
     provenance: {
       nemoclawVersion: bounded(report.provenance.nemoclawVersion, 128),
-      ...(report.provenance.sourceRevision
+      ...(report.provenance.sourceRevision &&
+      SOURCE_REVISION_PATTERN.test(report.provenance.sourceRevision)
         ? { sourceRevision: report.provenance.sourceRevision }
         : {}),
       observedAt: report.provenance.observedAt,

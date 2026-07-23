@@ -44,6 +44,31 @@ describe("public readiness presentation (#7412)", () => {
     expect(validate(publicReport), JSON.stringify(validate.errors)).toBe(true);
   });
 
+  it.each([
+    [`nvapi-${"a".repeat(24)}`, undefined],
+    ["not-a-source-revision", undefined],
+    ["a".repeat(40), "a".repeat(40)],
+  ])("publishes only schema-valid source revisions", (sourceRevision, expected) => {
+    const ajv = new Ajv2020({ strict: true });
+    ajv.addFormat("date-time", {
+      type: "string",
+      validate: (value: string) => !Number.isNaN(Date.parse(value)),
+    });
+    const validate = ajv.compile(systemReadinessSchema as AnySchema);
+    const publicReport = createPublicReadinessReport(
+      report({
+        provenance: {
+          nemoclawVersion: "0.1.0",
+          observedAt: "2026-06-01T12:00:00.000Z",
+          sourceRevision,
+        },
+      }),
+    );
+
+    expect(publicReport.provenance.sourceRevision).toBe(expected);
+    expect(validate(publicReport), JSON.stringify(validate.errors)).toBe(true);
+  });
+
   it("renders human output from the same public report used for JSON", () => {
     const publicReport = createPublicReadinessReport(
       report({
@@ -86,6 +111,7 @@ describe("public readiness presentation (#7412)", () => {
               processEnv: `NVIDIA_API_KEY=${token}`,
               "processEnv.PATH": "/usr/bin",
               environmentDump: "HOME=/home/user",
+              envVars: `NVIDIA_API_KEY=${token}`,
             },
           },
         ],
@@ -97,6 +123,8 @@ describe("public readiness presentation (#7412)", () => {
     expect(serialized).not.toContain("user:");
     expect(serialized).not.toContain("NVIDIA_API_KEY");
     expect(serialized).not.toContain("processEnv");
+    expect(serialized).not.toContain("environmentDump");
+    expect(serialized).not.toContain("envVars");
     expect(publicReport.evidence[0]?.summary.length).toBeLessThanOrEqual(1024);
     expect(String(publicReport.evidence[0]?.details?.stderr).length).toBeLessThanOrEqual(1024);
   });

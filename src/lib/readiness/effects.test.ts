@@ -15,9 +15,16 @@ const DOCKER_INFO = JSON.stringify({
   OperatingSystem: "Docker Engine",
 });
 const COMMAND_OUTPUTS: Record<string, string> = {
-  "sh -lc command -v node": "/usr/bin/node",
-  "sh -lc command -v openshell": "/usr/bin/openshell",
-  "sh -lc command -v nvidia-container-cli": "/usr/bin/nvidia-container-cli",
+  'sh -c command -v "$1" -- docker': "/usr/bin/docker",
+  'sh -c command -v "$1" -- node': "/usr/bin/node",
+  'sh -c command -v "$1" -- openshell': "/usr/bin/openshell",
+  'sh -c command -v "$1" -- nvidia-ctk': "/usr/bin/nvidia-ctk",
+  'sh -c command -v "$1" -- apt-get': "",
+  'sh -c command -v "$1" -- dnf': "",
+  'sh -c command -v "$1" -- yum': "",
+  'sh -c command -v "$1" -- brew': "",
+  'sh -c command -v "$1" -- pacman': "",
+  'sh -c command -v "$1" -- systemctl': "/usr/bin/systemctl",
   "docker info --format {{json .}}": DOCKER_INFO,
   "systemctl is-active docker": "active",
   "systemctl is-enabled docker": "enabled",
@@ -64,9 +71,9 @@ describe("readiness process effects (#7412)", () => {
     expect(first.mutated).toBe(false);
     expect(assess).toHaveBeenCalledTimes(2);
     expect(commands.length).toBeGreaterThan(0);
-    expect(
-      commands.every(([command]) => ["sh", "docker", "systemctl"].includes(command ?? "")),
-    ).toBe(true);
+    expect(commands.every((command) => Object.hasOwn(COMMAND_OUTPUTS, command.join(" ")))).toBe(
+      true,
+    );
     expect(
       commands
         .filter(([command]) => command === "systemctl")
