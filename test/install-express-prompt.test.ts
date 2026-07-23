@@ -283,6 +283,14 @@ detect_express_platform
     ].join("\n");
   }
 
+  function noOtaDgxOs76Release(version = "7.6.0") {
+    return `DGX_NAME="DGX GB300WS"\nDGX_PRETTY_NAME="NVIDIA DGX GB300WS"
+DGX_SWBUILD_DATE="2026-07-14-13-59-06"
+DGX_SWBUILD_VERSION="${version}"
+DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
+`;
+  }
+
   it("parses and documents the DGX Station DeepSeek override", () => {
     const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--station-deepseek", "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -1246,6 +1254,7 @@ detect_express_platform
   it.each([
     "Dell Pro Max with Station GB300",
     "NVIDIA DGX Station GB300",
+    "DGX_Station_GB300",
   ])("recognizes supported Station GB300 firmware as DGX Station: %s", (productName) => {
     const result = detectExpressPlatformForProductName(productName);
 
@@ -1253,10 +1262,20 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s on Station GB300", (version) => {
+  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s", (version) => {
     const result = detectExpressPlatformForStockDgxRelease(
       "DGX Station GB300",
       stockDgxRelease(version),
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
+  it("recognizes the no-OTA DGX OS 7.6 family on Station GB300 (#7417)", () => {
+    const result = detectExpressPlatformForStockDgxRelease(
+      "DGX Station GB300",
+      noOtaDgxOs76Release(),
     );
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
@@ -1312,7 +1331,9 @@ detect_express_platform
   });
 
   it.each([
-    ["unreviewed version", stockDgxRelease("7.6.0")],
+    ["out-of-scope OTA version", stockDgxRelease("7.6.0")],
+    ["future OTA version", stockDgxRelease("7.7.0")],
+    ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
     ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
     ["missing DGX_OTA_PRETTY_NAME", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", null)],
     ["BaseOS identity", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", "NVIDIA BaseOS")],
@@ -1378,9 +1399,10 @@ printf 'PROMPT_REACHED\n'
       },
     );
     const output = `${result.stdout}${result.stderr}`;
-
     expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/outside the validated Station/);
+    expect(output).toMatch(
+      /outside the (recognized Station Express release-metadata|validated Station GB300 express) boundary/,
+    );
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
@@ -1410,9 +1432,10 @@ printf 'PROMPT_REACHED\n'
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("outside the validated Station express boundary");
+    expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
-    expect(output).toContain("stock DGX OS 7.2.0, 7.4.0, or 7.5.0");
+    expect(output).toContain("OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0");
+    expect(output).toContain("no-OTA DGX OS 7.6.x NVIDIA DGX GB300WS profile");
     expect(output).not.toContain("PROMPT_REACHED");
   });
 

@@ -344,7 +344,7 @@ check_package_managers_idle test
     expect(output).toMatch(/APT or dpkg lock is active/);
   });
 
-  it("keeps PackageKit process detection fail-closed outside generic Ubuntu", () => {
+  it("keeps PackageKit process detection fail-closed for BaseOS", () => {
     const { result, output } = runSourced(`
 STATION_HOST_PROFILE=colossus-baseos
 ps() { printf '4242 packagekitd\n'; }
@@ -354,6 +354,92 @@ check_package_managers_idle test
     expect(result.status, output).not.toBe(0);
     expect(output).toContain("4242 packagekitd");
     expect(output).toMatch(/package-manager process is active/);
+  });
+
+  it.each([
+    "stock-dgx-os",
+    "ai-developer-tools",
+  ])("allows idle PackageKit when %s preserves the factory package stack (#7417)", (profile) => {
+    const { result, output } = runPackageKitBoundary(
+      `
+STATION_HOST_PROFILE="$FACTORY_PROFILE"
+ps() { printf '4242 packagekitd\n'; }
+check_package_managers_idle test
+cat "$CALLS"
+`,
+      { FACTORY_PROFILE: profile },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("GetTransactionList");
+    expect(output).toContain("packagekit_transactions=none phase=test");
+    expect(output).toContain("package_manager=idle phase=test");
+  });
+
+  it.each([
+    "stock-dgx-os",
+    "ai-developer-tools",
+  ])("rejects an active PackageKit transaction for %s before factory validation (#7417)", (profile) => {
+    const { result, output } = runPackageKitBoundary(
+      `
+STATION_HOST_PROFILE="$FACTORY_PROFILE"
+ps() { printf '4242 packagekitd\n'; }
+trap 'cat "$CALLS"' EXIT
+check_package_managers_idle 'initial Station package preflight'
+printf 'FACTORY_VALIDATION\n' >>"$CALLS"
+`,
+      {
+        FACTORY_PROFILE: profile,
+        PACKAGEKIT_TRANSACTIONS: 'ao 1 "/42_deadbeef"',
+      },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("GetTransactionList");
+    expect(output).toMatch(
+      /active PackageKit transaction blocks initial Station package preflight/,
+    );
+    expect(output).not.toContain("FACTORY_VALIDATION");
+  });
+
+  it.each(
+    ["stock-dgx-os", "ai-developer-tools"].flatMap((profile) => [
+      {
+        label: "malformed",
+        profile,
+        transactionState: "unexpected reply",
+        expectedError: /malformed transaction state/,
+      },
+      {
+        label: "inconsistent empty",
+        profile,
+        transactionState: 'ao 0 "/42_deadbeef"',
+        expectedError: /inconsistent empty transaction state/,
+      },
+    ]),
+  )("rejects $label PackageKit state for $profile before factory validation (#7417)", ({
+    expectedError,
+    profile,
+    transactionState,
+  }) => {
+    const { result, output } = runPackageKitBoundary(
+      `
+STATION_HOST_PROFILE="$FACTORY_PROFILE"
+ps() { printf '4242 packagekitd\n'; }
+trap 'cat "$CALLS"' EXIT
+check_package_managers_idle 'initial Station package preflight'
+printf 'FACTORY_VALIDATION\n' >>"$CALLS"
+`,
+      {
+        FACTORY_PROFILE: profile,
+        PACKAGEKIT_TRANSACTIONS: transactionState,
+      },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("GetTransactionList");
+    expect(output).toMatch(expectedError);
+    expect(output).not.toContain("FACTORY_VALIDATION");
   });
 
   it.each([
