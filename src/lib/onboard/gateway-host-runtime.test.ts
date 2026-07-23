@@ -342,6 +342,30 @@ describe("gateway host runtime attachment probe", () => {
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw");
   });
 
+  it("rejects changed authority before gateway registration (#6576)", async () => {
+    process.env[GATEWAY_MANAGEMENT_ENV_VAR] = "/etc/nemoclaw/gateway-management.json";
+    let declaration = DECLARATION;
+    vi.spyOn(require("node:fs") as typeof import("node:fs"), "readFileSync").mockImplementation(
+      () => JSON.stringify(declaration) as never,
+    );
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const runtime = createGatewayHostRuntime(createDeps({ runOpenshell }));
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+    declaration = {
+      ...DECLARATION,
+      supervisor: {
+        ...DECLARATION.supervisor,
+        execPath: "/opt/platform/replacement-gatewayd",
+      },
+    };
+
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toThrow(
+      /authority changed during this run/,
+    );
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("replaces stale registration before selecting the declared endpoint (#6576)", async () => {
     declareExternalSupervision();
     const statuses = [1, 0, 0];

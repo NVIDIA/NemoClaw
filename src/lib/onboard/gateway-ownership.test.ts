@@ -184,7 +184,7 @@ describe("externally supervised gateway attachment", () => {
     expect(result.ok === false && result.message).toMatch(/will not start a competing gateway/);
   });
 
-  it("fails when an unrecognized process holds the gateway port (#6576)", () => {
+  it("fails when an occupied gateway port has no identifiable listener process (#6576)", () => {
     const result = evaluateGatewayAttachment(
       externalOwner,
       probe({ listenerPids: [], listenerExecPath: null }),

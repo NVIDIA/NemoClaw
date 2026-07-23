@@ -374,7 +374,7 @@ export function evaluateGatewayAttachment(
       ok: false,
       code: "unknown_listener",
       message:
-        `The gateway port is held by a process that is not a recognizable OpenShell gateway. ` +
+        `NemoClaw could not identify a listener process for the occupied gateway port. ` +
         `NemoClaw will not attach to it or replace it. Identify the process holding the port, ` +
         `stop only that process, and let ${supervisorName} own the gateway.`,
     };

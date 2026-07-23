@@ -107,12 +107,13 @@ For an HTTP endpoint, NemoClaw sends the readiness request to the exact declared
 
 NemoClaw validates external authority before provider, policy, sandbox, or sandbox-registry mutations.
 NemoClaw requires systemd to confirm that the declared unit is active.
-It checks that exactly one recognizable process holds the configured port.
+It checks that exactly one live process holds the configured port.
 The process identity must remain stable while NemoClaw reads `/proc` evidence and confirms the listener a second time.
 The process must belong to the unit's cgroup, and its executable must match `execPath`.
 The exact endpoint must answer its health check.
 
 After validation, NemoClaw registers the exact endpoint under the canonical gateway name and selects it as the active OpenShell gateway.
+Immediately before registration, NemoClaw reloads the authority and rejects any change from the authority bound to the run.
 Port `8080` uses the name `nemoclaw`, and another port uses `nemoclaw-<port>`.
 NemoClaw verifies the named and active registrations before advancing to provider selection.
 It then repeats the health, supervisor, listener, executable, cgroup, and process identity checks and compares them with the initial evidence.
@@ -125,7 +126,7 @@ Onboarding fails when any of the following conditions applies:
 - The declared supervisor is inactive, or systemd cannot confirm its active state.
 - Nothing is listening on the declared endpoint.
 - The listener set cannot be enumerated completely.
-- No recognizable gateway process holds the port.
+- NemoClaw cannot identify a listener process for the occupied port.
 - More than one process holds the port.
 - The listener process or listener set changes during identity verification.
 - The listener does not belong to the declared systemd unit.

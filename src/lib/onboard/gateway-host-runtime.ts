@@ -355,6 +355,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     owner: GatewayOwner,
     expectedProbe: GatewayAttachmentProbe,
   ): Promise<void> {
+    bindGatewayOwner(owner);
     if (!isExternallySupervised(owner) || !owner.endpoint) return;
     const expectedAttachment = evaluateGatewayAttachment(owner, expectedProbe);
     if (!expectedAttachment.ok) {
