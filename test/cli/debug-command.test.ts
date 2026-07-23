@@ -46,8 +46,8 @@ describe("CLI debug command", () => {
     testTimeoutOptions(30_000),
     ({ resources }) => {
       const env = createDebugCommandTestEnv(resources, "nemoclaw-cli-debug-authority-");
-      if (!env.HOME) throw new Error("Expected debug test environment to set HOME");
-      writeExternalGatewayAuthoritySession(env.HOME);
+      expect(env.HOME).toBeTypeOf("string");
+      writeExternalGatewayAuthoritySession(env.HOME!);
 
       const result = runWithEnv("debug --quick", env, 30000);
 
