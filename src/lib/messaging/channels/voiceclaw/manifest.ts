@@ -167,6 +167,7 @@ export const voiceclawManifest = {
             },
             tts: {
               provider: "nvidia",
+              timeoutMs: 30_000,
               providers: {
                 nvidia: {
                   apiKey: "{{credential.nvidiaApiKey.placeholder}}",
@@ -251,6 +252,15 @@ export const voiceclawManifest = {
             "[channels] Installing VoiceClaw NVIDIA batch ASR and TTS compatibility patch",
           installedMessage:
             "[channels] VoiceClaw NVIDIA batch ASR and TTS compatibility patch installed (NODE_OPTIONS updated)",
+        },
+        {
+          module: "openclaw-voicecall-gather-tts",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing VoiceClaw Twilio Gather NVIDIA TTS compatibility patch",
+          installedMessage:
+            "[channels] VoiceClaw Twilio Gather NVIDIA TTS compatibility patch installed (NODE_OPTIONS updated)",
         },
       ],
     },

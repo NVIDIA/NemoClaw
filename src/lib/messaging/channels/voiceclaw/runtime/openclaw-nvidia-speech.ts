@@ -28,6 +28,7 @@ var VIRTUAL_ASSETS = {
   "voiceclaw-nvidia-speech-config.js": "voiceclaw-nvidia-speech-config.mjs",
   "voiceclaw-nvidia-speech-http.runtime.js": "voiceclaw-nvidia-speech-http.runtime.mjs",
   "voiceclaw-nvidia-speech-provider.js": "voiceclaw-nvidia-speech-provider.mjs",
+  "voiceclaw-wave-audio.js": "voiceclaw-wave-audio.mjs",
 };
 var PATCHED_CONTRACTS = {
   mediaUnderstandingProviders: ["nvidia"],

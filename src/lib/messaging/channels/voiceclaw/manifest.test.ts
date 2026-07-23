@@ -103,6 +103,7 @@ describe("VoiceClaw channel manifest", () => {
               },
               tts: expect.objectContaining({
                 provider: "nvidia",
+                timeoutMs: 30_000,
                 providers: {
                   nvidia: expect.objectContaining({
                     apiKey: "openshell:resolve:env:NVIDIA_API_KEY",
@@ -167,6 +168,18 @@ describe("VoiceClaw channel manifest", () => {
         "[channels] Installing VoiceClaw NVIDIA batch ASR and TTS compatibility patch",
       installedMessage:
         "[channels] VoiceClaw NVIDIA batch ASR and TTS compatibility patch installed (NODE_OPTIONS updated)",
+    });
+    expect(plan.runtimeSetup?.nodePreloads).toContainEqual({
+      channelId: "voiceclaw",
+      module: "openclaw-voicecall-gather-tts",
+      source: "/usr/local/lib/nemoclaw/preloads/openclaw-voicecall-gather-tts.js",
+      target: "/tmp/nemoclaw-openclaw-voicecall-gather-tts.js",
+      injectInto: ["boot", "connect"],
+      optional: false,
+      installMessage:
+        "[channels] Installing VoiceClaw Twilio Gather NVIDIA TTS compatibility patch",
+      installedMessage:
+        "[channels] VoiceClaw Twilio Gather NVIDIA TTS compatibility patch installed (NODE_OPTIONS updated)",
     });
     expect(plan.stateUpdates[0]).toMatchObject({
       channelId: "voiceclaw",

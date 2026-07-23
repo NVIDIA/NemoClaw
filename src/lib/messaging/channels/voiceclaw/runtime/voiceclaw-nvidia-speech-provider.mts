@@ -15,6 +15,7 @@ import {
   NVIDIA_DEFAULT_VOICE,
   normalizeNvidiaTtsConfig,
 } from "./voiceclaw-nvidia-speech-config.js";
+import { decodeLinearPcmWav } from "./voiceclaw-wave-audio.js";
 
 const MAGPIE_VOICES = [
   "Magpie-Multilingual.EN-US.Aria",
@@ -68,6 +69,29 @@ export function buildNvidiaSpeechProvider(): SpeechProviderPlugin {
         outputFormat: "wav",
         fileExtension: ".wav",
         voiceCompatible: false,
+      };
+    },
+    synthesizeTelephony: async (req) => {
+      const config = normalizeNvidiaTtsConfig(req.providerConfig);
+      const apiKey = await resolveNvidiaSpeechApiKey(config.apiKey, req.cfg);
+      const overrides = req.providerOverrides ?? {};
+      const { magpieSynthesize } = await import("./voiceclaw-nvidia-speech-http.runtime.js");
+      const wav = await magpieSynthesize({
+        text: req.text,
+        apiKey,
+        baseUrl: config.baseUrl,
+        voice: trimToUndefined(overrides.voice) ?? config.voice ?? NVIDIA_DEFAULT_VOICE,
+        language: trimToUndefined(overrides.language) ?? config.language ?? NVIDIA_DEFAULT_LANGUAGE,
+        sampleRateHz: config.sampleRateHz,
+        customDictionary: trimToUndefined(overrides.customDictionary) ?? config.customDictionary,
+        customConfiguration:
+          trimToUndefined(overrides.customConfiguration) ?? config.customConfiguration,
+        timeoutMs: req.timeoutMs,
+      });
+      const pcm = decodeLinearPcmWav(wav);
+      return {
+        ...pcm,
+        outputFormat: "pcm",
       };
     },
   };

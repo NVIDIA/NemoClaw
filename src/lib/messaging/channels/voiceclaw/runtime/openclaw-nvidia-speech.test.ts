@@ -64,6 +64,7 @@ describe("VoiceClaw OpenClaw NVIDIA speech preload", () => {
       "voiceclaw-nvidia-speech-config.js": "export const config = true;",
       "voiceclaw-nvidia-speech-http.runtime.js": "export const http = true;",
       "voiceclaw-nvidia-speech-provider.js": "export const tts = true;",
+      "voiceclaw-wave-audio.js": "export const wave = true;",
     };
     const hooks = createNvidiaSpeechHooks(virtualSources, () => REVIEWED_NVIDIA_INDEX_SHA256);
     const indexUrl = `file:///usr/local/lib/node_modules/openclaw${NVIDIA_INDEX_SUFFIX}`;
