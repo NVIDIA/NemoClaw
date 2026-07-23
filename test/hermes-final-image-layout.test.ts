@@ -126,6 +126,22 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
+  // source-shape-contract: compatibility -- One final-stage payload copy preserves the measured Hermes export layer budget
+  it("commits repository payload through one final-image layer (#7144)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
+    const payloadStage = stages.find((stage) =>
+      stage.startsWith("FROM scratch AS hermes-repository-payload"),
+    );
+    const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
+
+    expect(payloadStage).toBeDefined();
+    expect(finalStageIndex).toBe(stages.length - 1);
+    expect(stages[finalStageIndex]?.match(/^(?:ADD|COPY)\b.*$/gmu)).toEqual([
+      "COPY --from=hermes-repository-payload / /",
+    ]);
+  });
+
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image
   it("keeps security entrypoint hashes synchronized with the copied files", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");

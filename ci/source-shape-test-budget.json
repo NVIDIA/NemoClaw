@@ -278,6 +278,11 @@
     },
     {
       "file": "test/hermes-final-image-layout.test.ts",
+      "test": "commits repository payload through one final-image layer (#7144)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/hermes-final-image-layout.test.ts",
       "test": "keeps security entrypoint hashes synchronized with the copied files",
       "category": "security"
     },
