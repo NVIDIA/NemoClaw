@@ -445,11 +445,8 @@ async function assertConcurrentAddSerialized(
         artifactName: `${options.artifactPrefix}-mcp-concurrent-add-${attempt}`,
         env,
         redactionValues: [HOST_SECRET],
-        // Hermes may need one host-authenticated managed restart (210s), a
-        // fresh helper-readiness window (90s), and its acknowledged config
-        // reload (300s). Keep both concurrent clients alive through that
-        // bounded recovery; the loser then acquires the lifecycle lock and
-        // rejects the committed duplicate.
+        // Keep both clients alive through Hermes' bounded restart and config
+        // reload; the loser then acquires the lock and rejects the duplicate.
         timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
       }),
     ),
@@ -862,6 +859,7 @@ test("mcp-bridge", {
   const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
     cleanup,
     label: "fake MCP HTTPS server",
+    progress,
     server: fakeMcp,
   });
   const decoyMcp = await startFakeMcpHttpsServer({ secret: HOST_SECRET });
@@ -869,6 +867,7 @@ test("mcp-bridge", {
   const decoyMcpTunnel = await startPublicMcpHttpsTunnel({
     cleanup,
     label: "unconfigured decoy MCP HTTPS server",
+    progress,
     server: decoyMcp,
   });
   const hostAddress = await hostAddressForSandbox(host);
@@ -1213,6 +1212,7 @@ mcpBridgeShardTest("hermes")(
     const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
       cleanup,
       label: "fake Hermes MCP HTTPS server",
+      progress,
       server: fakeMcp,
     });
     const hostAddress = await hostAddressForSandbox(host);
@@ -1378,6 +1378,7 @@ mcpBridgeShardTest("deepagents")(
     const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
       cleanup,
       label: "fake Deep Agents MCP HTTPS server",
+      progress,
       server: fakeMcp,
     });
     const hostAddress = await hostAddressForSandbox(host);

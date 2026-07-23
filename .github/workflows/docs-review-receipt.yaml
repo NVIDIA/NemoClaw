@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI / Documentation Writer Review
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docs-review-receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Collect receipt inputs
+        id: receipt-inputs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed_files="$RUNNER_TEMP/docs-review-changed-files.txt"
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
+          agents_blob="$(git rev-parse "${HEAD_SHA}:AGENTS.md")"
+          echo "changed_files=$changed_files" >> "$GITHUB_OUTPUT"
+          echo "agents_blob=$agents_blob" >> "$GITHUB_OUTPUT"
+
+      - name: Check documentation writer review receipt
+        continue-on-error: true
+        env:
+          AGENTS_BLOB: ${{ steps.receipt-inputs.outputs.agents_blob }}
+          CHANGED_FILES: ${{ steps.receipt-inputs.outputs.changed_files }}
+        run: >-
+          node --experimental-strip-types --no-warnings scripts/docs-review-receipt.mts check
+          --event "$GITHUB_EVENT_PATH"
+          --changed-files "$CHANGED_FILES"
+          --agents-blob "$AGENTS_BLOB"
+          --mode advisory
