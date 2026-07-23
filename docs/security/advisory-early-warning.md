@@ -53,9 +53,10 @@ shape unchanged.
   in CI) remains enabled and authoritative for exact npm package/version-range
   decisions. The early-warning path only triggers investigation and rescanning.
 
-`scripts/advisory-early-warning-scan.mts` is the CLI over the module. It reads
-only local files, exits 0 whether or not signals are found, and never mutates
-anything:
+`scripts/advisory-early-warning-scan.mts` is the CLI over the module.
+It reads only local files and exits 0 whether or not signals are found.
+It does not modify input files or external state.
+With `--output`, it writes the requested local signals file:
 
 ```sh
 # List inventory package names (one per line), the input for advisory queries.

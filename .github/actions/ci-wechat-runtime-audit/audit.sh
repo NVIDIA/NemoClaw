@@ -188,24 +188,30 @@ if (typeof report !== "object" || report === null || Array.isArray(report)) {
 // clean scan: report.error, exit status above 1, or a nonzero exit with zero
 // findings all mark the attempt as failed.
 const auditStatus = Number(process.env.AUDIT_STATUS);
-let findingCount = 0;
+const severities = ["info", "low", "moderate", "high", "critical"];
 const severityCounts = report?.metadata?.vulnerabilities;
-if (severityCounts && typeof severityCounts === "object" && !Array.isArray(severityCounts)) {
-  for (const count of Object.values(severityCounts)) {
-    if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) {
-      findingCount += count;
-    }
-  }
-}
-if (
+const hasCompleteSeverityCounts =
+  severityCounts &&
+  typeof severityCounts === "object" &&
+  !Array.isArray(severityCounts) &&
+  severities.every((severity) => {
+    const count = severityCounts[severity];
+    return typeof count === "number" && Number.isSafeInteger(count) && count >= 0;
+  });
+const findingCount = hasCompleteSeverityCounts
+  ? severities.reduce((total, severity) => total + severityCounts[severity], 0)
+  : 0;
+if (failure === undefined && report.error !== undefined) {
+  failure = `npm audit returned an error report: ${JSON.stringify(report.error)}`;
+} else if (failure === undefined && !hasCompleteSeverityCounts) {
+  failure = "npm audit did not produce a complete vulnerability finding report";
+} else if (
   failure === undefined &&
-  (report.error !== undefined ||
-    !Number.isSafeInteger(auditStatus) ||
+  (!Number.isSafeInteger(auditStatus) ||
     auditStatus > 1 ||
     (auditStatus !== 0 && findingCount === 0))
 ) {
-  const detail = report.error === undefined ? "" : `: ${JSON.stringify(report.error)}`;
-  failure = `npm audit exited ${process.env.AUDIT_STATUS} without a complete vulnerability finding report${detail}`;
+  failure = `npm audit exited ${process.env.AUDIT_STATUS} without vulnerability findings`;
 }
 const advisoryIds = new Set();
 const findings = report && typeof report.vulnerabilities === "object" ? report.vulnerabilities : {};
@@ -240,6 +246,7 @@ const provenance = {
   ...(failure === undefined ? {} : { failure }),
 };
 fs.writeFileSync(process.env.PROVENANCE_PATH, `${JSON.stringify(provenance, null, 2)}\n`);
+if (failure !== undefined) process.exitCode = 1;
 NODE
 
 signature_status=0
