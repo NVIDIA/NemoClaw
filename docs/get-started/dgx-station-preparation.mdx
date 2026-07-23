@@ -16,6 +16,7 @@ Complete this preparation before following the Quickstart on a qualifying DGX St
 
 DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, `7.5.0`, or `7.6.x`.
 A stock DGX OS image qualifies only when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+DGX OS `7.6.x` is recognized by its release metadata and remains subject to the runtime checks below; full Station Express end-to-end qualification for that release family is pending.
 Stock DGX OS `7.6.x` can omit the `DGX_OTA_*` fields.
 For that release family, NemoClaw requires `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, a numeric `7.6.x` `DGX_SWBUILD_VERSION`, and `DGX_SWBUILD_DATE` to be present, but does not match the date against an exact build.
 NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualification.
@@ -136,6 +137,8 @@ On a qualifying stock DGX OS or exact no-OTA factory image, express install vali
 It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
 The stock DGX OS path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
 The AI Developer Tools path preserves those boundaries when `nvidia.com/gpu=all` is already present.
+A resident `packagekitd` process alone does not block stock DGX OS or AI Developer Tools preflight because those paths preserve the factory package stack.
+The Colossus BaseOS path still blocks on `packagekitd`, while generic Ubuntu quiesces an idle PackageKit daemon before package mutation.
 When that CDI device is missing, the AI Developer Tools path first confirms that no workloads are active, then enables the packaged `nvidia-cdi-refresh.path` and `nvidia-cdi-refresh.service` units, starts the path unit, restarts the refresh service, and checks the device again.
 It stops with service diagnostics if packaged refresh fails or omits the device.
 It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.

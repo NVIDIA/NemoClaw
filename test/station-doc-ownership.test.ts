@@ -55,6 +55,12 @@ describe("DGX Station documentation ownership", () => {
     }
     expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("does not match the date against an exact build");
+    expect(stationPreparation).toContain(
+      "full Station Express end-to-end qualification for that release family is pending",
+    );
+    expect(stationPreparation).toContain(
+      "A resident `packagekitd` process alone does not block stock DGX OS",
+    );
     expect(quickstart).not.toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");
     expect(stationPreparation).toContain("metadata omits or varies fields");

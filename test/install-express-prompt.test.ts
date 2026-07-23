@@ -284,12 +284,10 @@ detect_express_platform
   }
 
   function noOtaDgxOs76Release(version = "7.6.0") {
-    return `DGX_NAME="DGX GB300WS"
-DGX_PRETTY_NAME="NVIDIA DGX GB300WS"
+    return `DGX_NAME="DGX GB300WS"\nDGX_PRETTY_NAME="NVIDIA DGX GB300WS"
 DGX_SWBUILD_DATE="2026-07-14-13-59-06"
 DGX_SWBUILD_VERSION="${version}"
-DGX_COMMIT_ID="d0e99cc"
-DGX_PLATFORM="DGX Server for GALAXY-GB300"
+DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
 `;
   }
 
@@ -1402,7 +1400,9 @@ printf 'PROMPT_REACHED\n'
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/outside the validated Station/);
+    expect(output).toMatch(
+      /outside the (recognized Station Express release-metadata|validated Station GB300 express) boundary/,
+    );
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
@@ -1432,7 +1432,7 @@ printf 'PROMPT_REACHED\n'
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("outside the validated Station express boundary");
+    expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
     expect(output).toContain("stock DGX OS 7.2.0, 7.4.0, 7.5.0, or 7.6.x");
     expect(output).not.toContain("PROMPT_REACHED");
