@@ -1167,7 +1167,7 @@ Terminal agents do not have a gateway runtime and fail as unsupported.
 ### `$$nemoclaw <name> stop`
 
 Stop the sandbox's Docker container while preserving all of its state.
-Workspace files, credentials, network policies, the registry entry, and the OpenShell sandbox record stay in place; only the container stops running.
+Workspace files, credentials, network policies, the registry entry, and the OpenShell sandbox record stay in place.
 Use this to free CPU, memory, and GPU resources without destroying the sandbox; use [`$$nemoclaw <name> destroy`](#$$nemoclaw-name-destroy) when you want to delete it instead.
 
 ```bash
@@ -1176,8 +1176,17 @@ $$nemoclaw my-assistant stop
 
 For OpenClaw-managed gateways, the command first asks the in-sandbox gateway to shut down its channels gracefully; agent-managed gateways (for example Hermes) are supervised inside the sandbox and shut down with the container's stop signal.
 Then the container stops; a container stuck in a crash loop is stopped the same way, which also disarms its restart policy.
+<AgentOnly variant="openclaw,hermes">
+After the container stops, NemoClaw attempts to stop that sandbox's host dashboard forward.
+If the container does not stop, NemoClaw leaves the dashboard forward running.
+</AgentOnly>
 The shared host gateway, tunnel services, and any local NIM inference container serve other sandboxes and keep running.
+<AgentOnly variant="openclaw,hermes">
+Stopping an already-stopped sandbox succeeds and attempts to remove any leftover dashboard forward for that sandbox.
+</AgentOnly>
+<AgentOnly variant="deepagents">
 Stopping an already-stopped sandbox succeeds without changes.
+</AgentOnly>
 The command controls the local container directly, so it is available for local-container drivers (the default Docker driver and the vm driver) and unavailable for remote drivers such as kubernetes; if the Docker daemon itself is unreachable, the command reports the outage instead of guessing at container state.
 
 ### `$$nemoclaw <name> start`
