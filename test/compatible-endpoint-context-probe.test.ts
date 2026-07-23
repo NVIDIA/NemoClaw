@@ -17,9 +17,20 @@ import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "./e2e/fixtures/fake-openai-compatible";
+import { startTestProgress, type TestProgress } from "./e2e/fixtures/progress.ts";
 import { testTimeout } from "./helpers/timeouts";
 
 const MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4";
+let progress: TestProgress | null = null;
+
+function testProgress(): TestProgress {
+  progress ??= startTestProgress(
+    "compatible endpoint support",
+    ["serve compatible endpoint", "verify compatible endpoint"],
+    { targetId: "compatible-endpoint-context-probe" },
+  );
+  return progress;
+}
 
 // The fake server binds to loopback (127.0.0.1). Loopback is an allowed
 // host-side probe target (a locally-run vLLM/Ollama endpoint), so these
@@ -43,16 +54,28 @@ function fetchFromServer(apiKey: string): () => unknown | null {
 }
 
 afterEach(async () => {
-  await server?.close();
-  server = null;
+  try {
+    await server?.close();
+  } finally {
+    server = null;
+    progress?.stop();
+    progress = null;
+  }
 });
 
 describe("compatible-endpoint context probe against a real server (#6177)", {
   timeout: testTimeout(60_000),
 }, () => {
   it("reads max_model_len from a live /v1/models endpoint into NEMOCLAW_CONTEXT_WINDOW (#6177)", async () => {
-    server = await startFakeOpenAiCompatibleServer({ model: MODEL, maxModelLen: 65_536 });
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
+    server = await startFakeOpenAiCompatibleServer({
+      model: MODEL,
+      maxModelLen: 65_536,
+      progress: testRun,
+    });
 
+    testRun.phase("verify compatible endpoint");
     const models = fetchCompatibleEndpointModels(server.baseUrl, "");
     expect(models).toMatchObject({ data: [{ id: MODEL, max_model_len: 65_536 }] });
 
@@ -66,12 +89,16 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   });
 
   it("sends the endpoint credential through curl's --config auth flow (#6177)", async () => {
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
     server = await startFakeOpenAiCompatibleServer({
       model: MODEL,
       maxModelLen: 32_768,
       apiKey: "secret-key",
+      progress: testRun,
     });
 
+    testRun.phase("verify compatible endpoint");
     const env: NodeJS.ProcessEnv = {};
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
@@ -89,13 +116,17 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   });
 
   it("enforces auth on /v1/models: sets the window with the key, skips it without (#6177)", async () => {
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
     server = await startFakeOpenAiCompatibleServer({
       model: MODEL,
       maxModelLen: 65_536,
       apiKey: "secret-key",
+      progress: testRun,
       requireAuthModels: true,
     });
 
+    testRun.phase("verify compatible endpoint");
     // Wrong/absent credential → the endpoint 401s → no window is set.
     const noKeyEnv: NodeJS.ProcessEnv = {};
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
@@ -131,7 +162,14 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     // so the source-boundary guard exempts loopback (mirroring the chat probe)
     // and the real curl fetcher must run and propagate the window. Non-loopback
     // private targets stay blocked — see the unit-test rejection cases.
-    server = await startFakeOpenAiCompatibleServer({ model: MODEL, maxModelLen: 65_536 });
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
+    server = await startFakeOpenAiCompatibleServer({
+      model: MODEL,
+      maxModelLen: 65_536,
+      progress: testRun,
+    });
+    testRun.phase("verify compatible endpoint");
     expect(new URL(server.baseUrl).hostname).toBe("127.0.0.1");
     const modelsRequestsBefore = server
       .requests()
@@ -151,8 +189,11 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   });
 
   it("keeps the default context window when the endpoint omits max_model_len (#6177)", async () => {
-    server = await startFakeOpenAiCompatibleServer({ model: MODEL });
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
+    server = await startFakeOpenAiCompatibleServer({ model: MODEL, progress: testRun });
 
+    testRun.phase("verify compatible endpoint");
     const env: NodeJS.ProcessEnv = {};
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,

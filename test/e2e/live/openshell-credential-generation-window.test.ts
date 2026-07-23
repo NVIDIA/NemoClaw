@@ -366,6 +366,7 @@ test("openshell-credential-generation-window", {
   const tunnel = await startPublicMcpHttpsTunnel({
     cleanup,
     label: "credential-window MCP endpoint",
+    progress,
     server: fakeMcp,
   });
   const hostAddress = await hostAddressForSandbox(host);
