@@ -1313,15 +1313,8 @@ async function ensurePrGateCheck(options: {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
   const existing = lineage.filter((check) => check.external_id === externalId);
   const current = currentExactDiffCheck(existing);
-  for (const stale of lineage.filter((check) => check.external_id !== externalId)) {
-    if (stale.status === "completed") continue;
-    await completeCheck({ repository: options.repository, checkRunId: stale.id }, options.token, {
-      conclusion: "failure",
-      title: "PR base changed",
-      summary:
-        "This check was computed for an earlier PR base and cannot authorize the current diff.",
-    });
-  }
+  // A base retarget can create another exact identity after this caller's live
+  // PR validation. Never mutate checks owned by a different base from here.
   if (
     current &&
     !(options.replaceRetryableCompleted && retryableFailureReason(current) !== undefined)

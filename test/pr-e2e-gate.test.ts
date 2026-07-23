@@ -735,10 +735,10 @@ describe("PR E2E controller", () => {
     expect(requests[1]?.url).toContain(`/commits/${HEAD_SHA}/check-runs?`);
   });
 
-  it("closes a stale retarget check before reusing the original base check", async () => {
+  it("does not mutate a newer-base gate that appears after live validation", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const otherBaseSha = "c".repeat(40);
+    const newerBaseSha = "c".repeat(40);
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -749,19 +749,18 @@ describe("PR E2E controller", () => {
               url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
             () =>
               githubResponse({
-                total_count: 2,
+                total_count: 1,
                 check_runs: [
-                  exactPrGateCheck(),
                   exactPrGateCheck({
                     id: 18,
-                    external_id: prGateExternalId(42, HEAD_SHA, otherBaseSha),
+                    external_id: prGateExternalId(42, HEAD_SHA, newerBaseSha),
                   }),
                 ],
               }),
           ),
           githubFetchRoute(
-            ({ url, method }) => url.endsWith("/check-runs/18") && method === "PATCH",
-            (request) => prGateMutationResponse(request, 18),
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -771,14 +770,13 @@ describe("PR E2E controller", () => {
     await expect(seedPrGate(42, HEAD_SHA, BASE_SHA)).resolves.toBe(17);
     expect(requests).toHaveLength(3);
     expect(requests[2]).toMatchObject({
-      method: "PATCH",
+      method: "POST",
       body: {
-        status: "completed",
-        conclusion: "failure",
-        output: { title: "PR base changed" },
+        external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
+        status: "in_progress",
       },
     });
-    expect(requests.some((request) => request.url.endsWith("/check-runs"))).toBe(false);
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
   it("rejects a seeded identity claimed by another GitHub App", async () => {

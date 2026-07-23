@@ -170,9 +170,12 @@ On open, synchronization, reopen, transition out of draft, or base retarget,
 the PR SHA and base SHA, including fork SHAs. The read-only native
 observer starts for every configured non-closed PR event; metadata-only edits
 mirror the existing PR/base SHA coordination result instead of publishing a
-skipped success. A base retarget fails any still-active earlier coordination
-result in that head's lineage, preserves completed audit history, and then
-reserves the new PR/base SHA identity. The
+skipped success. A base retarget reserves a distinct PR/base SHA identity.
+Controllers never mutate coordination owned by another base because a newer
+base can appear after an older controller's live validation. The exact-identity
+observer ignores checks from other bases, and an older controller that resumes
+fails its own coordination closed at final live validation. Completed results
+remain audit history. The
 `CI / Pull Request` run name binds its PR number, head SHA, base SHA, and gate
 eligibility so the trusted controller can authenticate the completed run even
 when a fork `workflow_run` payload omits pull-request metadata. The controller
