@@ -257,6 +257,21 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
+      "test": "keeps every candidate on standard runners when $name (#7145)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
+      "test": "rejects malformed administrator workflow labels (#7145)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
+      "test": "routes only the measured heavy lanes on trusted main (#7145)",
+      "category": "security"
+    },
+    {
       "file": "test/fetch-guard-patch-regression.test.ts",
       "test": "requires classifier review and integrity evidence when the OpenClaw build pin changes",
       "category": "security"

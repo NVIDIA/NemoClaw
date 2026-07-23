@@ -114,6 +114,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
     kind: "axios",
     version: "2026.6.10",
   },
+  // #7337: remove this branch only after a reviewed diagnostics release ships a safe SDK graph.
   "@openclaw/diagnostics-otel@2026.7.1": {
     expectedPatchedTreeIntegrity:
       "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",

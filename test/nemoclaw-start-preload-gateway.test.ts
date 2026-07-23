@@ -54,6 +54,40 @@ describe("nemoclaw-start gateway preload process detection (#2478)", () => {
     expect(run.stderr).toContain("[guard] ciao-network-guard loaded (openclaw-gateway)");
   });
 
+  it("returns no interfaces when the sandbox blocks network interface discovery", () => {
+    const run = runEmbeddedPreload(
+      [
+        "const os = require('node:os');",
+        "os.networkInterfaces = function () { throw new Error('uv_interface_addresses blocked'); };",
+        ciaoGuardScript,
+        "process.stdout.write(JSON.stringify(os.networkInterfaces()));",
+      ].join("\n"),
+      "/usr/local/bin/openclaw-gateway",
+      "--port",
+    );
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual({});
+    expect(run.stderr).toContain("returning empty (mDNS disabled)");
+  });
+
+  it("preserves discovered interfaces when the sandbox permits discovery", () => {
+    const run = runEmbeddedPreload(
+      [
+        "const os = require('node:os');",
+        "const interfaces = { lo: [{ address: '127.0.0.1', family: 'IPv4' }] };",
+        "os.networkInterfaces = function () { return interfaces; };",
+        ciaoGuardScript,
+        "process.stdout.write(JSON.stringify(os.networkInterfaces()));",
+      ].join("\n"),
+      "/usr/local/bin/openclaw-gateway",
+      "--port",
+    );
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual({
+      lo: [{ address: "127.0.0.1", family: "IPv4" }],
+    });
+  });
+
   it("still recognizes the openclaw gateway launcher path", () => {
     const safetyNet = runEmbeddedPreload(safetyNetScript, "/usr/local/bin/openclaw", "gateway");
     const ciaoGuard = runEmbeddedPreload(ciaoGuardScript, "/usr/local/bin/openclaw", "gateway");

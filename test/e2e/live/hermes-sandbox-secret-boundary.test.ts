@@ -733,9 +733,13 @@ test("hermes sandbox secret boundary keeps raw secrets out of images and startup
       "reject raw secrets from Hermes process env",
     ],
   },
-}, async ({ artifacts, cleanup, progress, secrets, skip }) => {
-  const probe = new DockerProbe(artifacts, (text, extraValues) =>
-    secrets.redact(text, extraValues),
+}, async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+  const probe = new DockerProbe(
+    artifacts,
+    (text, extraValues) => secrets.redact(text, extraValues),
+    undefined,
+    progress,
+    signal,
   );
   const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
   const baseImageFromEnv = Boolean(

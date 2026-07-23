@@ -138,6 +138,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
         host: "0.0.0.0",
         model: MOCK_BASELINE_MODEL,
         publicHost: "host.openshell.internal",
+        progress,
         requireAuth: true,
       })
     : undefined;
