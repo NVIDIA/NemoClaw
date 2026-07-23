@@ -122,7 +122,7 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
         },
       },
     );
-    if (result.error) throw result.error;
+    expect(result.error).toBeUndefined();
     const calls = existsSync(callLog) ? readFileSync(callLog, "utf8").trimEnd().split("\n") : [];
     return { calls, status: result.status, stderr: result.stderr };
   } finally {
