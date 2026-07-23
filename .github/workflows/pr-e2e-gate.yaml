@@ -377,7 +377,7 @@ jobs:
           --run-id "${{ steps.retry.outputs.run_id }}"
 
       - name: Terminalize interrupted retry setup
-        if: ${{ always() && steps.finish.outputs.runner_loss_retry_authorized == 'true' && steps.retry.outcome == 'failure' && steps.retry.outputs.check_id == '' }}
+        if: ${{ always() && steps.finish.outputs.runner_loss_retry_authorized == 'true' && steps.retry.outcome != 'success' && steps.retry.outputs.check_id == '' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
@@ -581,7 +581,7 @@ jobs:
           --run-id "${{ steps.retry.outputs.run_id }}"
 
       - name: Terminalize interrupted approved retry setup
-        if: ${{ always() && steps.finish.outputs.runner_loss_retry_authorized == 'true' && steps.retry.outcome == 'failure' && steps.retry.outputs.check_id == '' }}
+        if: ${{ always() && steps.finish.outputs.runner_loss_retry_authorized == 'true' && steps.retry.outcome != 'success' && steps.retry.outputs.check_id == '' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-

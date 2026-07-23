@@ -614,7 +614,8 @@ describe("PR E2E gate workflow", () => {
     expect(retryFinish.run).toContain('--state-hash "${{ steps.retry.outputs.state_hash }}"');
     expect(retryFinish.run).toContain('--evidence-outcome "${{ steps.retry_evidence.outcome }}"');
     const interruptedRetry = step(coordinate, "Terminalize interrupted retry setup");
-    expect(interruptedRetry.if).toContain("steps.retry.outcome == 'failure'");
+    expect(interruptedRetry.if).toContain("steps.retry.outcome != 'success'");
+    expect(interruptedRetry.if).not.toContain("steps.retry.outcome == 'failure'");
     expect(interruptedRetry.if).toContain("steps.retry.outputs.check_id == ''");
     expect(interruptedRetry.run).toContain("--mode abandon-runner-loss-retry");
     const approval = step(approveForkSkip, "Record approved credentialed E2E skip");
@@ -866,9 +867,14 @@ describe("PR E2E gate workflow", () => {
     );
     expect(step(approveInternal, "Verify approved retry evidence").if).toContain("always()");
     expect(step(approveInternal, "Close incomplete approved retry check").if).toContain("always()");
-    expect(step(approveInternal, "Terminalize interrupted approved retry setup").run).toContain(
-      "--mode abandon-runner-loss-retry",
+    const approvedInterruptedRetry = step(
+      approveInternal,
+      "Terminalize interrupted approved retry setup",
     );
+    expect(approvedInterruptedRetry.if).toContain("steps.retry.outcome != 'success'");
+    expect(approvedInterruptedRetry.if).not.toContain("steps.retry.outcome == 'failure'");
+    expect(approvedInterruptedRetry.if).toContain("steps.retry.outputs.check_id == ''");
+    expect(approvedInterruptedRetry.run).toContain("--mode abandon-runner-loss-retry");
     expect(step(approveInternal, "Close incomplete approved check").if).toContain("always()");
     expect(step(approveInternal, "Remove private workspace").if).toContain("always()");
   });
