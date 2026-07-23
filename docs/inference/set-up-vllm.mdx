@@ -211,6 +211,12 @@ For the current support status and direct GPU policy boundaries, see [Platform S
 
 ## Run Non-Interactive Onboarding
 
+On DGX Spark, non-interactive onboarding can select local vLLM when `NEMOCLAW_PROVIDER` is unset and no provider is recorded for the sandbox.
+It reuses a running local vLLM server first.
+If no server is running, it selects the managed install or start entry.
+If neither local entry is available, it selects NVIDIA Endpoints.
+On DGX Station and other hosts, an unset provider keeps NVIDIA Endpoints as the automatic default.
+
 Use an already-running server.
 
 ```bash
