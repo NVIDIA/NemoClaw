@@ -760,6 +760,66 @@ describe("installVllm model resolution", () => {
     );
   });
 
+  it("rejects a Spark-only override without a runtime before side effects on generic Linux (#7358)", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(errors).toContain("Qwen3.6 35B-A3B NVFP4 is not supported on Linux + NVIDIA GPU");
+  });
+
+  it("rejects the Station-only V4 Flash override before its 352 GB download on generic Linux (#7358)", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "deepseek-v4-flash";
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(errors).toContain("DeepSeek V4 Flash is not supported on Linux + NVIDIA GPU");
+  });
+
+  it("still accepts a platform-matched override on its own platform (#7358)", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const promptFn = vi.fn<(q: string) => Promise<string>>();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(promptFn).not.toHaveBeenCalled();
+    const summary = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(summary).toContain("Model: nvidia/Qwen3.6-35B-A3B-NVFP4 (NEMOCLAW_VLLM_MODEL override)");
+    const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(errors).not.toContain("is not supported on");
+  });
+
   it("installs the complete Nemotron Ultra Station recipe without another selection", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
     mocks.getGpuIndicesByName.mockReturnValue([0]);
