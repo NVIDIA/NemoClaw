@@ -30,6 +30,7 @@ export interface ChannelBase {
 
 export interface CredentialBackedChannelDef extends ChannelBase {
   envKey?: string;
+  additionalCredentialEnvKeys?: readonly string[];
   appTokenEnvKey?: string;
   appTokenHelp?: string;
   appTokenLabel?: string;
@@ -50,6 +51,7 @@ export interface InSandboxQrChannelDef extends ChannelBase {
   // provider credentials for these channels.
   loginMethod: "in-sandbox-qr";
   envKey?: never;
+  additionalCredentialEnvKeys?: never;
   appTokenEnvKey?: never;
   appTokenHelp?: never;
   appTokenLabel?: never;
@@ -82,7 +84,11 @@ export function listChannels(): Array<{ name: string } & ChannelDef> {
 
 export function getChannelTokenKeys(channel: ChannelDef): string[] {
   if (!channel.envKey) return [];
-  return channel.appTokenEnvKey ? [channel.envKey, channel.appTokenEnvKey] : [channel.envKey];
+  return [
+    channel.envKey,
+    ...(channel.appTokenEnvKey ? [channel.appTokenEnvKey] : []),
+    ...(channel.additionalCredentialEnvKeys ?? []),
+  ];
 }
 
 export function channelUsesInSandboxQrPairing(channel: ChannelDef): boolean {
@@ -113,8 +119,12 @@ function channelDefFromManifest(manifest: ChannelManifest): ChannelDef {
   const primaryInput = primaryCredential
     ? findInput(manifest, primaryCredential.sourceInput)
     : undefined;
-  const appCredential = credentials[1];
+  const appCredential = credentials.slice(1).find((credential) => /appToken/i.test(credential.id));
   const appInput = appCredential ? findInput(manifest, appCredential.sourceInput) : undefined;
+  const additionalCredentialEnvKeys = credentials
+    .slice(1)
+    .filter((credential) => credential !== appCredential)
+    .map((credential) => credential.providerEnvKey);
   const base: ChannelBase = {
     description: manifest.description ?? `${manifest.displayName} messaging`,
     help:
@@ -139,6 +149,7 @@ function channelDefFromManifest(manifest: ChannelManifest): ChannelDef {
     ...(manifest.auth.mode === "host-qr" ? { loginMethod: "host-qr" as const } : {}),
     ...(primaryCredential ? credentialFieldMetadata(primaryCredential, primaryInput) : {}),
     ...(appCredential ? appCredentialFieldMetadata(appCredential, appInput) : {}),
+    ...(additionalCredentialEnvKeys.length > 0 ? { additionalCredentialEnvKeys } : {}),
   };
 }
 

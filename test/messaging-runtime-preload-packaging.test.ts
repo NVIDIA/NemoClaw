@@ -23,6 +23,8 @@ describe("messaging runtime preload packaging", () => {
       "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/",
     );
     expect(dockerfile).toContain("-path '*/runtime/*.js'");
+    expect(dockerfile).toContain("-path '*/runtime/*.mjs'");
+    expect(dockerfile).toContain("-name '*.mjs'");
     expect(dockerfile).not.toContain("COPY package.json package-lock.json tsconfig.src.json");
     expect(dockerfile).not.toContain("npm ci --ignore-scripts");
     expect(dockerfile).not.toContain(

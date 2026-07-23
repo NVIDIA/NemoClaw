@@ -32,7 +32,12 @@ describe("messaging channel config", () => {
       "MSTEAMS_TENANT_ID",
       "MSTEAMS_PORT",
       "VOICECLAW_ENABLED",
-      "VOICECLAW_AUDIO_BRIDGE_URL",
+      "VOICECLAW_TWILIO_ACCOUNT_SID",
+      "VOICECLAW_TWILIO_AUTH_TOKEN",
+      "VOICECLAW_TWILIO_FROM_NUMBER",
+      "VOICECLAW_TWILIO_TO_NUMBER",
+      "VOICECLAW_PUBLIC_URL",
+      "VOICECLAW_WEBHOOK_PORT",
     ]);
   });
 

@@ -10,21 +10,21 @@ import {
   type DiagnosticSignal,
   MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
 } from "../../channel-health";
-import { VOICECLAW_AUDIO_BRIDGE_URL } from "../manifest";
 
 export const VOICECLAW_STATUS_HEALTH_HOOK_HANDLER_ID = "voiceclaw.statusHealth";
 const DEFAULT_TIMEOUT_MS = 8_000;
-const PLUGIN_PRESENT_MARKER = "NEMOCLAW_VOICECLAW_PLUGIN_PRESENT";
-const PLUGIN_MISSING_MARKER = "NEMOCLAW_VOICECLAW_PLUGIN_MISSING";
+const PLUGIN_PRESENT_MARKER = "NEMOCLAW_VOICE_CALL_PLUGIN_PRESENT";
+const PLUGIN_MISSING_MARKER = "NEMOCLAW_VOICE_CALL_PLUGIN_MISSING";
 
 export type VoiceClawStatusHealthHookOptions = ChannelStatusHealthHookOptions;
 
 type VoiceClawProbe = {
   readonly configReadable: boolean;
   readonly pluginEnabled: boolean;
-  readonly voiceModeEnabled: boolean;
-  readonly bridgeConfigured: boolean;
-  readonly bridgeReachable: boolean;
+  readonly twilioConfigured: boolean;
+  readonly webhookConfigured: boolean;
+  readonly nvidiaAsrConfigured: boolean;
+  readonly nvidiaTtsConfigured: boolean;
 };
 
 export function createVoiceClawStatusHealthHook(
@@ -84,32 +84,43 @@ export function createVoiceClawStatusHealthHookRegistration(
 export function buildVoiceClawProbeNodeScript(): string {
   return String.raw`
 const fs = require("fs");
-(async () => {
 const result = {
   configReadable: false,
   pluginEnabled: false,
-  voiceModeEnabled: false,
-  bridgeConfigured: false,
-  bridgeReachable: false,
+  twilioConfigured: false,
+  webhookConfigured: false,
+  nvidiaAsrConfigured: false,
+  nvidiaTtsConfigured: false,
 };
 try {
   const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
   result.configReadable = true;
-  const plugin = config?.plugins?.entries?.voiceclaw;
-  result.pluginEnabled = plugin?.enabled === true;
-  result.voiceModeEnabled = plugin?.config?.voiceModeEnabled === true;
-  const bridgeUrl = plugin?.config?.audioBridgeUrl;
-  const supportedBridgeUrl = ${JSON.stringify(VOICECLAW_AUDIO_BRIDGE_URL)};
-  if (bridgeUrl === supportedBridgeUrl) {
-    result.bridgeConfigured = true;
-    const response = await fetch(new URL("/health", supportedBridgeUrl), {
-      signal: AbortSignal.timeout(3000),
-    });
-    result.bridgeReachable = response.ok;
-  }
+  const plugin = config?.plugins?.entries?.["voice-call"];
+  result.pluginEnabled = plugin?.enabled === true && plugin?.config?.enabled === true;
+  result.twilioConfigured =
+    plugin?.config?.provider === "twilio" &&
+    typeof plugin?.config?.twilio?.accountSid === "string" &&
+    plugin.config.twilio.accountSid.startsWith("AC") &&
+    typeof plugin?.config?.twilio?.authToken === "string" &&
+    plugin.config.twilio.authToken.length > 0 &&
+    typeof plugin?.config?.fromNumber === "string" &&
+    plugin.config.fromNumber.startsWith("+");
+  result.webhookConfigured =
+    plugin?.config?.serve?.bind === "0.0.0.0" &&
+    plugin?.config?.serve?.port === 3334 &&
+    plugin?.config?.serve?.path === "/voice/webhook" &&
+    typeof plugin?.config?.publicUrl === "string" &&
+    plugin.config.publicUrl.startsWith("https://") &&
+    plugin.config.publicUrl.endsWith("/voice/webhook");
+  result.nvidiaTtsConfigured =
+    plugin?.config?.tts?.provider === "nvidia" &&
+    config?.messages?.tts?.provider === "nvidia";
+  result.nvidiaAsrConfigured =
+    config?.tools?.media?.audio?.enabled === true &&
+    Array.isArray(config?.tools?.media?.audio?.models) &&
+    config.tools.media.audio.models.some((model) => model?.provider === "nvidia");
 } catch {}
 process.stdout.write(JSON.stringify(result) + "\n");
-})().catch(() => process.stdout.write("{}\n"));
 `;
 }
 
@@ -118,7 +129,7 @@ function buildVoiceClawProbeScript(): string {
   return [
     "set +e",
     `node --input-type=commonjs -e ${shellQuote(nodeScript)}`,
-    `if openclaw plugins inspect voiceclaw --json >/dev/null 2>&1; then printf '%s\\n' ${shellQuote(PLUGIN_PRESENT_MARKER)}; else printf '%s\\n' ${shellQuote(PLUGIN_MISSING_MARKER)}; fi`,
+    `if openclaw plugins inspect voice-call --json >/dev/null 2>&1; then printf '%s\\n' ${shellQuote(PLUGIN_PRESENT_MARKER)}; else printf '%s\\n' ${shellQuote(PLUGIN_MISSING_MARKER)}; fi`,
     "exit 0",
   ].join("\n");
 }
@@ -131,9 +142,10 @@ function parseProbe(stdout: string): VoiceClawProbe | null {
     if (
       typeof value.configReadable !== "boolean" ||
       typeof value.pluginEnabled !== "boolean" ||
-      typeof value.voiceModeEnabled !== "boolean" ||
-      typeof value.bridgeConfigured !== "boolean" ||
-      typeof value.bridgeReachable !== "boolean"
+      typeof value.twilioConfigured !== "boolean" ||
+      typeof value.webhookConfigured !== "boolean" ||
+      typeof value.nvidiaAsrConfigured !== "boolean" ||
+      typeof value.nvidiaTtsConfigured !== "boolean"
     ) {
       return null;
     }
@@ -152,22 +164,26 @@ function evaluateVoiceClawHealth(input: {
   readonly presetInRegistry: boolean;
   readonly presetOnGateway: boolean | null;
 }): ChannelHealthReport {
-  const signals: DiagnosticSignal[] = [];
-  signals.push(configSignal(input));
-  signals.push(pluginSignal(input.pluginPresent));
-  signals.push(policySignal(input));
-  signals.push(bridgeSignal(input.probe));
+  const signals: DiagnosticSignal[] = [
+    configSignal(input),
+    pluginSignal(input.pluginPresent),
+    policySignal(input),
+    twilioSignal(input.probe),
+    nvidiaSpeechSignal(input.probe),
+  ];
   const verdict = !input.probe
     ? "probe_failed"
-    : !input.channelEnabledInRegistry || !input.probe.pluginEnabled || !input.probe.voiceModeEnabled
+    : !input.channelEnabledInRegistry || !input.probe.pluginEnabled
       ? "config_gap"
       : !input.pluginPresent
         ? "plugin_missing"
         : !input.presetInRegistry || input.presetOnGateway === false
           ? "policy_gap"
-          : !input.probe.bridgeReachable
-            ? "bridge_unreachable"
-            : "healthy";
+          : !input.probe.twilioConfigured || !input.probe.webhookConfigured
+            ? "twilio_config_gap"
+            : !input.probe.nvidiaAsrConfigured || !input.probe.nvidiaTtsConfigured
+              ? "nvidia_speech_config_gap"
+              : "ready";
   return {
     schemaVersion: 1,
     channel: "voiceclaw",
@@ -191,37 +207,29 @@ function configSignal(input: {
       hint: "add the voiceclaw channel and rebuild the sandbox",
     };
   }
-  if (!input.probe?.configReadable) {
+  if (!input.probe?.configReadable || !input.probe.pluginEnabled) {
     return {
       label: "Rendered config",
       severity: "fail",
-      detail: "could not read the OpenClaw configuration",
-      hint: "rebuild the sandbox, then re-run channels status",
-    };
-  }
-  if (!input.probe.pluginEnabled || !input.probe.voiceModeEnabled) {
-    return {
-      label: "Rendered config",
-      severity: "fail",
-      detail: "VoiceClaw plugin or voice mode is not enabled in openclaw.json",
+      detail: "the OpenClaw voice-call plugin configuration is unavailable or disabled",
       hint: "rebuild the sandbox so the VoiceClaw manifest is rendered again",
     };
   }
   return {
     label: "Rendered config",
     severity: "ok",
-    detail: "VoiceClaw plugin and voice mode are enabled",
+    detail: "OpenClaw voice-call is enabled",
   };
 }
 
 function pluginSignal(pluginPresent: boolean): DiagnosticSignal {
   return pluginPresent
-    ? { label: "Plugin install", severity: "ok", detail: "VoiceClaw plugin is discoverable" }
+    ? { label: "Plugin install", severity: "ok", detail: "voice-call plugin is discoverable" }
     : {
         label: "Plugin install",
         severity: "fail",
-        detail: "VoiceClaw plugin is not discoverable",
-        hint: "rebuild after NemoClaw pins the published VoiceClaw plugin artifact",
+        detail: "voice-call plugin is not discoverable",
+        hint: "rebuild the sandbox so the pinned voice-call plugin is installed",
       };
 }
 
@@ -251,35 +259,40 @@ function policySignal(input: {
     detail:
       input.presetOnGateway === null
         ? "voiceclaw preset recorded; gateway cross-check unavailable"
-        : "voiceclaw preset applied and loaded on the gateway",
+        : "Twilio and NVIDIA HTTP policy is loaded on the gateway",
   };
 }
 
-function bridgeSignal(probe: VoiceClawProbe | null): DiagnosticSignal {
-  if (!probe) {
+function twilioSignal(probe: VoiceClawProbe | null): DiagnosticSignal {
+  if (probe?.twilioConfigured && probe.webhookConfigured) {
     return {
-      label: "Audio bridge",
-      severity: "fail",
-      detail: "VoiceClaw audio bridge probe did not complete",
-      hint: "verify the sandbox is running, then re-run channels status",
+      label: "Twilio setup",
+      severity: "ok",
+      detail: "Twilio credentials, caller number, and HTTPS webhook are configured",
     };
   }
-  if (!probe.bridgeConfigured) {
+  return {
+    label: "Twilio setup",
+    severity: "fail",
+    detail: "Twilio credentials, caller number, or HTTPS webhook configuration is incomplete",
+    hint: "re-add VoiceClaw with the Twilio account, number, and public webhook URL",
+  };
+}
+
+function nvidiaSpeechSignal(probe: VoiceClawProbe | null): DiagnosticSignal {
+  if (probe?.nvidiaAsrConfigured && probe.nvidiaTtsConfigured) {
     return {
-      label: "Audio bridge",
-      severity: "fail",
-      detail: "VoiceClaw audio bridge URL is not configured",
-      hint: "set VOICECLAW_AUDIO_BRIDGE_URL and rebuild the sandbox",
+      label: "NVIDIA speech",
+      severity: "ok",
+      detail: "NVIDIA batch ASR and TTS are configured in OpenClaw",
     };
   }
-  return probe.bridgeReachable
-    ? { label: "Audio bridge", severity: "ok", detail: "host audio bridge health check passed" }
-    : {
-        label: "Audio bridge",
-        severity: "fail",
-        detail: "host audio bridge health check failed",
-        hint: "start the VoiceClaw audio bridge and verify host port 7880",
-      };
+  return {
+    label: "NVIDIA speech",
+    severity: "fail",
+    detail: "NVIDIA batch ASR or TTS configuration is missing",
+    hint: "rebuild the sandbox so the VoiceClaw speech preload and config are applied",
+  };
 }
 
 function normalizeString(value: unknown): string | null {

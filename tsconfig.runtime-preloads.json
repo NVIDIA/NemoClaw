@@ -15,7 +15,10 @@
     "rootDir": "src",
     "noEmitOnError": true
   },
-  "include": ["src/lib/messaging/channels/*/runtime/*.ts"],
+  "include": [
+    "src/lib/messaging/channels/*/runtime/*.ts",
+    "src/lib/messaging/channels/*/runtime/*.mts"
+  ],
   "exclude": [
     "src/lib/messaging/channels/*/runtime/*.test.ts",
     "src/lib/messaging/channels/*/runtime/*-test-helpers.ts"

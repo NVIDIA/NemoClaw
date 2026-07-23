@@ -11,12 +11,27 @@ export const voiceclawRenderedConfigParser: RenderedChannelConfigParser = {
   listConfigVisibilityKeys(context) {
     if (context.agentId !== "openclaw") return [];
     return [
-      structuredConfigKey("audioBridgeUrl", "openclaw.json", [
+      structuredConfigKey("twilioAccountSid", "openclaw.json", [
         "plugins",
         "entries",
-        "voiceclaw",
+        "voice-call",
         "config",
-        "audioBridgeUrl",
+        "twilio",
+        "accountSid",
+      ]),
+      structuredConfigKey("twilioFromNumber", "openclaw.json", [
+        "plugins",
+        "entries",
+        "voice-call",
+        "config",
+        "fromNumber",
+      ]),
+      structuredConfigKey("publicUrl", "openclaw.json", [
+        "plugins",
+        "entries",
+        "voice-call",
+        "config",
+        "publicUrl",
       ]),
     ];
   },

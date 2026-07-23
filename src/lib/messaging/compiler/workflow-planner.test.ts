@@ -11,6 +11,8 @@ import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../ho
 import { type ChannelManifest, createChannelManifestRegistry } from "../manifest";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
+const TEST_TWILIO_ACCOUNT_SID = `AC${"0123456789abcdef".repeat(2)}`;
+
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
   DISCORD_BOT_TOKEN: "test-discord-token",
@@ -18,6 +20,8 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   SLACK_BOT_TOKEN: "xoxb-test-slack-token",
   SLACK_APP_TOKEN: "xapp-test-slack-token",
   MSTEAMS_APP_PASSWORD: "test-teams-client-secret",
+  VOICECLAW_TWILIO_AUTH_TOKEN: "test-twilio-auth-token",
+  NVIDIA_API_KEY: "nvapi-test-speech-key",
 };
 const TEST_WECHAT_LOGIN = {
   token: "test-wechat-token",
@@ -788,7 +792,12 @@ describe("MessagingWorkflowPlanner", () => {
     const added = await withEnv(
       {
         VOICECLAW_ENABLED: "1",
-        VOICECLAW_AUDIO_BRIDGE_URL: "http://host.openshell.internal:7880",
+        VOICECLAW_TWILIO_ACCOUNT_SID: TEST_TWILIO_ACCOUNT_SID,
+        VOICECLAW_TWILIO_AUTH_TOKEN: "test-token",
+        NVIDIA_API_KEY: "nvapi-test-speech-key",
+        VOICECLAW_TWILIO_FROM_NUMBER: "+15550001234",
+        VOICECLAW_TWILIO_TO_NUMBER: "+15550005678",
+        VOICECLAW_PUBLIC_URL: "https://voice.example.test/voice/webhook",
       },
       () =>
         planner().buildPlan({
@@ -811,25 +820,45 @@ describe("MessagingWorkflowPlanner", () => {
     });
 
     expect(rebuilt?.workflow).toBe("rebuild");
-    expect(rebuilt?.channels).toMatchObject([
-      {
+    expect(rebuilt?.channels).toEqual([
+      expect.objectContaining({
         channelId: "voiceclaw",
         active: true,
-        inputs: [
-          { inputId: "enabled", value: "1" },
-          {
-            inputId: "audioBridgeUrl",
-            value: "http://host.openshell.internal:7880",
-          },
-        ],
-      },
+        hostForward: {
+          channelId: "voiceclaw",
+          port: 3334,
+          label: "VoiceClaw Twilio webhook",
+        },
+        inputs: expect.arrayContaining([
+          expect.objectContaining({ inputId: "enabled", value: "1" }),
+          expect.objectContaining({
+            inputId: "twilioAccountSid",
+            value: TEST_TWILIO_ACCOUNT_SID,
+          }),
+          expect.objectContaining({ inputId: "twilioAuthToken", value: "test-token" }),
+          expect.objectContaining({ inputId: "twilioFromNumber", value: "+15550001234" }),
+          expect.objectContaining({ inputId: "twilioToNumber", value: "+15550005678" }),
+          expect.objectContaining({
+            inputId: "publicUrl",
+            value: "https://voice.example.test/voice/webhook",
+          }),
+          expect.objectContaining({ inputId: "webhookPort", value: "3334" }),
+        ]),
+      }),
     ]);
-    expect(rebuilt?.agentRender).toMatchObject([
-      {
-        channelId: "voiceclaw",
-        path: "plugins.entries.voiceclaw",
-      },
-    ]);
+    expect(rebuilt?.agentRender).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: "voiceclaw",
+          path: "plugins.entries.voice-call",
+          value: expect.objectContaining({
+            config: expect.objectContaining({
+              twilio: expect.objectContaining({ authToken: "test-token" }),
+            }),
+          }),
+        }),
+      ]),
+    );
     expect(rebuilt?.networkPolicy.entries).toMatchObject([
       { channelId: "voiceclaw", presetName: "voiceclaw" },
     ]);

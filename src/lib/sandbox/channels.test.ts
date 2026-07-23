@@ -34,6 +34,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("slack")?.envKey).toBe("SLACK_BOT_TOKEN");
     expect(getChannelDef("wechat")?.envKey).toBe("WECHAT_BOT_TOKEN");
     expect(getChannelDef("teams")?.envKey).toBe("MSTEAMS_APP_PASSWORD");
+    expect(getChannelDef("voiceclaw")?.envKey).toBe("NVIDIA_API_KEY");
   });
 
   it("classifies channels by login method", () => {
@@ -78,9 +79,9 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelTokenKeys(KNOWN_CHANNELS.whatsapp)).toEqual([]);
   });
 
-  it("declares no provider credential for VoiceClaw", () => {
-    expect(getChannelDef("voiceclaw")?.envKey).toBeUndefined();
-    expect(getChannelTokenKeys(KNOWN_CHANNELS.voiceclaw)).toEqual([]);
+  it("declares only the NVIDIA credential for VoiceClaw", () => {
+    expect(getChannelDef("voiceclaw")?.envKey).toBe("NVIDIA_API_KEY");
+    expect(getChannelTokenKeys(KNOWN_CHANNELS.voiceclaw)).toEqual(["NVIDIA_API_KEY"]);
   });
 
   it("only slack declares a secondary app-token env var", () => {
@@ -90,6 +91,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("whatsapp")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("teams")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("voiceclaw")?.appTokenEnvKey).toBeUndefined();
+    expect(getChannelDef("voiceclaw")?.additionalCredentialEnvKeys).toBeUndefined();
   });
 
   it("asks for Microsoft Teams AAD object IDs as a comma-separated allowlist", () => {
@@ -213,6 +215,6 @@ describe("sandbox-channels listChannels", () => {
     const teams = list.find((c) => c.name === "teams");
     expect(teams?.envKey).toBe("MSTEAMS_APP_PASSWORD");
     const voiceclaw = list.find((c) => c.name === "voiceclaw");
-    expect(voiceclaw?.envKey).toBeUndefined();
+    expect(voiceclaw?.envKey).toBe("NVIDIA_API_KEY");
   });
 });

@@ -12,8 +12,19 @@ export const resolveVoiceClawTemplateReference: BuiltInRenderTemplateResolver = 
   reference,
   context,
 ) => {
-  if (reference !== "voiceclaw.audioBridgeUrl") return undefined;
-  return resolvedRenderTemplateReference(
-    nonEmptyString(stateValue(context, "voiceclaw.audioBridgeUrl")),
-  );
+  const pathByReference: Readonly<Record<string, string>> = {
+    "voiceclaw.twilioAccountSid": "voiceclaw.twilioAccountSid",
+    "voiceclaw.twilioAuthToken": "voiceclaw.twilioAuthToken",
+    "voiceclaw.twilioFromNumber": "voiceclaw.twilioFromNumber",
+    "voiceclaw.twilioToNumber": "voiceclaw.twilioToNumber",
+    "voiceclaw.publicUrl": "voiceclaw.publicUrl",
+    "voiceclaw.webhookPort": "voiceclaw.webhookPort",
+  };
+  const statePath = pathByReference[reference];
+  if (!statePath) return undefined;
+  const value = nonEmptyString(stateValue(context, statePath));
+  if (reference === "voiceclaw.webhookPort") {
+    return resolvedRenderTemplateReference(value ? Number(value) : undefined);
+  }
+  return resolvedRenderTemplateReference(value);
 };

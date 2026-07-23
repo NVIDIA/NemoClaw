@@ -53,12 +53,12 @@ describe("extractEnabledChannelsFromOpenclawConfig", () => {
   it("detects plugin-only VoiceClaw runtime configuration", () => {
     expect(
       extractEnabledChannelsFromOpenclawConfig({
-        plugins: { entries: { voiceclaw: { enabled: true } } },
+        plugins: { entries: { "voice-call": { enabled: true } } },
       }),
     ).toEqual(["voiceclaw"]);
     expect(
       extractEnabledChannelsFromOpenclawConfig({
-        plugins: { entries: { voiceclaw: { enabled: false } } },
+        plugins: { entries: { "voice-call": { enabled: false } } },
       }),
     ).toEqual([]);
   });
@@ -171,7 +171,7 @@ describe("buildGatewayLogScanScript", () => {
       "whatsapp",
       "wechat",
       "openclaw-weixin",
-      "voiceclaw",
+      "voice-call",
     ]) {
       expect(script).toContain(token);
     }

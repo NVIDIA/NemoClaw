@@ -7,6 +7,8 @@ import type { MessagingHookContext, MessagingHookResult } from "../../../hooks/t
 import type { ChannelHealthReport } from "../../channel-health";
 import { buildVoiceClawProbeNodeScript, createVoiceClawStatusHealthHook } from "./status-health";
 
+const TEST_TWILIO_ACCOUNT_SID = `AC${"0123456789abcdef".repeat(2)}`;
+
 const BASE_INPUTS = {
   currentSandbox: "voice-agent",
   agent: "openclaw",
@@ -14,6 +16,15 @@ const BASE_INPUTS = {
   channelEnabledInRegistry: true,
   presetInRegistry: true,
   presetOnGateway: true,
+};
+
+const READY_PROBE = {
+  configReadable: true,
+  pluginEnabled: true,
+  twilioConfigured: true,
+  webhookConfigured: true,
+  nvidiaAsrConfigured: true,
+  nvidiaTtsConfigured: true,
 };
 
 function context(inputs: Record<string, unknown> = BASE_INPUTS): MessagingHookContext {
@@ -34,74 +45,82 @@ function reportOf(result: MessagingHookResult | Promise<MessagingHookResult>) {
 
 function probeOutput(
   probe: Record<string, boolean>,
-  pluginMarker = "NEMOCLAW_VOICECLAW_PLUGIN_PRESENT",
+  pluginMarker = "NEMOCLAW_VOICE_CALL_PLUGIN_PRESENT",
 ): string {
   return `${JSON.stringify(probe)}\n${pluginMarker}\n`;
 }
 
-const HEALTHY_PROBE = {
-  configReadable: true,
-  pluginEnabled: true,
-  voiceModeEnabled: true,
-  bridgeConfigured: true,
-  bridgeReachable: true,
-};
-
 describe("voiceclaw.statusHealth", () => {
-  it("does not fetch a tampered audio bridge URL from runtime config (#6387)", async () => {
+  it("derives readiness from local config without making an external request (#6387)", () => {
     const writes: string[] = [];
-    const fetch = vi.fn();
     const require = vi.fn(() => ({
       readFileSync: () =>
         JSON.stringify({
           plugins: {
             entries: {
-              voiceclaw: {
+              "voice-call": {
                 enabled: true,
                 config: {
-                  voiceModeEnabled: true,
-                  audioBridgeUrl: "http://attacker.example:7880",
+                  enabled: true,
+                  provider: "twilio",
+                  fromNumber: "+15550001234",
+                  twilio: {
+                    accountSid: TEST_TWILIO_ACCOUNT_SID,
+                    authToken: "test-twilio-auth-token",
+                  },
+                  serve: { bind: "0.0.0.0", port: 3334, path: "/voice/webhook" },
+                  publicUrl: "https://voice.example.test/voice/webhook",
+                  tts: { provider: "nvidia" },
                 },
+              },
+            },
+          },
+          messages: { tts: { provider: "nvidia" } },
+          tools: {
+            media: {
+              audio: {
+                enabled: true,
+                models: [{ provider: "nvidia" }],
               },
             },
           },
         }),
     }));
 
-    await runInNewContext(buildVoiceClawProbeNodeScript(), {
-      AbortSignal,
-      URL,
-      fetch,
+    runInNewContext(buildVoiceClawProbeNodeScript(), {
       process: { stdout: { write: (value: string) => writes.push(value) } },
       require,
     });
 
     expect(require).toHaveBeenCalledWith("fs");
-    expect(fetch).not.toHaveBeenCalled();
-    expect(JSON.parse(writes.join(""))).toEqual(
-      expect.objectContaining({
-        configReadable: true,
-        bridgeConfigured: false,
-        bridgeReachable: false,
-      }),
-    );
+    expect(JSON.parse(writes.join(""))).toEqual(READY_PROBE);
   });
 
-  it("reports healthy only when config, plugin, policy, and bridge checks pass (#6387)", () => {
-    const execute = vi.fn(() => ({ status: 0, stdout: probeOutput(HEALTHY_PROBE), stderr: "" }));
+  it("reports ready when config, plugin, policy, Twilio, and speech checks pass (#6387)", () => {
+    const execute = vi.fn(() => ({ status: 0, stdout: probeOutput(READY_PROBE), stderr: "" }));
     const report = reportOf(
       createVoiceClawStatusHealthHook({ executeSandboxCommand: execute })(context()),
     );
 
-    expect(report?.verdict).toBe("healthy");
-    expect(report?.signals.map((signal) => signal.severity)).toEqual(["ok", "ok", "ok", "ok"]);
-    expect(execute).toHaveBeenCalledWith("voice-agent", expect.stringContaining("/health"), 8000);
+    expect(report?.verdict).toBe("ready");
+    expect(report?.signals.map((signal) => signal.severity)).toEqual([
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+    ]);
+    expect(execute).toHaveBeenCalledWith(
+      "voice-agent",
+      expect.stringContaining("plugins inspect voice-call"),
+      8000,
+    );
   });
 
-  it("reports the unpublished plugin as a distinct install gap (#6387)", () => {
+  it("reports the missing voice-call plugin as a distinct install gap (#6387)", () => {
     const execute = vi.fn(() => ({
       status: 0,
-      stdout: probeOutput(HEALTHY_PROBE, "NEMOCLAW_VOICECLAW_PLUGIN_MISSING"),
+      stdout: probeOutput(READY_PROBE, "NEMOCLAW_VOICE_CALL_PLUGIN_MISSING"),
       stderr: "",
     }));
     const report = reportOf(
@@ -114,10 +133,10 @@ describe("voiceclaw.statusHealth", () => {
     );
   });
 
-  it("reports bridge and policy failures without exposing the configured URL (#6387)", () => {
+  it("reports Twilio and policy failures without exposing credentials (#6387)", () => {
     const execute = vi.fn(() => ({
       status: 0,
-      stdout: probeOutput({ ...HEALTHY_PROBE, bridgeReachable: false }),
+      stdout: probeOutput({ ...READY_PROBE, twilioConfigured: false }),
       stderr: "",
     }));
     const report = reportOf(
@@ -130,10 +149,10 @@ describe("voiceclaw.statusHealth", () => {
     expect(report?.signals).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Policy coverage", severity: "fail" }),
-        expect.objectContaining({ label: "Audio bridge", severity: "fail" }),
+        expect.objectContaining({ label: "Twilio setup", severity: "fail" }),
       ]),
     );
-    expect(JSON.stringify(report)).not.toContain("host.openshell.internal");
+    expect(JSON.stringify(report)).not.toContain("test-twilio-auth-token");
   });
 
   it("reports probe failure for malformed or unreachable sandbox output (#6387)", () => {

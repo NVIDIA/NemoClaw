@@ -53,7 +53,7 @@ describe("built-in messaging channel metadata", () => {
       slack: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
       whatsapp: [],
       teams: ["MSTEAMS_APP_PASSWORD"],
-      voiceclaw: [],
+      voiceclaw: ["NVIDIA_API_KEY"],
     });
     expect(getMessagingChannelForCredentialEnvKey("SLACK_APP_TOKEN")).toBe("slack");
     expect(getMessagingChannelForCredentialEnvKey("WHATSAPP_ALLOWED_IDS")).toBeNull();
@@ -63,12 +63,13 @@ describe("built-in messaging channel metadata", () => {
       wechat: ["-wechat-bridge"],
       slack: ["-slack-bridge", "-slack-app"],
       teams: ["-teams-bridge"],
+      voiceclaw: ["-voiceclaw-nvidia-speech"],
     });
     expect(listMessagingProviderNamesForChannel("demo", "slack")).toEqual([
       "demo-slack-bridge",
       "demo-slack-app",
     ]);
-    expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp", "voiceclaw"]);
+    expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp"]);
   });
 
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
@@ -92,7 +93,12 @@ describe("built-in messaging channel metadata", () => {
       "MSTEAMS_PORT",
       "TEAMS_REQUIRE_MENTION",
       "VOICECLAW_ENABLED",
-      "VOICECLAW_AUDIO_BRIDGE_URL",
+      "VOICECLAW_TWILIO_ACCOUNT_SID",
+      "VOICECLAW_TWILIO_AUTH_TOKEN",
+      "VOICECLAW_TWILIO_FROM_NUMBER",
+      "VOICECLAW_TWILIO_TO_NUMBER",
+      "VOICECLAW_PUBLIC_URL",
+      "VOICECLAW_WEBHOOK_PORT",
     ]);
     expect(getMessagingConfigEnvAliases()).toEqual({
       DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
@@ -140,6 +146,7 @@ describe("built-in messaging channel metadata", () => {
       "slack",
       "whatsapp",
       "msteams",
+      "voice-call",
     ]);
     expect(
       Object.fromEntries(
@@ -161,7 +168,7 @@ describe("built-in messaging channel metadata", () => {
           entry.pluginConfigKeys,
         ]),
       ),
-    ).toMatchObject({ voiceclaw: ["voiceclaw"] });
+    ).toMatchObject({ voiceclaw: ["voice-call"] });
     expect(
       Object.fromEntries(
         listMessagingPackageInstallSpecs({ agent: "openclaw" }).map((entry) => [
@@ -175,6 +182,7 @@ describe("built-in messaging channel metadata", () => {
       slack: "npm:@openclaw/slack@{{openclaw.version}}",
       whatsapp: "npm:@openclaw/whatsapp@{{openclaw.version}}",
       teams: "npm:@openclaw/msteams@{{openclaw.version}}",
+      voiceclaw: "npm:@openclaw/voice-call@{{openclaw.version}}",
     });
     expect(listMessagingPackageInstallSpecs({ agent: "hermes" })).toEqual([
       {
@@ -236,6 +244,11 @@ describe("built-in messaging channel metadata", () => {
         packageKey: "teams/openclawPluginPackage",
         committedIntegrity:
           "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
+      },
+      {
+        packageKey: "voiceclaw/openclawVoiceCallPlugin",
+        committedIntegrity:
+          "sha512-d/gYtMZSScp75fYi7DNVslh4X+P/VaVBmOQpGIt3Y7NShHHOrMhC3oUq4N0ie50Ee/IFFWJ1BkvYNJsr0z+Nzg==",
       },
     ]);
   });
