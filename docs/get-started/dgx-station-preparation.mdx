@@ -21,7 +21,7 @@ DGX Station GB300 Express install accepts these host images:
 - Stock no-OTA DGX OS `7.6.x` with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`.
 
 Every stock DGX OS form requires a safe, root-owned `/etc/dgx-release` marker with `DGX_PLATFORM=DGX Server for GALAXY-GB300`.
-Qualification uses the latest `DGX_OTA_VERSION` for stock OTA-form images and accepts `7.2.0`, `7.4.0`, or `7.5.0`.
+OTA-form qualification uses the latest `DGX_OTA_VERSION` and accepts `7.2.0`, `7.4.0`, or `7.5.0`.
 When `DGX_OTA_PRETTY_NAME` is present, it must equal `DGX OS`.
 An OTA-upgraded host can omit `DGX_OTA_PRETTY_NAME`.
 When that field is absent, `DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`.
