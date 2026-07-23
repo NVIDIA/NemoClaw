@@ -105,6 +105,15 @@ function openClawBaseProvenance(
   version = PINNED_OPENCLAW_VERSION,
   integrity = PINNED_OPENCLAW_INTEGRITY,
   tarball = PINNED_OPENCLAW_TARBALL,
+  auditPolicy: Readonly<{
+    exceptions: string;
+    sha256: string;
+    status: "accepted-exceptions" | "clean";
+  }> = {
+    exceptions: "none",
+    sha256: NPM_AUDIT_EXCEPTION_POLICY_SHA256,
+    status: "clean",
+  },
 ): string {
   const recipe =
     version === LEGACY_REBUILD_OPENCLAW_VERSION
@@ -120,9 +129,9 @@ function openClawBaseProvenance(
     `mcporter-integrity=${PINNED_MCPORTER_INTEGRITY}`,
     `mcporter-tarball=${PINNED_MCPORTER_TARBALL}`,
     `mcporter-lock-sha256=${PINNED_MCPORTER_LOCK_SHA256}`,
-    `mcporter-audit-policy-sha256=${NPM_AUDIT_EXCEPTION_POLICY_SHA256}`,
-    "mcporter-audit-status=clean",
-    "mcporter-audit-exceptions=none",
+    `mcporter-audit-policy-sha256=${auditPolicy.sha256}`,
+    `mcporter-audit-status=${auditPolicy.status}`,
+    `mcporter-audit-exceptions=${auditPolicy.exceptions}`,
     "mcporter-recipe=locked-ci+reviewed-audit+signatures-v2",
     "",
   ].join("\n");
@@ -169,6 +178,7 @@ function runInstallBlock(
     baseProvenance?: string | null;
     baseProvenanceMetadata?: string;
     baseProvenanceSymlink?: boolean;
+    auditExceptionPolicy?: string;
   } = {},
 ) {
   const {
@@ -189,6 +199,7 @@ function runInstallBlock(
     baseProvenance = null,
     baseProvenanceMetadata = "0:0:444",
     baseProvenanceSymlink = false,
+    auditExceptionPolicy = fs.readFileSync(NPM_AUDIT_EXCEPTION_FILE, "utf-8"),
   } = options;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-integrity-"));
   const blueprint = path.join(tmp, "blueprint.yaml");
@@ -199,10 +210,15 @@ function runInstallBlock(
   const reviewedNpmExecutable = path.join(tmp, "bin", "reviewed-npm-fixture");
   const remediationHelper = path.join(tmp, "openclaw-npm-remediation.cjs");
   const auditHelper = path.join(tmp, "reviewed-npm-audit.cjs");
+  const auditExceptionFile = path.join(tmp, "npm-audit-exceptions.json");
+  const auditExceptionPolicySha256 = createHash("sha256")
+    .update(auditExceptionPolicy)
+    .digest("hex");
   fs.mkdirSync(path.dirname(mcporterBin), { recursive: true });
   fs.mkdirSync(mcporterRuntime, { recursive: true });
   fs.copyFileSync(MCPORTER_LOCKFILE, path.join(mcporterRuntime, "package-lock.json"));
   fs.writeFileSync(blueprint, fs.readFileSync(BLUEPRINT, "utf-8"));
+  fs.writeFileSync(auditExceptionFile, auditExceptionPolicy);
   fs.writeFileSync(
     reviewedNpmExecutable,
     [
@@ -254,14 +270,24 @@ function runInstallBlock(
     auditHelper,
     [
       'const fs = require("node:fs");',
+      "exports.parseAuditExceptionRegistry = (source) => {",
+      "  const policy = JSON.parse(source);",
+      "  for (const entry of policy.exceptions) {",
+      "    const expiresAt = new Date(`${entry.expires}T23:59:59.999Z`);",
+      "    if (expiresAt.valueOf() < Date.now()) throw new Error(`npm audit exception 1 expired on ${entry.expires}`);",
+      "  }",
+      "  return policy;",
+      "};",
+      "if (require.main === module) {",
       "const args = process.argv.slice(2);",
       "const value = (name) => args[args.indexOf(name) + 1];",
       "const counts = { info: 0, low: 0, moderate: 0, high: 0, critical: 0 };",
       "const report = { auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: counts } };",
-      `const policy = { schemaVersion: 1, graph: value("--graph"), blockingThreshold: value("--threshold"), exceptionPolicySha256: ${JSON.stringify(NPM_AUDIT_EXCEPTION_POLICY_SHA256)}, reported: counts, status: "clean", acceptedAdvisories: [], unacceptedBlockingAdvisories: [] };`,
+      `const policy = { schemaVersion: 1, graph: value("--graph"), blockingThreshold: value("--threshold"), exceptionPolicySha256: ${JSON.stringify(auditExceptionPolicySha256)}, reported: counts, status: "clean", acceptedAdvisories: [], unacceptedBlockingAdvisories: [] };`,
       'if (args.includes("--report")) fs.writeFileSync(value("--report"), `${JSON.stringify(report)}\\n`);',
       'if (args.includes("--result")) fs.writeFileSync(value("--result"), `${JSON.stringify(policy)}\\n`);',
       "console.log(`npm audit policy ${policy.graph}: clean`);",
+      "}",
       "",
     ].join("\n"),
   );
@@ -316,7 +342,7 @@ function runInstallBlock(
     "}",
     "sha256sum() {",
     `  if [ "\${1:-}" = ${JSON.stringify(path.join(mcporterRuntime, "package-lock.json"))} ]; then printf '%s  %s\\n' ${JSON.stringify(PINNED_MCPORTER_LOCK_SHA256)} "$1"; return 0; fi`,
-    `  if [ "\${1:-}" = ${JSON.stringify(NPM_AUDIT_EXCEPTION_FILE)} ]; then printf '%s  %s\\n' ${JSON.stringify(NPM_AUDIT_EXCEPTION_POLICY_SHA256)} "$1"; return 0; fi`,
+    `  if [ "\${1:-}" = ${JSON.stringify(auditExceptionFile)} ]; then printf '%s  %s\\n' ${JSON.stringify(auditExceptionPolicySha256)} "$1"; return 0; fi`,
     '  printf "unexpected sha256sum input: %s\\n" "${1:-}" >&2; return 1',
     "}",
     "npm() {",
@@ -358,7 +384,7 @@ function runInstallBlock(
       .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
       .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper)
       .replaceAll("/scripts/lib/reviewed-npm-audit.mts", auditHelper)
-      .replaceAll("/scripts/npm-audit-exceptions.json", NPM_AUDIT_EXCEPTION_FILE),
+      .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -927,6 +953,60 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).not.toContain(`npm view mcporter@${PINNED_MCPORTER_VERSION} dist.integrity`);
         expect(calls).not.toContain("npm --prefix ");
         expect(provenanceExists).toBe(false);
+      });
+
+      it("rejects matching trusted-base provenance when its audit exception has expired", () => {
+        const advisory = "GHSA-aaaa-bbbb-cccc";
+        const auditExceptionPolicy = `${JSON.stringify({
+          schemaVersion: 1,
+          exceptions: [
+            {
+              advisory,
+              package: "fast-uri",
+              installedVersion: "3.1.3",
+              graph: "mcporter-runtime",
+              severity: "high",
+              decision: "temporary-risk-acceptance",
+              expires: "2000-01-01",
+              owner: "security-maintainers",
+              trackingIssue: "https://github.com/NVIDIA/NemoClaw/issues/1234",
+              rationale: "Regression fixture for trusted-base expiry.",
+              compensatingControls: ["The child build revalidates exception expiry."],
+            },
+          ],
+        })}\n`;
+        const auditPolicy = {
+          exceptions: advisory,
+          sha256: createHash("sha256").update(auditExceptionPolicy).digest("hex"),
+          status: "accepted-exceptions" as const,
+        };
+        const { result, calls, provenanceExists } = runInstallBlock(
+          extractRunBlock(
+            DOCKERFILE,
+            "# OPENCLAW_VERSION is the NemoClaw runtime build target",
+            "# Patch OpenClaw media fetch",
+          ),
+          {
+            openclawVersion: PINNED_OPENCLAW_VERSION,
+            installedOpenClawVersion: PINNED_OPENCLAW_VERSION,
+            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            auditExceptionPolicy,
+            baseProvenance: openClawBaseProvenance(
+              PINNED_OPENCLAW_VERSION,
+              PINNED_OPENCLAW_INTEGRITY,
+              PINNED_OPENCLAW_TARBALL,
+              auditPolicy,
+            ),
+          },
+        );
+
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("expired on 2000-01-01");
+        expect(result.stdout).not.toContain("Reusing reviewed base OpenClaw");
+        expect(result.stdout).not.toContain("Reusing reviewed base mcporter");
+        expect(calls).toBe("");
+        expect(provenanceExists).toBe(true);
       });
 
       it.each([
