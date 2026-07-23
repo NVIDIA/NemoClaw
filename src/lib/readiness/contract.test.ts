@@ -74,7 +74,9 @@ describe("system readiness contract", () => {
     const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;
     const provenance = { ...(fixture.provenance as Record<string, unknown>) };
 
-    expect(validate({ ...fixture, provenance: { ...provenance, observedAt: "2026-02-30T00:00:00Z" } })).toBe(false);
+    expect(
+      validate({ ...fixture, provenance: { ...provenance, observedAt: "2026-02-30T00:00:00Z" } }),
+    ).toBe(false);
   });
 
   it("rejects status and exit-code mismatches (#7409)", async () => {
