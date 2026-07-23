@@ -269,6 +269,39 @@ function redactHfDownloadOutput(text: string, tokenValue: string | null): string
   return redactFull(withoutKnownToken);
 }
 
+function redactHfDownloadOutputChunks(
+  chunks: readonly { text: string; stream: NodeJS.WriteStream }[],
+  tokenValue: string | null,
+): string[] {
+  const joined = chunks.map((chunk) => chunk.text).join("");
+  const tokenSpans: { start: number; end: number }[] = [];
+  if (tokenValue) {
+    let searchFrom = 0;
+    while (searchFrom < joined.length) {
+      const start = joined.indexOf(tokenValue, searchFrom);
+      if (start < 0) break;
+      tokenSpans.push({ start, end: start + tokenValue.length });
+      searchFrom = start + tokenValue.length;
+    }
+  }
+
+  let chunkStart = 0;
+  return chunks.map((chunk) => {
+    const chunkEnd = chunkStart + chunk.text.length;
+    let cursor = chunkStart;
+    let safeText = "";
+    for (const span of tokenSpans) {
+      if (span.end <= chunkStart || span.start >= chunkEnd) continue;
+      safeText += joined.slice(cursor, Math.max(cursor, span.start));
+      if (span.start >= chunkStart) safeText += "<REDACTED>";
+      cursor = Math.max(cursor, Math.min(chunkEnd, span.end));
+    }
+    safeText += joined.slice(cursor, chunkEnd);
+    chunkStart = chunkEnd;
+    return redactHfDownloadOutput(safeText, null);
+  });
+}
+
 function printHfRateLimitRecovery(): void {
   process.stderr.write("  Hugging Face rate limiting was detected.\n");
   process.stderr.write(`  Create a read token at ${HF_TOKEN_SETTINGS_URL}.\n`);
@@ -478,10 +511,11 @@ function downloadModel(
     );
 
     const tail: string[] = [];
-    const outputStates = [
-      { decoder: new StringDecoder("utf8"), pending: "", stream: process.stdout },
-      { decoder: new StringDecoder("utf8"), pending: "", stream: process.stderr },
+    const outputDecoders = [
+      { decoder: new StringDecoder("utf8"), stream: process.stdout },
+      { decoder: new StringDecoder("utf8"), stream: process.stderr },
     ];
+    let pendingOutput: { text: string; stream: NodeJS.WriteStream }[] = [];
     const TAIL_MAX = 50;
     let resolved = false;
     let decodersFinalized = false;
@@ -514,35 +548,59 @@ function downloadModel(
       }
     }
 
-    function flushOutput(state: (typeof outputStates)[number], flushAll = false): void {
+    function takePendingOutput(end: number): { text: string; stream: NodeJS.WriteStream }[] {
+      const selected: { text: string; stream: NodeJS.WriteStream }[] = [];
+      let remaining = end;
+      while (remaining > 0 && pendingOutput.length > 0) {
+        const chunk = pendingOutput[0];
+        if (chunk.text.length <= remaining) {
+          selected.push(chunk);
+          pendingOutput.shift();
+          remaining -= chunk.text.length;
+          continue;
+        }
+        selected.push({ text: chunk.text.slice(0, remaining), stream: chunk.stream });
+        pendingOutput[0] = { text: chunk.text.slice(remaining), stream: chunk.stream };
+        remaining = 0;
+      }
+      return selected;
+    }
+
+    function flushOutput(flushAll = false): void {
+      const pendingText = pendingOutput.map((chunk) => chunk.text).join("");
       const end = flushAll
-        ? state.pending.length
-        : Math.max(state.pending.lastIndexOf("\n"), state.pending.lastIndexOf("\r")) + 1;
+        ? pendingText.length
+        : Math.max(pendingText.lastIndexOf("\n"), pendingText.lastIndexOf("\r")) + 1;
       if (end <= 0) return;
-      const safeText = redactHfDownloadOutput(state.pending.slice(0, end), tokenValue);
-      state.pending = state.pending.slice(end);
-      state.stream.write(safeText);
-      lastOutputEndedCleanly = /[\r\n]$/.test(safeText);
-      rememberTail(safeText);
+      const selected = takePendingOutput(end);
+      const safeChunks = redactHfDownloadOutputChunks(selected, tokenValue);
+      for (const [index, safeText] of safeChunks.entries()) {
+        if (!safeText) continue;
+        selected[index].stream.write(safeText);
+        lastOutputEndedCleanly = /[\r\n]$/.test(safeText);
+        rememberTail(safeText);
+      }
     }
 
     function finalizeOutputDecoders(): void {
       if (decodersFinalized) return;
       decodersFinalized = true;
-      for (const state of outputStates) {
-        state.pending += state.decoder.end();
-        flushOutput(state, true);
+      for (const state of outputDecoders) {
+        const text = state.decoder.end();
+        if (text) pendingOutput.push({ text, stream: state.stream });
       }
+      flushOutput(true);
     }
 
-    function onChunk(buf: Buffer, state: (typeof outputStates)[number]): void {
+    function onChunk(buf: Buffer, state: (typeof outputDecoders)[number]): void {
       lastOutputAt = Date.now();
-      state.pending += state.decoder.write(buf);
-      flushOutput(state);
+      const text = state.decoder.write(buf);
+      if (text) pendingOutput.push({ text, stream: state.stream });
+      flushOutput();
     }
 
-    proc.stdout?.on("data", (buf: Buffer) => onChunk(buf, outputStates[0]));
-    proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, outputStates[1]));
+    proc.stdout?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[0]));
+    proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[1]));
 
     proc.on("error", (err: Error) => {
       finalizeOutputDecoders();

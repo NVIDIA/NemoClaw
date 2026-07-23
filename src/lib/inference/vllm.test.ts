@@ -1065,7 +1065,7 @@ describe("installVllm model resolution", () => {
     expect(summary).not.toContain(token);
   });
 
-  it("redacts chunked 429 output while preserving stdout and stderr ownership (#7157)", async () => {
+  it("redacts a token across downloader streams while preserving stream ownership (#7157)", async () => {
     const token = `hf_${"r".repeat(32)}`;
     process.env.HF_TOKEN = token;
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
@@ -1078,12 +1078,14 @@ describe("installVllm model resolution", () => {
       mockDockerSpawnFailure([
         { stream: "stdout", data: unicodeOutput.subarray(0, unicodeSplitAt) },
         { stream: "stdout", data: unicodeOutput.subarray(unicodeSplitAt) },
-        { stream: "stdout", data: "Downloading 50%" },
+        {
+          stream: "stdout",
+          data: `Downloading 50% value=${token.slice(0, splitAt)}`,
+        },
         {
           stream: "stderr",
-          data: `HTTP 429 Too Many Requests token=${token.slice(0, splitAt)}`,
+          data: `${token.slice(splitAt)} HTTP 429 Too Many Requests\n`,
         },
-        { stream: "stderr", data: `${token.slice(splitAt)}\n` },
         { stream: "stdout", data: "\n" },
       ]),
     );
@@ -1101,11 +1103,13 @@ describe("installVllm model resolution", () => {
     const logs = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     expect(`${stdout}\n${stderr}\n${logs}\n${errors}`).not.toContain(token);
+    expect(`${stdout}\n${stderr}\n${logs}\n${errors}`).not.toContain(token.slice(0, splitAt));
+    expect(`${stdout}\n${stderr}\n${logs}\n${errors}`).not.toContain(token.slice(splitAt));
     expect(stdout).toContain("Downloading café");
-    expect(stdoutWrite).toHaveBeenCalledWith("Downloading 50%\n");
-    expect(stderrWrite).not.toHaveBeenCalledWith("Downloading 50%\n");
+    expect(stdout).toContain("Downloading 50% value=<REDACTED>");
+    expect(stderrWrite.mock.calls[0]?.[0]).toBe(" HTTP 429 Too Many Requests\n");
     expect(`${stdout}\n${stderr}`).not.toContain("�");
-    expect(stderr).toContain("HTTP 429 Too Many Requests token=<REDACTED>");
+    expect(stderr).toContain("HTTP 429 Too Many Requests");
     expect(stderr).toContain("Hugging Face rate limiting was detected");
     expect(stderr).toContain("https://huggingface.co/settings/tokens");
     expect(stderr).toContain("export HF_TOKEN=<read-token>");
