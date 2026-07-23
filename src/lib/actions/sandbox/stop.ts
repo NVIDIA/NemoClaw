@@ -29,6 +29,19 @@ function isAtRest(status: string): boolean {
   return AT_REST_STATUS_PREFIXES.some((prefix) => status.startsWith(prefix));
 }
 
+function teardownDashboardForwardBestEffort(
+  sandboxName: string,
+  teardown: typeof teardownSandboxDashboardForward,
+  warn: (message: string) => void,
+): void {
+  try {
+    teardown(sandboxName);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    warn(`  Warning: could not release the dashboard port-forward: ${detail}`);
+  }
+}
+
 export type SandboxLifecycleResult = {
   exitCode: number;
   message?: string;
@@ -144,7 +157,11 @@ export function stopSandbox(
     // alive (e.g. openshell was unreachable then, or the forward was orphaned by
     // a raw `docker stop`). Release it here too so a repeated stop always
     // converges on no leftover listener (#7227).
-    (deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward)(sandboxName);
+    teardownDashboardForwardBestEffort(
+      sandboxName,
+      deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+      warn,
+    );
     log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
     return { exitCode: 0 };
   }
@@ -193,7 +210,11 @@ export function stopSandbox(
   // `status` misreports the cleanly-stopped sandbox as a foreign
   // `sandbox_dashboard_port_conflict` and `start`/`recover` contend with the
   // still-held port (#7227). Best-effort — the container is already stopped.
-  (deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward)(sandboxName);
+  teardownDashboardForwardBestEffort(
+    sandboxName,
+    deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+    warn,
+  );
 
   log(`  Sandbox '${sandboxName}' stopped. Workspace state is preserved.`);
   log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);

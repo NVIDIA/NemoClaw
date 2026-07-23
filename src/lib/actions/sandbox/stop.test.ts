@@ -75,6 +75,19 @@ describe("teardownSandboxDashboardForward", () => {
       stdio: "ignore",
     });
   });
+
+  it("does not throw when OpenShell cannot be launched (#7227)", () => {
+    const runOpenshell = vi.fn(() => {
+      throw new Error("spawn openshell ENOENT");
+    });
+
+    expect(() =>
+      teardownSandboxDashboardForward("selected-sandbox", {
+        resolveSandboxDashboardPort: () => 19443,
+        runOpenshell,
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("stopSandbox", () => {
@@ -107,6 +120,21 @@ describe("stopSandbox", () => {
     // Release the forward only after the container is stopped, never before.
     expect(h.dockerStop.mock.invocationCallOrder[0]).toBeLessThan(
       h.teardownSandboxDashboardForward.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps a successful stop successful when dashboard cleanup cannot launch (#7227)", () => {
+    const teardownSandboxDashboardForward = vi.fn(() => {
+      throw new Error("spawn openshell EACCES");
+    });
+    const h = harness({ teardownSandboxDashboardForward });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
+    expect(h.warn).toHaveBeenCalledWith(
+      "  Warning: could not release the dashboard port-forward: spawn openshell EACCES",
     );
   });
 

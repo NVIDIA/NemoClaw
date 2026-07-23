@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+
 import { captureOpenshell, isCommandTimeout, runOpenshell } from "../../adapters/openshell/runtime";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT } from "../../core/ports";
@@ -12,8 +15,10 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/persis
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import { isWsl } from "../../platform";
+import { ROOT } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
+import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   classifyForwardHealthWithReachability,
   isLocalForwardReachable,
@@ -38,8 +43,28 @@ type SandboxForwardRecoveryOptions = {
   isWsl?: boolean;
 };
 
+type DashboardForwardStopRunner = (
+  args: string[],
+  options: { ignoreError: true; stdio: "ignore" },
+) => unknown;
+
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
+}
+
+function runDashboardForwardStopBestEffort(args: string[]): void {
+  try {
+    const openshellBinary = resolveOpenshell();
+    if (!openshellBinary) return;
+    spawnSync(openshellBinary, args, {
+      cwd: ROOT,
+      env: buildSubprocessEnv(),
+      stdio: "ignore",
+    });
+  } catch {
+    // The container lifecycle action has already completed; cleanup must not
+    // replace that result when OpenShell cannot be launched.
+  }
 }
 
 export function resolveSandboxDashboardPort(
@@ -76,16 +101,20 @@ export function teardownSandboxDashboardForward(
   sandboxName: string,
   deps: {
     resolveSandboxDashboardPort?: typeof resolveSandboxDashboardPort;
-    runOpenshell?: typeof runOpenshell;
+    runOpenshell?: DashboardForwardStopRunner;
   } = {},
 ): void {
   const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
-  const run = deps.runOpenshell ?? runOpenshell;
+  const run = deps.runOpenshell ?? runDashboardForwardStopBestEffort;
   const port = resolvePort(sandboxName);
-  run(["forward", "stop", String(port), sandboxName], {
-    ignoreError: true,
-    stdio: "ignore",
-  });
+  try {
+    run(["forward", "stop", String(port), sandboxName], {
+      ignoreError: true,
+      stdio: "ignore",
+    });
+  } catch {
+    // Defense in depth for injected or future runners: teardown is best-effort.
+  }
 }
 
 /**
