@@ -30,7 +30,7 @@ function restoreEnv(name: string, value: string | undefined): void {
     : Reflect.set(process.env, name, value);
 }
 
-function writeOpenClawRegistry(sandboxName: string): void {
+function writeSandboxRegistry(sandboxName: string, agent: string | null = null): void {
   const stateRoot = path.join(TMP_HOME, ".nemoclaw");
   fs.mkdirSync(stateRoot, { recursive: true });
   fs.writeFileSync(
@@ -44,7 +44,7 @@ function writeOpenClawRegistry(sandboxName: string): void {
           provider: "p",
           gpuEnabled: false,
           policies: [],
-          agent: null,
+          agent,
         },
       },
     }),
@@ -95,7 +95,7 @@ process.exit(0);
 `,
     );
 
-    writeOpenClawRegistry("alpha");
+    writeSandboxRegistry("alpha");
     process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
     process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
 
@@ -136,6 +136,61 @@ process.exit(0);
   }
 });
 
+it("clears a Hermes directory declared absent by the snapshot (#7428)", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-absent-dir-"));
+  const oldPath = process.env.PATH;
+  const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+  try {
+    const binDir = path.join(fixture, "bin");
+    const workspaceMarker = path.join(fixture, "workspace-content");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(workspaceMarker, "stale");
+
+    const openshell = writeFakeOpenshell(binDir);
+    writeExecutable(
+      path.join(binDir, "ssh"),
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+if (cmd.includes("[ -d ") && cmd.includes("printf")) {
+  process.exit(0);
+}
+if (
+  cmd.includes("/sandbox/.hermes/SOUL.md") ||
+  cmd.includes("/sandbox/.hermes/.hermes_history") ||
+  cmd.includes("/sandbox/.hermes/runtime/state.db") ||
+  cmd.includes("/sandbox/.hermes/kanban.db")
+) {
+  process.exit(2);
+}
+if (cmd.includes("d='/sandbox/.hermes/workspace'")) {
+  fs.rmSync(${JSON.stringify(workspaceMarker)}, { force: true });
+}
+process.exit(0);
+`,
+    );
+
+    writeSandboxRegistry("alpha", "hermes");
+    process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+    process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+    const backup = sandboxState.backupSandboxState("alpha");
+    expect(backup.success).toBe(true);
+    expect(backup.manifest?.stateDirs).toContain("workspace");
+    expect(backup.manifest?.backedUpDirs).not.toContain("workspace");
+    expect(backup.manifest?.failedBackupDirs).not.toContain("workspace");
+
+    const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+
+    expect(restore.success).toBe(true);
+    expect(fs.existsSync(workspaceMarker)).toBe(false);
+  } finally {
+    restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+    restoreEnv("PATH", oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 it("preserves stale content for directories whose backup failed (#7428)", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-failed-dir-"));
   const oldPath = process.env.PATH;
@@ -167,7 +222,7 @@ process.exit(0);
 `,
     );
 
-    writeOpenClawRegistry("alpha");
+    writeSandboxRegistry("alpha");
     process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
     process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
 
@@ -229,7 +284,7 @@ process.exit(0);
 `,
     );
 
-    writeOpenClawRegistry("alpha");
+    writeSandboxRegistry("alpha");
     process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
     process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
     const backup = sandboxState.backupSandboxState("alpha");
