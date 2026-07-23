@@ -1568,6 +1568,19 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
+  it("activate_express_install fails closed on an unreadable Docker config", () => {
+    const { result, output } = runInstallerSourced(
+      `mkdir -p "$HOME/.docker"\n` +
+        `printf '%s' '{"currentContext":"remote-prod"}' > "$HOME/.docker/config.json"\n` +
+        `chmod 000 "$HOME/.docker/config.json"\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
   it("activate_express_install treats a default persisted currentContext as local", () => {
     const { result, output } = runInstallerSourced(
       `mkdir -p "$HOME/.docker"\n` +

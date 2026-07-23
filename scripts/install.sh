@@ -3612,6 +3612,10 @@ express_wsl_docker_active_context() {
   fi
   local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
   local ctx=""
+  if [ -e "$cfg" ] && [ ! -r "$cfg" ]; then
+    printf '%s' "__unreadable__"
+    return 0
+  fi
   if [ -r "$cfg" ]; then
     ctx="$(sed -n 's/.*"currentContext"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -n1)"
   fi
