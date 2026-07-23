@@ -324,12 +324,12 @@ On open, synchronization, reopen, transition out of draft, or base retarget,
 `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate` for the exact PR
 head and base commits, including fork heads. Metadata-only edits preserve the
 existing exact-diff result instead of publishing a skipped success. A base
-retarget fails any still-active earlier result in that head's lineage,
-preserves completed audit history, and reserves a distinct PR/base identity.
-Controllers never mutate a required check owned by another base because a
-newer base can appear after an older controller's live validation. An older
-controller that resumes fails its own required check at final live validation.
-The
+retarget reserves a distinct exact-diff identity. Controllers never mutate a
+required check owned by another base because a newer
+base can appear after an older controller's live validation. The exact-identity
+controller ignores checks from other bases, and an older controller that
+resumes fails its own required check closed at final live validation. Completed
+results remain audit history. The
 `CI / Pull Request` run name binds its PR number, head SHA, base SHA, and gate
 eligibility so the trusted controller can authenticate the completed run even
 when a fork `workflow_run` payload omits pull-request metadata. The controller
@@ -621,11 +621,12 @@ required-check lineage again.
 
 The controller reserves a distinct replacement required check before dispatch
 without mutating completed attempt-one history. Attempt two uses separate
-private state and evidence paths. Its result is terminal and cannot authorize
-another automatic retry. If the retry setup fails, is cancelled, or is skipped
-before reservation, its always-run cleanup removes the retry authorization
-from the source. If it stops after reservation, cleanup closes the reserved
-replacement. This prevents a retryable or active check from remaining.
+private state and evidence paths.
+Its result is terminal and cannot authorize another automatic retry. If the
+retry setup fails, is cancelled, or is skipped before reservation, its
+always-run cleanup removes the retry authorization from the source. If it stops
+after reservation, cleanup closes the reserved replacement. This prevents a
+retryable or active check from remaining.
 
 Each evidence download has its own 10-minute limit and 30-second process-kill
 grace. Two 140-minute waits plus both download windows consume 301 minutes,

@@ -400,10 +400,10 @@ describe("PR E2E gate workflow", () => {
       "pr-e2e-gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ github.event.pull_request.base.sha }}",
     );
     expect(workflow.jobs.required).toBeUndefined();
-    expect(initialize.concurrency?.queue).toBe("max");
-    expect(initialize.concurrency?.["cancel-in-progress"]).toBe(false);
     expect(workflow.jobs.coordinate["timeout-minutes"]).toBe(330);
     expect(collectStrings(initialize).some((value) => value.includes("--mode seed"))).toBe(true);
+    expect(initialize.concurrency?.queue).toBe("max");
+    expect(initialize.concurrency?.["cancel-in-progress"]).toBe(false);
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
     expect(cancel.if).toContain("github.run_attempt == 1");
     expect(cancel.if).toContain(

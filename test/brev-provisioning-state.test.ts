@@ -138,15 +138,14 @@ describe("Brev provisioning state", () => {
     );
   });
 
-  it("rejects malformed entries in recognized Brev JSON inventories", () => {
-    expect(() => parseBrevJsonInventory([{ unexpected: "value" }])).toThrow(
-      "Brev JSON inventory contains an unrecognized instance",
-    );
-    expect(() =>
-      parseBrevJsonInventory({
-        workspaces: [{ workspaceName: "pr-42", state: "starting" }, null],
-      }),
-    ).toThrow("Brev JSON inventory contains an unrecognized instance");
+  it.each([
+    [[{ unexpected: "value" }], "Brev JSON inventory entry 0 is malformed"],
+    [
+      { workspaces: [{ name: "pr-42", status: "starting" }, null] },
+      "Brev JSON inventory entry 1 is malformed",
+    ],
+  ])("rejects malformed entries in a recognized Brev JSON inventory", (inventory, message) => {
+    expect(() => parseBrevJsonInventory(inventory)).toThrow(message);
   });
 
   it("does not treat successful unrecognized text output as authoritative absence", () => {

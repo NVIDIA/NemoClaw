@@ -61,13 +61,13 @@ export function parseBrevJsonInventory(raw: unknown): BrevProvisioningInstance[]
   } else {
     throw new Error("Brev JSON inventory has an unrecognized shape");
   }
-  const instances: BrevProvisioningInstance[] = [];
-  for (const rawInstance of rawInstances) {
-    const instance = normalizeBrevProvisioningInstance(rawInstance);
-    if (!instance) throw new Error("Brev JSON inventory contains an unrecognized instance");
-    instances.push(instance);
-  }
-  return instances;
+  return rawInstances.map((instance, index) => {
+    const normalized = normalizeBrevProvisioningInstance(instance);
+    if (!normalized) {
+      throw new Error(`Brev JSON inventory entry ${index} is malformed`);
+    }
+    return normalized;
+  });
 }
 
 /**
