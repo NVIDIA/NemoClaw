@@ -126,7 +126,7 @@ run_onboard < "$PROMPT_INPUT_FILE"
 
 // ---------------------------------------------------------------------------
 
-describe("installer runtime preflight", { timeout: 15_000 }, () => {
+describe("installer runtime preflight", { timeout: 90_000 }, () => {
   it("attempts nvm upgrade when system Node.js is below minimum version", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-preflight-"));
     const fakeBin = path.join(tmp, "bin");

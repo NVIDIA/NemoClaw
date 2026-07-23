@@ -22,6 +22,7 @@ const CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const HERMES_SECRET_BOUNDARY_STEP_ID = "hermes-secret-boundary";
 const HERMES_ROOT_AFTER_SECRET_CONDITION =
   "${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}";
+const HERMES_EXPORT_SWAP_STEP_NAME = "Add swap for Hermes image export";
 const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
@@ -90,6 +91,46 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
     stepName: "Build production image on arm64",
     target: "nemoclaw-production-arm64",
     testImageDockerfile: "-f test/Dockerfile.sandbox",
+  },
+];
+
+type NodeTarImageScanContract = Readonly<{
+  artifactName: string;
+  boundaryStepName: string;
+  evidencePath: string;
+  jobName: "build-hermes-sandbox-image" | "build-sandbox-images" | "build-sandbox-images-arm64";
+  scanStepName: string;
+  target: string;
+  uploadStepName: string;
+}>;
+
+const NODE_TAR_IMAGE_SCAN_CONTRACTS: readonly NodeTarImageScanContract[] = [
+  {
+    artifactName: "openclaw-node-tar-inventory",
+    boundaryStepName: "Save images to tarballs",
+    evidencePath: "/tmp/openclaw-node-tar-inventory.json",
+    jobName: "build-sandbox-images",
+    scanStepName: "Scan completed OpenClaw image for node-tar",
+    target: "nemoclaw-production",
+    uploadStepName: "Upload OpenClaw node-tar inventory",
+  },
+  {
+    artifactName: "hermes-node-tar-inventory",
+    boundaryStepName: "Save Hermes production image",
+    evidencePath: "/tmp/hermes-node-tar-inventory.json",
+    jobName: "build-hermes-sandbox-image",
+    scanStepName: "Scan completed Hermes image for node-tar",
+    target: "nemoclaw-hermes-production",
+    uploadStepName: "Upload Hermes node-tar inventory",
+  },
+  {
+    artifactName: "openclaw-arm64-node-tar-inventory",
+    boundaryStepName: "Build sandbox test image on arm64",
+    evidencePath: "/tmp/openclaw-arm64-node-tar-inventory.json",
+    jobName: "build-sandbox-images-arm64",
+    scanStepName: "Scan completed OpenClaw arm64 image for node-tar",
+    target: "nemoclaw-production-arm64",
+    uploadStepName: "Upload OpenClaw arm64 node-tar inventory",
   },
 ];
 
@@ -370,6 +411,94 @@ function validateGuardedProductionBuildContracts(
   }
 }
 
+function validateNodeTarImageScan(
+  errors: string[],
+  workflow: SandboxImagesWorkflow,
+  contract: NodeTarImageScanContract,
+): void {
+  const job = workflow.jobs[contract.jobName] ?? {};
+  const scan = requireStep(errors, contract.jobName, job, contract.scanStepName);
+  const upload = requireStep(errors, contract.jobName, job, contract.uploadStepName);
+  if (steps(job).filter((step) => step.name === contract.scanStepName).length !== 1) {
+    errors.push(`${contract.jobName} must scan its completed image exactly once`);
+  }
+  if (scan.id !== "node-tar-scan" || scan.shell !== "bash") {
+    errors.push(`${contract.jobName} node-tar scan must expose its outcome from a bash step`);
+  }
+
+  const run = normalizedShell(scan.run);
+  const requiredFragments = [
+    "set -euo pipefail",
+    `image_id="$(docker image inspect --format '{{.Id}}' ${contract.target})"`,
+    "docker run --rm",
+    "--network none",
+    "--read-only",
+    "--cap-drop ALL",
+    "--cap-add DAC_READ_SEARCH",
+    "--security-opt no-new-privileges",
+    "--pids-limit 64",
+    "--memory 256m",
+    "--entrypoint node",
+    '-v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro"',
+    contract.target,
+    "--experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
+    "--root /",
+    '--image "${image_id}"',
+    `| tee ${contract.evidencePath}`,
+  ];
+  for (const fragment of requiredFragments) {
+    if (!run.includes(fragment)) {
+      errors.push(`${contract.jobName} node-tar scan must include ${fragment}`);
+    }
+  }
+  if (run.includes("--privileged") || run.includes("/var/run/docker.sock")) {
+    errors.push(`${contract.jobName} node-tar scan must remain isolated from host privileges`);
+  }
+
+  if (
+    steps(job).filter((step) => step.name === contract.uploadStepName).length !== 1 ||
+    upload.if !== "${{ always() && steps.node-tar-scan.outcome != 'skipped' }}" ||
+    !FULL_SHA_ACTION.test(upload.uses ?? "") ||
+    !String(upload.uses ?? "").startsWith("actions/upload-artifact@") ||
+    !isDeepStrictEqual(record(upload.with), {
+      name: contract.artifactName,
+      path: contract.evidencePath,
+      "if-no-files-found": "error",
+      "retention-days": 14,
+    })
+  ) {
+    errors.push(`${contract.jobName} must retain its node-tar inventory for 14 days`);
+  }
+
+  const buildIndex = stepIndex(
+    job,
+    contract.jobName === "build-hermes-sandbox-image"
+      ? "Build Hermes production image"
+      : contract.jobName === "build-sandbox-images-arm64"
+        ? "Build production image on arm64"
+        : "Build production image",
+  );
+  const scanIndex = stepIndex(job, contract.scanStepName);
+  const uploadIndex = stepIndex(job, contract.uploadStepName);
+  const boundaryIndex = stepIndex(job, contract.boundaryStepName);
+  if (
+    buildIndex < 0 ||
+    scanIndex <= buildIndex ||
+    uploadIndex <= scanIndex ||
+    boundaryIndex <= uploadIndex
+  ) {
+    errors.push(
+      `${contract.jobName} must scan and retain evidence before the completed image is handed off`,
+    );
+  }
+}
+
+function validateNodeTarImageScans(errors: string[], workflow: SandboxImagesWorkflow): void {
+  for (const contract of NODE_TAR_IMAGE_SCAN_CONTRACTS) {
+    validateNodeTarImageScan(errors, workflow, contract);
+  }
+}
+
 function normalizedShell(run: string | undefined): string {
   return (run ?? "")
     .replace(/\\\r?\n\s*/gu, " ")
@@ -479,6 +608,39 @@ function validateMessagingPlanImageBoundary(
   }
   if (steps(job).some((step) => String(step.uses ?? "").includes("upload-artifact"))) {
     errors.push("messaging plan image boundary must not publish probe image artifacts");
+  }
+}
+
+function validateHermesExportSwap(errors: string[], workflow: SandboxImagesWorkflow): void {
+  for (const [jobName, buildStepName] of [
+    ["build-hermes-sandbox-image", "Build Hermes production image"],
+    [MESSAGING_PLAN_IMAGE_BOUNDARY_JOB, "Build and verify Hermes messaging plan boundary"],
+  ] as const) {
+    const job = workflow.jobs[jobName] ?? {};
+    const swapSteps = steps(job).filter((step) => step.name === HERMES_EXPORT_SWAP_STEP_NAME);
+    if (swapSteps.length !== 1) {
+      errors.push(`${jobName} must provision Hermes export swap exactly once`);
+      continue;
+    }
+    const run = swapSteps[0]?.run ?? "";
+    for (const fragment of [
+      "swap_file=/mnt/nemoclaw-hermes-image-export.swap",
+      'sudo fallocate -l 32G "$swap_file"',
+      'sudo chmod 0600 "$swap_file"',
+      'sudo mkswap "$swap_file"',
+      'sudo swapon "$swap_file"',
+      "swapon --show",
+      "free -h",
+      "df -h / /mnt",
+      "docker system df",
+    ]) {
+      if (!run.includes(fragment)) {
+        errors.push(`${jobName} Hermes export swap must include ${fragment}`);
+      }
+    }
+    if (stepIndex(job, HERMES_EXPORT_SWAP_STEP_NAME) >= stepIndex(job, buildStepName)) {
+      errors.push(`${jobName} must provision swap before the Hermes image build`);
+    }
   }
 }
 
@@ -840,6 +1002,8 @@ export function validateSandboxImagesWorkflow(
   }
   validateSecretScopeAndRegistryWrites(errors, workflow);
   validateGuardedProductionBuildContracts(errors, workflow);
+  validateNodeTarImageScans(errors, workflow);
+  validateHermesExportSwap(errors, workflow);
   validateMessagingPlanImageBoundary(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);
   validateHermesImageReuse(errors, workflow);

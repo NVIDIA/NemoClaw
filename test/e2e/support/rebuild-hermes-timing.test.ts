@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import {
-  type RebuildHermesProgressOptions,
-  startRebuildHermesProgress,
-} from "../live/rebuild-hermes-progress.ts";
+import { startTestProgress, type TestProgressOptions } from "../fixtures/progress.ts";
 import {
   buildRebuildHermesTimingSummary,
   describeRunnerClass,
@@ -13,7 +10,7 @@ import {
 
 function timelineHarness() {
   const state = { clockMs: 1_000 };
-  const options: RebuildHermesProgressOptions = {
+  const options: TestProgressOptions = {
     now: () => state.clockMs,
     setTimer: () => ({ unref() {} }),
     clearTimer: () => {},
@@ -34,16 +31,20 @@ function timelineHarness() {
 describe("Hermes rebuild timing timeline", () => {
   it("records each completed phase and closes the in-flight phase on snapshot", () => {
     const { options, state } = timelineHarness();
-    const progress = startRebuildHermesProgress("setup", options);
+    const progress = startTestProgress(
+      "rebuild-hermes",
+      ["prepare Hermes rebuild timing", "run NemoClaw Hermes rebuild"],
+      options,
+    );
 
     state.clockMs = 4_000;
-    progress.phase("phase 6 nemoclaw rebuild");
+    progress.phase("run NemoClaw Hermes rebuild");
     state.clockMs = 9_000;
 
     expect(progress.timeline()).toEqual({
       phases: [
-        { label: "setup", elapsedMs: 3_000 },
-        { label: "phase 6 nemoclaw rebuild", elapsedMs: 5_000 },
+        { label: "prepare Hermes rebuild timing", elapsedMs: 3_000 },
+        { label: "run NemoClaw Hermes rebuild", elapsedMs: 5_000 },
       ],
       totalMs: 8_000,
     });
@@ -51,7 +52,11 @@ describe("Hermes rebuild timing timeline", () => {
 
   it("freezes the timeline at stop and ignores post-stop transitions", () => {
     const { options, state } = timelineHarness();
-    const progress = startRebuildHermesProgress("phase 7 verification", options);
+    const progress = startTestProgress(
+      "rebuild-hermes",
+      ["validate rebuilt Hermes sandbox", "record rebuild timing evidence"],
+      options,
+    );
 
     state.clockMs = 6_000;
     progress.stop();
@@ -59,7 +64,7 @@ describe("Hermes rebuild timing timeline", () => {
     progress.phase("after stop");
 
     expect(progress.timeline()).toEqual({
-      phases: [{ label: "phase 7 verification", elapsedMs: 5_000 }],
+      phases: [{ label: "validate rebuilt Hermes sandbox", elapsedMs: 5_000 }],
       totalMs: 5_000,
     });
   });
@@ -72,13 +77,17 @@ describe("Hermes rebuild timing timeline", () => {
       clockMs += 1_000;
       return current;
     };
-    const progress = startRebuildHermesProgress("phase 7 verification", options);
+    const progress = startTestProgress(
+      "rebuild-hermes",
+      ["validate rebuilt Hermes sandbox", "record rebuild timing evidence"],
+      options,
+    );
 
     progress.stop();
 
     expect(progress.timeline()).toEqual({
-      phases: [{ label: "phase 7 verification", elapsedMs: 2_000 }],
-      totalMs: 2_000,
+      phases: [{ label: "validate rebuilt Hermes sandbox", elapsedMs: 1_000 }],
+      totalMs: 1_000,
     });
   });
 });
