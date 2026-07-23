@@ -936,8 +936,11 @@ async function startDeploymentFixture(
   });
   await artifacts.writeJson("fake-openai-compatible.json", { baseUrl: fake.baseUrl });
   cleanup.add("close EXDEV compatible endpoint mock", async () => {
-    await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
-    await fake.close();
+    try {
+      await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
+    } finally {
+      await fake.close();
+    }
   });
 
   return liveEnv({
