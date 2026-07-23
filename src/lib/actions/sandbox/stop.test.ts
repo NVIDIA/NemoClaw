@@ -112,6 +112,21 @@ describe("teardownSandboxDashboardForward", () => {
       }),
     ).not.toThrow();
   });
+
+  it("does not probe the port when OpenShell reports cleanup failure (#7227)", () => {
+    const isLocalForwardReachable = vi.fn(() => false);
+
+    expect(() =>
+      teardownSandboxDashboardForward("selected-sandbox", {
+        getSandbox: () => sandbox(),
+        isLocalForwardReachable,
+        resolveSandboxDashboardPort: () => 19443,
+        runOpenshell: () => ({ status: 1 }),
+      }),
+    ).not.toThrow();
+
+    expect(isLocalForwardReachable).not.toHaveBeenCalled();
+  });
 });
 
 describe("stopSandbox", () => {
