@@ -63,16 +63,27 @@ standard runners even though they use the trusted workflow definition from
 `main`.
 
 Exact-head PR-gate dispatches use a bounded swap fallback for the hosted
-Hermes image-building lanes that remain on those standard runners. The live
-Vitest helper activates the fallback only when GitHub Actions supplies a
-validated lowercase 40-hex checkout SHA. It reuses at least 32 GiB of active
-swap when available; otherwise, it creates one fixed 32 GiB swap file under
-`/mnt` before agent-turn latency, Hermes inference switch and shields, the
-Hermes Bedrock and stable MCP shards, or the `hermes-e2e`, `hermes-dashboard`,
-and Hermes security-posture tests. Setup failure stops before Vitest. Scheduled
-and ordinary manual `main` runs, larger-runner executions, rebuild lanes with
+Hermes image-building lanes that remain on those standard runners. The trusted
+workflow provisions the fallback as the first job step, before checking out or
+executing the candidate revision. It requires a controller-supplied lowercase
+40-hex checkout SHA, matching trusted workflow and dispatch revisions, and an
+ephemeral GitHub-hosted Linux x64 runner. Candidate code cannot supply the
+program or arguments passed to `sudo`.
+
+The trusted step reuses at least 32 GiB of active swap when available.
+Otherwise, it preserves at least 16 GiB of available disk capacity under
+`/mnt`, creates a root-owned mode-`0700` directory and an exclusive randomized
+mode-`0600` file there, then enables at least 32 GiB of usable swap.
+Setup failure stops before candidate checkout and removes partial state only
+after proving the file inactive or successfully disabling it.
+Successful state is discarded with the ephemeral runner.
+
+The fallback covers agent-turn latency, Hermes inference switch and shields,
+the Hermes Bedrock and stable MCP shards, and the `hermes-e2e`,
+`hermes-dashboard`, and Hermes security-posture tests. Scheduled and ordinary
+manual `main` runs, larger-runner executions, rebuild lanes with
 workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
-shards do not use this fallback.
+shards do not use it.
 
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
