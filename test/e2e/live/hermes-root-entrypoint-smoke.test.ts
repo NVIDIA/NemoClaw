@@ -404,12 +404,16 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   );
 }
 
-test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migration", async ({
-  artifacts,
-  cleanup,
-  secrets,
-  skip,
-}) => {
+test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migration", {
+  meta: {
+    e2ePhases: [
+      "check Docker and Hermes image inputs",
+      "build Hermes root-entrypoint image",
+      "validate clean root-entrypoint startup",
+      "validate legacy PID migration",
+    ],
+  },
+}, async ({ artifacts, cleanup, progress, secrets, skip }) => {
   const probe = new DockerProbe(artifacts, (text, extraValues) =>
     secrets.redact(text, extraValues),
   );
@@ -451,8 +455,11 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
   await requireDocker(probe, skip);
 
   try {
+    progress.phase("build Hermes root-entrypoint image");
     await buildImageIfNeeded(probe, image, baseImage);
+    progress.phase("validate clean root-entrypoint startup");
     await runCleanVariant(probe, image, runId, containers);
+    progress.phase("validate legacy PID migration");
     await runLegacyVariant(probe, image, runId, containers);
   } catch (error) {
     for (const container of containers) {

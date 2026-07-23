@@ -181,9 +181,13 @@ function assertEvidencePath(path: string | undefined, variableName: string): str
 /** Append one phase baseline without replacing the immutable workflow baseline. */
 export function appendResourcePhaseBaseline(path: string, phase: string): void {
   const validatedPath = assertEvidencePath(path, "E2E_RESOURCE_PHASE_BASELINES_FILE");
-  appendPrivateRegularFile(validatedPath, `${renderBaselineLine(collectResourceBaseline(phase))}\n`, {
-    maxBytes: PHASE_BASELINES_FILE_MAX_BYTES,
-  });
+  appendPrivateRegularFile(
+    validatedPath,
+    `${renderBaselineLine(collectResourceBaseline(phase))}\n`,
+    {
+      maxBytes: PHASE_BASELINES_FILE_MAX_BYTES,
+    },
+  );
 }
 
 /** Create the trusted evidence files before PR-controlled live tests execute. */
@@ -201,10 +205,7 @@ function runInitializeEvidence(): void {
     process.env.E2E_TERMINAL_CLASSIFICATION_FILE,
     "E2E_TERMINAL_CLASSIFICATION_FILE",
   );
-  writePrivateRegularFile(
-    baselinePath,
-    `${renderBaselineLine(collectResourceBaseline(phase))}\n`,
-  );
+  writePrivateRegularFile(baselinePath, `${renderBaselineLine(collectResourceBaseline(phase))}\n`);
   writePrivateRegularFile(phaseBaselinesPath, "");
   writePrivateRegularFile(classificationPath, "");
 }

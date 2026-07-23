@@ -132,7 +132,19 @@ async function waitSandboxAbsent(sandbox: SandboxClient, name: string): Promise<
 
 test("onboard repair resumes missing sandbox and rejects conflicting resume inputs", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Docker and start the compatible endpoint",
+      "clear prior onboard-repair state",
+      "interrupt onboarding after sandbox creation",
+      "remove the recorded sandbox and resume repair",
+      "validate repaired attachments and corporate trust",
+      "reseed interrupted onboarding state",
+      "reject conflicting resume inputs",
+      "clear the repaired onboarding state",
+    ],
+  },
+}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, skip }) => {
   const corporateCa = createCorporateCaFixture("requests", "nemoclaw-repair-corporate-ca-");
   cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
     cleanupCorporateCaFixture(corporateCa),
@@ -267,8 +279,10 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       sandboxCleanupOptions,
     );
   }
+  progress.phase("clear prior onboard-repair state");
   await cleanup(host, sandbox);
 
+  progress.phase("interrupt onboarding after sandbox creation");
   const first = await nemoclaw(
     host,
     ["onboard", "--non-interactive"],
@@ -307,6 +321,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
   );
 
+  progress.phase("remove the recorded sandbox and resume repair");
   await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
     artifactName: "phase-2-delete-recorded-sandbox",
     env: env(),
@@ -339,6 +354,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     env: env(),
   });
 
+  progress.phase("validate repaired attachments and corporate trust");
   const status = await nemoclaw(host, [SANDBOX_NAME, "status"], "phase-2-status-after-repair");
   expect(status.exitCode, resultText(status)).toBe(0);
 
@@ -349,6 +365,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   });
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
+  progress.phase("reseed interrupted onboarding state");
   const reinject = await nemoclaw(
     host,
     ["onboard", "--non-interactive"],
@@ -363,6 +380,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   );
   expect(reinject.exitCode, resultText(reinject)).toBe(1);
 
+  progress.phase("reject conflicting resume inputs");
   const sandboxConflict = await nemoclaw(
     host,
     ["onboard", "--resume", "--non-interactive"],
@@ -392,6 +410,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   );
   expect(resultText(providerConflict)).toContain("not 'gpt-5.4'");
 
+  progress.phase("clear the repaired onboarding state");
   await cleanup(host, sandbox);
   expect(fs.existsSync(SESSION_FILE)).toBe(false);
   await artifacts.target.complete({ id: "onboard-repair", status: "passed" });

@@ -70,7 +70,18 @@ function expectGroupMembership(idGroupsOutput: string, gid: string): void {
 
 test("Jetson nvmap GPU onboard grants device-node group and reports verified CUDA", {
   timeout: TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "detect Jetson hardware",
+      "clear previous Jetson runtime state",
+      "confirm nvmap and NVIDIA Docker runtime",
+      "install NemoClaw on the Jetson host",
+      "inspect sandbox nvmap access",
+      "prove CUDA initialization inside the sandbox",
+      "confirm verified GPU status",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await artifacts.target.declare({
     id: "jetson-nvmap-gpu",
     issue: 4231,
@@ -179,8 +190,10 @@ exit "$status"`,
     SANDBOX_NAME,
     nemoclawSandboxCleanupOptions,
   );
+  progress.phase("clear previous Jetson runtime state");
   await cleanupJetsonSandbox(host);
 
+  progress.phase("confirm nvmap and NVIDIA Docker runtime");
   const hostNvmap = await hostShell(
     host,
     "ls -l /dev/nvmap && stat -c 'gid=%g group=%G' /dev/nvmap",
@@ -210,6 +223,7 @@ exit "$status"`,
   expect(resultText(dockerRuntimes)).toMatch(/"nvidia"|nvidia:/u);
 
   // A3: preserve the reporter workflow by installing/running the real onboarding shell path.
+  progress.phase("install NemoClaw on the Jetson host");
   const installOllama = await hostShell(
     host,
     'if [ "${NEMOCLAW_PROVIDER:-ollama}" = "ollama" ] && ! command -v ollama >/dev/null 2>&1; then\n' +
@@ -241,6 +255,7 @@ exit "$status"`,
   );
 
   // A5: the sandbox user must be in the host /dev/nvmap owning GID.
+  progress.phase("inspect sandbox nvmap access");
   const sandboxId = await sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript("id -G"), {
     artifactName: "phase-3-sandbox-id-groups",
     env: env(),
@@ -260,6 +275,7 @@ exit "$status"`,
 
   // A7: authoritative CUDA usability proof must succeed, not reproduce
   // NvRmMemInitNvmap permission denial / cuInit(0)=999 from #4231.
+  progress.phase("prove CUDA initialization inside the sandbox");
   const cudaProbe = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -272,6 +288,7 @@ exit "$status"`,
   expect(resultText(cudaProbe)).toContain("cuInit(0)=0");
 
   // A8: status must say enabled with verified CUDA, never bare/unverified/failed.
+  progress.phase("confirm verified GPU status");
   const status = await hostShell(
     host,
     `nemoclaw "$NEMOCLAW_SANDBOX_NAME" status`,
