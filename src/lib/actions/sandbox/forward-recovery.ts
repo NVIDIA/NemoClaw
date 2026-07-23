@@ -5,7 +5,10 @@ import { spawnSync } from "node:child_process";
 
 import { captureOpenshell, isCommandTimeout, runOpenshell } from "../../adapters/openshell/runtime";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT } from "../../core/ports";
 import { waitUntil } from "../../core/wait";
@@ -14,6 +17,7 @@ import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../state/paths";
 import * as registry from "../../state/registry";
@@ -45,26 +49,48 @@ type SandboxForwardRecoveryOptions = {
 
 type DashboardForwardStopRunner = (
   args: string[],
-  options: { ignoreError: true; stdio: "ignore" },
-) => unknown;
+  options: { ignoreError: true; stdio: "ignore"; timeout: number },
+) => { status?: number | null };
+
+const FORWARD_RELEASE_TIMEOUT_MS = 5_000;
+const FORWARD_RELEASE_POLL_MS = 250;
 
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
-function runDashboardForwardStopBestEffort(args: string[]): void {
+function runDashboardForwardStopBestEffort(
+  args: string[],
+  options: { timeout: number },
+): { status?: number | null } {
   try {
     const openshellBinary = resolveOpenshell();
-    if (!openshellBinary) return;
-    spawnSync(openshellBinary, args, {
+    if (!openshellBinary) return { status: 1 };
+    return spawnSync(openshellBinary, args, {
       cwd: ROOT,
       env: buildSubprocessEnv(),
       stdio: "ignore",
+      timeout: options.timeout,
     });
   } catch {
     // The container lifecycle action has already completed; cleanup must not
     // replace that result when OpenShell cannot be launched.
+    return { status: 1 };
   }
+}
+
+function confirmDashboardForwardReleased(
+  port: number,
+  isForwardReachable: (port: number) => boolean,
+): boolean {
+  const now = Date.now;
+  return waitUntil(() => !isForwardReachable(port), {
+    deadlineMs: now() + FORWARD_RELEASE_TIMEOUT_MS,
+    initialIntervalMs: FORWARD_RELEASE_POLL_MS,
+    maxIntervalMs: FORWARD_RELEASE_POLL_MS,
+    backoffFactor: 1,
+    now,
+  });
 }
 
 export function resolveSandboxDashboardPort(
@@ -94,24 +120,35 @@ export function resolveSandboxDashboardPort(
  * `status` then misreports as a foreign `sandbox_dashboard_port_conflict` and
  * which `start`/`recover` contend with (#7227). Best-effort: a stop must still
  * free container resources when openshell is unreachable, so errors are ignored
- * — mirroring the `forward stop <port> <sandbox>` calls in the onboard, destroy,
- * and forward-recovery paths.
+ * — mirroring the sandbox- and gateway-scoped forward cleanup used elsewhere.
+ * OpenShell may return before its SSH listener exits, so successful commands
+ * also receive a bounded host-port release wait.
  */
 export function teardownSandboxDashboardForward(
   sandboxName: string,
   deps: {
+    getSandbox?: typeof registry.getSandbox;
+    isLocalForwardReachable?: typeof isLocalForwardReachable;
     resolveSandboxDashboardPort?: typeof resolveSandboxDashboardPort;
+    resolveSandboxGatewayName?: typeof resolveSandboxGatewayName;
     runOpenshell?: DashboardForwardStopRunner;
   } = {},
 ): void {
-  const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
-  const run = deps.runOpenshell ?? runDashboardForwardStopBestEffort;
-  const port = resolvePort(sandboxName);
   try {
-    run(["forward", "stop", String(port), sandboxName], {
+    const getSandbox = deps.getSandbox ?? registry.getSandbox;
+    const sandbox = getSandbox(sandboxName);
+    if (!sandbox) return;
+    const gatewayName = (deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName)(sandbox);
+    const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
+    const port = resolvePort(sandboxName, { getSandbox: () => sandbox });
+    const run = deps.runOpenshell ?? runDashboardForwardStopBestEffort;
+    const result = run(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
       ignoreError: true,
       stdio: "ignore",
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
+    if (result.status !== 0) return;
+    confirmDashboardForwardReleased(port, deps.isLocalForwardReachable ?? isLocalForwardReachable);
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
   }

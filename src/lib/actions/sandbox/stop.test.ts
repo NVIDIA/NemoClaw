@@ -58,22 +58,45 @@ function harness(overrides: Partial<SandboxStopDeps> = {}) {
 }
 
 describe("teardownSandboxDashboardForward", () => {
-  it("stops only the selected sandbox's resolved dashboard forward (#7227)", () => {
+  it("stops only the selected sandbox's resolved dashboard forward on its gateway (#7227)", () => {
+    const getSandbox = vi.fn(() =>
+      sandbox({
+        dashboardPort: 19443,
+        gatewayName: "nemoclaw-18080",
+        gatewayPort: 18080,
+      }),
+    );
     const resolveSandboxDashboardPort = vi.fn(() => 19443);
-    const runOpenshell = vi.fn(() => ({ status: 1 }) as never);
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const isLocalForwardReachable = vi
+      .fn<() => boolean>()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
 
     expect(() =>
       teardownSandboxDashboardForward("selected-sandbox", {
+        getSandbox,
+        isLocalForwardReachable,
         resolveSandboxDashboardPort,
         runOpenshell,
       }),
     ).not.toThrow();
 
-    expect(resolveSandboxDashboardPort).toHaveBeenCalledWith("selected-sandbox");
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "19443", "selected-sandbox"], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
+    expect(resolveSandboxDashboardPort).toHaveBeenCalledWith(
+      "selected-sandbox",
+      expect.objectContaining({ getSandbox: expect.any(Function) }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "stop", "19443", "selected-sandbox", "--gateway", "nemoclaw-18080"],
+      {
+        ignoreError: true,
+        stdio: "ignore",
+        timeout: 30_000,
+      },
+    );
+    expect(isLocalForwardReachable).toHaveBeenCalledTimes(2);
+    expect(isLocalForwardReachable).toHaveBeenNthCalledWith(1, 19443);
+    expect(isLocalForwardReachable).toHaveBeenNthCalledWith(2, 19443);
   });
 
   it("does not throw when OpenShell cannot be launched (#7227)", () => {
@@ -83,6 +106,7 @@ describe("teardownSandboxDashboardForward", () => {
 
     expect(() =>
       teardownSandboxDashboardForward("selected-sandbox", {
+        getSandbox: () => sandbox(),
         resolveSandboxDashboardPort: () => 19443,
         runOpenshell,
       }),
