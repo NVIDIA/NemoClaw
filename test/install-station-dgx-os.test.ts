@@ -242,6 +242,12 @@ dgx_station_release_state "$DGX_RELEASE"
       "partial OTA identity",
       writeNoOtaDgxOs76Release({ otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }),
     ],
+    [
+      "complete OTA history",
+      writeNoOtaDgxOs76Release({
+        otaMetadata: 'DGX_OTA_VERSION="7.6.0"\nDGX_OTA_DATE="Tue Jul 14 13:59:06 UTC 2026"',
+      }),
+    ],
   ])("keeps no-OTA release metadata fail-closed with %s (#7417)", (_scenario, release) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
