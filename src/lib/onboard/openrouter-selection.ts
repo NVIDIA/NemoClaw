@@ -6,6 +6,7 @@ import type { ModelPromptResult } from "../inference/model-prompts";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
 import { OPENROUTER_CREDENTIAL_ENV } from "../inference/openrouter";
 import { validateOpenRouterApiKeyValue } from "../validation";
+import { compatibleEndpointAllowsMissingApiKey } from "./inference-providers/compatible-endpoint-gateway-route";
 import type { SetupNimSelectionState } from "./setup-nim-selection";
 import type { ModelValidationResult } from "./types";
 
@@ -39,6 +40,18 @@ export function credentialValidatorForProvider(
   selectedKey: string,
 ): ((value: string) => string | null) | null {
   return isOpenRouterProvider(selectedKey) ? validateOpenRouterApiKeyValue : null;
+}
+
+export function compatibleApiKeyOptional(
+  selectedKey: string,
+  endpointUrl: string | null,
+  credential: string | null,
+): boolean {
+  return (
+    selectedKey === "custom" &&
+    Boolean(endpointUrl && compatibleEndpointAllowsMissingApiKey(endpointUrl)) &&
+    !credential
+  );
 }
 
 export function openAiLikeModelValidationOptions(
