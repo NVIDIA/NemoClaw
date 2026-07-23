@@ -152,8 +152,8 @@ describe("resolveRequestedProviderSelection", () => {
     assert.equal(selectedKey(result), "vllm");
   });
 
-  it("keeps the cloud default when the platform is not a managed-vLLM default (#7293)", () => {
-    // Same options, but the host is not Spark/Station → must stay `build`.
+  it("keeps the cloud default when the caller does not prefer managed vLLM (#7293)", () => {
+    // The menu can expose managed vLLM without changing the automatic selection.
     const result = resolve({
       options: [option("build"), option("install-vllm")],
       preferManagedVllmDefault: false,

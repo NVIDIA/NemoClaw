@@ -97,7 +97,8 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
     ```
 
-    For a non-interactive first run, also set the provider, credential, and sandbox name.
+    For a non-interactive first run, set the sandbox name.
+    Set the provider and matching credential unless you want DGX Spark to select local vLLM automatically.
 
     ```bash
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
@@ -113,6 +114,7 @@ Use these details when your first-run path needs more control.
     The example uses NVIDIA Endpoints.
     Set `NEMOCLAW_AGENT` to `hermes` or `langchain-deepagents-code` to install another agent.
     Set `NEMOCLAW_PROVIDER` and the matching credential variable for another provider, then use a sandbox name that does not depend on a previous onboarding session.
+    On DGX Spark, omit `NEMOCLAW_PROVIDER` only when you want the automatic local selection described in [Set Up vLLM](../inference/local-inference/set-up-vllm#run-non-interactive-onboarding).
     To select a specific NemoClaw release, replace `vX.Y.Z` with its versioned release tag.
     `NEMOCLAW_INSTALL_REF` is a higher-priority development override, so clear it when pinning a release tag.
 

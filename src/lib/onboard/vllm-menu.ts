@@ -32,11 +32,7 @@ interface VllmProfileShape {
 
 const MANAGED_VLLM_DEFAULT_PLATFORMS = new Set<NvidiaPlatform>(["spark", "station"]);
 
-/**
- * DGX platforms where managed vLLM is the recommended default (not gated behind
- * `experimental`). Single source of truth shared by the interactive menu and the
- * non-interactive provider default (#7293), so both stay in lock-step.
- */
+/** DGX platforms where the provider menu exposes managed vLLM without `experimental`. */
 export function isManagedVllmDefaultPlatform(platform: NvidiaPlatform | null | undefined): boolean {
   return platform != null && MANAGED_VLLM_DEFAULT_PLATFORMS.has(platform);
 }
