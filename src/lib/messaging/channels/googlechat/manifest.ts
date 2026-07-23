@@ -15,29 +15,21 @@ export const googlechatManifest = {
   displayName: "Google Chat",
   description: "Google Chat (Chat API) bot messaging",
   enrollmentNotes: [
-    "Google Workspace accounts need no appPrincipal — leave it blank.",
-    "──────────────────────────────────────────────────────────────",
-    "Google Chat — capture appPrincipal (personal / standalone Gmail only)",
-    "  Workspace accounts: skip this, you are done.",
-    "  Personal/standalone accounts are served as Workspace add-ons and need",
-    "  channels.googlechat.appPrincipal (the add-on's ~21-digit numeric ID, not",
-    "  an email). It is stable for a given Google account/add-on: if you",
-    "  already know it (e.g. captured on an earlier build), paste it at the",
-    "  appPrincipal prompt and skip the steps below — you never need to capture",
-    "  it twice. Otherwise leave it blank and a discovery placeholder is seeded",
-    "  so the first message reveals the real value.",
-    "  These steps are only needed the first time, when you do not yet know your",
-    "  appPrincipal — after onboarding finishes and the sandbox is live:",
-    "    1. Watch the gateway log:",
-    '         nemoclaw <sandbox> logs --follow | grep "unexpected add-on principal"',
-    "    2. Send ONE direct message to the bot. It will NOT reply yet (expected).",
-    "       The log prints:  unexpected add-on principal: <N>",
-    "       That <N> is your appPrincipal.",
-    "    3. Persist it and rebuild:",
-    "         GOOGLECHAT_APP_PRINCIPAL=<N> nemoclaw <sandbox> channels add googlechat",
-    "         nemoclaw <sandbox> rebuild --yes",
-    "──────────────────────────────────────────────────────────────",
-    "The dedicated public endpoint forwards only POST /googlechat; open the Control UI from http://127.0.0.1:18789 (localhost), not the webhook URL.",
+    "┃  GOOGLE CHAT — appPrincipal",
+    "┃",
+    "┃  Workspace account   → leave blank, done.",
+    "┃  Personal Gmail      → needs the add-on's ~21-digit ID (not an email), stable across rebuilds.",
+    "┃",
+    "┃  If you already know it, paste it at the prompt and you're done.",
+    "┃  If not, leave it blank — the first DM reveals it once the sandbox is live:",
+    "┃",
+    "┃    1.  Watch the gateway log:",
+    '┃          nemoclaw <sandbox> logs --follow | grep "unexpected add-on principal"',
+    "┃    2.  DM the bot once — it won't reply yet, that's expected. The log prints:",
+    "┃          unexpected add-on principal: <N>",
+    "┃    3.  Save that <N> and rebuild:",
+    "┃          GOOGLECHAT_APP_PRINCIPAL=<N> nemoclaw <sandbox> channels add googlechat",
+    "┃          nemoclaw <sandbox> rebuild --yes",
   ],
   supportedAgents: ["openclaw"],
   auth: {
@@ -49,9 +41,27 @@ export const googlechatManifest = {
       kind: "secret",
       required: true,
       envKey: "GOOGLECHAT_SERVICE_ACCOUNT",
+      // Cap the mask — a ~2 KB SA JSON would otherwise echo thousands of stars.
+      maskCap: 40,
+      // Validate the paste now (token-paste hook re-prompts, then skips the
+      // channel) so a bad key never reaches token-minting and aborts onboarding.
+      // The googlechat.tokenPaste hook parses the paste as JSON; a truncated or
+      // malformed paste is re-prompted here instead of failing later at minting.
+      formatHint:
+        "Paste the entire service-account JSON key on one line (minified) — the whole downloaded JSON file.",
+      // Re-prompt on a bad paste — an SA JSON is long and easy to truncate.
+      maxTokenAttempts: 3,
       prompt: {
         label: "Google Chat service account JSON",
-        help: "Paste the downloaded service account JSON key as a single line (minified). Google Cloud Console → IAM → Service Accounts → Keys → Add key → JSON.",
+        help: [
+          "┃  GOOGLE CHAT — service account key",
+          "┃",
+          "┃  Google Cloud Console → IAM & Admin → Service Accounts",
+          "┃    → your bot's SA → Keys → Add key → Create new key → JSON",
+          "┃",
+          "┃  A .json file downloads. Paste its contents below as ONE line (minified).",
+          "",
+        ].join("\n"),
       },
     },
     {
@@ -85,8 +95,7 @@ export const googlechatManifest = {
       formatHint:
         "appPrincipal is the add-on's numeric OAuth client ID (uniqueId, ~21 digits), not an email.",
       prompt: {
-        label: "Google Chat appPrincipal (personal/standalone accounts only)",
-        help: "Leave blank for Google Workspace accounts. For personal/standalone Google accounts, paste the add-on's 21-digit numeric ID if you already have it; otherwise leave blank and capture it after the bot is live.",
+        label: "Google Chat appPrincipal",
         emptyValueMessage: "Workspace accounts do not need it; personal accounts must set it later",
       },
     },
@@ -279,7 +288,7 @@ export const googlechatManifest = {
     {
       id: "googlechat-service-account",
       phase: "enroll",
-      handler: "common.tokenPaste",
+      handler: "googlechat.tokenPaste",
       outputs: [
         {
           id: "serviceAccount",
@@ -294,10 +303,6 @@ export const googlechatManifest = {
       phase: "enroll",
       handler: "common.configPrompt",
       outputs: [
-        {
-          id: "audience",
-          kind: "config",
-        },
         {
           id: "appPrincipal",
           kind: "config",

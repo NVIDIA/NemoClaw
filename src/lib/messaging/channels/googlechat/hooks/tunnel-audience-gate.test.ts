@@ -62,14 +62,26 @@ describe("googlechat tunnel/audience gate hook", () => {
     expect(stopTunnel).not.toHaveBeenCalled();
   });
 
-  it("defers non app-url audience types to the config prompt", async () => {
+  it("collects a non app-url audience directly, without touching the tunnel", async () => {
     const startTunnel = vi.fn(async () => {});
-    const hook = createGooglechatTunnelAudienceGateHook(baseOptions({ startTunnel }));
+    const prompt = vi.fn(async () => "123456789012");
+    const hook = createGooglechatTunnelAudienceGateHook(baseOptions({ startTunnel, prompt }));
 
     const result = await hook(gateContext({ audienceType: "project-number" }));
 
-    expect(result).toEqual({});
+    expect(result).toEqual({
+      outputs: { audience: { kind: "config", value: "123456789012" } },
+    });
     expect(startTunnel).not.toHaveBeenCalled();
+  });
+
+  it("skips googlechat when a non app-url audience is left blank", async () => {
+    const prompt = vi.fn(async () => "");
+    const hook = createGooglechatTunnelAudienceGateHook(baseOptions({ prompt }));
+
+    await expect(hook(gateContext({ audienceType: "project-number" }))).rejects.toThrow(
+      /No Google Chat webhook audience provided/,
+    );
   });
 
   it("always skips (throws) in non-interactive mode, even with an explicit audience", async () => {

@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessagingHookRegistration } from "../../../hooks/types";
+import { createGooglechatTokenPasteHookRegistration } from "./service-account-token-paste";
 import {
   createGooglechatTunnelAudienceGateHookRegistration,
   type GooglechatTunnelAudienceGateHookOptions,
 } from "./tunnel-audience-gate";
 import { createDefaultGooglechatTunnelGateOptions } from "./tunnel-runtime";
 
+export * from "./service-account-token-paste";
 export * from "./tunnel-audience-gate";
 
 export interface GooglechatHookOptions {
@@ -21,7 +23,10 @@ export function createGooglechatHookRegistrations(
     ...createDefaultGooglechatTunnelGateOptions(),
     ...withoutUndefinedValues(options.tunnelAudienceGate),
   };
-  return [createGooglechatTunnelAudienceGateHookRegistration(gateOptions)] as const;
+  return [
+    createGooglechatTunnelAudienceGateHookRegistration(gateOptions),
+    createGooglechatTokenPasteHookRegistration(),
+  ] as const;
 }
 
 function withoutUndefinedValues(

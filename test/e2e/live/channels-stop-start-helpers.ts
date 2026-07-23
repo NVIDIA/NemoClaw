@@ -446,8 +446,8 @@ export async function runChannelsStopStartTarget({
     channels: CHANNELS,
   });
 
-  const progress = startChannelsStopStartProgress(AGENT);
-  cleanup.trackDisposable("stop channels stop/start progress", progress.stop);
+  const heartbeat = startChannelsStopStartProgress(AGENT);
+  cleanup.trackDisposable("stop channels stop/start heartbeat", heartbeat.stop);
 
   cleanup.trackGateway(host, "nemoclaw", {
     artifactName: `cleanup-openshell-gateway-destroy-${AGENT}`,

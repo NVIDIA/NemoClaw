@@ -329,16 +329,27 @@ export function ensureMessagingBridgeProfiles(
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
 
   for (const profile of active) {
-    // Idempotent: a fresh onboard registers bridge providers twice — once when
-    // credentials are staged for resume, once during create-plan materialization.
-    // Skip the import when the profile is already registered so the second pass
-    // does not surface OpenShell's "provider profile ... already exists / import
-    // failed" diagnostic. The import and tolerance below stay as a race fallback.
+    // Onboard registers each bridge provider twice: once up front so an
+    // interrupted run can resume, then again during create-plan materialization.
+    // Probe first and skip the re-import so the second pass never hits OpenShell's
+    // "already exists" error. A fresh gateway answers the probe with a harmless
+    // "not found" that suppressOutput hides — only the exit status says whether
+    // the profile already exists.
     const alreadyRegistered = deps.runOpenshell(
       ["provider", "profile", "export", profile.profileId],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
     );
     if (alreadyRegistered.status === 0) continue;
+    // Probe failed for something other than "not found" (gateway down, auth, …):
+    // surface it instead of masking a real problem.
+    const probeDiagnostic = `${bufferOrStringToText(alreadyRegistered.stderr)} ${bufferOrStringToText(
+      alreadyRegistered.stdout,
+    )}`;
+    if (probeDiagnostic.trim() && !/not found/i.test(probeDiagnostic)) {
+      errorLog(`\n  ⚠ Unexpected error probing the ${profile.channelId} bridge provider profile:`);
+      const probeText = compactText(deps.redact(probeDiagnostic));
+      if (probeText) errorLog(`    ${probeText.slice(0, 500)}`);
+    }
 
     const result = deps.runOpenshell(
       ["provider", "profile", "import", "--file", profile.profilePath],
@@ -346,6 +357,7 @@ export function ensureMessagingBridgeProfiles(
     );
     if (result.status === 0) continue;
 
+    // Tolerate a lost race: the probe saw no profile but a concurrent import made it.
     const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
     if (/already exists/i.test(rawDiagnostic)) continue;
 

@@ -19,15 +19,22 @@ export interface TokenPasteField {
   readonly envKey: string;
   readonly label: string;
   readonly help?: string;
+  readonly maskCap?: number;
+  readonly maxTokenAttempts?: number;
   readonly format?: RegExp;
   readonly formatHint?: string;
+  /** Reject-check run after `format` for a rule a regex cannot express (a channel injects one via resolveField); return non-null to reject the value. */
+  readonly validate?: (token: string) => string | null;
 }
 
 export interface TokenPasteHookOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly getCredential?: (key: string) => string | null;
   readonly saveCredential?: (key: string, value: string) => void;
-  readonly prompt?: (question: string, options?: { readonly secret?: boolean }) => Promise<string>;
+  readonly prompt?: (
+    question: string,
+    options?: { readonly secret?: boolean; readonly maskCap?: number },
+  ) => Promise<string>;
   readonly log?: (message: string) => void;
   readonly resolveField?: (
     channelId: string,
@@ -126,23 +133,41 @@ async function resolveTokenValue(
     }
     if (field.help) {
       log("");
-      log(`  ${field.help}`);
+      for (const line of field.help.split("\n")) {
+        log(line ? `  ${line}` : "");
+      }
     }
-    token = normalizeCredentialValue(await prompt(`  ${field.label}: `, { secret: true }));
     source = "prompted";
+    // Default 1 attempt (skip on first invalid — unchanged for other channels);
+    // maxTokenAttempts opts into re-prompts. An empty entry is a deliberate skip
+    // (not a format error), so break out.
+    const maxAttempts = field.maxTokenAttempts ?? 1;
+    for (let attempt = 1; ; attempt += 1) {
+      token = normalizeCredentialValue(
+        await prompt(`  ${field.label}: `, { secret: true, maskCap: field.maskCap }),
+      );
+      if (!token) break;
+      // Accept unless the regex or the field's injected validator (e.g. a JSON check) rejects it.
+      if ((!field.format || field.format.test(token)) && !field.validate?.(token)) break;
+      if (attempt >= maxAttempts) {
+        log(`  ✗ Invalid format. ${field.formatHint || "Check the value and try again."}`);
+        log(formatSkippedInvalidTokenMessage(channelId, output));
+        throw new Error(
+          `Invalid token format for ${field.envKey}. ${
+            field.formatHint || "Check the value and try again."
+          }`,
+        );
+      }
+      log(
+        `  ✗ Invalid format (attempt ${attempt + 1} of ${maxAttempts}). ${
+          field.formatHint || "Please paste it again."
+        }`,
+      );
+    }
   }
   if (!token) {
     log(formatSkippedNoTokenMessage(channelId, output));
     throw new Error(`No token entered for ${field.envKey}.`);
-  }
-  if (field.format && !field.format.test(token)) {
-    log(`  ✗ Invalid format. ${field.formatHint || "Check the token and try again."}`);
-    log(formatSkippedInvalidTokenMessage(channelId, output));
-    throw new Error(
-      `Invalid token format for ${field.envKey}. ${
-        field.formatHint || "Check the token and try again."
-      }`,
-    );
   }
 
   return { token, source };
@@ -183,7 +208,7 @@ function resolveTokenPasteField(
   return manifest ? resolveManifestTokenPasteField(manifest, output) : null;
 }
 
-function resolveManifestTokenPasteField(
+export function resolveManifestTokenPasteField(
   manifest: ChannelManifest,
   output: ChannelHookOutputSpec,
 ): TokenPasteField | null {
@@ -195,6 +220,8 @@ function resolveManifestTokenPasteField(
     envKey: input.envKey,
     label: input.prompt?.label ?? input.envKey,
     help: input.prompt?.help,
+    maskCap: input.maskCap,
+    maxTokenAttempts: input.maxTokenAttempts,
     format: input.formatPattern ? new RegExp(input.formatPattern) : undefined,
     formatHint: input.formatHint,
   };
@@ -225,8 +252,11 @@ function logEnrollmentNotes(
   options: TokenPasteHookOptions,
 ): void {
   const log = options.log ?? ((message: string) => console.log(message));
-  for (const line of manifest?.enrollmentNotes ?? []) {
-    log(`  ${line}`);
+  const notes = manifest?.enrollmentNotes ?? [];
+  if (notes.length === 0) return;
+  log("");
+  for (const line of notes) {
+    log(line ? `  ${line}` : "");
   }
 }
 

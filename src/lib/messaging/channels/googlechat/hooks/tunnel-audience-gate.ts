@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { styleText } from "node:util";
+
 import type {
   MessagingHookHandler,
   MessagingHookOutputMap,
@@ -48,12 +50,21 @@ function audienceOutput(audience: string): { readonly outputs: MessagingHookOutp
 }
 
 function printEndpointInstructions(log: (message: string) => void, audience: string): void {
+  const url = styleText("cyan", audience, { stream: process.stdout });
   log("");
-  log("  ── Google Chat — action required ───────────────────────────────");
-  log("  In Google Cloud Console → Google Chat API → Configuration →");
-  log("  Connection settings, set the HTTP endpoint URL to exactly:");
-  log(`      ${audience}`);
-  log("  (HTTPS, exact match including the path — no trailing slash.)");
+  log("  ┃  GOOGLE CHAT — ACTION REQUIRED");
+  log("  ┃");
+  log("  ┃  1.  Open    Google Cloud Console → Chat API → Configuration");
+  log("  ┃  2.  Select  Connection settings  →  HTTP endpoint URL");
+  log("  ┃  3.  Select  Use a common HTTP endpoint URL for all triggers");
+  log("  ┃  4.  Paste   this exact URL (HTTPS, no trailing slash):");
+  log("  ┃");
+  log(`  ┃      ${url}`);
+  log("  ┃");
+  log("  ┃  HTTPS · exact match · include /googlechat · no trailing slash");
+  log("  ┃");
+  log("  ┃  This URL only forwards POST /googlechat — it doesn't expose your");
+  log("  ┃  dashboard. Open the Control UI at http://127.0.0.1:18789 (localhost).");
   log("");
 }
 
@@ -89,11 +100,29 @@ export function createGooglechatTunnelAudienceGateHook(
     // never touch the cloudflared tunnel in that case. Also covers project-number.
     const existingAudience =
       readString(context.inputs?.audience) || readString(env.GOOGLECHAT_AUDIENCE);
-    if (existingAudience) return audienceOutput(existingAudience);
+    if (existingAudience) {
+      log(`  ✓ Google Chat webhook audience already set: ${existingAudience}`);
+      return audienceOutput(existingAudience);
+    }
 
     // Only the app-url path derives its audience from a public webhook URL. Any
-    // other audienceType (e.g. project-number) is entered via the config prompt.
-    if (audienceType !== "app-url") return {};
+    // other audienceType (e.g. project-number) is entered here — the gate is the
+    // single audience authority (audience is not a config-prompt input).
+    if (audienceType !== "app-url") {
+      const promptAudience = requireOption(options.prompt, "prompt");
+      const entered = readString(
+        await promptAudience("  Google Chat webhook audience (GCP project number): "),
+      );
+      if (!entered) {
+        log("  Skipped googlechat (no webhook audience provided)");
+        throw new Error(
+          `No Google Chat webhook audience provided for audienceType ${audienceType}.`,
+        );
+      }
+      env.GOOGLECHAT_AUDIENCE = entered;
+      log(`  ✓ Google Chat webhook audience set: ${entered}`);
+      return audienceOutput(entered);
+    }
 
     const readTunnelState = requireOption(options.readTunnelState, "readTunnelState");
     const getTunnelUrl = requireOption(options.getTunnelUrl, "getTunnelUrl");
@@ -134,9 +163,7 @@ export function createGooglechatTunnelAudienceGateHook(
     // path is only reached interactively. Mirrors promptYesNoOrDefault: default
     // No, y/yes wins.
     const prompt = requireOption(options.prompt, "prompt");
-    const answer = await prompt(
-      "  Have you set this as the HTTP endpoint URL in Google Cloud Console? [y/N]: ",
-    );
+    const answer = await prompt("  Set and saved it in the Console? [y/N] (N skips Google Chat): ");
     if (!isAffirmative(answer)) {
       if (startedByUs) stopTunnel();
       log("  Skipped googlechat (HTTP endpoint URL not set in Google Cloud Console)");
@@ -144,6 +171,7 @@ export function createGooglechatTunnelAudienceGateHook(
     }
 
     env.GOOGLECHAT_AUDIENCE = audience;
+    log(`  ✓ Google Chat webhook audience set: ${audience}`);
     return audienceOutput(audience);
   };
 }
