@@ -29,6 +29,7 @@ import {
   cgroupBelongsToUnit,
   describeGatewayOwnerForError,
   evaluateGatewayAttachment,
+  evaluateGatewayAttachmentConfiguration,
   type GatewayAttachmentProbe,
   type GatewayOwner,
   GatewayOwnershipError,
@@ -249,6 +250,10 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
    * gateway it does not own. Read-only: this runs before any effect.
    */
   async function probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe> {
+    const configuration = evaluateGatewayAttachmentConfiguration(owner, deps.gatewayPort());
+    if (!configuration.ok) {
+      throw new GatewayOwnershipError(configuration.code, configuration.message, owner);
+    }
     const portCheck = await deps.checkGatewayPortAvailable();
     const httpReady = await waitForDeclaredGatewayHttpReady(owner);
     const supervisorActive = isSupervisorUnitActive(owner);

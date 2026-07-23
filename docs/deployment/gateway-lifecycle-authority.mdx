@@ -75,7 +75,7 @@ The declaration uses the following fields.
 
 The endpoint port must match `NEMOCLAW_GATEWAY_PORT`.
 When the endpoint omits a port, `http` resolves to port `80` and `https` resolves to port `443` for this comparison.
-Onboarding rejects a mismatch because validating one endpoint and operating a different gateway would break the authority boundary.
+Onboarding rejects a mismatch before making a health request or inspecting the host listener because validating one endpoint and operating a different gateway would break the authority boundary.
 
 <Note>
 The declaration is versioned and secret-free.
@@ -142,6 +142,19 @@ The record includes the canonical gateway name and port, mode, source, endpoint,
 Resume resolves the current authority again and compares the complete record with the checkpoint.
 If any value changes, including the per-port gateway binding, resume fails before gateway effects and directs you to start a fresh onboarding run.
 A completed gateway step does not bypass listener, supervisor, identity, health, registration, or checkpoint validation.
+
+## Inspect the selected authority
+
+Run `nemoclaw status` to see the management mode and redacted owner identity selected by the last onboarding run.
+The JSON form includes the same secret-free fields under `gatewayAuthority`.
+
+```bash
+nemoclaw status
+nemoclaw status --json
+```
+
+`nemoclaw debug` also records `gatewayAuthority` in `onboard-session-summary.txt`.
+The status and debug views omit the external state directory and never include credential values.
 
 ## Keep external lifecycle paths inert
 

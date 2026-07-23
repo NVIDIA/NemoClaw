@@ -72,6 +72,23 @@ export interface GatewayOwner {
   requiredCapabilities: readonly GatewayCapability[];
 }
 
+export interface GatewayOwnerSupervisorDescription extends JsonObject {
+  kind: GatewaySupervisorDeclaration["kind"];
+  serviceName: string;
+  execPath: string;
+}
+
+/** Secret-free owner shape exposed by status, diagnostics, and machine events. */
+export interface GatewayOwnerDescription extends JsonObject {
+  gatewayName: string;
+  gatewayPort: number;
+  mode: GatewayManagementMode;
+  source: GatewayOwnerSource;
+  endpoint: string | null;
+  supervisor: GatewayOwnerSupervisorDescription | null;
+  requiredCapabilities: string[];
+}
+
 /** Lifecycle effects whose legality depends on who owns the gateway. */
 export type GatewayLifecycleEffect =
   | "start"
@@ -303,34 +320,27 @@ export type GatewayAttachmentResult =
   | { ok: false; code: GatewayOwnershipFailureCode; message: string };
 
 /**
- * Decide whether NemoClaw may attach to an externally supervised gateway.
- *
- * Every failure here must be raised before provider, policy, sandbox, or
- * registry mutation: an ambiguous or multiply owned gateway is precisely the
- * state that must not be papered over by starting another one.
+ * Reject declaration-only attachment failures before any host or network
+ * probe. Runtime evidence is meaningful only after the declaration names the
+ * gateway this process will actually use.
  */
-export function evaluateGatewayAttachment(
+export function evaluateGatewayAttachmentConfiguration(
   owner: GatewayOwner,
-  probe: GatewayAttachmentProbe,
+  gatewayPort: number,
 ): GatewayAttachmentResult {
   if (!isExternallySupervised(owner)) {
     return { ok: true, owner };
   }
 
-  const supervisorName = owner.supervisor?.serviceName ?? "the declared supervisor";
-
-  // Configuration errors are reported before any runtime observation: probing
-  // is only meaningful once we know the declaration describes the gateway this
-  // process actually operates on.
   const declaredPort = declaredEndpointPort(owner.endpoint);
-  if (declaredPort !== null && declaredPort !== probe.gatewayPort) {
+  if (declaredPort !== null && declaredPort !== gatewayPort) {
     return {
       ok: false,
       code: "endpoint_port_mismatch",
       message:
         `The declared gateway endpoint uses port ${declaredPort}, but this NemoClaw process operates ` +
-        `the gateway on port ${probe.gatewayPort}. Attaching would validate one gateway and then use ` +
-        `another. Point the declaration at port ${probe.gatewayPort}, or re-run with ` +
+        `the gateway on port ${gatewayPort}. Attaching would validate one gateway and then use ` +
+        `another. Point the declaration at port ${gatewayPort}, or re-run with ` +
         `NEMOCLAW_GATEWAY_PORT=${declaredPort}.`,
     };
   }
@@ -348,6 +358,29 @@ export function evaluateGatewayAttachment(
         `it cannot drive as declared.`,
     };
   }
+
+  return { ok: true, owner };
+}
+
+/**
+ * Decide whether NemoClaw may attach to an externally supervised gateway.
+ *
+ * Every failure here must be raised before provider, policy, sandbox, or
+ * registry mutation: an ambiguous or multiply owned gateway is precisely the
+ * state that must not be papered over by starting another one.
+ */
+export function evaluateGatewayAttachment(
+  owner: GatewayOwner,
+  probe: GatewayAttachmentProbe,
+): GatewayAttachmentResult {
+  if (!isExternallySupervised(owner)) {
+    return { ok: true, owner };
+  }
+
+  const supervisorName = owner.supervisor?.serviceName ?? "the declared supervisor";
+
+  const configuration = evaluateGatewayAttachmentConfiguration(owner, probe.gatewayPort);
+  if (!configuration.ok) return configuration;
 
   if (probe.listenerPids.length > 1) {
     return {
@@ -469,7 +502,15 @@ export function evaluateGatewayAttachment(
  * endpoint still goes through URL redaction so this stays safe if the contract
  * ever widens.
  */
-export function describeGatewayOwner(owner: GatewayOwner): JsonObject {
+export function describeGatewayOwner(owner: {
+  gatewayName: string;
+  gatewayPort: number;
+  mode: GatewayManagementMode;
+  source: GatewayOwnerSource;
+  endpoint: string | null;
+  supervisor: GatewaySupervisorDeclaration | null;
+  requiredCapabilities: readonly string[];
+}): GatewayOwnerDescription {
   return {
     gatewayName: owner.gatewayName,
     gatewayPort: owner.gatewayPort,

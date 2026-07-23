@@ -154,6 +154,34 @@ describe("gateway host runtime ownership", () => {
 });
 
 describe("gateway host runtime attachment probe", () => {
+  it("rejects a mismatched endpoint port before any host or HTTP probe (#6576)", async () => {
+    declareExternalSupervision({
+      ...DECLARATION,
+      endpoint: "http://127.0.0.1:9443",
+    });
+    const checkGatewayPortAvailable = vi.fn().mockResolvedValue(OCCUPIED_PORT);
+    const probeGatewayHttpReady = vi.fn().mockResolvedValue(true);
+    const getGatewayPortListenerRawScan = vi.fn(() => ({
+      pids: [SYSTEMD_GATEWAY_PID],
+      complete: true,
+    }));
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        checkGatewayPortAvailable,
+        getGatewayPortListenerRawScan,
+        probeGatewayHttpReady,
+      }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    await expect(runtime.probeGatewayAttachment(owner)).rejects.toMatchObject({
+      code: "endpoint_port_mismatch",
+    });
+    expect(checkGatewayPortAvailable).not.toHaveBeenCalled();
+    expect(probeGatewayHttpReady).not.toHaveBeenCalled();
+    expect(getGatewayPortListenerRawScan).not.toHaveBeenCalled();
+  });
+
   it("attaches to a real systemd-supervised gateway listener (#6576)", async () => {
     declareExternalSupervision();
     const runtime = createGatewayHostRuntime(createDeps());

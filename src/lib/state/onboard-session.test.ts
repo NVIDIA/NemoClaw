@@ -1421,6 +1421,39 @@ describe("onboard session", () => {
     expect(summary.resumable).toBe(false);
   });
 
+  it("summarizes the checkpointed gateway authority without its state directory", () => {
+    const selected = session.createSession({ sandboxName: "my-assistant" });
+    selected.checkpoint = {
+      ...selected.checkpoint!,
+      gatewayAuthority: {
+        kind: "selected",
+        value: {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: "http://127.0.0.1:8080",
+          stateDir: "/var/lib/openshell/private-gateway-state",
+          supervisor: {
+            kind: "systemd-system",
+            serviceName: "openshell-gateway.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+          requiredCapabilities: ["gateway.health"],
+        },
+      },
+    };
+
+    const summary = requireDebugSummary(session.summarizeForDebug(selected));
+
+    expect(summary.gatewayAuthority).toMatchObject({
+      mode: "externally-supervised",
+      source: "declared",
+      supervisor: { serviceName: "openshell-gateway.service" },
+    });
+    expect(JSON.stringify(summary.gatewayAuthority)).not.toContain("private-gateway-state");
+  });
+
   it("keeps debug summaries redacted when failures were sanitized", () => {
     session.saveSession(session.createSession({ sandboxName: "my-assistant" }));
     markStepFailedLegacy(
