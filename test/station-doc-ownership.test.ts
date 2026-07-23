@@ -56,7 +56,7 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("does not match the date against an exact build");
     expect(stationPreparation).toContain(
-      "full Station Express end-to-end qualification for that release family is pending",
+      "Full Station Express end-to-end qualification for the no-OTA DGX OS `7.6.x` profile is pending",
     );
     expect(stationPreparation).toContain(
       "A resident `packagekitd` process alone does not block stock DGX OS",
@@ -68,7 +68,7 @@ describe("DGX Station documentation ownership", () => {
     expect(quickstart).not.toContain("--force-station-install");
     expect(platformSupport).toContain("explicit temporary metadata override");
     expect(platformSupport).toContain(
-      "full Station Express end-to-end qualification for `7.6.x` is pending",
+      "Full Station Express end-to-end qualification for the accepted no-OTA DGX OS `7.6.x` profile is pending",
     );
     expect(platformSupport).toContain(
       "Physical validation on one DGX Station GB300 covers generic Ubuntu 24.04 ARM64",

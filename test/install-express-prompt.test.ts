@@ -1399,7 +1399,6 @@ printf 'PROMPT_REACHED\n'
       },
     );
     const output = `${result.stdout}${result.stderr}`;
-
     expect(result.status, output).not.toBe(0);
     expect(output).toMatch(
       /outside the (recognized Station Express release-metadata|validated Station GB300 express) boundary/,
@@ -1435,7 +1434,8 @@ printf 'PROMPT_REACHED\n'
     expect(result.status, output).not.toBe(0);
     expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
-    expect(output).toContain("stock DGX OS 7.2.0, 7.4.0, 7.5.0, or 7.6.x");
+    expect(output).toContain("OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0");
+    expect(output).toContain("no-OTA DGX OS 7.6.x NVIDIA DGX GB300WS profile");
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
