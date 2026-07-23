@@ -549,6 +549,36 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
+  it("keeps both absent-sandbox listings read-only in --check mode (#7279)", async () => {
+    const harness = createRecoveryHarness(["my-assistant"], {
+      liveOutput: "other-box Ready",
+      latestBackup: null,
+      staleNames: ["my-assistant"],
+    });
+
+    await expect(harness.upgradeSandboxes({ check: true })).resolves.toBeUndefined();
+
+    expect(harness.readOnlyListSpy).toHaveBeenCalledTimes(2);
+    expect(harness.readOnlyListSpy).toHaveBeenNthCalledWith(
+      1,
+      {
+        action: "checking sandbox upgrade state",
+        command: "nemoclaw upgrade-sandboxes",
+      },
+      "nemoclaw",
+    );
+    expect(harness.readOnlyListSpy).toHaveBeenNthCalledWith(
+      2,
+      {
+        action: "confirming sandboxes absent from the selected gateway",
+        command: "nemoclaw upgrade-sandboxes",
+      },
+      "nemoclaw",
+    );
+    expect(harness.liveListSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+  });
+
   it("also flags a stale own-gateway orphan alongside the generic skip line (#6520)", async () => {
     // The versioned-reinstall repro (v0.0.77 sandbox, v0.0.76 tag): the
     // sandbox is stale+stopped, prints the generic skip line, and must ALSO
