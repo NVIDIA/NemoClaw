@@ -431,8 +431,10 @@ When GitHub emits a generic cancellation instead, the controller requires
 exactly one failure annotation whose message is `The operation was canceled.`
 The annotation must use `.github`, equal start and end lines, null columns, and
 empty title and detail fields. Every annotation must use a blob URL bound to the
-same workflow commit. This permits a trusted non-failure notice beside the sole
-failure annotation.
+same workflow commit. The controller accepts at most 20 annotations, bounds
+each text field, and limits the normalized annotation evidence to 64 KiB. This
+permits trusted bounded non-failure notices beside the sole failure annotation
+without allowing annotation output to exhaust the coordinator.
 
 The generic-cancellation fallback also authenticates the job log. The
 controller requests the GitHub job-log endpoint and accepts only its signed
@@ -470,9 +472,10 @@ The controller reserves a distinct replacement coordination check before
 dispatch so the native observer can follow the retry without mutating completed
 attempt-one history. Attempt two uses separate private state and evidence paths.
 Its result is terminal and cannot authorize another automatic retry. If the
-retry controller stops before or after reservation, its always-run cleanup
-removes the retry authorization from the source or closes the reserved
-replacement. This prevents a retryable or active check from remaining.
+retry setup fails, is cancelled, or is skipped before reservation, its
+always-run cleanup removes the retry authorization from the source. If it stops
+after reservation, cleanup closes the reserved replacement. This prevents a
+retryable or active check from remaining.
 
 Each evidence download has its own 10-minute limit and 30-second process-kill
 grace. Two 140-minute waits plus both download windows consume 301 minutes,
