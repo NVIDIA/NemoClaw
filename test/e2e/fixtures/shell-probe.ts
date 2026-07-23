@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
-
 import type { ArtifactSink } from "./artifacts.ts";
+import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { superviseChild } from "./shell/supervisor.ts";
 import type { TrustedShellCommand } from "./shell/trusted-command.ts";
 
@@ -58,6 +57,7 @@ export interface ShellProbeResult {
 
 export interface ShellProbeDeps {
   artifacts: ArtifactSink;
+  progress: ChildProcessProgress;
   redact: (text: string, extraValues?: string[]) => string;
   signal: AbortSignal;
 }
@@ -151,11 +151,13 @@ function redactTruncatedSecretPrefix(text: string, redactionValues: string[]): s
 
 export class ShellProbe {
   private readonly artifacts: ArtifactSink;
+  private readonly progress: ChildProcessProgress;
   private readonly redact: (text: string, extraValues?: string[]) => string;
   private readonly signal: AbortSignal;
 
   constructor(deps: ShellProbeDeps) {
     this.artifacts = deps.artifacts;
+    this.progress = deps.progress;
     this.redact = deps.redact;
     this.signal = deps.signal;
   }
@@ -191,7 +193,8 @@ export class ShellProbe {
         : redacted;
     };
     const redactedCommand = [command, ...args].map(redactProbeText);
-    const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
+    const activityName = safeArtifactBase(redactProbeText(options.artifactName ?? command));
+    const artifactBase = `shell/${activityName}`;
     const writeArtifacts = async (
       result: Omit<ShellProbeResult, "artifacts">,
     ): Promise<ShellProbeResult["artifacts"]> => ({
@@ -203,11 +206,17 @@ export class ShellProbe {
     const stdout = createTextCapture(options.captureLimitBytes);
     const stderr = createTextCapture(options.captureLimitBytes);
     const startedAtMs = Date.now();
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      detached: true,
-      env: { ...(options.env ?? {}) },
-      stdio: ["ignore", "pipe", "pipe"],
+    const commandOutputObserver =
+      options.onOutput === this.progress.onOutput ? undefined : options.onOutput;
+    const child = spawnObservedChild(command, args, {
+      activityLabel: `command: ${activityName}`,
+      progress: this.progress,
+      spawn: {
+        cwd: options.cwd,
+        detached: true,
+        env: { ...(options.env ?? {}) },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     });
     const supervised = await superviseChild(child, {
       timeoutMs,
@@ -216,7 +225,7 @@ export class ShellProbe {
       onStdout: (chunk) => {
         stdout.append(chunk);
         try {
-          options.onOutput?.({ stream: "stdout", atMs: Date.now() });
+          commandOutputObserver?.({ stream: "stdout", atMs: Date.now() });
         } catch {
           // Test instrumentation must not change command execution.
         }
@@ -224,7 +233,7 @@ export class ShellProbe {
       onStderr: (chunk) => {
         stderr.append(chunk);
         try {
-          options.onOutput?.({ stream: "stderr", atMs: Date.now() });
+          commandOutputObserver?.({ stream: "stderr", atMs: Date.now() });
         } catch {
           // Test instrumentation must not change command execution.
         }

@@ -20,9 +20,31 @@ function runStep(workflow: Workflow, jobId: (typeof JOBS)[number]): WorkflowStep
   return workflow.jobs[jobId]!.steps.find((step) => step.name?.startsWith("Run Hermes"))!;
 }
 
+function swapStep(workflow: Workflow, jobId: (typeof JOBS)[number]): WorkflowStep {
+  return workflow.jobs[jobId]!.steps.find(
+    (step) => step.name === "Add swap for Hermes image rebuild",
+  )!;
+}
+
 describe("runner-pressure E2E workflow boundary (#7146)", () => {
   it("accepts the canonical Hermes heartbeat and terminal-consumer wiring", () => {
     expect(validateRunnerPressureWorkflow(loadWorkflow())).toEqual([]);
+  });
+
+  it.each(
+    JOBS,
+  )("provisions bounded swap before %s starts its memory-heavy image build", (jobId) => {
+    const workflow = loadWorkflow();
+    const jobSteps = workflow.jobs[jobId]!.steps;
+    const provision = swapStep(workflow, jobId);
+    const run = runStep(workflow, jobId);
+
+    expect(provision).toBeDefined();
+    expect(jobSteps.indexOf(provision)).toBeLessThan(jobSteps.indexOf(run));
+    expect(provision.run).toContain("fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap");
+    expect(provision.run).toContain("chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap");
+    expect(provision.run).toContain("mkswap /mnt/nemoclaw-hermes-rebuild.swap");
+    expect(provision.run).toContain("swapon /mnt/nemoclaw-hermes-rebuild.swap");
   });
 
   it.each([

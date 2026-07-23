@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../fixtures/clients/command.ts";
+import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
@@ -35,6 +36,7 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_OPENCLAW_VERSION must use the YYYY.M.D release format; got ${fixture.openclawVersion}`,
     );
   }
+  reviewedOldInstallerProfile(fixture);
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];
@@ -57,6 +59,17 @@ export function currentGatewayUpgradeInstallerArgs(
   return options.interactive ? [installer] : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
 }
 
+export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
+  for (const candidate of [
+    env.NEMOCLAW_CURRENT_NEMOCLAW_REF,
+    env.NEMOCLAW_E2E_EXPECTED_SHA,
+    env.GITHUB_SHA,
+  ]) {
+    if (candidate?.trim()) return candidate.trim();
+  }
+  return "HEAD";
+}
+
 export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
   nemoclawVersion: string | undefined;
   fromDockerfile: null | undefined;
@@ -67,6 +80,8 @@ export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
       return { nemoclawVersion: undefined, fromDockerfile: undefined };
     case "v0.0.74":
       return { nemoclawVersion: "0.0.74", fromDockerfile: null };
+    case "v0.0.89":
+      return { nemoclawVersion: "0.0.89", fromDockerfile: null };
     default:
       throw new Error(`Unsupported gateway-upgrade registry fixture: ${nemoclawRef}`);
   }

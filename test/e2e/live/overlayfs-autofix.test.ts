@@ -136,7 +136,19 @@ async function waitForDocker(host: HostCliClient): Promise<boolean> {
 
 test.skipIf(overlayfsAutofixNotInRuntimePath())(
   "overlayfs-autofix: patched cluster image handles Docker containerd overlayfs",
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  {
+    timeout: TEST_TIMEOUT_MS * 3,
+    meta: {
+      e2ePhases: [
+        "confirm Docker overlayfs eligibility",
+        "enable containerd snapshotter mode",
+        "install with the overlayfs auto-fix enabled",
+        "confirm patched cluster image reuse",
+        "reproduce the failure with the auto-fix disabled",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     assertTestOwnedSandboxName();
 
     await artifacts.writeJson("contract.json", {
@@ -243,6 +255,7 @@ test.skipIf(overlayfsAutofixNotInRuntimePath())(
       sandboxName: SANDBOX_NAME,
     });
 
+    progress.phase("enable containerd snapshotter mode");
     const backup = await bash(
       host,
       `if [ -f ${DAEMON_JSON} ]; then sudo cp ${DAEMON_JSON} ${JSON.stringify(daemonBackup)}; else touch ${JSON.stringify(daemonAbsentMarker)}; fi`,
@@ -288,6 +301,7 @@ sudo systemctl restart docker`,
 
     await preCleanup(host, apiKey, "phase-2-pre-cleanup");
 
+    progress.phase("install with the overlayfs auto-fix enabled");
     const positive = await host.command("bash", ["install.sh", "--non-interactive"], {
       artifactName: "phase-3-install-autofix-on",
       cwd: process.cwd(),
@@ -340,6 +354,7 @@ sudo systemctl restart docker`,
     });
     expect(text(gatewayLogs)).not.toMatch(/overlayfs.*snapshotter cannot be enabled/i);
 
+    progress.phase("confirm patched cluster image reuse");
     const beforeCreated = await bash(
       host,
       `docker inspect --format '{{.Created}}' ${JSON.stringify(patchedTag)}`,
@@ -386,6 +401,7 @@ sudo systemctl restart docker`,
     expect(afterCreated.exitCode).toBe(0);
     expect(afterCreated.stdout.trim()).toBe(beforeCreated.stdout.trim());
 
+    progress.phase("reproduce the failure with the auto-fix disabled");
     await preCleanup(host, apiKey, "phase-5-negative-pre-cleanup");
     const negative = await host.command(
       "timeout",
@@ -430,5 +446,4 @@ sudo systemctl restart docker`,
         );
     }
   },
-  TEST_TIMEOUT_MS * 3,
 );

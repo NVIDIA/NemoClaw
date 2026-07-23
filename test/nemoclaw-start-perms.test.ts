@@ -594,15 +594,29 @@ describe("nemoclaw-start mutable config reclaim", () => {
         expect(fs.statSync(configDir).uid.toString()).toBe(nobodyUid);
         expect(fs.statSync(configDir).gid.toString()).toBe(nobodyGid);
 
-        const writeCheck = spawnSync("setpriv", [
-          `--reuid=${nobodyUid}`,
-          `--regid=${nobodyGid}`,
-          "--clear-groups",
-          "--",
-          "touch",
-          path.join(configDir, "nemoclaw-write-check"),
-        ]);
-        expect(writeCheck.status).toBe(0);
+        const tempRoot = path.dirname(root);
+        const tempRootMode = mode(tempRoot);
+        const writeCheck = (() => {
+          // Vitest's shared temp root is private; expose traversal only for this peer probe.
+          fs.chmodSync(tempRoot, tempRootMode | 0o001);
+          try {
+            return spawnSync(
+              "setpriv",
+              [
+                `--reuid=${nobodyUid}`,
+                `--regid=${nobodyGid}`,
+                "--clear-groups",
+                "--",
+                "touch",
+                path.join(configDir, "nemoclaw-write-check"),
+              ],
+              { encoding: "utf-8" },
+            );
+          } finally {
+            fs.chmodSync(tempRoot, tempRootMode);
+          }
+        })();
+        expect(writeCheck.status, writeCheck.stderr).toBe(0);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
