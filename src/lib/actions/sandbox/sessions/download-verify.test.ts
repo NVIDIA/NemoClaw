@@ -152,7 +152,7 @@ describe("assertDownloadArtifactExists", () => {
     ).not.toThrow();
   });
 
-  it("throws when nothing was written (the #7367 exit-0 race)", () => {
+  it("throws when nothing was written, the exit-0 race (#7367)", () => {
     const target = path.join(dir, "missing");
     expect(() =>
       assertDownloadArtifactExists(target, { remoteLabel: "/sandbox/x", sandboxName: "alpha" }),
