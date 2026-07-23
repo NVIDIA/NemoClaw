@@ -237,6 +237,52 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     expect(pairingMocks.establish).toHaveBeenCalledWith("beta");
   });
 
+  it("fails with repair guidance when restored gateway pairing cannot be verified", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+          }
+        : null,
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["user.md"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    pairingMocks.establish.mockImplementationOnce(() => {
+      throw new Error("authenticated gateway verification failed");
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true }),
+    ).rejects.toMatchObject({
+      exitCode: 1,
+      lines: [
+        "State restored into 'beta', but gateway pairing could not be verified.",
+        "Run `nemoclaw beta connect` to retry pairing before running an agent.",
+        expect.stringContaining("authenticated gateway verification failed"),
+      ],
+    });
+  });
+
   it("leaves the working gateway credentials untouched on a self-restore", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });

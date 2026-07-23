@@ -1101,7 +1101,16 @@ async function runSnapshotRestoreUnlocked(
     reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
   });
   if (isCrossSandboxRestore) {
-    establishRestoredSandboxGatewayPairing(targetSandbox);
+    try {
+      establishRestoredSandboxGatewayPairing(targetSandbox);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new SnapshotCommandError([
+        `State restored into '${targetSandbox}', but gateway pairing could not be verified.`,
+        `Run \`${CLI_NAME} ${targetSandbox} connect\` to retry pairing before running an agent.`,
+        `Details: ${detail}`,
+      ]);
+    }
   }
 }
 
