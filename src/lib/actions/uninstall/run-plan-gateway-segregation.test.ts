@@ -823,15 +823,17 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           rmSync: fs.rmSync,
           run: (_command, args) => {
             openshellCalls.push(args);
-            if (args[0] !== "gateway" || args[1] !== "list") return ok();
-            gatewayListCalls += 1;
-            return ok(
-              JSON.stringify(
-                gatewayListCalls === 1
-                  ? [{ name: "nemoclaw" }]
-                  : [{ name: "nemoclaw" }, { name: "nemoclaw-9124" }],
-              ),
-            );
+            const isGatewayList = args[0] === "gateway" && args[1] === "list";
+            gatewayListCalls += isGatewayList ? 1 : 0;
+            return isGatewayList
+              ? ok(
+                  JSON.stringify(
+                    gatewayListCalls === 1
+                      ? [{ name: "nemoclaw" }]
+                      : [{ name: "nemoclaw" }, { name: "nemoclaw-9124" }],
+                  ),
+                )
+              : ok();
           },
           runDocker: () => ok(""),
           error: (line) => warnings.push(line),
