@@ -19,12 +19,17 @@ function isRfc3339DateTime(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(
     value,
   );
-  if (!match) return false;
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  return month >= 1 && month <= 12 && day >= 1 && day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const [, yearText = "0", monthText = "0", dayText = "0"] = match ?? [];
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  return (
+    match !== null &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= new Date(Date.UTC(year, month, 0)).getUTCDate()
+  );
 }
 
 async function createValidator() {
