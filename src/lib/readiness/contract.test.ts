@@ -17,7 +17,10 @@ async function readJson(path: string): Promise<unknown> {
 
 async function createValidator() {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
-  ajv.addFormat("date-time", { type: "string", validate: (value: string) => !Number.isNaN(Date.parse(value)) });
+  ajv.addFormat("date-time", {
+    type: "string",
+    validate: (value: string) => !Number.isNaN(Date.parse(value)),
+  });
   return ajv.compile((await readJson(schemaPath)) as AnySchema);
 }
 
