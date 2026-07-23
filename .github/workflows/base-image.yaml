@@ -29,9 +29,11 @@ on:
       - "agents/langchain-deepagents-code/requirements.lock"
       - "agents/openclaw/mcporter-runtime/package.json"
       - "agents/openclaw/mcporter-runtime/package-lock.json"
+      - "ci/npm-audit-exceptions.json"
       # Dockerfile.base validates min_openclaw_version from this file at build time.
       - "nemoclaw-blueprint/blueprint.yaml"
       - "scripts/lib/openclaw-npm-remediation.mts"
+      - "scripts/lib/reviewed-npm-audit.mts"
       - "scripts/lib/reviewed-npm-archive.mts"
       - "scripts/checks/node-tar-image-scan.mts"
       - "scripts/patch-bundled-npm-tar.mts"
