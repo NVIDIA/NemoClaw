@@ -9,15 +9,12 @@ import type { ChildProcess } from "node:child_process";
  *
  * Spec ownership: detached process-group cleanup, SIGTERM -> SIGKILL
  * escalation, timeout enforcement, and AbortSignal handling are
- * FIXTURE INFRASTRUCTURE. Every TS spawn site delegates here so the
- * cleanup contract stays in one place. Callers keep their own spawn()
- * call so per-site argv contracts (literal `bash -c` scripts with
- * positional argv, host-CLI argv arrays, trusted-command descriptors)
- * and any CodeQL suppression markers stay attached to the literal
- * spawn line that actually performs the syscall.
+ * FIXTURE INFRASTRUCTURE. The shared observed-child boundary owns spawn,
+ * activity, and timestamp-only output reporting; callers that need bounded
+ * command completion hand its child to this supervisor immediately.
  *
  * Contract:
- *   - The caller spawns the child with `detached: true` so the
+ *   - The observed-child boundary spawns with `detached: true` so the
  *     supervisor can target the whole process group when delivering
  *     signals. Without it, bash ignores SIGTERM until its current
  *     foreground command (e.g. `sleep`) returns, so timeouts never
