@@ -22,11 +22,15 @@ vi.mock("../../lib/readiness/index", () => ({
 
 import HostProbeCommand from "./probe";
 
+function throwSchemaErrors(errors: unknown): never {
+  throw new Error(JSON.stringify(errors));
+}
+
 function assertSchemaValid(value: unknown): void {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   ajv.addFormat("date-time", true);
   const validate = ajv.compile(systemReadinessSchema as AnySchema);
-  if (!validate(value)) throw new Error(JSON.stringify(validate.errors));
+  validate(value) || throwSchemaErrors(validate.errors);
 }
 
 function report(
