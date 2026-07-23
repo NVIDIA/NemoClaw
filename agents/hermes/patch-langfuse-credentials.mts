@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url";
  *
  * Remove this patch when the pinned Hermes release natively accepts exact,
  * same-name OpenShell placeholders while retaining its raw-key prefix checks.
+ * Issue #7446 tracks that removal condition.
  */
 const DEFAULT_PLUGIN_PATH = "/opt/hermes/plugins/observability/langfuse/__init__.py";
 
@@ -51,6 +52,8 @@ _LANGFUSE_OPENSHELL_KEYS: Dict[str, str] = {
     if value.startswith(expected):
         return None
     openshell_key = _LANGFUSE_OPENSHELL_KEYS.get(env_name)
+    # Keep the revision bound aligned with NemoClaw's OpenShell credential
+    # observation contract in mcp-bridge-provider-readiness.ts.
     if openshell_key and re.fullmatch(
         rf"openshell:resolve:env:(?:v[0-9]{{1,20}}_)?{re.escape(openshell_key)}",
         value,
