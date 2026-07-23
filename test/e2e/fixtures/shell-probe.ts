@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
-
 import type { ArtifactSink } from "./artifacts.ts";
+import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { superviseChild } from "./shell/supervisor.ts";
 import type { TrustedShellCommand } from "./shell/trusted-command.ts";
 
@@ -58,12 +57,9 @@ export interface ShellProbeResult {
 
 export interface ShellProbeDeps {
   artifacts: ArtifactSink;
+  progress: ChildProcessProgress;
   redact: (text: string, extraValues?: string[]) => string;
   signal: AbortSignal;
-  /** Default timestamp-only observer applied to every command in this test. */
-  onOutput?: (event: ShellProbeOutputEvent) => void;
-  /** Content-free activity boundary applied to every command in this test. */
-  onActivity?: (label: string) => (() => void) | void;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -155,17 +151,15 @@ function redactTruncatedSecretPrefix(text: string, redactionValues: string[]): s
 
 export class ShellProbe {
   private readonly artifacts: ArtifactSink;
+  private readonly progress: ChildProcessProgress;
   private readonly redact: (text: string, extraValues?: string[]) => string;
   private readonly signal: AbortSignal;
-  private readonly onOutput?: (event: ShellProbeOutputEvent) => void;
-  private readonly onActivity?: (label: string) => (() => void) | void;
 
   constructor(deps: ShellProbeDeps) {
     this.artifacts = deps.artifacts;
+    this.progress = deps.progress;
     this.redact = deps.redact;
     this.signal = deps.signal;
-    this.onOutput = deps.onOutput;
-    this.onActivity = deps.onActivity;
   }
 
   async run(
@@ -212,84 +206,68 @@ export class ShellProbe {
     const stdout = createTextCapture(options.captureLimitBytes);
     const stderr = createTextCapture(options.captureLimitBytes);
     const startedAtMs = Date.now();
-    let finishActivity: (() => void) | undefined;
-    try {
-      finishActivity = this.onActivity?.(`command: ${activityName}`) ?? undefined;
-    } catch {
-      // Test instrumentation must not change command execution.
-    }
-    const finishActivityBestEffort = () => {
-      try {
-        finishActivity?.();
-      } catch {
-        // Test instrumentation must not change command execution.
-      }
-    };
-    const observeOutput = (event: ShellProbeOutputEvent) => {
-      try {
-        this.onOutput?.(event);
-      } catch {
-        // Test instrumentation must not change command execution.
-      }
-      if (options.onOutput === this.onOutput) return;
-      try {
-        options.onOutput?.(event);
-      } catch {
-        // Test instrumentation must not change command execution.
-      }
-    };
-    try {
-      const child = spawn(command, args, {
+    const commandOutputObserver =
+      options.onOutput === this.progress.onOutput ? undefined : options.onOutput;
+    const child = spawnObservedChild(command, args, {
+      activityLabel: `command: ${activityName}`,
+      progress: this.progress,
+      spawn: {
         cwd: options.cwd,
         detached: true,
         env: { ...(options.env ?? {}) },
         stdio: ["ignore", "pipe", "pipe"],
-      });
-      const supervised = await superviseChild(child, {
-        timeoutMs,
-        killGraceMs,
-        signal: this.signal,
-        onStdout: (chunk) => {
-          stdout.append(chunk);
-          observeOutput({ stream: "stdout", atMs: Date.now() });
-        },
-        onStderr: (chunk) => {
-          stderr.append(chunk);
-          observeOutput({ stream: "stderr", atMs: Date.now() });
-        },
-      });
+      },
+    });
+    const supervised = await superviseChild(child, {
+      timeoutMs,
+      killGraceMs,
+      signal: this.signal,
+      onStdout: (chunk) => {
+        stdout.append(chunk);
+        try {
+          commandOutputObserver?.({ stream: "stdout", atMs: Date.now() });
+        } catch {
+          // Test instrumentation must not change command execution.
+        }
+      },
+      onStderr: (chunk) => {
+        stderr.append(chunk);
+        try {
+          commandOutputObserver?.({ stream: "stderr", atMs: Date.now() });
+        } catch {
+          // Test instrumentation must not change command execution.
+        }
+      },
+    });
 
-      const redactedStdout = renderCapturedText(stdout);
-      const redactedStderr = renderCapturedText(stderr);
-      const durationMs = Date.now() - startedAtMs;
-      if (supervised.spawnError) {
-        const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
-        const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
-        await writeArtifacts({
-          command: redactedCommand,
-          durationMs,
-          exitCode: null,
-          signal: null,
-          timedOut: supervised.timedOut,
-          stdout: redactedStdout,
-          stderr: stderrWithError,
-        });
-        throw redactedError(supervised.spawnError, redactedMessage);
-      }
-
-      const result: Omit<ShellProbeResult, "artifacts"> = {
+    const redactedStdout = renderCapturedText(stdout);
+    const redactedStderr = renderCapturedText(stderr);
+    const durationMs = Date.now() - startedAtMs;
+    if (supervised.spawnError) {
+      const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
+      const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
+      await writeArtifacts({
         command: redactedCommand,
         durationMs,
-        exitCode: supervised.exitCode,
-        signal: supervised.signal,
+        exitCode: null,
+        signal: null,
         timedOut: supervised.timedOut,
         stdout: redactedStdout,
-        stderr: redactedStderr,
-      };
-      const artifacts = await writeArtifacts(result);
-      return { ...result, artifacts };
-    } finally {
-      finishActivityBestEffort();
+        stderr: stderrWithError,
+      });
+      throw redactedError(supervised.spawnError, redactedMessage);
     }
+
+    const result: Omit<ShellProbeResult, "artifacts"> = {
+      command: redactedCommand,
+      durationMs,
+      exitCode: supervised.exitCode,
+      signal: supervised.signal,
+      timedOut: supervised.timedOut,
+      stdout: redactedStdout,
+      stderr: redactedStderr,
+    };
+    const artifacts = await writeArtifacts(result);
+    return { ...result, artifacts };
   }
 }

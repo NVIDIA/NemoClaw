@@ -84,9 +84,10 @@ Each reviewed npm audit report now has a `*.provenance.json` sidecar
 the WeChat locked runtime graph audit) recording:
 
 - scanner identity: `npm audit`, npm version, Node.js version;
-- the configured registry plus the derived bulk advisory endpoint npm posts
-  the dependency graph to (npm >= 7 has no quick-audit fallback: on request
-  failure npm reports no advisory data, and the note records this);
+- the configured registry, with URL credentials removed, plus the derived bulk
+  advisory endpoint npm posts the dependency graph to (npm >= 7 has no
+  quick-audit fallback: on request failure npm reports no advisory data, and
+  the note records this);
 - run start and finish timestamps (ISO 8601);
 - the audited graph label and committed package specs;
 - the raw machine-readable report path (`rawReportPath`, by convention

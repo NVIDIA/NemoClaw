@@ -41,6 +41,7 @@ export interface ProgressSummary {
 }
 
 export interface TestProgressOptions {
+  targetId?: string;
   stallThresholdMs?: number;
   stallReminderIntervalMs?: number;
   now?: () => number;
@@ -61,20 +62,52 @@ export interface TestProgressTimeline {
 
 export type ProgressPhaseOutcome = "passed" | "failed" | "skipped";
 
-export interface TestProgress {
+const TEST_PROGRESS_CAPABILITY: unique symbol = Symbol("nemoclaw.test-progress");
+const TEST_PROGRESS_INSTANCES = new WeakSet<object>();
+
+/**
+ * Unforgeable-by-structure capability proving that subprocess diagnostics are
+ * backed by the shared E2E progress recorder.
+ */
+export interface TestProgressCapability {
+  readonly [TEST_PROGRESS_CAPABILITY]: true;
+}
+
+export interface TestProgress extends TestProgressCapability {
   onOutput: (event: ShellProbeOutputEvent) => void;
   activity: (label: string) => () => void;
+  /** Emit a content-free semantic status event. Never pass child output or request data. */
+  event: (label: string) => void;
   phase: (label: string) => void;
+  hasReached: (label: string) => boolean;
   isComplete: () => boolean;
   stop: (outcome?: ProgressPhaseOutcome) => void;
   summary: () => ProgressSummary;
   timeline: () => TestProgressTimeline;
 }
 
+export function isTestProgressCapability(value: unknown): value is TestProgressCapability {
+  if (typeof value !== "object" || value === null || !TEST_PROGRESS_INSTANCES.has(value)) {
+    return false;
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, TEST_PROGRESS_CAPABILITY);
+  return (
+    Object.isFrozen(value) &&
+    descriptor?.value === true &&
+    descriptor.enumerable === false &&
+    descriptor.configurable === false &&
+    descriptor.writable === false
+  );
+}
+
 const DEFAULT_STALL_THRESHOLD_MS = 5 * 60_000;
 const DEFAULT_STALL_REMINDER_INTERVAL_MS = 10 * 60_000;
 const GENERIC_PHASE_LABEL =
   /^(?:cleanup|execute|phase(?: \d+)?|run test|setup|teardown|test body|verify)$/iu;
+const MAX_LOG_IDENTITY_LENGTH = 160;
+const MAX_PHASE_LABEL_LENGTH = 160;
+const MAX_ACTIVITY_LABEL_LENGTH = 160;
+const MAX_EVENT_LABEL_LENGTH = 160;
 
 function formatGiB(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
@@ -86,6 +119,33 @@ function formatElapsed(elapsedMs: number): string {
   const minutes = Math.floor(elapsedSeconds / 60);
   const seconds = elapsedSeconds % 60;
   return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+}
+
+function logIdentity(value: string, fallback: string): string {
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, MAX_LOG_IDENTITY_LENGTH);
+  return JSON.stringify(normalized || fallback);
+}
+
+function validateProgressEventLabel(label: string): void {
+  if (label !== label.trim() || label.length === 0 || label.length > MAX_EVENT_LABEL_LENGTH) {
+    throw new Error("invalid live E2E progress event label");
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(label)) {
+    throw new Error("invalid live E2E progress event label");
+  }
+}
+
+function validateProgressActivityLabel(label: string): void {
+  if (label !== label.trim() || label.length === 0 || label.length > MAX_ACTIVITY_LABEL_LENGTH) {
+    throw new Error("invalid live E2E progress activity label");
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(label)) {
+    throw new Error("invalid live E2E progress activity label");
+  }
 }
 
 function defaultResourceSnapshot(): ResourceSnapshot {
@@ -123,8 +183,13 @@ export function validateE2EPhasePlan(phasePlan: readonly string[]): void {
 
   const seen = new Set<string>();
   for (const label of phasePlan) {
-    if (label !== label.trim() || label.length === 0) {
-      throw new Error(`invalid live E2E phase label: ${JSON.stringify(label)}`);
+    if (
+      label !== label.trim() ||
+      label.length === 0 ||
+      label.length > MAX_PHASE_LABEL_LENGTH ||
+      /[\u0000-\u001f\u007f]/u.test(label)
+    ) {
+      throw new Error("invalid live E2E phase label");
     }
     if (GENERIC_PHASE_LABEL.test(label) || label.toLowerCase().startsWith("command:")) {
       throw new Error(`live E2E phase label must describe test behavior: ${JSON.stringify(label)}`);
@@ -137,9 +202,9 @@ export function validateE2EPhasePlan(phasePlan: readonly string[]): void {
 }
 
 /**
- * Reports only semantic E2E phase transitions during normal execution. Child
- * output and command activity are observed without forwarding their contents;
- * they become visible only as content-free evidence after a phase is stalled.
+ * Reports semantic E2E phase transitions plus explicitly requested,
+ * content-free status events. Child output is observed only as timestamps;
+ * current command or cleanup activity becomes visible after a phase stalls.
  */
 export function startTestProgress(
   scenario: string,
@@ -168,7 +233,11 @@ export function startTestProgress(
   const stallReminderIntervalMs =
     options.stallReminderIntervalMs ?? DEFAULT_STALL_REMINDER_INTERVAL_MS;
   const scenarioStartedAt = now();
+  const identityPrefix =
+    `[e2e target=${logIdentity(options.targetId ?? "", "unassigned")} ` +
+    `scenario=${logIdentity(scenario, "unnamed")}]`;
   const phases: ProgressPhase[] = [];
+  const reachedPhases = new Set<string>([runtimePhasePlan[0] as string]);
   const activities = new Map<number, string>();
   let nextActivityId = 0;
   let phaseIndex = 0;
@@ -197,7 +266,8 @@ export function startTestProgress(
   let phaseStartErrorCount = readTaskStatus().errorCount;
 
   const currentPhase = () => runtimePhasePlan[phaseIndex] as string;
-  const phasePrefix = () => `[e2e phase ${phaseIndex + 1}/${runtimePhasePlan.length}]`;
+  const phasePrefix = (index = phaseIndex) =>
+    `${identityPrefix} [phase ${index + 1}/${runtimePhasePlan.length}]`;
 
   const recordBaselineBestEffort = () => {
     try {
@@ -207,9 +277,12 @@ export function startTestProgress(
     }
   };
 
-  const logTransitionBestEffort = () => {
+  const logTransitionBestEffort = (atMs: number) => {
     try {
-      logLine(`${phasePrefix()} ${currentPhase()}`);
+      logLine(
+        `${phasePrefix()} started: ${currentPhase()} (` +
+          `total ${formatElapsed(atMs - scenarioStartedAt)}; phase 0s)`,
+      );
     } catch {
       // Diagnostics must not change the live test result.
     }
@@ -220,15 +293,13 @@ export function startTestProgress(
     completedLabel: string,
     outcome: ProgressPhaseOutcome,
     durationMs: number,
-    next?: { index: number; label: string },
+    finishedAtMs: number,
   ) => {
     try {
-      const nextText = next
-        ? `; next ${next.index + 1}/${runtimePhasePlan.length}: ${next.label}`
-        : "";
       logLine(
-        `[e2e phase ${completedIndex + 1}/${runtimePhasePlan.length}] ${completedLabel} — ` +
-          `${outcome} in ${formatElapsed(durationMs)}${nextText}`,
+        `${phasePrefix(completedIndex)} completed: ${completedLabel} — ` +
+          `${outcome} in ${formatElapsed(durationMs)} ` +
+          `(total ${formatElapsed(finishedAtMs - scenarioStartedAt)})`,
       );
     } catch {
       // Diagnostics must not change the live test result.
@@ -254,6 +325,7 @@ export function startTestProgress(
       logLine(
         `${phasePrefix()} still running: ${currentPhase()} (` +
           [
+            `total ${formatElapsed(current - scenarioStartedAt)}`,
             `phase ${formatElapsed(current - phaseStartedAt)}`,
             outputAge,
             activityEvidence(),
@@ -357,6 +429,7 @@ export function startTestProgress(
       });
     }
     phaseIndex = nextPhaseIndex;
+    reachedPhases.add(label);
     phaseStartedAt = current;
     lastOutputAt = null;
     outputEvents = 0;
@@ -365,20 +438,19 @@ export function startTestProgress(
       completed.label,
       completed.outcome,
       completed.durationMs,
-      {
-        index: phaseIndex,
-        label: currentPhase(),
-      },
+      current,
     );
+    logTransitionBestEffort(current);
     recordBaselineBestEffort();
     resetStallTimer();
   };
 
   recordBaselineBestEffort();
-  logTransitionBestEffort();
+  logTransitionBestEffort(scenarioStartedAt);
   scheduleStall(stallThresholdMs);
 
   const progress: TestProgress = {
+    [TEST_PROGRESS_CAPABILITY]: true,
     onOutput(event) {
       if (finishedAt !== null) return;
       lastOutputAt = event.atMs;
@@ -386,6 +458,7 @@ export function startTestProgress(
     },
     activity(label) {
       if (finishedAt !== null) return () => undefined;
+      validateProgressActivityLabel(label);
       const activityId = nextActivityId;
       nextActivityId += 1;
       activities.set(activityId, label);
@@ -396,7 +469,24 @@ export function startTestProgress(
         activities.delete(activityId);
       };
     },
+    event(label) {
+      if (finishedAt !== null) return;
+      validateProgressEventLabel(label);
+      const current = now();
+      try {
+        logLine(
+          `${phasePrefix()} event: ${label} (` +
+            `total ${formatElapsed(current - scenarioStartedAt)}; ` +
+            `phase ${formatElapsed(current - phaseStartedAt)})`,
+        );
+      } catch {
+        // Diagnostics must not change the live test result.
+      }
+    },
     phase: selectPhase,
+    hasReached(label) {
+      return reachedPhases.has(label);
+    },
     isComplete() {
       return phaseIndex === runtimePhasePlan.length - 1;
     },
@@ -405,13 +495,20 @@ export function startTestProgress(
       finishedAt = now();
       clearStallTimer();
       const completed = finishPhase(finishedAt, outcomeAtBoundary(outcome));
-      logCompletionBestEffort(phaseIndex, completed.label, completed.outcome, completed.durationMs);
+      logCompletionBestEffort(
+        phaseIndex,
+        completed.label,
+        completed.outcome,
+        completed.durationMs,
+        finishedAt,
+      );
       activities.clear();
     },
     summary() {
       return {
         version: 1,
         scenario,
+        ...(options.targetId ? { targetId: options.targetId } : {}),
         startedAtMs: scenarioStartedAt,
         finishedAtMs: finishedAt,
         durationMs: finishedAt === null ? null : Math.max(0, finishedAt - scenarioStartedAt),
@@ -442,5 +539,12 @@ export function startTestProgress(
     },
   };
 
-  return progress;
+  Object.defineProperty(progress, TEST_PROGRESS_CAPABILITY, {
+    configurable: false,
+    enumerable: false,
+    value: true,
+    writable: false,
+  });
+  TEST_PROGRESS_INSTANCES.add(progress);
+  return Object.freeze(progress);
 }
