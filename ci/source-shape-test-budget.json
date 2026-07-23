@@ -278,7 +278,7 @@
     },
     {
       "file": "test/hermes-final-image-layout.test.ts",
-      "test": "commits repository payload through one final-image layer (#7144)",
+      "test": "keeps repository payload layers at their cache boundaries (#7144)",
       "category": "compatibility"
     },
     {
