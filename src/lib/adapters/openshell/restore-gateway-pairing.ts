@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SpawnSyncOptions, spawnSync } from "node:child_process";
+import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 
 import { ROOT } from "../../state/paths";
 import { resolveOpenshell } from "./resolve";
@@ -12,22 +12,22 @@ const RESTORE_GATEWAY_PAIRING_VERIFY_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 1
-output="$(
-  openclaw agent --agent main --json -m "ping" \
-    --session-id "$1restore-verify-$$-$(date +%s)" 2>&1
-)"
-status=$?
-[ "$status" -eq 0 ] || exit 1
-if printf '%s\n' "$output" | grep -Eiq \
-  'EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded'; then
-  exit 1
-fi
-exit 0
+openclaw agent --agent main --json -m "ping" \
+  --session-id "$1restore-verify-$$-$(date +%s)"
 `;
+
+// OpenClaw can currently exit zero after using its embedded fallback, and its
+// JSON output does not expose a supported, stable transport discriminator.
+// These compatibility signals match the gateway-auth live tests. Remove this
+// classifier once OpenClaw provides a machine-readable gateway-only result.
+const RESTORE_GATEWAY_PAIRING_REJECTION =
+  /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i;
 
 type RestoreGatewayPairingSpawnResult = {
   status: number | null;
   error?: Error;
+  stdout?: string | null;
+  stderr?: string | null;
 };
 
 export type RestoreGatewayPairingVerifierDeps = {
@@ -35,7 +35,7 @@ export type RestoreGatewayPairingVerifierDeps = {
   spawnSync: (
     command: string,
     args: readonly string[],
-    options: SpawnSyncOptions,
+    options: SpawnSyncOptionsWithStringEncoding,
   ) => RestoreGatewayPairingSpawnResult;
 };
 
@@ -69,12 +69,18 @@ export function verifyRestoredSandboxGatewayPairing(
       ],
       {
         cwd: ROOT,
+        encoding: "utf8",
         env: process.env,
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
         timeout: RESTORE_GATEWAY_PAIRING_VERIFY_TIMEOUT_MS,
       },
     );
-    return result.status === 0 && result.error === undefined;
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    return (
+      result.status === 0 &&
+      result.error === undefined &&
+      !RESTORE_GATEWAY_PAIRING_REJECTION.test(output)
+    );
   } catch {
     return false;
   }
