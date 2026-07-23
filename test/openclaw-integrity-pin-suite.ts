@@ -39,6 +39,7 @@ const REVIEWED_NPM_ARCHIVE_HELPER = path.join(
   "lib",
   "reviewed-npm-archive.mts",
 );
+const REVIEWED_NPM_AUDIT_HELPER = path.join(REPO_ROOT, "scripts", "lib", "reviewed-npm-audit.mts");
 const UNPINNED_OPENCLAW_VERSION = "2026.7.2";
 const PINNED_OPENCLAW_VERSION = "2026.7.1";
 const PINNED_OPENCLAW_INTEGRITY =
@@ -270,14 +271,7 @@ function runInstallBlock(
     auditHelper,
     [
       'const fs = require("node:fs");',
-      "exports.parseAuditExceptionRegistry = (source) => {",
-      "  const policy = JSON.parse(source);",
-      "  for (const entry of policy.exceptions) {",
-      "    const expiresAt = new Date(`${entry.expires}T23:59:59.999Z`);",
-      "    if (expiresAt.valueOf() < Date.now()) throw new Error(`npm audit exception 1 expired on ${entry.expires}`);",
-      "  }",
-      "  return policy;",
-      "};",
+      `exports.parseAuditExceptionRegistry = require(${JSON.stringify(REVIEWED_NPM_AUDIT_HELPER)}).parseAuditExceptionRegistry;`,
       "if (require.main === module) {",
       "const args = process.argv.slice(2);",
       "const value = (name) => args[args.indexOf(name) + 1];",
