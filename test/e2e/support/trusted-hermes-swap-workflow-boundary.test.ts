@@ -56,6 +56,7 @@ type SwapHarnessOptions = {
   failCleanupQuery?: boolean;
   failMkswap?: boolean;
   failSwapoff?: boolean;
+  provisionedSwapBytes?: number;
 };
 
 type SwapHarnessResult = {
@@ -88,7 +89,7 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
       '  *"--output SIZE"*)',
       '    state="$(head -n 1 "$FAKE_SWAP_STATE")"',
       '    if [ "$state" = "active" ]; then',
-      '      printf "1\\n"',
+      '      printf "%s\\n" "$FAKE_PROVISIONED_SWAP_BYTES"',
       "    else",
       '      printf "%s\\n" "$FAKE_ACTIVE_SWAP_BYTES"',
       "    fi",
@@ -101,6 +102,8 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
       '    if [ "${FAKE_FAIL_QUERY_AT:-0}" -eq "$count" ]; then exit 41; fi',
       '    state="$(head -n 1 "$FAKE_SWAP_STATE")"',
       '    [ "$state" != "active" ] || printf "%s\\n" "$FAKE_SWAP_FILE"',
+      "    ;;",
+      '  "--show")',
       "    ;;",
       "  *)",
       '    printf "active\\n" > "$FAKE_SWAP_STATE"',
@@ -193,6 +196,7 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
         FAKE_FAIL_MKSWAP: options.failMkswap ? "1" : "0",
         FAKE_FAIL_QUERY_AT: options.failCleanupQuery ? "2" : "0",
         FAKE_FAIL_SWAPOFF: options.failSwapoff ? "1" : "0",
+        FAKE_PROVISIONED_SWAP_BYTES: String(options.provisionedSwapBytes ?? 1),
         FAKE_QUERY_COUNT: queryCount,
         FAKE_SWAP_FILE: swapFile,
         FAKE_SWAP_STATE: swapState,
@@ -259,6 +263,30 @@ describe("trusted Hermes swap workflow boundary", () => {
       "stat:-c %F:%u:%g -- /mnt",
       "swapon:--show --bytes --noheadings --output SIZE",
     ]);
+  });
+
+  it("provisions bounded swap without cleanup when setup succeeds (#7145)", () => {
+    const result = runTrustedSwapHarness({ provisionedSwapBytes: 34_359_738_368 });
+
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual(
+      expect.arrayContaining([
+        "fallocate:-l 34359742464 /mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap",
+        "mkswap:--quiet /mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap",
+        "swapon:/mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap",
+        "swapon-activate:/mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap",
+        "swapon:--show --noheadings --raw --output NAME",
+        "swapon:--show --bytes --noheadings --output SIZE",
+        "swapon:--show",
+      ]),
+    );
+    expect(result.calls.filter((call) => call.startsWith("swapon-activate:"))).toHaveLength(1);
+    expect(
+      result.calls.filter(
+        (call) =>
+          call.startsWith("swapoff:") || call.startsWith("rm:") || call.startsWith("rmdir:"),
+      ),
+    ).toEqual([]);
   });
 
   it("removes an inactive partial allocation after setup fails (#7145)", () => {
