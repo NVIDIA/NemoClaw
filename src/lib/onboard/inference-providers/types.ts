@@ -109,6 +109,7 @@ export type RemoteProviderDeps = CommonDeps & {
     baseUrl: string;
     credentialEnv: string;
     credentialValue: string;
+    rollback?: () => void;
   }>;
   // #6294 OpenAI-surface registration for openai_compatible agents onboarded
   // on compatible-anthropic-endpoint. Optional: production falls back to the
@@ -244,10 +245,13 @@ export type OllamaDeps = CommonDeps & {
   getOllamaWarmupCommand: (model: string) => any;
   run: RunFn;
   shouldFrontOllamaWithProxy: () => boolean;
-  ensureOllamaAuthProxy: () => void;
+  ensureOllamaAuthProxy: (expectedOwner?: "ollama" | "compatible-endpoint") => void;
   isProxyHealthy: () => boolean;
   getOllamaProxyToken: () => string | null | undefined;
-  persistAndProbeOllamaProxy: (token: string) => Promise<void>;
+  persistAndProbeOllamaProxy: (
+    token: string,
+    owner?: "ollama" | "compatible-endpoint",
+  ) => Promise<void>;
   localInference: {
     validateOllamaModelWithToolsOverride(
       model: string,

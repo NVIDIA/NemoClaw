@@ -40,7 +40,7 @@ export async function setupOllamaLocalInference(
     // Try to start/restart the auth proxy before probing — this recovers
     // from stale or missing proxy processes before we decide to abort.
     if (frontOllamaWithProxy) {
-      ensureOllamaAuthProxy();
+      ensureOllamaAuthProxy("ollama");
       proxyReady = isProxyHealthy();
     }
     if (proxyReady) {
@@ -67,7 +67,7 @@ export async function setupOllamaLocalInference(
   let ollamaCredential = "ollama";
   if (frontOllamaWithProxy) {
     // Skip if already started during the fallback recovery above.
-    if (!proxyReady) ensureOllamaAuthProxy();
+    if (!proxyReady) ensureOllamaAuthProxy("ollama");
     const proxyToken = getOllamaProxyToken();
     if (!proxyToken) {
       error("  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.");

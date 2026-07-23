@@ -155,6 +155,44 @@ describe("onboarding inference gateway scope", () => {
     });
   });
 
+  it("releases a new no-auth proxy reservation when provider registration fails (#7424)", async () => {
+    const rollback = vi.fn();
+    const harness = createHarness({
+      runOpenshell: (args) => {
+        const command = args.join(" ");
+        if (command.startsWith("provider get")) return { status: 1 };
+        if (command.startsWith("provider create")) {
+          return { status: 7, stderr: "provider registration failed" };
+        }
+        return undefined;
+      },
+      overrides: {
+        isNonInteractive: () => true,
+        prepareCompatibleEndpointNoAuthProxy: async () => ({
+          baseUrl: "http://host.openshell.internal:11435/v1",
+          credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+          credentialValue: "internal-loopback-token",
+          rollback,
+        }),
+      },
+    });
+
+    await expect(
+      harness.setupInference(
+        "local-no-auth",
+        "local-model",
+        "compatible-endpoint",
+        "http://localhost:8000/v1",
+        null,
+        null,
+        [],
+        { gatewayName: GATEWAY },
+      ),
+    ).rejects.toThrow("EXIT_CALLED:7");
+
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
   it("updates a recovered loopback route without re-exporting its gateway credential (#5744)", async () => {
     await withProcessEnv({ COMPATIBLE_API_KEY: undefined }, async () => {
       const harness = createHarness({

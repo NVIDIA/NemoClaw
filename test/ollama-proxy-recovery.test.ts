@@ -19,7 +19,7 @@ function parseStdoutJson<T>(stdout: string): T {
 }
 
 describe("ollama auth proxy recovery", () => {
-  it("preserves an existing Ollama route when a no-auth endpoint requests the shared proxy (#7424)", () => {
+  it("preserves the existing route when another provider requests the shared proxy (#7424)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-owner-"));
     const proxyPath = JSON.stringify(
@@ -37,7 +37,7 @@ fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "ollama-token\n", { 
 fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242\n", { mode: 0o600 });
 fs.writeFileSync(
   path.join(stateDir, "ollama-auth-proxy.json"),
-  JSON.stringify({ backendUrl: "http://127.0.0.1:11434" }),
+  JSON.stringify({ owner: "ollama", backendUrl: "http://127.0.0.1:11434" }),
   { mode: 0o600 },
 );
 const calls = [];
@@ -46,13 +46,34 @@ runner.runCapture = (command) =>
   command.join(" ").includes("ps -p 4242") ? "node /tmp/ollama-auth-proxy.js" : "";
 childProcess.spawn = (...args) => { calls.push(args); return { pid: 5000, unref() {} }; };
 const proxy = require(${proxyPath});
-void proxy.prepareCompatibleEndpointNoAuthProxy("http://localhost:8000/v1")
-  .then(() => console.log(JSON.stringify({ error: null, calls })))
-  .catch((error) => console.log(JSON.stringify({
-    error: error.message,
+void (async () => {
+  let compatibleError = null;
+  try {
+    await proxy.prepareCompatibleEndpointNoAuthProxy("http://localhost:8000/v1");
+  } catch (error) {
+    compatibleError = error.message;
+  }
+  const ollamaState = JSON.parse(
+    fs.readFileSync(path.join(stateDir, "ollama-auth-proxy.json"), "utf8"),
+  );
+  fs.writeFileSync(
+    path.join(stateDir, "ollama-auth-proxy.json"),
+    JSON.stringify({ owner: "compatible-endpoint", backendUrl: "http://localhost:8000" }),
+    { mode: 0o600 },
+  );
+  let ollamaError = null;
+  try {
+    proxy.ensureOllamaAuthProxy("ollama");
+  } catch (error) {
+    ollamaError = error.message;
+  }
+  console.log(JSON.stringify({
+    compatibleError,
+    ollamaError,
     calls,
-    state: JSON.parse(fs.readFileSync(path.join(stateDir, "ollama-auth-proxy.json"), "utf8")),
-  })));
+    ollamaState,
+  }));
+})();
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: repoRoot,
@@ -62,13 +83,18 @@ void proxy.prepareCompatibleEndpointNoAuthProxy("http://localhost:8000/v1")
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
-      error: string;
+      compatibleError: string;
+      ollamaError: string;
       calls: unknown[];
-      state: { backendUrl: string };
+      ollamaState: { owner: string; backendUrl: string };
     }>(result.stdout);
-    assert.match(payload.error, /already reserved by another local inference route/);
+    assert.match(payload.compatibleError, /already reserved by another local inference route/);
+    assert.match(payload.ollamaError, /reserved for compatible-endpoint/);
     assert.deepEqual(payload.calls, []);
-    assert.equal(payload.state.backendUrl, "http://127.0.0.1:11434");
+    assert.deepEqual(payload.ollamaState, {
+      owner: "ollama",
+      backendUrl: "http://127.0.0.1:11434",
+    });
   });
 
   it("restarts the proxy from the persisted token when the recorded pid is stale", () => {

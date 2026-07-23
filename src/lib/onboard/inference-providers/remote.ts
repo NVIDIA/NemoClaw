@@ -255,6 +255,7 @@ export async function setupRemoteProviderInference(
       return exitProcess(1);
     }
   }
+  const rollbackNoAuthProxy = () => noAuthProxy?.rollback?.();
   while (true) {
     const resolvedCredentialEnv = noAuthProxy
       ? noAuthProxy.credentialEnv
@@ -351,6 +352,7 @@ export async function setupRemoteProviderInference(
       capabilityCache?.invalidate();
       error(`  ${providerResult.message}`);
       if (isNonInteractive()) {
+        rollbackNoAuthProxy();
         return exitProcess(providerResult.status || 1);
       }
       const retry = await promptValidationRecovery(
@@ -363,8 +365,10 @@ export async function setupRemoteProviderInference(
         continue;
       }
       if (retry === "selection" || retry === "model") {
+        rollbackNoAuthProxy();
         return { done: true, result: { retry: "selection" } };
       }
+      rollbackNoAuthProxy();
       return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
@@ -386,6 +390,7 @@ export async function setupRemoteProviderInference(
     capabilityCache?.invalidate();
     error(`  ${message}`);
     if (isNonInteractive()) {
+      rollbackNoAuthProxy();
       return exitProcess(applyResult.status || 1);
     }
     const retry = await promptValidationRecovery(
@@ -398,8 +403,10 @@ export async function setupRemoteProviderInference(
       continue;
     }
     if (retry === "selection" || retry === "model") {
+      rollbackNoAuthProxy();
       return { done: true, result: { retry: "selection" } };
     }
+    rollbackNoAuthProxy();
     return exitProcess(applyResult.status || 1);
   }
   return { done: false };

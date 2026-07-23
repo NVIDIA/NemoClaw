@@ -45,6 +45,7 @@ const {
   persistLocalAdapterPid,
   readLocalAdapterJsonFile,
   readLocalAdapterTextFile,
+  removeLocalAdapterFile,
   spawnDetachedNodeAdapter,
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
@@ -57,6 +58,7 @@ const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 const PROXY_STATE_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.json");
 const DEFAULT_PROXY_BACKEND_URL = `http://127.0.0.1:${OLLAMA_PORT}`;
+type ProxyOwner = "ollama" | "compatible-endpoint";
 
 let ollamaProxyToken: string | null = null;
 let ollamaProxyBackendUrl = DEFAULT_PROXY_BACKEND_URL;
@@ -82,6 +84,18 @@ function normalizeLoopbackBackendUrl(value: unknown): string | null {
   }
 }
 
+function readPersistedProxyRoute(): { owner: ProxyOwner; backendUrl: string } {
+  const state = readLocalAdapterJsonFile(PROXY_STATE_PATH);
+  const backendUrl = normalizeLoopbackBackendUrl(state?.backendUrl) || DEFAULT_PROXY_BACKEND_URL;
+  const owner =
+    state?.owner === "ollama" || state?.owner === "compatible-endpoint"
+      ? state.owner
+      : backendUrl === DEFAULT_PROXY_BACKEND_URL
+        ? "ollama"
+        : "compatible-endpoint";
+  return { owner, backendUrl };
+}
+
 function sleep(seconds: number): void {
   spawnSync("sleep", [String(seconds)]);
 }
@@ -97,9 +111,12 @@ function persistProxyToken(token: string): void {
 // and a retry (including --resume) re-enters setupInference and re-probes.
 // A tcp_failed result prints the UFW remediation and exits 1; probe_unavailable
 // (Docker Desktop, DNS, missing network) is non-fatal.
-async function persistAndProbeOllamaProxy(token: string): Promise<void> {
+async function persistAndProbeOllamaProxy(
+  token: string,
+  owner: ProxyOwner = "ollama",
+): Promise<void> {
   persistProxyToken(token);
-  writeLocalAdapterJsonFile(PROXY_STATE_PATH, { backendUrl: ollamaProxyBackendUrl });
+  writeLocalAdapterJsonFile(PROXY_STATE_PATH, { owner, backendUrl: ollamaProxyBackendUrl });
   const reach = await probeOllamaProxySandboxReachability();
   if (!reach.ok && reach.reason === "tcp_failed") {
     console.error(formatOllamaProxyUnreachableMessage(reach));
@@ -352,6 +369,7 @@ async function prepareCompatibleEndpointNoAuthProxy(endpointUrl: string): Promis
   baseUrl: string;
   credentialEnv: string;
   credentialValue: string;
+  rollback?: () => void;
 }> {
   const endpoint = new URL(endpointUrl);
   const backendUrl = normalizeLoopbackBackendUrl(endpoint.origin);
@@ -359,10 +377,11 @@ async function prepareCompatibleEndpointNoAuthProxy(endpointUrl: string): Promis
     throw new Error("Could not start the protected loopback route for the no-auth endpoint.");
   }
   const persistedToken = loadPersistedProxyToken();
-  const persistedBackendUrl =
-    normalizeLoopbackBackendUrl(readLocalAdapterJsonFile(PROXY_STATE_PATH)?.backendUrl) ||
-    DEFAULT_PROXY_BACKEND_URL;
-  if (persistedToken && persistedBackendUrl !== backendUrl) {
+  const persistedRoute = readPersistedProxyRoute();
+  if (
+    persistedToken &&
+    (persistedRoute.owner !== "compatible-endpoint" || persistedRoute.backendUrl !== backendUrl)
+  ) {
     throw new Error(
       "The shared loopback proxy is already reserved by another local inference route.",
     );
@@ -374,12 +393,22 @@ async function prepareCompatibleEndpointNoAuthProxy(endpointUrl: string): Promis
   }
   const credentialValue = persistedToken || getOllamaProxyToken();
   if (!credentialValue) throw new Error("Loopback proxy token was not initialized.");
-  if (!persistedToken) await persistAndProbeOllamaProxy(credentialValue);
+  if (!persistedToken) await persistAndProbeOllamaProxy(credentialValue, "compatible-endpoint");
   const pathname = endpoint.pathname.replace(/\/+$/, "");
+  const rollback = persistedToken
+    ? undefined
+    : () => {
+        killStaleProxy();
+        removeLocalAdapterFile(PROXY_TOKEN_PATH);
+        removeLocalAdapterFile(PROXY_STATE_PATH);
+        ollamaProxyToken = null;
+        ollamaProxyBackendUrl = DEFAULT_PROXY_BACKEND_URL;
+      };
   return {
     baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${pathname}`,
     credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
     credentialValue,
+    rollback,
   };
 }
 
@@ -429,13 +458,18 @@ function proxyOwnsPortWithToken(token: string): boolean {
  * background proxy process was lost, and to detect token divergence
  * after a failed re-onboard (see issue #2553).
  */
-function ensureOllamaAuthProxy(): void {
+function ensureOllamaAuthProxy(expectedOwner?: ProxyOwner): void {
   // Try to load persisted token first — if none, this isn't an Ollama setup.
   const token = loadPersistedProxyToken();
   if (!token) return;
-  ollamaProxyBackendUrl =
-    normalizeLoopbackBackendUrl(readLocalAdapterJsonFile(PROXY_STATE_PATH)?.backendUrl) ||
-    DEFAULT_PROXY_BACKEND_URL;
+  const persistedRoute = readPersistedProxyRoute();
+  ollamaProxyBackendUrl = persistedRoute.backendUrl;
+  if (persistedRoute.owner === "ollama" && ollamaProxyBackendUrl !== DEFAULT_PROXY_BACKEND_URL) {
+    throw new Error("The persisted Ollama proxy backend does not match the Ollama endpoint.");
+  }
+  if (expectedOwner && persistedRoute.owner !== expectedOwner) {
+    throw new Error(`The shared loopback proxy is reserved for ${persistedRoute.owner}.`);
+  }
 
   const pid = loadPersistedProxyPid();
   if (isOllamaProxyProcess(pid)) {

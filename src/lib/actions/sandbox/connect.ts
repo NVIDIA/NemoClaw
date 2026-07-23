@@ -588,7 +588,7 @@ function verifyLocalInferenceRouteDependencies(
   if (isOllamaLocal) {
     findReachableOllamaHost();
     if (!isWsl()) {
-      ensureOllamaAuthProxy();
+      ensureOllamaAuthProxy("ollama");
     }
   }
   const localHealth = probeLocalProviderHealth(provider, {
