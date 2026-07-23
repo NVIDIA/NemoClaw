@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+
+import { spawnObservedChild } from "./observed-child-process.ts";
+import type { TestProgress, TestProgressCapability } from "./progress.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SERVER_SCRIPT = path.join(REPO_ROOT, "test/e2e/lib/fake-openai-compatible-api.mts");
@@ -39,6 +42,7 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly maxModelLen?: number;
   readonly model?: string;
   readonly port?: number;
+  readonly progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   readonly publicHost?: string;
   readonly requireAuth?: boolean;
   readonly requireAuthModels?: boolean;
@@ -54,11 +58,32 @@ function readPort(portFile: string): number | null {
   }
 }
 
-function waitForExit(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
   return new Promise((resolve) => {
-    child.once("exit", () => resolve());
+    let settled = false;
+    const finish = (exited: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = (): void => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref();
+    child.once("exit", onExit);
+    if (child.exitCode !== null || child.signalCode !== null) finish(true);
   });
+}
+
+async function terminateChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  if (await waitForExit(child, 5_000)) return;
+  child.kill("SIGKILL");
+  if (await waitForExit(child, 5_000)) return;
+  throw new Error("fake OpenAI-compatible endpoint did not stop after SIGKILL");
 }
 
 function readinessProbeHost(host: string): string {
@@ -132,7 +157,7 @@ function parseEnvironmentKeys(environmentFile: string): string[] {
 }
 
 export async function startFakeOpenAiCompatibleServer(
-  options: FakeOpenAiCompatibleServerOptions = {},
+  options: FakeOpenAiCompatibleServerOptions,
 ): Promise<FakeOpenAiCompatibleServer> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openai-"));
   const environmentFile = path.join(tmpDir, "environment-keys.json");
@@ -140,36 +165,73 @@ export async function startFakeOpenAiCompatibleServer(
   const logFile = path.join(tmpDir, "server.log");
   const requestsFile = path.join(tmpDir, "requests.jsonl");
   const host = options.host ?? "127.0.0.1";
-  const child = spawn(process.execPath, ["--experimental-strip-types", SERVER_SCRIPT], {
-    env: {
-      PATH: process.env.PATH ?? "",
-      HOME: process.env.HOME ?? "",
-      NEMOCLAW_FAKE_OPENAI_API_KEY: options.apiKey ?? "",
-      NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT: options.chatContent ?? "ok",
-      NEMOCLAW_FAKE_OPENAI_ENVIRONMENT_FILE: environmentFile,
-      NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
-      NEMOCLAW_FAKE_OPENAI_HOST: host,
-      NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
-      NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
-        options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
-      NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",
-      NEMOCLAW_FAKE_OPENAI_PORT: String(options.port ?? 0),
-      NEMOCLAW_FAKE_OPENAI_PORT_FILE: portFile,
-      NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE: requestsFile,
-      NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH: options.requireAuth ? "1" : "0",
-      NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS: options.requireAuthModels ? "1" : "0",
-      NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT: options.responseText ?? options.chatContent ?? "ok",
-    },
-    stdio: "ignore",
-  });
+  let child: ChildProcess;
+  try {
+    child = spawnObservedChild(process.execPath, ["--experimental-strip-types", SERVER_SCRIPT], {
+      activityLabel: "command: fake-openai-compatible-server",
+      progress: options.progress,
+      spawn: {
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: process.env.HOME ?? "",
+          NEMOCLAW_FAKE_OPENAI_API_KEY: options.apiKey ?? "",
+          NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT: options.chatContent ?? "ok",
+          NEMOCLAW_FAKE_OPENAI_ENVIRONMENT_FILE: environmentFile,
+          NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
+          NEMOCLAW_FAKE_OPENAI_HOST: host,
+          NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
+          NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
+            options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
+          NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",
+          NEMOCLAW_FAKE_OPENAI_PORT: String(options.port ?? 0),
+          NEMOCLAW_FAKE_OPENAI_PORT_FILE: portFile,
+          NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE: requestsFile,
+          NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH: options.requireAuth ? "1" : "0",
+          NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS: options.requireAuthModels ? "1" : "0",
+          NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT: options.responseText ?? options.chatContent ?? "ok",
+        },
+        stdio: "ignore",
+      },
+    });
+  } catch (error) {
+    fs.rmSync(tmpDir, { force: true, recursive: true });
+    throw error;
+  }
+  try {
+    options.progress?.event("fake OpenAI-compatible server started");
+  } catch {
+    // Progress diagnostics must never change fake endpoint behavior.
+  }
+
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closePromise ??= (async () => {
+      try {
+        await terminateChild(child);
+      } finally {
+        try {
+          options.progress?.event("fake OpenAI-compatible server stopped");
+        } catch {
+          // Progress diagnostics must never change fake endpoint cleanup.
+        }
+        fs.rmSync(tmpDir, { force: true, recursive: true });
+      }
+    })();
+    return closePromise;
+  };
 
   let port: number;
   try {
     port = await waitForReady(portFile, child, host);
   } catch (error) {
-    child.kill("SIGTERM");
-    await waitForExit(child);
-    fs.rmSync(tmpDir, { force: true, recursive: true });
+    try {
+      await close();
+    } catch (closeError) {
+      throw new AggregateError(
+        [error, closeError],
+        "fake OpenAI-compatible server failed to become ready and failed to terminate cleanly",
+      );
+    }
     throw error;
   }
   const publicHost = options.publicHost ?? readinessProbeHost(host);
@@ -179,10 +241,6 @@ export async function startFakeOpenAiCompatibleServer(
     requestsFile,
     environmentKeys: () => parseEnvironmentKeys(environmentFile),
     requests: () => parseRequests(requestsFile),
-    close: async () => {
-      child.kill("SIGTERM");
-      await waitForExit(child);
-      fs.rmSync(tmpDir, { force: true, recursive: true });
-    },
+    close,
   };
 }

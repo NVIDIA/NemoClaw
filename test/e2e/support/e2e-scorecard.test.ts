@@ -188,6 +188,8 @@ describe("E2E scorecard", () => {
         const loaded = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard', file));
         if (Object.keys(loaded).length === 0) process.exit(2);
       }
+      const runtimeAudit = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/audit-test-runtime.mts'));
+      if (Object.keys(runtimeAudit).length === 0) process.exit(2);
     `;
     const result = spawnSync(process.execPath, ["--experimental-strip-types", "-e", script], {
       cwd: process.cwd(),

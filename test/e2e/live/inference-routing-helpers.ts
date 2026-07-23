@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,7 +12,11 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { redactString } from "../fixtures/redaction.ts";
+import {
+  type RawRunOptions,
+  type RawRunResult,
+  runRawCommand,
+} from "./bedrock-runtime-compatible-anthropic-raw-command.ts";
 
 // live conversion: direct CLI/onboard subprocesses plus OpenShell sandbox
 // probes, with local helpers only where raw in-memory output is required to
@@ -52,26 +55,6 @@ type SkipFn = (note?: string) => void;
 function skipLive(skip: SkipFn, note: string): never {
   skip(note);
   throw new Error(note);
-}
-
-interface RawRunResult {
-  readonly command: readonly string[];
-  readonly exitCode: number | null;
-  readonly signal: NodeJS.Signals | null;
-  readonly timedOut: boolean;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly redactedStdout: string;
-  readonly redactedStderr: string;
-}
-
-interface RawRunOptions {
-  readonly artifactName: string;
-  readonly artifacts: ArtifactSink;
-  readonly cwd?: string;
-  readonly env?: NodeJS.ProcessEnv;
-  readonly redactionValues?: readonly string[];
-  readonly timeoutMs?: number;
 }
 
 function redactedResultText(
@@ -118,93 +101,6 @@ process.exit(0);
     { mode: 0o755 },
   );
   return commandLogPath;
-}
-
-function redactedCommand(command: readonly string[], values: readonly string[]): string[] {
-  return command.map((part) => redactString(part, values));
-}
-
-async function runRawCommand(
-  command: string,
-  args: readonly string[],
-  options: RawRunOptions,
-): Promise<RawRunResult> {
-  const timeoutMs = options.timeoutMs ?? 60_000;
-  const redactionValues = [...(options.redactionValues ?? [])];
-  const child = spawn(command, [...args], {
-    cwd: options.cwd ?? REPO_ROOT,
-    detached: true,
-    env: options.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const fullCommand = [command, ...args];
-  let stdout = "";
-  let stderr = "";
-  let timedOut = false;
-  let spawnError: Error | undefined;
-
-  const killProcessGroup = (signal: NodeJS.Signals): void => {
-    if (child.pid === undefined) return;
-    try {
-      process.kill(-child.pid, signal);
-    } catch {
-      child.kill(signal);
-    }
-  };
-
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    killProcessGroup("SIGTERM");
-    setTimeout(() => killProcessGroup("SIGKILL"), 1_000).unref();
-  }, timeoutMs);
-  timeout.unref();
-
-  child.stdout?.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString("utf8");
-  });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  child.on("error", (error) => {
-    spawnError = error;
-  });
-
-  const { exitCode, signal } = await new Promise<{
-    exitCode: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolve) => {
-    child.on("close", (code, closeSignal) => resolve({ exitCode: code, signal: closeSignal }));
-  });
-  clearTimeout(timeout);
-
-  if (spawnError) {
-    const message = redactString(spawnError.message, redactionValues);
-    throw new Error(`failed to spawn ${redactString(command, redactionValues)}: ${message}`);
-  }
-
-  const redactedStdout = redactString(stdout, redactionValues);
-  const redactedStderr = redactString(stderr, redactionValues);
-  await options.artifacts.writeText(`raw-shell/${options.artifactName}.stdout.txt`, redactedStdout);
-  await options.artifacts.writeText(`raw-shell/${options.artifactName}.stderr.txt`, redactedStderr);
-  await options.artifacts.writeJson(`raw-shell/${options.artifactName}.result.json`, {
-    command: redactedCommand(fullCommand, redactionValues),
-    exitCode,
-    signal,
-    timedOut,
-    stdout: redactedStdout,
-    stderr: redactedStderr,
-  });
-
-  return {
-    command: fullCommand,
-    exitCode,
-    signal,
-    timedOut,
-    stdout,
-    stderr,
-    redactedStdout,
-    redactedStderr,
-  };
 }
 
 async function runNemoclawCli(
@@ -391,6 +287,7 @@ async function onboardSandbox(
   extraEnv: NodeJS.ProcessEnv,
   redactionValues: readonly string[],
   artifactName: string,
+  progress: RawRunOptions["progress"],
   timeoutMs = 10 * 60_000,
 ): Promise<RawRunResult> {
   clearOnboardState();
@@ -402,6 +299,7 @@ async function onboardSandbox(
       NEMOCLAW_SANDBOX_NAME: sandboxName,
       ...extraEnv,
     }),
+    progress,
     redactionValues,
     timeoutMs,
   });
