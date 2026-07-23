@@ -289,7 +289,7 @@ function forwardOwnerForPort(output: string, port: string): string | undefined {
 async function waitForForwardOwner(
   sandbox: SandboxClient,
   port: string,
-  owner: string,
+  owner: string | undefined,
   artifactPrefix: string,
 ): Promise<{ owner: string | undefined; output: string }> {
   let observedOwner: string | undefined;
@@ -303,27 +303,6 @@ async function waitForForwardOwner(
     lastOutput = resultText(result);
     observedOwner = forwardOwnerForPort(lastOutput, port);
     if (observedOwner === owner) break;
-    if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
-  }
-  return { owner: observedOwner, output: lastOutput };
-}
-
-async function waitForForwardReleased(
-  sandbox: SandboxClient,
-  port: string,
-  artifactPrefix: string,
-): Promise<{ owner: string | undefined; output: string }> {
-  let observedOwner: string | undefined;
-  let lastOutput = "";
-  for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt += 1) {
-    const result = await sandbox.openshell(["forward", "list"], {
-      artifactName: `${artifactPrefix}-attempt-${attempt}`,
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    });
-    lastOutput = resultText(result);
-    observedOwner = forwardOwnerForPort(lastOutput, port);
-    if (observedOwner === undefined) break;
     if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
   }
   return { owner: observedOwner, output: lastOutput };
@@ -710,9 +689,10 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   });
   expect(stopB.exitCode, resultText(stopB)).toBe(0);
 
-  const releasedForwardB = await waitForForwardReleased(
+  const releasedForwardB = await waitForForwardOwner(
     sandbox,
     portB ?? "",
+    undefined,
     "phase-4-openshell-forward-list-b-after-stop",
   );
   expect(releasedForwardB.owner, releasedForwardB.output).toBeUndefined();
