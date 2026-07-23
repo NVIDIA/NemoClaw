@@ -75,7 +75,10 @@ describe("system readiness contract", () => {
     const provenance = { ...(fixture.provenance as Record<string, unknown>) };
 
     expect(
-      validate({ ...fixture, provenance: { ...provenance, observedAt: "2026-02-30T00:00:00Z" } }),
+      validate({
+        ...fixture,
+        provenance: { ...provenance, observedAt: "2026-02-30T00:00:00Z" },
+      }),
     ).toBe(false);
   });
 
