@@ -397,12 +397,19 @@ describe("OpenShell gateway auth source contract helpers", () => {
     const artifactPath = path.join(dir, "scenario.json");
     fs.mkdirSync(dir);
     fs.writeFileSync(artifactPath, '{"status":"passed"}\n');
-    const scanSourceFd = fs.openSync(artifactPath, fs.constants.O_RDONLY);
-    const copySourceFd = fs.openSync(artifactPath, fs.constants.O_RDONLY);
+    const originalOpen = fs.openSync.bind(fs);
+    let scanSourceFd: number | undefined;
+    let copySourceFd: number | undefined;
     const openSpy = vi
       .spyOn(fs, "openSync")
-      .mockImplementationOnce(() => scanSourceFd)
-      .mockImplementationOnce(() => copySourceFd)
+      .mockImplementationOnce((target, flags, mode) => {
+        scanSourceFd = originalOpen(target, flags, mode);
+        return scanSourceFd;
+      })
+      .mockImplementationOnce((target, flags, mode) => {
+        copySourceFd = originalOpen(target, flags, mode);
+        return copySourceFd;
+      })
       .mockImplementationOnce(() => {
         throw new Error("simulated approved destination open failure");
       });
@@ -410,12 +417,19 @@ describe("OpenShell gateway auth source contract helpers", () => {
       expect(() => scanAndApproveOpenShellGatewayAuthArtifacts(dir)).toThrow(
         "simulated approved destination open failure",
       );
-      expect(() => fs.fstatSync(copySourceFd)).toThrowError(
+      expect(scanSourceFd).toBeDefined();
+      expect(copySourceFd).toBeDefined();
+      expect(() => fs.fstatSync(scanSourceFd as number)).toThrowError(
+        expect.objectContaining({ code: "EBADF" }),
+      );
+      expect(() => fs.fstatSync(copySourceFd as number)).toThrowError(
         expect.objectContaining({ code: "EBADF" }),
       );
     } finally {
       openSpy.mockRestore();
-      for (const descriptor of [scanSourceFd, copySourceFd]) {
+      for (const descriptor of [scanSourceFd, copySourceFd].filter(
+        (candidate): candidate is number => candidate !== undefined,
+      )) {
         try {
           fs.closeSync(descriptor);
         } catch {
