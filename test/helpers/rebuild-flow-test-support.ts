@@ -35,6 +35,7 @@ export type RebuildFlowOverrides = {
     ok: boolean;
     imageRef: string | null;
     overrideEnvVar: string | null;
+    disposeImageRef?: () => boolean;
   };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   checkAndRecoverSandboxProcesses?: () => {

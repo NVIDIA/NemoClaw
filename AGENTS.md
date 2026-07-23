@@ -198,8 +198,8 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Use existing repository vocabulary and name what a thing does.
 - Remove modifiers that do not distinguish a real current case.
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
-- Apply [NemoClaw Technical English](CONTRIBUTING.md#nemoclaw-technical-english) to changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
-- During the 30-day changed-text pilot, treat language findings as suggestions unless ambiguity can change behavior, security, data safety, test meaning, or release meaning. Do not request unrelated language cleanup.
+- Follow the [NemoClaw Writing Guide](WRITING.md) for changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
+  The guide defines the review scope and the conditions that make a language finding blocking.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
 - Report conclusions and evidence, not an analysis transcript.
@@ -252,7 +252,9 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 ## Documentation
 
 - Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
-- After completing development changes, run a documentation writer subagent before final handoff. Give it the changed files, behavior summary, and test evidence so it can update docs or report that no doc changes are needed.
+- After completing code or documentation changes, run a documentation writer subagent before final handoff. Give it the changed files, change summary, and test or docs-build evidence. For documentation-only changes, ask it to verify the writing rules and documentation style.
+- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, agent surface, and PR number. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
+- If any commit changes the pull-request head after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
 - For normal docs changes, include source pages under `docs/`.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
