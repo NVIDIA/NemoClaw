@@ -299,11 +299,19 @@ function printProxyPortConflict(owners: { pids: number[]; descriptions: string[]
 // so poll with backoff instead of the previous single 2s probe (issue #4820).
 const PROXY_START_ATTEMPTS = 12;
 
-function startOllamaAuthProxy(backendUrl: string = DEFAULT_PROXY_BACKEND_URL): boolean {
+function startOllamaAuthProxy(
+  backendUrl: string = DEFAULT_PROXY_BACKEND_URL,
+  owner: ProxyOwner = "ollama",
+): boolean {
   const crypto = require("crypto");
   const normalizedBackendUrl = normalizeLoopbackBackendUrl(backendUrl);
   if (!normalizedBackendUrl) {
     console.error("  Error: loopback auth proxy requires an exact loopback upstream origin.");
+    return false;
+  }
+  const persistedRoute = loadPersistedProxyToken() ? readPersistedProxyRoute() : null;
+  if (persistedRoute && persistedRoute.owner !== owner) {
+    console.error(`  Error: The shared loopback proxy is reserved for ${persistedRoute.owner}.`);
     return false;
   }
   ollamaProxyBackendUrl = normalizedBackendUrl;
@@ -388,7 +396,7 @@ async function prepareCompatibleEndpointNoAuthProxy(endpointUrl: string): Promis
   }
   if (persistedToken) {
     ensureOllamaAuthProxy();
-  } else if (!startOllamaAuthProxy(backendUrl)) {
+  } else if (!startOllamaAuthProxy(backendUrl, "compatible-endpoint")) {
     throw new Error("Could not start the protected loopback route for the no-auth endpoint.");
   }
   const credentialValue = persistedToken || getOllamaProxyToken();

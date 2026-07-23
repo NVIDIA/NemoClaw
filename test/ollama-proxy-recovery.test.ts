@@ -67,9 +67,11 @@ void (async () => {
   } catch (error) {
     ollamaError = error.message;
   }
+  const ollamaStarted = proxy.startOllamaAuthProxy();
   console.log(JSON.stringify({
     compatibleError,
     ollamaError,
+    ollamaStarted,
     calls,
     ollamaState,
   }));
@@ -85,11 +87,13 @@ void (async () => {
     const payload = parseStdoutJson<{
       compatibleError: string;
       ollamaError: string;
+      ollamaStarted: boolean;
       calls: unknown[];
       ollamaState: { owner: string; backendUrl: string };
     }>(result.stdout);
     assert.match(payload.compatibleError, /already reserved by another local inference route/);
     assert.match(payload.ollamaError, /reserved for compatible-endpoint/);
+    assert.equal(payload.ollamaStarted, false);
     assert.deepEqual(payload.calls, []);
     assert.deepEqual(payload.ollamaState, {
       owner: "ollama",
