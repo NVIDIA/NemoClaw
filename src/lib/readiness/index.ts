@@ -15,6 +15,17 @@ export type {
   HostObservationSnapshot,
   HostObservations,
 } from "./host.js";
+export {
+  collectPlatformIdentity,
+  projectPlatformQualification,
+} from "./platform-qualification.js";
+export type {
+  CollectPlatformIdentityOptions,
+  PlatformIdentity,
+  PlatformQualificationInput,
+  PlatformQualificationProjection,
+  StationProfile,
+} from "./platform-qualification.js";
 export { createPublicReadinessReport, renderReadinessReport } from "./presentation.js";
 export {
   SUPPORTED_SYSTEM_READINESS_SCHEMA_MAJOR,

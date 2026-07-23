@@ -4,6 +4,12 @@
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
 import {
+  collectPlatformIdentity,
+  type CollectPlatformIdentityOptions,
+  type PlatformIdentity,
+  projectPlatformQualification,
+} from "./platform-qualification.js";
+import {
   SYSTEM_READINESS_SCHEMA_VERSION,
   type EvidenceScalar,
   type FindingSeverity,
@@ -46,6 +52,7 @@ export interface HostObservations {
   cdiNvidiaGpuSpecMissing: boolean;
   cdiNvidiaGpuSpecStale?: boolean;
   cdiNvidiaGpuSpecNeedsRepair?: boolean;
+  platformIdentity?: PlatformIdentity;
 }
 
 export interface HostObservationSnapshot {
@@ -59,6 +66,9 @@ export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
   hostGpuPlatform?: string;
+  wslDockerDesktopGpuProofPassed?: boolean;
+  collectPlatformIdentity?: () => PlatformIdentity;
+  platformIdentityOptions?: CollectPlatformIdentityOptions;
   now?: () => Date;
 }
 
@@ -77,6 +87,8 @@ function adaptHostAssessment(
   host: Readonly<HostAssessment>,
   architecture: string,
   hostGpuPlatform?: string,
+  platformIdentity?: PlatformIdentity,
+  wslDockerDesktopGpuProofPassed?: boolean,
 ): HostObservations {
   return {
     platform: host.platform,
@@ -104,6 +116,9 @@ function adaptHostAssessment(
     cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
     cdiNvidiaGpuSpecStale: host.cdiNvidiaGpuSpecStale,
     cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair,
+    platformIdentity: platformIdentity
+      ? { ...platformIdentity, wslDockerDesktopGpuProofPassed }
+      : { wslDockerDesktopGpuProofPassed },
   };
 }
 
@@ -119,6 +134,11 @@ export function collectHostObservations(
         assessment,
         options.architecture ?? process.arch,
         options.hostGpuPlatform,
+        (
+          options.collectPlatformIdentity ??
+          (() => collectPlatformIdentity(options.platformIdentityOptions))
+        )(),
+        options.wslDockerDesktopGpuProofPassed,
       ),
       reusable: false,
     };
@@ -191,6 +211,15 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.gpu.nvidia_available",
     "host.gpu.container_toolkit_available",
     "host.gpu.cdi_healthy",
+    "host.platform.supported",
+    "host.platform.linux_supported",
+    "host.platform.macos_apple_silicon",
+    "host.platform.wsl_docker_desktop",
+    "host.platform.wsl_native_docker",
+    "host.platform.wsl_runtime_available",
+    "host.platform.wsl_gpu_passthrough",
+    "host.platform.dgx_spark",
+    "host.platform.dgx_station",
   ];
   return {
     observations: observationIds.map((id) => ({ id, state: "unknown", evidenceIds })),
@@ -228,6 +257,7 @@ export function projectHostReadiness(
 
   let observations: ReadinessObservation[];
   let capabilities: ReadinessCapability[];
+  let qualifications: SystemReadinessReport["qualifications"] = [];
   let findings: ReadinessFinding[];
   const host = snapshot.observations;
   if (!host || snapshot.failure || unsafeReuse) {
@@ -282,7 +312,20 @@ export function projectHostReadiness(
       observation("host.gpu.cdi", cdiHealthy),
       observation("host.gpu.cdi_stale", cdiApplies ? host.cdiNvidiaGpuSpecStale : undefined),
     ];
+    const platform = projectPlatformQualification({
+      platform: host.platform,
+      architecture: host.architecture,
+      isWsl: host.isWsl,
+      dockerInstalled: host.dockerInstalled,
+      dockerReachable: host.dockerReachable,
+      runtime: host.runtime,
+      hasNvidiaGpu: host.hasNvidiaGpu,
+      ...host.platformIdentity,
+    });
+    evidence.push(...platform.evidence);
+    qualifications = platform.qualifications;
     capabilities = [
+      ...platform.capabilities,
       capability("host.docker.available", stateOf(host.dockerInstalled)),
       capability(
         "host.docker.daemon_reachable",
@@ -309,7 +352,7 @@ export function projectHostReadiness(
       ),
       capability("host.gpu.cdi_healthy", stateOf(cdiHealthy)),
     ];
-    findings = [];
+    findings = [...platform.findings];
     if (!host.dockerInstalled)
       findings.push(
         finding("host.docker.unavailable", "blocking", "Docker is not installed.", [
@@ -383,7 +426,7 @@ export function projectHostReadiness(
     },
     observations,
     capabilities,
-    qualifications: [],
+    qualifications,
     findings,
     evidence,
   };

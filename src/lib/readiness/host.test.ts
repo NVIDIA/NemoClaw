@@ -7,6 +7,15 @@ import { collectHostObservations, projectHostReadiness } from "./host";
 
 const NOW = new Date("2026-06-01T12:00:00Z");
 
+function emptyPlatformIdentity() {
+  return {
+    productName: null,
+    nvidiaPlatform: null,
+    stationProfile: null,
+    stationGb300PciGpu: null,
+  };
+}
+
 function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
   return {
     platform: "linux",
@@ -41,14 +50,18 @@ function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
 
 function report(
   overrides: Partial<HostAssessment> = {},
-  collectionOptions: { hostGpuPlatform?: string } = {},
+  collectionOptions: {
+    hostGpuPlatform?: string;
+    platformIdentity?: ReturnType<typeof emptyPlatformIdentity>;
+  } = {},
 ) {
   return projectHostReadiness(
     collectHostObservations({
       assess: () => host(overrides),
       architecture: "x64",
       now: () => NOW,
-      ...collectionOptions,
+      collectPlatformIdentity: () => collectionOptions.platformIdentity ?? emptyPlatformIdentity(),
+      hostGpuPlatform: collectionOptions.hostGpuPlatform,
     }),
     { nemoclawVersion: "0.1.0", now: () => NOW },
   );
@@ -65,7 +78,11 @@ function findingIds(result: ReturnType<typeof report>) {
 describe("host readiness projection (#7408)", () => {
   it("keeps collection dependency-injected and separate from pure evaluation", () => {
     const assess = vi.fn(() => host());
-    const snapshot = collectHostObservations({ assess, now: () => NOW });
+    const snapshot = collectHostObservations({
+      assess,
+      collectPlatformIdentity: emptyPlatformIdentity,
+      now: () => NOW,
+    });
 
     expect(assess).toHaveBeenCalledOnce();
     expect(snapshot.observations).toMatchObject({ platform: "linux", architecture: process.arch });
@@ -169,7 +186,11 @@ describe("host readiness projection (#7408)", () => {
   });
 
   it("rejects stale observations unless reuse is explicitly safe", () => {
-    const current = collectHostObservations({ assess: () => host(), now: () => NOW });
+    const current = collectHostObservations({
+      assess: () => host(),
+      collectPlatformIdentity: emptyPlatformIdentity,
+      now: () => NOW,
+    });
     const snapshot = { ...current, observedAt: "2026-06-01T11:00:00Z", reusable: false };
     const result = projectHostReadiness(snapshot, { nemoclawVersion: "0.1.0", now: () => NOW });
 
@@ -184,7 +205,11 @@ describe("host readiness projection (#7408)", () => {
     ["2026-06-01T11:00:00Z", true],
     ["2026-06-01T11:59:30Z", false],
   ] as const)("projects safe snapshot reuse at %s", (observedAt, reusable) => {
-    const current = collectHostObservations({ assess: () => host(), now: () => NOW });
+    const current = collectHostObservations({
+      assess: () => host(),
+      collectPlatformIdentity: emptyPlatformIdentity,
+      now: () => NOW,
+    });
     const result = projectHostReadiness(
       { ...current, observedAt, reusable },
       { nemoclawVersion: "0.1.0", now: () => NOW },
