@@ -81,7 +81,7 @@ function runAuditValidation(
 
 function installFakeAuditNpm(
   targetRoot: string,
-  auditReport: Record<string, unknown>,
+  auditOutput: Record<string, unknown> | string,
   auditStatus: number,
 ): void {
   const binDir = path.join(targetRoot, "bin");
@@ -91,7 +91,9 @@ function installFakeAuditNpm(
     npm,
     [
       "#!/usr/bin/env node",
-      `const auditReport = ${JSON.stringify(JSON.stringify(auditReport))};`,
+      `const auditReport = ${JSON.stringify(
+        typeof auditOutput === "string" ? auditOutput : JSON.stringify(auditOutput),
+      )};`,
       `const auditStatus = ${auditStatus};`,
       "const args = process.argv.slice(2);",
       'if (args[0] === "--version") {',
@@ -253,6 +255,7 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
   });
 
   it.each([
+    ["malformed npm output", "{not-json", 1, /parseable JSON report/],
     [
       "parseable npm error JSON",
       { error: { code: "ECONNREFUSED", summary: "registry unreachable" } },
