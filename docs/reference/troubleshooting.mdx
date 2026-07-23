@@ -72,6 +72,16 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 
 ### Docker is not running
 
+Check the host before onboarding:
+
+```bash
+$$nemoclaw host probe
+```
+
+The command does not start Docker or apply a repair.
+A `host.docker.daemon_unreachable` finding means Docker is installed but NemoClaw cannot reach the daemon.
+For JSON output and exit-code details, refer to [System Readiness](system-readiness).
+
 The installer and onboard wizard require Docker to be running.
 If you see a Docker connection error, start the Docker daemon:
 
