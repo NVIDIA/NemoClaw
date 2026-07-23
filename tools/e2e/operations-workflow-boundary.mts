@@ -16,6 +16,8 @@ const META_JOBS = new Set(["report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
+const DOWNLOAD_ARTIFACT_ACTION =
+  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
@@ -48,6 +50,7 @@ const GENERIC_ISSUE_GRAPHQL_MUTATION =
   /github\.graphql\s*\(\s*["'`]\s*mutation\b[\s\S]*?\b(?:addComment|closeIssue|createIssue|reopenIssue|updateIssue)\b/u;
 
 type WorkflowStep = {
+  "continue-on-error"?: boolean;
   env?: Record<string, unknown>;
   if?: string;
   name?: string;
@@ -511,11 +514,27 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     .map((entry) => entry.trim())
     .filter(Boolean);
   if (
-    sparseCheckout.length !== 2 ||
+    sparseCheckout.length !== 3 ||
     !sparseCheckout.includes("ci/onboard-performance-budget.json") ||
+    !sparseCheckout.includes("scripts/audit-test-runtime.mts") ||
     !sparseCheckout.includes("scripts/scorecard")
   ) {
-    errors.push("scorecard checkout must be limited to scorecard builders and budget config");
+    errors.push(
+      "scorecard checkout must be limited to runtime and scorecard builders and budget config",
+    );
+  }
+
+  const download = findStep(job, "Download E2E progress artifacts");
+  requirePinnedAction(errors, download, "scorecard artifact download");
+  if (
+    download.uses !== DOWNLOAD_ARTIFACT_ACTION ||
+    download["continue-on-error"] !== true ||
+    download.with?.pattern !== "e2e-*" ||
+    download.with?.path !== "${{ runner.temp }}/e2e-runtime-audit"
+  ) {
+    errors.push(
+      "scorecard must download this run's E2E artifacts into the runtime audit directory",
+    );
   }
 
   const generate = findStep(job, "Generate E2E scorecard");
@@ -531,6 +550,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "core.warning(trace.budgetWarningMessage)",
     "scripts/scorecard/summarize-jobs.mts",
     "scorecardJobs.loadWorkflowRunJobs",
+    "scripts/audit-test-runtime.mts",
+    "runtimeAudit.auditTestRuntime",
+    "runtimeAudit.formatRuntimeAuditSummary",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -542,6 +564,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     generate.env?.EXPLICIT_ONLY_JOBS !== "${{ needs.generate-matrix.outputs.explicit_only_jobs }}"
   ) {
     errors.push("scorecard generator must derive explicit-only jobs from workflow inventory");
+  }
+  if (generate.env?.RUNTIME_ARTIFACTS !== "${{ runner.temp }}/e2e-runtime-audit") {
+    errors.push("scorecard generator must read the downloaded runtime audit directory");
   }
 
   const slack = findStep(job, "Post scorecard to Slack");
