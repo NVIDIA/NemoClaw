@@ -61,6 +61,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
 
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+# npm 11.13.0 in the pinned Node 24 image bundles an affected node-tar copy.
+# Patch that private package after curl is installed and before npm processes
+# the checksum-pinned Hermes release lockfiles.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
 # gosu for privilege separation (gateway vs sandbox user).
 # Identical to OpenClaw base — pinned to 1.19 with checksum.
 # hadolint ignore=DL4006
@@ -294,3 +303,11 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
 RUN /usr/local/bin/hermes --version \
     && /opt/hermes/.venv/bin/python -c \
         'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
+
+# Gate the exact completed base filesystem before it can be published.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:hermes-base \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json

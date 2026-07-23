@@ -19,7 +19,7 @@ Render the final scorecard with `scripts/render-verdict.py`. Below is the human-
 |---|---|---|
 | **Tier 0 — gates** | | |
 | State OPEN | pass | pass |
-| CI green (latest SHA) | pass | fail (stale) |
+| CI on `<short-sha>` | pass | fail |
 | Mergeable | pass | pass |
 | Contributor compliance | pass | pass |
 | Branch protection | pass | pass |
@@ -35,6 +35,7 @@ Render the final scorecard with `scripts/render-verdict.py`. Below is the human-
 | Description-vs-diff drift | pass | pass |
 | Migration completion | pass | yellow (no follow-up link) |
 | Public surface preservation | pass | pass |
+| Workaround versus root cause | pass | pass |
 | **Weighted score** | 14.5 / 16.0 | 9.0 / 16.0 |
 
 ### Behavior Coverage Matrix
@@ -48,21 +49,21 @@ Render the final scorecard with `scripts/render-verdict.py`. Below is the human-
 ### Verdict: MERGE PR #A
 
 Reasoning trace:
-- PR #B failed Tier 0 (CI fail on latest SHA after force-push at SHA <hash>)
-- PR #A score 18.5 vs PR #B score 14.0
-- PR #A misses criterion 3; cherry-pick PR #B's test at <file:line> to cover it
+- PR #B failed Tier 0. Check `<name>` failed on `<short-sha>` after the force-push.
+- PR #A scored 14.5. PR #B scored 9.0.
+- PR #A misses criterion 3. Cherry-pick PR #B's test at `<file>:<line>` to cover it.
 
 ### Suggested action
 
-1. Merge PR #A
-2. Cherry-pick test from PR #B at `<file>:<line-range>` to cover criterion 3
-3. Close PR #B with comment linking to #A and noting the cherry-pick
+1. Merge PR #A.
+2. Cherry-pick the test from PR #B at `<file>:<line-range>` to cover criterion 3.
+3. Close PR #B with a comment that links to #A and records the cherry-pick.
 
 ### Reasoning evidence
-- Tier 0 gate "CI green": PR #A latest SHA <hash>, all 12 required checks passed; PR #B latest SHA <hash>, "test-cli" failed at <log-line>
-- Tier 1.1 PR #A: test at `<file>:<line-range>` asserts on <output>; pre-fix code returned <wrong-output>; assertion would have failed
+- CI: all 12 required checks passed on PR #A commit `<short-sha>`. On PR #B commit `<short-sha>`, `test-cli` failed at `<log-line>`.
+- Tier 1.1 PR #A: The test at `<file>:<line-range>` asserts on `<output>`. The previous code returned `<wrong-output>`, so the assertion would have failed.
 - Tier 1.3 PR #A fail: no test for empty-input edge case despite issue commenter raising it at `issue.comment.4`
-- ... <one entry per non-trivial judgment> ...
+- ... <one entry per judgment> ...
 ```
 
 Every judgment in the trace must include:
@@ -79,7 +80,7 @@ If the verdict is **degraded mode** ("Neither mergeable yet"), substitute the ve
 
 **PR #A — ineligible:**
 - Substantive: Rebase against current main (3 conflicts in `<file>`)
-- Ineligible: contributor gate failed; the author must fix each failing requirement before re-review
+- Ineligible: The contributor gate failed. The author must fix each failure before another review.
   - Missing PR-body DCO declaration: update the PR body
   - Missing GitHub Verified commit history: replace the branch with compliant history
 
@@ -89,6 +90,6 @@ If the verdict is **degraded mode** ("Neither mergeable yet"), substitute the ve
 
 ### Suggested action
 
-1. Ask the PR #A author to fix each failing contributor gate; do not repair or approve the PR on their behalf
-2. Salvage PR #B by resolving the substantive failures, then re-run this skill to confirm the winner
+1. Ask the PR #A author to fix each contributor-gate failure. Do not repair or approve the PR for the author.
+2. Resolve the substantive failures in PR #B. Then, run this skill again to confirm the winner.
 ```

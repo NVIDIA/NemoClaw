@@ -146,7 +146,7 @@ function validatePullRequest(value: unknown, identity: RequiredGateIdentity): Pu
     !isObjectRecord(value.base) ||
     value.base.sha !== identity.baseSha
   ) {
-    throw new Error("PR no longer matches the exact head and base revision observed by this job");
+    throw new Error("PR is not the expected open PR with the observed PR SHA and base SHA");
   }
   return value as PullRequest;
 }
@@ -188,16 +188,19 @@ function currentCoordinationCheck(
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => left.id - right.id);
   if (new Set(ordered.map((check) => check.id)).size !== ordered.length) {
-    throw new Error("Duplicate exact-diff coordination check IDs exist");
+    throw new Error("Duplicate coordination check IDs exist for one PR/base SHA pair");
   }
   const active = ordered.filter((check) => check.status !== "completed");
-  if (active.length > 1) throw new Error("Multiple active exact-diff coordination checks exist");
+  if (active.length > 1)
+    throw new Error("Multiple active coordination checks exist for one PR/base SHA pair");
   if (ordered.slice(0, -1).some((check) => !hasRetryableFailureMarker(check))) {
-    throw new Error("Exact-diff coordination history contains a non-retryable older check");
+    throw new Error(
+      "Coordination history contains a non-retryable older check for one PR/base SHA pair",
+    );
   }
   const current = ordered.at(-1)!;
   if (active[0] && active[0].id !== current.id) {
-    throw new Error("Exact-diff coordination history contains an older active check");
+    throw new Error("Coordination history for one PR/base SHA pair contains an older active check");
   }
   return current;
 }
@@ -221,7 +224,9 @@ async function matchingChecks(
       check.external_id === externalId,
   );
   if (claimed.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
-    throw new Error("The exact-diff coordination identity was claimed by an unexpected GitHub App");
+    throw new Error(
+      "The PR/base SHA coordination identity was claimed by an unexpected GitHub App",
+    );
   }
   const current = currentCoordinationCheck(
     claimed.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID),
@@ -234,13 +239,15 @@ export async function findCoordinationCheck(
 ): Promise<CoordinationCheckRun | undefined> {
   assertIdentity(identity);
   const current = await matchingChecks(identity, COORDINATION_CHECK_NAME);
-  if (current.length > 1) throw new Error("Multiple exact-diff coordination checks exist");
+  if (current.length > 1)
+    throw new Error("Multiple coordination checks exist for one PR/base SHA pair");
   if (current[0]) return current[0];
 
   // Migration bridge for PRs whose base-branch controller still publishes the
   // old name. Remove after this workflow is on main and open PRs resynchronize.
   const legacy = await matchingChecks(identity, LEGACY_COORDINATION_CHECK_NAME);
-  if (legacy.length > 1) throw new Error("Multiple legacy exact-diff coordination checks exist");
+  if (legacy.length > 1)
+    throw new Error("Multiple legacy coordination checks exist for one PR/base SHA pair");
   return legacy[0];
 }
 

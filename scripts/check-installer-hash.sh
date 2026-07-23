@@ -6,7 +6,7 @@
 # still match the immutable upstream checksum manifests.
 #
 # Checked artifacts:
-#   1. OpenShell archives — scripts/install-openshell.sh release-asset table
+#   1. OpenShell archives/formula — scripts/install-openshell.sh release-asset table
 #   2. Brev OpenShell CLI — scripts/brev-launchable-ci-cpu.sh release-asset table
 #
 # Usage:
@@ -88,11 +88,11 @@ sha256_file() {
 check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
   local brev_installer="${REPO_ROOT}/scripts/brev-launchable-ci-cpu.sh"
-  local release_base workspace manifests spec manifest expected actual source asset pinned upstream
+  local release_base workspace manifests spec manifest expected actual source asset pinned upstream formula_asset
   local matches required_manifest required_matches
   local pin_records parser_error parser_errors parsed_version release_version="" record_extra
   local allowlist_entry allowlist_version allowlist_extra
-  local count=0 brev_count=0 published_count=0 failures=0
+  local count=0 brev_count=0 published_count=0 expected_published_count=0 failures=0
   local -a manifest_specs=()
   workspace=$(mktemp -d)
   manifests="${workspace}/published-sha256.txt"
@@ -147,8 +147,11 @@ check_openshell_release_assets() {
     esac
   done <<<"$pin_records"
 
-  if [[ "$count" -ne 8 ]]; then
-    echo "  STALE: expected 8 pinned OpenShell v${release_version:-unknown} assets, found ${count}."
+  # Transitional trust anchor: accept the current archive set and the same set
+  # plus openshell.rb. Tighten this to nine assets when the formula consumer
+  # lands. The base-trusted parser still rejects every other asset set.
+  if [[ "$count" -ne 8 && "$count" -ne 9 ]]; then
+    echo "  STALE: expected 8 or 9 pinned OpenShell v${release_version:-unknown} assets, found ${count}."
     failures=$((failures + 1))
   fi
   if [[ "$brev_count" -ne 2 ]]; then
@@ -224,6 +227,29 @@ check_openshell_release_assets() {
   done
 
   while IFS=$'\t' read -r parsed_version source asset pinned record_extra; do
+    if [[ "$asset" == "openshell.rb" ]]; then
+      formula_asset="${workspace}/${asset}"
+      if ! fetch_file "${release_base}/${asset}" "$formula_asset"; then
+        echo "  STALE: unable to download ${source} ${asset}."
+        failures=$((failures + 1))
+        continue
+      fi
+      if ! actual=$(sha256_file "$formula_asset"); then
+        echo "  STALE: unable to hash ${source} ${asset}."
+        failures=$((failures + 1))
+        continue
+      fi
+      if [[ "$actual" == "$pinned" ]]; then
+        published_count=$((published_count + 1))
+        echo "  OK: ${source} ${asset} (${pinned})"
+      else
+        echo "  STALE: ${source} ${asset} digest does not match the pinned v${release_version} release asset."
+        echo "    pinned:   ${pinned}"
+        echo "    upstream: ${actual}"
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
     matches=$(awk -v asset="$asset" '$2 == asset { count++ } END { print count + 0 }' "$manifests")
     upstream=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$manifests")
     if [[ "$matches" -eq 1 && "$pinned" == "$upstream" ]]; then
@@ -238,8 +264,9 @@ check_openshell_release_assets() {
     fi
   done <<<"$pin_records"
 
-  if [[ "$published_count" -ne 10 ]]; then
-    echo "  STALE: expected all 10 pinned asset references in the v${release_version} checksum manifests, matched ${published_count}."
+  expected_published_count=$((count + brev_count))
+  if [[ "$published_count" -ne "$expected_published_count" ]]; then
+    echo "  STALE: expected all ${expected_published_count} pinned asset references for v${release_version}, matched ${published_count}."
     failures=$((failures + 1))
   fi
   return "$failures"

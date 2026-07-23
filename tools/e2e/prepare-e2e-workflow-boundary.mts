@@ -24,10 +24,8 @@ const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 
 const NO_BUILD_JOBS = new Set([
   "generate-matrix",
-  "launchable-smoke",
+  "bootstrap-install-smoke",
   "ollama-auth-proxy",
-  "rebuild-hermes",
-  "rebuild-hermes-stale-base",
   "shields-config",
   "snapshot-commands",
   "spark-install",
