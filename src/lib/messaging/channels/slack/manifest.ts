@@ -214,11 +214,11 @@ export const slackManifest = {
       spec: "npm:@openclaw/slack@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.6.10":
-          "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==",
+        "2026.7.1":
+          "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==",
       },
       tarballUrlByVersion: {
-        "2026.6.10": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.6.10.tgz",
+        "2026.7.1": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz",
       },
       required: true,
     },

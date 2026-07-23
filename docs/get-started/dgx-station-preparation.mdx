@@ -26,19 +26,29 @@ By default, an unknown version, malformed or unsafe marker, unmatched no-OTA fac
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
 
 Station preparation preserves existing stopped Docker container records, captures their IDs before its probes, and stops if that inventory changes during preparation.
-Running containers still block initial preparation and every Docker configuration change.
+Running containers block initial preparation and every Docker configuration change.
 Before a Docker restart or host reboot, stopped containers with a restart policy other than `no` also block preparation because they could start automatically.
+
+If preparation detects an existing vLLM workload, the installer shows the requested model and the model reported by the configured vLLM port when available, then offers two choices:
+
+1. Keep the managed Express recipe. This default leaves the host unchanged and prints the workload stop command and exact Express resume command.
+2. Leave vLLM running and continue in the same installer run through advanced manual Local vLLM validation and configuration.
+
+For the manual Local vLLM choice, NemoClaw records the exact installer revision until installation succeeds.
+If Docker access requires a new login or a later step fails, run the printed command to continue the same choice and revision.
+Without an interactive terminal or a choice, the installer safely selects the first option.
 
 <Warning title="Temporary Metadata Override">
 Use `--force-station-install` only on a genuine DGX Station GB300 when automatic Station detection rejects its DGX release metadata.
 The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
 The flag bypasses only the `/etc/dgx-release` allowlist.
-It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent, inference, or Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
+It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent or unrelated Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
 It cannot enable Station Express on another Station generation or hardware platform.
 This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the exact automatic allowlist.
 Remove the override after those images publish recognized metadata or NemoClaw replaces the exact allowlist with a separately qualified platform-family and runtime-capability check.
 
+If the installer cannot read the prompt, it stops before host changes.
 Run the override from an interactive terminal:
 
 ```bash
@@ -53,6 +63,7 @@ The installer records the override in the printed relogin command when Docker-gr
 
 On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
 Preparation probes package and runtime state first, reuses exact matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+
 NemoClaw accepts an idle PackageKit daemon and quiesces it during repository and package changes.
 NemoClaw still stops before mutation when it finds any of these conditions:
 
@@ -133,16 +144,7 @@ The preparation helper writes a private audit log under `~/station-bootstrap-log
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.
 The AI Developer Tools path can also leave the packaged CDI refresh units enabled when it repairs a missing device.
 
-Physical validation on one DGX Station GB300 covers generic Ubuntu 24.04 ARM64, stock DGX OS `7.5.0`, the April 2026 NVIDIA Colossus BaseOS profile, and the June 2026 NVIDIA AI Developer Tools profile.
-Clean-host end-to-end validation passed on generic Ubuntu and Colossus BaseOS; stock DGX OS and AI Developer Tools completed Station Express validation.
-The DGX OS `7.5.0` run used released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
-A dual-Station configuration has not been validated, and dedicated CI coverage is not available.
-For the complete support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
-
-<Warning title="DGX Station Support Status">
-DGX Station is Tested with limitations across the qualified profiles above on one physical DGX Station GB300.
-Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
-</Warning>
+For the current support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
 
 ## Next Step
 

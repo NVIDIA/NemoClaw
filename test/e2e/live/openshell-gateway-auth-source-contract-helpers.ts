@@ -17,10 +17,11 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 const DOCKER_GRPC_PROBE_IMAGE =
-  "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
+  "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
 
 const FORBIDDEN_AUTH_ARTIFACT_CONTENT: Array<{ label: string; pattern: RegExp }> = [
   { label: "authorization header", pattern: /["']?authorization["']?\s*[:=]/i },
@@ -44,6 +45,7 @@ type ScenarioFixtures = {
   artifacts: ArtifactSink;
   cleanup: CleanupRegistry;
   host: HostCliClient;
+  progress: TestProgress;
   skip: SkipFn;
 };
 
@@ -639,7 +641,7 @@ function createDockerBindableTempDir(prefix: string): string {
 }
 
 async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
-  { artifacts, cleanup, host, skip }: ScenarioFixtures,
+  { artifacts, cleanup, host, progress, skip }: ScenarioFixtures,
   dependencies: GatewayAuthSourceContractDependencies,
 ): Promise<void> {
   const gatewayBin = requireGatewayBin(skip);
@@ -651,6 +653,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 
   await requireDockerDaemon({ dockerBin, host, skip });
 
+  progress.phase("launch the mTLS and JWT-protected gateway");
   const port = await pickPort();
   const stateDir = createDockerBindableTempDir("nemoclaw-openshell-auth-contract-");
   const networkName = `nemoclaw-auth-contract-${process.pid}-${port}`;
@@ -738,6 +741,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     stateDir,
   });
 
+  progress.phase("probe unauthenticated and mTLS-only access");
   const noToken = noTokenContainerProbe(dockerBin, networkName, port, useHostNetwork);
   await artifacts.writeJson("no-token-container-probe.json", noToken);
   skipUnavailableProbeImage(noToken, skip);
@@ -761,6 +765,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     commandOutput(mtlsOnlyContainerCall),
   ).toBe(true);
 
+  progress.phase("probe sandbox JWT authorization boundaries");
   const sandboxToken = mintSandboxJwt({ configPath, sandboxId });
   const sandboxCall = await callGrpc({
     authorization: `Bearer ${sandboxToken}`,
@@ -811,12 +816,12 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 }
 
 export async function runOpenShellGatewayAuthSourceContractScenario(
-  { artifacts, cleanup, host, skip }: ScenarioFixtures,
+  { artifacts, cleanup, host, progress, skip }: ScenarioFixtures,
   dependencies: GatewayAuthSourceContractDependencies,
 ): Promise<void> {
   await withOpenShellGatewayAuthArtifactSafety(artifacts.rootDir, () =>
     runOpenShellGatewayAuthSourceContractScenarioUnchecked(
-      { artifacts, cleanup, host, skip },
+      { artifacts, cleanup, host, progress, skip },
       dependencies,
     ),
   );

@@ -163,8 +163,8 @@ If a manifest-declared state file fails, NemoClaw stops before deleting the orig
 If every state directory fails, NemoClaw stops before deleting the original sandbox even when it captured loose files, unless you explicitly pass `--force`.
 
 <Warning>
-`rebuild --force` can continue when no state directory was preserved.
-NemoClaw restores any loose files captured in the partial backup; if nothing usable was captured, it recreates the sandbox from recorded registry metadata without restoring prior sandbox state.
+`rebuild --force` can continue when no state directory was preserved or a manifest-declared state file failed.
+NemoClaw restores any entries captured in the partial backup; if nothing usable was captured, it recreates the sandbox from recorded registry metadata without restoring prior sandbox state.
 Use this recovery path only when losing the state that could not be backed up is acceptable.
 </Warning>
 

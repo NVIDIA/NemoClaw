@@ -4,8 +4,8 @@
 title: "Engineer Documentation for AI Agents"
 sidebar-title: "Engineer Agentic Docs"
 description: "A practical architecture and operating model for making technical documentation reliable for both people and AI agents."
-description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, workflow automation, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, or docs-as-code automation."
-keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "docs as code", "llms.txt", "docs MCP server"]
+description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, workflow automation, review receipts, adoption metrics, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, or docs-as-code automation."
+keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation review receipt", "docs as code", "llms.txt", "docs MCP server"]
 content:
   type: "how_to"
 ---
@@ -79,6 +79,71 @@ It does not remove documentation ownership.
 It shifts the writer's role toward designing the system, maintaining the instructions, monitoring outcomes, and handling work that requires editorial judgment.
 When the instructions are working, the writer can review by exception.
 Routine pull-request updates that already meet the documentation contract do not need line editing, so the writer can focus on unclear product scope, structural pressure, and recurring failure patterns.
+
+## Make Documentation Review Observable
+
+A repository instruction can require a documentation writer subagent, but the instruction alone does not show whether an engineering agent followed it.
+Add a structured pull-request receipt so each code or documentation change produces observable documentation-review evidence.
+
+NemoClaw records the following fields in the Documentation Writer Review section of the pull-request description:
+
+- A completed-review checkbox.
+- One result: `docs-updated`, `no-docs-needed`, or `blocked`.
+- Evidence that names the changed documentation or explains the result.
+- The agent product and surface that ran the review.
+- The pull-request number.
+- Hidden metadata for the reviewed head SHA and the `AGENTS.md` blob SHA.
+
+Keep one instance of each field.
+The pull-request number detects a receipt copied from another pull request.
+The head SHA binds the review to one pull-request revision.
+The `AGENTS.md` blob SHA records which repository instruction version the review covered.
+
+Use the following sequence for a pull request that changes code or documentation:
+
+1. Run the documentation writer subagent after the changes and applicable validation are complete.
+2. For code changes, update the canonical documentation or record why no documentation change is required.
+3. For documentation changes, verify the writing rules and documentation style.
+4. Commit all changes from the review.
+5. Complete the visible receipt and hidden metadata for the committed head.
+6. Rerun the documentation review after any later commit.
+
+The `CI / Documentation Writer Review` workflow runs when a pull request opens or reopens, when its description is edited, or when it receives a new commit.
+It compares the receipt with the pull-request number, current head, and current `AGENTS.md` blob.
+A new commit makes the previous receipt stale until the documentation writer subagent runs again and refreshes the metadata.
+The checker evaluates code-changing and documentation-only pull requests.
+For documentation-only changes, the receipt records the agent's review of writing rules and documentation style.
+NemoClaw keeps this check advisory during the data-collection pilot.
+
+<Note>
+A valid receipt does not prove that an agent loaded or understood `AGENTS.md`.
+It records observable workflow compliance that can be compared with documentation outcomes.
+</Note>
+
+### Measure Workflow Adoption
+
+Export receipt data from pull-request descriptions with the authenticated GitHub CLI session.
+The report returns JSON by default and also supports CSV and summary output.
+
+```bash
+npm run docs-review:report -- --since 2026-07-01 --format summary
+```
+
+Use a consistent reporting window and track the following measures:
+
+| Measure | What it shows |
+|---|---|
+| Eligible pull requests | The total in `eligiblePrs`, plus the code and documentation-only counts in `eligibleCodePrs` and `eligibleDocsOnlyPrs`. |
+| Receipt coverage | The share of eligible code-changing and documentation-only pull requests that contain a receipt. |
+| Valid receipt rate | The share of eligible pull requests whose receipt has one complete and consistent set of fields. |
+| Fresh receipt rate | The share of recorded receipts tied to the pull request's current head. |
+| Result distribution | The number of receipts that report `docs-updated`, `no-docs-needed`, or `blocked`. |
+| Agent surface | The agent products and surfaces recorded by valid receipts. |
+| Unclassified pull requests | Pull requests whose Type of Change selection does not establish whether code or documentation changed. |
+
+Receipt trends show whether the repository workflow is being followed.
+They do not establish that the instructions caused a documentation improvement.
+Pair the report with accuracy sampling, editorial-intervention rates, and recurring review findings before changing the instruction or making the check required.
 
 ## Use a Layered Architecture
 
@@ -497,6 +562,7 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Variant generation | `scripts/sync-agent-variant-docs.mts`. |
 | Route validation | `scripts/check-docs-published-routes.mts`. |
 | Update workflow | `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
+| Documentation review receipt | `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/docs-review-receipt.yaml`, and `scripts/docs-review-receipt.mts`. |
 | Information-architecture workflow | `.agents/skills/nemoclaw-maintainer-refactor-docs/SKILL.md`. |
 | Pull-request assurance | Docs link, product parity, and preview workflows under `.github/workflows/`. |
 | Release history | Dated entries under `docs/changelog/` that land before the release tag. |
@@ -515,6 +581,8 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Routing prompts and skills point to the source instead of copying it.
 - Variant generation is deterministic and variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
+- Code-changing and documentation-only pull requests record a documentation-review result tied to the pull-request number, current head, and instruction version.
+- New commits invalidate the recorded review until the documentation writer subagent runs again.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
 - Release publication uses an approved immutable revision.
 - Retrieval, citation, task, variant, safety, and freshness regressions have repeatable evaluations.

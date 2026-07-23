@@ -29,6 +29,7 @@ import {
 
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
+const SUPERSEDED_HEAD_SHA = "c".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
 const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
@@ -1152,6 +1153,56 @@ describe("PR E2E controller lifecycle", () => {
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/actions/runs/23/cancel")),
     ).toHaveLength(1);
+  });
+
+  it("closes the superseded head check before the current revision requests approval", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    const supersededCheck = exactPrGateCheck({
+      head_sha: SUPERSEDED_HEAD_SHA,
+      external_id: prGateExternalId(42, SUPERSEDED_HEAD_SHA, BASE_SHA),
+      output: { title: "E2E reviewer authorization required to run E2E" },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${SUPERSEDED_HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [supersededCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/workflows/e2e.yaml/runs?") && method === "GET",
+            () => githubResponse({ workflow_runs: [] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) =>
+              githubResponse({
+                ...supersededCheck,
+                ...(request.body as Record<string, unknown>),
+              }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(cancelPrGate(42, HEAD_SHA, SUPERSEDED_HEAD_SHA)).resolves.toBe(0);
+    const completion = requests.find((request) => request.url.endsWith("/check-runs/17"));
+    expect(completion?.body).toMatchObject({
+      status: "completed",
+      conclusion: "cancelled",
+      output: {
+        title: "Superseded by PR update",
+      },
+    });
   });
 
   it("fails before cancellation when an active-status search reaches its result limit", async () => {

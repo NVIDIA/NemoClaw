@@ -47,6 +47,21 @@ describe("node-tar image remediation contract", () => {
     }
   });
 
+  it.each([
+    "Dockerfile.base",
+    "agents/hermes/Dockerfile.base",
+    "agents/langchain-deepagents-code/Dockerfile.base",
+  ])("installs curl before patching the bundled npm tar in $file", (file) => {
+    const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
+    const curlInstall = source.indexOf("curl=");
+    const patchRun = source.indexOf(
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+    );
+
+    expect(curlInstall, file).toBeGreaterThanOrEqual(0);
+    expect(patchRun, file).toBeGreaterThan(curlInstall);
+  });
+
   it.each(
     dockerfiles,
   )("patches npm before use and scans the completed $file filesystem", (entry) => {

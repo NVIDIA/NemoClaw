@@ -182,6 +182,24 @@ jobs:
       - name: Resolve Hermes base image
         uses: ./.github/actions/resolve-hermes-base-image
 
+      - &hermes-export-swap
+        name: Add swap for Hermes image export
+        shell: bash
+        run: |
+          set -euo pipefail
+          swap_file=/mnt/nemoclaw-hermes-image-export.swap
+          free -h
+          df -h / /mnt
+          swapon --show
+          sudo fallocate -l 32G "$swap_file"
+          sudo chmod 0600 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
+          swapon --show
+          free -h
+          df -h / /mnt
+          docker system df
+
       - name: Build Hermes production image
         env:
           HERMES_BASE_IMAGE: ${{ env.HERMES_BASE_IMAGE }}
@@ -329,6 +347,8 @@ jobs:
           docker build "${build_args[@]}" -t nemoclaw-openclaw-plan-boundary .
           node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify \
             nemoclaw-openclaw-plan-boundary openclaw
+
+      - *hermes-export-swap
 
       - name: Build and verify Hermes messaging plan boundary
         env:

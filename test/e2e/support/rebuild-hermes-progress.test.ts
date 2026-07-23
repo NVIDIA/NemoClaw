@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import {
-  type RebuildHermesProgressOptions,
-  startRebuildHermesProgress,
-} from "../live/rebuild-hermes-progress.ts";
+import { startTestProgress, type TestProgressOptions } from "../fixtures/progress.ts";
 
 function progressHarness() {
   const state = {
@@ -15,8 +12,9 @@ function progressHarness() {
     lines: [] as string[],
     timerCallback: null as (() => void) | null,
   };
-  const options: RebuildHermesProgressOptions = {
-    heartbeatIntervalMs: 60_000,
+  const options: TestProgressOptions = {
+    stallThresholdMs: 300_000,
+    stallReminderIntervalMs: 600_000,
     now: () => state.clockMs,
     setTimer: (callback) => {
       state.timerCallback = callback;
@@ -40,33 +38,35 @@ function progressHarness() {
 }
 
 describe("Hermes rebuild live progress", () => {
-  it("streams timestamp-only phase and resource heartbeats through cleanup", () => {
+  it("keeps runner evidence out of normal phase transitions", () => {
     const { options, state } = progressHarness();
-    const progress = startRebuildHermesProgress("phase 6 nemoclaw rebuild", options);
+    const progress = startTestProgress(
+      "rebuild-hermes",
+      ["run authoritative Hermes rebuild", "remove rebuilt Hermes resources"],
+      options,
+    );
 
-    progress.onOutput({ stream: "stderr", atMs: 21_000 });
-    state.clockMs = 61_000;
+    progress.onOutput({ stream: "stderr", atMs: 61_000 });
+    state.clockMs = 301_000;
     state.timerCallback?.();
-    progress.phase("cleanup");
+    progress.phase("remove rebuilt Hermes resources");
     progress.stop();
     const linesAfterStop = state.lines.length;
     progress.stop();
     progress.phase("after stop");
 
-    expect(state.clearCalls).toBe(1);
-    expect(state.baselinePhases).toEqual(["phase 6 nemoclaw rebuild", "cleanup"]);
+    expect(state.clearCalls).toBe(2);
+    expect(state.baselinePhases).toEqual([
+      "run authoritative Hermes rebuild",
+      "remove rebuilt Hermes resources",
+    ]);
     expect(state.lines).toHaveLength(linesAfterStop);
     expect(state.lines).toEqual([
-      "[rebuild-hermes] phase 6 nemoclaw rebuild started (0s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      'E2E_RESOURCE_SNAPSHOT {"phase":"phase 6 nemoclaw rebuild"}',
-      "[rebuild-hermes] phase 6 nemoclaw rebuild running (60s elapsed; last child output 40s ago; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      'E2E_RESOURCE_SNAPSHOT {"phase":"phase 6 nemoclaw rebuild"}',
-      "[rebuild-hermes] phase 6 nemoclaw rebuild finished (60s elapsed; last child output 40s ago; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      'E2E_RESOURCE_SNAPSHOT {"phase":"phase 6 nemoclaw rebuild"}',
-      "[rebuild-hermes] cleanup started (0s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      'E2E_RESOURCE_SNAPSHOT {"phase":"cleanup"}',
-      "[rebuild-hermes] cleanup finished (0s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      'E2E_RESOURCE_SNAPSHOT {"phase":"cleanup"}',
+      "[e2e phase 1/2] run authoritative Hermes rebuild",
+      "[e2e phase 1/2] still running: run authoritative Hermes rebuild (phase 5m; child output 4m ago; no active command; rss 0.5 GiB; memory free 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)",
+      'E2E_RESOURCE_SNAPSHOT {"phase":"run authoritative Hermes rebuild"}',
+      "[e2e phase 1/2] run authoritative Hermes rebuild — passed in 5m; next 2/2: remove rebuilt Hermes resources",
+      "[e2e phase 2/2] remove rebuilt Hermes resources — passed in 0s",
     ]);
   });
 
@@ -80,10 +80,16 @@ describe("Hermes rebuild live progress", () => {
     };
 
     expect(() => {
-      const progress = startRebuildHermesProgress("phase 2 old base build", options);
-      progress.phase("cleanup");
+      const progress = startTestProgress(
+        "rebuild-hermes",
+        ["build previous Hermes base", "remove previous Hermes base"],
+        options,
+      );
+      state.clockMs = 301_000;
+      state.timerCallback?.();
+      progress.phase("remove previous Hermes base");
       progress.stop();
     }).not.toThrow();
-    expect(state.clearCalls).toBe(1);
+    expect(state.clearCalls).toBe(2);
   });
 });

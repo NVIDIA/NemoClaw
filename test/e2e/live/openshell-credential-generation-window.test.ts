@@ -321,12 +321,21 @@ async function runFreshRequest(
   }>(result.stdout);
 }
 
-test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async ({
-  artifacts,
-  cleanup,
-  host,
-  sandbox,
-}) => {
+test("openshell-credential-generation-window", {
+  timeout: 60 * 60_000,
+  meta: {
+    e2ePhases: [
+      "start endpoints and onboard the credential-window sandbox",
+      "attach the MCP provider and observe its initial generation",
+      "prove a retained credential generation expires",
+      "rotate beyond the retained generation window",
+      "prove key removal and provider detach revoke access",
+      "restart the bridge and confirm old-process fallback",
+      "rebuild the sandbox and confirm credential reuse",
+      "remove the MCP bridge and audit denied requests",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox }) => {
   expect(process.env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF).toBe("1");
   expect(CREDENTIAL_WINDOW_ROTATION_COUNT).toBeGreaterThan(
     OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
@@ -392,6 +401,7 @@ test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async (
   );
   expectExitZero(onboard, "onboard credential-window sandbox");
 
+  progress.phase("attach the MCP provider and observe its initial generation");
   const add = await host.nemoclaw(
     [
       SANDBOX_NAME,
@@ -446,6 +456,7 @@ test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async (
   );
   expectExitZero(resetControl, "reset credential-window control files");
 
+  progress.phase("prove a retained credential generation expires");
   const expiryAtMs = Date.now() + CREDENTIAL_WINDOW_EXPIRY_DELAY_MS;
   fakeMcp.setSecret(expirySecret);
   await updateProviderCredential(
@@ -578,6 +589,7 @@ test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async (
     ],
   });
 
+  progress.phase("rotate beyond the retained generation window");
   const clearExpiryControl = await sandbox.exec(
     SANDBOX_NAME,
     [
@@ -676,6 +688,7 @@ test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async (
       placeholderAbsent: true,
     });
 
+    progress.phase("prove key removal and provider detach revoke access");
     await updateProviderCredential(
       sandbox,
       providerName,
@@ -763,6 +776,7 @@ test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async (
       ).seen,
     ).toBe(false);
 
+    progress.phase("restart the bridge and confirm old-process fallback");
     await rotateCredential(
       host,
       fakeMcp,
@@ -834,6 +848,7 @@ test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async (
     ],
   });
 
+  progress.phase("rebuild the sandbox and confirm credential reuse");
   const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
     artifactName: "credential-window-rebuild-with-provider-reuse",
     env: {
@@ -867,6 +882,7 @@ test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async (
     placeholderAbsent: true,
   });
 
+  progress.phase("remove the MCP bridge and audit denied requests");
   const remove = await host.nemoclaw([SANDBOX_NAME, "mcp", "remove", SERVER_NAME], {
     artifactName: "credential-window-mcp-remove",
     env: buildAvailabilityProbeEnv(),
