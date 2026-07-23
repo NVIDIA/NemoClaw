@@ -365,18 +365,13 @@ describe("OpenShell gateway auth source contract helpers", () => {
     fs.writeFileSync(path.join(outside, "scenario.json"), '{"status":"external"}\n');
     const originalMkdir = fs.mkdirSync.bind(fs);
     let approvedRoot: string | undefined;
-    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation((target, options) => {
+    let approvedNested: string | undefined;
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementationOnce((target, options) => {
       const result = originalMkdir(target, options);
-      const targetPath = String(target);
-      if (
-        !approvedRoot &&
-        path.basename(targetPath) === "nested" &&
-        path.basename(path.dirname(targetPath)).startsWith("nemoclaw-approved-auth-artifacts-")
-      ) {
-        approvedRoot = path.dirname(targetPath);
-        fs.renameSync(nested, originalNested);
-        fs.symlinkSync(outside, nested, "dir");
-      }
+      approvedNested = String(target);
+      approvedRoot = path.dirname(approvedNested);
+      fs.renameSync(nested, originalNested);
+      fs.symlinkSync(outside, nested, "dir");
       return result;
     });
 
@@ -384,6 +379,8 @@ describe("OpenShell gateway auth source contract helpers", () => {
       expect(() => scanAndApproveOpenShellGatewayAuthArtifacts(dir)).toThrow(
         /nested.*entry identity changed during safety approval/,
       );
+      expect(path.basename(approvedNested as string)).toBe("nested");
+      expect(path.basename(approvedRoot as string)).toMatch(/^nemoclaw-approved-auth-artifacts-/);
       expect(approvedRoot).toBeDefined();
       expect(fs.existsSync(approvedRoot as string)).toBe(false);
       expect(fs.existsSync(dir)).toBe(false);
@@ -400,28 +397,31 @@ describe("OpenShell gateway auth source contract helpers", () => {
     const artifactPath = path.join(dir, "scenario.json");
     fs.mkdirSync(dir);
     fs.writeFileSync(artifactPath, '{"status":"passed"}\n');
-    const originalOpen = fs.openSync.bind(fs);
-    let copySourceFd: number | undefined;
-    const openSpy = vi.spyOn(fs, "openSync").mockImplementation((target, flags, mode) => {
-      if (typeof flags === "number" && (flags & fs.constants.O_CREAT) !== 0) {
+    const scanSourceFd = fs.openSync(artifactPath, fs.constants.O_RDONLY);
+    const copySourceFd = fs.openSync(artifactPath, fs.constants.O_RDONLY);
+    const openSpy = vi
+      .spyOn(fs, "openSync")
+      .mockImplementationOnce(() => scanSourceFd)
+      .mockImplementationOnce(() => copySourceFd)
+      .mockImplementationOnce(() => {
         throw new Error("simulated approved destination open failure");
-      }
-      const descriptor = originalOpen(target, flags, mode);
-      if (path.resolve(String(target)) === path.resolve(artifactPath)) {
-        copySourceFd = descriptor;
-      }
-      return descriptor;
-    });
+      });
     try {
       expect(() => scanAndApproveOpenShellGatewayAuthArtifacts(dir)).toThrow(
         "simulated approved destination open failure",
       );
-      expect(copySourceFd).toBeDefined();
-      expect(() => fs.fstatSync(copySourceFd as number)).toThrowError(
+      expect(() => fs.fstatSync(copySourceFd)).toThrowError(
         expect.objectContaining({ code: "EBADF" }),
       );
     } finally {
       openSpy.mockRestore();
+      for (const descriptor of [scanSourceFd, copySourceFd]) {
+        try {
+          fs.closeSync(descriptor);
+        } catch {
+          // The implementation already closed the descriptor.
+        }
+      }
       fs.rmSync(parent, { recursive: true, force: true });
     }
   });
