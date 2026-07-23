@@ -60,8 +60,7 @@ function telemetrySteps(workflow: Workflow, jobId: string): WorkflowStep[] {
 function matrixValues(workflow: Workflow, jobId: string, key: string): unknown[] {
   const matrix = workflow.jobs[jobId]!.strategy!.matrix!;
   const direct = matrix[key];
-  if (Array.isArray(direct)) return direct;
-  return matrix.include?.map((entry) => entry[key]) ?? [];
+  return Array.isArray(direct) ? direct : (matrix.include?.map((entry) => entry[key]) ?? []);
 }
 
 describe("runner comparison E2E workflow boundary (#7145)", () => {
