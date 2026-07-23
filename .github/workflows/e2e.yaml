@@ -595,6 +595,12 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (matrix.agent == 'hermes' || matrix.agent == 'deepagents') }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Install and verify cloudflared prerequisite
         # Update posture: maintainers review upstream cloudflared releases and
         # update the version and reviewed SHA256 together in both explicit MCP
@@ -664,6 +670,12 @@ jobs:
               --no-file-parallelism \
               --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
           fi
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (matrix.agent == 'hermes' || matrix.agent == 'deepagents') }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
@@ -1206,6 +1218,11 @@ jobs:
       - *dockerhub-auth
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run Hermes inference switch live Vitest test
@@ -1217,6 +1234,11 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell || true)"
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-inference-switch.test.ts
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
       - name: Upload Hermes inference switch artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1685,12 +1707,24 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Run Hermes live Vitest test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-e2e.test.ts
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload Hermes live Vitest artifacts
         if: always()
@@ -1993,12 +2027,24 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Run Hermes dashboard live Vitest test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-e2e.test.ts
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload Hermes dashboard live Vitest artifacts
         if: always()
@@ -2036,6 +2082,12 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Run Hermes Discord live test
         # Preserves the
         # ubuntu-latest Docker/OpenShell/Hermes Discord schema, provider,
@@ -2049,6 +2101,12 @@ jobs:
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-discord.test.ts
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload Hermes Discord artifacts
         if: always()
@@ -2150,6 +2208,12 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Install OpenShell
         # Direct Vitest execution uses bin/nemoclaw.js instead of install.sh,
         # so install OpenShell explicitly before onboard and SSH-agent probes.
@@ -2182,6 +2246,12 @@ jobs:
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload common-egress agent artifacts
         if: always()
@@ -2269,12 +2339,24 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Run Hermes shields-config live regression
         # This hermetic regression uses a local OpenAI-compatible endpoint and
         # proves two complete down/up cycles on a fresh non-root Hermes sandbox.
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-shields-config.test.ts
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload Hermes shields-config artifacts
         if: always()
@@ -2378,6 +2460,12 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Install OpenShell
         # Full NemoClaw installer coverage remains in hermes-e2e. Rebuild uses
         # the checked-out CLI and installs only its external runtime dependency.
@@ -2437,6 +2525,12 @@ jobs:
           fi
           exit "$test_status"
 
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
+
       - name: Upload Hermes rebuild artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -2479,6 +2573,12 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Install OpenShell
         # Full NemoClaw installer coverage remains in hermes-e2e. Rebuild uses
@@ -2538,6 +2638,12 @@ jobs:
             npx tsx tools/e2e/runner-pressure.mts validate-classification
           fi
           exit "$test_status"
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload Hermes stale-base rebuild artifacts
         if: always()
@@ -3181,6 +3287,12 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
@@ -3191,6 +3303,12 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path "${{ matrix.test_file }}"
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload security posture artifacts
         if: always()
@@ -4646,6 +4764,12 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Install OpenShell
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
@@ -4679,6 +4803,12 @@ jobs:
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/channels-stop-start.test.ts
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload channels stop/start artifacts
         if: always()
