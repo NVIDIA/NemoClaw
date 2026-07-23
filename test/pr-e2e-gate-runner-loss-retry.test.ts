@@ -263,12 +263,13 @@ function retryRoutes(
       githubFetchRoute(
         ({ url, method }) => url.includes("/actions/runs/23/attempts/1/jobs?") && method === "GET",
         (request) => {
-          if (options.jobPages) {
-            const page = Number(new URL(request.url).searchParams.get("page"));
-            return githubResponse(options.jobPages[page - 1]);
-          }
+          const page = Number(new URL(request.url).searchParams.get("page"));
           const jobs = options.jobs ?? [hostedRunnerLossJob()];
-          return githubResponse({ total_count: jobs.length, jobs });
+          const response =
+            options.jobPages === undefined
+              ? { total_count: jobs.length, jobs }
+              : options.jobPages[page - 1];
+          return githubResponse(response);
         },
       ),
       githubFetchRoute(
@@ -306,9 +307,7 @@ function retryRoutes(
         ({ url, method }) =>
           url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
         () => {
-          if (options.createRetryStateDirectory) {
-            fs.mkdirSync(options.createRetryStateDirectory);
-          }
+          options.createRetryStateDirectory && fs.mkdirSync(options.createRetryStateDirectory);
           return githubResponse({
             workflow_run_id: 24,
             run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/24",
@@ -930,11 +929,11 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
         childRunId: 24,
         evidenceOutcome,
       });
-      if (conclusion === "success") {
-        await expect(finalization).rejects.toThrow(/Evidence download did not complete/u);
-      } else {
-        await expect(finalization).resolves.toBeUndefined();
-      }
+      const expectedFinalization =
+        conclusion === "success"
+          ? expect(finalization).rejects.toThrow(/Evidence download did not complete/u)
+          : expect(finalization).resolves.toBeUndefined();
+      await expectedFinalization;
       const completion = requests.find(
         (request) =>
           request.url.endsWith("/check-runs/18") &&
