@@ -402,6 +402,46 @@ printf 'FACTORY_VALIDATION\n' >>"$CALLS"
     expect(output).not.toContain("FACTORY_VALIDATION");
   });
 
+  it.each(
+    ["stock-dgx-os", "ai-developer-tools"].flatMap((profile) => [
+      {
+        label: "malformed",
+        profile,
+        transactionState: "unexpected reply",
+        expectedError: /malformed transaction state/,
+      },
+      {
+        label: "inconsistent empty",
+        profile,
+        transactionState: 'ao 0 "/42_deadbeef"',
+        expectedError: /inconsistent empty transaction state/,
+      },
+    ]),
+  )("rejects $label PackageKit state for $profile before factory validation (#7417)", ({
+    expectedError,
+    profile,
+    transactionState,
+  }) => {
+    const { result, output } = runPackageKitBoundary(
+      `
+STATION_HOST_PROFILE="$FACTORY_PROFILE"
+ps() { printf '4242 packagekitd\n'; }
+trap 'cat "$CALLS"' EXIT
+check_package_managers_idle 'initial Station package preflight'
+printf 'FACTORY_VALIDATION\n' >>"$CALLS"
+`,
+      {
+        FACTORY_PROFILE: profile,
+        PACKAGEKIT_TRANSACTIONS: transactionState,
+      },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("GetTransactionList");
+    expect(output).toMatch(expectedError);
+    expect(output).not.toContain("FACTORY_VALIDATION");
+  });
+
   it.each([
     "/var/lib/dpkg/lock-frontend",
     "/var/lib/dpkg/lock",
