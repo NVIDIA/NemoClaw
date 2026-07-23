@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
+import { SNAPSHOT_DATA_PREFIX } from "../live/bedrock-runtime-compatible-anthropic-leaks.ts";
 import { runRawCommand } from "../live/bedrock-runtime-compatible-anthropic-raw-command.ts";
 
 const temporaryRoots: string[] = [];
@@ -166,5 +167,41 @@ describe("Bedrock raw-command progress", () => {
       stderr: marker,
     });
     expect(JSON.stringify(resultArtifact)).not.toContain(secret);
+  });
+
+  it("captures null-heavy snapshot framing within the bounded output limit (#7101)", async () => {
+    const artifacts = await artifactSink("bedrock-progress-compact-snapshot");
+    const observation = progressProbe();
+    const record = `${SNAPSHOT_DATA_PREFIX}\n`;
+    const recordCount = 500_000;
+    const expectedBytes = Buffer.byteLength(record) * recordCount;
+
+    const result = await runRawCommand(
+      process.execPath,
+      ["-e", `process.stdout.write(${JSON.stringify(record)}.repeat(${recordCount}))`],
+      {
+        artifactName: "bedrock-progress-compact-snapshot",
+        artifactOutputMode: "metadata-only",
+        artifacts,
+        progress: observation.progress,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.byteLength(result.stdout)).toBe(expectedBytes);
+    expect(expectedBytes).toBeLessThan(10 * 1024 * 1024);
+    await expect(
+      fs.readFile(
+        path.join(artifacts.rootDir, "raw-shell/bedrock-progress-compact-snapshot.stdout.txt"),
+        "utf8",
+      ),
+    ).resolves.toBe(
+      `${JSON.stringify({
+        stream: "stdout",
+        capturedBytes: expectedBytes,
+        capturedLines: recordCount + 1,
+        content: "omitted: inspected in memory only",
+      })}\n`,
+    );
   });
 });
