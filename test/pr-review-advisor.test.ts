@@ -27,6 +27,7 @@ import {
   extractPreviousAdvisorReview,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
+  readTrustedWritingGuide,
   recordSynthesisValidationFailureOnDraft,
   renderDetailedReview,
   renderSummary,
@@ -423,14 +424,22 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     );
   });
 
-  it("loads the checked-in security review skill into the advisor prompt", () => {
+  it("loads the checked-in review guides into the advisor prompt", () => {
     const skill = readTrustedSecurityReviewSkill();
+    const writingGuide = readTrustedWritingGuide();
     const prompt = buildSystemPrompt();
 
     expect(skill).toContain("# Security Code Review");
     expect(skill).toContain("Category 1: Secrets and Credentials");
+    expect(writingGuide).toContain("# NemoClaw Writing Guide");
+    expect(writingGuide).toContain("Use one term for one concept");
+    expect(writingGuide).toContain("## Scope and Review Policy");
     expect(prompt).toContain("Trusted security review skill from main checkout");
-    expect(prompt).toContain("For NemoClaw PRs, check sandbox escape vectors");
+    expect(prompt).toContain("Trusted NemoClaw writing guide from workflow checkout");
+    expect(prompt).toContain("Apply its review policy when you evaluate changed explanatory text");
+    expect(prompt).toContain("Do not request unrelated language cleanup");
+    expect(prompt).toContain("For NemoClaw PRs, check SSRF bypasses");
+    expect(prompt).not.toContain("For NemoClaw PRs, check sandbox escape vectors");
     expect(prompt).toContain(
       "Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status",
     );

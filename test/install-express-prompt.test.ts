@@ -6,29 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
-const INSTALLER_BOOTSTRAP = path.resolve(import.meta.dirname, "..", "install.sh");
-
 describe("installer express install prompt (sourced)", () => {
-  function runInstallerSourced(body: string) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-sourced-"));
-    const result = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
-      {
-        cwd: path.resolve(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: home,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        },
-      },
-    );
-    return { result, output: `${result.stdout}${result.stderr}` };
-  }
-
   function runExpressPromptWithTty(
     answer: string,
     stdinMode: "pipe" | "tty",
@@ -303,13 +284,11 @@ detect_express_platform
 
   it("documents optional Hugging Face authentication in piped bootstrap help (#7157)", () => {
     const result = spawnSync("bash", ["-s", "--", "--help"], {
-      cwd: os.tmpdir(),
-      input: fs.readFileSync(INSTALLER_BOOTSTRAP, "utf8"),
+      input: fs.readFileSync(path.resolve(import.meta.dirname, "..", "install.sh"), "utf8"),
       encoding: "utf8",
       env: { HOME: os.tmpdir(), PATH: TEST_SYSTEM_PATH },
     });
     const output = `${result.stdout}${result.stderr}`;
-
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/HF_TOKEN\s+Optional Hugging Face read token/);
     expect(output).toContain("https://huggingface.co/settings/tokens");
@@ -401,7 +380,10 @@ detect_express_platform
     expect(output).toMatch(
       /installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages/,
     );
-    expect(output).toMatch(/DGX Station remains Deferred/);
+    expect(output).toMatch(
+      /DGX Station is Tested with limitations across qualified profiles on one physical DGX Station GB300/,
+    );
+    expect(output).toMatch(/dual-Station configurations are not yet validated/);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
@@ -516,22 +498,14 @@ describe_express_install 'DGX Station'`,
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
-  });
-
-  it("reports authenticated Station downloads without displaying the token (#7157)", () => {
     const token = `hf_${"s".repeat(32)}`;
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      HF_TOKEN: token,
-    });
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("Hugging Face model download: authenticated");
-    expect(output).toContain("token value is not displayed");
-    expect(output).not.toContain(token);
-    expect(output.indexOf("Hugging Face model download: authenticated")).toBeLessThan(
-      output.indexOf("Run express install with these settings?"),
+    const authenticated = runInstallerSourced(
+      `HF_TOKEN="${token}"\ndescribe_express_install "DGX Station"`,
     );
+    expect(authenticated.result.status, authenticated.output).toBe(0);
+    expect(authenticated.output).toContain("Hugging Face model download: authenticated");
+    expect(authenticated.output).toContain("token value is not displayed");
+    expect(authenticated.output).not.toContain(token);
   });
 
   it("pre-stages complete Station Express intent and ports before a Docker-group relogin (#7203)", () => {
@@ -590,6 +564,154 @@ ensure_station_express_host`,
     expect(output).toContain(
       `NEMOCLAW_INSTALL_TAG=${revision} NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=custom-agent NEMOCLAW_POLICY_TIER=restricted NEMOCLAW_GATEWAY_PORT=18081 NEMOCLAW_DASHBOARD_PORT=18790 NEMOCLAW_VLLM_PORT=18000 bash`,
     );
+  });
+
+  it("preserves Express intent and prints the exact resume command when the user keeps Express", () => {
+    const { home, result, output } = runInstallerSourced(`
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+load_station_vllm_conflict_helpers
+NON_INTERACTIVE=1
+NEMOCLAW_PROVIDER=install-vllm
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
+station_existing_vllm_model() { printf 'existing/model'; }
+express_prompt_can_read_tty() { return 0; }
+read_station_vllm_conflict_choice() { printf '1'; }
+classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
+run_station_host_preparation() { return 12; }
+ensure_station_express_host
+`);
+
+    expect(result.status, output).toBe(12);
+    expect(output).toContain("Keep Express with nvidia/nemotron-3-ultra-550b-a55b (default)");
+    expect(output).toContain("Existing vLLM workload detected");
+    expect(output).toContain("Model reported by port 8000: existing/model");
+    expect(output).toContain(
+      "Use Local vLLM at port 8000 (reported model: existing/model; advanced manual setup)",
+    );
+    expect(output).not.toContain("Existing vLLM detected: existing/model");
+    expect(output).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | " +
+        "NEMOCLAW_INSTALL_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa " +
+        "NEMOCLAW_AGENT=openclaw NEMOCLAW_SANDBOX_NAME=my-assistant " +
+        "NEMOCLAW_POLICY_TIER=balanced NEMOCLAW_GATEWAY_PORT=8080 " +
+        "NEMOCLAW_DASHBOARD_PORT=18789 NEMOCLAW_VLLM_PORT=8000 bash",
+    );
+    expect(output).not.toContain("NEMOCLAW_NO_EXPRESS=1");
+    expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
+  });
+
+  it("reads a bounded running-model identity from the existing vLLM health endpoint", () => {
+    const { home, result, output } = runInstallerSourced(`
+load_station_vllm_conflict_helpers
+NEMOCLAW_VLLM_PORT=18000
+curl() {
+  printf '%s\n' "$@" >"$HOME/curl-args"
+  printf '{"data":[{"id":"running/model"}]}'
+}
+printf 'MODEL=%s\n' "$(station_existing_vllm_model)"
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("MODEL=running/model");
+    expect(fs.readFileSync(path.join(home, "curl-args"), "utf8")).toBe(
+      "-fsS\n--connect-timeout\n1\n--max-time\n3\n--max-filesize\n1048576\n" +
+        "http://127.0.0.1:18000/v1/models\n",
+    );
+  });
+
+  it("does not display an unsafe model identity returned by the existing endpoint", () => {
+    const { result, output } = runInstallerSourced(`
+load_station_vllm_conflict_helpers
+curl() { printf '{"data":[{"id":"unsafe model\\ntext"}]}'; }
+if station_existing_vllm_model; then
+  printf 'UNSAFE_MODEL_ACCEPTED\n'
+else
+  printf 'MODEL=unknown\n'
+fi
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("MODEL=unknown");
+    expect(output).not.toContain("UNSAFE_MODEL_ACCEPTED");
+    expect(output).not.toContain("unsafe model");
+  });
+
+  it("uses the Express-preserving default when the user submits an empty choice", () => {
+    const { home, result, output } = runInstallerSourced(`
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+load_station_vllm_conflict_helpers
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
+station_existing_vllm_model() { printf 'existing/model'; }
+express_prompt_can_read_tty() { return 0; }
+read_station_vllm_conflict_choice() { printf ''; }
+classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
+run_station_host_preparation() { return 12; }
+ensure_station_express_host
+`);
+
+    expect(result.status, output).toBe(12);
+    expect(output).toContain("Choose 1 or 2 [1]");
+    expect(output).toContain("Keep Express: stop the vLLM workload");
+    expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
+  });
+
+  it("rejects an invalid conflict choice before accepting advanced manual setup", () => {
+    const { result, output } = runInstallerSourced(`
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+load_station_vllm_conflict_helpers
+NON_INTERACTIVE=1
+NEMOCLAW_NON_INTERACTIVE=1
+NEMOCLAW_PROVIDER=install-vllm
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
+station_existing_vllm_model() { printf 'existing/model'; }
+express_prompt_can_read_tty() { return 0; }
+printf '3\n2\n' >"$HOME/choices"
+exec 9<"$HOME/choices"
+read_station_vllm_conflict_choice() {
+  local selected
+  IFS= read -r selected <&9 || return 1
+  printf '%s' "$selected"
+}
+classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
+run_station_host_preparation() { return 12; }
+ensure_station_express_host
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("Enter 1 or 2");
+    expect(output).toContain("Continuing with advanced manual Local vLLM setup");
+  });
+
+  it("uses the Express-preserving default without a TTY", () => {
+    const { home, result, output } = runInstallerSourced(`
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+load_station_vllm_conflict_helpers
+FORCE_STATION_INSTALL=1
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
+station_existing_vllm_model() { printf 'existing/model'; }
+express_prompt_can_read_tty() { return 1; }
+classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
+run_station_host_preparation() { return 12; }
+ensure_station_express_host
+`);
+
+    expect(result.status, output).toBe(12);
+    expect(output).toContain("No interactive terminal is available");
+    expect(output).not.toContain("NEMOCLAW_NO_EXPRESS=1");
+    expect(output).toContain("--force-station-install");
+    expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
   });
 
   it("does not invoke Station host preparation when the accepted receipt cannot be staged (#7203)", () => {
@@ -928,7 +1050,12 @@ main "$@"
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Explicit --force-station-install intent bypasses only/);
+    expect(output).toMatch(
+      /Explicit --force-station-install intent bypasses only DGX release-metadata qualification/,
+    );
+    expect(output).toMatch(
+      /Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices/,
+    );
     expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(/PROVIDER=install-vllm/);

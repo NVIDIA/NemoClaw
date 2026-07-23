@@ -125,7 +125,7 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     expect(isOpenClawQrTerminalRendererSource("const unrelated = true;")).toBe(false);
   });
 
-  it("recognizes the reviewed OpenClaw 2026.6.10 renderer integrity", () => {
+  it("recognizes the reviewed OpenClaw 2026.7.1 renderer integrity", () => {
     expect(
       isReviewedOpenClawQrTerminalRendererIntegrity(REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256),
     ).toBe(true);

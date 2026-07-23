@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { expect, test } from "vitest";
-
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { type ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 
 // reporter-workflow coverage guard for #4522 installs the exact OpenClaw /
 // @openclaw/whatsapp versions bundled by Dockerfile.base and measures the real
@@ -118,41 +117,35 @@ type QrProfile = {
   dataImageFallback: boolean;
 };
 
-function runCommand(
+async function runCommand(
+  shellProbe: ShellProbe,
   command: string,
   args: string[],
-  options: { cwd: string; env?: Record<string, string>; timeoutMs: number },
+  options: {
+    artifactName: string;
+    cwd: string;
+    env?: Record<string, string>;
+    timeoutMs: number;
+  },
 ): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+  const result = await shellProbe.run(
+    trustedShellCommand({
+      command,
+      args,
+      reason: "exercise the reviewed WhatsApp QR runtime boundary",
+    }),
+    {
+      artifactName: options.artifactName,
       cwd: options.cwd,
       env: { ...process.env, ...(options.env ?? {}) },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 1_000).unref();
-    }, options.timeoutMs);
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.on("close", (status) => {
-      clearTimeout(timeout);
-      resolve({ status, stdout, stderr });
-    });
-  });
+      timeoutMs: options.timeoutMs,
+    },
+  );
+  return {
+    status: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
 
 async function readBundledOpenClawVersion(): Promise<string> {
@@ -226,12 +219,17 @@ function parseCompactProbeResult(stdout: string, label: string): QrProbeResult {
   };
 }
 
-async function compileProductionPreload(workdir: string): Promise<string> {
+async function compileProductionPreload(shellProbe: ShellProbe, workdir: string): Promise<string> {
   const outDir = path.join(workdir, "compiled-runtime-preloads");
   const compile = await runCommand(
+    shellProbe,
     path.join(REPO_ROOT, "node_modules", ".bin", "tsc"),
     ["-p", path.join(REPO_ROOT, "tsconfig.runtime-preloads.json"), "--outDir", outDir],
-    { cwd: REPO_ROOT, timeoutMs: TSC_TIMEOUT_MS },
+    {
+      artifactName: "compile-compact-qr-preload",
+      cwd: REPO_ROOT,
+      timeoutMs: TSC_TIMEOUT_MS,
+    },
   );
   expect(compile.status, `runtime preload compile failed\n${compile.stderr}`).toBe(0);
   const preload = path.join(
@@ -247,10 +245,22 @@ async function compileProductionPreload(workdir: string): Promise<string> {
   return preload;
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "WhatsApp pairing QR renders compact with the NemoClaw preload",
-  testTimeoutOptions(INSTALL_TIMEOUT_MS + TSC_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2),
-  async () => {
+  {
+    ...testTimeoutOptions(INSTALL_TIMEOUT_MS + TSC_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2),
+    meta: {
+      e2ePhases: [
+        "read the bundled OpenClaw WhatsApp version",
+        "compile the production compact-QR preload",
+        "install matching WhatsApp runtime packages",
+        "measure unmodified QR rendering",
+        "measure compact-preload QR rendering",
+      ],
+    },
+  },
+  async ({ progress, shellProbe }) => {
     expect(
       await pathExists(PRELOAD_SOURCE),
       `compact-QR preload source missing: ${PRELOAD_SOURCE}`,
@@ -259,14 +269,17 @@ test(
 
     const workdir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-wa-qr-e2e-"));
     try {
-      const preload = await compileProductionPreload(workdir);
+      progress.phase("compile the production compact-QR preload");
+      const preload = await compileProductionPreload(shellProbe, workdir);
 
       await fs.writeFile(
         path.join(workdir, "package.json"),
         `${JSON.stringify({ name: "wa-qr-e2e", version: "1.0.0", private: true })}\n`,
       );
 
+      progress.phase("install matching WhatsApp runtime packages");
       const install = await runCommand(
+        shellProbe,
         "npm",
         [
           "install",
@@ -275,7 +288,11 @@ test(
           `openclaw@${openclawVersion}`,
           `@openclaw/whatsapp@${openclawVersion}`,
         ],
-        { cwd: workdir, timeoutMs: INSTALL_TIMEOUT_MS },
+        {
+          artifactName: "install-whatsapp-runtime-packages",
+          cwd: workdir,
+          timeoutMs: INSTALL_TIMEOUT_MS,
+        },
       );
       expect(install.status, `npm install failed\n${install.stderr}`).toBe(0);
 
@@ -287,7 +304,9 @@ test(
 
       await fs.writeFile(path.join(workdir, "probe.mjs"), PROBE_SOURCE);
 
-      const baseline = await runCommand("node", ["probe.mjs"], {
+      progress.phase("measure unmodified QR rendering");
+      const baseline = await runCommand(shellProbe, "node", ["probe.mjs"], {
+        artifactName: "baseline-qr-rendering",
         cwd: workdir,
         timeoutMs: PROBE_TIMEOUT_MS,
       });
@@ -300,7 +319,9 @@ test(
       expect(baselineProbe.explicitSmall.leftModules).toBeLessThan(4);
       expect(baselineProbe.explicitSmall.topModules).toBeLessThan(4);
 
-      const patched = await runCommand("node", ["probe.mjs"], {
+      progress.phase("measure compact-preload QR rendering");
+      const patched = await runCommand(shellProbe, "node", ["probe.mjs"], {
+        artifactName: "compact-preload-qr-rendering",
         cwd: workdir,
         env: { NODE_OPTIONS: `--require ${preload}` },
         timeoutMs: PROBE_TIMEOUT_MS,
