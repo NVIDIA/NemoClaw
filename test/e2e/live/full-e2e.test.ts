@@ -336,6 +336,12 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       timeoutMs: 60_000,
     }),
   );
+  cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: env(),
+    redactionValues: [hosted.apiKey],
+    timeoutMs: 120_000,
+  });
   await cleanup(host, sandbox);
 
   const coldOnboard = createColdOnboardCapture();
@@ -373,12 +379,6 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       });
   const installCompletedAtMs = Date.now();
   expect(install.exitCode, resultText(install)).toBe(0);
-  cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-nemoclaw-destroy",
-    env: env(),
-    redactionValues: [hosted.apiKey],
-    timeoutMs: 120_000,
-  });
   await (coldOnboard
     ? assertColdOnboardPerformance({
         apiKey: hosted.apiKey,
