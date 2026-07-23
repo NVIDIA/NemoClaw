@@ -1491,7 +1491,7 @@ function restoreSandboxStateInternal(
   const staleContentDirs =
     manifest.failedBackupDirs === undefined
       ? []
-      : targetAgent.stateDirs.filter(
+      : manifest.stateDirs.filter(
           (stateDir) =>
             !targetRuntimeAuthDirs.has(stateDir) &&
             !localDirSet.has(stateDir) &&

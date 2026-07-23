@@ -66,7 +66,7 @@ process.exit(0);
   return openshell;
 }
 
-it("clears directories absent from a complete backup while preserving managed extensions (#7428)", () => {
+it("clears snapshot-declared absent directories while preserving target-only state (#7428)", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-absent-dirs-"));
   const oldPath = process.env.PATH;
   const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -103,6 +103,11 @@ process.exit(0);
     expect(backup.success).toBe(true);
     expect(backup.manifest?.backedUpDirs).toEqual([]);
     expect(backup.manifest?.failedBackupDirs).toEqual([]);
+    const manifestPath = path.join(backup.manifest!.backupPath, "rebuild-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    expect(manifest.stateDirs).toContain("agents");
+    manifest.stateDirs = manifest.stateDirs.filter((stateDir: string) => stateDir !== "agents");
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
     const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
     expect(restore.success).toBe(true);
@@ -121,6 +126,9 @@ process.exit(0);
     expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
     expect(cleanupCommand).not.toContain("rm -rf -- '/sandbox/.openclaw/extensions'");
     expect(cleanupCommand).not.toContain("d='/sandbox/.openclaw/extensions'");
+    expect(loggedCommands).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("d='/sandbox/.openclaw/agents'")]),
+    );
   } finally {
     restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
     restoreEnv("PATH", oldPath);
