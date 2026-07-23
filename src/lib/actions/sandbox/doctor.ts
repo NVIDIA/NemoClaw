@@ -28,6 +28,7 @@ import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import { captureHostCommand } from "./doctor-host-command";
 import { collectInferenceChecks, type DoctorInferenceRoute } from "./doctor-inference";
+import { buildLifecycleRegistrationCheck } from "./doctor-lifecycle-registration";
 import { collectMessagingDoctorChecks } from "./doctor-messaging";
 import {
   buildDoctorReport,
@@ -361,6 +362,7 @@ function collectRegisteredSandboxChecks(
 ): DoctorCheck[] {
   if (!sb) return [];
   const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
+  checks.push(buildLifecycleRegistrationCheck(sandboxName, sb, CLI_NAME));
   const permsCheck = buildConfigPermsCheck(sandboxName, wantsFix, {
     inspect: shields.inspectMutableConfigPerms,
     repair: shields.repairMutableConfigPerms,

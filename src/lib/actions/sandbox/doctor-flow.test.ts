@@ -61,6 +61,11 @@ function createDoctorHarness(): {
     model: "registry-model",
     provider,
     openshellDriver: "docker",
+    openshellVersion: "0.0.72",
+    nemoclawVersion: "0.0.83",
+    fromDockerfile: null,
+    dashboardPort: 18789,
+    imageTag: "nemoclaw-openclaw:test",
     gatewayName: "nemoclaw-19080",
     gatewayPort: 19080,
     messaging: undefined,
@@ -253,6 +258,11 @@ describe("runSandboxDoctor flow", () => {
             label: "Inference route (gateway)",
             status: "fail",
           }),
+          expect.objectContaining({
+            group: "Sandbox",
+            label: "Lifecycle registration",
+            status: "ok",
+          }),
           expect.objectContaining({ group: "Messaging", label: "Channels", status: "info" }),
           expect.objectContaining({ group: "Local services", label: "Ollama", status: "ok" }),
           expect.objectContaining({
@@ -287,6 +297,11 @@ describe("runSandboxDoctor flow", () => {
       model: "registry-model",
       provider: "ollama-local",
       openshellDriver: "docker",
+      openshellVersion: "0.0.72",
+      nemoclawVersion: "0.0.83",
+      fromDockerfile: null,
+      dashboardPort: 18789,
+      imageTag: "nemoclaw-openclaw:test",
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
     });
@@ -360,6 +375,30 @@ describe("runSandboxDoctor flow", () => {
           detail: "skipped because the sandbox is not reachable through its named gateway",
         }),
       ]),
+    );
+  });
+
+  it("reports incomplete lifecycle registration even when runtime health is otherwise readable", async () => {
+    const harness = createDoctorHarness();
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "ollama-local",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        group: "Sandbox",
+        label: "Lifecycle registration",
+        status: "warn",
+        detail: expect.stringContaining("openshellDriver"),
+        hint: expect.stringContaining("re-register or re-onboard"),
+      }),
     );
   });
 
