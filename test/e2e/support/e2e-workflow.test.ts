@@ -62,6 +62,47 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("keeps network-policy scenarios isolated with cleanup reserve", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, unknown>;
+          steps: Array<{ name?: string; run?: string }>;
+          strategy: {
+            "fail-fast": boolean;
+            matrix: { include: Array<Record<string, string>> };
+          };
+          "timeout-minutes": number;
+        }
+      >;
+    };
+    const job = workflow.jobs["network-policy"]!;
+    const source = fs.readFileSync("test/e2e/live/network-policy.test.ts", "utf8");
+    expect(source).toContain("const TEST_TIMEOUT_MS = 65 * 60_000;");
+
+    job["timeout-minutes"] = 65;
+    job.strategy["fail-fast"] = true;
+    job.strategy.matrix.include.pop();
+    job.env.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts/live/network-policy";
+    delete job.env.NEMOCLAW_E2E_SHARD;
+    delete job.env.NEMOCLAW_SANDBOX_NAME;
+    const run = job.steps.find((step) => step.name === "Run network-policy live test")!;
+    run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "network-policy scenario jobs must keep the 90 minute timeout",
+        "network-policy scenario matrix must disable fail-fast",
+        "network-policy job must keep the two isolated scenario shards",
+        "network-policy job must isolate artifacts by matrix.scenario",
+        "network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
+        "network-policy job must bind its sandbox name to matrix.sandbox",
+        `step 'Run network-policy live test' run script must include --selector "\${{ matrix.selector }}"`,
+      ]),
+    );
+  });
+
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
