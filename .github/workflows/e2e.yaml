@@ -260,6 +260,72 @@ jobs:
             fi
           fi
 
+  staging-brev-launchable:
+    name: Exact staging Brev Launchable
+    needs: generate-matrix
+    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment:
+      name: approve-brev-launchable-e2e
+      deployment: false
+    permissions:
+      contents: read
+    concurrency:
+      group: staging-brev-launchable-cpu
+      cancel-in-progress: false
+    env:
+      CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_JOB: "1"
+      INSTANCE_NAME: nclaw-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout trusted Launchable lane
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            tools/e2e/brev-launchable-e2e.sh
+          sparse-checkout-cone-mode: false
+
+      - id: workspace
+        name: Prepare the trusted lane
+        env:
+          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.BREV_API_KEY || '' }}
+          BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
+          BREV_CLI_VERSION: 0.6.330
+          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.BREV_ORG_ID || '' }}
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-e2e.XXXXXX")"
+          chmod 700 "$work_dir"
+          archive="${RUNNER_TEMP}/brev-cli.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "${RUNNER_TEMP}" brev && sudo install -m 0755 "${RUNNER_TEMP}/brev" /usr/local/bin/brev
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
+          printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Build, deploy, verify, test, and clean up
+        env:
+          BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
+          GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-e2e.sh
+
+      - name: Upload Launchable evidence
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}
+          path: |
+            ${{ steps.workspace.outputs.work_dir }}/lane.log
+            ${{ steps.workspace.outputs.work_dir }}/qualification.json
+            ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
+            ${{ steps.workspace.outputs.work_dir }}/cleanup.json
+
   live:
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
@@ -5147,6 +5213,7 @@ jobs:
       [
         base-image-publication,
         generate-matrix,
+        staging-brev-launchable,
         live,
         shared-e2e,
         openshell-gateway-auth-contract,
