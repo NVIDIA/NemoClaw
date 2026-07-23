@@ -177,6 +177,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
 
   const fake = await startFakeOpenAiCompatibleServer({
     host: "0.0.0.0",
+    progress,
     publicHost: "host.openshell.internal",
   });
   cleanupRegistry.trackDisposable("close fake OpenAI-compatible endpoint", async () =>

@@ -7,6 +7,7 @@ import {
   type ForbiddenLeakPattern,
   findForbiddenLeaks,
   frameSnapshotFile,
+  SNAPSHOT_DATA_PREFIX,
   SNAPSHOT_FILE_PREFIX,
   SNAPSHOT_PROBE_PID_PREFIX,
   scanForbiddenLeaks,
@@ -28,6 +29,19 @@ function file(path: string, ...lines: string[]): string[] {
 }
 
 describe("Bedrock Runtime leak snapshot process identity", () => {
+  it("keeps per-line snapshot framing compact without weakening control separation (#7101)", () => {
+    expect(SNAPSHOT_DATA_PREFIX).toBe("D ");
+    expect(
+      frameSnapshotFile(
+        "/sandbox/.openclaw/runtime.env",
+        `${SNAPSHOT_FILE_PREFIX}/proc/1418/environ`,
+      ).split("\n"),
+    ).toEqual([
+      `${SNAPSHOT_FILE_PREFIX}/sandbox/.openclaw/runtime.env`,
+      `${SNAPSHOT_DATA_PREFIX}${SNAPSHOT_FILE_PREFIX}/proc/1418/environ`,
+    ]);
+  });
+
   it("allows the provider placeholder name only in the declared probe environment", () => {
     const text = snapshot(
       ...file("/proc/1418/environ", `${ADAPTER_ENV_NAME}=openshell-placeholder`),

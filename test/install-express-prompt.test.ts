@@ -6,27 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
-  function runInstallerSourced(body: string) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-sourced-"));
-    const result = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
-      {
-        cwd: path.resolve(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: home,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        },
-      },
-    );
-    return { home, result, output: `${result.stdout}${result.stderr}` };
-  }
-
   function runExpressPromptWithTty(
     answer: string,
     stdinMode: "pipe" | "tty",
@@ -283,18 +266,13 @@ detect_express_platform
     ].join("\n");
   }
 
-  it("parses and documents the DGX Station DeepSeek override", () => {
-    const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--station-deepseek", "--help"], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(
-      /--station-deepseek\s+Use DeepSeek V4 Flash for DGX Station express install/,
-    );
-  });
+  function noOtaDgxOs76Release(version = "7.6.0") {
+    return `DGX_NAME="DGX GB300WS"\nDGX_PRETTY_NAME="NVIDIA DGX GB300WS"
+DGX_SWBUILD_DATE="2026-07-14-13-59-06"
+DGX_SWBUILD_VERSION="${version}"
+DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
+`;
+  }
 
   it("parses and documents the metadata-only Station override", () => {
     const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--force-station-install", "--help"], {
@@ -370,6 +348,14 @@ detect_express_platform
       /Express install will configure managed local vLLM with NVIDIA Nemotron 3 Ultra 550B/,
     );
     expect(output).toMatch(/approximately 352 GB model/);
+    expect(output).toContain(
+      "Hugging Face authentication is optional for this public model but recommended",
+    );
+    expect(output).toContain("https://huggingface.co/settings/tokens");
+    expect(output).toContain("export HF_TOKEN=<read-token>");
+    expect(output.indexOf("Hugging Face authentication is optional")).toBeLessThan(
+      output.indexOf("Run express install with these settings?"),
+    );
     expect(output).toMatch(
       /installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages/,
     );
@@ -481,11 +467,24 @@ describe_express_install 'DGX Station'`,
     expect(output).toMatch(
       /Express install will configure managed local vLLM with DeepSeek V4 Flash/,
     );
+    expect(output).toContain("Hugging Face authentication is optional for this public model");
+    expect(output).toContain("export HF_TOKEN=<read-token>");
+    expect(output.indexOf("Hugging Face authentication is optional")).toBeLessThan(
+      output.indexOf("Run express install with these settings?"),
+    );
     expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
+    const token = `hf_${"s".repeat(32)}`;
+    const authenticated = runInstallerSourced(
+      `HF_TOKEN="${token}"\ndescribe_express_install "DGX Station"`,
+    );
+    expect(authenticated.result.status, authenticated.output).toBe(0);
+    expect(authenticated.output).toContain("Hugging Face model download: authenticated");
+    expect(authenticated.output).toContain("token value is not displayed");
+    expect(authenticated.output).not.toContain(token);
   });
 
   it("pre-stages complete Station Express intent and ports before a Docker-group relogin (#7203)", () => {
@@ -1246,6 +1245,7 @@ detect_express_platform
   it.each([
     "Dell Pro Max with Station GB300",
     "NVIDIA DGX Station GB300",
+    "DGX_Station_GB300",
   ])("recognizes supported Station GB300 firmware as DGX Station: %s", (productName) => {
     const result = detectExpressPlatformForProductName(productName);
 
@@ -1253,10 +1253,20 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s on Station GB300", (version) => {
+  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s", (version) => {
     const result = detectExpressPlatformForStockDgxRelease(
       "DGX Station GB300",
       stockDgxRelease(version),
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
+  it("recognizes the no-OTA DGX OS 7.6 family on Station GB300 (#7417)", () => {
+    const result = detectExpressPlatformForStockDgxRelease(
+      "DGX Station GB300",
+      noOtaDgxOs76Release(),
     );
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
@@ -1312,7 +1322,9 @@ detect_express_platform
   });
 
   it.each([
-    ["unreviewed version", stockDgxRelease("7.6.0")],
+    ["out-of-scope OTA version", stockDgxRelease("7.6.0")],
+    ["future OTA version", stockDgxRelease("7.7.0")],
+    ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
     ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
     ["missing DGX_OTA_PRETTY_NAME", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", null)],
     ["BaseOS identity", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", "NVIDIA BaseOS")],
@@ -1378,9 +1390,10 @@ printf 'PROMPT_REACHED\n'
       },
     );
     const output = `${result.stdout}${result.stderr}`;
-
     expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/outside the validated Station/);
+    expect(output).toMatch(
+      /outside the (recognized Station Express release-metadata|validated Station GB300 express) boundary/,
+    );
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
@@ -1410,9 +1423,10 @@ printf 'PROMPT_REACHED\n'
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("outside the validated Station express boundary");
+    expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
-    expect(output).toContain("stock DGX OS 7.2.0, 7.4.0, or 7.5.0");
+    expect(output).toContain("OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0");
+    expect(output).toContain("no-OTA DGX OS 7.6.x NVIDIA DGX GB300WS profile");
     expect(output).not.toContain("PROMPT_REACHED");
   });
 

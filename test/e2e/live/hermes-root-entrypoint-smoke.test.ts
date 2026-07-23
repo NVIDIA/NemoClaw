@@ -413,9 +413,13 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       "validate legacy PID migration",
     ],
   },
-}, async ({ artifacts, cleanup, progress, secrets, skip }) => {
-  const probe = new DockerProbe(artifacts, (text, extraValues) =>
-    secrets.redact(text, extraValues),
+}, async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+  const probe = new DockerProbe(
+    artifacts,
+    (text, extraValues) => secrets.redact(text, extraValues),
+    undefined,
+    progress,
+    signal,
   );
   const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
   const image =

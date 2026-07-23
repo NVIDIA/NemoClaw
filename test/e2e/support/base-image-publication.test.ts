@@ -379,6 +379,34 @@ describe("base-image publication evidence", () => {
     expect(selection).toMatchObject({ state: "ready", run: { id: 11, headSha: DESCENDANT_SHA } });
   });
 
+  it("ignores pre-rename workflow metadata outside the eligible history (#7372)", () => {
+    const selection = selectPublicationRun(
+      runsPayload([
+        workflowRun({
+          id: 10,
+          name: "base-image",
+          head_sha: STALE_SHA,
+          html_url: `${RUN_URL.replace(String(RUN_ID), "10")}`,
+        }),
+        workflowRun(),
+      ]),
+      history(),
+      WORKFLOW_ID,
+    );
+
+    expect(selection).toMatchObject({ state: "ready", run: { id: RUN_ID } });
+  });
+
+  it("rejects pre-rename workflow metadata inside the eligible history (#7372)", () => {
+    expect(() =>
+      selectPublicationRun(
+        runsPayload([workflowRun({ name: "base-image" })]),
+        history(),
+        WORKFLOW_ID,
+      ),
+    ).toThrow(/name must be Images \/ Base Images/u);
+  });
+
   it("waits for missing and in-progress publication evidence (#7372)", () => {
     expect(selectPublicationRun(runsPayload([]), history(), WORKFLOW_ID)).toEqual({
       state: "missing",
