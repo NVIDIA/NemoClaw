@@ -1,6 +1,9 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Repo Policy
 
-Configurable defaults that adapt the skill to a specific repository.
+Defaults for the target repository.
 
 ## Contents
 
@@ -15,10 +18,10 @@ Configurable defaults that adapt the skill to a specific repository.
 per_symbol_top: 10        # top N issues per symbol search
 per_file_top: 5           # top N issues per file path search
 per_error_string_top: 5   # top N issues per error string search
-max_total_candidates: 30  # hard cap before LLM judgment
+max_total_candidates: 30  # limit before model judgment
 ```
 
-Per-search caps balance recall against cost. The hard cap bounds total LLM calls per PR.
+The search limits control cost. `max_total_candidates` limits classification calls for each PR.
 
 ## Symbol extraction (per-language regex)
 
@@ -43,11 +46,11 @@ shell:
   - '^([a-z_][\w]*)\s*\(\)\s*\{'         # function definitions
 ```
 
-Override or add languages here for non-NemoClaw repos.
+Change or add languages for another repository.
 
 ## Bot-author exclusions
 
-Issues authored by these accounts are skipped during candidate search (they're noise — automated bug reports, dependency bots, etc.):
+Do not include issues from these automated accounts:
 
 ```yaml
 excluded_authors:
@@ -64,4 +67,4 @@ Drop judgments below this:
 confidence_floor: medium
 ```
 
-Set to `low` if you want to see every flagged candidate; `high` if you want only the most confident bundling/contradiction signals.
+Use `low` to include all candidates. Use `high` to include high-confidence results only.

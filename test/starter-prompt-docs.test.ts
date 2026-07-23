@@ -28,9 +28,9 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
-// CI resolves this exact Git commit and byte-compares its prompt-asset blobs with
+// CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "f3682a5be7069e58303d3345e682424d5c2453b2";
+const promptAssetRevision = "ebf29b024c7a24e69ab8386b68e426d31a4c6821";
 
 type PromptAsset = {
   path: string;
@@ -53,7 +53,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "82a47519f415c0c3ad1d6c5cb30dcb33de846026661d8da88054385b9789f3b5", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "9f506ece27dcda3cf85735d7c6a80846a7727696b825cf8ca161334ac6925c1f", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
@@ -486,6 +486,68 @@ describe("starter prompt docs CTA", () => {
     ).toThrow("use LF line endings");
   });
 
+  it("names non-interactive install controls and scopes sandboxed Docker approval (#7311)", () => {
+    const promptSource = readStarterPrompt();
+    const quickstartSource = read("docs/get-started/quickstart.mdx");
+    const commandsSource = read("docs/reference/commands.mdx");
+    const updateSource = read("docs/manage-sandboxes/update-sandboxes.mdx");
+
+    for (const variable of ["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER", "NEMOCLAW_INSTALL_TAG"]) {
+      expect(promptSource, `starter prompt names ${variable}`).toContain(variable);
+      expect(quickstartSource, `quickstart names ${variable}`).toContain(variable);
+    }
+
+    expect(promptSource).toContain("NEMOCLAW_AGENT=openclaw");
+    expect(promptSource).toContain("NEMOCLAW_AGENT=hermes");
+    expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
+    expect(promptSource).toContain(
+      "set `NEMOCLAW_AGENT` and `NEMOCLAW_PROVIDER` from my selections",
+    );
+    expect(quickstartSource).toMatch(/NEMOCLAW_AGENT=openclaw\s*\\\s*NEMOCLAW_PROVIDER=build/);
+    expect(promptSource).toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z");
+    expect(promptSource).toContain("clear any inherited `NEMOCLAW_INSTALL_REF`");
+    expect(promptSource).toContain(
+      "Request permission to rerun only that exact command outside the sandbox",
+    );
+    expect(promptSource).toContain("`NEMOCLAW_NON_INTERACTIVE=1` removes NemoClaw prompts");
+    expect(promptSource).toContain(
+      "`NEMOCLAW_NON_INTERACTIVE=1` does not bypass execution-sandbox permissions",
+    );
+    expect(promptSource).toContain(
+      "Do not change Docker socket permissions or request broad host access only to bypass the execution sandbox.",
+    );
+    expect(promptSource).not.toContain("or another approved host command");
+    expect(quickstartSource).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
+    );
+    expect(quickstartSource).toContain(
+      "Approve only the exact Docker-dependent command that the coding agent requests",
+    );
+    expect(quickstartSource).toContain(
+      "Do not change Docker socket permissions or grant broad host access only to bypass the restriction.",
+    );
+    expect(promptSource).not.toContain("## Codex Execution Sandbox");
+    expect(quickstartSource).not.toContain("When Codex reports");
+    expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z curl");
+    expect(quickstartSource).not.toContain(
+      "https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
+    );
+    expect(commandsSource).toContain(
+      "A nonempty value takes precedence over `NEMOCLAW_INSTALL_TAG`.",
+    );
+    expect(commandsSource).toContain("Overridden by the `--install-ref` flag.");
+    expect(commandsSource).toContain("Overridden by the `--install-tag` flag.");
+    expect(commandsSource).toContain("Defaults to the admin-promoted `lkg` tag when unset.");
+    expect(updateSource).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash",
+    );
+    expect(updateSource).not.toContain(
+      "https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash",
+    );
+    expect(promptSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
+    expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
+  });
+
   it("rejects missing or stale generated snippets and accepts the current output (#5048)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-starter-prompt-"));
     const generatedPath = path.join(tempDir, "StarterPrompt.generated.mdx");
@@ -657,7 +719,7 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("Existing vLLM: `NEMOCLAW_PROVIDER=vllm`");
   });
 
-  it("keeps local prompt assets byte-aligned with their exact immutable revision blobs (#6990)", () => {
+  it("keeps local prompt assets byte-aligned with their pinned revision blobs (#6990)", () => {
     resolvePromptAssetRevision(promptAssetRevision, runGit);
     for (const asset of Object.values(promptAssets)) {
       const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
@@ -754,56 +816,29 @@ describe("starter prompt docs CTA", () => {
 
     expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
-    expect(stationSource).toContain("NEMOCLAW_VLLM_MODEL=deepseek-v4-flash");
-    expect(stationSource).toContain("NEMOCLAW_MODEL=deepseek-ai/DeepSeek-V4-Flash");
+    expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
+    expect(stationSource).toContain("`nvidia/nemotron-3-ultra-550b-a55b`");
+    expect(stationSource).toContain("`deepseek-v4-flash`");
+    expect(stationSource).toContain("`deepseek-ai/DeepSeek-V4-Flash`");
+    expect(stationSource).toContain("Nemotron 3 Ultra 550B, the ordinary installer default");
     expect(stationSource).toContain(
-      "provider-preseeded DeepSeek path below is not the installer Express path",
+      "DeepSeek V4 Flash, the explicit `--station-deepseek` override",
     );
-    expect(stationSource).toContain("downloads the pinned vLLM container and model data");
-    expect(stationSource).not.toContain("nemotron-3-ultra");
+    expect(stationSource).not.toContain("provider-preseeded DeepSeek path");
+    expect(stationSource).not.toContain("only supported next step");
     expect(stationSource).toContain("model-cache filesystem and Docker storage");
-    expect(stationSource).toContain("scripts/prepare-dgx-station-host.sh --check");
-    expect(stationSource).toContain("scripts/prepare-dgx-station-host.sh --verify");
-    const stationPermissionIndex = stationSource.indexOf(
-      "Ask permission to run the selected maintained release's",
+    expect(stationSource).toContain(
+      "DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.",
     );
-    const stationNonRepairingDisclosureIndex = stationSource.indexOf(
-      "Both `--check` and `--verify` are non-repairing readiness modes, and neither applies host repairs.",
+    expect(stationSource).toContain(
+      "Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.",
     );
-    const stationImageDisclosureIndex = stationSource.indexOf(
-      "`--verify` requires the pinned acceptance image to already be present locally",
+    expect(stationSource).not.toContain("deferred end-to-end validation on physical hardware");
+    expect(stationSource).toContain(
+      "Do not run `scripts/prepare-dgx-station-host.sh --check`, `--verify`, or `--apply` separately",
     );
-    const stationContainerDisclosureIndex = stationSource.indexOf(
-      "`--verify` is not read-only: it starts short-lived GPU test containers through both CDI",
-    );
-    expect(stationSource).toContain("consumes GPU and temporary Docker storage");
-    expect(stationSource).toContain("may create Docker state and logs");
-    expect(stationSource).not.toContain(
-      "Both `--check` and `--verify` are read-only readiness modes",
-    );
-    expect(stationPermissionIndex).toBeGreaterThan(-1);
-    for (const disclosureIndex of [
-      stationNonRepairingDisclosureIndex,
-      stationImageDisclosureIndex,
-      stationContainerDisclosureIndex,
-    ]) {
-      expect(disclosureIndex).toBeGreaterThan(-1);
-      expect(disclosureIndex).toBeLessThan(stationPermissionIndex);
-    }
-    expect(stationSource).not.toMatch(/--verify[^.\n]*\b(?:may|can|will)\s+pull\b/i);
-    expect(stationSource).toContain("If either readiness mode fails");
-    const stationFailureIndex = stationSource.indexOf("If either readiness mode fails");
-    const stationFallbackIndex = stationSource.indexOf(
-      "only supported next step is the official installer with `--station-deepseek`",
-      stationFailureIndex,
-    );
-    expect(stationFailureIndex).toBeGreaterThan(-1);
-    expect(stationFallbackIndex).toBeGreaterThan(stationFailureIndex);
-    const stationFailureInstructions = stationSource.slice(
-      stationFailureIndex,
-      stationFallbackIndex,
-    );
-    expect(stationFailureInstructions).toContain("- Do not set ");
+    expect(stationSource).toContain("For Nemotron Ultra, run the ordinary installer without");
+    expect(stationSource).toContain("For DeepSeek, pass `--station-deepseek`");
     for (const environmentName of [
       "NEMOCLAW_PROVIDER",
       "NEMOCLAW_VLLM_MODEL",
@@ -811,16 +846,15 @@ describe("starter prompt docs CTA", () => {
       "NEMOCLAW_NON_INTERACTIVE",
       "NEMOCLAW_YES",
       "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      "NEMOCLAW_NO_EXPRESS",
     ]) {
-      expect(stationFailureInstructions).toContain(`\`${environmentName}\``);
+      expect(stationSource).toContain(`\`${environmentName}\``);
     }
     expect(stationSource).toContain(
-      "Let the official installer present its third-party-software notice and complete confirmation summary.",
+      "Let the installer present its third-party-software notice and complete Express summary.",
     );
-    expect(stationSource).toContain("If a secure interactive terminal is unavailable, stop");
-    expect(stationSource).toContain("Keep the official confirmation visible");
-    expect(stationSource).toContain("evaluation path with deferred end-to-end validation");
-    expect(stationSource).toContain("startup may still fail after readiness checks");
+    expect(stationSource).toContain("Run the installer only in a secure interactive terminal");
+    expect(stationSource).toContain("Keep each official confirmation visible");
     expect(stationSource).toContain("third-party-software notice");
     expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
     expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
@@ -843,7 +877,6 @@ describe("starter prompt docs CTA", () => {
     const promptSource = readStarterPrompt();
     const platformAssets = [
       readPromptAsset(promptAssets.dgxSpark),
-      readPromptAsset(promptAssets.dgxStation),
       readPromptAsset(promptAssets.windowsWsl),
     ];
     const expressAssets = [
@@ -863,7 +896,7 @@ describe("starter prompt docs CTA", () => {
       "For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.",
     );
     expect(promptSource).toContain(
-      "For an accepted platform-asset install path, treat the asset's confirmation as final permission and do not ask again.",
+      "When a platform asset delegates consent to the official installer, let the installer present its notice and final Express confirmation instead of pre-accepting them.",
     );
     expect(promptSource).toContain(
       "Ask for final permission before installation outside an accepted platform-asset path.",
@@ -900,39 +933,35 @@ describe("starter prompt docs CTA", () => {
     }
 
     expect(stationSource).toContain(
-      "Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when the prepared-host DeepSeek path is accepted.",
+      "Use the selected maintained release's official installer as the authority",
     );
-    expect(stationSource).toContain("Treat the prepared-host confirmation as approval");
+    expect(stationSource).toContain(
+      "Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.",
+    );
+    expect(stationSource).not.toContain("`NEMOCLAW_NON_INTERACTIVE=1`");
+    expect(stationSource).not.toContain("Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`");
+    expect(stationSource).not.toContain("Set `NEMOCLAW_PROVIDER=install-vllm`");
 
-    const stationDisclosureIndex = stationSource.indexOf(
-      "official `--station-deepseek` installer flow may install or change",
-    );
+    const stationDisclosureIndex = stationSource.indexOf("On generic Ubuntu, Station Express");
     const stationDockerGroupIndex = stationSource.indexOf(
       "`docker` group, which grants root-equivalent control",
     );
     const stationRebootIndex = stationSource.indexOf("operator-controlled reboot");
-    const stationNoticeIndex = stationSource.indexOf("Include the third-party-software notice");
+    const stationNoticeIndex = stationSource.indexOf(
+      "Let the installer present its third-party-software notice",
+    );
     const stationConfirmationIndex = stationSource.indexOf("Choices:");
-    const stationFailClosedIndex = stationSource.indexOf("If either readiness mode fails");
-    const stationPreparedGateIndex = stationSource.indexOf(
-      "If and only if both readiness modes succeed",
+    const stationDefaultIndex = stationSource.indexOf(
+      "For Nemotron Ultra, run the ordinary installer without",
     );
-    const stationProviderSetIndex = stationSource.indexOf("- Set `NEMOCLAW_PROVIDER=install-vllm`");
-    const stationAcceptanceIndex = stationSource.indexOf(
-      "Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`",
-    );
+    const stationOverrideIndex = stationSource.indexOf("For DeepSeek, pass `--station-deepseek`");
     expect(stationDisclosureIndex).toBeGreaterThan(-1);
     expect(stationDockerGroupIndex).toBeGreaterThan(stationDisclosureIndex);
     expect(stationRebootIndex).toBeGreaterThan(stationDockerGroupIndex);
-    expect(stationNoticeIndex).toBeGreaterThan(stationRebootIndex);
-    expect(stationConfirmationIndex).toBeGreaterThan(stationNoticeIndex);
-    expect(stationPreparedGateIndex).toBeGreaterThan(stationFailClosedIndex);
-    expect(stationProviderSetIndex).toBeGreaterThan(stationPreparedGateIndex);
-    expect(stationAcceptanceIndex).toBeGreaterThan(stationConfirmationIndex);
-    expect(stationSource).toContain("NVIDIA open driver `610.43.02`");
-    expect(stationSource).toContain("Docker CE `29.6.1` with Buildx");
-    expect(stationSource).toContain("NVIDIA Container Toolkit `1.19.1`");
-    expect(stationSource).toContain("from `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`");
+    expect(stationConfirmationIndex).toBeGreaterThan(stationRebootIndex);
+    expect(stationDefaultIndex).toBeGreaterThan(stationConfirmationIndex);
+    expect(stationOverrideIndex).toBeGreaterThan(stationDefaultIndex);
+    expect(stationNoticeIndex).toBeGreaterThan(stationOverrideIndex);
   });
 
   it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {

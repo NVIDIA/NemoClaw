@@ -3,9 +3,10 @@
 
 # Salvage PR Workflow
 
-Take one near-mergeable PR and make the smallest safe change to unblock it.
+Select a PR that needs a small fix. Make only the change needed to unblock it.
 
-**Default to maintainer salvage.** When a maintainer picks an item from the queue, the assumption is they're doing the work now — rebase, fix conflicts, add missing tests, push. Do not default to "ask the contributor and wait" because that blocks the daily cadence. Only defer to the contributor when the fix requires understanding intent that isn't clear from the diff.
+**Default to maintainer work.** Rebase, resolve conflicts, add missing tests, and push when the task permits these actions.
+Do not wait for the contributor unless the diff does not show the intended behavior.
 
 ## Step 1: Gather Context
 
@@ -16,13 +17,16 @@ gh pr view <number> --repo NVIDIA/NemoClaw \
 gh pr diff <number> --repo NVIDIA/NemoClaw
 ```
 
-Also read: maintainer and CodeRabbit comments, linked issues, recent `main` changes in touched files. Understand the PR's purpose before coding.
+Also read maintainer comments, CodeRabbit comments, linked issues, and recent `main` changes in affected files.
+Understand the PR objective before you change code.
 
 ## Step 2: Assess Fit
 
-**Maintainer does it now:** rebase and resolve conflicts, add missing tests for risky code, fix one or two failing checks, apply small correctness fixes from review, narrow gate cleanup.
+**Maintainer does it now:** Rebase and resolve conflicts. Add missing tests for risky code.
+Fix one or two failing checks or small correctness problems.
 
-**Defer to contributor only when:** the fix requires a design change the maintainer can't judge from the diff, contributor intent is ambiguous and the wrong guess would change semantics, or the PR spans multiple subsystems the maintainer isn't familiar with.
+**Defer to the contributor when:** The fix requires a design decision that the diff does not answer.
+Also defer when intent is unclear or the fix crosses multiple subsystems.
 
 ## Step 3: Check Out and Reproduce
 
@@ -31,21 +35,25 @@ gh pr checkout <number>
 git fetch origin --prune
 ```
 
-Reproduce locally. Run narrowest relevant commands first.
+Reproduce the problem locally. Run the most focused applicable command first.
 
 ## Step 4: Review PR Scope Before Fixing
 
-Before fixing, review **all** changed files in the PR — not just the ones causing failures. Flag any files that expand the PR's scope unnecessarily (config changes, unrelated refactors, tool settings). Revert those to `main` if they aren't needed for the feature to work.
+Review all changed files before you fix the blocker.
+Identify configuration, refactor, or tool-setting changes that do not support the PR objective.
+Restore those files from `main` when the PR does not need them.
 
 ## Step 5: Fix Narrowly
 
-Smallest change that clears the blocker. No opportunistic reformatting.
+Make only the change needed to clear the blocker. Do not reformat unrelated code.
 
-If risky code is touched (see [RISKY-AREAS.md](RISKY-AREAS.md)), treat missing tests as part of the fix — follow [TEST-GAPS.md](TEST-GAPS.md) when needed.
+If the PR changes risky code, include missing tests in the fix.
+See [RISKY-AREAS.md](RISKY-AREAS.md) and [TEST-GAPS.md](TEST-GAPS.md).
 
 ## Step 6: Conflicts
 
-Resolve only mechanical conflicts (import ordering, adjacent additions, branch drift). Stop and summarize if the conflict changes behavior.
+Resolve a conflict only when the resolution does not change behavior.
+Stop and report a conflict that can change behavior.
 
 ## Step 7: Validate
 
@@ -60,34 +68,45 @@ Use only commands matching the changed area.
 
 ## Step 8: Push
 
-Push when: fix is small, improves mergeability, validation passed, you have push permission. Never force-push.
+Push only if the fix is small, improves mergeability, passes validation, and you can push.
+Never force-push.
 
-If the push fails because of SSH, authentication, remote access, authorization, or permission problems, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). Resolve ordinary merge conflicts or dirty-worktree state in the salvage workflow.
+If Git or GitHub access prevents the push, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md).
+Resolve merge conflicts and dirty-worktree problems in this workflow.
 
-**Fork PRs:** Most PRs come from contributor forks. Check where to push:
+Check the PR's head repository before you push:
 
 ```bash
 gh pr view <number> --repo NVIDIA/NemoClaw --json headRepositoryOwner,headRepository,headRefName,maintainerCanModify
 ```
 
-If `maintainerCanModify` is true, push directly to the fork:
+If `headRepository.nameWithOwner` is `NVIDIA/NemoClaw`, push to the PR branch on `origin`:
+
+```bash
+git push origin <local-branch>:<headRefName>
+```
+
+For a fork PR, push only when `maintainerCanModify` is true:
 
 ```bash
 git push git@github.com:<owner>/<repo>.git <local-branch>:<headRefName>
 ```
 
-Do **not** push to `origin` — that creates a separate branch on NVIDIA/NemoClaw that won't appear in the PR.
+For a fork PR, do not push to `origin`.
+If `maintainerCanModify` is false, do not push.
 
 ## Step 9: Monitor After Push
 
-After any maintainer push, follow [PR CI and Review Follow-Up](../_shared/pr-follow-up.md) before routing onward. Keep salvage narrow: address valid correctness, security, and test-coverage findings with the smallest safe follow-up; consult the user when feedback is ambiguous, design-changing, or outside the salvage scope.
+After a maintainer push, follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md).
+Fix valid correctness, security, and test-coverage findings within the PR scope.
+Ask the user about ambiguous or design-changing feedback.
 
 ## Step 10: Route to Merge Gate
 
-If PR looks ready after CI and feedback settle, follow [MERGE-GATE.md](MERGE-GATE.md).
+After CI and review finish, follow [MERGE-GATE.md](MERGE-GATE.md) if the PR is ready.
 
 ## Notes
 
-- Goal is safe backlog reduction, not finishing the PR at any cost.
+- Reduce the backlog without accepting unresolved risk.
 - Never hide unresolved reviewer concerns.
 - Use full GitHub links.

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary NemoClaw compatibility shim for OpenClaw 2026.5.x and 2026.6.x
+ * Temporary NemoClaw compatibility shim for OpenClaw 2026.5.x through 2026.7.x
  * chat.send gateway behavior. Remove this when upstream OpenClaw preserves
  * submitted chat.send run lineage and stops emitting empty terminal chat
  * events.
@@ -117,28 +117,44 @@ function patchChatSendTranscriptIdempotency(source: string, file: string): Patch
 }
 
 function patchChatSendEmptyFinal(source: string, file: string): PatchResult {
-  if (source.includes("suppressing empty final event")) {
-    return { nextSource: source, status: "already-applied" };
+  let nextSource = source;
+  if (!nextSource.includes("suppressing empty final event")) {
+    nextSource = nextSource.replace(
+      /\n(\s*)broadcastChatFinal\(\{\n(\s*)context,\n\s*runId: clientRunId,\n\s*sessionKey,\n(\s*agentId,\n)?\s*message\n\s*\}\);/,
+      (_match, outerIndent, innerIndent, agentIdLine) =>
+        `\n${outerIndent}if (message) broadcastChatFinal({\n` +
+        `${innerIndent}context,\n` +
+        `${innerIndent}runId: clientRunId,\n` +
+        `${innerIndent}sessionKey,\n` +
+        (agentIdLine || "") +
+        `${innerIndent}message\n` +
+        `${outerIndent}}); else context.logGateway.warn("webchat chat.send completed without visible assistant reply; suppressing empty final event (nemoclaw #2603/#3145)");`,
+    );
   }
-  const nextSource = source.replace(
-    /\n(\s*)broadcastChatFinal\(\{\n(\s*)context,\n\s*runId: clientRunId,\n\s*sessionKey,\n(\s*agentId,\n)?\s*message\n\s*\}\);/,
-    (_match, outerIndent, innerIndent, agentIdLine) =>
-      `\n${outerIndent}if (message) broadcastChatFinal({\n` +
-      `${innerIndent}context,\n` +
-      `${innerIndent}runId: clientRunId,\n` +
-      `${innerIndent}sessionKey,\n` +
-      (agentIdLine || "") +
-      `${innerIndent}message\n` +
-      `${outerIndent}}); else context.logGateway.warn("webchat chat.send completed without visible assistant reply; suppressing empty final event (nemoclaw #2603/#3145)");`,
-  );
-  if (nextSource === source) {
+  if (
+    nextSource.includes("queuedFollowupEnqueued") &&
+    !nextSource.includes("suppressing premature queued followup final event")
+  ) {
+    nextSource = nextSource.replace(
+      /if \(queuedFollowupEnqueued && !context\.chatAbortedRuns\.has\(clientRunId\)\) broadcastChatFinal\(\{\n\s*context,\n\s*runId: clientRunId,\n\s*sessionKey,\n\s*agentId\n\s*\}\);/,
+      'if (queuedFollowupEnqueued && !context.chatAbortedRuns.has(clientRunId)) context.logGateway.warn("webchat chat.send queued a correlated followup; suppressing premature queued followup final event (nemoclaw #2603/#3145)");',
+    );
+  }
+  const missingVisibleFinalPatch = !nextSource.includes("suppressing empty final event");
+  const missingQueuedFinalPatch =
+    nextSource.includes("queuedFollowupEnqueued") &&
+    !nextSource.includes("suppressing premature queued followup final event");
+  if (missingVisibleFinalPatch || missingQueuedFinalPatch) {
     return {
       nextSource: source,
       status: "no-match",
       error: `OpenClaw chat.send empty-final shape not recognized in ${file}`,
     };
   }
-  return { nextSource, status: "would-apply" };
+  return {
+    nextSource,
+    status: nextSource === source ? "already-applied" : "would-apply",
+  };
 }
 
 function patchGetReplyFollowupRunId(source: string, file: string): PatchResult {
@@ -229,7 +245,8 @@ function patchFollowupRunIdPreservation(source: string, file: string): PatchResu
   // 2026.5.22 closes over params.opts and uses createReplyOperation, and
   // 2026.5.27 closes over params.opts and admits a queued reply turn before
   // creating the run id. OpenClaw 2026.6.10 keeps that admission flow but routes
-  // the session id through effectiveQueued and includes routeThreadId.
+  // the session id through effectiveQueued and includes routeThreadId. OpenClaw
+  // 2026.7.1 resolves the queued inbound context immediately before the run id.
   let nextSource = working.replace(
     /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal(?: \?\? opts\?\.abortSignal)?\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
     (_match, prefix) =>
@@ -239,6 +256,14 @@ function patchFollowupRunIdPreservation(source: string, file: string): PatchResu
   if (nextSource === working) {
     nextSource = working.replace(
       /(const admission = await admitReplyTurn\(\{\n\s*sessionId: (?:run\.sessionId|effectiveQueued\.admissionSessionId \?\? run\.sessionId),\n\s*sessionKey: replySessionKey \?\? "",\n\s*kind: "queued_followup",\n\s*resetTriggered: false,\n\s*(?:routeThreadId: queued\.originatingThreadId,\n\s*)?upstreamAbortSignal: queued\.abortSignal\n\s*\}\);[\s\S]*?replyOperation = admission\.operation;[\s\S]*?\n\s*)const runId = crypto\.randomUUID\(\);/,
+      (_match, prefix) =>
+        `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
+        `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
+    );
+  }
+  if (nextSource === working) {
+    nextSource = working.replace(
+      /(const currentInboundContext = opts\?\.isHeartbeat === true \? effectiveQueued\.currentInboundContext : refreshActiveGoalContext\(effectiveQueued\.currentInboundContext, goalContextSessionEntry\);\n\s*)const runId = crypto\.randomUUID\(\);/,
       (_match, prefix) =>
         `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
         `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,

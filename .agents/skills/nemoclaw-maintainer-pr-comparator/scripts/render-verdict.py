@@ -14,7 +14,7 @@ Spec shape:
       {
         "number": 2851,
         "title": "...",
-        "tier_0": {"state_open": true, "ci_green_latest_sha": true, ...},
+        "tier_0": {"state_open": true, "ci_green_sha": true, ...},
         "tier_1": {"test_exercises_bug_path": "pass", "comment_as_spec": "yellow", ...},
         "tier_2": {"description_diff_drift": "pass", ...},
         "matrix": {"criterion 1": "covered", "criterion 2": "missing", ...},
@@ -27,7 +27,7 @@ Spec shape:
     "tiebreaker_fired": "smaller_diff",
     "winner": 2851,
     "closest_to_ready": null,
-    "mode": "happy"  // optional assertion; derived from Tier 0 gates
+    "mode": "happy"  // optional assertion. Derived from Tier 0 gates
   }
 
 Usage:
@@ -48,7 +48,7 @@ TIER_2_WEIGHT = 1.0
 
 TIER_0_GATES = (
     ("state_open", "State open"),
-    ("ci_green_latest_sha", "CI green on latest SHA"),
+    ("ci_green_sha", "CI on PR SHA"),
     ("mergeable", "Mergeable"),
     ("contributor_compliance", "Contributor compliance"),
     ("branch_protection", "Branch protection"),
