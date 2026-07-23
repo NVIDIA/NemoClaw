@@ -170,7 +170,7 @@ function stationHasGb300PciGpu(
         matches += 1;
       }
     }
-    return matches === 1;
+    return matches > 0;
   } catch {
     return undefined;
   }

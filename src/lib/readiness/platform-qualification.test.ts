@@ -198,7 +198,10 @@ describe("platform readiness qualification (#7410)", () => {
     expect(readFile.mock.calls.every(([path]) => String(path).startsWith("/fixtures/"))).toBe(true);
   });
 
-  it("accepts the same Station NVIDIA display-class device as preparation", () => {
+  it.each([
+    [["0000:01:00.0"], "one"],
+    [["0000:01:00.0", "0000:02:00.0"], "multiple"],
+  ] as const)("accepts %s Station NVIDIA display-class devices as preparation", (devices) => {
     const readFile = vi.fn((path: string) => {
       if (path.endsWith("product_name")) return "NVIDIA DGX Station GB300\n";
       if (path.endsWith("vendor")) return "0x10DE\n";
@@ -212,7 +215,7 @@ describe("platform readiness qualification (#7410)", () => {
       stationReleasePath: "/fixtures/dgx-release",
       pciDevicesPath: "/fixtures/pci",
       readFile,
-      readdir: () => ["0000:01:00.0"],
+      readdir: () => devices,
       stat: () => ({ isFile: () => true, isSymbolicLink: () => false, size: 256 }),
     });
 
