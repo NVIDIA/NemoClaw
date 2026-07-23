@@ -85,6 +85,7 @@ const RESUME_ENV = [
   "NEMOCLAW_MODEL",
   STATION_EXPRESS_RECEIPT_GENERATION_ENV,
 ] as const;
+type ExpectedResumeEnvironment = Partial<Record<(typeof RESUME_ENV)[number], string | null>>;
 const MAX_SERVED_MODEL_LENGTH = 512;
 const UNBOUND_INTENT_KEYS = "model,sandboxName,version";
 const UNBOUND_RECEIPT_INTENT_KEYS = "model,receiptGeneration,sandboxName,version";
@@ -772,9 +773,9 @@ export function bindStationExpressProviderSelection(
 function expectedEnvironment(
   intent: StationExpressResumeIntent,
   includeProviderSelection = true,
-): Partial<Record<(typeof RESUME_ENV)[number], string>> | null {
+): ExpectedResumeEnvironment | null {
   if (intent.kind === "spark") {
-    const expected: Partial<Record<(typeof RESUME_ENV)[number], string>> = {
+    const expected: ExpectedResumeEnvironment = {
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_YES: "1",
       NEMOCLAW_SANDBOX_NAME: intent.sandboxName,
@@ -787,13 +788,16 @@ function expectedEnvironment(
       if (pinned) {
         expected.NEMOCLAW_VLLM_MODEL = pinned.envValue;
         expected.NEMOCLAW_MODEL = servedModel(pinned);
+      } else {
+        expected.NEMOCLAW_VLLM_MODEL = null;
+        expected.NEMOCLAW_MODEL = null;
       }
     }
     return expected;
   }
   const model = stationModel(intent.model);
   if (!model) return null;
-  const expected: Partial<Record<(typeof RESUME_ENV)[number], string>> = {
+  const expected: ExpectedResumeEnvironment = {
     [STATION_EXPRESS_ENV]: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_YES: "1",
@@ -827,11 +831,11 @@ function equivalentEnvironmentValue(
 
 function validateExpectedEnvironment(
   env: NodeJS.ProcessEnv,
-  expected: Partial<Record<(typeof RESUME_ENV)[number], string>>,
+  expected: ExpectedResumeEnvironment,
 ): string | null {
   for (const name of RESUME_ENV) {
     const expectedValue = expected[name];
-    if (expectedValue === undefined) continue;
+    if (expectedValue === undefined || expectedValue === null) continue;
     const actual = env[name];
     if (typeof actual !== "string" || actual.trim().length === 0) continue;
     if (!equivalentEnvironmentValue(name, actual, expectedValue)) return name;
@@ -1118,7 +1122,8 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
       const expectedValue = expected[name];
       if (expectedValue === undefined) continue;
       previous.set(name, env[name]);
-      env[name] = expectedValue;
+      if (expectedValue === null) delete env[name];
+      else env[name] = expectedValue;
     }
     try {
       await run(options);

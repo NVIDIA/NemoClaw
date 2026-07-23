@@ -1009,8 +1009,13 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
     expect(parseStationExpressResumeIntent({ ...sparkIntent, kind: "station" })).toBeNull();
   });
 
-  it("restores install-vllm on resume without any Station marker or policy env", async () => {
-    const env: NodeJS.ProcessEnv = { NEMOCLAW_PROVIDER: "" };
+  it("restores install-vllm without Station state or inherited model overrides", async () => {
+    const originalEnv: NodeJS.ProcessEnv = {
+      NEMOCLAW_PROVIDER: "",
+      NEMOCLAW_VLLM_MODEL: sparkModelEnv,
+      NEMOCLAW_MODEL: sparkServedModel,
+    };
+    const env = { ...originalEnv };
     const failedSession = createSession({
       mode: "non-interactive",
       stationExpressIntent: sparkIntent,
@@ -1027,12 +1032,13 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
       expect(env.NEMOCLAW_STATION_EXPRESS).toBeUndefined();
       expect(env.NEMOCLAW_POLICY_MODE).toBeUndefined();
       expect(env.NEMOCLAW_VLLM_MODEL).toBeUndefined();
+      expect(env.NEMOCLAW_MODEL).toBeUndefined();
     });
 
     await withStationExpressResumeEnvironment(run, deps, env)({ resume: true });
 
     expect(run).toHaveBeenCalledTimes(1);
-    expect(env).toEqual({ NEMOCLAW_PROVIDER: "" });
+    expect(env).toEqual(originalEnv);
   });
 
   it("restores a pinned spark model on resume", async () => {
