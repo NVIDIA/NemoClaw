@@ -280,6 +280,18 @@ sys.exit(exit_code)
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
+  it("activate_express_install fails closed on malformed Docker config when Node is unavailable", () => {
+    const { result, output } = runInstallerSourced(
+      `mkdir -p "$HOME/.docker"\n` +
+        `printf '%s' 'not-json {"currentContext":"default"}' > "$HOME/.docker/config.json"\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
   it("activate_express_install fails closed on an unreadable Docker config", () => {
     const { result, output } = runInstallerSourced(
       `mkdir -p "$HOME/.docker"\n` +
@@ -300,6 +312,7 @@ sys.exit(exit_code)
         `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
         `activate_express_install "Windows WSL"\n` +
         `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+      { PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
     );
     expect(result.status, output).toBe(0);
     expect(output).toContain("PROVIDER=install-windows-ollama");
