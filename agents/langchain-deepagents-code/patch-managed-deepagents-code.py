@@ -749,8 +749,33 @@ def _run_single_hook(command, event, payload_bytes) -> None:
 '''
 
 NON_INTERACTIVE_PATCH = r'''
+import logging as _nemoclaw_logging
+import re as _nemoclaw_re
 
 # NemoClaw-managed Deep Agents Code hardening v2.
+_NEMOCLAW_KNOWN_PROVIDER_ERRORS = (
+    (_nemoclaw_re.compile(r"ResourceExhausted", _nemoclaw_re.IGNORECASE), "upstream_provider_capacity", True),
+    (_nemoclaw_re.compile(r"RateLimitError|429|rate.limit", _nemoclaw_re.IGNORECASE), "upstream_rate_limit", True),
+    (_nemoclaw_re.compile(r"timeout|deadline\s*exceeded|DeadlineExceeded", _nemoclaw_re.IGNORECASE), "upstream_timeout", True),
+    (_nemoclaw_re.compile(r"ConnectionError|connection\s*refused|ConnectionRefused", _nemoclaw_re.IGNORECASE), "upstream_connection", True),
+)
+
+
+def _nemoclaw_classify_non_interactive_error(exc):
+    exc_type_name = type(exc).__name__
+    for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
+        if pattern.search(exc_type_name):
+            return (category, retryable)
+    try:
+        exc_str = str(exc)
+    except Exception:
+        return None
+    for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
+        if pattern.search(exc_str):
+            return (category, retryable)
+    return None
+
+
 _nemoclaw_original_run_non_interactive = run_non_interactive
 
 
@@ -771,7 +796,17 @@ async def run_non_interactive(*args, **kwargs):
     kwargs["enable_interpreter"] = False
     kwargs["interpreter_ptc"] = None
     kwargs["rubric_model"] = None
-    return await _nemoclaw_original_run_non_interactive(*args, **kwargs)
+    try:
+        return await _nemoclaw_original_run_non_interactive(*args, **kwargs)
+    except Exception as exc:
+        _logger = _nemoclaw_logging.getLogger("nemoclaw.managed.non_interactive")
+        classified = _nemoclaw_classify_non_interactive_error(exc)
+        if classified:
+            category, retryable = classified
+            _logger.warning("managed non-interactive error: category=%s retryable=%s exc_id=%s", category, retryable, hex(id(exc)))
+        else:
+            _logger.warning("managed non-interactive error: category=unknown retryable=false exc_id=%s", hex(id(exc)))
+        raise
 
 
 async def _run_startup_command(command, console, *, quiet: bool) -> None:
