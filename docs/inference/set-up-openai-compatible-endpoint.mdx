@@ -59,7 +59,7 @@ If you manually enter a sandbox-internal alias such as `http://host.openshell.in
 Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 Otherwise, verify the runtime route after onboarding with `$$nemoclaw <name> status` and a short agent request.
 
-For an exact loopback URL, the API key prompt says that pressing Enter selects no authentication.
+For an HTTP URL using the exact host `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`, the API key prompt says that pressing Enter selects no authentication.
 Other URLs still require `COMPATIBLE_API_KEY`.
 
 Refer to [Choose a Compatible Inference API](choose-compatible-inference-api) for the probe order and runtime API selection.
@@ -121,7 +121,7 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_PROVIDER` | Set to `custom`. |
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the server. |
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
-| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an exact loopback endpoint. |
+| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private inference endpoints. Wildcards are not supported. |
 | `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
