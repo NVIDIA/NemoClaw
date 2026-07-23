@@ -5,16 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as f from "./snapshot-restore-test-fixture";
 
-const pairingMocks = vi.hoisted(() => ({
-  establish: vi.fn(),
-}));
-vi.mock("./restore-gateway-pairing", () => ({
-  establishRestoredSandboxGatewayPairing: pairingMocks.establish,
-}));
-
 beforeEach(() => {
   f.resetSnapshotRestoreMocks();
-  pairingMocks.establish.mockReset();
 });
 afterEach(f.cleanupSnapshotRestoreMocks);
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
@@ -234,7 +226,7 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true });
 
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
-    expect(pairingMocks.establish).toHaveBeenCalledWith("beta");
+    expect(f.establishRestoredSandboxGatewayPairingMock).toHaveBeenCalledWith("beta");
   });
 
   it("fails with repair guidance when restored gateway pairing cannot be verified", async () => {
@@ -266,7 +258,7 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
       failedDirs: [],
       failedFiles: [],
     });
-    pairingMocks.establish.mockImplementationOnce(() => {
+    f.establishRestoredSandboxGatewayPairingMock.mockImplementationOnce(() => {
       throw new Error("authenticated gateway verification failed");
     });
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -298,6 +290,6 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-    expect(pairingMocks.establish).not.toHaveBeenCalled();
+    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
   });
 });
