@@ -28,6 +28,12 @@ const WORKFLOW_SHA = "d".repeat(40);
 const ORIGINAL_CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 const ORIGINAL_RUN_URL = "https://github.com/NVIDIA/NemoClaw/actions/runs/23";
 const RETRY_MARKER = "<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->";
+const JOB_LOG_DOWNLOAD_URL =
+  "https://productionresultssa0.blob.core.windows.net/actions-results/job-89074697099.txt?sp=r&sig=signed";
+const JOB_LOG_ETAG = '"hosted-runner-log"';
+const JOB_LOG_RANGE_BYTES = 64 * 1024;
+const RUNNER_SHUTDOWN_MESSAGE =
+  "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -114,6 +120,8 @@ function hostedRunnerLossJob(runId = 23) {
     name: "Hermes security-posture",
     status: "completed",
     conclusion: "failure",
+    started_at: "2026-07-23T07:26:56Z",
+    completed_at: "2026-07-23T07:32:54Z",
     runner_id: 1_021_277_393,
     runner_name: "GitHub Actions 1021277393",
     runner_group_id: 0,
@@ -125,6 +133,8 @@ function hostedRunnerLossJob(runId = 23) {
         name: "Run security posture live Vitest test",
         status: "completed",
         conclusion: "cancelled",
+        started_at: "2026-07-23T07:27:43Z",
+        completed_at: "2026-07-23T07:32:49Z",
       },
       { name: "Upload security posture artifacts", status: "completed", conclusion: "skipped" },
       { name: "Clean up Docker auth", status: "completed", conclusion: "skipped" },
@@ -146,6 +156,88 @@ function runnerLossAnnotation() {
     message:
       "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.",
     raw_details: "",
+  };
+}
+
+function genericCancellationAnnotation() {
+  return {
+    ...runnerLossAnnotation(),
+    start_line: 34,
+    end_line: 34,
+    message: "The operation was canceled.",
+  };
+}
+
+function runnerShutdownJobLog() {
+  return [
+    "x".repeat(JOB_LOG_RANGE_BYTES),
+    `2026-07-23T07:32:47.0261924Z ##[error]${RUNNER_SHUTDOWN_MESSAGE}`,
+    "2026-07-23T07:32:49.9360750Z ##[error]The operation was canceled.",
+    "2026-07-23T07:32:50.0577487Z Cleaning up orphan processes",
+    "",
+  ].join("\n");
+}
+
+type JobLogFixture = {
+  body?: string;
+  downloadUrl?: string;
+  metadataHeaders?: Record<string, string>;
+  rangeHeaders?: Record<string, string>;
+  redirectStatus?: number;
+};
+
+function jobLogRoutes(options: JobLogFixture = {}) {
+  const body = options.body ?? runnerShutdownJobLog();
+  const bytes = new TextEncoder().encode(body);
+  const rangeStart = Math.max(0, bytes.byteLength - JOB_LOG_RANGE_BYTES);
+  const rangeEnd = bytes.byteLength - 1;
+  const range = bytes.slice(rangeStart);
+  const downloadUrl = options.downloadUrl ?? JOB_LOG_DOWNLOAD_URL;
+  return [
+    githubFetchRoute(
+      ({ url, method }) =>
+        url.endsWith(`/actions/jobs/${hostedRunnerLossJob().id}/logs`) && method === "GET",
+      () =>
+        new Response(null, {
+          status: options.redirectStatus ?? 302,
+          headers: { location: downloadUrl },
+        }),
+    ),
+    githubFetchRoute(
+      ({ url, method }) => url === JOB_LOG_DOWNLOAD_URL && method === "HEAD",
+      () =>
+        new Response(null, {
+          status: 200,
+          headers: {
+            "content-length": String(bytes.byteLength),
+            "content-type": "text/plain",
+            etag: JOB_LOG_ETAG,
+            ...options.metadataHeaders,
+          },
+        }),
+    ),
+    githubFetchRoute(
+      ({ url, method }) => url === JOB_LOG_DOWNLOAD_URL && method === "GET",
+      () =>
+        new Response(range, {
+          status: 206,
+          headers: {
+            "content-length": String(range.byteLength),
+            "content-range": `bytes ${rangeStart}-${rangeEnd}/${bytes.byteLength}`,
+            "content-type": "text/plain",
+            etag: JOB_LOG_ETAG,
+            ...options.rangeHeaders,
+          },
+        }),
+    ),
+  ];
+}
+
+function authenticatedShutdownOptions(jobLog: JobLogFixture = {}) {
+  const annotations = [genericCancellationAnnotation()];
+  return {
+    annotationPages: [annotations, annotations],
+    jobLog,
   };
 }
 
@@ -235,6 +327,7 @@ function retryRoutes(
     workflow?: unknown;
     jobCheck?: unknown;
     annotationPages?: unknown[][];
+    jobLog?: JobLogFixture;
     createRetryStateDirectory?: string;
   } = {},
 ) {
@@ -286,6 +379,7 @@ function retryRoutes(
           return githubResponse(annotations);
         },
       ),
+      ...jobLogRoutes(options.jobLog),
       githubFetchRoute(
         ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
         () => githubResponse(pullRequest()),
@@ -407,6 +501,61 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
             .map((request) => (request.body as { output?: { title?: string } }).output?.title),
         ),
       ).toEqual(new Set(["Preparing one-time hosted-runner-loss retry", "Running 2 E2E checks"]));
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("dispatches once for an authenticated hosted-runner shutdown log", async () => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(retryRoutes(requests, authenticatedShutdownOptions()));
+
+    try {
+      await expect(retryRunnerLossPrGate(context.command)).resolves.toBeUndefined();
+      expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
+      expect(requests.filter((request) => request.url.endsWith("/actions/runs/23"))).toHaveLength(
+        3,
+      );
+
+      const calls = fetchSpy.mock.calls.map(([input, init]) => ({
+        url: input instanceof Request ? input.url : String(input),
+        init,
+      }));
+      const apiLogCalls = calls.filter((call) =>
+        call.url.endsWith(`/actions/jobs/${hostedRunnerLossJob().id}/logs`),
+      );
+      const metadataCalls = calls.filter(
+        (call) => call.url === JOB_LOG_DOWNLOAD_URL && call.init?.method === "HEAD",
+      );
+      const rangeCalls = calls.filter(
+        (call) => call.url === JOB_LOG_DOWNLOAD_URL && call.init?.method === undefined,
+      );
+      expect(apiLogCalls).toHaveLength(2);
+      expect(metadataCalls).toHaveLength(2);
+      expect(rangeCalls).toHaveLength(2);
+      expect(apiLogCalls[0]?.init).toMatchObject({
+        redirect: "manual",
+        headers: { Authorization: "Bearer token" },
+      });
+      expect(metadataCalls[0]?.init).toMatchObject({
+        method: "HEAD",
+        redirect: "error",
+        headers: { "Accept-Encoding": "identity" },
+      });
+      const totalBytes = new TextEncoder().encode(runnerShutdownJobLog()).byteLength;
+      expect(rangeCalls[0]?.init).toMatchObject({
+        redirect: "error",
+        headers: {
+          "If-Match": JOB_LOG_ETAG,
+          Range: `bytes=${totalBytes - JOB_LOG_RANGE_BYTES}-${totalBytes - 1}`,
+        },
+      });
+      for (const call of [...metadataCalls, ...rangeCalls]) {
+        expect(call.init?.headers).not.toHaveProperty("Authorization");
+      }
     } finally {
       fs.rmSync(context.workDir, { recursive: true, force: true });
     }
@@ -587,6 +736,53 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
         };
       },
       error: /not authorized/u,
+    },
+    {
+      label: "an untrusted job-log redirect",
+      options: () =>
+        authenticatedShutdownOptions({
+          downloadUrl: "https://example.com/actions-results/job.txt?sig=untrusted",
+        }),
+      error: /not authorized/u,
+    },
+    {
+      label: "a weak job-log metadata ETag",
+      options: () =>
+        authenticatedShutdownOptions({ metadataHeaders: { etag: 'W/"hosted-runner-log"' } }),
+      error: /not authorized/u,
+    },
+    {
+      label: "a mismatched authenticated job-log range",
+      options: () =>
+        authenticatedShutdownOptions({
+          rangeHeaders: { "content-range": "bytes 0-1/2" },
+        }),
+      error: /not authorized/u,
+    },
+    {
+      label: "a completed-step marker after the shutdown tail",
+      options: () =>
+        authenticatedShutdownOptions({
+          body: `${runnerShutdownJobLog()}2026-07-23T07:32:51.0000000Z ##[end-action id=__self.__run;outcome=cancelled;conclusion=cancelled;duration_ms=1]\n`,
+        }),
+      error: /not authorized/u,
+    },
+    {
+      label: "shutdown evidence that changes before dispatch",
+      options: () => ({
+        ...authenticatedShutdownOptions(),
+        annotationPages: [
+          [genericCancellationAnnotation()],
+          [
+            {
+              ...genericCancellationAnnotation(),
+              start_line: 35,
+              end_line: 35,
+            },
+          ],
+        ],
+      }),
+      error: /evidence changed/u,
     },
   ])("fails closed after reservation for $label", async ({ options, error }) => {
     const context = setup();
@@ -850,6 +1046,83 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     try {
       await expect(abandonRunnerLossRetrySource(17, 23, 1)).rejects.toThrow(/ambiguous/u);
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes the retry authorization marker for an authenticated shutdown log", async () => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    const currentCheck = checkRun(17, {
+      status: "in_progress",
+      conclusion: null,
+      output: { title: "Running 2 E2E checks", summary: "Attempt 1 is running." },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(workflowRun()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [currentCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/runs/23/attempts/1/jobs?") && method === "GET",
+            () => githubResponse({ total_count: 1, jobs: [hostedRunnerLossJob()] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith(`/check-runs/${hostedRunnerLossJob().id}`) && method === "GET",
+            () => githubResponse(workflowJobCheckRun(hostedRunnerLossJob())),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/check-runs/${hostedRunnerLossJob().id}/annotations?`) &&
+              method === "GET",
+            () => githubResponse([genericCancellationAnnotation()]),
+          ),
+          ...jobLogRoutes(),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => mutationResponse(request, 17),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        finishPrGate({
+          statePath: context.statePath,
+          stateHash: sha256(context.serializedState),
+          evidencePath: context.workDir,
+          checkRunId: 17,
+          childRunId: 23,
+          evidenceOutcome: "skipped",
+        }),
+      ).resolves.toBeUndefined();
+      expect(fs.readFileSync(context.outputPath, "utf8")).toBe(
+        "runner_loss_retry_authorized=true\nfinalized=true\n",
+      );
+      const completion = requests.find(
+        (request) =>
+          request.url.endsWith("/check-runs/17") &&
+          request.method === "PATCH" &&
+          (request.body as { status?: string }).status === "completed",
+      );
+      expect(completion?.body).toMatchObject({ conclusion: "failure" });
+      expect(JSON.stringify(completion?.body)).toContain(RETRY_MARKER);
     } finally {
       fs.rmSync(context.workDir, { recursive: true, force: true });
     }
