@@ -2255,6 +2255,9 @@ jobs:
       - name: Upload network-policy artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-network-policy-${{ matrix.scenario }}
+          path: e2e-artifacts/live/network-policy/${{ matrix.scenario }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -2350,6 +2353,9 @@ jobs:
       - name: Upload common-egress agent artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-common-egress-agent-${{ matrix.scenario }}
+          path: e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}/
 
       - name: Clean up Docker auth
         if: always()

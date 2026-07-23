@@ -68,7 +68,7 @@ describe("e2e workflow boundary", () => {
         string,
         {
           env: Record<string, unknown>;
-          steps: Array<{ name?: string; run?: string }>;
+          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
           strategy: {
             "fail-fast": boolean;
             matrix: { include: Array<Record<string, string>> };
@@ -89,6 +89,8 @@ describe("e2e workflow boundary", () => {
     delete job.env.NEMOCLAW_SANDBOX_NAME;
     const run = job.steps.find((step) => step.name === "Run network-policy live test")!;
     run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
+    const upload = job.steps.find((step) => step.name === "Upload network-policy artifacts")!;
+    delete upload.with;
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
@@ -99,6 +101,8 @@ describe("e2e workflow boundary", () => {
         "network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
         "network-policy job must bind its sandbox name to matrix.sandbox",
         `step 'Run network-policy live test' run script must include --selector "\${{ matrix.selector }}"`,
+        "network-policy upload-e2e-artifacts invocation must not override its contract",
+        "network-policy upload-e2e-artifacts must preserve its explicit name/path contract",
       ]),
     );
   });
@@ -109,7 +113,7 @@ describe("e2e workflow boundary", () => {
         string,
         {
           env: Record<string, unknown>;
-          steps: Array<{ name?: string; run?: string }>;
+          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
           strategy: {
             "fail-fast": boolean;
             "max-parallel": number;
@@ -131,6 +135,8 @@ describe("e2e workflow boundary", () => {
     delete job.env.NEMOCLAW_E2E_SHARD;
     const run = job.steps.find((step) => step.name === "Run common-egress agent live test")!;
     run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
+    const upload = job.steps.find((step) => step.name === "Upload common-egress agent artifacts")!;
+    delete upload.with;
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
@@ -141,6 +147,8 @@ describe("e2e workflow boundary", () => {
         "common-egress-agent job must isolate artifacts by matrix.scenario",
         "common-egress-agent job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
         `step 'Run common-egress agent live test' run script must include --selector "\${{ matrix.selector }}"`,
+        "common-egress-agent upload-e2e-artifacts invocation must not override its contract",
+        "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
       ]),
     );
   });
