@@ -99,6 +99,12 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     gatewayBin?: string | null,
     platform?: NodeJS.Platform,
   ): DockerDriverGatewayRuntimeDrift | null;
+  getDockerDriverGatewayReuseDrift(
+    pid: number,
+    desiredEnv: Record<string, string>,
+    gatewayBin?: string | null,
+    trustedServicePid?: number | null,
+  ): DockerDriverGatewayRuntimeDrift | null;
   getDockerDriverGatewayRuntimeDriftFromSnapshot(snapshot: {
     processEnv: Record<string, string> | null;
     processExe: string | null;
@@ -387,6 +393,22 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     });
   }
 
+  function getDockerDriverGatewayReuseDrift(
+    pid: number,
+    desiredEnv: Record<string, string>,
+    gatewayBin?: string | null,
+    trustedServicePid?: number | null,
+  ): DockerDriverGatewayRuntimeDrift | null {
+    return pid === trustedServicePid
+      ? getDockerDriverGatewayRuntimeDriftFromSnapshot({
+          processEnv: readProcessEnv(pid),
+          processExe: readProcessExe(pid),
+          desiredEnv,
+          gatewayBin,
+        })
+      : getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin);
+  }
+
   function captureProcessArgs(pid: number): string {
     return deps
       .runCapture(["ps", "-p", String(pid), "-o", "args="], {
@@ -475,6 +497,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     getDockerDriverGatewayPortListenerScan,
     getDockerDriverGatewayPortListenerPids,
     getDockerDriverGatewayPortListenerPid,
+    getDockerDriverGatewayReuseDrift,
     getDockerDriverGatewayRuntimeDrift,
     getDockerDriverGatewayRuntimeDriftFromSnapshot,
     getDockerDriverGatewayStateDir,

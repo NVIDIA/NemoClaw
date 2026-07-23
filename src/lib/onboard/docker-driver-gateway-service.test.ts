@@ -9,6 +9,7 @@ import {
   getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
   getOpenShellUserConfigHome,
+  getTrustedActiveOpenShellGatewayUserServicePid,
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
   type SpawnSyncLikeResult,
@@ -204,6 +205,72 @@ describe("docker-driver-gateway-service", () => {
       "restart nemoclaw-openshell-gateway",
       "is-active --quiet nemoclaw-openshell-gateway",
     ]);
+  });
+
+  it("identifies the active trusted NemoClaw systemd gateway process (#6903)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const gatewayBin = `${home}/.local/bin/openshell-gateway`;
+    const spawnSyncImpl = vi.fn(() =>
+      spawnResult(
+        0,
+        "",
+        [trustedShowOutput(servicePath, gatewayBin), "ActiveState=active", "MainPID=4242"].join(
+          "\n",
+        ),
+      ),
+    );
+
+    expect(
+      getTrustedActiveOpenShellGatewayUserServicePid({
+        commandExists: (command) => command === "systemctl",
+        env: { HOME: home },
+        existsSync: (candidate) => candidate === servicePath,
+        home,
+        lstatSync: nonSymlinkStat,
+        platform: "linux",
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl,
+      }),
+    ).toBe(4242);
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "systemctl",
+      [
+        "--user",
+        "show",
+        "nemoclaw-openshell-gateway",
+        "--property=FragmentPath",
+        "--property=ExecStart",
+        "--property=ActiveState",
+        "--property=MainPID",
+      ],
+      expect.any(Object),
+    );
+  });
+
+  it("does not trust an inactive or foreign systemd gateway process (#6903)", () => {
+    const existsSync = (candidate: string) =>
+      candidate === "/lib/systemd/user/openshell-gateway.service";
+    const query = (output: string) =>
+      getTrustedActiveOpenShellGatewayUserServicePid({
+        commandExists: () => true,
+        existsSync,
+        platform: "linux",
+        spawnSyncImpl: () => spawnResult(0, "", output),
+      });
+
+    expect(
+      query([trustedShowOutput(), "ActiveState=inactive", "MainPID=4242"].join("\n")),
+    ).toBeNull();
+    expect(
+      query(
+        [
+          trustedShowOutput("/lib/systemd/user/openshell-gateway.service", "/tmp/gateway"),
+          "ActiveState=active",
+          "MainPID=4242",
+        ].join("\n"),
+      ),
+    ).toBeNull();
   });
 
   it("removes a marked NemoClaw unit before activating an upstream systemd unit (#6903)", () => {

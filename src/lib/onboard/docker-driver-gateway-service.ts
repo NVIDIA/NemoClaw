@@ -357,6 +357,13 @@ function validateSystemdServiceIdentity(
   );
   if (!result.ok) return { ok: false, reason: result.reason };
   const properties = parseSystemctlShow(result.stdout ?? "");
+  return validateSystemdServiceIdentityFromProperties(service, properties);
+}
+
+function validateSystemdServiceIdentityFromProperties(
+  service: OpenShellGatewayUserServiceTarget,
+  properties: Record<string, string>,
+): { ok: boolean; reason?: string } {
   const fragmentPath = path.normalize(properties.FragmentPath ?? "");
   const execStartPath = extractSystemdExecStartPath(properties.ExecStart ?? "");
   const trustedUnit = service.trustedUnitPaths.some(
@@ -371,6 +378,45 @@ function validateSystemdServiceIdentity(
         ok: false,
         reason: `service identity is not a trusted OpenShell gateway (${fragmentPath})`,
       };
+}
+
+export function getTrustedActiveOpenShellGatewayUserServicePid(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): number | null {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "linux") return null;
+  const env = opts.env ?? process.env;
+  const home = effectiveHome(opts.home, opts.env);
+  const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  let service: OpenShellGatewayUserServiceTarget | null;
+  try {
+    service = resolveOpenShellGatewayUserService({ ...opts, env, home });
+  } catch {
+    return null;
+  }
+  if (service?.manager !== "systemd" || !commandExists("systemctl")) return null;
+  const result = runSystemctlUser(
+    [
+      "show",
+      service.serviceName,
+      "--property=FragmentPath",
+      "--property=ExecStart",
+      "--property=ActiveState",
+      "--property=MainPID",
+    ],
+    { env, spawnSyncImpl },
+  );
+  if (!result.ok) return null;
+  const properties = parseSystemctlShow(result.stdout ?? "");
+  if (
+    properties.ActiveState !== "active" ||
+    !validateSystemdServiceIdentityFromProperties(service, properties).ok
+  ) {
+    return null;
+  }
+  const mainPid = Number(properties.MainPID);
+  return Number.isSafeInteger(mainPid) && mainPid > 0 ? mainPid : null;
 }
 
 function removeCompetingNemoclawUnit(
