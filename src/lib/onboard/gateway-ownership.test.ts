@@ -296,7 +296,7 @@ describe("cgroupBelongsToUnit", () => {
   const UNIT = "openshell-gateway.service";
 
   it("matches a cgroup v2 process in the unit's system slice (#6576)", () => {
-    expect(cgroupBelongsToUnit(`0::/system.slice/${UNIT}\n`, UNIT)).toBe(true);
+    expect(cgroupBelongsToUnit(`0::/system.slice/${UNIT}\n`, UNIT, "systemd-system")).toBe(true);
   });
 
   it("matches a cgroup v1 process listed under the unit (#6576)", () => {
@@ -304,7 +304,13 @@ describe("cgroupBelongsToUnit", () => {
       "12:pids:/system.slice/openshell-gateway.service",
       "0:name=systemd:/system.slice/openshell-gateway.service",
     ].join("\n");
-    expect(cgroupBelongsToUnit(v1, UNIT)).toBe(true);
+    expect(cgroupBelongsToUnit(v1, UNIT, "systemd-system")).toBe(true);
+  });
+
+  it("matches a system-manager unit in a custom slice (#6576)", () => {
+    expect(
+      cgroupBelongsToUnit(`0::/platform.slice/gateways.slice/${UNIT}`, UNIT, "systemd-system"),
+    ).toBe(true);
   });
 
   it("matches a user-manager unit path (#6576)", () => {
@@ -312,19 +318,38 @@ describe("cgroupBelongsToUnit", () => {
       cgroupBelongsToUnit(
         `0::/user.slice/user-1000.slice/user@1000.service/app.slice/${UNIT}`,
         UNIT,
+        "systemd-user",
       ),
     ).toBe(true);
   });
 
+  it("rejects a same-named user unit for the system manager (#6576)", () => {
+    expect(
+      cgroupBelongsToUnit(
+        `0::/user.slice/user-1000.slice/user@1000.service/app.slice/${UNIT}`,
+        UNIT,
+        "systemd-system",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a same-named system unit for the user manager (#6576)", () => {
+    expect(cgroupBelongsToUnit(`0::/system.slice/${UNIT}`, UNIT, "systemd-user")).toBe(false);
+  });
+
   it("rejects a same-binary process in a login session scope (#6576)", () => {
-    expect(cgroupBelongsToUnit("0::/user.slice/user-1000.slice/session-3.scope", UNIT)).toBe(false);
+    expect(
+      cgroupBelongsToUnit("0::/user.slice/user-1000.slice/session-3.scope", UNIT, "systemd-user"),
+    ).toBe(false);
   });
 
   it("rejects a different unit that merely shares a prefix (#6576)", () => {
-    expect(cgroupBelongsToUnit("0::/system.slice/openshell-gateway.service.d", UNIT)).toBe(false);
+    expect(
+      cgroupBelongsToUnit("0::/system.slice/openshell-gateway.service.d", UNIT, "systemd-system"),
+    ).toBe(false);
   });
 
   it("rejects empty or unreadable cgroup text (#6576)", () => {
-    expect(cgroupBelongsToUnit("", UNIT)).toBe(false);
+    expect(cgroupBelongsToUnit("", UNIT, "systemd-system")).toBe(false);
   });
 });

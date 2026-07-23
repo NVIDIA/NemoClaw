@@ -200,6 +200,48 @@ describe("gateway host runtime attachment probe", () => {
     });
   });
 
+  it("rejects a same-named user unit when the system manager is declared (#6576)", async () => {
+    declareExternalSupervision();
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        readProcCgroup: () =>
+          `0::/user.slice/user-1000.slice/user@1000.service/app.slice/${DECLARATION.supervisor.serviceName}\n`,
+        runOpenshell,
+      }),
+    );
+    const owner = runtime.getGatewayOwner();
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.listenerSupervisorMatch).toBe(false);
+    await expect(runtime.attachGateway(owner, probe)).rejects.toMatchObject({
+      code: "identity_mismatch",
+    });
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects a same-named system unit when the user manager is declared (#6576)", async () => {
+    declareExternalSupervision({
+      ...DECLARATION,
+      supervisor: { ...DECLARATION.supervisor, kind: "systemd-user" },
+    });
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        readProcCgroup: () => `0::/system.slice/${DECLARATION.supervisor.serviceName}\n`,
+        runOpenshell,
+      }),
+    );
+    const owner = runtime.getGatewayOwner();
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.listenerSupervisorMatch).toBe(false);
+    await expect(runtime.attachGateway(owner, probe)).rejects.toMatchObject({
+      code: "identity_mismatch",
+    });
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("rejects a listener whose executable differs from the arbitrary declared path (#6576)", async () => {
     declareExternalSupervision();
     const runtime = createGatewayHostRuntime(

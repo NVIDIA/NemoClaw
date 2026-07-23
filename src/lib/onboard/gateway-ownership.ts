@@ -264,16 +264,20 @@ export interface GatewayAttachmentProbe {
 }
 
 /**
- * Whether a process cgroup path names the given systemd unit.
+ * Whether a process cgroup path names the given systemd unit under the
+ * declared manager scope.
  *
  * `/proc/<pid>/cgroup` lists the process's cgroup path; a process managed by a
- * systemd unit sits under a slice segment named for the unit (for example
- * `/system.slice/openshell-gateway.service` or a `.../<unit>/...` subpath). A
- * same-binary process started outside the unit lands in a different cgroup
- * (a login session scope, the user slice), so this distinguishes the unit's
- * own process from an impostor holding the same port.
+ * user-manager unit sits below the `user@<uid>.service` delegation boundary.
+ * A system-manager unit does not, even when it uses a custom slice. Requiring
+ * that scope as well as the unit segment prevents a same-named unit in the
+ * other manager from satisfying the authority declaration.
  */
-export function cgroupBelongsToUnit(cgroupText: string, serviceName: string): boolean {
+export function cgroupBelongsToUnit(
+  cgroupText: string,
+  serviceName: string,
+  supervisorKind: GatewaySupervisorDeclaration["kind"],
+): boolean {
   const unit = serviceName.trim();
   if (!unit) return false;
   for (const line of cgroupText.split(/\r?\n/)) {
@@ -281,7 +285,15 @@ export function cgroupBelongsToUnit(cgroupText: string, serviceName: string): bo
     const cgroupPath = line.slice(line.lastIndexOf(":") + 1).trim();
     if (!cgroupPath) continue;
     const segments = cgroupPath.split("/").filter(Boolean);
-    if (segments.includes(unit)) return true;
+    const unitIndex = segments.indexOf(unit);
+    if (unitIndex < 0) continue;
+    const userManagerIndex = segments.findIndex((segment) => /^user@\d+\.service$/.test(segment));
+    if (supervisorKind === "systemd-system") {
+      if (userManagerIndex < 0 || userManagerIndex >= unitIndex) return true;
+      continue;
+    }
+    if (segments[0] === "user.slice" && userManagerIndex >= 0 && userManagerIndex < unitIndex)
+      return true;
   }
   return false;
 }

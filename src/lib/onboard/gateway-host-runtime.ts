@@ -208,7 +208,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     if (!supervisor) return null;
     const cgroupText = readProcCgroup(pid);
     if (cgroupText === null) return null;
-    return cgroupBelongsToUnit(cgroupText, supervisor.serviceName);
+    return cgroupBelongsToUnit(cgroupText, supervisor.serviceName, supervisor.kind);
   }
 
   /** Read executable and cgroup evidence only while the PID names one process. */

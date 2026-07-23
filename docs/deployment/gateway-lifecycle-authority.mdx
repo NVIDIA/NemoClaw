@@ -85,7 +85,7 @@ The authority may be persisted in checkpoints, diagnostics, and machine events, 
 
 <Note>
 Only systemd supervisors are supported in version 1.
-NemoClaw verifies both the listener executable and its membership in the declared unit's cgroup.
+NemoClaw verifies the listener executable, the declared system or user manager scope, and membership in the declared unit's cgroup.
 A matching executable alone is not sufficient because the same binary can run outside the declared unit.
 </Note>
 
@@ -109,7 +109,7 @@ NemoClaw validates external authority before provider, policy, sandbox, or sandb
 NemoClaw requires systemd to confirm that the declared unit is active.
 It checks that exactly one live process holds the configured port.
 The process identity must remain stable while NemoClaw reads `/proc` evidence and confirms the listener a second time.
-The process must belong to the unit's cgroup, and its executable must match `execPath`.
+The process must belong to the unit's cgroup under the declared systemd manager scope, and its executable must match `execPath`.
 The exact endpoint must answer its health check.
 
 After validation, NemoClaw registers the exact endpoint under the canonical gateway name and selects it as the active OpenShell gateway.
