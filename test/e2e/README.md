@@ -436,6 +436,14 @@ each text field, and limits the normalized annotation evidence to 64 KiB. This
 permits trusted bounded non-failure notices beside the sole failure annotation
 without allowing annotation output to exhaust the coordinator.
 
+GitHub Actions creates this `.github` failure annotation after the hosted runner
+shuts down; NemoClaw workflow code cannot replace its generic message with the
+canonical lost-communication annotation. The classifier test `accepts the
+exact authenticated terminal shutdown block from run 29988226653` preserves
+the observed fallback contract. Remove the fallback and that test together
+only after GitHub's documented Jobs or Checks API contract provides an
+authenticated structured runner-loss reason for this exact shutdown path.
+
 The generic-cancellation fallback also authenticates the job log. The
 controller requests the GitHub job-log endpoint and accepts only its signed
 HTTPS redirect to GitHub Actions result storage. It does not forward the
