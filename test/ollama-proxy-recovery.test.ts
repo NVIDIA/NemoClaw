@@ -429,6 +429,7 @@ childProcess.spawnSync = (...args) => {
 
 const proxy = require(${proxyPath});
 const prepared = proxy.noAuthProxy("http://127.0.0.1:8000/v1");
+prepared.persist();
 const running = proxy.getOllamaProxyToken();
 
 const tokenPath = path.join(process.env.HOME, ".nemoclaw", "ollama-proxy-token");

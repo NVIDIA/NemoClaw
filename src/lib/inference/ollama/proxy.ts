@@ -320,9 +320,8 @@ function noAuthProxy(endpointUrl: string) {
   const endpoint = new URL(endpointUrl);
   if (!startOllamaAuthProxy(endpoint.origin))
     throw new Error("Could not start the protected loopback route.");
-  persistProxyToken(getOllamaProxyToken()!, endpoint.origin);
   // biome-ignore format: keep the proxy route and its token together.
-  return { baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`, credentialValue: getOllamaProxyToken()! };
+  return { baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`, credentialValue: getOllamaProxyToken()!, persist: () => persistProxyToken(getOllamaProxyToken()!, endpoint.origin) };
 }
 
 /**

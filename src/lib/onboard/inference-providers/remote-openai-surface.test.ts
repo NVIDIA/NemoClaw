@@ -230,9 +230,11 @@ describe("OpenAI-compatible no-auth provider registration", () => {
 
   it("registers the protected proxy URL and generated credential (#7424)", async () => {
     const harness = createHarness();
+    const persist = vi.fn();
     vi.mocked(noAuthProxy).mockReturnValue({
       baseUrl: "http://host.openshell.internal:11435/v1",
       credentialValue: "proxy-token",
+      persist,
     });
     harness.deps.hydrateCredentialEnv.mockImplementation(
       () => process.env[NO_AUTH_ENV] || "missing",
@@ -250,6 +252,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       "http://host.openshell.internal:11435/v1",
       { [NO_AUTH_ENV]: "proxy-token" },
     );
+    expect(persist).toHaveBeenCalledOnce();
   });
 
   it("stops before registration when proxy startup fails (#7424)", async () => {
@@ -262,5 +265,20 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       "proxy startup failed",
     );
     expect(harness.upsertProvider).not.toHaveBeenCalled();
+  });
+
+  it("does not persist proxy state when provider registration fails (#7424)", async () => {
+    const harness = createHarness();
+    const persist = vi.fn();
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      credentialValue: "proxy-token",
+      persist,
+    });
+    harness.deps.hydrateCredentialEnv.mockReturnValue("proxy-token");
+    harness.upsertProvider.mockReturnValue({ ok: false });
+
+    await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow("EXIT_CALLED:1");
+    expect(persist).not.toHaveBeenCalled();
   });
 });

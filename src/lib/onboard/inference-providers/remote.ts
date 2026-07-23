@@ -362,6 +362,7 @@ export async function setupRemoteProviderInference(
     }
     const applyResult = runOpenshell(argsv, { ignoreError: true });
     if (applyResult.status === 0) {
+      proxy?.persist();
       break;
     }
     const message =
