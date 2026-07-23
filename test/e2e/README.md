@@ -136,6 +136,49 @@ graph as the live targets:
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
 
+### Runner comparison telemetry
+
+Trusted `main` runs without an alternate checkout SHA record runner-comparison
+telemetry for the #7145 contract: 12 routed workflow lane identities / 13
+concrete job executions.
+
+- `common-egress-agent`
+- `rebuild-hermes`
+- `rebuild-hermes-stale-base`
+- `mcp-bridge` with the `hermes` shard
+- `mcp-bridge` with the `deepagents` shard
+- `channels-stop-start` with the `hermes` shard
+- `hermes-dashboard`
+- `hermes-discord`
+- `hermes-e2e`
+- `hermes-inference-switch` with the `hosted` and `anthropic` modes
+- `hermes-shields-config`
+- `security-posture` with the `hermes` shard
+
+The extra execution comes from `hermes-inference-switch`, which runs both
+listed modes. The OpenClaw matrix entries for `mcp-bridge`,
+`channels-stop-start`, and `security-posture` are not instrumented.
+
+Each execution writes two best-effort numeric samples to
+`runner-comparison.jsonl`, one after workspace preparation and one from an
+`always()` finalizer before artifact checking and upload. The finalizer writes
+`runner-comparison-summary.json` only when both samples are valid, monotonic,
+and have the same target and shard identity. The summary contains the sampled
+post-prepare time window, average CPU utilization and logical CPU capacity,
+memory availability and endpoint usage, the available root-cgroup memory peak,
+and workspace free-space and growth values. Unsupported measurements are `null`.
+Endpoint memory and workspace samples do not establish the true maximum or
+minimum between those two observations. The root-cgroup peak is a lifetime
+counter that includes Docker siblings but can also include host activity before
+the measured window. Compare it only across runs with the same runner setup.
+
+Treat a missing summary as unavailable evidence, not as low utilization. A
+hard runner loss can prevent finalization or artifact upload. When you compare
+standard and larger runners, use runs with the same commit SHA, workflow
+inputs, target, and shard. Pair the artifact with the GitHub Actions runner
+label, queue time, result, and usage or cost metadata. This telemetry does not
+maintain rolling history or write to the GitHub Actions step summary.
+
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
 allowlisted `cloud-onboard-trace-timing-summary.json` timing schema and deletes
