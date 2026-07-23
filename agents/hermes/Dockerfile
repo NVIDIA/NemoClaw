@@ -215,6 +215,12 @@ PY
 # the exact public/secret placeholder bound to the matching standard Langfuse
 # key; raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
 # fails closed when the pinned upstream source shape changes.
+ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=abf0d5203f67dda4425248f25bc0d5bb0dd73dc7e7bf8e7d6a8ad1412a73f29f
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-hermes-langfuse-credentials.mts hash mismatch (update NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256)" >&2; exit 1; }
 RUN node --experimental-strip-types \
         /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
         /opt/hermes/plugins/observability/langfuse/__init__.py \

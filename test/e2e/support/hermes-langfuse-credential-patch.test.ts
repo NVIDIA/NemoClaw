@@ -39,18 +39,7 @@ def _validate_langfuse_key(env_name: str, value: str) -> Optional[str]:
     )
 `;
 
-function runPython(source: string, assertions: string) {
-  return spawnSync("python3", ["-I", "-c", `${source}\n${assertions}`], {
-    encoding: "utf8",
-  });
-}
-
-describe("Hermes Langfuse OpenShell credential compatibility", () => {
-  it("accepts only raw keys or exact same-name resolver placeholders (#7446)", () => {
-    const patched = patchLangfuseCredentials(pinnedValidatorFixture);
-    const result = runPython(
-      patched,
-      `\
+const validatorAssertions = `\
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "pk-lf-public") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "sk-lf-secret") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is None
@@ -60,8 +49,18 @@ assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:e
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:v123456789012345678901_LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "prefix-openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
-`,
-    );
+`;
+
+function runPython(source: string, assertions: string) {
+  return spawnSync("python3", ["-I", "-c", `${source}\n${assertions}`], {
+    encoding: "utf8",
+  });
+}
+
+describe("Hermes Langfuse OpenShell credential compatibility", () => {
+  it("accepts only raw keys or exact same-name resolver placeholders (#7446)", () => {
+    const patched = patchLangfuseCredentials(pinnedValidatorFixture);
+    const result = runPython(patched, validatorAssertions);
 
     expect(result.status, result.stderr).toBe(0);
     expect(patchLangfuseCredentials(patched)).toBe(patched);
@@ -93,6 +92,8 @@ assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "prefix-openshell:re
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(fixturePath, "utf8")).toContain("_LANGFUSE_OPENSHELL_KEYS");
+    const patched = fs.readFileSync(fixturePath, "utf8");
+    const validation = runPython(patched, validatorAssertions);
+    expect(validation.status, validation.stderr).toBe(0);
   });
 });
