@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
@@ -15,9 +16,29 @@ const META_JOBS = new Set(["report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
+const DOWNLOAD_ARTIFACT_ACTION =
+  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
+const PUBLICATION_REQUIRED_CONDITION = "${{ steps.publication_mode.outputs.required == '1' }}";
+const PUBLICATION_CLASSIFIER_SCRIPT =
+  [
+    "set -euo pipefail",
+    'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
+    "  NVIDIA/NemoClaw:refs/heads/main:schedule:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    "    required=1",
+    "    ;;",
+    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
+    "    required=0",
+    "    ;;",
+    "  *)",
+    '    echo "::error::base-image publication mode is not trusted" >&2',
+    "    exit 1",
+    "    ;;",
+    "esac",
+    'printf \'required=%s\\n\' "${required}" >> "${GITHUB_OUTPUT}"',
+  ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
   /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
@@ -29,6 +50,7 @@ const GENERIC_ISSUE_GRAPHQL_MUTATION =
   /github\.graphql\s*\(\s*["'`]\s*mutation\b[\s\S]*?\b(?:addComment|closeIssue|createIssue|reopenIssue|updateIssue)\b/u;
 
 type WorkflowStep = {
+  "continue-on-error"?: boolean;
   env?: Record<string, unknown>;
   if?: string;
   name?: string;
@@ -44,7 +66,9 @@ type WorkflowJob = {
   if?: string;
   needs?: unknown;
   permissions?: WorkflowPermissions;
+  "runs-on"?: unknown;
   steps?: WorkflowStep[];
+  "timeout-minutes"?: unknown;
 };
 
 export type OperationsWorkflow = {
@@ -215,16 +239,91 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
         jobName === "report-to-pr" &&
         step.name === "Check out the trusted E2E reporting helper" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedLaunchableLaneCheckout =
+        jobName === "staging-brev-launchable" &&
+        step.name === "Checkout trusted Launchable lane" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedPublicationCheckout =
+        jobName === "base-image-publication" &&
+        step.name === "Check out trusted E2E workflow" &&
+        step.if === PUBLICATION_REQUIRED_CONDITION &&
+        step.with?.ref === "${{ github.sha }}";
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
         !trustedHermesFixtureCheckout &&
-        !trustedReportHelperCheckout
+        !trustedReportHelperCheckout &&
+        !trustedLaunchableLaneCheckout &&
+        !trustedPublicationCheckout
       ) {
         errors.push(`${jobName} checkout must use the selected PR commit`);
       }
     }
   }
+}
+
+export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): string[] {
+  const errors: string[] = [];
+  const job = workflow.jobs["base-image-publication"] ?? {};
+  const expectedJob = {
+    "runs-on": "ubuntu-latest",
+    "timeout-minutes": 55,
+    permissions: {
+      actions: "read",
+      contents: "read",
+    },
+    steps: [
+      {
+        id: "publication_mode",
+        name: "Classify base-image publication requirement",
+        env: {
+          CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+          EVENT_NAME: "${{ github.event_name }}",
+          REF: "${{ github.ref }}",
+          REPOSITORY: "${{ github.repository }}",
+        },
+        shell: "bash",
+        run: PUBLICATION_CLASSIFIER_SCRIPT,
+      },
+      {
+        name: "Check out trusted E2E workflow",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        uses: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
+        with: {
+          ref: "${{ github.sha }}",
+          "fetch-depth": 0,
+          "persist-credentials": false,
+        },
+      },
+      {
+        name: "Set up Node for publication verification",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        uses: "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        with: {
+          "node-version": 22,
+        },
+      },
+      {
+        name: "Verify applicable base-image publication",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        env: {
+          EXPECTED_SHA: "${{ github.sha }}",
+          GITHUB_TOKEN: "${{ github.token }}",
+        },
+        run: "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+      },
+    ],
+  };
+
+  if (!isDeepStrictEqual(job, expectedJob)) {
+    errors.push(
+      "base-image-publication job must preserve its exact trusted-mode classifier, minimal permissions, pinned checkout, and verifier boundary",
+    );
+  }
+  if (!needs(workflow.jobs["generate-matrix"] ?? {}).includes("base-image-publication")) {
+    errors.push("generate-matrix must wait for base-image-publication");
+  }
+  return errors;
 }
 
 function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsWorkflow): void {
@@ -420,11 +519,27 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     .map((entry) => entry.trim())
     .filter(Boolean);
   if (
-    sparseCheckout.length !== 2 ||
+    sparseCheckout.length !== 3 ||
     !sparseCheckout.includes("ci/onboard-performance-budget.json") ||
+    !sparseCheckout.includes("scripts/audit-test-runtime.mts") ||
     !sparseCheckout.includes("scripts/scorecard")
   ) {
-    errors.push("scorecard checkout must be limited to scorecard builders and budget config");
+    errors.push(
+      "scorecard checkout must be limited to runtime and scorecard builders and budget config",
+    );
+  }
+
+  const download = findStep(job, "Download E2E progress artifacts");
+  requirePinnedAction(errors, download, "scorecard artifact download");
+  if (
+    download.uses !== DOWNLOAD_ARTIFACT_ACTION ||
+    download["continue-on-error"] !== true ||
+    download.with?.pattern !== "e2e-*" ||
+    download.with?.path !== "${{ runner.temp }}/e2e-runtime-audit"
+  ) {
+    errors.push(
+      "scorecard must download this run's E2E artifacts into the runtime audit directory",
+    );
   }
 
   const generate = findStep(job, "Generate E2E scorecard");
@@ -440,6 +555,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "core.warning(trace.budgetWarningMessage)",
     "scripts/scorecard/summarize-jobs.mts",
     "scorecardJobs.loadWorkflowRunJobs",
+    "scripts/audit-test-runtime.mts",
+    "runtimeAudit.auditTestRuntime",
+    "runtimeAudit.formatRuntimeAuditSummary",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -451,6 +569,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     generate.env?.EXPLICIT_ONLY_JOBS !== "${{ needs.generate-matrix.outputs.explicit_only_jobs }}"
   ) {
     errors.push("scorecard generator must derive explicit-only jobs from workflow inventory");
+  }
+  if (generate.env?.RUNTIME_ARTIFACTS !== "${{ runner.temp }}/e2e-runtime-audit") {
+    errors.push("scorecard generator must read the downloaded runtime audit directory");
   }
 
   const slack = findStep(job, "Post scorecard to Slack");
@@ -593,6 +714,7 @@ export function validateE2eOperationsWorkflow(
   advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
   const errors: string[] = [];
+  errors.push(...validateBaseImagePublicationGate(workflow));
   validatePrGateDispatch(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);

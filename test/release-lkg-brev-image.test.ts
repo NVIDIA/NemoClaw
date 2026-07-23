@@ -27,6 +27,7 @@ type Workflow = {
     {
       if?: string;
       steps?: WorkflowStep[];
+      "timeout-minutes"?: number;
     }
   >;
   on?: {
@@ -95,6 +96,11 @@ if [[ "\${GH_EXIT_CODE:-0}" != "0" ]]; then
   echo "HTTP 403: dispatch denied" >&2
   exit "$GH_EXIT_CODE"
 fi
+if [[ -n "\${GH_OUTPUT+x}" ]]; then
+  printf '%s\n' "$GH_OUTPUT"
+else
+  printf '123456789\thttps://github.com/brevdev/nemoclaw-image/actions/runs/123456789\n'
+fi
 `,
     "utf8",
   );
@@ -156,14 +162,17 @@ describe("LKG production image dispatch", () => {
       "-H",
       "Accept: application/vnd.github+json",
       "-H",
-      "X-GitHub-Api-Version: 2022-11-28",
+      "X-GitHub-Api-Version: 2026-03-10",
       "repos/brevdev/nemoclaw-image/actions/workflows/build-scheduled.yml/dispatches",
       "--input",
       "-",
+      "--jq",
+      "[.workflow_run_id, .html_url] | @tsv",
     ]);
     expect(JSON.parse(fs.readFileSync(fixture.inputPath, "utf8"))).toEqual({
       ref: "main",
       inputs: { nemoclaw_ref: "v0.0.10" },
+      return_run_details: true,
     });
     const summary = fs.readFileSync(fixture.summaryPath, "utf8");
     expect(summary).toContain(`LKG commit: \`${fixture.commit}\``);
@@ -171,7 +180,16 @@ describe("LKG production image dispatch", () => {
     expect(summary).toContain(
       "Target: `brevdev/nemoclaw-image/.github/workflows/build-scheduled.yml@main`",
     );
-    expect(summary).toContain("Dispatch result: `accepted (HTTP 204)`");
+    expect(summary).toContain("Dispatch result: `accepted (HTTP 200)`");
+    expect(summary).toContain(
+      "Downstream run: [123456789](https://github.com/brevdev/nemoclaw-image/actions/runs/123456789)",
+    );
+    expect(summary).toContain(
+      "Follow the downstream run to terminal success and verify production image promotion.",
+    );
+    expect(result.stdout).toContain(
+      "https://github.com/brevdev/nemoclaw-image/actions/runs/123456789",
+    );
     expect(`${result.stdout}${result.stderr}${summary}`).not.toContain("test-dispatch-token");
   });
 
@@ -233,6 +251,40 @@ describe("LKG production image dispatch", () => {
     expect(fs.readFileSync(fixture.summaryPath, "utf8")).toContain("Dispatch result: `rejected`");
   });
 
+  it("fails when GitHub omits valid downstream run details (#6772)", () => {
+    const fixture = createFixture();
+    tag(fixture, "v0.0.1");
+
+    const result = runDispatch(fixture, { GH_OUTPUT: "null\tnull" });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "GitHub accepted the dispatch but did not return valid downstream run details",
+    );
+    const summary = fs.readFileSync(fixture.summaryPath, "utf8");
+    expect(summary).toContain("Dispatch result: `rejected (invalid run details)`");
+    expect(summary).toContain("Downstream run: `unavailable`");
+    expect(summary).not.toContain("actions/runs/");
+  });
+
+  it("rejects a downstream run URL that does not match its numeric ID (#6772)", () => {
+    const fixture = createFixture();
+    tag(fixture, "v0.0.1");
+
+    const result = runDispatch(fixture, {
+      GH_OUTPUT: "123456789\thttps://github.com/brevdev/nemoclaw-image/actions/runs/987654321",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "GitHub accepted the dispatch but did not return valid downstream run details",
+    );
+    const summary = fs.readFileSync(fixture.summaryPath, "utf8");
+    expect(summary).toContain("Dispatch result: `rejected (invalid run details)`");
+    expect(summary).toContain("Downstream run: `unavailable`");
+    expect(summary).not.toContain("actions/runs/");
+  });
+
   // source-shape-contract: security -- The secret-bearing LKG trigger must stay canonical, deletion-safe, read-only, and immutable
   it("keeps LKG dispatch inside the trusted secret boundary (#6772)", () => {
     const workflow = readYaml<Workflow>(".github/workflows/release-lkg-brev-image.yaml");
@@ -245,6 +297,7 @@ describe("LKG production image dispatch", () => {
     expect(job.if).toBe(
       "${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false }}",
     );
+    expect(job["timeout-minutes"]).toBe(5);
     expect(checkout?.uses).toMatch(/^actions\/checkout@[0-9a-f]{40}$/u);
     expect(checkout?.with).toEqual({
       ref: "${{ github.sha }}",

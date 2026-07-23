@@ -11,8 +11,10 @@ import type { AgentDefinition } from "../../src/lib/agent/defs";
 type AgentOnboardModule = typeof import("../../src/lib/agent/onboard");
 type DockerRunModule = typeof import("../../src/lib/adapters/docker/run");
 type DockerImageModule = typeof import("../../src/lib/adapters/docker/image");
+type DockerInfoModule = typeof import("../../src/lib/adapters/docker/info");
 type DockerInspectModule = typeof import("../../src/lib/adapters/docker/inspect");
 type SandboxBaseImageModule = typeof import("../../src/lib/sandbox-base-image");
+type SourceIdentityModule = typeof import("../../src/lib/sandbox-base-image/source-identity");
 
 const requireSource = createRequire(
   new URL("../../src/lib/agent/base-image.test.ts", import.meta.url),
@@ -69,6 +71,7 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
 export function withMockedDocker<T>(
   run: (deps: {
     ensureAgentBaseImage: AgentOnboardModule["ensureAgentBaseImage"];
+    bindLocalAgentBaseImageToPinnedProvenance: AgentOnboardModule["bindLocalAgentBaseImageToPinnedProvenance"];
     pinAgentSandboxBaseImageRef: AgentOnboardModule["pinAgentSandboxBaseImageRef"];
     dockerBuildMock: ReturnType<typeof vi.fn>;
     dockerCaptureMock: ReturnType<typeof vi.fn>;
@@ -82,28 +85,40 @@ export function withMockedDocker<T>(
   }) => T,
 ): T {
   const dockerRunModule = requireSource("../adapters/docker/run.js") as DockerRunModule;
+  const originalDockerCapture = dockerRunModule.dockerCapture;
+  const dockerCaptureMock = vi.fn().mockReturnValue("nemoclaw-hermes-mcp-runtime-ok");
+  dockerRunModule.dockerCapture = dockerCaptureMock as DockerRunModule["dockerCapture"];
+
   const dockerImageModule = requireSource("../adapters/docker/image.js") as DockerImageModule;
+  const dockerInfoModule = requireSource("../adapters/docker/info.js") as DockerInfoModule;
   const dockerInspectModule = requireSource("../adapters/docker/inspect.js") as DockerInspectModule;
   const sandboxBaseImageModule = requireSource(
     "../sandbox-base-image.js",
   ) as SandboxBaseImageModule;
+  const sourceIdentityModule = requireSource(
+    "../sandbox-base-image/source-identity.js",
+  ) as SourceIdentityModule;
   const runnerModule = requireSource("../runner.js") as { ROOT: string };
-  const originalDockerCapture = dockerRunModule.dockerCapture;
   const originalDockerBuild = dockerImageModule.dockerBuild;
   const originalDockerRmi = dockerImageModule.dockerRmi;
   const originalDockerTag = dockerImageModule.dockerTag;
   const originalDockerImageInspect = dockerInspectModule.dockerImageInspect;
   const originalDockerImageInspectFormat = dockerInspectModule.dockerImageInspectFormat;
+  const originalDockerInfoFormat = dockerInfoModule.dockerInfoFormat;
   const originalResolveSandboxBaseImage = sandboxBaseImageModule.resolveSandboxBaseImage;
+  const originalGetVersionedBaseImageTags = sourceIdentityModule.getVersionedBaseImageTags;
+  const originalGetNearestVersionedBaseImageTags =
+    sourceIdentityModule.getNearestVersionedBaseImageTags;
+  const originalGetSourceShortShaTags = sourceIdentityModule.getSourceShortShaTags;
   const agentOnboardModulePath = requireSource.resolve("./onboard.js");
   delete require.cache[agentOnboardModulePath];
 
-  const dockerCaptureMock = vi.fn().mockReturnValue("nemoclaw-hermes-mcp-runtime-ok");
   const dockerBuildMock = vi.fn().mockReturnValue({ status: 0 });
   const dockerRmiMock = vi.fn().mockReturnValue({ status: 0 });
   const dockerTagMock = vi.fn().mockReturnValue({ status: 0 });
   const dockerImageInspectMock = vi.fn();
   const dockerImageInspectFormatMock = vi.fn().mockReturnValue(`sha256:${"a".repeat(64)}`);
+  const dockerInfoFormatMock = vi.fn().mockReturnValue("linux/amd64\n");
   const resolveSandboxBaseImageMock = vi.fn().mockImplementation((options) => {
     const override = options.env?.[options.envVar];
     return {
@@ -113,7 +128,6 @@ export function withMockedDocker<T>(
       glibcVersion: process.platform === "linux" ? "2.41" : null,
     };
   });
-  dockerRunModule.dockerCapture = dockerCaptureMock as DockerRunModule["dockerCapture"];
   dockerImageModule.dockerBuild = dockerBuildMock as DockerImageModule["dockerBuild"];
   dockerImageModule.dockerRmi = dockerRmiMock as DockerImageModule["dockerRmi"];
   dockerImageModule.dockerTag = dockerTagMock as DockerImageModule["dockerTag"];
@@ -121,13 +135,19 @@ export function withMockedDocker<T>(
     dockerImageInspectMock as DockerInspectModule["dockerImageInspect"];
   dockerInspectModule.dockerImageInspectFormat =
     dockerImageInspectFormatMock as DockerInspectModule["dockerImageInspectFormat"];
+  dockerInfoModule.dockerInfoFormat = dockerInfoFormatMock as DockerInfoModule["dockerInfoFormat"];
   sandboxBaseImageModule.resolveSandboxBaseImage =
     resolveSandboxBaseImageMock as SandboxBaseImageModule["resolveSandboxBaseImage"];
+  sourceIdentityModule.getVersionedBaseImageTags = () => [];
+  sourceIdentityModule.getNearestVersionedBaseImageTags = () => [];
+  sourceIdentityModule.getSourceShortShaTags = () => [];
 
   try {
     const agentOnboardModule = requireSource("./onboard.js") as AgentOnboardModule;
     return run({
       ensureAgentBaseImage: agentOnboardModule.ensureAgentBaseImage,
+      bindLocalAgentBaseImageToPinnedProvenance:
+        agentOnboardModule.bindLocalAgentBaseImageToPinnedProvenance,
       pinAgentSandboxBaseImageRef: agentOnboardModule.pinAgentSandboxBaseImageRef,
       dockerBuildMock,
       dockerCaptureMock,
@@ -146,7 +166,12 @@ export function withMockedDocker<T>(
     dockerImageModule.dockerTag = originalDockerTag;
     dockerInspectModule.dockerImageInspect = originalDockerImageInspect;
     dockerInspectModule.dockerImageInspectFormat = originalDockerImageInspectFormat;
+    dockerInfoModule.dockerInfoFormat = originalDockerInfoFormat;
     sandboxBaseImageModule.resolveSandboxBaseImage = originalResolveSandboxBaseImage;
+    sourceIdentityModule.getVersionedBaseImageTags = originalGetVersionedBaseImageTags;
+    sourceIdentityModule.getNearestVersionedBaseImageTags =
+      originalGetNearestVersionedBaseImageTags;
+    sourceIdentityModule.getSourceShortShaTags = originalGetSourceShortShaTags;
     delete require.cache[agentOnboardModulePath];
   }
 }

@@ -193,7 +193,7 @@ describe("built-in messaging channel metadata", () => {
           .map((agentPackage) => ({
             packageKey: `${manifest.id}/${agentPackage.id}`,
             committedIntegrity:
-              agentPackage.integrity ?? agentPackage.integrityByVersion?.["2026.6.10"],
+              agentPackage.integrity ?? agentPackage.integrityByVersion?.["2026.7.1"],
           })),
     );
 
@@ -201,7 +201,7 @@ describe("built-in messaging channel metadata", () => {
       {
         packageKey: "discord/openclawPluginPackage",
         committedIntegrity:
-          "sha512-NKp/j00l+rk5PC0Lv/0fOIiiQJ1c/OpG9471zqXUDKQie6pQ1Fi9KUZUouyoTMmfLh/n4S0CkEMqrON40eBKXA==",
+          "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==",
       },
       {
         packageKey: "wechat/openclawPluginPackage",
@@ -211,17 +211,17 @@ describe("built-in messaging channel metadata", () => {
       {
         packageKey: "slack/openclawPluginPackage",
         committedIntegrity:
-          "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==",
+          "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==",
       },
       {
         packageKey: "whatsapp/openclawPluginPackage",
         committedIntegrity:
-          "sha512-k/XrRdZY77SHrdaRwJOEB7/JRbjp4yVgGD/ZNyakjTMqo32XRVtwPBUnj7726rW8Kl5yyOMQQLKFiD9MDfhmPQ==",
+          "sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==",
       },
       {
         packageKey: "teams/openclawPluginPackage",
         committedIntegrity:
-          "sha512-GjHnCPvjbnI0C7mEFcdT2uKDH4/WwOe2dZBfQiWxBtkE76m6TNG0J9dJjD4mc8/pk8rXSO0cWw+KV9jzWtF9VA==",
+          "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
       },
     ]);
   });

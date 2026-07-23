@@ -234,6 +234,7 @@ let getDisabledChannelsMock: MockInstance;
 let listSandboxesMock: MockInstance;
 let rebuildSandboxMock: MockInstance;
 let ensureMessagingHostForwardAfterRebuildMock: MockInstance;
+let scopeDisclosureMock: MockInstance;
 
 function arrangeRegistry(opts: { current: SandboxEntry; others?: SandboxEntry[] }): void {
   const all = [opts.current, ...(opts.others ?? [])];
@@ -330,6 +331,10 @@ beforeEach(() => {
   vi.spyOn(policy, "loadPreset").mockReturnValue("network_policies:\n  stub: {}\n");
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["stub"]);
   vi.spyOn(policy, "listPresets").mockReturnValue([]);
+  vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("absent");
+  scopeDisclosureMock = vi
+    .spyOn(policy, "logPresetScopeForState")
+    .mockImplementation(() => undefined);
   applyPresetMock = vi.spyOn(policy, "applyPreset").mockReturnValue(true);
   vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
 
@@ -1061,7 +1066,9 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
     await startSandboxChannel("alpha", { channel: "teams" });
 
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
+      disclosedPresetState: "absent",
+    });
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
     expect(applyPresetMock.mock.invocationCallOrder[0]).toBeLessThan(
       rebuildSandboxMock.mock.invocationCallOrder[0],
@@ -1087,9 +1094,34 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
     await startSandboxChannel("alpha", { channel: "teams" });
 
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
+      disclosedPresetState: "absent",
+    });
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("Change queued");
+  });
+
+  it("channels start discloses before dry-run return and before persisted-plan mutation (#7179)", async () => {
+    const current = makeTeamsEntry("alpha", { disabled: true });
+    arrangeRegistry({ current });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+
+    await startSandboxChannel("alpha", { channel: "teams", dryRun: true });
+
+    expect(scopeDisclosureMock).toHaveBeenCalledOnce();
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+
+    scopeDisclosureMock.mockClear();
+    await startSandboxChannel("alpha", { channel: "teams" });
+
+    expect(scopeDisclosureMock).toHaveBeenCalledOnce();
+    expect(scopeDisclosureMock.mock.invocationCallOrder[0]).toBeLessThan(
+      updateSandboxMock.mock.invocationCallOrder[0],
+    );
+    expect(scopeDisclosureMock.mock.invocationCallOrder[0]).toBeLessThan(
+      applyPresetMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("channels start restores the disabled plan and skips rebuild when its policy preset fails", async () => {
@@ -1108,7 +1140,9 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       "process.exit(1)",
     );
 
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
+      disclosedPresetState: "absent",
+    });
     expect(registry.getDisabledChannels("alpha")).toContain("teams");
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("channels start teams");

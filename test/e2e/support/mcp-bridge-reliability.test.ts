@@ -8,7 +8,9 @@ import {
   retryAfterHermesRestartTransportFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
-const HERMES_BROKEN_PIPE = `  Widening sandbox egress — adding: fixture.trycloudflare.com
+const HERMES_BROKEN_PIPE = `  Effective egress that would be opened:
+    policy 'mcp-bridge-concurrent':
+      - fixture.trycloudflare.com:443 (protocol: rest, enforcement: enforce)
   Applied preset: mcp-bridge-concurrent
   Narrowing sandbox egress — removing: fixture.trycloudflare.com
   Removed preset: mcp-bridge-concurrent

@@ -262,13 +262,13 @@ function runOpenclawStaleGroupFallback() {
 }
 
 describe("sandbox provisioning: runtime npm online state", () => {
-  it("replays the Dockerfile ENV directives so the runtime image inherits NPM_CONFIG_OFFLINE=false", () => {
+  it("does not bake the split-user OpenClaw state marker into the runtime environment", () => {
     const exports = collectDockerfileEnvExports(DOCKERFILE);
     const probe = [
       "#!/usr/bin/env bash",
       "set -eo pipefail",
       ...exports,
-      'printf "%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+      'printf "%s\\n" "${NPM_CONFIG_OFFLINE:-unset}" "${NEMOCLAW_OPENCLAW_SHARED_STATE:-unset}"',
     ].join("\n");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-npm-online-"));
     const scriptPath = path.join(tmp, "replay.sh");
@@ -276,7 +276,7 @@ describe("sandbox provisioning: runtime npm online state", () => {
       fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
-      expect(result.stdout.trim()).toBe("false");
+      expect(result.stdout.trim().split("\n")).toEqual(["false", "unset"]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -853,11 +853,12 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       "plugin-runtime-deps",
       "sandbox",
       "skills",
+      "state",
       "telegram",
       "wechat",
       "workspace",
     ]);
-    expect(modern.filesAfterCleanup).toEqual(["exec-approvals.json", "update-check.json"]);
+    expect(modern.filesAfterCleanup).toEqual(["exec-approvals.json"]);
     expect(modern.cleanup.calls.split("\n").filter(Boolean)).not.toEqual(
       expect.arrayContaining([expect.stringMatching(/^find /)]),
     );
@@ -906,8 +907,8 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       const openclawDir = path.join(sandboxRoot, ".openclaw");
       expect(fs.statSync(openclawDir).isDirectory()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "exec-approvals.json")).isFile()).toBe(true);
-      expect(fs.statSync(path.join(openclawDir, "update-check.json")).isFile()).toBe(true);
-      for (const dir of ["credentials", "devices", "identity", "logs", "telegram"]) {
+      expect(fs.existsSync(path.join(openclawDir, "update-check.json"))).toBe(false);
+      for (const dir of ["credentials", "devices", "identity", "logs", "state", "telegram"]) {
         const stateDir = path.join(openclawDir, dir);
         expect(fs.statSync(stateDir).isDirectory()).toBe(true);
         expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(false);

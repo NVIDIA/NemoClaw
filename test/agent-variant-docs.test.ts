@@ -247,6 +247,51 @@ import { AgentOnly } from "../_components/AgentGuide";
     );
   });
 
+  it("lists only implemented commands in manifest iteration guidance (#7308)", () => {
+    const manifest = readFileSync(
+      new URL("../docs/inference/declarative-agents-manifest.mdx", import.meta.url),
+      "utf8",
+    );
+    const rendered = renderAgentVariantPage(manifest, "openclaw", {
+      sourcePath: "/repo/docs/inference/declarative-agents-manifest.mdx",
+    });
+    const iteratingStart = rendered.indexOf("## Iterating");
+    const iteratingEnd = rendered.indexOf("## Apply to an Existing Sandbox", iteratingStart);
+    const iterating = rendered.slice(iteratingStart, iteratingEnd);
+
+    expect(iteratingStart).toBeGreaterThanOrEqual(0);
+    expect(iteratingEnd).toBeGreaterThan(iteratingStart);
+    expect(iterating).toContain("agents add|delete|list");
+    expect(iterating).toContain("agents apply -f <agents.yaml>");
+    expect(iterating).not.toContain("agents show");
+  });
+
+  it("renders provider-switch instructions for the applicable agent variants (#7309)", () => {
+    const source = readFileSync(
+      new URL("../docs/inference/switch-providers.mdx", import.meta.url),
+      "utf8",
+    );
+    const render = (variant: "openclaw" | "hermes" | "deepagents") =>
+      renderAgentVariantPage(source, variant, {
+        sourcePath: "/repo/docs/inference/switch-providers.mdx",
+      });
+    const openclaw = render("openclaw");
+    const hermes = render("hermes");
+    const deepAgents = render("deepagents");
+    const recreationHeading = "## Recreate a Deep Agents Sandbox";
+    const namedSandboxSyntax =
+      "The `shields` commands take a positional name. `inference set` takes `--sandbox <name>`.";
+
+    expect(openclaw).toContain(namedSandboxSyntax);
+    expect(openclaw).toContain("nemoclaw <name> shields down");
+    expect(openclaw).not.toContain(recreationHeading);
+    expect(hermes).toContain(namedSandboxSyntax);
+    expect(hermes).toContain("nemohermes <name> shields down");
+    expect(hermes).not.toContain(recreationHeading);
+    expect(deepAgents).toContain(recreationHeading);
+    expect(deepAgents).not.toContain(namedSandboxSyntax);
+  });
+
   it("keeps the troubleshooting security review link within each agent guide (#6558)", () => {
     const troubleshooting = readFileSync(
       new URL("../docs/reference/troubleshooting.mdx", import.meta.url),

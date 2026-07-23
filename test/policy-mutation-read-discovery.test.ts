@@ -52,6 +52,51 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
     expect(countPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toBe(0);
   });
 
+  it("ignores locally shadowed CommonJS require and OpenShell resolver decoys", () => {
+    const source = [
+      "const require = () => ({ buildPolicyGetCommand: () => [] });",
+      'const { buildPolicyGetCommand } = require("./policy");',
+      "function resolveOpenshellBinary() { return 'openshell'; }",
+      "buildPolicyGetCommand(sandboxName);",
+      '[resolveOpenshellBinary(), "policy", "get", "--base", sandboxName];',
+    ].join("\n");
+
+    expect(countPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toBe(0);
+  });
+
+  it("ignores a nested resolver shadow in the canonical policy command module", () => {
+    const source = [
+      "function resolveOpenshellBinary() { return 'openshell'; }",
+      "function inspect(resolveOpenshellBinary: () => string) {",
+      '  return [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName];',
+      "}",
+    ].join("\n");
+
+    expect(countPolicyReadCalls(source, "/repo/src/lib/policy/commands.ts", "/repo")).toBe(0);
+  });
+
+  it("ignores a nested resolver function in the canonical policy command module", () => {
+    const source = [
+      "function resolveOpenshellBinary() { return 'openshell'; }",
+      "function inspect() {",
+      "  function resolveOpenshellBinary() { return 'decoy'; }",
+      '  return [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName];',
+      "}",
+    ].join("\n");
+
+    expect(countPolicyReadCalls(source, "/repo/src/lib/policy/commands.ts", "/repo")).toBe(0);
+  });
+
+  it("counts the canonical policy command resolver arrays", () => {
+    const source = [
+      "function resolveOpenshellBinary() { return 'openshell'; }",
+      'const base = [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName];',
+      'const full = [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName];',
+    ].join("\n");
+
+    expect(countPolicyReadCalls(source, "/repo/src/lib/policy/commands.ts", "/repo")).toBe(2);
+  });
+
   it("ignores a named policy builder import when a nested binding shadows its alias", () => {
     const source = [
       'import { buildPolicyGetCommand as buildBase } from "./policy/commands";',

@@ -106,6 +106,7 @@ const {
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
+  discloseInitialSandboxPolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
 const {
   getSelectionDrift,
@@ -620,11 +621,7 @@ import { createSandboxRecreateProtection } from "./onboard/sandbox-recreate-prot
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { createSetupNimVllmHandler } from "./onboard/setup-nim-vllm";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
-import type {
-  ModelValidationResult,
-  OnboardOptions as SharedOnboardOptions,
-  ValidationFailureLike,
-} from "./onboard/types";
+import type { ModelValidationResult, OnboardOptions, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
 import { listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
@@ -672,11 +669,6 @@ const {
 import type { JsonObject as LooseObject } from "./core/json-types";
 import type { PreparedSandboxBuildContext } from "./onboard/build-context-stage";
 
-type OnboardOptions = SharedOnboardOptions & {
-  baseImageResolutionHint?:
-    | import("./sandbox-base-image").SandboxBaseImageResolutionMetadata
-    | null;
-};
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
@@ -2283,21 +2275,8 @@ async function createSandboxWithBaseImageResolution(
   const extraProviderPlan = createIntent?.extraProviders
     ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
     : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
-  const resolvedCreateIntent =
-    createIntent?.resolved ??
-    (await sandboxCreateIntentResolver.resolve({
-      sandboxName,
-      enabledChannels,
-      webSearchConfig,
-      agent,
-      sandboxGpuConfig: effectiveSandboxGpuConfig,
-      resourceProfile,
-      hermesToolGateways,
-      extraProviders: extraProviderPlan.extraProviders,
-      staleExtraProviders: extraProviderPlan.staleExtraProviders,
-      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-      ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}),
-    }));
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
     {
       sandboxName,
@@ -2719,14 +2698,10 @@ async function createSandboxWithBaseImageResolution(
     upsertMessagingProviders,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+    discloseInitialSandboxPolicy,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
-  }
-  if (initialSandboxPolicy.appliedPresets.length > 0) {
-    console.log(
-      `  Including policy preset(s) at sandbox boot: ${initialSandboxPolicy.appliedPresets.join(", ")}`,
-    );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
@@ -2900,12 +2875,8 @@ async function createSandboxWithBaseImageResolution(
       register: (openclawImagePluginInstalls) =>
         sandboxRegistration.registerCreatedSandbox({
           sandboxName,
-          inferenceSelection: sandboxRegistration.selection(
-            sandboxName,
-            provider,
-            model,
-            preferredInferenceApi,
-          ),
+          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+          inferenceSelection: sandboxRegistration.selection(sandboxName, provider, model, preferredInferenceApi, createIntent?.endpointSource ?? null),
           runtimeFields: sandboxRuntimeFields,
           agent,
           agentVersionKnown: !fromDockerfile,
@@ -4043,6 +4014,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
+    initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
   });
   if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
@@ -4443,6 +4415,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
         authoritativePolicyTier:
           opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+        endpointSource: opts.endpointSource,
+        endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null,
+        endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null,
         recreateSandbox: isRecreateSandbox,
         controlUiPort: _preflightDashboardPort,
         rootDir: ROOT,

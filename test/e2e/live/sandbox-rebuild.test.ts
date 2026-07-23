@@ -64,8 +64,22 @@ async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "sandbox-rebuild: rebuild preserves marker state and refreshes registry metadata",
+  {
+    timeout: TEST_TIMEOUT_MS * 3,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and environment readiness",
+        "onboard the OpenClaw rebuild sandbox",
+        "write state and mark the registry stale",
+        "rebuild the stale sandbox",
+        "confirm marker preservation and registry refresh",
+        "scan the rebuild backup for credential leaks",
+      ],
+    },
+  },
   async ({
     artifacts,
     cleanup,
@@ -73,6 +87,7 @@ test(
     host,
     lifecycle,
     onboard,
+    progress,
     sandbox,
     secrets,
     skip,
@@ -151,6 +166,7 @@ test(
       }),
     );
 
+    progress.phase("onboard the OpenClaw rebuild sandbox");
     const instance = await onboard.from(ready, {
       sandboxName: SANDBOX_NAME,
       timeoutMs: ONBOARD_TIMEOUT_MS,
@@ -172,6 +188,7 @@ test(
       });
     }
 
+    progress.phase("write state and mark the registry stale");
     await stateValidationWriteMarker();
 
     patchRegistrySandboxEntry(SANDBOX_NAME, { agentVersion: STALE_AGENT_VERSION });
@@ -189,6 +206,7 @@ test(
     expect(staleStatus.exitCode, resultText(staleStatus)).toBe(0);
     expect(resultText(staleStatus)).toMatch(/rebuild/i);
 
+    progress.phase("rebuild the stale sandbox");
     await lifecycle.rebuildSandbox(instance, {
       artifactName: "phase-5-nemoclaw-rebuild",
       env: sandboxRebuildEnv(apiKey),
@@ -202,6 +220,7 @@ test(
       delayMs: 5_000,
     });
 
+    progress.phase("confirm marker preservation and registry refresh");
     await stateValidation.expectMarkerFileContent(instance, MARKER_FILE, MARKER_CONTENT, {
       artifactName: "phase-6-read-marker-after-rebuild",
       env: buildAvailabilityProbeEnv(),
@@ -218,6 +237,7 @@ test(
       updatedVersion,
     });
 
+    progress.phase("scan the rebuild backup for credential leaks");
     const backupDir = latestRebuildBackupDir(SANDBOX_NAME);
     const leaks = listCredentialLeakPaths(backupDir, { extraSecrets: [apiKey] });
     await artifacts.writeJson("phase-8-backup-credential-scan.json", {
@@ -240,5 +260,4 @@ test(
       });
     }
   },
-  TEST_TIMEOUT_MS * 3,
 );

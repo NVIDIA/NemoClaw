@@ -3,7 +3,7 @@
 
 name: E2E / Brev Nightly
 
-# Runs Brev launchable validation as a standalone nightly workflow while the
+# Runs Brev source validation as a standalone nightly workflow while the
 # main E2E workflow remains isolated from Brev platform flakiness.
 #
 # Suites:
@@ -50,7 +50,6 @@ jobs:
       # not let a write-scoped trusted caller select a second arbitrary branch.
       branch: ${{ github.ref_name }}
       test_suite: ${{ matrix.test_suite }}
-      use_launchable: true
       keep_alive: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_alive || false }}
     secrets:
       BREV_API_KEY: ${{ secrets.BREV_API_KEY }}

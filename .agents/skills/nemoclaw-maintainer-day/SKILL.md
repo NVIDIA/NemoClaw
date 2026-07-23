@@ -1,14 +1,19 @@
 ---
 name: nemoclaw-maintainer-day
-description: Runs the daytime maintainer loop for NemoClaw, prioritizing items labeled with the current version target. Picks the highest-value item, executes the right workflow (merge gate, salvage, security sweep, test gaps, hotspot cooling, or sequencing), and reports progress. Use during the workday to land PRs and close issues. Designed for /loop (e.g. /loop 10m /nemoclaw-maintainer-day). Trigger keywords - maintainer day, work on PRs, land PRs, make progress, what's next, keep going, maintainer loop.
+description: Run one NemoClaw daytime maintainer pass. Prioritize items for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow and report progress. Use during the workday to land PRs and close issues. Designed for /loop, for example /loop 10m /nemoclaw-maintainer-day. Trigger keywords - maintainer day, work on PRs, land PRs, make progress, what's next, keep going, maintainer loop.
 user_invocable: true
 ---
+
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # NemoClaw Maintainer Day
 
 Execute one pass of the maintainer loop, prioritizing version-targeted work.
 
-**Autonomy:** push small fixes and approve when gates pass. Surface contributor/approver overlap reported by the merge gate as an advisory warning; it does not require another reviewer or change merge readiness. Never merge. Stop and ask for merge decisions, product scope decisions, architecture decisions, and unclear contributor intent.
+**Autonomy:** You may push small fixes. You may approve a PR when all gates pass.
+Report contributor and approver overlap as an advisory. It does not change merge readiness or require another reviewer.
+Never merge. Ask the user about merge, product-scope, and architecture decisions. Also ask when contributor intent is unclear.
 
 ## References
 
@@ -23,28 +28,33 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
 ```
 
-The first script determines the target version. The second shows shipped vs open.
+The first script selects the target version. The second lists shipped and open items.
 
 ## Step 2: Pick One Action
 
-From the open version-targeted items, pick the highest-value one:
+Select the first applicable action for an open item:
 
-1. **Ready-now PR** — green CI, no conflicts, no unresolved correctness or security issues after review, has tests → follow [MERGE-GATE.md](MERGE-GATE.md)
-2. **Salvage-now PR** — close to ready, needs small fix → follow [SALVAGE-PR.md](SALVAGE-PR.md)
-3. **Security item** — touches risky areas → follow [SECURITY-SWEEP.md](SECURITY-SWEEP.md)
-4. **Test-gap item** — risky code with weak tests → follow [TEST-GAPS.md](TEST-GAPS.md)
-5. **Hotspot cooling** — repeated conflicts → follow [HOTSPOTS.md](HOTSPOTS.md)
-6. **Sequencing needed** — too large for one pass → follow [SEQUENCE-WORK.md](SEQUENCE-WORK.md)
+1. **PR ready for approval** — CI passes, no conflicts remain, and tests cover the change.
+   Confirm that there is no unresolved correctness or security issue. Follow [MERGE-GATE.md](MERGE-GATE.md).
+2. **PR that needs a small fix** — Follow [SALVAGE-PR.md](SALVAGE-PR.md).
+3. **Security item** — The item touches a risky area. Follow [SECURITY-SWEEP.md](SECURITY-SWEEP.md).
+4. **Test gap** — Risky code does not have sufficient tests. Follow [TEST-GAPS.md](TEST-GAPS.md).
+5. **Repeated conflicts** — Follow [HOTSPOTS.md](HOTSPOTS.md).
+6. **Work that needs sequencing** — The work is too large for one pass. Follow [SEQUENCE-WORK.md](SEQUENCE-WORK.md).
 
-If all version-targeted items are blocked, fall back to the general backlog. Productive work on non-labeled items is better than waiting.
+If all items for the release version are blocked, select an item from the backlog.
 
-Prefer finishing one almost-ready contribution over starting a new refactor.
+Prefer to complete a contribution that needs little work before you start a refactor.
 
 ## Step 3: Execute
 
-Follow the chosen workflow document. A good pass ends with one of:
+Follow the selected workflow. Complete one outcome in each pass:
 
-- a PR approved, a fix pushed, a test gap closed, a hotspot mitigated, or a blocker surfaced.
+- Approve a PR.
+- Push a fix.
+- Add a missing test.
+- Reduce a source of merge conflicts.
+- Report a blocker.
 
 ## Step 4: Report Progress
 
@@ -54,7 +64,7 @@ Re-run the progress script and show the update:
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
 ```
 
-If all version-targeted items are done, suggest running `/nemoclaw-maintainer-evening` early.
+If all items for the release version are done, suggest `/nemoclaw-maintainer-evening`.
 
 Update `.nemoclaw-maintainer/state.json` via the state script:
 
@@ -64,18 +74,20 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 ## Commit Hygiene
 
-Only commit skill files when the task intentionally changes agent guidance.
-Keep unrelated `.agents/skills/` changes out of ordinary code or docs PRs.
+Commit skill files only when the task changes agent guidance.
+Do not include unrelated skill changes in code or documentation PRs.
 
 ## Stop and Ask When
 
-- A PR would create a new supported product surface without an accepted product decision
-- Broad refactor or architecture decision needed
-- Contributor intent unclear and diff would change semantics
-- Multiple subsystems must change for CI
-- Sensitive security boundaries with unclear risk
-- Next step is opening a new PR or merging
+- A PR creates a supported product surface without an accepted product decision.
+- The work requires a refactor or architecture decision.
+- Contributor intent is unclear and the change can alter behavior.
+- CI requires changes to multiple subsystems.
+- A security boundary has an unclear risk.
+- The next step is to open a PR or merge.
 
 ## /loop Integration
 
-Designed for `/loop 10m /nemoclaw-maintainer-day`. Each pass should produce compact output: what was done, what changed, what needs the user. Check `state.json` history to avoid re-explaining prior context on repeat runs.
+Use this skill with `/loop 10m /nemoclaw-maintainer-day`.
+Keep each pass report short. State what you did, what changed, and what needs a user decision.
+Read `state.json` to avoid repeated context.

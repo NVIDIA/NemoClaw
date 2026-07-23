@@ -37,6 +37,7 @@ import {
   registryEntryGatewayPort,
 } from "../../state/gateway-registry";
 import { GATEWAYS_SUBDIR } from "../../state/state-root";
+import { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 import { stopOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
@@ -63,6 +64,7 @@ export interface UninstallRunDeps {
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log?: (message: string) => void;
+  readProcessArgv?: (pid: number) => readonly string[] | null;
   readLine?: () => string | null;
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -287,6 +289,7 @@ interface UninstallRuntime {
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log: (message: string) => void;
+  readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readLine: () => string | null;
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -315,6 +318,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
+    readProcessArgv: deps.readProcessArgv,
     readLine: deps.readLine ?? readLineFromStdin,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
@@ -1296,8 +1300,9 @@ function executePlan(
         });
         stopOrphanedOpenShell(runtime);
       } else {
-        runtime.log("Sibling gateways remain; kept shared helper and forward services.");
+        runtime.log("Sibling gateways remain; kept shared helper services and sibling forwards.");
       }
+      if (!stopHermesForwardWatchers(paths.nemoclawStateDir, runtime)) return { ok: false };
       if (!scopedToSelectedGateway) {
         stopHostGatewayProcesses(
           {
