@@ -14,8 +14,10 @@ Complete this preparation before following the Quickstart on a qualifying DGX St
 
 ## Qualify Your DGX Station
 
-DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
+DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, `7.5.0`, or `7.6.x`.
 A stock DGX OS image qualifies only when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+Stock DGX OS `7.6.x` can omit the `DGX_OTA_*` fields.
+For that release family, NemoClaw requires `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, a numeric `7.6.x` `DGX_SWBUILD_VERSION`, and `DGX_SWBUILD_DATE` to be present, but does not match the date against an exact build.
 NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualification.
 Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires both `DGX_OTA_VERSION` and `DGX_OTA_DATE` to be absent, and requires every profile-specific field below:
 

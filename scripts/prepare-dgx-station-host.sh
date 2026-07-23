@@ -216,6 +216,14 @@ dgx_station_release_value() {
   printf '%s' "$value"
 }
 
+dgx_station_stock_version_is_supported() {
+  local version=${1:-}
+  case "$version" in
+    7.2.0 | 7.4.0 | 7.5.0) return 0 ;;
+  esac
+  [[ "$version" =~ ^7\.6\.[0-9]+$ ]]
+}
+
 dgx_station_release_profile() {
   local path=$1 ota_pretty="" pretty version build_date platform
   dgx_station_release_schema_is_valid "$path" || return 1
@@ -240,20 +248,26 @@ dgx_station_release_profile() {
       [[ "$pretty" == "NVIDIA DGX GB300WS" ]] || return 1
     fi
     version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
-    case "$version" in
-      7.2.0 | 7.4.0 | 7.5.0) printf '%s' supported-dgx-os ;;
-      *) return 1 ;;
-    esac
+    dgx_station_stock_version_is_supported "$version" || return 1
+    printf '%s' supported-dgx-os
     return 0
   fi
 
-  # No-OTA factory images are separate, exact profiles. Do not infer support
-  # merely from a missing OTA identity: internal BaseOS and customer images
-  # use different software stacks and qualification evidence.
+  # Stock DGX OS 7.6 uses stable workstation lineage fields without DGX_OTA_*
+  # metadata. Qualify that release family and leave its build date diagnostic;
+  # the factory-runtime path still proves GB300, driver, ECC, Docker, CDI, and
+  # container GPU capability before onboarding. Other no-OTA factory images
+  # remain exact profiles because they carry separately qualified stacks.
   dgx_station_release_value "$path" DGX_OTA_DATE >/dev/null 2>&1 && return 1
   pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
   version="$(dgx_station_release_value "$path" DGX_SWBUILD_VERSION)" || return 1
   build_date="$(dgx_station_release_value "$path" DGX_SWBUILD_DATE)" || return 1
+
+  if [[ "$pretty" == "NVIDIA DGX GB300WS" && "$version" == 7.6.* ]] \
+    && dgx_station_stock_version_is_supported "$version"; then
+    printf '%s' supported-dgx-os
+    return 0
+  fi
 
   case "${pretty}|${version}|${build_date}" in
     "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
