@@ -112,13 +112,21 @@ const COMMON_SECRET_ENV_NAMES = [
   "DOCKERHUB_TOKEN",
   "GITHUB_TOKEN",
 ];
-const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e", "hermes-gpu-startup"]);
+const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
+  "hermes-e2e",
+  "hermes-gpu-startup",
+  "staging-brev-launchable",
+]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
 ]);
-const NO_IMAGE_E2E_JOBS = new Set(["gateway-health-honest", SHARED_E2E_JOB_ID]);
+const NO_IMAGE_E2E_JOBS = new Set([
+  "gateway-health-honest",
+  "staging-brev-launchable",
+  SHARED_E2E_JOB_ID,
+]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
@@ -3994,6 +4002,37 @@ function validateInferenceModeGeneration(
   requireRunContains(errors, step, "--ci-output");
 }
 
+function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["staging-brev-launchable"]);
+  const environment = asRecord(job.environment);
+  if (environment.name !== "approve-brev-launchable-e2e" || environment.deployment !== false) {
+    errors.push("staging-brev-launchable must use its protected non-deployment environment");
+  }
+  const trustedRun = "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'";
+  if (
+    !stringValue(job.if).includes(trustedRun) ||
+    stringValue(job.if).includes("checkout_sha == ''")
+  ) {
+    errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
+  }
+  const steps = asSteps(job.steps);
+  const prepareEnv = asRecord(requireStep(errors, steps, "Prepare the trusted lane")?.env);
+  const runEnv = asRecord(
+    requireStep(errors, steps, "Build, deploy, verify, test, and clean up")?.env,
+  );
+  for (const [env, key, secret] of [
+    [prepareEnv, "BREV_API_KEY", "BREV_API_KEY"],
+    [prepareEnv, "BREV_ORG_ID", "BREV_ORG_ID"],
+    [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
+    [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
+  ] as const) {
+    const expected = `\${{ ${trustedRun} && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
+    if (env[key] !== expected) {
+      errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
+    }
+  }
+}
+
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -4491,6 +4530,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
 
   validateSharedE2eJob(errors, jobs);
+  validateStagingBrevLaunchableJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration", "credential-migration");
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
