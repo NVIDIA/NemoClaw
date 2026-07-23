@@ -211,7 +211,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
-| `npm run test:e2e-phases:check` | Validate semantic phase plans for every live E2E test without executing live bodies |
+| `npm run test:e2e-phases:check` | Validate semantic phase plans for every live E2E test and workflow-selected credential-free integration test without executing test bodies |
 | `npm run test:runtime-audit -- <artifact-dir> [...]` | Rank captured live E2E runs by median, p95, variability, and slowest phase |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
@@ -234,15 +234,28 @@ npx vitest run --project e2e-support
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
 
-Every `e2e-live` test must declare its ordered, behavior-specific phase plan in
-`meta.e2ePhases`, call `progress.phase("literal phase label")` at those
-boundaries, and reach the final test-declared phase on every passing path. The
-harness then appends `release registered E2E resources` so cleanup duration and
-failures have their own phase. Run `npm run test:e2e-phases:check` after adding
-or changing a live E2E case; collection validates the plans without running
-infrastructure-mutating test bodies. See
+Every `e2e-live` test, plus every credential-free integration test selected by
+the shared E2E workflow planner, must declare its ordered, behavior-specific
+phase plan in `meta.e2ePhases`, call
+`progress.phase("literal phase label")` at those boundaries, and reach the final
+test-declared phase on every passing path. Live tests import the shared
+`e2e-test` fixture, which appends `release registered E2E resources` so cleanup
+duration and failures have their own phase. Workflow-selected integration tests
+import `workflow-e2e-test` and declare their own final release phase. Run
+`npm run test:e2e-phases:check` after changing either coverage set or its
+workflow selection; collection validates the union without running test bodies. See
 [`test/e2e/docs/README.md`](test/e2e/docs/README.md) for the logging and artifact
 contract.
+
+Use the shared `ShellProbe` for E2E child processes. The semantic-phase check
+also follows shared E2E helpers and rejects new direct asynchronous process
+boundaries unless they are explicitly audited for content-free activity and
+timestamp-only output reporting. Synchronous process calls must have a positive
+timeout shorter than the first heartbeat and use `killSignal: "SIGKILL"` so the
+child cannot ignore that bound; write child contents only through the redacted
+artifact sink. Pass the auto fixture's frozen, canonical `progress` capability
+through unchanged; custom, copied, or no-op progress adapters are rejected at
+audited subprocess boundaries.
 
 ### Test Declarative Behavior
 
@@ -418,7 +431,6 @@ Record one result:
 
 Record the product and surface that ran the review, such as `Codex Desktop`, `Codex CLI`, `Claude Code`, or `Cursor`.
 Use the same name for the same surface across PRs so the report groups its data correctly.
-Record the PR number in the visible receipt so the check can detect a receipt copied from another PR.
 
 Commit all changes from the final review.
 Then run these commands and put their values in the receipt's hidden HTML metadata comments:
@@ -428,11 +440,12 @@ git rev-parse --short HEAD
 git rev-parse --short HEAD:AGENTS.md
 ```
 
-The visible PR number ties the receipt to this PR, while the hidden head SHA identifies the pull-request revision that the review covered.
+GitHub supplies the pull-request identity to the workflow and report.
+The hidden head SHA identifies the pull-request revision that the review covered.
 Rerun the review after any new commit changes the pull-request head.
 Pushing a new commit runs the receipt check again and reports the review as stale until the hidden metadata is refreshed.
 The Documentation Writer Review check reports an advisory finding when the receipt is missing, incomplete, or stale.
-The check compares the receipt's PR number with the current PR number, the hidden head SHA with the current PR head, and the hidden `AGENTS.md` blob SHA with the current PR's file.
+The check compares the hidden head SHA with the current PR head and the hidden `AGENTS.md` blob SHA with the current PR's file.
 
 Maintainers can export receipt data from PR descriptions:
 
@@ -441,7 +454,7 @@ npm run docs-review:report -- --since 2026-06-12 --format csv > /tmp/nemoclaw-do
 ```
 
 The report uses the authenticated GitHub CLI session and returns JSON by default.
-It measures receipt coverage, PR-number integrity, head-revision freshness, review results, and agent-surface counts.
+It measures receipt coverage, head-revision freshness, review results, and agent-surface counts.
 The `eligiblePrs` JSON metric reports the total eligible pull requests.
 The `eligibleCodePrs` and `eligibleDocsOnlyPrs` metrics report the code and documentation-only counts.
 It records the `AGENTS.md` blob SHA, but only the PR check compares that SHA with the current PR's file.

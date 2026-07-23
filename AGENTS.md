@@ -253,7 +253,7 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 
 - Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
 - After completing code or documentation changes, run a documentation writer subagent before final handoff. Give it the changed files, change summary, and test or docs-build evidence. For documentation-only changes, ask it to verify the writing rules and documentation style.
-- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, agent surface, and PR number. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
+- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, and agent surface. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
 - If any commit changes the pull-request head after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
 - For normal docs changes, include source pages under `docs/`.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.

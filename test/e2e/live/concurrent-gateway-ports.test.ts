@@ -343,6 +343,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   const fake = await startFakeOpenAiCompatibleServer({
     host: "0.0.0.0",
     port: Number(process.env.NEMOCLAW_E2E_FAKE_PORT ?? 0),
+    progress,
     publicHost: "host.openshell.internal",
   });
   await artifacts.target.declare({
