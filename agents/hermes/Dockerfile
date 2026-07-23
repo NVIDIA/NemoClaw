@@ -11,6 +11,14 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:fa05221f5c7bca
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+# The final Hermes image owns the shipped dependency boundary independently of
+# base freshness. Reassert the idempotent npm-private node-tar fix here.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
 # Keep the final image contract explicit even when the published base image
 # changes independently of this Dockerfile.
 RUN set -eu; \
@@ -106,12 +114,12 @@ COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
-COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
     && chmod 444 /src/lib/tool-disclosure.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/openclaw-npm-remediation.mts \
+        /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
 # Copy blueprint (shared infrastructure)
@@ -596,6 +604,15 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
+
+# Gate the completed local filesystem too; CI repeats this scan in an isolated
+# container and retains evidence keyed to the final image ID.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:hermes \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
 
 # start.sh handles privilege separation: runs as root initially, then drops
 # to 'gateway' user via gosu for the agent process. See start.sh.

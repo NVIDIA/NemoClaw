@@ -34,8 +34,12 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 | Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
 | Platform   | Refer to [Platforms](#platforms) below |
 
-On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
-If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
+On Linux, the installer checks Docker before it installs the NemoClaw CLI.
+The installer can install Docker, start the Docker service, and add your user to the `docker` group.
+When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
+In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
+If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
+
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
@@ -105,9 +109,7 @@ Use only the page that matches your host.
 
 ### DGX Station Express Preparation
 
-DGX Station is Tested with limitations on one qualifying DGX Station GB300.
-Dual-Station configurations are not yet validated.
-Follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation) before the Quickstart.
+If you are using a qualifying DGX Station GB300, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation) before the Quickstart.
 
 ### Windows Preparation
 

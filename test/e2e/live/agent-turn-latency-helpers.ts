@@ -13,6 +13,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -252,6 +253,7 @@ export async function installSandbox(
   agent: "openclaw" | "hermes",
   apiKey: string,
   cleanupBeforeRetry?: () => Promise<void>,
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
@@ -262,6 +264,7 @@ export async function installSandbox(
         artifactName: `${agent}-install-attempt-${attempt}`,
         cwd: REPO_ROOT,
         env: env(sandboxName, agent, apiKey),
+        onOutput: progress?.onOutput,
         redactionValues: [apiKey],
         timeoutMs: 30 * 60_000,
       },
@@ -271,8 +274,12 @@ export async function installSandbox(
       isTransientProviderValidationFailure(install) &&
       attempt < INSTALL_ATTEMPTS;
     install.exitCode === 0 && (attempt = INSTALL_ATTEMPTS + 1);
-    retry && cleanupBeforeRetry && (await cleanupBeforeRetry());
-    retry && (await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt)));
+    if (retry && cleanupBeforeRetry) {
+      await cleanupBeforeRetry();
+    }
+    if (retry) {
+      await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt));
+    }
     !retry && install.exitCode !== 0 && (attempt = INSTALL_ATTEMPTS + 1);
   }
   if (!install) throw new Error(`${agent} install command did not run`);
@@ -282,18 +289,20 @@ export async function installSandbox(
 export async function cleanupTurnSandboxes(
   host: HostCliClient,
   sandbox: SandboxClient,
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<void> {
   for (const [name, agent] of [
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
   ] as const) {
     await bestEffortPreclean(`destroy ${agent} sandbox`, () =>
-      cleanupTurnSandbox(host, name, agent),
+      cleanupTurnSandbox(host, name, agent, progress),
     );
     await bestEffortPreclean(`delete ${agent} sandbox`, () =>
       sandbox.openshell(["sandbox", "delete", name], {
         artifactName: `cleanup-${agent}-delete`,
         env: env(name, agent),
+        onOutput: progress?.onOutput,
         timeoutMs: 60_000,
       }),
     );
@@ -302,6 +311,7 @@ export async function cleanupTurnSandboxes(
     sandbox.openshell(["forward", "stop", "8642"], {
       artifactName: "cleanup-forward-stop-hermes-api",
       env: buildAvailabilityProbeEnv(),
+      onOutput: progress?.onOutput,
       timeoutMs: 30_000,
     }),
   );
@@ -309,6 +319,7 @@ export async function cleanupTurnSandboxes(
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-gateway-destroy-turn-latency",
       env: buildAvailabilityProbeEnv(),
+      onOutput: progress?.onOutput,
       timeoutMs: 60_000,
     }),
   );
@@ -318,10 +329,12 @@ export async function cleanupTurnSandbox(
   host: HostCliClient,
   name: string,
   agent: "openclaw" | "hermes",
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<void> {
   const result = await host.command("node", [CLI, name, "destroy", "--yes"], {
     artifactName: `cleanup-${agent}-destroy`,
     env: env(name, agent),
+    onOutput: progress?.onOutput,
     timeoutMs: 120_000,
   });
   const output = resultText(result);
@@ -339,10 +352,12 @@ export async function route(
   sandboxName: string,
   agent: "openclaw" | "hermes",
   artifactName: string,
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<ShellProbeResult> {
   return await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
     artifactName,
     env: env(sandboxName, agent),
+    onOutput: progress?.onOutput,
     timeoutMs: 30_000,
   });
 }
@@ -350,6 +365,7 @@ export async function route(
 export async function openclawTurn(
   sandbox: SandboxClient,
   apiKey: string,
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<{ result: ShellProbeResult; elapsedMs: number }> {
   const started = process.hrtime.bigint();
   const result = await sandbox.execShell(
@@ -360,6 +376,7 @@ export async function openclawTurn(
     {
       artifactName: "openclaw-agent-turn",
       env: env(OPENCLAW_SANDBOX, "openclaw"),
+      onOutput: progress?.onOutput,
       redactionValues: [apiKey],
       timeoutMs: (MAX_TURN_SECONDS + 30) * 1000,
     },
@@ -367,13 +384,21 @@ export async function openclawTurn(
   return { result, elapsedMs: msSince(started) };
 }
 
-export async function waitHermesHealth(sandbox: SandboxClient): Promise<ShellProbeResult> {
+export async function waitHermesHealth(
+  sandbox: SandboxClient,
+  progress?: Pick<TestProgress, "onOutput">,
+): Promise<ShellProbeResult> {
   return await sandbox.execShell(
     HERMES_SANDBOX,
     trustedSandboxShellScript(
       "for attempt in $(seq 1 10); do body=$(curl -sf --max-time 10 http://localhost:8642/health 2>/dev/null || true); printf '%s' \"$body\" | grep -qi '\"ok\"' && { printf '%s' \"$body\"; exit 0; }; sleep 5; done; printf '%s' \"$body\"; exit 1",
     ),
-    { artifactName: "hermes-health", env: env(HERMES_SANDBOX, "hermes"), timeoutMs: 90_000 },
+    {
+      artifactName: "hermes-health",
+      env: env(HERMES_SANDBOX, "hermes"),
+      onOutput: progress?.onOutput,
+      timeoutMs: 90_000,
+    },
   );
 }
 

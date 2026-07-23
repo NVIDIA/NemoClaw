@@ -6,7 +6,7 @@
 # still match the immutable upstream checksum manifests.
 #
 # Checked artifacts:
-#   1. OpenShell archives/formula — scripts/install-openshell.sh release-asset tables
+#   1. OpenShell archives/formula — scripts/install-openshell.sh release-asset table
 #   2. Brev OpenShell CLI — scripts/brev-launchable-ci-cpu.sh release-asset table
 #
 # Usage:
@@ -92,7 +92,7 @@ check_openshell_release_assets() {
   local matches required_manifest required_matches
   local pin_records parser_error parser_errors parsed_version release_version="" record_extra
   local allowlist_entry allowlist_version allowlist_extra
-  local count=0 brev_count=0 published_count=0 failures=0
+  local count=0 brev_count=0 published_count=0 expected_published_count=0 failures=0
   local -a manifest_specs=()
   workspace=$(mktemp -d)
   manifests="${workspace}/published-sha256.txt"
@@ -261,8 +261,9 @@ check_openshell_release_assets() {
     fi
   done <<<"$pin_records"
 
-  if [[ "$published_count" -ne 11 ]]; then
-    echo "  STALE: expected all 11 pinned asset references for v${release_version}, matched ${published_count}."
+  expected_published_count=$((count + brev_count))
+  if [[ "$published_count" -ne "$expected_published_count" ]]; then
+    echo "  STALE: expected all ${expected_published_count} pinned asset references for v${release_version}, matched ${published_count}."
     failures=$((failures + 1))
   fi
   return "$failures"

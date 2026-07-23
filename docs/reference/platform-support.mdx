@@ -149,8 +149,7 @@ Pick the row that matches the target environment.
 | Path | Status | Notes |
 |------|--------|-------|
 | Local CLI onboard | Tested | Run `$$nemoclaw onboard` on a tested platform with Docker available locally. Primary path. |
-| Remote GPU with Brev CLI | Tested with limitations | Legacy compatibility wrapper provisions a Brev VM, installs Docker + NVIDIA Container Toolkit, and runs `$$nemoclaw onboard` on that host. Defaults to GCP; override with `NEMOCLAW_BREV_PROVIDER`. The preferred path is the standard installer followed by `$$nemoclaw onboard` after the VM is reachable. |
-| Brev web UI | Tested | Browser-driven launcher provisions a Brev-managed Linux VM with Docker, the OpenShell runtime, a NemoClaw sandbox running OpenClaw, inference routing, and the OpenClaw dashboard. |
+| Headless Linux server | Tested with limitations | Provision a tested Linux host, connect over SSH, run the standard installer and `$$nemoclaw onboard`, and keep dashboards bound to loopback behind SSH port forwarding. Automatic recovery after a host reboot is not guaranteed; follow the documented manual recovery flow. |
 {/* deployment-status:end */}
 
 ## Out of Scope and Not Supported
@@ -170,7 +169,7 @@ They are listed here so launch material, sales conversations, and support triage
 | Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal) | Unsupported | Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard/fatal-runtime-preflight.ts`). NemoClaw does not install non-NVIDIA accelerator drivers. |
 | Other LangChain, AutoGen, CrewAI, or non-listed agent harnesses | Unsupported | LangChain Deep Agents Code is the only integrated LangChain-family harness (see the Agents section above; status `Experimental`). Other LangChain harnesses, AutoGen, CrewAI, and any agent runtime not listed in the Agents table are not integrated. Bringing more harnesses is tracked as a research epic (see open issue #4861) but is not on the current roadmap. |
 | Multi-user host sharing | Unsupported | Sandboxes are scoped to a single host user. NemoClaw treats multi-user hosts as a risk and warns at onboard; see `docs/security/openclaw-controls.mdx` Multi-user detection. |
-| Hosted SaaS / managed NemoClaw | Unsupported | There is no managed offering. Supported deployment paths are Local CLI onboard, Remote GPU with Brev CLI, and Brev web UI. |
+| Hosted SaaS / managed NemoClaw | Unsupported | There is no managed offering. Supported deployment paths are local CLI onboarding and headless Linux server onboarding. |
 | Native provider integrations not in the Providers table | Unsupported | Vertex AI, Azure OpenAI, SageMaker, Together.ai, Replicate, and HuggingFace Inference Endpoints are not first-class onboarding entries. AWS Bedrock works through the `compatible-anthropic-endpoint` adapter (`src/lib/onboard/bedrock-runtime.ts`). |
 | Production SLA or guaranteed response times | Unsupported | NemoClaw is an early-preview alpha project. Maintainers respond on a best-effort basis. No SLA is offered. |
 {/* out-of-scope:end */}

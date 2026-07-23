@@ -327,6 +327,31 @@
       "category": "compatibility"
     },
     {
+      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "test": "rebuilds a guarded plugin archive with the patched Axios graph bundled",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "test": "replaces the reviewed bundled Axios graph with the patched graph",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-dependency-review.test.ts",
+      "test": "copies the legacy OpenClaw remediation helper before the base build invokes it",
+      "category": "security"
+    },
+    {
       "file": "test/openclaw-dependency-review.test.ts",
       "test": "runs and gates the real patched-distribution harness only from trusted main code",
       "category": "security"
@@ -334,26 +359,6 @@
     {
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-npm-remediation.test.ts",
-      "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-npm-remediation.test.ts",
-      "test": "rebuilds a guarded plugin archive with the patched Axios graph bundled",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-npm-remediation.test.ts",
-      "test": "replaces the reviewed bundled Axios graph with the patched graph",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-npm-remediation.test.ts",
-      "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
       "category": "security"
     },
     {
