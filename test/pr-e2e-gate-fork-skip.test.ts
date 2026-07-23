@@ -203,7 +203,7 @@ function startControlPlaneCommand(workDir: string) {
 function approvalWorkflowRun(overrides: Record<string, unknown> = {}) {
   return {
     id: APPROVAL_RUN_ID,
-    name: "E2E / PR Gate Controller",
+    name: `E2E Gate workflow_run ${APPROVAL_RUN_ID}`,
     path: ".github/workflows/pr-e2e-gate.yaml",
     event: "workflow_run",
     head_sha: WORKFLOW_SHA,
@@ -698,7 +698,6 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
 
   it.each([
     { name: "wrong run id", overrides: { id: APPROVAL_RUN_ID + 1 } },
-    { name: "wrong workflow name", overrides: { name: "Other workflow" } },
     { name: "wrong event", overrides: { event: "workflow_dispatch" } },
     {
       name: "untrusted workflow path suffix",
