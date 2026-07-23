@@ -104,6 +104,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     desiredEnv: Record<string, string>,
     gatewayBin?: string | null,
     trustedServicePid?: number | null,
+    platform?: NodeJS.Platform,
   ): DockerDriverGatewayRuntimeDrift | null;
   getDockerDriverGatewayRuntimeDriftFromSnapshot(snapshot: {
     processEnv: Record<string, string> | null;
@@ -398,15 +399,28 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     desiredEnv: Record<string, string>,
     gatewayBin?: string | null,
     trustedServicePid?: number | null,
+    platform: NodeJS.Platform = process.platform,
   ): DockerDriverGatewayRuntimeDrift | null {
-    return pid === trustedServicePid
-      ? getDockerDriverGatewayRuntimeDriftFromSnapshot({
-          processEnv: readProcessEnv(pid),
-          processExe: readProcessExe(pid),
-          desiredEnv,
-          gatewayBin,
-        })
-      : getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin);
+    if (pid !== trustedServicePid)
+      return getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin, platform);
+    if (platform === "linux") {
+      return getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: readProcessEnv(pid),
+        processExe: readProcessExe(pid),
+        desiredEnv,
+        gatewayBin,
+      });
+    }
+    if (
+      platform === "darwin" &&
+      desiredEnv.OPENSHELL_DRIVERS === "docker" &&
+      vmDriverProcess.hasOpenShellVmDriverChildProcess(pid, (args) =>
+        deps.runCapture([...args], { ignoreError: true }),
+      )
+    ) {
+      return { reason: "VM driver child process is still attached to the gateway" };
+    }
+    return null;
   }
 
   function captureProcessArgs(pid: number): string {

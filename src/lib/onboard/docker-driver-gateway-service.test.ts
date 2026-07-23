@@ -54,6 +54,31 @@ function officialFormulaInfo(): SpawnSyncLikeResult {
   );
 }
 
+function officialRunningServiceInfo(
+  overrides: Partial<{
+    loaded: boolean;
+    name: string;
+    pid: number;
+    running: boolean;
+    service_name: string;
+  }> = {},
+): SpawnSyncLikeResult {
+  return spawnResult(
+    0,
+    "",
+    JSON.stringify([
+      {
+        loaded: true,
+        name: "openshell",
+        pid: 4242,
+        running: true,
+        service_name: "homebrew.mxcl.openshell",
+        ...overrides,
+      },
+    ]),
+  );
+}
+
 function nonSymlinkStat(): never {
   return { isSymbolicLink: () => false } as never;
 }
@@ -270,6 +295,43 @@ describe("docker-driver-gateway-service", () => {
           "MainPID=4242",
         ].join("\n"),
       ),
+    ).toBeNull();
+  });
+
+  it("identifies the active official Homebrew gateway process (#6903)", () => {
+    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
+      if (args[0] === "info") return officialFormulaInfo();
+      if (args[0] === "services") return officialRunningServiceInfo();
+      return spawnResult();
+    });
+
+    expect(
+      getTrustedActiveOpenShellGatewayUserServicePid({
+        commandExists: (command) => command === "brew",
+        platform: "darwin",
+        spawnSyncImpl,
+      }),
+    ).toBe(4242);
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "brew",
+      ["services", "info", "openshell", "--json"],
+      expect.any(Object),
+    );
+  });
+
+  it.each([
+    ["inactive", officialRunningServiceInfo({ running: false })],
+    ["foreign", officialRunningServiceInfo({ service_name: "other.openshell" })],
+    ["malformed", spawnResult(0, "", "not-json")],
+  ])("does not trust a %s Homebrew gateway process (#6903)", (_case, serviceInfo) => {
+    expect(
+      getTrustedActiveOpenShellGatewayUserServicePid({
+        commandExists: () => true,
+        platform: "darwin",
+        spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
+          args[0] === "info" ? officialFormulaInfo() : serviceInfo,
+        ),
+      }),
     ).toBeNull();
   });
 

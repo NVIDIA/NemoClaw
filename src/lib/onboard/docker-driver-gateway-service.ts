@@ -384,7 +384,7 @@ export function getTrustedActiveOpenShellGatewayUserServicePid(
   opts: OpenShellGatewayUserServiceOptions = {},
 ): number | null {
   const platform = opts.platform ?? process.platform;
-  if (platform !== "linux") return null;
+  if (platform !== "linux" && platform !== "darwin") return null;
   const env = opts.env ?? process.env;
   const home = effectiveHome(opts.home, opts.env);
   const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
@@ -395,7 +395,38 @@ export function getTrustedActiveOpenShellGatewayUserServicePid(
   } catch {
     return null;
   }
-  if (service?.manager !== "systemd" || !commandExists("systemctl")) return null;
+  if (!service) return null;
+  if (service.manager === "homebrew") {
+    if (!commandExists("brew")) return null;
+    const result = runBrew(["services", "info", service.serviceName, "--json"], {
+      env,
+      spawnSyncImpl,
+    });
+    if (!result.ok) return null;
+    try {
+      const records = JSON.parse(result.stdout ?? "") as Array<{
+        loaded?: boolean;
+        name?: string;
+        pid?: number;
+        running?: boolean;
+        service_name?: string;
+      }>;
+      const record = records.find(
+        (candidate) =>
+          candidate.name === service.serviceName &&
+          candidate.service_name === `homebrew.mxcl.${service.serviceName}`,
+      );
+      return record?.running === true &&
+        record.loaded === true &&
+        Number.isSafeInteger(record.pid) &&
+        Number(record.pid) > 0
+        ? Number(record.pid)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  if (!commandExists("systemctl")) return null;
   const result = runSystemctlUser(
     [
       "show",

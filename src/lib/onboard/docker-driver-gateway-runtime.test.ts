@@ -428,6 +428,24 @@ describe("docker-driver gateway runtime helpers", () => {
     expect(
       helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin, "linux")?.reason,
     ).toContain("lacks target-bound cleanup identity");
-    expect(helpers.getDockerDriverGatewayReuseDrift(pid, desiredEnv, gatewayBin, pid)).toBeNull();
+    expect(
+      helpers.getDockerDriverGatewayReuseDrift(pid, desiredEnv, gatewayBin, pid, "linux"),
+    ).toBeNull();
+  });
+
+  it("reuses the active official Homebrew gateway without detached cleanup identity (#6903)", () => {
+    const pid = 12_351;
+    const gatewayBin = "/opt/homebrew/bin/openshell-gateway";
+    const { helpers } = makeHelpers();
+
+    expect(
+      helpers.getDockerDriverGatewayReuseDrift(
+        pid,
+        { OPENSHELL_DRIVERS: "docker" },
+        gatewayBin,
+        pid,
+        "darwin",
+      ),
+    ).toBeNull();
   });
 });
