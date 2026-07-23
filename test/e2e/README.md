@@ -74,6 +74,15 @@ and ordinary manual `main` runs, larger-runner executions, rebuild lanes with
 workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
 shards do not use this fallback.
 
+The fallback exists because the alternate-checkout trust boundary deliberately
+keeps PR-authored code from selecting the administrator-managed larger-runner
+label; changing the PR checkout cannot safely grant itself that capacity.
+Remove the fallback only after the trusted controller routes exact-head PR
+gates to an ephemeral GitHub-hosted runner with at least 32 GB RAM without
+weakening the exact-SHA guard, and five consecutive runs of every protected
+lane complete without runner loss while runner-pressure telemetry reports less
+than 1 GiB of swap used.
+
 The eligible set is limited to the measured or repeatedly interrupted heavy
 lanes:
 

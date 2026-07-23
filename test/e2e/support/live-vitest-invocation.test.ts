@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -10,6 +12,7 @@ import {
   buildLiveVitestArgs,
   HERMES_E2E_SWAP_BYTES,
   HERMES_E2E_SWAP_FILE,
+  HERMES_E2E_SWAP_SCRIPT,
   LIVE_VITEST_PROJECT,
   type LiveVitestSpawner,
   needsHermesE2ESwap,
@@ -23,6 +26,109 @@ import {
 const LIVE_VITEST_TOOL = path.resolve("tools/e2e/live-vitest-invocation.mts");
 const TSX = path.resolve("node_modules", ".bin", "tsx");
 const EXACT_HEAD_SHA = "a".repeat(40);
+
+interface FakeSwapScriptOptions {
+  failCleanupQuery?: boolean;
+  failSwapoff?: boolean;
+}
+
+interface FakeSwapScriptResult {
+  calls: string[];
+  status: number | null;
+  stderr: string;
+}
+
+function writeFakeCommand(directory: string, name: string, lines: string[]): void {
+  const commandPath = path.join(directory, name);
+  writeFileSync(commandPath, `${["#!/bin/sh", "set -eu", ...lines].join("\n")}\n`);
+  chmodSync(commandPath, 0o755);
+}
+
+function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSwapScriptResult {
+  const fakeBin = mkdtempSync(path.join(tmpdir(), "nemoclaw-hermes-swap-"));
+  const callLog = path.join(fakeBin, "calls.log");
+  const swapState = path.join(fakeBin, "swap-state");
+  const nameQueryCount = path.join(fakeBin, "name-query-count");
+  writeFileSync(swapState, "inactive\n");
+
+  writeFakeCommand(fakeBin, "swapon", [
+    `printf 'swapon:%s\\n' "$*" >> "$FAKE_CALL_LOG"`,
+    'case "$*" in',
+    '  *"--output SIZE"*)',
+    `    printf '1\\n'`,
+    "    ;;",
+    '  *"--output NAME"*)',
+    "    query_count=0",
+    '    if [ -f "$FAKE_NAME_QUERY_COUNT_FILE" ]; then',
+    '      IFS= read -r query_count < "$FAKE_NAME_QUERY_COUNT_FILE" || query_count=0',
+    "    fi",
+    "    query_count=$((query_count + 1))",
+    `    printf '%s\\n' "$query_count" > "$FAKE_NAME_QUERY_COUNT_FILE"`,
+    '    if [ "${FAKE_FAIL_NAME_QUERY_AT:-0}" -eq "$query_count" ]; then',
+    `      printf 'swapon-name-query:%s:fail\\n' "$query_count" >> "$FAKE_CALL_LOG"`,
+    "      exit 41",
+    "    fi",
+    '    swap_state="inactive"',
+    '    if [ -f "$FAKE_SWAP_STATE_FILE" ]; then',
+    '      IFS= read -r swap_state < "$FAKE_SWAP_STATE_FILE" || swap_state="inactive"',
+    "    fi",
+    `    printf 'swapon-name-query:%s:%s\\n' "$query_count" "$swap_state" >> "$FAKE_CALL_LOG"`,
+    '    if [ "$swap_state" = "active" ]; then',
+    `      printf '%s\\n' "$FAKE_FIXED_SWAP"`,
+    "    fi",
+    "    ;;",
+    "  *)",
+    `    printf 'active\\n' > "$FAKE_SWAP_STATE_FILE"`,
+    `    printf 'swapon-activate:%s\\n' "$1" >> "$FAKE_CALL_LOG"`,
+    "    ;;",
+    "esac",
+  ]);
+  writeFakeCommand(fakeBin, "awk", ["while IFS= read -r _line; do :; done", `printf '1\\n'`]);
+  writeFakeCommand(fakeBin, "swapoff", [
+    `printf 'swapoff:%s\\n' "$1" >> "$FAKE_CALL_LOG"`,
+    'if [ "${FAKE_FAIL_SWAPOFF:-0}" = "1" ]; then',
+    "  exit 42",
+    "fi",
+    `printf 'inactive\\n' > "$FAKE_SWAP_STATE_FILE"`,
+  ]);
+  writeFakeCommand(fakeBin, "rm", [`printf 'rm:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]);
+  writeFakeCommand(fakeBin, "fallocate", [`printf 'fallocate:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]);
+  writeFakeCommand(fakeBin, "chmod", [`printf 'chmod:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]);
+  writeFakeCommand(fakeBin, "mkswap", [`printf 'mkswap:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]);
+
+  try {
+    const result = spawnSync(
+      "/bin/bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        HERMES_E2E_SWAP_SCRIPT,
+        "hermes-e2e-swap-test",
+        HERMES_E2E_SWAP_FILE,
+        String(HERMES_E2E_SWAP_BYTES),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          FAKE_CALL_LOG: callLog,
+          FAKE_FAIL_NAME_QUERY_AT: options.failCleanupQuery ? "2" : "0",
+          FAKE_FAIL_SWAPOFF: options.failSwapoff ? "1" : "0",
+          FAKE_FIXED_SWAP: HERMES_E2E_SWAP_FILE,
+          FAKE_NAME_QUERY_COUNT_FILE: nameQueryCount,
+          FAKE_SWAP_STATE_FILE: swapState,
+          LC_ALL: "C",
+          PATH: fakeBin,
+        },
+      },
+    );
+    if (result.error) throw result.error;
+    const calls = existsSync(callLog) ? readFileSync(callLog, "utf8").trimEnd().split("\n") : [];
+    return { calls, status: result.status, stderr: result.stderr };
+  } finally {
+    rmSync(fakeBin, { force: true, recursive: true });
+  }
+}
 
 describe("validateLiveProject (#6961)", () => {
   it("accepts the live project and defaults to it", () => {
@@ -358,6 +464,67 @@ describe("runLiveVitestCommand Hermes resource setup (#7145)", () => {
     ).toBe(0);
     expect(calls).toEqual(["npx"]);
   });
+});
+
+describe("HERMES_E2E_SWAP_SCRIPT failure cleanup (#7145)", () => {
+  const provisioningFailureCalls = [
+    "swapon:--show --bytes --noheadings --output SIZE",
+    "swapon:--show --noheadings --raw --output NAME",
+    "swapon-name-query:1:inactive",
+    `rm:-f -- ${HERMES_E2E_SWAP_FILE}`,
+    `fallocate:-l ${HERMES_E2E_SWAP_BYTES} ${HERMES_E2E_SWAP_FILE}`,
+    `chmod:0600 ${HERMES_E2E_SWAP_FILE}`,
+    `mkswap:${HERMES_E2E_SWAP_FILE}`,
+    `swapon:${HERMES_E2E_SWAP_FILE}`,
+    `swapon-activate:${HERMES_E2E_SWAP_FILE}`,
+    "swapon:--show --bytes --noheadings --output SIZE",
+    "swapon:--show --noheadings --raw --output NAME",
+  ];
+
+  it("removes the active fixed swap only after cleanup swapoff succeeds", () => {
+    const result = runHermesSwapScriptFailure();
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Hermes E2E swap provisioning failed");
+    expect(result.calls).toEqual([
+      ...provisioningFailureCalls,
+      "swapon-name-query:2:active",
+      `swapoff:${HERMES_E2E_SWAP_FILE}`,
+      `rm:-f -- ${HERMES_E2E_SWAP_FILE}`,
+    ]);
+  }, 15_000);
+
+  it("preserves the active fixed swap when cleanup swapoff fails", () => {
+    const result = runHermesSwapScriptFailure({ failSwapoff: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Preserving active Hermes E2E swap after setup failure");
+    expect(result.calls).toEqual([
+      ...provisioningFailureCalls,
+      "swapon-name-query:2:active",
+      `swapoff:${HERMES_E2E_SWAP_FILE}`,
+    ]);
+    expect(
+      result.calls
+        .slice(result.calls.indexOf(`swapon-activate:${HERMES_E2E_SWAP_FILE}`) + 1)
+        .filter((call) => call.startsWith("rm:")),
+    ).toEqual([]);
+  }, 15_000);
+
+  it("preserves the fixed swap when cleanup cannot query active swap", () => {
+    const result = runHermesSwapScriptFailure({ failCleanupQuery: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Preserving Hermes E2E swap because active swap could not be queried",
+    );
+    expect(result.calls).toEqual([...provisioningFailureCalls, "swapon-name-query:2:fail"]);
+    expect(
+      result.calls
+        .slice(result.calls.indexOf(`swapon-activate:${HERMES_E2E_SWAP_FILE}`) + 1)
+        .filter((call) => call.startsWith("rm:")),
+    ).toEqual([]);
+  }, 15_000);
 });
 
 describe("needsHermesE2ESwap (#7145)", () => {

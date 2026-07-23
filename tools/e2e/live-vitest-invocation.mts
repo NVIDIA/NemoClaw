@@ -37,7 +37,7 @@ const HERMES_BEDROCK_BUILD_TEST = "test/e2e/live/bedrock-runtime-compatible-anth
 const HERMES_SHARED_E2E_TEST = "test/e2e/live/hermes-e2e.test.ts";
 const HERMES_SHARED_E2E_TARGETS = new Set(["hermes-dashboard", "hermes-e2e", "security-posture"]);
 const HERMES_MCP_BUILD_TEST = "test/e2e/live/mcp-bridge.test.ts";
-const HERMES_E2E_SWAP_SCRIPT = `set -euo pipefail
+export const HERMES_E2E_SWAP_SCRIPT = `set -euo pipefail
 swap_file="$1"
 swap_size_bytes="$2"
 
