@@ -3195,7 +3195,9 @@ function validateApprovalWorkflowRun(
   const expectedUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
   const valid =
     value.id === options.runId &&
-    value.name === WORKFLOW_NAME &&
+    // The Actions REST API exposes the evaluated `run-name` as `name`, not the
+    // workflow's top-level name. Bind authority to the immutable workflow path
+    // and trusted workflow SHA below instead of mutable display text.
     value.event === "workflow_run" &&
     value.path === PR_GATE_WORKFLOW_PATH &&
     value.head_branch === "main" &&

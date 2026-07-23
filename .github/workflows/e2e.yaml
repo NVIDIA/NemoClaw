@@ -84,7 +84,60 @@ env:
   NEMOCLAW_E2E_SHARD: default
 
 jobs:
+  base-image-publication:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - id: publication_mode
+        name: Classify base-image publication requirement
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in
+            NVIDIA/NemoClaw:refs/heads/main:schedule:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)
+              required=1
+              ;;
+            NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)
+              required=0
+              ;;
+            *)
+              echo "::error::base-image publication mode is not trusted" >&2
+              exit 1
+              ;;
+          esac
+          printf 'required=%s\n' "${required}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out trusted E2E workflow
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node for publication verification
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+
+      - name: Verify applicable base-image publication
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
+
   generate-matrix:
+    needs: base-image-publication
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
@@ -4932,6 +4985,7 @@ jobs:
     # skipped checks to the normal pull_request workflow.
     needs: &e2e-result-jobs
       [
+        base-image-publication,
         generate-matrix,
         live,
         shared-e2e,
