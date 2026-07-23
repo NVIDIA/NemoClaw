@@ -81,7 +81,9 @@ This section shows what actually runs where on the host.
 NemoClaw's default Docker-driver topology does not place the sandbox in an embedded k3s cluster.
 Only the default gateway port `8080` uses a managed service.
 On Linux, NemoClaw prefers the upstream package-managed `openshell-gateway.service`.
-For tarball installs, the NemoClaw installer stages a marked user-level `nemoclaw-openshell-gateway.service` based on the upstream unit; onboarding validates, enables, restarts, and checks the selected service.
+For tarball installs, the NemoClaw installer stages a marked user-level `nemoclaw-openshell-gateway.service` based on the upstream unit.
+Onboarding validates and reuses a healthy selected service.
+It enables or restarts the service when startup or verified runtime drift requires it, then checks gateway health.
 The marked service generates the local OpenShell mTLS bundle and reads `$XDG_CONFIG_HOME/openshell/gateway.env`, or `~/.config/openshell/gateway.env` when `XDG_CONFIG_HOME` is not absolute.
 NemoClaw preserves unrelated environment entries, accepts `DOCKER_HOST` only for an absolute local `unix://` socket, and refuses foreign or symlinked managed files.
 The standalone Linux process is used only when the systemd user manager is unavailable; after a service is selected, startup or health failure stops onboarding.
