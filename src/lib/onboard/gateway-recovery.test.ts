@@ -32,6 +32,7 @@ function makeVirtualClock(startMs = 1_000_000_000_000) {
 
 function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecoveryDeps {
   return {
+    assertGatewayStartAllowed: vi.fn(),
     getGatewayClusterContainerState: () => "missing",
     getGatewayStartEnv: () => ({ OPENSHELL_DRIVERS: "docker" }),
     runCaptureOpenshell: vi.fn(() => "Disconnected"),
