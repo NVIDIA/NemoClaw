@@ -309,6 +309,7 @@ describe("stopSandbox", () => {
 
     expect(result.exitCode).toBe(1);
     expect(h.dockerStop).toHaveBeenCalledTimes(2);
+    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
     expect(h.dockerStop).toHaveBeenNthCalledWith(
       2,
       "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",
