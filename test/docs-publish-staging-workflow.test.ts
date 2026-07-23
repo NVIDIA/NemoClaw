@@ -75,4 +75,42 @@ describe("staging docs preview cleanup", () => {
       rmSync(temp, { force: true, recursive: true });
     }
   });
+
+  it.each([
+    [0, "Domain not registered", "Fern preview pr-123 does not exist."],
+    [1, "Authentication failed", "Authentication failed"],
+  ])("returns exit status %i when Fern reports %s", (expectedStatus, fernError, expectedOutput) => {
+    const deleteStep = requiredStep(workflow.jobs["delete-preview"]?.steps, "Delete Fern previews");
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-fern-preview-cleanup-error-"));
+    const fakeBin = join(temp, "bin");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "npx"),
+      [
+        "#!/usr/bin/env node",
+        "process.stderr.write(`${process.env.FERN_ERROR}\\n`);",
+        "process.exit(1);",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync("bash", ["-c", deleteStep.run ?? ""], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FERN_ERROR: fernError,
+          FERN_STAGING_INSTANCE: "nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw",
+          FERN_TOKEN: "test-token",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          PREVIEW_IDS: "pr-123",
+        },
+      });
+
+      expect(result.status).toBe(expectedStatus);
+      expect(`${result.stdout}${result.stderr}`).toContain(expectedOutput);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
+  });
 });
