@@ -76,6 +76,12 @@ function makeRun(status: number) {
   return { status, stdout: "", stderr: "" };
 }
 
+// A statSync stand-in for "this path does not exist". Kept branchless so the
+// mocks that use it stay linear (the changed-test if-statement guardrail).
+function throwEnoent(): never {
+  throw new Error("ENOENT");
+}
+
 describe("buildSandboxTarArgv", () => {
   it("isolates resolved files behind `--` and prefixes each with './' so a leading-dash filename cannot be reinterpreted as a tar option", () => {
     expect(
@@ -588,12 +594,11 @@ describe("exportSandboxSessions", () => {
     const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     // Stale published paths stat fine; the fresh staging path does not exist
     // because the exit-0 download wrote nothing.
-    statSyncSpy.mockImplementation((target) => {
-      if (String(target).includes(".sessions-export-")) {
-        throw new Error("ENOENT");
-      }
-      return { size: 42, isFile: () => true } as unknown as ReturnType<typeof fs.statSync>;
-    });
+    statSyncSpy.mockImplementation((target: fs.PathLike) =>
+      String(target).includes(".sessions-export-")
+        ? throwEnoent()
+        : ({ size: 42, isFile: () => true } as unknown as ReturnType<typeof fs.statSync>),
+    );
     try {
       await expect(
         exportSandboxSessions({ sandboxName: "alpha", out: "./sessions-alpha" }),
@@ -609,12 +614,11 @@ describe("exportSandboxSessions", () => {
     captureMock.mockReturnValueOnce(
       makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
     );
-    statSyncSpy.mockImplementation((target) => {
-      if (String(target).includes(".sessions-export-")) {
-        throw new Error("ENOENT");
-      }
-      return { size: 42, isFile: () => true } as unknown as ReturnType<typeof fs.statSync>;
-    });
+    statSyncSpy.mockImplementation((target: fs.PathLike) =>
+      String(target).includes(".sessions-export-")
+        ? throwEnoent()
+        : ({ size: 42, isFile: () => true } as unknown as ReturnType<typeof fs.statSync>),
+    );
     await expect(
       exportSandboxSessions({ sandboxName: "alpha", out: "./out.tgz", format: "tar" }),
     ).rejects.toThrow(/reported success \(exit 0\) but no file was written/);
