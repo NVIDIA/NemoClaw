@@ -103,6 +103,48 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("keeps common-egress scenarios isolated with bounded concurrency and cleanup reserve", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, unknown>;
+          steps: Array<{ name?: string; run?: string }>;
+          strategy: {
+            "fail-fast": boolean;
+            "max-parallel": number;
+            matrix: { include: Array<Record<string, string>> };
+          };
+          "timeout-minutes": number;
+        }
+      >;
+    };
+    const job = workflow.jobs["common-egress-agent"]!;
+    const source = fs.readFileSync("test/e2e/live/common-egress-agent.test.ts", "utf8");
+    expect(source).toContain("const TEST_TIMEOUT_MS = 40 * 60_000;");
+
+    job["timeout-minutes"] = 40;
+    job.strategy["fail-fast"] = true;
+    job.strategy["max-parallel"] = 3;
+    job.strategy.matrix.include.pop();
+    job.env.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts/live/common-egress-agent";
+    delete job.env.NEMOCLAW_E2E_SHARD;
+    const run = job.steps.find((step) => step.name === "Run common-egress agent live test")!;
+    run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "common-egress-agent scenario jobs must keep the 60 minute timeout",
+        "common-egress-agent scenario matrix must disable fail-fast",
+        "common-egress-agent scenario matrix must cap concurrency at two",
+        "common-egress-agent job must keep the three isolated scenario shards",
+        "common-egress-agent job must isolate artifacts by matrix.scenario",
+        "common-egress-agent job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
+        `step 'Run common-egress agent live test' run script must include --selector "\${{ matrix.selector }}"`,
+      ]),
+    );
+  });
+
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {
     const workflow = readWorkflow() as {
       jobs: Record<

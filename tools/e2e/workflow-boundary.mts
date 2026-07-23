@@ -207,6 +207,22 @@ const NETWORK_POLICY_SCENARIO_MATRIX = {
     },
   ],
 } as const;
+const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
+  include: [
+    {
+      scenario: "openclaw-balanced-weather",
+      selector: "^common-egress.+C1.+$",
+    },
+    {
+      scenario: "openclaw-open-reference",
+      selector: "^common-egress.+C2.+$",
+    },
+    {
+      scenario: "hermes-open-reference",
+      selector: "^common-egress.+C3.+$",
+    },
+  ],
+} as const;
 const ROUTED_JOB_NAMES = new Set([
   ...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS),
   ...Object.keys(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS),
@@ -1437,8 +1453,21 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
   }
 
   validateFreeStandingJobSelector(errors, jobs, jobName, "common-egress-agent");
-  if (job["timeout-minutes"] !== 120) {
-    errors.push("common-egress-agent job must keep the legacy 120 minute timeout");
+  if (job.name !== "Common egress agent (${{ matrix.scenario }})") {
+    errors.push("common-egress-agent job name must identify matrix.scenario");
+  }
+  if (job["timeout-minutes"] !== 60) {
+    errors.push("common-egress-agent scenario jobs must keep the 60 minute timeout");
+  }
+  const strategy = asRecord(job.strategy);
+  if (strategy["fail-fast"] !== false) {
+    errors.push("common-egress-agent scenario matrix must disable fail-fast");
+  }
+  if (strategy["max-parallel"] !== 2) {
+    errors.push("common-egress-agent scenario matrix must cap concurrency at two");
+  }
+  if (!isDeepStrictEqual(asRecord(strategy.matrix), COMMON_EGRESS_AGENT_SCENARIO_MATRIX)) {
+    errors.push("common-egress-agent job must keep the three isolated scenario shards");
   }
 
   const jobEnv = asRecord(job.env);
@@ -1446,14 +1475,16 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("common-egress-agent job must set NEMOCLAW_RUN_LIVE_E2E=1");
   }
   if (
-    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/common-egress-agent"
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}"
   ) {
-    errors.push(
-      "common-egress-agent job must write artifacts under e2e-artifacts/live/common-egress-agent",
-    );
+    errors.push("common-egress-agent job must isolate artifacts by matrix.scenario");
   }
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
     errors.push("common-egress-agent job must point NEMOCLAW_CLI_BIN at the repo CLI");
+  }
+  if (jobEnv.NEMOCLAW_E2E_SHARD !== "${{ matrix.scenario }}") {
+    errors.push("common-egress-agent job must bind NEMOCLAW_E2E_SHARD to matrix.scenario");
   }
   if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
     errors.push("common-egress-agent job must set NEMOCLAW_NON_INTERACTIVE=1");
@@ -1526,6 +1557,7 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/common-egress-agent.test.ts");
+  requireRunContains(errors, runVitest, '--selector "${{ matrix.selector }}"');
 }
 
 function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void {

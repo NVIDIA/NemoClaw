@@ -2262,15 +2262,28 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   common-egress-agent:
+    name: Common egress agent (${{ matrix.scenario }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',common-egress-agent,') || contains(format(',{0},', inputs.targets), ',common-egress-agent,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}
-    timeout-minutes: 120
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - scenario: openclaw-balanced-weather
+            selector: "^common-egress.+C1.+$"
+          - scenario: openclaw-open-reference
+            selector: "^common-egress.+C2.+$"
+          - scenario: hermes-open-reference
+            selector: "^common-egress.+C3.+$"
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "common-egress-agent"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/common-egress-agent
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -2325,7 +2338,8 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts \
+            --selector "${{ matrix.selector }}"
 
       - name: Finalize runner comparison telemetry
         if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
