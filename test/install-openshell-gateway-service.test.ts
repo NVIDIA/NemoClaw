@@ -90,6 +90,7 @@ describe("install.sh OpenShell gateway service", () => {
       fs.readFileSync(SERVICE_TEMPLATE, "utf-8").replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBin),
     );
     expect(unit).toContain("# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1");
+    expect(unit).toContain("Environment=OPENSHELL_LOCAL_TLS_DIR=%S/openshell/tls");
     expect(unit).toContain(`ExecStart=${gatewayBin}`);
     expect(unit).not.toContain("@OPENSHELL_GATEWAY_BIN@");
     expect(fs.existsSync(path.join(home, ".config", "systemd", "user"))).toBe(false);

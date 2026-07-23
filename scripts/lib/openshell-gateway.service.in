@@ -10,7 +10,7 @@ After=default.target
 [Service]
 Type=simple
 StateDirectory=openshell/gateway
-Environment=OPENSHELL_LOCAL_TLS_DIR=%h/.local/state/openshell/tls
+Environment=OPENSHELL_LOCAL_TLS_DIR=%S/openshell/tls
 EnvironmentFile=-%E/openshell/gateway.env
 ExecStartPre=@OPENSHELL_GATEWAY_BIN@ generate-certs --output-dir ${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal
 ExecStart=@OPENSHELL_GATEWAY_BIN@

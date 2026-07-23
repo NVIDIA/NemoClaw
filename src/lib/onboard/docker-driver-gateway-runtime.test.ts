@@ -410,27 +410,31 @@ describe("docker-driver gateway runtime helpers", () => {
       [`/proc/${pid}/cmdline`, `${gatewayBin}\0`],
       [`/proc/${pid}/environ`, "OPENSHELL_DRIVERS=docker\0"],
     ]);
-    vi.spyOn(fs, "existsSync").mockImplementation(
-      ((candidate) =>
-        existingProcPaths.has(String(candidate)) ||
-        originalExistsSync(candidate)) as typeof fs.existsSync,
-    );
-    vi.spyOn(fs, "readFileSync").mockImplementation(
-      ((candidate, options) =>
-        procFileContents.get(String(candidate)) ??
-        originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync,
-    );
-    vi.spyOn(fs, "readlinkSync").mockImplementation(((candidate, options) =>
-      String(candidate) === `/proc/${pid}/exe`
-        ? gatewayBin
-        : originalReadlinkSync(candidate, options as never)) as typeof fs.readlinkSync);
+    try {
+      vi.spyOn(fs, "existsSync").mockImplementation(
+        ((candidate) =>
+          existingProcPaths.has(String(candidate)) ||
+          originalExistsSync(candidate)) as typeof fs.existsSync,
+      );
+      vi.spyOn(fs, "readFileSync").mockImplementation(
+        ((candidate, options) =>
+          procFileContents.get(String(candidate)) ??
+          originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync,
+      );
+      vi.spyOn(fs, "readlinkSync").mockImplementation(((candidate, options) =>
+        String(candidate) === `/proc/${pid}/exe`
+          ? gatewayBin
+          : originalReadlinkSync(candidate, options as never)) as typeof fs.readlinkSync);
 
-    expect(
-      helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin, "linux")?.reason,
-    ).toContain("lacks target-bound cleanup identity");
-    expect(
-      helpers.getDockerDriverGatewayReuseDrift(pid, desiredEnv, gatewayBin, pid, "linux"),
-    ).toBeNull();
+      expect(
+        helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin, "linux")?.reason,
+      ).toContain("lacks target-bound cleanup identity");
+      expect(
+        helpers.getDockerDriverGatewayReuseDrift(pid, desiredEnv, gatewayBin, pid, "linux"),
+      ).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("reuses the active official Homebrew gateway without detached cleanup identity (#6903)", () => {
