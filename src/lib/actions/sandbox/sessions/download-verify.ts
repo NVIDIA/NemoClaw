@@ -13,9 +13,10 @@ export interface VerifyDownloadedFileOptions {
   /** Sandbox name used in error messages. */
   sandboxName: string;
   /**
-   * Require the artifact to be non-empty. Set for bundles that are never
-   * legitimately empty (a gzip tarball, a hermes export); leave off for
-   * individual session files whose size we do not want to constrain.
+   * Require the artifact to be non-empty. Set for a bundle that is never
+   * legitimately empty (a gzip tarball of at least one file); leave off for
+   * individual session files and for the hermes export, whose size we do not
+   * want to constrain (a zero-session hermes export can be legitimately empty).
    */
   requireNonEmpty?: boolean;
 }
@@ -30,6 +31,13 @@ export interface VerifyDownloadedFileOptions {
  * #7367). Trusting exit 0 alone would let a rejected or partial download be
  * recorded as a valid session bundle, so re-check the outcome against the file
  * system before treating the download as complete.
+ *
+ * `hostPath` must be a path that did not exist before the download — a fresh
+ * per-export staging path, published to its real destination only after this
+ * check passes. The check can only establish that SOMETHING exists at
+ * `hostPath`; run against a reused destination it would accept a stale
+ * artifact left by an earlier export and mask the exit-0/no-write race it
+ * exists to catch.
  *
  * @throws if the download reported a non-zero status, wrote no file, wrote a
  * non-regular file, or (when `requireNonEmpty`) wrote an empty file.
