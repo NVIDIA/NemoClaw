@@ -12,11 +12,7 @@ const sandboxState = await import("../src/lib/state/sandbox.js");
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 
 afterAll(() => {
-  if (ORIGINAL_HOME === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = ORIGINAL_HOME;
-  }
+  restoreEnv("HOME", ORIGINAL_HOME);
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
@@ -127,7 +123,52 @@ process.exit(0);
     expect(cleanupCommand).not.toContain("d='/sandbox/.openclaw/extensions'");
   } finally {
     restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
-    process.env.PATH = oldPath;
+    restoreEnv("PATH", oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+it("reports stale directories when restore cannot obtain SSH configuration (#7428)", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-dir-ssh-failure-"));
+  const oldPath = process.env.PATH;
+  const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+  try {
+    const binDir = path.join(fixture, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const openshell = writeFakeOpenshell(binDir);
+    writeExecutable(
+      path.join(binDir, "ssh"),
+      `#!/usr/bin/env node
+const cmd = process.argv[process.argv.length - 1] || "";
+if (cmd.includes("[ -d ") && cmd.includes("printf")) {
+  process.exit(0);
+}
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.exit(2);
+}
+process.exit(0);
+`,
+    );
+
+    writeOpenClawRegistry("alpha");
+    process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+    process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+    const backup = sandboxState.backupSandboxState("alpha");
+    expect(backup.success).toBe(true);
+    expect(backup.manifest?.failedBackupDirs).toEqual([]);
+
+    const failingOpenshell = path.join(binDir, "openshell-fail");
+    writeExecutable(failingOpenshell, "#!/usr/bin/env node\nprocess.exit(1);\n");
+    process.env.NEMOCLAW_OPENSHELL_BIN = failingOpenshell;
+    const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+
+    expect(restore.success).toBe(false);
+    expect(restore.failedDirs).toEqual(
+      expect.arrayContaining(["agents", "extensions", "workspace"]),
+    );
+  } finally {
+    restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+    restoreEnv("PATH", oldPath);
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 });

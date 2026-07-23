@@ -1569,7 +1569,7 @@ function restoreSandboxStateInternal(
     return {
       success: false,
       restoredDirs,
-      failedDirs: [...localDirs],
+      failedDirs: [...cleanupStateDirs],
       restoredFiles,
       failedFiles: localFiles.map((f) => f.path),
     };
@@ -1602,7 +1602,7 @@ function restoreSandboxStateInternal(
       return {
         success: false,
         restoredDirs,
-        failedDirs: [...localDirs],
+        failedDirs: [...cleanupStateDirs],
         restoredFiles,
         failedFiles: localFiles.map((f) => f.path),
         error:
@@ -1641,7 +1641,7 @@ function restoreSandboxStateInternal(
         return {
           success: false,
           restoredDirs,
-          failedDirs: [...localDirs],
+          failedDirs: [...cleanupStateDirs],
           restoredFiles,
           failedFiles: localFiles.map((f) => f.path),
         };
