@@ -142,7 +142,8 @@ It does not authorize fork code to use repository secrets.
 The waiting job has `deployment: false`, no secrets, and no PR-controlled execution.
 
 The controller reads the approval history and requires one approval for that environment.
-The reviewer must still have `maintain` or `admin` access.
+The reviewer must be configured as a required reviewer and have repository read
+access, but does not need merge rights.
 The controller also checks the PR number, PR SHA, base SHA, plan, failed check, compatible `main`, and PR state.
 
 An accepted approval completes the required check with this result:
@@ -151,7 +152,7 @@ The summary starts with `Outcome: APPROVED SKIP — credentialed E2E did not run
 Treat this result as an audited skip, not as E2E evidence.
 
 Configure the environment before rollout.
-Require reviewers with `maintain` or `admin` access.
+Require reviewers with repository read access; they do not need merge rights.
 Do not add secrets, variables, or a protection app. Disable administrator bypass when possible.
 
 If **Review deployments** is absent, the environment might be missing, unprotected, or no longer waiting.
@@ -224,12 +225,13 @@ then revalidates the internal repository origin, open PR, exact head and base
 SHAs, deterministic plan, pending required-check identity, trusted controller
 commit, and final live revision before it dispatches selected work.
 
-Configure the environment before rollout. Require reviewers with `maintain` or
-`admin` access. Do not add secrets, variables, or a protection app. Disable
-administrator bypass when possible. If **Review deployments** is absent, the
-environment might be missing, unprotected, or no longer waiting. Configure it,
-update the PR to create a new head, and run PR CI again. Do not rerun the waiting
-workflow. The controller accepts a protected approval only on the first attempt.
+Configure the environment before rollout. Require reviewers with repository
+read access; they do not need merge rights. Do not add secrets, variables, or a
+protection app. Disable administrator bypass when possible. If **Review
+deployments** is absent, the environment might be missing, unprotected, or no
+longer waiting. Configure it, update the PR to create a new head, and run PR CI
+again. Do not rerun the waiting workflow. The controller accepts a protected
+approval only on the first attempt.
 
 The manual maintainer path remains available as a fallback. Select **Run
 workflow** on `main`, select `run-control-plane`, and provide the PR number,
