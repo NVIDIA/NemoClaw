@@ -111,7 +111,8 @@ export const test = base.extend<E2ETargetFixtures>({
   },
   progress: [
     async ({ artifacts, onTestFinished, secrets, task }, use) => {
-      const targetId = process.env.E2E_TARGET_ID;
+      const targetId = process.env.E2E_TARGET_ID || process.env.GITHUB_JOB;
+      const shardId = process.env.NEMOCLAW_E2E_SHARD;
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
       const phasePlan = task.meta.e2ePhases;
       assert.ok(
@@ -120,8 +121,8 @@ export const test = base.extend<E2ETargetFixtures>({
       );
       const declaredPhasePlan = phasePlan ?? SUPPORT_PHASES;
       const declaredFinalPhase = declaredPhasePlan.at(-1) as string;
-      let reachedDeclaredFinal = !phasePlan;
-      const baseProgress = startTestProgress(task.name, declaredPhasePlan, {
+      const progress = startTestProgress(task.name, declaredPhasePlan, {
+        targetId,
         terminalPhase: E2E_TEARDOWN_PHASE,
         taskStatus: () => ({
           errorCount: task.result?.errors?.length ?? 0,
@@ -144,13 +145,6 @@ export const test = base.extend<E2ETargetFixtures>({
             }
           : {}),
       });
-      const progress: TestProgress = {
-        ...baseProgress,
-        phase(label) {
-          baseProgress.phase(label);
-          if (label === declaredFinalPhase) reachedDeclaredFinal = true;
-        },
-      };
       const completeSupportPlan = phasePlan
         ? () => undefined
         : () => {
@@ -162,14 +156,14 @@ export const test = base.extend<E2ETargetFixtures>({
         finalized = true;
         const outcome = outcomeForTaskState(task.result?.state);
         completeSupportPlan();
-        const completedPhasePlan = reachedDeclaredFinal;
+        const completedPhasePlan = !phasePlan || progress.hasReached(declaredFinalPhase);
         if (!progress.isComplete()) progress.phase(E2E_TEARDOWN_PHASE);
         const phaseOutcome = outcome === "passed" && !completedPhasePlan ? "failed" : outcome;
         progress.stop(phaseOutcome);
         await artifacts.writeJson("test-progress.json", {
           ...progress.summary(),
-          ...(process.env.E2E_TARGET_ID ? { targetId: process.env.E2E_TARGET_ID } : {}),
-          ...(process.env.NEMOCLAW_E2E_SHARD ? { shardId: process.env.NEMOCLAW_E2E_SHARD } : {}),
+          ...(targetId ? { targetId } : {}),
+          ...(shardId ? { shardId } : {}),
         });
         assert.ok(
           outcome !== "passed" || completedPhasePlan,
@@ -180,12 +174,18 @@ export const test = base.extend<E2ETargetFixtures>({
     },
     { auto: true },
   ],
-  docker: async ({ artifacts, secrets, skip }, use) => {
-    const probe = new DockerProbe(artifacts, (text, extra) => secrets.redact(text, extra));
+  docker: async ({ artifacts, progress, secrets, signal, skip }, use) => {
+    const probe = new DockerProbe(
+      artifacts,
+      (text, extra) => secrets.redact(text, extra),
+      undefined,
+      progress,
+      signal,
+    );
     await use(new DockerPrerequisite(probe, skip));
   },
   cleanup: async ({ artifacts, progress, secrets }, use) => {
-    const cleanup = new CleanupRegistry((text) => secrets.redact(text));
+    const cleanup = new CleanupRegistry((text) => secrets.redact(text), progress);
     try {
       await use(cleanup);
     } finally {
@@ -199,10 +199,9 @@ export const test = base.extend<E2ETargetFixtures>({
     await use(
       new ShellProbe({
         artifacts,
+        progress,
         redact: (text, extraValues) => secrets.redact(text, extraValues),
         signal,
-        onOutput: progress.onOutput,
-        onActivity: progress.activity,
       }),
     );
   },
@@ -221,8 +220,8 @@ export const test = base.extend<E2ETargetFixtures>({
   provider: async ({ shellProbe }, use) => {
     await use(new ProviderClient(shellProbe));
   },
-  inference: async ({ artifacts, provider, secrets }, use) => {
-    const inference = await createE2EInferenceAdapter({ artifacts, provider, secrets });
+  inference: async ({ artifacts, progress, provider, secrets }, use) => {
+    const inference = await createE2EInferenceAdapter({ artifacts, progress, provider, secrets });
     try {
       await use(inference);
     } finally {

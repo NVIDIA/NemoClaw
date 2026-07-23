@@ -40,6 +40,7 @@
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
         "test/installer-hash-check.test.ts",
         "test/runner.test.ts"
@@ -53,6 +54,7 @@
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
         "test/installer-hash-check.test.ts",
         "test/runner.test.ts"
@@ -156,6 +158,7 @@
     {
       "live": "test/e2e/live/agent-turn-latency.test.ts",
       "fast": [
+        "test/e2e/support/agent-turn-latency-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -163,6 +166,7 @@
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
       "fast": [
+        "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -522,7 +526,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -530,7 +535,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -538,7 +544,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -546,7 +553,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -554,7 +562,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -562,7 +571,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -570,7 +580,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -578,7 +589,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -586,7 +598,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -594,7 +607,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -602,7 +616,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
     {
@@ -610,7 +625,8 @@
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     }
   ]

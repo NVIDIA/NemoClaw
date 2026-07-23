@@ -69,6 +69,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
     { NVIDIA_INFERENCE_API_KEY: apiKey },
     [apiKey],
     "tc-inf-05-onboard-credential-isolation",
+    progress,
   );
   expectOnboardSuccess(onboard, "TC-INF-05 credential-isolation onboard");
   cleanup.add(`strict inference-routing credential-isolation cleanup for ${sandboxName}`, () =>
@@ -80,6 +81,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
     artifactName: "tc-inf-05-sandbox-env",
     artifacts,
     env: buildAvailabilityProbeEnv(),
+    progress,
     redactionValues: [apiKey],
     timeoutMs: 60_000,
   });
@@ -101,6 +103,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
       artifactName: "tc-inf-05-sandbox-process-list",
       artifacts,
       env: buildAvailabilityProbeEnv(),
+      progress,
       redactionValues: [apiKey],
       timeoutMs: 60_000,
     },
@@ -149,6 +152,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
           .update(leakCanary)
           .digest("hex"),
       }),
+      progress,
       timeoutMs: 90_000,
     },
   );
@@ -180,6 +184,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
           .update(apiKey)
           .digest("hex"),
       }),
+      progress,
       redactionValues: [apiKey],
       timeoutMs: 90_000,
     },
@@ -238,6 +243,7 @@ test("TC-INF-02 OpenAI provider responds through inference.local", {
     { NEMOCLAW_MODEL: model, NEMOCLAW_PROVIDER: "openai", OPENAI_API_KEY: apiKey },
     [apiKey],
     "tc-inf-02-onboard-openai",
+    progress,
   );
   expectOnboardSuccess(onboard, "TC-INF-02 OpenAI onboard");
   cleanup.add(`strict inference-routing OpenAI cleanup for ${sandboxName}`, () =>
@@ -292,6 +298,7 @@ test("TC-INF-03 Anthropic provider responds through inference.local", {
     { ANTHROPIC_API_KEY: apiKey, NEMOCLAW_MODEL: model, NEMOCLAW_PROVIDER: "anthropic" },
     [apiKey],
     "tc-inf-03-onboard-anthropic",
+    progress,
   );
   expectOnboardSuccess(onboard, "TC-INF-03 Anthropic onboard");
   cleanup.add(`strict inference-routing Anthropic cleanup for ${sandboxName}`, () =>

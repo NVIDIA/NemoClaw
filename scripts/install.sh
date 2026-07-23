@@ -2986,7 +2986,11 @@ ensure_docker() {
     printf "\n"
     info "Docker group membership is not active in this shell yet. To finish:"
     info "  1) Run: newgrp docker   (or log out and log back in)"
-    info "  2) Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
+    if [[ "${_STATION_LOCAL_VLLM_SELECTED:-}" == "1" ]]; then
+      info "  2) Re-run: $(station_local_vllm_resume_command)"
+    else
+      info "  2) Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
+    fi
     exit 0
   fi
 
@@ -3534,6 +3538,14 @@ station_express_resume_command() {
   fi
 }
 
+load_station_vllm_conflict_helpers() {
+  declare -F handle_station_vllm_conflict >/dev/null 2>&1 && return 0
+  local helper="${SCRIPT_DIR}/lib/station-vllm-conflict.sh"
+  [[ -f "$helper" ]] || error "Station vLLM conflict helper is missing: ${helper}"
+  # shellcheck source=lib/station-vllm-conflict.sh
+  . "$helper"
+}
+
 clear_station_express_resume() {
   local state_file state_dir claim claim_name claim_mode entry entry_mode unexpected_entry
   state_file="$(station_express_resume_file)" || return 0
@@ -3664,7 +3676,7 @@ ensure_station_express_host() {
       ;;
     *)
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-        warn "Proceeding with explicit --force-station-install intent; DGX release metadata qualification is bypassed, but Station GB300 hardware and factory-runtime health checks remain required."
+        warn "Proceeding with explicit --force-station-install intent; only DGX release metadata qualification is bypassed. Station GB300 hardware, workload quiescence, and factory-runtime health checks remain required."
         info "Validating the existing Station GPU and local container runtime. Host packages, the NVIDIA driver, and runtime configuration will not be changed."
       else
         info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
@@ -3689,6 +3701,10 @@ ensure_station_express_host() {
       info "After signing in again, rerun the accepted Station Express recipe:"
       info "$(station_express_resume_command)"
       exit 11
+      ;;
+    12)
+      load_station_vllm_conflict_helpers
+      handle_station_vllm_conflict
       ;;
     *)
       error "DGX Station host preparation failed. Review the station-bootstrap log above, correct the reported host state, and rerun the installer."
@@ -3757,7 +3773,7 @@ describe_express_install() {
           ;;
         *)
           if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
+            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
           else
             printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
           fi
@@ -3954,6 +3970,11 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
+  load_station_vllm_conflict_helpers
+  if consume_station_local_vllm_resume; then
+    info "Resuming the selected manual Local vLLM setup."
+  fi
+
   # Validate the gateway port before the banner, notice acceptance, downloads,
   # or any other installer side effect.
   resolve_nemoclaw_gateway_port >/dev/null
@@ -4065,6 +4086,9 @@ finalize_install() {
   print_done
   if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
     error "Installation incomplete: one or more existing sandboxes failed to upgrade. See the recovery guidance above."
+  fi
+  if [[ "${_STATION_LOCAL_VLLM_SELECTED:-}" == "1" ]]; then
+    clear_station_local_vllm_resume
   fi
 }
 
