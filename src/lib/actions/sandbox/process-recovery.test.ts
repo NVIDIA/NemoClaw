@@ -119,6 +119,78 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(captureOpenshellImpl).toHaveBeenCalledOnce();
     expect(sleeps).toEqual([3]);
   });
+
+  it("retries an inconclusive managed guard within the readiness deadline", () => {
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    }));
+    const beforeProbe = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([3]);
+  });
+
+  it("fails closed on a definitive managed guard failure without probing OpenShell", () => {
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    }));
+    const beforeProbe = vi.fn(() => false);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(false);
+    expect(beforeProbe).toHaveBeenCalledOnce();
+    expect(captureOpenshellImpl).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([]);
+  });
+
+  it("fails when the managed guard stays inconclusive until the deadline", () => {
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    }));
+    const beforeProbe = vi.fn(() => null);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(false);
+    expect(beforeProbe).toHaveBeenCalledTimes(3);
+    expect(captureOpenshellImpl).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([3, 3]);
+  });
 });
 
 describe("confirmRecoveredSandboxGatewayManaged scope", () => {

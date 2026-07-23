@@ -601,23 +601,47 @@ function isExactlyRetryableOpenshellSandboxNotReady(
   );
 }
 
+type RecreatedSandboxOpenShellReadinessFailure =
+  | "managed-health-definitive-failure"
+  | "managed-health-inconclusive-timeout"
+  | "openshell-readiness-failure";
+
+type RecreatedSandboxOpenShellReadinessResult =
+  | { ready: true }
+  | { failure: RecreatedSandboxOpenShellReadinessFailure; ready: false };
+
+type RecreatedSandboxOpenShellReadyOptions = {
+  captureOpenshellImpl?: typeof captureOpenshell;
+  beforeProbe?: (timeoutMs: number) => boolean | null;
+  intervalSeconds?: number;
+  nowImpl?: () => number;
+  sleepImpl?: (seconds: number) => void;
+  timeoutSeconds?: number;
+};
+
+function recreatedSandboxOpenShellReadinessFailureDetail(
+  failure: RecreatedSandboxOpenShellReadinessFailure,
+): string {
+  switch (failure) {
+    case "managed-health-definitive-failure":
+      return "the recreated sandbox failed the managed health guard, so the primary dashboard/API host forward was not started";
+    case "managed-health-inconclusive-timeout":
+      return "the recreated sandbox managed health guard stayed inconclusive within the readiness deadline, so the primary dashboard/API host forward was not started";
+    case "openshell-readiness-failure":
+      return "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
+  }
+}
+
 /**
  * Wait until OpenShell has re-registered a directly recreated sandbox as
  * ready. This probe deliberately has no direct-Docker or SSH fallback: it is
  * proving control-plane readiness, not authorizing the already completed
  * replacement-container recovery.
  */
-export function waitForRecreatedSandboxOpenShellReady(
+function waitForRecreatedSandboxOpenShellReadyResult(
   sandboxName: string,
-  options: {
-    captureOpenshellImpl?: typeof captureOpenshell;
-    beforeProbe?: (timeoutMs: number) => boolean;
-    intervalSeconds?: number;
-    nowImpl?: () => number;
-    sleepImpl?: (seconds: number) => void;
-    timeoutSeconds?: number;
-  } = {},
-): boolean {
+  options: RecreatedSandboxOpenShellReadyOptions = {},
+): RecreatedSandboxOpenShellReadinessResult {
   const capture = options.captureOpenshellImpl ?? captureOpenshell;
   const now = options.nowImpl ?? Date.now;
   const sleep = options.sleepImpl ?? sleepSeconds;
@@ -637,25 +661,56 @@ export function waitForRecreatedSandboxOpenShellReady(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const preGuardRemainingMs = deadlineMs - now();
-    if (attempt > 1 && preGuardRemainingMs <= 0) return false;
+    if (attempt > 1 && preGuardRemainingMs <= 0) {
+      return { failure: "managed-health-inconclusive-timeout", ready: false };
+    }
     const guardBudgetMs = Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, preGuardRemainingMs));
-    if (options.beforeProbe?.(guardBudgetMs) === false) return false;
+    const guardResult = options.beforeProbe?.(guardBudgetMs);
+    if (guardResult === false) {
+      return { failure: "managed-health-definitive-failure", ready: false };
+    }
+    if (guardResult === null) {
+      if (attempt === maxAttempts) {
+        return { failure: "managed-health-inconclusive-timeout", ready: false };
+      }
+      const postGuardRemainingMs = deadlineMs - now();
+      if (postGuardRemainingMs <= 0) {
+        return { failure: "managed-health-inconclusive-timeout", ready: false };
+      }
+      sleep(Math.min(intervalSeconds * 1000, postGuardRemainingMs) / 1000);
+      continue;
+    }
     const remainingMs = deadlineMs - now();
-    if (attempt > 1 && remainingMs <= 0) return false;
+    if (attempt > 1 && remainingMs <= 0) {
+      return { failure: "openshell-readiness-failure", ready: false };
+    }
     const result = capture(["sandbox", "exec", "--name", sandboxName, "--", "true"], {
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
       timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
     });
-    if (result.status === 0 && !result.error) return true;
-    if (!isExactlyRetryableOpenshellSandboxNotReady(result)) return false;
-    if (attempt === maxAttempts) return false;
+    if (result.status === 0 && !result.error) return { ready: true };
+    if (!isExactlyRetryableOpenshellSandboxNotReady(result)) {
+      return { failure: "openshell-readiness-failure", ready: false };
+    }
+    if (attempt === maxAttempts) {
+      return { failure: "openshell-readiness-failure", ready: false };
+    }
     const postProbeRemainingMs = deadlineMs - now();
-    if (postProbeRemainingMs <= 0) return false;
+    if (postProbeRemainingMs <= 0) {
+      return { failure: "openshell-readiness-failure", ready: false };
+    }
     sleep(Math.min(intervalSeconds * 1000, postProbeRemainingMs) / 1000);
   }
-  return false;
+  return { failure: "openshell-readiness-failure", ready: false };
+}
+
+export function waitForRecreatedSandboxOpenShellReady(
+  sandboxName: string,
+  options: RecreatedSandboxOpenShellReadyOptions = {},
+): boolean {
+  return waitForRecreatedSandboxOpenShellReadyResult(sandboxName, options).ready;
 }
 
 function gatewayRecoveryTimeoutSeconds(
@@ -1055,19 +1110,21 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     let relaunchedIdentityRejected = false;
     const confirmRelaunchedManagedHealth = relaunch
       ? (timeout = OPENSHELL_PROBE_TIMEOUT_MS) => {
-          let confirmed = false;
           try {
-            confirmed =
-              confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                requestGatewaySupervisorActionImpl: (name, action) =>
-                  requestManagedProbe(name, action, timeout),
-              }) === true;
+            const confirmed = confirmRecoveredSandboxGatewayManaged(sandboxName, {
+              requestGatewaySupervisorActionImpl: (name, action) =>
+                requestManagedProbe(name, action, timeout),
+            });
+            if (confirmed === false) relaunchedIdentityRejected = true;
+            return confirmed;
           } catch {
-            confirmed = false;
+            relaunchedIdentityRejected = true;
+            return false;
           }
-          relaunchedIdentityRejected ||= !confirmed;
-          return confirmed;
         }
+      : null;
+    const confirmRelaunchedManagedHealthForForward = relaunch
+      ? () => confirmRelaunchedManagedHealth?.() === true
       : null;
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
@@ -1134,28 +1191,38 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         }
       }
     }
-    if (
-      relaunch &&
-      !waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, {
-        beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) === true,
-        timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
-      })
-    ) {
+    const readinessFailureDetail = relaunch
+      ? (() => {
+          const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
+            beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
+            timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
+          };
+          const readiness =
+            waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
+              ? waitForRecreatedSandboxOpenShellReadyResult(sandboxName, readinessOptions)
+              : waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, readinessOptions)
+                ? ({ ready: true } as const)
+                : ({ failure: "openshell-readiness-failure", ready: false } as const);
+          return readiness.ready
+            ? null
+            : recreatedSandboxOpenShellReadinessFailureDetail(readiness.failure);
+        })()
+      : null;
+    if (readinessFailureDetail) {
       return {
         checked: true,
         wasRunning: false,
         recovered: true,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started",
+        forwardRecoveryFailureDetail: readinessFailureDetail,
       };
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
     const forwardRecovered = ensureSandboxPortForward(sandboxName, {
-      afterSuccess: confirmRelaunchedManagedHealth ?? undefined,
-      beforeStart: confirmRelaunchedManagedHealth ?? undefined,
+      afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
+      beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
       isWsl: isWslOverride,
     });
     if (!forwardRecovered && relaunchedIdentityRejected) {
