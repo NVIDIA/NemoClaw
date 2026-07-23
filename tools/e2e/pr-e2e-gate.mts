@@ -61,6 +61,8 @@ const NEVER_RETRY_FAILURE_TITLES = new Set([
 ]);
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
+const CHECK_EXTERNAL_ID_PATTERN =
+  /^nemoclaw-pr-e2e:v2:([1-9][0-9]*):([0-9a-f]{40}):([0-9a-f]{40})$/u;
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
@@ -205,6 +207,12 @@ export type ControllerCommand =
       evidenceOutcome: EvidenceStepOutcome;
     } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
+  | {
+      mode: "abandon-runner-loss-retry";
+      checkRunId: number;
+      childRunId: number;
+      workflowRunAttempt: number;
+    }
   | {
       mode: "cancel";
       prNumber: number;
@@ -549,6 +557,21 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       childRunId: args.runId ? parsePositiveId(args.runId, "--run-id") : undefined,
     };
   }
+  if (args.mode === "abandon-runner-loss-retry") {
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
+    if (workflowRunAttempt !== 1) {
+      throw new Error("--workflow-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "abandon-runner-loss-retry",
+      checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+      workflowRunAttempt,
+    };
+  }
   if (args.mode === "cancel") {
     if ((args.head === undefined) !== (args.supersededHead === undefined)) {
       throw new Error("--head and --superseded-head must be provided together");
@@ -694,7 +717,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish, abandon, cancel, wait, download, retry-runner-loss, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
+    "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, retry-runner-loss, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
   );
 }
 
@@ -3801,6 +3824,100 @@ export async function abandonPrGate(checkRunId: number, childRunId?: number): Pr
   if (cancellationError) throw cancellationError;
 }
 
+export async function abandonRunnerLossRetrySource(
+  checkRunId: number,
+  childRunId: number,
+  workflowRunAttempt: number,
+): Promise<void> {
+  if (workflowRunAttempt !== 1) {
+    throw new Error("runner-loss retry cleanup must use the first controller workflow run attempt");
+  }
+  if (!Number.isSafeInteger(checkRunId) || checkRunId < 1) {
+    throw new Error("runner-loss retry source check ID is invalid");
+  }
+  if (!Number.isSafeInteger(childRunId) || childRunId < 1) {
+    throw new Error("runner-loss retry source run ID is invalid");
+  }
+  const { token, repository } = tokenAndRepository();
+  const childRunUrl = `https://github.com/${repository}/actions/runs/${childRunId}`;
+  const value = await githubApi<unknown>(`repos/${repository}/check-runs/${checkRunId}`, token, {
+    userAgent: USER_AGENT,
+  });
+  if (!isObjectRecord(value)) {
+    throw new Error("GitHub returned an invalid runner-loss retry source check");
+  }
+  const source = value as CheckRun;
+  const externalIdMatch =
+    typeof source.external_id === "string"
+      ? CHECK_EXTERNAL_ID_PATTERN.exec(source.external_id)
+      : null;
+  if (
+    source.id !== checkRunId ||
+    source.name !== CHECK_NAME ||
+    source.app?.id !== GITHUB_ACTIONS_APP_ID ||
+    source.status !== "completed" ||
+    source.conclusion !== "failure" ||
+    source.details_url !== childRunUrl ||
+    retryableFailureReason(source) !== "child-cancelled" ||
+    !externalIdMatch
+  ) {
+    throw new Error("completed check does not match the exact runner-loss retry source");
+  }
+
+  const [, prNumberText, headSha, baseSha] = externalIdMatch;
+  const history = await matchingPrGateHistory({
+    repository,
+    token,
+    prNumber: parsePositiveId(prNumberText!, "runner-loss retry source PR number"),
+    headSha: headSha!,
+    baseSha: baseSha!,
+  });
+  const sourceIndex = history.findIndex((check) => check.id === checkRunId);
+  const current = history.at(-1);
+  if (sourceIndex < 0) {
+    throw new Error("runner-loss retry source is absent from its exact check history");
+  }
+  if (current?.id !== checkRunId) {
+    const sourceImmediatelyPrecedesCurrent = sourceIndex === history.length - 2;
+    const canonicalReservedReplacement =
+      current?.status === "in_progress" &&
+      current.conclusion === null &&
+      (current.details_url === null || current.details_url === undefined) &&
+      current.output?.title === RESERVED_CHECK_TITLE &&
+      current.output.summary === RESERVED_CHECK_SUMMARY;
+    if (!sourceImmediatelyPrecedesCurrent || !canonicalReservedReplacement) {
+      throw new Error("runner-loss retry source has an ambiguous replacement check history");
+    }
+    await completeCheck(
+      { repository, checkRunId: current.id },
+      token,
+      {
+        conclusion: "failure",
+        title: "Runner-loss retry could not start",
+        summary: `The one-time automatic retry controller stopped after reserving this replacement check. The original runner-loss evidence remains linked at [attempt 1](${childRunUrl}); inspect the controller job before retrying the gate.`,
+      },
+      childRunUrl,
+    );
+    appendOutput("finalized", "true");
+    return;
+  }
+
+  const markerBoundary = `\n\n${retryableFailureMarker("child-cancelled")}`;
+  const sourceSummary = source.output!.summary!;
+  const evidenceSummary = sourceSummary.slice(0, -markerBoundary.length);
+  await completeCheck(
+    { repository, checkRunId },
+    token,
+    {
+      conclusion: "failure",
+      title: "Runner-loss retry could not start",
+      summary: `${evidenceSummary}\n\nThe one-time automatic retry controller stopped before it reserved a replacement check. The original runner-loss run remains linked; inspect the controller job before retrying the gate.`,
+    },
+    childRunUrl,
+  );
+  appendOutput("finalized", "true");
+}
+
 function validateApprovalWorkflowRun(
   value: unknown,
   options: {
@@ -4258,6 +4375,14 @@ async function main(): Promise<void> {
   }
   if (command.mode === "abandon") {
     await abandonPrGate(command.checkRunId, command.childRunId);
+    return;
+  }
+  if (command.mode === "abandon-runner-loss-retry") {
+    await abandonRunnerLossRetrySource(
+      command.checkRunId,
+      command.childRunId,
+      command.workflowRunAttempt,
+    );
     return;
   }
   if (command.mode === "wait") {

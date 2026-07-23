@@ -250,6 +250,26 @@ describe("PR E2E controller commands", () => {
     });
   });
 
+  it("parses the narrowly scoped interrupted-retry cleanup", () => {
+    expect(
+      parseControllerCommand([
+        "--mode",
+        "abandon-runner-loss-retry",
+        "--check-id",
+        "17",
+        "--run-id",
+        "23",
+        "--workflow-run-attempt",
+        "1",
+      ]),
+    ).toEqual({
+      mode: "abandon-runner-loss-retry",
+      checkRunId: 17,
+      childRunId: 23,
+      workflowRunAttempt: 1,
+    });
+  });
+
   it("rejects unknown controller path slots", () => {
     withPrivateWorkDir((workDir) => {
       expect(() =>

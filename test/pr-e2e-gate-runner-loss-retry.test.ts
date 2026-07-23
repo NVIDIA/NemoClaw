@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  abandonRunnerLossRetrySource,
   finishPrGate,
   type PrGateState,
   prGateExternalId,
@@ -334,6 +335,21 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
       await expect(
         retryRunnerLossPrGate({ ...context.command, workflowRunAttempt: 2 }),
       ).rejects.toThrow(/first controller workflow run attempt/u);
+      expect(requests).toHaveLength(0);
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects direct retry cleanup from a controller workflow rerun", async () => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(retryRoutes(requests));
+
+    try {
+      await expect(abandonRunnerLossRetrySource(17, 23, 2)).rejects.toThrow(
+        /first controller workflow run attempt/u,
+      );
       expect(requests).toHaveLength(0);
     } finally {
       fs.rmSync(context.workDir, { recursive: true, force: true });
@@ -737,6 +753,104 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
       expect(requests.some((request) => request.method === "POST")).toBe(false);
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
       expect(fs.readFileSync(context.outputPath, "utf8")).toBe("");
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { label: "before reservation", replacement: false },
+    { label: "after a create response is lost", replacement: true },
+  ])("terminalizes retry setup $label with older retryable history", async ({ replacement }) => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    const older = checkRun(16, {
+      details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/22",
+      output: {
+        title: "PR prerequisite CI did not pass",
+        summary: "Prerequisite CI failed.\n\n<!-- nemoclaw-pr-e2e-retry:v1:prerequisite-ci -->",
+      },
+    });
+    const source = checkRun(17);
+    const reserved = checkRun(18, {
+      status: "in_progress",
+      conclusion: null,
+      details_url: null,
+      output: {
+        title: "Waiting for PR CI",
+        summary:
+          "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.",
+      },
+    });
+    const history = replacement ? [older, source, reserved] : [older, source];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(source),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: history.length, check_runs: history }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith(`/check-runs/${replacement ? 18 : 17}`) && method === "PATCH",
+            (request) => mutationResponse(request, replacement ? 18 : 17),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(abandonRunnerLossRetrySource(17, 23, 1)).resolves.toBeUndefined();
+      const completion = requests.find((request) => request.method === "PATCH");
+      expect(completion?.url).toMatch(new RegExp(`/check-runs/${replacement ? 18 : 17}$`, "u"));
+      expect(completion?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: { title: "Runner-loss retry could not start" },
+      });
+      expect(JSON.stringify(completion?.body)).not.toContain("nemoclaw-pr-e2e-retry:v1:");
+      expect(fs.readFileSync(context.outputPath, "utf8")).toBe("finalized=true\n");
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an ambiguous retry replacement without mutating either check", async () => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    const source = checkRun(17);
+    const ambiguous = checkRun(18, {
+      status: "in_progress",
+      conclusion: null,
+      details_url: null,
+      output: { title: "Unexpected owner", summary: "Not a canonical reservation." },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(source),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 2, check_runs: [source, ambiguous] }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(abandonRunnerLossRetrySource(17, 23, 1)).rejects.toThrow(/ambiguous/u);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
     } finally {
       fs.rmSync(context.workDir, { recursive: true, force: true });
     }
