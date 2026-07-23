@@ -138,6 +138,17 @@ describe("Brev provisioning state", () => {
     );
   });
 
+  it("rejects malformed entries in recognized Brev JSON inventories", () => {
+    expect(() => parseBrevJsonInventory([{ unexpected: "value" }])).toThrow(
+      "Brev JSON inventory contains an unrecognized instance",
+    );
+    expect(() =>
+      parseBrevJsonInventory({
+        workspaces: [{ workspaceName: "pr-42", state: "starting" }, null],
+      }),
+    ).toThrow("Brev JSON inventory contains an unrecognized instance");
+  });
+
   it("does not treat successful unrecognized text output as authoritative absence", () => {
     const snapshot = parseBrevTextInventory("Brev service diagnostic: retry later");
 

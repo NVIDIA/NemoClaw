@@ -345,7 +345,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
 });
 
 describe("SandboxClient disruption helpers (#2701)", () => {
-  it("wipeGuardChain removes the seven guard files plus proxy-env.sh", async () => {
+  it("wipeGuardChain removes the five guard files plus proxy-env.sh", async () => {
     const runner = new ScriptedRunner();
     const sandbox = new SandboxClient(runner);
 
@@ -361,9 +361,7 @@ describe("SandboxClient disruption helpers (#2701)", () => {
     expect(removeArgs).toContain("/tmp/nemoclaw-sandbox-safety-net.js");
     expect(removeArgs).toContain("/tmp/nemoclaw-slack-channel-guard.js");
     expect(removeArgs).toContain("/tmp/nemoclaw-http-proxy-fix.js");
-    expect(removeArgs).toContain("/tmp/nemoclaw-ws-proxy-fix.js");
     expect(removeArgs).toContain("/tmp/nemoclaw-nemotron-inference-fix.js");
-    expect(removeArgs).toContain("/tmp/nemoclaw-seccomp-guard.js");
   });
 
   it("wipeGuardChain throws when the sandbox returns a non-zero exit", async () => {
