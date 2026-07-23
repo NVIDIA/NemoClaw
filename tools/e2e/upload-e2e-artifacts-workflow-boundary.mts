@@ -34,6 +34,8 @@ const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
+const GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION =
+  "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const SHARED_E2E_JOBS: ReadonlyMap<string, { targetId: string }> = new Map([
@@ -62,6 +64,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
         "e2e-artifacts/live/${{ matrix.id }}/target.json",
         "e2e-artifacts/live/${{ matrix.id }}/target-result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/test-progress.json",
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
@@ -84,6 +87,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json",
         "e2e-artifacts/live/skill-agent/*/target.json",
         "e2e-artifacts/live/skill-agent/*/target-result.json",
+        "e2e-artifacts/live/skill-agent/*/test-progress.json",
         "e2e-artifacts/live/skill-agent/*/shell/*.result.json",
         "e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt",
         "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",
@@ -140,6 +144,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "openshell-gateway-auth-contract",
+    {
+      name: "e2e-openshell-gateway-auth-contract",
+      path: "${{ steps.artifact_safety.outputs.approved_path }}",
+    },
+  ],
+  [
     "bedrock-runtime-compatible-anthropic",
     {
       name: "e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}",
@@ -172,6 +183,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  ["openshell-gateway-auth-contract", GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION],
 ]);
 
 const EXPECTED_ACTION_INPUTS = {

@@ -70,14 +70,18 @@ function routedPongReason(raw: string): "ok" | string {
   return "ok";
 }
 
-test("model-router provider-routed onboard returns routed inference.local PONG", async ({
-  artifacts,
-  cleanup,
-  host,
-  sandbox,
-  secrets,
-  skip,
-}) => {
+test("model-router provider-routed onboard returns routed inference.local PONG", {
+  meta: {
+    e2ePhases: [
+      "confirm routed-provider prerequisites",
+      "clear the previous routed-provider sandbox",
+      "onboard the routed provider",
+      "wait for a healthy model-router endpoint",
+      "request a routed inference.local completion",
+      "record the routed inference contract result",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   expect(
     fs.existsSync(CLI_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -111,6 +115,7 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
     ],
   });
 
+  progress.phase("clear the previous routed-provider sandbox");
   const cleanEnv = buildAvailabilityProbeEnv();
   await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "pre-cleanup-nemoclaw-destroy-model-router-provider-routed",
@@ -125,6 +130,7 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
     timeoutMs: 120_000,
   });
 
+  progress.phase("onboard the routed provider");
   const onboard = await host.command(
     "node",
     [
@@ -143,6 +149,7 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
   );
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
+  progress.phase("wait for a healthy model-router endpoint");
   let lastHealth = "";
   for (let attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt += 1) {
     const health = await host.command(
@@ -164,6 +171,7 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
     `model-router has no healthy endpoints; expected #3255 main-equivalent failure: ${lastHealth.slice(0, 500)}`,
   ).toBe(true);
 
+  progress.phase("request a routed inference.local completion");
   const payload = JSON.stringify({
     model: "nvidia-routed",
     messages: [
@@ -208,6 +216,7 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
     `Model Router inference.local did not return a routed completion; expected #3255 main-equivalent failure: ${lastCompletion.slice(0, 500)}`,
   ).toBe("ok");
 
+  progress.phase("record the routed inference contract result");
   await artifacts.target.complete({
     id: "model-router-provider-routed-inference",
     assertions: {

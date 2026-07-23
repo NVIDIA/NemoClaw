@@ -9,14 +9,22 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { expect, test } from "vitest";
+import { expect } from "vitest";
 
 import { detectVllmProfile } from "../src/lib/inference/vllm";
 import { imageStorageRequirementBytes } from "../src/lib/inference/vllm-storage";
+import { test } from "./e2e/fixtures/workflow-e2e-test.ts";
 
 const TARGET_ID = "vllm-docker-storage";
 const DOCKER_HOST = "unix:///run/docker.sock";
 const INSTALL_SUBPROCESS_TIMEOUT_MS = 15_000;
+const VLLM_STORAGE_PHASES = [
+  "inspect Docker storage prerequisites",
+  "exercise the managed vLLM storage gate",
+  "verify Docker and filesystem capacity evidence",
+  "record release-candidate storage evidence",
+  "release vLLM storage fixtures",
+] as const;
 const RUN_REAL_DOCKER =
   process.env.E2E_TARGET_ID === TARGET_ID ||
   process.env.NEMOCLAW_RUN_VLLM_STORAGE_DOCKER_E2E === "1";
@@ -112,7 +120,8 @@ function writeEvidence(evidence: Record<string, unknown>): void {
 
 realDockerTest(
   "allows non-interactive express managed vLLM past the real /run/docker.sock storage gate (#7039)",
-  () => {
+  { timeout: 30_000, meta: { e2ePhases: VLLM_STORAGE_PHASES } },
+  ({ progress }) => {
     expect(process.platform, "this release acceptance requires a native Linux host").toBe("linux");
     expect(
       fs.statSync("/run/docker.sock").isSocket(),
@@ -123,6 +132,7 @@ realDockerTest(
     const infoResult = spawnSync("docker", ["info", "--format", "{{json .}}"], {
       encoding: "utf8",
       env,
+      killSignal: "SIGKILL",
       timeout: 15_000,
     });
     expect(
@@ -142,6 +152,7 @@ realDockerTest(
     assert(profile, "managed vLLM has no generic Linux profile");
     const requiredAvailableBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
 
+    progress.phase("exercise the managed vLLM storage gate");
     const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
     const blockedHome = path.join(fakeBinDir, "blocked-home");
     const commandLogPath = path.join(fakeBinDir, "docker-commands.jsonl");
@@ -149,6 +160,7 @@ realDockerTest(
     const dockerPathResult = spawnSync("sh", ["-c", "command -v docker"], {
       encoding: "utf8",
       env,
+      killSignal: "SIGKILL",
       timeout: 5_000,
     });
     expect(
@@ -162,7 +174,7 @@ realDockerTest(
     const cachedImageResult = spawnSync(
       realDockerPath,
       ["image", "inspect", "--format", "{{.Id}}", profile.image],
-      { encoding: "utf8", env, timeout: 10_000 },
+      { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 10_000 },
     );
     expect(
       cachedImageResult.error,
@@ -237,6 +249,7 @@ realDockerTest(
         new Set(["container ls", "image inspect", "info --format"]),
       );
 
+      progress.phase("verify Docker and filesystem capacity evidence");
       const statfsLog = fs.readFileSync(statfsLogPath, "utf8").trim();
       expect(statfsLog, "production did not consume a filesystem capacity sample").not.toBe("");
       productionStatfsSamples = statfsLog
@@ -250,64 +263,67 @@ realDockerTest(
       measuredAvailableBytes = BigInt(dockerRootSample.bavail) * BigInt(dockerRootSample.bsize);
       expect(measuredAvailableBytes).toBeGreaterThan(0n);
       expect(measuredAvailableBytes).toBeGreaterThanOrEqual(requiredAvailableBytes);
+
+      progress.phase("record release-candidate storage evidence");
+      const checkoutResult = spawnSync("git", ["rev-parse", "HEAD"], {
+        encoding: "utf8",
+        killSignal: "SIGKILL",
+        timeout: 5_000,
+      });
+      expect(
+        checkoutResult.status,
+        `could not record the validated checkout: ${
+          checkoutResult.error?.message || checkoutResult.stderr || checkoutResult.stdout
+        }`,
+      ).toBe(0);
+      const checkoutSha = checkoutResult.stdout.trim();
+      expect(checkoutSha).toMatch(/^[0-9a-f]{40}$/u);
+      const sourceVersionResult = spawnSync("git", ["describe", "--tags", "--always", "--dirty"], {
+        encoding: "utf8",
+        killSignal: "SIGKILL",
+        timeout: 5_000,
+      });
+      expect(
+        sourceVersionResult.status,
+        `could not record the validated source version: ${
+          sourceVersionResult.error?.message ||
+          sourceVersionResult.stderr ||
+          sourceVersionResult.stdout
+        }`,
+      ).toBe(0);
+      const releaseCandidateSourceVersion = sourceVersionResult.stdout.trim();
+      expect(releaseCandidateSourceVersion).not.toBe("");
+      const packageMetadata = JSON.parse(
+        fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+      ) as { version?: unknown };
+      expect(typeof packageMetadata.version).toBe("string");
+      const packageVersion = String(packageMetadata.version);
+      const evidence = {
+        schemaVersion: 1,
+        checkoutSha,
+        releaseCandidateSourceVersion,
+        packageVersion,
+        platform: process.platform,
+        architecture: process.arch,
+        dockerHost: DOCKER_HOST,
+        dockerServerVersion: info.ServerVersion,
+        dockerRootDir,
+        dockerRootAvailableBytes: String(measuredAvailableBytes),
+        measuredPath,
+        measuredSource: "Docker root directory",
+        measuredAvailableBytes: String(measuredAvailableBytes),
+        productionStatfsSamples,
+        imageDownloadSizeBytes: String(profile.imageDownloadSizeBytes),
+        requiredAvailableBytes: String(requiredAvailableBytes),
+        managedInstallCrossedImageStorageGate: true,
+        installSubprocessTimeoutMs: INSTALL_SUBPROCESS_TIMEOUT_MS,
+        installDockerCommands,
+      };
+      writeEvidence(evidence);
+      console.info(`[${TARGET_ID}] ${JSON.stringify(evidence)}`);
     } finally {
+      progress.phase("release vLLM storage fixtures");
       fs.rmSync(fakeBinDir, { force: true, recursive: true });
     }
-
-    const checkoutResult = spawnSync("git", ["rev-parse", "HEAD"], {
-      encoding: "utf8",
-      timeout: 5_000,
-    });
-    expect(
-      checkoutResult.status,
-      `could not record the validated checkout: ${
-        checkoutResult.error?.message || checkoutResult.stderr || checkoutResult.stdout
-      }`,
-    ).toBe(0);
-    const checkoutSha = checkoutResult.stdout.trim();
-    expect(checkoutSha).toMatch(/^[0-9a-f]{40}$/u);
-    const sourceVersionResult = spawnSync("git", ["describe", "--tags", "--always", "--dirty"], {
-      encoding: "utf8",
-      timeout: 5_000,
-    });
-    expect(
-      sourceVersionResult.status,
-      `could not record the validated source version: ${
-        sourceVersionResult.error?.message ||
-        sourceVersionResult.stderr ||
-        sourceVersionResult.stdout
-      }`,
-    ).toBe(0);
-    const releaseCandidateSourceVersion = sourceVersionResult.stdout.trim();
-    expect(releaseCandidateSourceVersion).not.toBe("");
-    const packageMetadata = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
-    ) as { version?: unknown };
-    expect(typeof packageMetadata.version).toBe("string");
-    const packageVersion = String(packageMetadata.version);
-    const evidence = {
-      schemaVersion: 1,
-      checkoutSha,
-      releaseCandidateSourceVersion,
-      packageVersion,
-      platform: process.platform,
-      architecture: process.arch,
-      dockerHost: DOCKER_HOST,
-      dockerServerVersion: info.ServerVersion,
-      dockerRootDir,
-      dockerRootAvailableBytes: String(measuredAvailableBytes),
-      measuredPath,
-      measuredSource: "Docker root directory",
-      measuredAvailableBytes: String(measuredAvailableBytes),
-      productionStatfsSamples,
-      imageDownloadSizeBytes: String(profile.imageDownloadSizeBytes),
-      requiredAvailableBytes: String(requiredAvailableBytes),
-      managedInstallCrossedImageStorageGate: true,
-      installSubprocessTimeoutMs: INSTALL_SUBPROCESS_TIMEOUT_MS,
-      installDockerCommands,
-    };
-    writeEvidence(evidence);
-    console.info(`[${TARGET_ID}] ${JSON.stringify(evidence)}`);
   },
-  30_000,
 );
