@@ -15,12 +15,21 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
+function isRfc3339DateTime(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(
+    value,
+  );
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  return month >= 1 && month <= 12 && day >= 1 && day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
 async function createValidator() {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
-  ajv.addFormat("date-time", {
-    type: "string",
-    validate: (value: string) => !Number.isNaN(Date.parse(value)),
-  });
+  ajv.addFormat("date-time", { type: "string", validate: isRfc3339DateTime });
   return ajv.compile(systemReadinessSchema as AnySchema);
 }
 
@@ -53,6 +62,14 @@ describe("system readiness contract", () => {
       reason: "unsupported system readiness schema major 2",
     });
     expect(checkSystemReadinessSchemaVersion("not-a-version").compatible).toBe(false);
+  });
+
+  it("rejects invalid calendar timestamps (#7409)", async () => {
+    const validate = await createValidator();
+    const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;
+    const provenance = { ...(fixture.provenance as Record<string, unknown>) };
+
+    expect(validate({ ...fixture, provenance: { ...provenance, observedAt: "2026-02-30T00:00:00Z" } })).toBe(false);
   });
 
   it("rejects status and exit-code mismatches (#7409)", async () => {
