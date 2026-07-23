@@ -21,7 +21,7 @@ const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
 
 type CoordinatorJob = WorkflowJob & {
-  concurrency?: { group: string; "cancel-in-progress": boolean };
+  concurrency?: { group: string; queue?: "max"; "cancel-in-progress": boolean };
 };
 
 type TriggeredWorkflow = Omit<Workflow, "jobs"> & {
@@ -307,6 +307,14 @@ describe("PR E2E gate workflow", () => {
     const approveInternal = workflow.jobs["approve-internal-e2e"];
     const approveForkSkip = workflow.jobs["approve-fork-e2e-skip"];
     const recordForkSkip = workflow.jobs["record-fork-e2e-skip"];
+    const longestSelectedE2eMinutes = 130;
+    const controllerWaitMinutes = 140;
+    const evidenceAndKillGraceMinutes = 10.5;
+    const twoAttemptMinimum = 2 * (controllerWaitMinutes + evidenceAndKillGraceMinutes);
+    const controllerSetupReserveMinutes = 25;
+    const maxPrerequisiteCiMinutes = 15;
+    const observerApiSlackMinutes = 13;
+    const observerPollMinutes = 21_480 / 60;
 
     expect(workflow.name).toBe("E2E / PR Gate Controller");
     expect(workflow["run-name"]).toContain("E2E Gate PR #{0} head {1} base {2} gate {3}");
@@ -381,6 +389,7 @@ describe("PR E2E gate workflow", () => {
     expect(metadataOnlyGate.status, metadataOnlyGate.stderr).toBe(0);
     expect(metadataOnlyGate.stdout).toContain("Metadata-only PR edit");
     expect(initialize.if).toContain("github.event_name == 'pull_request_target'");
+    expect(initialize.if).toContain("github.run_attempt == 1");
     expect(initialize.if).toContain("github.event.action != 'closed'");
     expect(initialize.if).toContain("github.event.action != 'edited'");
     expect(initialize.if).toContain("github.event.changes.base != null");
@@ -390,8 +399,10 @@ describe("PR E2E gate workflow", () => {
       "pull-requests": "read",
     });
     expect(initialize.concurrency?.group).toBe(
-      "pr-e2e-gate-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref }}",
+      "pr-e2e-gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ github.event.pull_request.base.sha }}",
     );
+    expect(initialize.concurrency?.queue).toBe("max");
+    expect(initialize.concurrency?.["cancel-in-progress"]).toBe(false);
     expect(required.name).toBe("E2E / PR Gate");
     expect(required.if).toContain("github.event_name == 'pull_request_target'");
     expect(required.if).toContain("github.event.action != 'closed'");
@@ -406,7 +417,7 @@ describe("PR E2E gate workflow", () => {
       group: "pr-e2e-required-${{ github.event.pull_request.number }}",
       "cancel-in-progress": true,
     });
-    expect(required["timeout-minutes"]).toBe(170);
+    expect(required["timeout-minutes"]).toBe(360);
     expect(required.secrets).toBeUndefined();
     expect(step(required, "Checkout observer").with).toEqual({
       ref: "${{ github.workflow_sha }}",
@@ -422,7 +433,9 @@ describe("PR E2E gate workflow", () => {
     expect(observer.run).toContain("tools/e2e/pr-e2e-required.mts");
     expect(observer.run).toContain('--head "$HEAD_SHA"');
     expect(observer.run).toContain('--base "$BASE_SHA"');
+    expect(observer.run).toContain("--timeout-seconds 21480");
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
+    expect(cancel.if).toContain("github.run_attempt == 1");
     expect(cancel.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
     );
@@ -453,8 +466,11 @@ describe("PR E2E gate workflow", () => {
       "pull-requests": "read",
     });
     expect(coordinate.concurrency?.group).toBe(
-      "pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}",
+      "pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].number || inputs.pr_number }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].base.sha || inputs.expected_base_sha }}",
     );
+    expect(coordinate.concurrency?.queue).toBe("max");
+    expect(coordinate.concurrency?.["cancel-in-progress"]).toBe(false);
+    expect(coordinate["timeout-minutes"]).toBe(330);
     expect(coordinate.outputs).toEqual({
       control_plane_approval_mode: "${{ steps.start.outputs.control_plane_approval_mode }}",
       control_plane_approval_pr_number:
@@ -483,9 +499,22 @@ describe("PR E2E gate workflow", () => {
     });
     expect(approveInternal.concurrency).toEqual({
       group:
-        "pr-e2e-gate-approve-internal-${{ needs.coordinate.outputs.control_plane_approval_pr_number }}",
-      "cancel-in-progress": true,
+        "pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.control_plane_approval_pr_number }}-${{ needs.coordinate.outputs.control_plane_approval_head_sha }}-${{ needs.coordinate.outputs.control_plane_approval_base_sha }}",
+      queue: "max",
+      "cancel-in-progress": false,
     });
+    expect(approveInternal["timeout-minutes"]).toBe(330);
+    expect(controllerWaitMinutes).toBeGreaterThan(longestSelectedE2eMinutes);
+    expect(coordinate["timeout-minutes"]).toBeGreaterThanOrEqual(
+      twoAttemptMinimum + controllerSetupReserveMinutes,
+    );
+    expect(approveInternal["timeout-minutes"]).toBeGreaterThanOrEqual(
+      twoAttemptMinimum + controllerSetupReserveMinutes,
+    );
+    expect(observerPollMinutes).toBeGreaterThanOrEqual(
+      coordinate["timeout-minutes"]! + maxPrerequisiteCiMinutes + observerApiSlackMinutes,
+    );
+    expect(required["timeout-minutes"]).toBeGreaterThan(observerPollMinutes);
     expect(approveInternal.secrets).toBeUndefined();
     expect(approveForkSkip.name).toBe("Approve credentialed E2E skip for fork PR");
     expect(approveForkSkip.needs).toBe("coordinate");
@@ -503,11 +532,14 @@ describe("PR E2E gate workflow", () => {
       "pull-requests": "read",
     });
     expect(approveForkSkip.concurrency).toEqual({
-      group: "pr-e2e-gate-approve-fork-skip-${{ needs.coordinate.outputs.fork_skip_pr_number }}",
-      "cancel-in-progress": true,
+      group:
+        "pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.fork_skip_pr_number }}-${{ needs.coordinate.outputs.fork_skip_head_sha }}-${{ needs.coordinate.outputs.fork_skip_base_sha }}",
+      queue: "max",
+      "cancel-in-progress": false,
     });
     expect(approveForkSkip.secrets).toBeUndefined();
     expect(recordForkSkip.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(recordForkSkip.if).toContain("github.run_attempt == 1");
     expect(recordForkSkip.if).toContain("github.ref == 'refs/heads/main'");
     expect(recordForkSkip.name).toBe("Record credentialed E2E skip for fork PR");
     expect(recordForkSkip.if).toContain("inputs.operation == 'approve-fork-e2e-skip'");
@@ -515,6 +547,12 @@ describe("PR E2E gate workflow", () => {
       checks: "write",
       contents: "read",
       "pull-requests": "read",
+    });
+    expect(recordForkSkip.concurrency).toEqual({
+      group:
+        "pr-e2e-gate-${{ github.repository }}-${{ inputs.pr_number }}-${{ inputs.expected_head_sha }}-${{ inputs.expected_base_sha }}",
+      queue: "max",
+      "cancel-in-progress": false,
     });
     expect(collectStrings(initialize).some((value) => value.includes("--mode seed"))).toBe(true);
     expect(
@@ -563,6 +601,23 @@ describe("PR E2E gate workflow", () => {
     expect(evidence.run).toContain('--run-id "${{ steps.start.outputs.run_id }}"');
     const finish = step(coordinate, "Verify evidence");
     expect(finish.run).toContain('--evidence-outcome "${{ steps.evidence.outcome }}"');
+    const retry = step(coordinate, "Retry after hosted runner loss");
+    expect(retry.if).toContain("steps.finish.outputs.runner_loss_retry_authorized == 'true'");
+    expect(retry.if).toContain("github.run_attempt == 1");
+    expect(retry.run).toContain("--mode retry-runner-loss");
+    expect(retry.run).toContain('--workflow-run-attempt "${{ github.run_attempt }}"');
+    const retryEvidence = step(coordinate, "Download retry evidence");
+    expect(retryEvidence.if).toContain("always()");
+    expect(retryEvidence.run).toContain("--slot runner-loss-retry");
+    const retryFinish = step(coordinate, "Verify retry evidence");
+    expect(retryFinish.if).toContain("always()");
+    expect(retryFinish.run).toContain('--state-hash "${{ steps.retry.outputs.state_hash }}"');
+    expect(retryFinish.run).toContain('--evidence-outcome "${{ steps.retry_evidence.outcome }}"');
+    const interruptedRetry = step(coordinate, "Terminalize interrupted retry setup");
+    expect(interruptedRetry.if).toContain("steps.retry.outcome != 'success'");
+    expect(interruptedRetry.if).not.toContain("steps.retry.outcome == 'failure'");
+    expect(interruptedRetry.if).toContain("steps.retry.outputs.check_id == ''");
+    expect(interruptedRetry.run).toContain("--mode abandon-runner-loss-retry");
     const approval = step(approveForkSkip, "Record approved credentialed E2E skip");
     expect(approval.env).toEqual({
       APPROVAL_RUN_ATTEMPT: "${{ github.run_attempt }}",
@@ -762,6 +817,12 @@ describe("PR E2E gate workflow", () => {
       "Wait for E2E run",
       "Download evidence",
       "Verify evidence",
+      "Retry after hosted runner loss",
+      "Wait for retry E2E run",
+      "Download retry evidence",
+      "Verify retry evidence",
+      "Close incomplete retry check",
+      "Terminalize interrupted retry setup",
       "Close incomplete check",
       "Remove private workspace",
     ]);
@@ -787,11 +848,33 @@ describe("PR E2E gate workflow", () => {
       "Wait for approved E2E run",
       "Download approved evidence",
       "Verify approved evidence",
+      "Retry approved E2E after hosted runner loss",
+      "Wait for approved retry E2E run",
+      "Download approved retry evidence",
+      "Verify approved retry evidence",
+      "Close incomplete approved retry check",
+      "Terminalize interrupted approved retry setup",
       "Close incomplete approved check",
       "Remove private workspace",
     ]);
     expect(step(approveInternal, "Download approved evidence").if).toContain("always()");
     expect(step(approveInternal, "Verify approved evidence").if).toContain("always()");
+    expect(step(approveInternal, "Retry approved E2E after hosted runner loss").if).toContain(
+      "github.run_attempt == 1",
+    );
+    expect(step(approveInternal, "Download approved retry evidence").run).toContain(
+      "--slot runner-loss-retry",
+    );
+    expect(step(approveInternal, "Verify approved retry evidence").if).toContain("always()");
+    expect(step(approveInternal, "Close incomplete approved retry check").if).toContain("always()");
+    const approvedInterruptedRetry = step(
+      approveInternal,
+      "Terminalize interrupted approved retry setup",
+    );
+    expect(approvedInterruptedRetry.if).toContain("steps.retry.outcome != 'success'");
+    expect(approvedInterruptedRetry.if).not.toContain("steps.retry.outcome == 'failure'");
+    expect(approvedInterruptedRetry.if).toContain("steps.retry.outputs.check_id == ''");
+    expect(approvedInterruptedRetry.run).toContain("--mode abandon-runner-loss-retry");
     expect(step(approveInternal, "Close incomplete approved check").if).toContain("always()");
     expect(step(approveInternal, "Remove private workspace").if).toContain("always()");
   });

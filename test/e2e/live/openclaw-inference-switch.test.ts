@@ -945,6 +945,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
         host: "0.0.0.0",
         model: MOCK_BASELINE_MODEL,
         publicHost: "host.openshell.internal",
+        progress,
         requireAuth: true,
       })
     : undefined;
