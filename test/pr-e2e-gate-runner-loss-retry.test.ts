@@ -34,6 +34,7 @@ const JOB_LOG_ETAG = '"hosted-runner-log"';
 const JOB_LOG_RANGE_BYTES = 64 * 1024;
 const RUNNER_SHUTDOWN_MESSAGE =
   "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
+const EXIT_143_MESSAGE = "Process completed with exit code 143.";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -143,6 +144,16 @@ function hostedRunnerLossJob(runId = 23) {
   };
 }
 
+function exit143HostedRunnerLossJob(runId = 23) {
+  const job = hostedRunnerLossJob(runId);
+  return {
+    ...job,
+    steps: job.steps.map((step) =>
+      step.conclusion === "cancelled" ? { ...step, conclusion: "failure" } : step,
+    ),
+  };
+}
+
 function runnerLossAnnotation() {
   return {
     path: ".github",
@@ -168,6 +179,15 @@ function genericCancellationAnnotation() {
   };
 }
 
+function exit143Annotation() {
+  return {
+    ...runnerLossAnnotation(),
+    start_line: 34,
+    end_line: 34,
+    message: EXIT_143_MESSAGE,
+  };
+}
+
 function runnerShutdownJobLog() {
   return [
     "x".repeat(JOB_LOG_RANGE_BYTES),
@@ -176,6 +196,13 @@ function runnerShutdownJobLog() {
     "2026-07-23T07:32:50.0577487Z Cleaning up orphan processes",
     "",
   ].join("\n");
+}
+
+function exit143ShutdownJobLog() {
+  return runnerShutdownJobLog().replace(
+    "##[error]The operation was canceled.",
+    `##[error]${EXIT_143_MESSAGE}`,
+  );
 }
 
 type JobLogFixture = {
@@ -1074,7 +1101,20 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     }
   });
 
-  it("writes the retry authorization marker for an authenticated shutdown log", async () => {
+  it.each([
+    {
+      label: "a cancelled workload",
+      job: hostedRunnerLossJob(),
+      annotation: genericCancellationAnnotation(),
+      log: runnerShutdownJobLog(),
+    },
+    {
+      label: "an exit-143 failed workload",
+      job: exit143HostedRunnerLossJob(),
+      annotation: exit143Annotation(),
+      log: exit143ShutdownJobLog(),
+    },
+  ])("writes the retry authorization marker for $label", async ({ job, annotation, log }) => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     const currentCheck = checkRun(17, {
@@ -1097,20 +1137,18 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
           githubFetchRoute(
             ({ url, method }) =>
               url.includes("/actions/runs/23/attempts/1/jobs?") && method === "GET",
-            () => githubResponse({ total_count: 1, jobs: [hostedRunnerLossJob()] }),
+            () => githubResponse({ total_count: 1, jobs: [job] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith(`/check-runs/${job.id}`) && method === "GET",
+            () => githubResponse(workflowJobCheckRun(job)),
           ),
           githubFetchRoute(
             ({ url, method }) =>
-              url.endsWith(`/check-runs/${hostedRunnerLossJob().id}`) && method === "GET",
-            () => githubResponse(workflowJobCheckRun(hostedRunnerLossJob())),
+              url.includes(`/check-runs/${job.id}/annotations?`) && method === "GET",
+            () => githubResponse([annotation]),
           ),
-          githubFetchRoute(
-            ({ url, method }) =>
-              url.includes(`/check-runs/${hostedRunnerLossJob().id}/annotations?`) &&
-              method === "GET",
-            () => githubResponse([genericCancellationAnnotation()]),
-          ),
-          ...jobLogRoutes(),
+          ...jobLogRoutes({ body: log }),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
             () => githubResponse(pullRequest()),
