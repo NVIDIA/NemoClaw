@@ -15,6 +15,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   adminApprovalConnectScript,
   extractPendingRequestId,
+  ISSUE_4462_SCOPE_UPGRADE_PHASES,
 } from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
@@ -1215,7 +1216,8 @@ echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$final_device request=\${request_id:-co
 
 test("keeps issue 4462 scope-upgrade approval on the gateway path without an admin leak", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
+  meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
+}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   await artifacts.target.declare({
     id: "issue-4462-scope-upgrade-approval",
@@ -1262,7 +1264,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     timeoutMs: 120_000,
   });
   await cleanup(host, sandbox);
-
+  progress.phase("install the OpenClaw sandbox");
   const install = await host.command(
     "bash",
     ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -1302,7 +1304,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     await artifacts.writeJson(`${phase}.json`, snapshot);
     return snapshot;
   };
-
+  progress.phase("prove fresh agent turns stay on the gateway path");
   let freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0", 0);
   expect(freshSnapshot.deviceId).not.toBe("");
   expect(freshSnapshot.publicKey).not.toBe("");
@@ -1372,9 +1374,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     expect(nextSnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
     freshSnapshot = nextSnapshot;
   }
-
-  // Preserve the transactional read/write upgrade proof before deliberately
-  // broadening this same CLI device with the manual admin approval below.
+  progress.phase("approve the write-scope upgrade without admin");
   const encodedScopeUpgradeScript = Buffer.from(
     scopeUpgradeScript().replaceAll("\\${", "${"),
     "utf8",
@@ -1399,7 +1399,6 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
   );
   expect(probe.exitCode, resultText(probe)).toBe(0);
   expect(resultText(probe)).toContain("ISSUE_4462_SCOPE_UPGRADE_OK");
-
   // #5324 command coverage (PRA-3): the operator scope-upgrade / approval
   // boundary is scope-keyed and command-agnostic, not per-command. Automatic
   // approval is bounded to {operator.pairing, operator.read, operator.write}
@@ -1415,6 +1414,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
   // approval below. `cron run` and `exec` cannot follow a different approval
   // path — whichever tier they request is one of the two already proven here,
   // so no separate per-command evidence is required to close #5324.
+  progress.phase("trigger and approve an operator.admin request through connect");
   const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
   // #5324's `exec` is NemoClaw's host transport, not an OpenClaw CLI
   // subcommand (the pinned OpenClaw 2026.6.10 command catalog has none).
@@ -1468,7 +1468,6 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     },
   );
   expect(connectProbe.exitCode, resultText(connectProbe)).toBe(0);
-
   const adminConnect = await host.command(
     "bash",
     [
@@ -1491,7 +1490,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
   const adminConnectOutput = resultText(adminConnect);
   expect(adminConnect.exitCode, adminConnectOutput).toBe(0);
   expect(adminConnectOutput).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
-
+  progress.phase("clear the sandbox and record the approval contract");
   await cleanup(host, sandbox);
   await artifacts.target.complete({
     id: "issue-4462-scope-upgrade-approval",

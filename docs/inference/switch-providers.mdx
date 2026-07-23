@@ -35,7 +35,8 @@ Run `$$nemoclaw onboard` to register the provider, then retry the switch.
 <AgentOnly variant="openclaw,hermes">
 
 Pass the target provider and model together.
-Pass `--sandbox <name>` when you do not want to use the default sandbox.
+Target a non-default sandbox by name.
+The `shields` commands take a positional name. `inference set` takes `--sandbox <name>`.
 
 ```bash
 $$nemoclaw <name> shields down
@@ -61,9 +62,9 @@ This flag does not bypass shared-gateway compatibility checks.
 
 </AgentOnly>
 
-## Recreate a Deep Agents Sandbox
-
 <AgentOnly variant="deepagents">
+
+## Recreate a Deep Agents Sandbox
 
 Deep Agents uses fresh sandbox recreation for provider changes.
 The recreation validates the provider and rewrites `/sandbox/.deepagents/config.toml` with the OpenShell route.

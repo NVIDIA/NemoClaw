@@ -225,9 +225,21 @@ async function expectLiveChatPong(
   throw new Error(`Live chat failed after ${MAX_ATTEMPTS} attempt(s): ${lastFailure}`);
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "cloud inference: inference.local chat and OpenClaw skill filesystem validate",
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  {
+    timeout: TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "verify cloud inference prerequisites",
+        "install hosted-inference OpenClaw sandbox",
+        "exercise managed inference.local chat",
+        "validate repo and sandbox skill layouts",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
@@ -290,6 +302,7 @@ test(
     );
     await cleanupCloudInferenceState(host, sandbox, home);
 
+    progress.phase("install hosted-inference OpenClaw sandbox");
     const install = await host.command(
       "bash",
       ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -316,6 +329,7 @@ test(
 
     await expectCliOnPath(host, home);
 
+    progress.phase("exercise managed inference.local chat");
     const chat = await expectLiveChatPong(sandbox, home, apiKey);
     await artifacts.writeJson("phase-2-chat-result.json", {
       model: CLOUD_MODEL,
@@ -323,6 +337,7 @@ test(
       content: chat.content,
     });
 
+    progress.phase("validate repo and sandbox skill layouts");
     const repoSkills = await host.command("bash", [REPO_SKILL_VALIDATOR, "--repo", REPO_ROOT], {
       artifactName: "phase-3-validate-repo-skills",
       cwd: REPO_ROOT,
@@ -358,5 +373,4 @@ test(
       },
     });
   },
-  TEST_TIMEOUT_MS,
 );

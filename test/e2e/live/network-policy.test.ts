@@ -503,7 +503,19 @@ main().catch((error) => {
 
 test("network-policy: restricted sandbox enforces live allow/deny policy probes", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm built CLI Docker OpenShell and credential",
+      "clear the sandbox and onboard restricted policy",
+      "prove default denial and the weather allowlist",
+      "exercise package and SaaS policy presets",
+      "prove dry-run and per-binary Jira approval",
+      "verify hot reload inference exemption and SSRF guards",
+      "exercise scoped host-gateway web fetch policy",
+      "switch to permissive policy and record the contract",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   await artifacts.target.declare({
     id: "network-policy",
     boundary: "live-sandbox-network-policy",
@@ -564,6 +576,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     timeoutMs: 120_000,
   });
 
+  progress.phase("clear the sandbox and onboard restricted policy");
   await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "pre-cleanup-nemoclaw-destroy-network-policy",
     env: baseEnv(),
@@ -643,6 +656,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
   // web-search, no OpenClaw OTEL) and asserts the `policy-list` output has
   // no `●`-bulleted entries; that scenario must remain the gate even if
   // this scenario's assertion is ever weakened.
+  progress.phase("prove default denial and the weather allowlist");
   const policyListAfterOnboard = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
     artifactName: "tc-net-01-policy-list-after-onboard",
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -709,6 +723,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     /STATUS_403|ERROR_/,
   );
 
+  progress.phase("exercise package and SaaS policy presets");
   const brewApply = await applyPreset(host, "brew");
   expect(brewApply.exitCode, text(brewApply)).toBe(0);
   const policyListAfterBrew = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
@@ -824,6 +839,7 @@ echo "GITHUB_GIT_OK"
   );
   expect(slackAfter).toMatch(/STATUS_200/);
 
+  progress.phase("prove dry-run and per-binary Jira approval");
   const atlassianBefore = await fetchStatus(
     sandbox,
     "https://api.atlassian.com/",
@@ -911,6 +927,7 @@ printf '\n'
   expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
   expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
 
+  progress.phase("verify hot reload inference exemption and SSRF guards");
   const startTimeBefore = await sandboxBash(
     sandbox,
     "cat /proc/1/stat 2>/dev/null | awk '{print $22}'",
@@ -953,6 +970,7 @@ printf '\n'
     expect(isPrivateIp(ip), `${ip} must be allowed by SSRF validation`).toBe(false);
   }
 
+  progress.phase("exercise scoped host-gateway web fetch policy");
   const marker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK";
   const denyMarker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_DENIED_PORT_SHOULD_NOT_LEAK";
   const approvedServer = await startMarkerServer(marker);
@@ -1016,6 +1034,7 @@ NEMOCLAW_WEB_FETCH_PROBE`,
     await Promise.all([approvedServer.close(), deniedServer.close()]);
   }
 
+  progress.phase("switch to permissive policy and record the contract");
   const permissiveApply = await sandbox.openshell(
     ["policy", "set", "--policy", PERMISSIVE_POLICY, "--wait", SANDBOX_NAME],
     {
@@ -1089,7 +1108,15 @@ NEMOCLAW_WEB_FETCH_PROBE`,
 // than here.
 test("network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm built CLI Docker OpenShell and credential",
+      "clear the restricted-policy sandbox",
+      "onboard default restricted OpenClaw",
+      "confirm the restricted tier has zero active presets",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   await artifacts.writeJson("scenario.json", {
     id: "restricted-openclaw-policy-suppression",
     runner: "vitest",
@@ -1136,12 +1163,14 @@ test("network-policy: default restricted OpenClaw onboard leaves policy-list wit
     timeoutMs: 120_000,
   });
 
+  progress.phase("clear the restricted-policy sandbox");
   await runNemoclaw(host, [SUPPRESSION_SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "pre-cleanup-nemoclaw-destroy-restricted-zero-presets",
     env: baseEnv(),
     timeoutMs: 120_000,
   });
 
+  progress.phase("onboard default restricted OpenClaw");
   const onboard = await runRestrictedOnboardWithRetry({
     host,
     artifacts,
@@ -1159,6 +1188,7 @@ test("network-policy: default restricted OpenClaw onboard leaves policy-list wit
   });
   expect(onboard.exitCode, text(onboard)).toBe(0);
 
+  progress.phase("confirm the restricted tier has zero active presets");
   const policyListAfterOnboard = await runNemoclaw(
     host,
     [SUPPRESSION_SANDBOX_NAME, "policy-list"],
