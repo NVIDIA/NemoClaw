@@ -182,14 +182,11 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         (candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service",
       );
     const openSync = fs.openSync.bind(fs);
-    let swapped = false;
-    const openSpy = vi.spyOn(fs, "openSync").mockImplementation(((...args) => {
+    const openSpy = vi.spyOn(fs, "openSync").mockImplementationOnce(((...args) => {
+      expect(args[0]).toBe(envFile);
       const descriptor = openSync(...(args as Parameters<typeof fs.openSync>));
-      if (!swapped && args[0] === envFile) {
-        fs.unlinkSync(envFile);
-        fs.symlinkSync(targetFile, envFile);
-        swapped = true;
-      }
+      fs.unlinkSync(envFile);
+      fs.symlinkSync(targetFile, envFile);
       return descriptor;
     }) as typeof fs.openSync);
 
