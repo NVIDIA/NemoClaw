@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import {
   GATEWAY_BIND_ADDRESS,
   getGatewayConnectHost,
@@ -265,16 +266,32 @@ function normalizePackageServiceDockerHost(value: string | undefined): string | 
   );
 }
 
-function readTextFileIfPresent(filePath: string): string {
+function errnoCode(error: unknown): string | null {
+  return error instanceof Error && "code" in error ? String(error.code) : null;
+}
+
+function openDockerGatewayEnvFile(envFile: string) {
   try {
-    return fs.readFileSync(filePath, "utf-8");
+    return openRegularFileNoFollow(envFile, { writable: true });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return "";
+    if (errnoCode(error) === "ENOENT") {
+      try {
+        return openRegularFileNoFollow(envFile, {
+          create: true,
+          mode: 0o600,
+          writable: true,
+        });
+      } catch (createError) {
+        if (errnoCode(createError) !== "EEXIST" && errnoCode(createError) !== "ELOOP") {
+          throw createError;
+        }
+        throw new Error(
+          `Refusing to write OpenShell gateway env file because it changed during validation: ${envFile}`,
+        );
+      }
+    }
+    if (errnoCode(error) === "ELOOP") {
+      throw new Error(`Refusing to write symlinked OpenShell gateway env file: ${envFile}`);
     }
     throw error;
   }
@@ -291,19 +308,13 @@ function writeDockerGatewayDebEnvOverrideFile(
   const envFile = path.join(envDir, "gateway.env");
   fs.mkdirSync(envDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(envDir, 0o700);
+  const file = openDockerGatewayEnvFile(envFile);
   try {
-    if (fs.lstatSync(envFile).isSymbolicLink()) {
-      throw new Error(`Refusing to write symlinked OpenShell gateway env file: ${envFile}`);
-    }
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    const existing = file.readUtf8();
+    file.replaceUtf8(buildDockerGatewayDebEnvFile(existing, override), 0o600);
+  } finally {
+    file.close();
   }
-  const existing = readTextFileIfPresent(envFile);
-  fs.writeFileSync(envFile, buildDockerGatewayDebEnvFile(existing, override), {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
-  fs.chmodSync(envFile, 0o600);
 }
 
 export function writeDockerGatewayDebEnvOverride(

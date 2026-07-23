@@ -51,7 +51,7 @@ function runInstallHelper(home: string, body: string, env: NodeJS.ProcessEnv = {
       env: {
         ...process.env,
         HOME: home,
-        PATH: TEST_SYSTEM_PATH,
+        PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
         XDG_CONFIG_HOME: "",
         NEMOCLAW_REPO_ROOT: path.dirname(INSTALLER),
         ...env,
@@ -162,6 +162,35 @@ describe("install.sh OpenShell gateway service", () => {
     fs.symlinkSync(targetPath, unitPath);
 
     const result = stageService(home, userGatewayBin(home));
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Refusing to replace symlinked");
+    expect(fs.lstatSync(unitPath).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(targetPath, "utf-8")).toBe("# foreign unit\n");
+  });
+
+  it("rejects a unit path swapped to a symlink after validation (#6903)", () => {
+    const home = makeTempRoot();
+    const unitPath = servicePath(home);
+    const targetPath = path.join(home, "foreign.service");
+    const raceBin = path.join(home, "race-bin");
+    fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+    fs.mkdirSync(raceBin);
+    fs.writeFileSync(targetPath, "# foreign unit\n");
+    writeExecutable(
+      path.join(raceBin, "node"),
+      [
+        "#!/usr/bin/env bash",
+        `rm -f -- ${JSON.stringify(unitPath)}`,
+        `ln -s -- ${JSON.stringify(targetPath)} ${JSON.stringify(unitPath)}`,
+        `exec ${JSON.stringify(process.execPath)} "$@"`,
+        "",
+      ].join("\n"),
+    );
+
+    const result = stageService(home, userGatewayBin(home), {
+      PATH: `${raceBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Refusing to replace symlinked");

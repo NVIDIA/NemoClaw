@@ -11,24 +11,52 @@ export interface OpenRegularFile {
 
 export function openRegularFileNoFollow(
   target: string,
-  options: { writable?: boolean } = {},
+  options: { create?: boolean; mode?: number; writable?: boolean } = {},
 ): OpenRegularFile {
   if (typeof fs.constants.O_NOFOLLOW !== "number") {
     throw new Error("O_NOFOLLOW is unavailable");
   }
+  if (options.create && !options.writable) {
+    throw new Error("creating a regular file requires writable access");
+  }
   const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
   const access = options.writable ? fs.constants.O_RDWR : fs.constants.O_RDONLY;
-  const descriptor = fs.openSync(target, access | fs.constants.O_NOFOLLOW | nonblock);
+  const create = options.create ? fs.constants.O_CREAT | fs.constants.O_EXCL : 0;
+  const descriptor = fs.openSync(
+    target,
+    access | create | fs.constants.O_NOFOLLOW | nonblock,
+    options.mode ?? 0o600,
+  );
   let closed = false;
   const close = () => {
     if (closed) return;
     closed = true;
     fs.closeSync(descriptor);
   };
+  const assertPathIdentity = () => {
+    const descriptorStats = fs.fstatSync(descriptor);
+    const pathStats = fs.lstatSync(target);
+    if (
+      !descriptorStats.isFile() ||
+      descriptorStats.nlink !== 1 ||
+      pathStats.isSymbolicLink() ||
+      !pathStats.isFile() ||
+      pathStats.nlink !== 1 ||
+      descriptorStats.dev !== pathStats.dev ||
+      descriptorStats.ino !== pathStats.ino
+    ) {
+      throw new Error(`regular file changed during validation: ${target}`);
+    }
+  };
   try {
-    if (!fs.fstatSync(descriptor).isFile()) {
+    const descriptorStats = fs.fstatSync(descriptor);
+    if (!descriptorStats.isFile()) {
       throw new Error("path is not a regular file");
     }
+    if (descriptorStats.nlink !== 1) {
+      throw new Error(`regular file changed during validation: ${target}`);
+    }
+    assertPathIdentity();
   } catch (error) {
     close();
     throw error;
@@ -47,11 +75,13 @@ export function openRegularFileNoFollow(
       return bytes.subarray(0, offset).toString("utf-8");
     },
     replaceUtf8: (contents, mode) => {
+      assertPathIdentity();
       const bytes = Buffer.from(contents, "utf-8");
       const written = fs.writeSync(descriptor, bytes, 0, bytes.length, 0);
       if (written !== bytes.length) throw new Error("short write while replacing file");
       fs.ftruncateSync(descriptor, bytes.length);
       fs.fchmodSync(descriptor, mode);
+      assertPathIdentity();
     },
   };
 }

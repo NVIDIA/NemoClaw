@@ -1367,8 +1367,97 @@ install_nemoclaw_openshell_gateway_user_service() {
   if ! {
     mkdir -p "$service_dir" \
       && chmod 700 "$service_dir" \
-      && sed "s|@OPENSHELL_GATEWAY_BIN@|${gateway_bin}|g" "$service_template" >"$service_path" \
-      && chmod 600 "$service_path"
+      && node - "$service_path" "$service_template" "$gateway_bin" "$NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE" <<'NODE'
+const fs = require("node:fs");
+
+const [servicePath, templatePath, gatewayBin, managedMarker] = process.argv.slice(2);
+const noFollow = fs.constants.O_NOFOLLOW;
+const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+
+if (typeof noFollow !== "number") {
+  console.error("O_NOFOLLOW is unavailable");
+  process.exit(1);
+}
+
+function errnoCode(error) {
+  return error && typeof error === "object" && "code" in error ? String(error.code) : null;
+}
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function openServiceFile() {
+  try {
+    return fs.openSync(servicePath, fs.constants.O_RDWR | noFollow | nonblock);
+  } catch (error) {
+    if (errnoCode(error) === "ELOOP") {
+      fail(`Refusing to replace symlinked OpenShell gateway user service: ${servicePath}`);
+    }
+    if (errnoCode(error) !== "ENOENT") throw error;
+  }
+
+  try {
+    return fs.openSync(
+      servicePath,
+      fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow | nonblock,
+      0o600,
+    );
+  } catch (error) {
+    if (errnoCode(error) === "ELOOP" || errnoCode(error) === "EEXIST") {
+      fail(
+        `Refusing to replace OpenShell gateway user service because it changed during validation: ${servicePath}`,
+      );
+    }
+    throw error;
+  }
+}
+
+function assertServiceIdentity(descriptor) {
+  const opened = fs.fstatSync(descriptor);
+  const current = fs.lstatSync(servicePath);
+  if (
+    !opened.isFile() ||
+    opened.nlink !== 1 ||
+    current.isSymbolicLink() ||
+    !current.isFile() ||
+    current.nlink !== 1 ||
+    opened.dev !== current.dev ||
+    opened.ino !== current.ino
+  ) {
+    fail(
+      `Refusing to replace OpenShell gateway user service because it changed during validation: ${servicePath}`,
+    );
+  }
+}
+
+let descriptor;
+try {
+  descriptor = openServiceFile();
+  assertServiceIdentity(descriptor);
+  const existing = fs.readFileSync(descriptor, "utf8");
+  if (existing && !existing.split(/\r?\n/u).includes(managedMarker)) {
+    fail(`Refusing to replace non-NemoClaw OpenShell gateway user service: ${servicePath}`);
+  }
+  const contents = fs
+    .readFileSync(templatePath, "utf8")
+    .replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBin);
+  assertServiceIdentity(descriptor);
+  const bytes = Buffer.from(contents, "utf8");
+  const written = fs.writeSync(descriptor, bytes, 0, bytes.length, 0);
+  if (written !== bytes.length) {
+    fail("Short write while installing OpenShell gateway user service");
+  }
+  fs.ftruncateSync(descriptor, bytes.length);
+  fs.fchmodSync(descriptor, 0o600);
+  assertServiceIdentity(descriptor);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+} finally {
+  if (descriptor !== undefined) fs.closeSync(descriptor);
+}
+NODE
   }; then
     error "Could not install OpenShell gateway user service at $service_path"
   fi

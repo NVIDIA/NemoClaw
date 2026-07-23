@@ -167,6 +167,51 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     }
   });
 
+  it("rejects an env file swapped to a symlink after opening without writing its target", () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    const envDir = path.join(tempHome, ".config", "openshell");
+    const envFile = path.join(envDir, "gateway.env");
+    const targetFile = path.join(tempHome, "foreign.env");
+    fs.mkdirSync(envDir, { recursive: true });
+    fs.writeFileSync(envFile, "KEEP_ME=1\n");
+    fs.writeFileSync(targetFile, "FOREIGN=1\n");
+
+    const existsSpy = vi
+      .spyOn(fs, "existsSync")
+      .mockImplementation(
+        (candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service",
+      );
+    const openSync = fs.openSync.bind(fs);
+    let swapped = false;
+    const openSpy = vi.spyOn(fs, "openSync").mockImplementation(((...args) => {
+      const descriptor = openSync(...(args as Parameters<typeof fs.openSync>));
+      if (!swapped && args[0] === envFile) {
+        fs.unlinkSync(envFile);
+        fs.symlinkSync(targetFile, envFile);
+        swapped = true;
+      }
+      return descriptor;
+    }) as typeof fs.openSync);
+
+    try {
+      expect(() =>
+        writeDockerGatewayDebEnvOverride(
+          () => ({
+            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+          }),
+          { env: homeEnv(tempHome), platform: "linux" },
+        ),
+      ).toThrow("regular file changed during validation");
+
+      expect(fs.lstatSync(envFile).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(targetFile, "utf-8")).toBe("FOREIGN=1\n");
+    } finally {
+      openSpy.mockRestore();
+      existsSpy.mockRestore();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
   it("does not write service env for standalone gateway binaries", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const existsSpy = vi

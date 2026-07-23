@@ -10,6 +10,26 @@ import { describe, expect, it } from "vitest";
 import { openRegularFileNoFollow } from "./regular-file";
 
 describe("regular file adapter", () => {
+  it("creates and replaces a private regular file through one descriptor", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-regular-file-"));
+    const filePath = path.join(tmp, "gateway.env");
+
+    try {
+      const file = openRegularFileNoFollow(filePath, {
+        create: true,
+        mode: 0o600,
+        writable: true,
+      });
+      file.replaceUtf8("created\n", 0o600);
+      file.close();
+
+      expect(fs.readFileSync(filePath, "utf-8")).toBe("created\n");
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("reads and replaces a regular file through one descriptor", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-regular-file-"));
     const filePath = path.join(tmp, "gateway.env");
