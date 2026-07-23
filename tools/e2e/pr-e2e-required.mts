@@ -421,7 +421,7 @@ async function main(): Promise<void> {
     baseSha: requiredArgument(args.base, "base"),
   };
   const timeoutSeconds = parsePositiveInteger(args.timeoutSeconds, "timeout-seconds");
-  if (timeoutSeconds > 10_200) throw new Error("--timeout-seconds must not exceed 10200");
+  if (timeoutSeconds > 21_480) throw new Error("--timeout-seconds must not exceed 21480");
   const result = await waitForRequiredGate(identity, { timeoutMs: timeoutSeconds * 1000 });
   appendJobSummary();
   console.log(`E2E / PR Gate completed: ${formatRequiredGateOutcome(result)}`);

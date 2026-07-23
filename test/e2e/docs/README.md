@@ -50,12 +50,16 @@ Live execution happens through shared fixtures:
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
 - The automatic `progress` fixture reports the ordered semantic phase plan for
-  each `e2e-live` case. Normal output contains phase transitions, outcomes, and
-  durations. The harness appends `release registered E2E resources` to cover
-  registered cleanup. After five minutes in one phase, a content-free stall
-  diagnostic adds child-output age, current redacted command activity, and
+  each `e2e-live` case. Normal output contains the target/scenario identity,
+  immediate phase starts and completions, and phase plus total durations. The
+  harness appends `release registered E2E resources` to cover registered
+  cleanup. After five minutes in one phase, a content-free stall diagnostic
+  adds child-output age, current redacted command or cleanup activity, and
   runner resources; it repeats every ten minutes while the phase remains
   active.
+- Credential-free integration tests selected by the shared E2E planner use the
+  lightweight `workflow-e2e-test` fixture for the same progress and artifact
+  contract without depending on the stateful live fixture services.
 
 The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
@@ -78,7 +82,7 @@ npx tsx test/e2e/registry/run.ts --emit-live-matrix --targets ubuntu-repo-cloud-
 # Fixture/support tests
 npx vitest run --project e2e-support --silent=false --reporter=default
 
-# Validate every live test's semantic phase metadata without running live bodies
+# Validate every live test and workflow-selected integration test without running bodies
 npm run test:e2e-phases:check
 
 # Opt-in live E2E targets
@@ -103,36 +107,45 @@ groups those files by target, optional shard, and test name, then reports
 median, p95, maximum, p95-minus-median variability, and the slowest observed
 phase with its duration and outcome. Scheduled and ordinary manual workflows
 publish the current run's table in the GitHub Actions scorecard summary. The
-summary reads the matrix identity from `E2E_TARGET_ID` and
-`NEMOCLAW_E2E_SHARD` when set. It retains overall start, finish, and duration,
-and records each declared or harness-owned phase's start, finish, duration,
-outcome, output-event count, and last-output timestamp. Use several recent
-workflow artifact directories to distinguish a consistently expensive test
-from a variable one.
+summary reads the target identity from `E2E_TARGET_ID`, falling back to the
+Actions `GITHUB_JOB`, and reads `NEMOCLAW_E2E_SHARD` when set. It retains
+overall start, finish, and duration, and records each declared or harness-owned
+phase's start, finish, duration, outcome, child-output event count, and
+last-output timestamp. Use several recent workflow artifact directories to
+distinguish a consistently expensive test from a variable one.
 
-Normal phase output intentionally omits test identity and test-level timing
-because Vitest and GitHub Actions already provide them. It reports the current
-position and semantic label, then the outcome and duration when that phase
-ends:
+Normal phase output repeats the workflow target and test scenario because a
+long-running Actions step may not expose Vitest's final report yet. It reports
+the current position and semantic label, total and phase elapsed time, and the
+outcome when that phase ends:
 
 ```text
-[e2e phase 1/4] provision a clean sandbox
-[e2e phase 1/4] provision a clean sandbox — passed in 48s; next 2/4: exercise token rotation
-[e2e phase 2/4] still running: exercise token rotation (phase 5m; child output 12s ago; activity command: rotate-token; ...)
-[e2e phase 3/4] verify the rotated credential — passed in 9s; next 4/4: release registered E2E resources
-[e2e phase 4/4] release registered E2E resources — passed in 6s
+[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 1/4] started: provision a clean sandbox (total 0s; phase 0s)
+[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 1/4] completed: provision a clean sandbox — passed in 48s (total 48s)
+[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 2/4] still running: exercise token rotation (total 5m 48s; phase 5m; child output 12s ago; activity command: credential-rotation; ...)
+[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 4/4] event: cleanup started: destroy sandbox e2e-token-rotation (total 6m; phase 0s)
+[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 4/4] completed: release registered E2E resources — passed in 6s (total 6m 6s)
 ```
 
 The `still running` line first appears after five minutes in the same phase and
 then every ten minutes. Shell probes update child-output liveness and redacted
 command activity automatically, but that detail remains hidden until the stall
-threshold. The progress fixture never forwards child output contents.
-The harness-owned final phase captures registered cleanup duration, failures,
-and stalls. Soft assertion failures are recorded against the semantic phase
-where they occurred, while successful resource release retains its own
-`passed` outcome.
+threshold. Automatic child-output observation forwards only the event timestamp
+and stream name, never the output contents.
+Use `progress.event("literal content-free status")` only for immediate semantic
+events such as an operation timeout, retry cleanup, backoff, or the next
+attempt. Event labels are logged, so never include child output, request data,
+credentials, or tokens.
+For the stateful live fixture, the harness-owned final phase captures registered
+cleanup duration, failures, and stalls; each registry entry reports a redacted
+start/outcome event and is shown as the active cleanup operation in a stall
+heartbeat. Workflow-selected integration tests declare their own final release
+phase. Soft assertion failures are recorded against the semantic phase where
+they occurred, while successful resource release retains its own `passed`
+outcome.
 
-Every `e2e-live` test must declare two to twelve behavior-specific phases and
+Every `e2e-live` test and every credential-free integration test selected by
+the shared E2E planner must declare two to twelve behavior-specific phases and
 transition through them in order. For example:
 
 ```typescript
@@ -168,10 +181,31 @@ attribute it to that case. A helper may own the operational boundary by
 accepting a callback that performs the transition.
 Completed phases use `passed`, `failed`, or `skipped` outcomes. A passing path
 must enter the final declared phase before returning, or fixture teardown fails
-the test. Do not declare or enter `release registered E2E resources`; the
-harness appends and enters it automatically after the test's phase plan.
-`npm run test:e2e-phases:check` collects the `e2e-live` project and rejects
-missing or invalid plans without executing live test bodies.
+the test. In `e2e-live`, do not declare or enter
+`release registered E2E resources`; the stateful harness appends and enters it
+automatically after the test's phase plan. Workflow-selected integration tests
+own and enter their final release phase.
+`npm run test:e2e-phases:check` collects every `e2e-live` module plus the
+workflow-selected integration modules from the authoritative shared-job plan.
+It rejects missing or invalid plans without executing test bodies. Live modules
+must import `fixtures/e2e-test.ts`; selected integration modules must import
+`fixtures/workflow-e2e-test.ts` and declare their final release phase explicitly.
+The same check audits direct child-process boundaries reachable through shared
+E2E helpers. Prefer `ShellProbe`; a long-lived process that cannot use it must
+live in an explicitly audited progress-aware boundary, close its activity on
+exit, and report child output only as `{ stream, atMs }`. Blocking child-process
+calls require a positive timeout shorter than the first heartbeat plus
+`killSignal: "SIGKILL"`, so that timeout cannot be ignored. Raw output belongs
+only in redacted artifacts.
+
+Audited subprocess helpers require the fixture-provided frozen, canonical
+`progress` capability. Forward that exact object unchanged instead of copying
+it or constructing a look-alike or no-op adapter. A module-private brand,
+runtime registry, frozen-object check, type system, and semantic checker enforce
+this boundary.
+
+Progress callbacks are diagnostic-only: callback failures must not change
+command execution, test outcomes, or registered resource release.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
@@ -229,6 +263,12 @@ test/e2e/
   live E2E targets and uploads an explicit artifact allowlist with
   JSON summaries plus action, log, and shell command-evidence directories under
   14-day retention.
+  Final OpenShell gateway-auth artifacts pass a fail-closed safety scan after
+  cleanup. The scanner copies safe files into a private staging directory,
+  scans that copy again, and adds a marker bound to the current Actions run ID
+  and attempt. Unsafe source files are quarantined or deleted. The workflow
+  uploads only the staged copy, so later changes to the source directory cannot
+  alter the approved payload.
   The allowlist includes each target's sanitized onboard timing summary at
   `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
   Raw onboard traces stay under the runner temporary directory and are deleted

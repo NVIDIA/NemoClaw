@@ -76,6 +76,8 @@ process.stdout.write(JSON.stringify({
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        killSignal: "SIGKILL",
+        timeout: 60_000,
       },
     );
     progress.phase("confirm the shipping version wins range selection");
@@ -372,6 +374,8 @@ async function runVersionPinTarget(
         PATH: `${fakeBin}:/usr/bin:/bin`,
       },
       encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 60_000,
     });
 
     // Persist the install transcript so failures can be diagnosed without
@@ -409,6 +413,8 @@ async function runVersionPinTarget(
     // there and it is writable) was overwritten with the pinned 0.0.85 build.
     const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
       encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 30_000,
     });
     expect(replacedVersion.status).toBe(0);
     expect(replacedVersion.stdout).toContain("0.0.85");
