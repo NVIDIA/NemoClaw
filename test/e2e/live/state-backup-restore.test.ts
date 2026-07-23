@@ -127,12 +127,24 @@ async function destroySandboxUntilAbsent(
 
 test("state-backup-restore: backup-workspace.sh restores workspace files and memory directory", {
   timeout: TEST_TIMEOUT_MS,
+  meta: {
+    e2ePhases: [
+      "confirm Docker and the workspace backup script",
+      "onboard the source sandbox",
+      "write workspace and memory markers",
+      "capture and inspect the host backup",
+      "destroy and re-onboard the sandbox",
+      "restore the backup into the fresh sandbox",
+      "validate restored workspace and memory",
+    ],
+  },
 }, async ({
   artifacts,
   cleanup,
   environment,
   host,
   onboard,
+  progress,
   sandbox,
   secrets,
   skip,
@@ -224,6 +236,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
     onboarding: "cloud-openclaw",
   });
 
+  progress.phase("onboard the source sandbox");
   let instance: NemoClawInstance;
   try {
     instance = await onboard.from(ready, {
@@ -243,6 +256,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
     throw error;
   }
 
+  progress.phase("write workspace and memory markers");
   const markerContent = `E2E_BACKUP_TEST_${Date.now()}`;
   const expectations: BackupExpectation[] = WORKSPACE_FILES.map((file) => ({
     relativePath: file,
@@ -270,6 +284,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
     memoryFilesWritten: 1,
   });
 
+  progress.phase("capture and inspect the host backup");
   const beforeBackupDirs = new Set(listBackupDirs());
   const backup = await host.command(
     "bash",
@@ -318,6 +333,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
     "TC-STATE-01: BackupCaptureDir — memory file must contain expected marker",
   ).toBe(true);
 
+  progress.phase("destroy and re-onboard the sandbox");
   await destroySandboxUntilAbsent(
     SANDBOX_NAME,
     (artifactName) => onboard.destroySandbox(SANDBOX_NAME, artifactName),
@@ -355,6 +371,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
     sandboxName: restoredInstance.sandboxName,
   });
 
+  progress.phase("restore the backup into the fresh sandbox");
   const restore = await host.command(
     "bash",
     [path.join(REPO_ROOT, "scripts", "backup-workspace.sh"), "restore", SANDBOX_NAME],
@@ -373,6 +390,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   }
   await artifacts.writeText("phase-5-restore-output.txt", restoreText);
 
+  progress.phase("validate restored workspace and memory");
   let restoredFiles = 0;
   const mismatches: Array<{ file: string; actual: string }> = [];
   for (const file of WORKSPACE_FILES) {

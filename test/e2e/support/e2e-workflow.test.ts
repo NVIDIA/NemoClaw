@@ -38,6 +38,30 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("rejects staging Launchable protected-environment and secret-guard drift", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          if?: string;
+          environment?: Record<string, unknown>;
+          steps?: Array<{ env?: Record<string, string>; name?: string }>;
+        }
+      >;
+    };
+    const job = workflow.jobs["staging-brev-launchable"]!;
+    job.environment = { name: "unprotected" };
+    const prepare = job.steps!.find((step) => step.name === "Prepare the trusted lane")!;
+    prepare.env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "staging-brev-launchable must use its protected non-deployment environment",
+        "staging-brev-launchable BREV_API_KEY must use the trusted-run secret guard",
+      ]),
+    );
+  });
+
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
