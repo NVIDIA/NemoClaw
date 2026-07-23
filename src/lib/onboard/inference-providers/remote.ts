@@ -6,14 +6,14 @@
 // onboard.setupInference (#767). Bedrock Runtime is delegated to
 // `onboard/bedrock-runtime.ts` exactly as the inline branch did.
 
-import * as inferenceConfig from "../../inference/config";
+import * as inference from "../../inference/config";
 import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
-import { prepareCompatibleEndpointNoAuthProxy } from "../../inference/ollama/proxy";
+import { noAuthProxy as noAuth } from "../../inference/ollama/proxy";
 import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
 import {
-  gatewayReachableCompatibleEndpointUrl as gatewayUrl,
+  gatewayReachableCompatibleEndpointUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
 } from "./compatible-endpoint-gateway-route";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
@@ -239,12 +239,14 @@ export async function setupRemoteProviderInference(
     (deleteProviderWithRecovery as unknown as NonNullable<
       RemoteProviderDeps["deleteGatewayProvider"]
     >);
-  const noAuth = credentialEnv === inferenceConfig.OLLAMA_LOCAL_CREDENTIAL_ENV;
-  const noAuthProxy = noAuth ? prepareCompatibleEndpointNoAuthProxy(endpointUrl!) : null;
+  const proxy =
+    credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV ? noAuth(endpointUrl!) : null;
+  if (proxy) process.env[credentialEnv!] = proxy.credentialValue;
   while (true) {
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
-    const gatewayEndpointUrl = noAuthProxy?.baseUrl ?? gatewayUrl(provider, resolvedEndpointUrl);
+    const gatewayEndpointUrl =
+      proxy?.baseUrl ?? gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
     let providerResult;
     if (reuseGatewayCredentialWithoutLocalKey) {
       providerResult = reuseRegisteredProviderWithGatewayEndpoint({
@@ -257,8 +259,7 @@ export async function setupRemoteProviderInference(
         upsertProvider,
       });
     } else {
-      const credentialValue =
-        noAuthProxy?.credentialValue ?? hydrateCredentialEnv(resolvedCredentialEnv);
+      const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
       const env =
         resolvedCredentialEnv && credentialValue
           ? { [resolvedCredentialEnv]: credentialValue }
@@ -276,7 +277,7 @@ export async function setupRemoteProviderInference(
         // already end in /v1. Re-add the suffix so the probe and the runtime
         // route exercise the identical URL.
         const openAiSurfaceBaseUrl =
-          inferenceConfig.getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
+          inference.getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
         const surfaceProbe = await probeOpenAiSurface(
           openAiSurfaceBaseUrl,
           model,

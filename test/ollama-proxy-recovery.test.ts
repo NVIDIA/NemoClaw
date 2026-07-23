@@ -19,7 +19,7 @@ function parseStdoutJson<T>(stdout: string): T {
 }
 
 describe("ollama auth proxy recovery", () => {
-  it("restarts the proxy from the persisted token when the recorded pid is stale", () => {
+  it("restarts with the persisted token and compatible backend when the pid is stale (#7424)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-restart-"));
     const scriptPath = path.join(tmpDir, "restart-proxy-check.js");
@@ -43,6 +43,7 @@ childProcess.spawn = (cmd, args, opts = {}) => {
       OLLAMA_PROXY_TOKEN: opts.env && opts.env.OLLAMA_PROXY_TOKEN,
       OLLAMA_PROXY_PORT: opts.env && opts.env.OLLAMA_PROXY_PORT,
       OLLAMA_BACKEND_PORT: opts.env && opts.env.OLLAMA_BACKEND_PORT,
+      OLLAMA_BACKEND_URL: opts.env && opts.env.OLLAMA_BACKEND_URL,
     },
   });
   return { pid: 4242, unref() {} };
@@ -66,6 +67,7 @@ childProcess.spawnSync = (...args) => {
 const stateDir = path.join(process.env.HOME, ".nemoclaw");
 fs.mkdirSync(stateDir, { recursive: true });
 fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "persisted-token\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:8000\n", { mode: 0o600 });
 fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "99999\n", { mode: 0o600 });
 
 const onboard = require(${onboardPath});
@@ -98,6 +100,7 @@ console.log(JSON.stringify({
           OLLAMA_PROXY_TOKEN: string;
           OLLAMA_PROXY_PORT: string;
           OLLAMA_BACKEND_PORT: string;
+          OLLAMA_BACKEND_URL: string;
         };
       }>;
       pid: string;
@@ -111,6 +114,7 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_TOKEN, "persisted-token");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_PORT, "11435");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_PORT, "11434");
+    assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_URL, "http://127.0.0.1:8000");
   });
 
   it("keeps the existing proxy when the recorded pid still points to the auth proxy", () => {
@@ -384,11 +388,10 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_PORT, "11434");
   });
 
-  it("persists the proxy token at mode 0600 matching the running token (#2553)", () => {
-    // startOllamaAuthProxy() mints an in-memory token; persistProxyToken() is
-    // the seam that writes it to disk. Assert the on-disk file (a) exists at
-    // mode 0600 and (b) matches the token the runner reports as current — the
-    // token-file invariant otherwise only exercised by the live E2E (phase 7).
+  it("persists compatible backend and token state for restart recovery (#7424)", () => {
+    // The compatible no-auth flow persists both restart inputs after startup.
+    // Assert that the backend round-trips and that the token file remains 0600
+    // with contents matching the running proxy.
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-persist-"));
     const scriptPath = path.join(tmpDir, "persist-token-check.js");
@@ -425,16 +428,15 @@ childProcess.spawnSync = (...args) => {
 };
 
 const proxy = require(${proxyPath});
-const started = proxy.startOllamaAuthProxy();
-// startOllamaAuthProxy intentionally holds the token in memory only; the
-// onboarding flow persists it once the provider is confirmed. Exercise that seam.
+const prepared = proxy.noAuthProxy("http://127.0.0.1:8000/v1");
 const running = proxy.getOllamaProxyToken();
-proxy.persistProxyToken(running);
 
 const tokenPath = path.join(process.env.HOME, ".nemoclaw", "ollama-proxy-token");
+const backendPath = path.join(process.env.HOME, ".nemoclaw", "ollama-backend");
 const stat = fs.statSync(tokenPath);
 console.log(JSON.stringify({
-  started,
+  prepared,
+  backendUrl: fs.readFileSync(backendPath, "utf8").trim(),
   mode: (stat.mode & 0o777).toString(8),
   fileToken: fs.readFileSync(tokenPath, "utf8").trim(),
   runningToken: running,
@@ -454,12 +456,15 @@ console.log(JSON.stringify({
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
-      started: boolean;
+      prepared: { baseUrl: string; credentialValue: string };
+      backendUrl: string;
       mode: string;
       fileToken: string;
       runningToken: string;
     }>(result.stdout);
-    assert.equal(payload.started, true);
+    assert.equal(payload.prepared.baseUrl, "http://host.openshell.internal:11435/v1");
+    assert.equal(payload.prepared.credentialValue, payload.runningToken);
+    assert.equal(payload.backendUrl, "http://127.0.0.1:8000");
     // Token file is 0600 and its contents match the running token.
     assert.equal(payload.mode, "600");
     assert.ok(payload.fileToken.length > 0, "expected a non-empty persisted token");

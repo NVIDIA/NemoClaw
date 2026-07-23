@@ -61,7 +61,8 @@ function sleep(seconds: number): void {
 
 // ── Token persistence ────────────────────────────────────────────
 
-function persistProxyToken(token: string): void {
+function persistProxyToken(token: string, backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`): void {
+  writeLocalAdapterSecretFile(path.join(PROXY_STATE_DIR, "ollama-backend"), backendUrl);
   writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
 }
 
@@ -140,13 +141,14 @@ function isOllamaProxyProcess(pid: number | null | undefined): boolean {
 }
 
 function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null {
+  const url = backendUrl || readLocalAdapterTextFile(path.join(PROXY_STATE_DIR, "ollama-backend"));
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
     env: {
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
-      ...(backendUrl ? { OLLAMA_BACKEND_URL: backendUrl } : {}),
+      ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
     },
     buildEnv: buildSubprocessEnv,
   });
@@ -275,7 +277,7 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
   // Don't persist yet — wait until provider is confirmed in setupInference.
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
-  const pid = spawnOllamaAuthProxy(proxyToken, backendUrl);
+  const pid = spawnOllamaAuthProxy(proxyToken, backendUrl || `http://127.0.0.1:${OLLAMA_PORT}`);
 
   // Poll for readiness with backoff. Three terminal outcomes:
   //   • proxy alive and listening → success
@@ -314,10 +316,11 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
   return false;
 }
 
-function prepareCompatibleEndpointNoAuthProxy(endpointUrl: string) {
+function noAuthProxy(endpointUrl: string) {
   const endpoint = new URL(endpointUrl);
   if (!startOllamaAuthProxy(endpoint.origin))
     throw new Error("Could not start the protected loopback route.");
+  persistProxyToken(getOllamaProxyToken()!, endpoint.origin);
   // biome-ignore format: keep the proxy route and its token together.
   return { baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`, credentialValue: getOllamaProxyToken()! };
 }
@@ -980,9 +983,9 @@ export {
   getOllamaPullTimeoutMs,
   isProxyHealthy,
   killStaleProxy,
+  noAuthProxy,
   persistAndProbeOllamaProxy,
   persistProxyToken,
-  prepareCompatibleEndpointNoAuthProxy,
   prepareOllamaModel,
   printOllamaExposureWarning,
   probeOllamaAuthProxyHealth,
