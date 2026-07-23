@@ -85,7 +85,10 @@ export interface GatewayHostRuntime {
    * Fail before the caller can start a gateway that an external supervisor
    * owns. Applies to onboarding, rebuild, and recovery alike.
    */
-  assertGatewayStartAllowed(exitOnFailure: boolean): void;
+  assertGatewayStartAllowed(
+    exitOnFailure: boolean,
+    target?: { gatewayName: string; gatewayPort: number },
+  ): void;
   attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
   bindGatewayOwner(owner: GatewayOwner): void;
   /** HTTPS endpoint of the gateway this process operates. */
@@ -107,6 +110,19 @@ export interface GatewayHostRuntime {
 export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayHostRuntime {
   let boundOwner: GatewayOwner | null = null;
 
+  function resolveCurrentGatewayOwner(gatewayName: string, gatewayPort: number): GatewayOwner {
+    const loaded = loadGatewayManagementDeclaration();
+    if (!loaded.ok) {
+      throw new Error(`Invalid gateway management declaration: ${loaded.reason}`);
+    }
+    return resolveGatewayOwner({
+      gatewayName,
+      gatewayPort,
+      declaration: loaded.declaration,
+      hasPackagedService: hasOpenShellGatewayUserService(),
+    });
+  }
+
   /**
    * Resolve the one gateway lifecycle authority for this run. A malformed
    * declaration throws instead of degrading to self-management: a host that
@@ -121,17 +137,13 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
    * migration, not something a mutating file can do underneath a running
    * onboard (#6576).
    */
-  function getGatewayOwner(): GatewayOwner {
-    const loaded = loadGatewayManagementDeclaration();
-    if (!loaded.ok) {
-      throw new Error(`Invalid gateway management declaration: ${loaded.reason}`);
-    }
-    const resolved = resolveGatewayOwner({
+  function getGatewayOwnerForTarget(
+    target: { gatewayName: string; gatewayPort: number } = {
       gatewayName: deps.gatewayName(),
       gatewayPort: deps.gatewayPort(),
-      declaration: loaded.declaration,
-      hasPackagedService: hasOpenShellGatewayUserService(),
-    });
+    },
+  ): GatewayOwner {
+    const resolved = resolveCurrentGatewayOwner(target.gatewayName, target.gatewayPort);
     if (boundOwner) {
       if (!sameGatewayOwner(boundOwner, resolved)) {
         throw new Error(
@@ -144,6 +156,10 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     }
     boundOwner = resolved;
     return boundOwner;
+  }
+
+  function getGatewayOwner(): GatewayOwner {
+    return getGatewayOwnerForTarget();
   }
 
   function isSupervisorUnitActive(owner: GatewayOwner): boolean | null {
@@ -306,9 +322,12 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     };
   }
 
-  function assertGatewayStartAllowed(exitOnFailure: boolean): void {
+  function assertGatewayStartAllowed(
+    exitOnFailure: boolean,
+    target?: { gatewayName: string; gatewayPort: number },
+  ): void {
     try {
-      assertGatewayEffectAllowed(getGatewayOwner(), "start");
+      assertGatewayEffectAllowed(getGatewayOwnerForTarget(target), "start");
     } catch (error) {
       console.error(`  ${error instanceof Error ? error.message : String(error)}`);
       if (exitOnFailure) process.exit(1);

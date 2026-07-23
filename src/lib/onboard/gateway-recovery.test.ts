@@ -296,10 +296,13 @@ describe("gateway lifecycle authority during recovery", () => {
     // The cross-port, non-default-name target is the branch that reaches a raw
     // `openshell gateway start` without going through startGatewayWithOptions.
     await expect(
-      startGatewayForRecovery({ gatewayName: "other", gatewayPort: 8080 }, deps),
+      startGatewayForRecovery({ gatewayName: "nemoclaw-8090", gatewayPort: 8090 }, deps),
     ).rejects.toThrow(ownershipError);
 
-    expect(deps.assertGatewayStartAllowed).toHaveBeenCalledWith(false);
+    expect(deps.assertGatewayStartAllowed).toHaveBeenCalledWith(false, {
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+    });
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
   });
@@ -309,7 +312,10 @@ describe("gateway lifecycle authority during recovery", () => {
 
     await startGatewayForRecovery({}, deps);
 
-    expect(deps.assertGatewayStartAllowed).toHaveBeenCalledWith(false);
+    expect(deps.assertGatewayStartAllowed).toHaveBeenCalledWith(false, {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
     expect(deps.startGatewayWithOptions).toHaveBeenCalledOnce();
   });
 });

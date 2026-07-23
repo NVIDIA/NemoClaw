@@ -93,6 +93,17 @@ describe("gateway host runtime ownership", () => {
     );
   });
 
+  it("binds a recovery guard to its explicit gateway target (#6576)", () => {
+    const runtime = createGatewayHostRuntime(createDeps());
+
+    runtime.assertGatewayStartAllowed(false, {
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+    });
+
+    expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
+  });
+
   it("fails closed on a malformed declaration rather than self-managing (#6576)", () => {
     declareExternalSupervision({ ...DECLARATION, version: 99 });
 
