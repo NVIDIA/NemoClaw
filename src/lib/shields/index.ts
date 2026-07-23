@@ -764,9 +764,7 @@ function ensureConfigHashSensitiveFile<T extends AgentConfigTarget>(target: T): 
   return { ...target, sensitiveFiles: [...sensitiveFiles, hashPath] } as T;
 }
 
-const {
-  DeferredShieldsExit,
-}: typeof import("./deferred-exit") = require("./deferred-exit");
+const { DeferredShieldsExit }: typeof import("./deferred-exit") = require("./deferred-exit");
 
 function failShieldsCommand(message: string, _shouldThrow?: boolean): never {
   // Never terminate while a transition-lock callback is active: process.exit
