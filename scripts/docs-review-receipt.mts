@@ -180,7 +180,7 @@ function evaluateReceipt(
   const { codeChanged, docsChanged } = changes;
   const issues: string[] = [];
 
-  if (codeChanged === null) {
+  if (codeChanged === null || docsChanged === null) {
     issues.push("The PR description does not select one code or documentation-only change type.");
     return {
       agent: parsed.agent,
@@ -199,7 +199,7 @@ function evaluateReceipt(
     };
   }
 
-  if (!codeChanged) {
+  if (!codeChanged && !docsChanged) {
     return {
       agent: parsed.agent,
       agentsBlobSha: parsed.agentsBlobSha,
@@ -218,7 +218,9 @@ function evaluateReceipt(
   }
 
   if (!parsed.present) {
-    issues.push("Code-changing PRs must include the Documentation Writer Review section.");
+    issues.push(
+      "Pull requests that change code or documentation must include the Documentation Writer Review section.",
+    );
   } else {
     if (parsed.duplicateSections) {
       issues.push("The PR description contains more than one Documentation Writer Review section.");
@@ -266,7 +268,7 @@ function evaluateReceipt(
     ? headPrSha.toLowerCase().startsWith(parsed.reviewedHeadSha)
     : null;
   if (headShaMatches === false) {
-    issues.push("The documentation writer review is stale after a new implementation commit.");
+    issues.push("The documentation writer review is stale after a new commit.");
   }
 
   const normalizedAgentsBlob = expectedAgentsBlob?.trim().toLowerCase();
@@ -320,9 +322,9 @@ function parseReceipt(body: string): ParsedReceipt {
   const section = remaining.slice(0, nextHeading?.index ?? remaining.length);
   const lines = section.split(/\r?\n/u).map((line) => line.trim());
   const reviewCheckboxPattern =
-    /^- \[[ xX]\] Documentation writer subagent reviewed the completed implementation$/u;
+    /^- \[[ xX]\] Documentation writer subagent reviewed the completed (?:changes|implementation)$/u;
   const completionPattern =
-    /^- \[[xX]\] Documentation writer subagent reviewed the completed implementation$/u;
+    /^- \[[xX]\] Documentation writer subagent reviewed the completed (?:changes|implementation)$/u;
   const duplicateFields = ["Result", "Evidence", "Agent", "PR"].filter(
     (name) => fieldValues(lines, name).length > 1,
   );
@@ -503,8 +505,16 @@ function formatDate(value: Date): string {
 }
 
 function buildReport(repository: string, since: string, through: string, records: ReportRecord[]) {
-  const eligible = records.filter((record) => record.codeChanged);
-  const unclassified = records.filter((record) => record.codeChanged === null);
+  const eligible = records.filter(
+    (record) => record.codeChanged === true || record.docsChanged === true,
+  );
+  const eligibleCode = eligible.filter((record) => record.codeChanged === true);
+  const eligibleDocsOnly = eligible.filter(
+    (record) => record.codeChanged === false && record.docsChanged === true,
+  );
+  const unclassified = records.filter(
+    (record) => record.codeChanged === null || record.docsChanged === null,
+  );
   const recorded = eligible.filter((record) => record.status !== "missing");
   const valid = eligible.filter((record) => record.status === "valid");
   const fresh = recorded.filter(
@@ -530,7 +540,9 @@ function buildReport(repository: string, since: string, through: string, records
     through,
     metrics: {
       totalPrs: records.length,
-      eligibleCodePrs: eligible.length,
+      eligiblePrs: eligible.length,
+      eligibleCodePrs: eligibleCode.length,
+      eligibleDocsOnlyPrs: eligibleDocsOnly.length,
       unclassifiedPrs: unclassified.length,
       recordedReceipts: recorded.length,
       receiptCoverage: ratio(recorded.length, eligible.length),
