@@ -229,7 +229,7 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     expect(f.establishRestoredSandboxGatewayPairingMock).toHaveBeenCalledWith("beta");
   });
 
-  it("fails with repair guidance when restored gateway pairing cannot be verified", async () => {
+  it("fails with repair guidance when restored gateway pairing cannot be verified (#7431)", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"

@@ -3,18 +3,14 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  establishRestoredSandboxGatewayPairing,
-  RESTORE_GATEWAY_PAIRING_VERIFY_SCRIPT,
-  RESTORE_GATEWAY_PAIRING_VERIFY_TIMEOUT_MS,
-} from "./restore-gateway-pairing";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("establishRestoredSandboxGatewayPairing", () => {
-  it("provokes the scope upgrade before approving it", () => {
+  it("provokes the scope upgrade before approving it (#7431)", () => {
     const order: string[] = [];
     const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
     const autoPairScopeApproval = vi.fn(() => order.push("approve"));
@@ -35,7 +31,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(order).toEqual(["warmup", "approve", "verify"]);
   });
 
-  it("fails when the pairing warm-up does not complete", () => {
+  it("fails when the pairing warm-up does not complete (#7431)", () => {
     const warmupScopeUpgrade = vi.fn(() => {
       throw new Error("gateway not up");
     });
@@ -53,7 +49,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
   });
 
-  it("fails when the authenticated verification run cannot use the restored gateway", () => {
+  it("fails when the authenticated verification run cannot use the restored gateway (#7431)", () => {
     expect(() =>
       establishRestoredSandboxGatewayPairing("beta", {
         warmupScopeUpgrade: vi.fn(),
@@ -61,15 +57,5 @@ describe("establishRestoredSandboxGatewayPairing", () => {
         verifyGatewayPairing: vi.fn(() => false),
       }),
     ).toThrow("authenticated gateway verification run did not succeed");
-  });
-
-  it("verifies the gateway without forcing a new pairing request", () => {
-    expect(RESTORE_GATEWAY_PAIRING_VERIFY_TIMEOUT_MS).toBe(30_000);
-    expect(RESTORE_GATEWAY_PAIRING_VERIFY_SCRIPT).toContain("openclaw agent --agent main --json");
-    expect(RESTORE_GATEWAY_PAIRING_VERIFY_SCRIPT).toContain("scope upgrade pending approval");
-    expect(RESTORE_GATEWAY_PAIRING_VERIFY_SCRIPT).toContain("transport");
-    expect(RESTORE_GATEWAY_PAIRING_VERIFY_SCRIPT).not.toContain(
-      "NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING",
-    );
   });
 });
