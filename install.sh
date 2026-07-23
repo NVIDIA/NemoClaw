@@ -105,6 +105,17 @@ exec_installer_from_ref() {
   NEMOCLAW_INSTALL_TAG="$ref" bash "$legacy_script" "$@"
 }
 
+require_supported_platform() {
+  # macOS ships only an Apple Silicon (aarch64) OpenShell gateway build, so an
+  # Intel Mac (x86_64 Darwin) install always fails once that binary is fetched.
+  # Reject it here, before any ref resolution or clone, so the user gets an
+  # actionable message instead of a mid-install failure and needless downloads.
+  if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "x86_64" ]]; then
+    printf "[ERROR] Apple Silicon (aarch64) is required on macOS. Intel Mac (x86_64) is not supported.\n" >&2
+    exit 1
+  fi
+}
+
 bootstrap_version() {
   printf "nemoclaw-installer\n"
 }
@@ -162,6 +173,8 @@ bootstrap_main() {
         ;;
     esac
   done
+
+  require_supported_platform
 
   local ref
   ref="$(resolve_release_tag)"
