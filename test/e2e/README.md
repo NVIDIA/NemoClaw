@@ -186,15 +186,17 @@ the deterministic risk plan.
 Runtime families and changes to workflow-wired live tests select
 canonical selectors from the trusted `e2e.yaml` inventory independently of
 advisor output. Ordinary internal changes execute those focused selections.
-Gate initialization and CI coordination share one non-cancelling concurrency
-group for the head repository and branch. Before the controller creates or
-updates coordination for the current revision, it reads the live PR and
-requires the event's PR SHA and base SHA, including when PR CI failed. The
-native observer performs the same live PR/base SHA check before waiting and
-again before accepting a terminal verdict. This keeps a stale seed, completed
-CI run, or observer from being applied to a newer PR/base SHA pair. A completed CI
-event for an older revision is handled without creating or updating the current
-revision's coordination check.
+Gate initialization, CI coordination, protected approval, and manual fork-skip
+recording share one non-cancelling FIFO concurrency group for the exact
+repository, PR number, PR SHA, and base SHA. `queue: max` keeps pending jobs for
+that exact identity instead of replacing them, up to GitHub's 100-job bound.
+Before the controller creates or updates coordination for the current revision,
+it reads the live PR and requires the event's PR SHA and base SHA, including
+when PR CI failed. The native observer performs the same live PR/base SHA check
+before waiting and again before accepting a terminal verdict. This keeps a
+stale seed, completed CI run, or observer from being applied to a newer PR/base
+SHA pair. A completed CI event for an older revision is handled without
+creating or updating the current revision's coordination check.
 If the older revision still has an in-progress coordination check, the
 controller completes it as cancelled with `Superseded by PR update` or
 `PR closed — gate no longer applies` and identifies the obsolete head and base.
@@ -256,17 +258,18 @@ false`, the job does not create a deployment record. After reviewing the exact
 head SHA, base SHA, and risk plan as described below, an environment reviewer
 opens the linked run, chooses **Review deployments**, selects that environment,
 and approves it. GitHub records the reviewer and optional comment. The
-protected approval job uses per-PR concurrency with in-progress cancellation.
-When a newer revision reaches authorization, its job cancels any waiting
-approval job for the prior revision and becomes available for review without
-waiting on the obsolete request. The controller reads that approval history and
-requires one approved review naming only the exact environment in the first
-attempt of the trusted `workflow_run`
-controller. It then revalidates the internal repository origin, open PR, PR SHA
-and base SHA, risk plan, matching pending coordination state, compatible
-trusted controller commit, and final live revision. It updates coordination to
-`Running <count> E2E check(s)` and dispatches the selected jobs and targets in
-one workflow run.
+protected approval job uses the exact-revision FIFO concurrency group without
+in-progress cancellation. A newer revision uses a distinct group and can
+become available for review without waiting on the obsolete request. The
+synchronization controller cancels active child runs and closes coordination
+checks for the old revision. If an old approval job later starts, exact live
+PR SHA and base SHA validation rejects it. The controller reads the approval
+history and requires one approved review naming only the exact environment in
+the first attempt of the trusted `workflow_run` controller. It then revalidates
+the internal repository origin, open PR, PR SHA and base SHA, risk plan,
+matching pending coordination state, compatible trusted controller commit, and
+final live revision. It updates coordination to `Running <count> E2E check(s)`
+and dispatches the selected jobs and targets in one workflow run.
 
 The manual maintainer path remains available as a fallback. A repository
 maintainer or administrator chooses **Run workflow** on `main`, selects
@@ -357,8 +360,9 @@ Configure the environment, update the PR to create a new head, and trigger fresh
 upstream PR CI to create a new gate run, or use the corresponding manual
 maintainer fallback. GitHub approval
 history is not bound to a run attempt, so the controller rejects reruns of an
-approval run. Per-PR approval concurrency cancels an older waiting job when a
-newer revision reaches the gate.
+approval run. Approval concurrency is bound to the exact PR SHA and base SHA.
+A newer revision creates a separate approval request, while an obsolete request
+cannot authorize it.
 
 For the fork button path, the controller requires a first-attempt, in-progress run
 of this exact workflow on `main`, at the trusted workflow SHA and with the

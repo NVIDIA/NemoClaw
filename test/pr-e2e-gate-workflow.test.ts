@@ -21,7 +21,7 @@ const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
 
 type CoordinatorJob = WorkflowJob & {
-  concurrency?: { group: string; "cancel-in-progress": boolean };
+  concurrency?: { group: string; queue?: "max"; "cancel-in-progress": boolean };
 };
 
 type TriggeredWorkflow = Omit<Workflow, "jobs"> & {
@@ -401,6 +401,7 @@ describe("PR E2E gate workflow", () => {
     expect(initialize.concurrency?.group).toBe(
       "pr-e2e-gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ github.event.pull_request.base.sha }}",
     );
+    expect(initialize.concurrency?.queue).toBe("max");
     expect(initialize.concurrency?.["cancel-in-progress"]).toBe(false);
     expect(required.name).toBe("E2E / PR Gate");
     expect(required.if).toContain("github.event_name == 'pull_request_target'");
@@ -467,6 +468,7 @@ describe("PR E2E gate workflow", () => {
     expect(coordinate.concurrency?.group).toBe(
       "pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].number || inputs.pr_number }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].base.sha || inputs.expected_base_sha }}",
     );
+    expect(coordinate.concurrency?.queue).toBe("max");
     expect(coordinate.concurrency?.["cancel-in-progress"]).toBe(false);
     expect(coordinate["timeout-minutes"]).toBe(330);
     expect(coordinate.outputs).toEqual({
@@ -498,6 +500,7 @@ describe("PR E2E gate workflow", () => {
     expect(approveInternal.concurrency).toEqual({
       group:
         "pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.control_plane_approval_pr_number }}-${{ needs.coordinate.outputs.control_plane_approval_head_sha }}-${{ needs.coordinate.outputs.control_plane_approval_base_sha }}",
+      queue: "max",
       "cancel-in-progress": false,
     });
     expect(approveInternal["timeout-minutes"]).toBe(330);
@@ -531,6 +534,7 @@ describe("PR E2E gate workflow", () => {
     expect(approveForkSkip.concurrency).toEqual({
       group:
         "pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.fork_skip_pr_number }}-${{ needs.coordinate.outputs.fork_skip_head_sha }}-${{ needs.coordinate.outputs.fork_skip_base_sha }}",
+      queue: "max",
       "cancel-in-progress": false,
     });
     expect(approveForkSkip.secrets).toBeUndefined();
@@ -547,6 +551,7 @@ describe("PR E2E gate workflow", () => {
     expect(recordForkSkip.concurrency).toEqual({
       group:
         "pr-e2e-gate-${{ github.repository }}-${{ inputs.pr_number }}-${{ inputs.expected_head_sha }}-${{ inputs.expected_base_sha }}",
+      queue: "max",
       "cancel-in-progress": false,
     });
     expect(collectStrings(initialize).some((value) => value.includes("--mode seed"))).toBe(true);
