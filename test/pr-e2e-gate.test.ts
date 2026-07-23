@@ -104,6 +104,11 @@ function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
     conclusion: null,
+    output: {
+      title: "Waiting for PR CI",
+      summary:
+        "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.",
+    },
     app: { id: 15368 },
     ...overrides,
   };

@@ -1342,6 +1342,10 @@ describe("PR E2E controller lifecycle", () => {
             () => githubResponse(undefined, 202),
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(exactPrGateCheck({ status: "in_progress" })),
+          ),
+          githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => prGateMutationResponse(request),
           ),
@@ -1353,10 +1357,11 @@ describe("PR E2E controller lifecycle", () => {
     try {
       await abandonPrGate(17, 23);
       expect(requests.map((request) => request.url)).toEqual([
+        "https://api.github.com/repos/NVIDIA/NemoClaw/check-runs/17",
         "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23/cancel",
         "https://api.github.com/repos/NVIDIA/NemoClaw/check-runs/17",
       ]);
-      expect(requests[1]?.body).toMatchObject({
+      expect(requests[2]?.body).toMatchObject({
         status: "completed",
         conclusion: "failure",
         output: {
@@ -1365,6 +1370,37 @@ describe("PR E2E controller lifecycle", () => {
         },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not cancel a child after an abandoned check is already completed", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-abandon-done-"));
+    const outputPath = path.join(directory, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(exactPrGateCheck({ status: "completed", conclusion: "failure" })),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(abandonPrGate(17, 23)).resolves.toBeUndefined();
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.method).toBe("GET");
+      expect(requests.some((request) => request.url.endsWith("/cancel"))).toBe(false);
+      expect(fs.readFileSync(outputPath, "utf8")).toBe("finalized=true\n");
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

@@ -11,7 +11,9 @@ import {
   finishPrGate,
   type PrGateState,
   prGateExternalId,
+  privateControllerPaths,
   retryRunnerLossPrGate,
+  startPrGate,
 } from "../tools/e2e/pr-e2e-gate.mts";
 import {
   createGitHubFetchRouter,
@@ -515,6 +517,62 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
           (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
         ),
       ).toHaveLength(0);
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let a fresh CI event claim an active runner-loss retry check", async () => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () =>
+              githubResponse({
+                total_count: 1,
+                check_runs: [
+                  checkRun(18, {
+                    status: "in_progress",
+                    conclusion: null,
+                    output: { title: "Running 2 E2E checks", summary: "Attempt 2 is running." },
+                  }),
+                ],
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        startPrGate({
+          mode: "start",
+          headSha: HEAD_SHA,
+          headRepository: "NVIDIA/NemoClaw",
+          headBranch: "feature/pr-e2e-gate",
+          workflowSha: WORKFLOW_SHA,
+          ciConclusion: "success",
+          ciDisplayTitle: `CI PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
+          ciRunId: 99,
+          ciRunAttempt: 1,
+          gateRunId: 77,
+          prNumber: 42,
+          ...privateControllerPaths(context.workDir),
+        }),
+      ).rejects.toThrow(/not retryable/u);
+      expect(requests).toHaveLength(2);
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(fs.readFileSync(context.outputPath, "utf8")).toBe("");
     } finally {
       fs.rmSync(context.workDir, { recursive: true, force: true });
     }

@@ -42,6 +42,9 @@ const FORK_SKIP_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-skip-for-fork-p
 const INTERNAL_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-internal-pr";
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
+const RESERVED_CHECK_TITLE = "Waiting for PR CI";
+const RESERVED_CHECK_SUMMARY =
+  "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
 const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
 const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
 const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
@@ -1219,9 +1222,8 @@ async function createPrGateCheck(options: {
   prNumber: number;
 }): Promise<CheckRun> {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
-  const title = "Waiting for PR CI";
-  const summary =
-    "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
+  const title = RESERVED_CHECK_TITLE;
+  const summary = RESERVED_CHECK_SUMMARY;
   const check = await githubApi<unknown>(`repos/${options.repository}/check-runs`, options.token, {
     method: "POST",
     body: {
@@ -1335,7 +1337,14 @@ async function markCheckInProgress(
 
 function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string): void {
   if (!check) return;
-  if (check.status === "in_progress" && check.conclusion === null) return;
+  if (
+    check.status === "in_progress" &&
+    check.conclusion === null &&
+    check.output?.title === RESERVED_CHECK_TITLE &&
+    check.output.summary === RESERVED_CHECK_SUMMARY
+  ) {
+    return;
+  }
   const reason = retryableFailureReason(check);
   if (ciConclusion === "success" && reason) return;
   const title = normalizedCiMetadata(check.output?.title ?? "untitled", "untitled");
@@ -2869,7 +2878,6 @@ export async function startPrGate(
   }
   const existingCheckRunId =
     existingChecks[0]?.status === "in_progress" ? existingChecks[0].id : undefined;
-  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   let pull: PullRequest;
   try {
     pull = await requireLiveExactDiff({
@@ -2881,7 +2889,12 @@ export async function startPrGate(
     });
   } catch (error) {
     if (!(error instanceof ObsoleteExactDiffError)) throw error;
-    if (existingCheckRunId) {
+    if (
+      existingCheckRunId &&
+      existingChecks[0]?.output?.title === RESERVED_CHECK_TITLE &&
+      existingChecks[0].output.summary === RESERVED_CHECK_SUMMARY
+    ) {
+      appendOutput("check_id", String(existingCheckRunId));
       await completeCheck({ repository, checkRunId: existingCheckRunId }, token, error.verdict);
     }
     appendOutput("dispatched", "false");
@@ -2898,6 +2911,7 @@ export async function startPrGate(
     throw new Error("PR repository or branch does not match the triggering CI run");
   }
   assertCheckCanStart(existingChecks[0], command.ciConclusion);
+  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   const checkRunId = await ensurePrGateCheck({
     repository,
     token,
@@ -3532,6 +3546,25 @@ export async function finishPrGate(options: {
 
 export async function abandonPrGate(checkRunId: number, childRunId?: number): Promise<void> {
   const { token, repository } = tokenAndRepository();
+  const existingCheck = await githubApi<unknown>(
+    `repos/${repository}/check-runs/${checkRunId}`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  if (
+    !isObjectRecord(existingCheck) ||
+    existingCheck.id !== checkRunId ||
+    existingCheck.name !== CHECK_NAME ||
+    !isObjectRecord(existingCheck.app) ||
+    existingCheck.app.id !== GITHUB_ACTIONS_APP_ID ||
+    typeof existingCheck.status !== "string"
+  ) {
+    throw new Error("GitHub returned a mismatched PR gate check during abandonment");
+  }
+  if (existingCheck.status === "completed") {
+    appendOutput("finalized", "true");
+    return;
+  }
   let cancellationError: unknown;
   if (childRunId) {
     try {
