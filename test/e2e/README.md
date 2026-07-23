@@ -184,6 +184,9 @@ already-finalized, full, or invalid ledger permanently disables comparison
 sampling for that test progress instance. In `rebuild-hermes` and
 `rebuild-hermes-stale-base`, where legacy phase resource evidence is configured,
 the existing five-minute full snapshot then becomes the best-effort fallback.
+That full profile may run `ps`, `docker stats`, and `docker system df`
+sequentially with a 15-second timeout each, or 45 seconds in the worst case;
+canonical sampling suppresses this heavier collection while it remains active.
 Other lanes stop canonical sampling without creating a second evidence stream.
 Historical v1 ledgers and summaries remain readable, but a v1 ledger cannot be
 extended or mixed with v2 samples.
@@ -222,8 +225,9 @@ to the portable free-memory value and labels that value as `memory free`.
 
 The comparison time series is diagnostic-only and is not an input to terminal
 classification or retry policy. Low available or free memory never implies an
-OOM. Classification still requires the existing positive OOM evidence, and the
-single retry remains limited to positive runner-loss evidence.
+OOM. OOM classification or attribution still requires the existing positive
+OOM evidence, and the single retry remains limited to positive runner-loss
+evidence.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
 hard runner loss can prevent finalization or artifact upload. When you compare
