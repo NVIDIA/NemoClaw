@@ -854,7 +854,7 @@ test(STALE_BASE_REBUILD
     timeoutMs: OPENSHELL_TIMEOUT_MS,
   });
 
-  progress.phase("pull and validate the old Hermes base fixture");
+  progress.phase("pull and verify the historical Hermes base fixture");
   const pullOldBase = await host.command(
     "docker",
     ["pull", REBUILD_HERMES_OLD_BASE_FIXTURE.imageRef],
@@ -999,7 +999,7 @@ test(STALE_BASE_REBUILD
     );
     expectExitZero(provider, "OpenShell Discord provider create/update");
 
-    progress.phase("create the old Hermes sandbox");
+    progress.phase("create the historical Hermes sandbox");
     const createOldSandbox = await host.command(
       "openshell",
       [
@@ -1077,7 +1077,6 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(seededKanban, "verify historical Hermes kanban seed before rebuild");
   expect(resultText(seededKanban)).toContain(KANBAN_TASK_TITLE);
-
   const writeMarker = await host.command(
     "openshell",
     [

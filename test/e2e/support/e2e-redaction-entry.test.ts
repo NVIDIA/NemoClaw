@@ -22,9 +22,18 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import { buildChildEnv, isValidSecretEnvKey, redactString } from "../fixtures/redaction.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
+
+function supportProgress() {
+  return startTestProgress(
+    "ShellProbe redaction support",
+    ["run redaction probe", "verify redacted evidence"],
+    { logLine: () => undefined },
+  );
+}
 
 describe("fixture redaction entry point", () => {
   it("recognizes pass env names only at exact or underscore-delimited boundaries", () => {
@@ -267,6 +276,7 @@ describe("fixture redaction entry point", () => {
     );
     const probe = new ShellProbe({
       artifacts,
+      progress: supportProgress(),
       redact: (text, extra) => secrets.redact(text, extra),
       signal: new AbortController().signal,
     });
@@ -348,6 +358,7 @@ describe("fixture redaction entry point", () => {
       await artifacts.ensureRoot();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text, extra) => redactString(text, extra),
         signal: new AbortController().signal,
       });
@@ -403,6 +414,7 @@ describe("fixture redaction entry point", () => {
       await artifacts.ensureRoot();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text, extra) => redactString(text, extra),
         signal: new AbortController().signal,
       });

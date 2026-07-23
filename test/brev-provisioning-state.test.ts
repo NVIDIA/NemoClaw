@@ -138,6 +138,16 @@ describe("Brev provisioning state", () => {
     );
   });
 
+  it.each([
+    [[{ unexpected: "value" }], "Brev JSON inventory entry 0 is malformed"],
+    [
+      { workspaces: [{ name: "pr-42", status: "starting" }, null] },
+      "Brev JSON inventory entry 1 is malformed",
+    ],
+  ])("rejects malformed entries in a recognized Brev JSON inventory", (inventory, message) => {
+    expect(() => parseBrevJsonInventory(inventory)).toThrow(message);
+  });
+
   it("does not treat successful unrecognized text output as authoritative absence", () => {
     const snapshot = parseBrevTextInventory("Brev service diagnostic: retry later");
 

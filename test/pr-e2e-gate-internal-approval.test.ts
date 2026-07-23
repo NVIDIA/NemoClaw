@@ -87,7 +87,7 @@ function approvedControlPlaneCommand(workDir: string) {
 function approvalWorkflowRun() {
   return {
     id: APPROVAL_RUN_ID,
-    name: "E2E / PR Gate Controller",
+    name: `E2E Gate workflow_run ${APPROVAL_RUN_ID}`,
     path: ".github/workflows/pr-e2e-gate.yaml",
     event: "workflow_run",
     head_sha: WORKFLOW_SHA,
@@ -200,6 +200,7 @@ describe("PR E2E protected internal approval", () => {
                 name: `E2E PR #42 (${correlationId})`,
                 path: ".github/workflows/e2e.yaml",
                 workflow_id: 7,
+                run_attempt: 1,
                 event: "workflow_dispatch",
                 head_sha: WORKFLOW_SHA,
                 status: "queued",

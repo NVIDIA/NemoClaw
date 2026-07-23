@@ -258,7 +258,11 @@ function assertPolicySourcesUnchanged(snapshot: PolicySourceSnapshot, phase: str
 }
 
 function runWrapper(wrapper: string, args: readonly string[]): string[] {
-  const result = spawnSync(wrapper, args, { encoding: "utf8" });
+  const result = spawnSync(wrapper, args, {
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    timeout: 30_000,
+  });
   expect(result.status, result.stderr).toBe(0);
   return result.stdout.trimEnd().split("\n");
 }
@@ -355,7 +359,7 @@ test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox crea
     const duplicateConfig = spawnSync(
       wrapper.executable,
       ["sandbox", "create", "--driver-config-json", "{}"],
-      { encoding: "utf8" },
+      { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
     );
     expect(duplicateConfig.status).toBe(64);
     expect(duplicateConfig.stderr).toContain("refusing duplicate --driver-config-json");
@@ -1008,6 +1012,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     apiKey: "nemoclaw-exdev-dummy-key",
     host: "0.0.0.0",
     model: "nemoclaw-exdev-probe",
+    progress,
     publicHost: "host.openshell.internal",
     responseText: "ok",
   });

@@ -547,10 +547,14 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
 
 realContainerTest(
   "the #7286 image ships only the reviewed OpenClaw dependency graph (#7272)",
-  async ({ artifacts, docker, secrets }) => {
+  async ({ artifacts, docker, progress, secrets, signal }) => {
     const image = configuredImage as string;
-    const probe = new DockerProbe(artifacts, (text, extraValues) =>
-      secrets.redact(text, extraValues),
+    const probe = new DockerProbe(
+      artifacts,
+      (text, extraValues) => secrets.redact(text, extraValues),
+      undefined,
+      progress,
+      signal,
     );
     const container = `nemoclaw-security-e2e-${process.pid}-${randomUUID()}`.toLowerCase();
 
