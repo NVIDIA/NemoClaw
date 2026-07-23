@@ -5,10 +5,10 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
+import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with { type: "json" };
 import { checkSystemReadinessSchemaVersion } from "./compatibility.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const schemaPath = `${repositoryRoot}/schemas/system-readiness.schema.json`;
 const fixtureRoot = `${repositoryRoot}/test/fixtures/system-readiness`;
 
 async function readJson(path: string): Promise<unknown> {
@@ -21,7 +21,7 @@ async function createValidator() {
     type: "string",
     validate: (value: string) => !Number.isNaN(Date.parse(value)),
   });
-  return ajv.compile((await readJson(schemaPath)) as AnySchema);
+  return ajv.compile(systemReadinessSchema as AnySchema);
 }
 
 describe("system readiness contract", () => {
