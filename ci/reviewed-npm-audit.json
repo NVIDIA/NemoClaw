@@ -1,7 +1,9 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "nodeVersion": "22.23.1",
   "severityThreshold": "high",
+  "exceptionFile": "ci/npm-audit-exceptions.json",
+  "archiveGraphId": "reviewed-archive-graph",
   "artifactDirectory": "coverage/reviewed-npm-audit",
   "archivePackages": [
     {
@@ -61,6 +63,7 @@
   ],
   "lockedGraphs": [
     {
+      "id": "mcporter-runtime",
       "label": "mcporter 0.7.3 locked runtime graph",
       "packageSpec": "mcporter@0.7.3",
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",

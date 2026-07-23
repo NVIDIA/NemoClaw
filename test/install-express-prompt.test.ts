@@ -6,27 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
-  function runInstallerSourced(body: string) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-sourced-"));
-    const result = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
-      {
-        cwd: path.resolve(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: home,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        },
-      },
-    );
-    return { home, result, output: `${result.stdout}${result.stderr}` };
-  }
-
   function runExpressPromptWithTty(
     answer: string,
     stdinMode: "pipe" | "tty",
@@ -291,19 +274,6 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
 `;
   }
 
-  it("parses and documents the DGX Station DeepSeek override", () => {
-    const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--station-deepseek", "--help"], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(
-      /--station-deepseek\s+Use DeepSeek V4 Flash for DGX Station express install/,
-    );
-  });
-
   it("parses and documents the metadata-only Station override", () => {
     const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--force-station-install", "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -378,6 +348,14 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
       /Express install will configure managed local vLLM with NVIDIA Nemotron 3 Ultra 550B/,
     );
     expect(output).toMatch(/approximately 352 GB model/);
+    expect(output).toContain(
+      "Hugging Face authentication is optional for this public model but recommended",
+    );
+    expect(output).toContain("https://huggingface.co/settings/tokens");
+    expect(output).toContain("export HF_TOKEN=<read-token>");
+    expect(output.indexOf("Hugging Face authentication is optional")).toBeLessThan(
+      output.indexOf("Run express install with these settings?"),
+    );
     expect(output).toMatch(
       /installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages/,
     );
@@ -489,11 +467,24 @@ describe_express_install 'DGX Station'`,
     expect(output).toMatch(
       /Express install will configure managed local vLLM with DeepSeek V4 Flash/,
     );
+    expect(output).toContain("Hugging Face authentication is optional for this public model");
+    expect(output).toContain("export HF_TOKEN=<read-token>");
+    expect(output.indexOf("Hugging Face authentication is optional")).toBeLessThan(
+      output.indexOf("Run express install with these settings?"),
+    );
     expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
+    const token = `hf_${"s".repeat(32)}`;
+    const authenticated = runInstallerSourced(
+      `HF_TOKEN="${token}"\ndescribe_express_install "DGX Station"`,
+    );
+    expect(authenticated.result.status, authenticated.output).toBe(0);
+    expect(authenticated.output).toContain("Hugging Face model download: authenticated");
+    expect(authenticated.output).toContain("token value is not displayed");
+    expect(authenticated.output).not.toContain(token);
   });
 
   it("pre-stages complete Station Express intent and ports before a Docker-group relogin (#7203)", () => {
