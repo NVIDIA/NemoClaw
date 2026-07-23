@@ -424,22 +424,55 @@ minutes to finish. A first-attempt controller may dispatch one replacement run
 when the first child fails because a standard GitHub-hosted `ubuntu-latest`
 runner lost communication. The Jobs API response must identify the exact run,
 attempt, workflow commit, job check, standard hosted runner group, and runner
-name. Its exact check-run annotation must contain one canonical runner-loss
-failure bound to `.github` at that workflow commit. Generic cancellation,
-timeout, unknown runner identity, self-hosted or custom runner groups, an
-ordinary failed step, another non-passing job, incomplete pagination, or
-mismatched annotation identity all fail closed without a retry.
+name. The controller accepts one canonical runner-loss failure annotation bound
+to `.github` at that workflow commit.
+
+When GitHub emits a generic cancellation instead, the controller requires
+exactly one failure annotation whose message is `The operation was canceled.`
+The annotation must use `.github`, equal start and end lines, null columns, and
+empty title and detail fields. Every annotation must use a blob URL bound to the
+same workflow commit. This permits a trusted non-failure notice beside the sole
+failure annotation.
+
+The generic-cancellation fallback also authenticates the job log. The
+controller requests the GitHub job-log endpoint and accepts only its signed
+HTTPS redirect to GitHub Actions result storage. It does not forward the
+repository token to that signed URL. A metadata request must return plain,
+unencoded text with a strong bounded ETag and an exact content length. The
+controller then reads at most the final 64 KiB with `If-Match` and requires an
+exact partial-content range, length, and matching ETag.
+
+The authenticated tail must end with exactly one line feed after the
+timestamped shutdown error, operation-cancelled error, and orphan-cleanup
+record, in that order. Up to 64 unique orphan-process termination records may
+follow the cleanup record. Each record must contain a positive process ID and a
+bounded process name. The record timestamps must not move backward. The
+job must start no later than the cancelled step. The shutdown must occur at or
+after that step starts, and the cancellation second must equal the step's
+completion time. Cleanup must not precede cancellation. Cleanup and
+orphan-process records must finish no later than the job completion time.
+
+A generic cancellation without this log contract, timeout, unknown runner
+identity, self-hosted or custom runner group, ordinary failed step, another
+non-passing job, incomplete pagination, or mismatched annotation identity
+fails closed without a retry.
 
 Before the one-time retry dispatch, the controller revalidates the unchanged
 internal PR head and base, original child, current coordination-check lineage,
-trusted runner-loss evidence, and deterministic plan. It reserves a distinct
-replacement coordination check before dispatch so the native observer can
-follow the retry without mutating completed attempt-one history. Attempt two
-uses separate private state and evidence paths. Its result is terminal: it can
-never authorize another automatic retry. If the retry controller stops before
-or after reservation, its always-run cleanup removes the retry authorization
-from the source or closes the reserved replacement so no retryable or active
-check is left behind.
+trusted runner-loss evidence, and deterministic plan. It reads the complete
+job, annotation, and optional log evidence twice. It confirms the unchanged
+completed child after each read and requires identical evidence fingerprints,
+including pagination state, log ETag, log length, and log-tail hash. After the
+second classification, it validates the live PR head and base and the current
+coordination-check lineage again.
+
+The controller reserves a distinct replacement coordination check before
+dispatch so the native observer can follow the retry without mutating completed
+attempt-one history. Attempt two uses separate private state and evidence paths.
+Its result is terminal and cannot authorize another automatic retry. If the
+retry controller stops before or after reservation, its always-run cleanup
+removes the retry authorization from the source or closes the reserved
+replacement. This prevents a retryable or active check from remaining.
 
 Each evidence download has its own 10-minute limit and 30-second process-kill
 grace. Two 140-minute waits plus both download windows consume 301 minutes,
