@@ -297,6 +297,7 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
     name: "E2E",
     path: ".github/workflows/e2e.yaml",
     workflow_id: 304268429,
+    run_attempt: 1,
     event: "workflow_dispatch",
     head_sha: gate.workflowSha,
     status: "completed",

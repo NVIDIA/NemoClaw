@@ -200,6 +200,56 @@ describe("PR E2E controller commands", () => {
     });
   });
 
+  it("parses a runner-loss retry with its original and isolated state paths", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "retry-runner-loss",
+          "--work-dir",
+          workDir,
+          "--check-id",
+          "17",
+          "--run-id",
+          "23",
+          "--state-hash",
+          "a".repeat(64),
+          "--workflow-run-attempt",
+          "1",
+        ]),
+      ).toEqual({
+        mode: "retry-runner-loss",
+        checkRunId: 17,
+        childRunId: 23,
+        workflowRunAttempt: 1,
+        stateHash: "a".repeat(64),
+        statePath: path.join(workDir, "controller-state.json"),
+        retryStatePath: path.join(workDir, "controller-state-runner-loss-retry.json"),
+      });
+    });
+  });
+
+  it("rejects runner-loss retries from controller reruns", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(() =>
+        parseControllerCommand([
+          "--mode",
+          "retry-runner-loss",
+          "--work-dir",
+          workDir,
+          "--check-id",
+          "17",
+          "--run-id",
+          "23",
+          "--state-hash",
+          "a".repeat(64),
+          "--workflow-run-attempt",
+          "2",
+        ]),
+      ).toThrow("--workflow-run-attempt must be exactly 1");
+    });
+  });
+
   it("rejects unknown controller path slots", () => {
     withPrivateWorkDir((workDir) => {
       expect(() =>

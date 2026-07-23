@@ -29,12 +29,10 @@ const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
 const GATE_RUN_ID = 77;
 const APPROVAL_RUN_ID = 123;
-
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-
 function githubResponse(value?: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -915,6 +913,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
                 name: `E2E PR #42 (${correlationId})`,
                 path: ".github/workflows/e2e.yaml",
                 workflow_id: 7,
+                run_attempt: 1,
                 event: "workflow_dispatch",
                 head_sha: WORKFLOW_SHA,
                 status: "queued",

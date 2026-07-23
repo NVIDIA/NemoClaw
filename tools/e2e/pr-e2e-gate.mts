@@ -207,6 +207,15 @@ export type ControllerCommand =
     }
   | { mode: "wait"; childRunId: number }
   | ({ mode: "download"; childRunId: number } & ControllerPaths)
+  | {
+      mode: "retry-runner-loss";
+      checkRunId: number;
+      childRunId: number;
+      workflowRunAttempt: number;
+      stateHash: string;
+      statePath: string;
+      retryStatePath: string;
+    }
   | ControlPlaneDispatchCommand
   | ApprovedControlPlaneDispatchCommand
   | ManualForkSkipCommand
@@ -233,6 +242,7 @@ type WorkflowRun = {
   workflow_id: number;
   event: string;
   head_sha: string;
+  run_attempt: number;
   status: string;
   conclusion: string | null;
   display_title: string;
@@ -546,6 +556,25 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ),
     };
   }
+  if (args.mode === "retry-runner-loss") {
+    const workDir = requiredArgument(args.workDir, "work-dir");
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
+    if (workflowRunAttempt !== 1) {
+      throw new Error("--workflow-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "retry-runner-loss",
+      checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+      workflowRunAttempt,
+      stateHash: parseHash(args.stateHash, "state-hash"),
+      statePath: privateControllerPaths(workDir).statePath,
+      retryStatePath: privateControllerPaths(workDir, "runner-loss-retry").statePath,
+    };
+  }
   if (args.mode === "start-control-plane") {
     const maintainer = requiredArgument(args.maintainer, "maintainer");
     if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
@@ -639,7 +668,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish, abandon, cancel, wait, download, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
+    "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish, abandon, cancel, wait, download, retry-runner-loss, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
   );
 }
 
@@ -712,6 +741,15 @@ export function validatePrGateState(value: unknown): PrGateState {
     }
   }
   return value as PrGateState;
+}
+
+function readBoundPrGateState(statePath: string, stateHash: string): PrGateState {
+  if (!HASH_PATTERN.test(stateHash)) throw new Error("controller state hash is invalid");
+  const serializedState = readPrivateRegularFile(statePath, { maxBytes: MAX_PLAN_BYTES })!;
+  if (sha256(serializedState) !== stateHash) {
+    throw new Error("controller state changed after E2E dispatch");
+  }
+  return validatePrGateState(JSON.parse(serializedState));
 }
 
 export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string>): RiskPlan {
@@ -1648,15 +1686,23 @@ async function listNonPassingWorkflowJobs(
   repository: string,
   token: string,
   runId: number,
-  runAttempt?: number,
+  runAttempt: number,
 ): Promise<{ jobs: WorkflowJob[]; complete: boolean }> {
+  if (
+    !Number.isSafeInteger(runId) ||
+    runId < 1 ||
+    !Number.isSafeInteger(runAttempt) ||
+    runAttempt < 1
+  ) {
+    throw new Error("workflow run and attempt IDs must be positive safe integers");
+  }
   const jobs: WorkflowJob[] = [];
+  const jobIds = new Set<number>();
   let totalCount: number | undefined;
   for (let page = 1; page <= MAX_WORKFLOW_JOB_PAGES; page += 1) {
-    const runPath = runAttempt ? `runs/${runId}/attempts/${runAttempt}` : `runs/${runId}`;
     const response = validateWorkflowJobsPage(
       await githubApi<unknown>(
-        `repos/${repository}/actions/${runPath}/jobs?per_page=100&page=${page}`,
+        `repos/${repository}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100&page=${page}`,
         token,
         { userAgent: USER_AGENT },
       ),
@@ -1664,6 +1710,12 @@ async function listNonPassingWorkflowJobs(
     totalCount ??= response.totalCount;
     if (response.totalCount !== totalCount || jobs.length + response.jobs.length > totalCount) {
       throw new Error("GitHub returned an invalid workflow job count");
+    }
+    for (const job of response.jobs) {
+      if (jobIds.has(job.id)) {
+        throw new Error("GitHub returned duplicate workflow job IDs across the job listing");
+      }
+      jobIds.add(job.id);
     }
     jobs.push(...response.jobs);
     if (jobs.length === totalCount) {
@@ -2221,6 +2273,7 @@ export function assertCorrelatedWorkflowRun(
   requireEqual("id", identity.childRunId, child.id);
   requireEqual("path", E2E_WORKFLOW_PATH, child.path);
   requireEqual("event", "workflow_dispatch", child.event);
+  requireEqual("run_attempt", 1, child.run_attempt);
   requireEqual("html_url", childRunUrl, child.html_url);
   requireEqual(
     "display_title",
@@ -2535,6 +2588,244 @@ async function dispatchSelectedPrGate(options: {
       `${controllerErrorMessage(error)}; child cancellation requested`,
       childRunId,
     );
+  }
+}
+
+async function dispatchRunnerLossRetry(options: {
+  repository: string;
+  token: string;
+  state: PrGateState;
+  checkRunId: number;
+  retryStatePath: string;
+}): Promise<void> {
+  const correlationId = randomUUID();
+  if (!CORRELATION_PATTERN.test(correlationId)) {
+    throw new Error("generated correlation ID is invalid");
+  }
+  const dispatch = await dispatchPrGate({
+    repository: options.repository,
+    token: options.token,
+    jobs: options.state.expectedJobs,
+    targets: options.state.expectedTargets,
+    prNumber: options.state.prNumber,
+    commitSha: options.state.commitSha,
+    baseSha: options.state.baseSha,
+    workflowSha: options.state.workflowSha,
+    planHash: options.state.planHash,
+    correlationId,
+  });
+  const childRunId = dispatch.runId;
+  try {
+    appendOutput("run_id", String(childRunId));
+    const retryState: PrGateState = {
+      ...options.state,
+      workflowSha: dispatch.workflowSha,
+      correlationId,
+    };
+    const serializedState = `${JSON.stringify(retryState, null, 2)}\n`;
+    writePrivateRegularFile(options.retryStatePath, serializedState);
+    await updateRunningCheck(
+      {
+        repository: options.repository,
+        checkRunId: options.checkRunId,
+        prNumber: retryState.prNumber,
+        headSha: retryState.commitSha,
+        baseSha: retryState.baseSha,
+      },
+      options.token,
+      {
+        childRunId,
+        jobs: retryState.expectedJobs,
+        targets: retryState.expectedTargets,
+        planHash: retryState.planHash,
+      },
+    );
+    appendOutput("state_hash", sha256(serializedState));
+    appendOutput("dispatched", "true");
+    console.log(
+      `Runner-loss retry dispatched: pr=${retryState.prNumber} run=${childRunId} plan=${retryState.planHash} jobs=${retryState.expectedJobs.join(",")} targets=${retryState.expectedTargets.join(",")} url=https://github.com/${options.repository}/actions/runs/${childRunId}`,
+    );
+  } catch (error) {
+    try {
+      await cancelChildRun(options.repository, options.token, childRunId);
+    } catch (cancelError) {
+      throw new DispatchedChildRunError(
+        `${controllerErrorMessage(error)}; retry child cancellation failed: ${controllerErrorMessage(cancelError)}`,
+        childRunId,
+      );
+    }
+    throw new DispatchedChildRunError(
+      `${controllerErrorMessage(error)}; retry child cancellation requested`,
+      childRunId,
+    );
+  }
+}
+
+export async function retryRunnerLossPrGate(
+  command: Extract<ControllerCommand, { mode: "retry-runner-loss" }>,
+): Promise<void> {
+  if (command.workflowRunAttempt !== 1) {
+    throw new Error("runner-loss retry must use the first controller workflow run attempt");
+  }
+  const { token, repository } = tokenAndRepository();
+  const originalRunUrl = `https://github.com/${repository}/actions/runs/${command.childRunId}`;
+  let retryCheckRunId: number | undefined;
+  try {
+    const state = readBoundPrGateState(command.statePath, command.stateHash);
+    const child = await githubApi<WorkflowRun>(
+      `repos/${repository}/actions/runs/${command.childRunId}`,
+      token,
+      { userAgent: USER_AGENT },
+    );
+    assertCorrelatedWorkflowRun(child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    if (
+      child.status !== "completed" ||
+      !["failure", "cancelled"].includes(child.conclusion ?? "")
+    ) {
+      throw new Error("runner-loss retry requires a terminal failed or cancelled child run");
+    }
+
+    const history = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    const current = history.at(-1);
+    if (current?.id !== command.checkRunId) {
+      throw new Error("runner-loss retry source is not the current PR gate check");
+    }
+    if (
+      retryableFailureReason(current) !== "child-cancelled" ||
+      current.details_url !== originalRunUrl
+    ) {
+      throw new Error("PR gate check does not authorize this runner-loss retry");
+    }
+    if (priorRunnerLossRunUrls(repository, history, command.checkRunId).length !== 0) {
+      throw new Error("runner-loss retry was already consumed for this PR/base SHA pair");
+    }
+
+    const jobDetails = await listNonPassingWorkflowJobs(repository, token, command.childRunId, 1);
+    const runnerLossEvidence = verifiedRunnerLossEvidence({
+      workflowConclusion: child.conclusion,
+      jobs: jobDetails.jobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: jobDetails.complete,
+    });
+    const retryDecision = runnerLossEvidence
+      ? decideRetry({
+          runnerLoss: detectRunnerLoss(runnerLossEvidence),
+          classification: null,
+          attempt: 1,
+        })
+      : { retry: false, reason: "runner-loss evidence is incomplete" };
+    if (!retryDecision.retry) {
+      throw new Error(`runner-loss retry is not authorized: ${retryDecision.reason}`);
+    }
+
+    const pull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: state.prNumber,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+    });
+    if (pull.head.repo?.full_name !== repository) {
+      throw new Error("runner-loss retry requires an internal pull request");
+    }
+
+    const historySize = history.length;
+    const retryCheck = await createPrGateCheck({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    retryCheckRunId = retryCheck.id;
+    appendOutput("check_id", String(retryCheckRunId));
+    const retryHistory = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    if (retryHistory.length !== historySize + 1 || retryHistory.at(-1)?.id !== retryCheckRunId) {
+      throw new Error("runner-loss retry did not acquire the current PR gate check");
+    }
+    await markCheckInProgress(
+      {
+        repository,
+        checkRunId: retryCheckRunId,
+        prNumber: state.prNumber,
+        headSha: state.commitSha,
+        baseSha: state.baseSha,
+      },
+      token,
+      "Preparing one-time hosted-runner-loss retry",
+      `Revalidating the exact PR/base SHA and risk plan after [attempt 1](${originalRunUrl}) lost its GitHub-hosted runner.`,
+    );
+
+    const currentPull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: state.prNumber,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+    });
+    assertPullUnchanged(pull, currentPull);
+    const dispatchHistory = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    const dispatchSource = dispatchHistory.find((check) => check.id === command.checkRunId);
+    if (
+      dispatchHistory.length !== historySize + 1 ||
+      dispatchHistory.at(-1)?.id !== retryCheckRunId ||
+      !dispatchSource ||
+      retryableFailureReason(dispatchSource) !== "child-cancelled" ||
+      dispatchSource.details_url !== originalRunUrl ||
+      priorRunnerLossRunUrls(repository, dispatchHistory, retryCheckRunId).length !== 1
+    ) {
+      throw new Error("runner-loss retry lost the current PR gate check before dispatch");
+    }
+    await dispatchRunnerLossRetry({
+      repository,
+      token,
+      state,
+      checkRunId: retryCheckRunId,
+      retryStatePath: command.retryStatePath,
+    });
+  } catch (error) {
+    if (retryCheckRunId !== undefined) {
+      const retryRunId = error instanceof DispatchedChildRunError ? error.childRunId : undefined;
+      const closed = await completeFailureAfterControllerError(
+        { repository, checkRunId: retryCheckRunId },
+        token,
+        "Runner-loss retry could not start",
+        {
+          error,
+          detailsUrl: retryRunId
+            ? `https://github.com/${repository}/actions/runs/${retryRunId}`
+            : originalRunUrl,
+          recovery:
+            "The original runner-loss evidence remains linked. This exact PR/base SHA pair will not receive another automatic retry.",
+        },
+      );
+      if (closed) appendOutput("finalized", "true");
+    }
+    throw error;
   }
 }
 
@@ -3691,6 +3982,10 @@ async function main(): Promise<void> {
   }
   if (command.mode === "start-approved-control-plane") {
     await startApprovedControlPlanePrGate(command);
+    return;
+  }
+  if (command.mode === "retry-runner-loss") {
+    await retryRunnerLossPrGate(command);
     return;
   }
   if (command.mode === "finish") {
