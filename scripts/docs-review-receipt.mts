@@ -26,7 +26,6 @@ interface ParsedReceipt {
   duplicateFields: string[];
   duplicateSections: boolean;
   evidence: string | null;
-  prNumber: number | null;
   present: boolean;
   result: ReviewResult | null;
   reviewedHeadSha: string | null;
@@ -41,8 +40,6 @@ interface ReceiptRecord {
   evidence: string | null;
   headShaMatches: boolean | null;
   issues: string[];
-  prNumber: number | null;
-  prNumberMatches: boolean | null;
   result: ReviewResult | null;
   reviewedHeadSha: string | null;
   status: ReceiptStatus;
@@ -116,7 +113,6 @@ function runCheck(args: string[]): void {
   const record = evaluateReceipt(
     pullRequest.body ?? "",
     classifyChangedFiles(changedFiles),
-    pullRequest.number ?? null,
     headPrSha,
     expectedAgentsBlob,
   );
@@ -172,7 +168,6 @@ function runReport(args: string[]): void {
 function evaluateReceipt(
   body: string,
   changes: ChangeClassification,
-  expectedPrNumber: number | null,
   headPrSha: string,
   expectedAgentsBlob?: string,
 ): ReceiptRecord {
@@ -180,7 +175,7 @@ function evaluateReceipt(
   const { codeChanged, docsChanged } = changes;
   const issues: string[] = [];
 
-  if (codeChanged === null) {
+  if (codeChanged === null || docsChanged === null) {
     issues.push("The PR description does not select one code or documentation-only change type.");
     return {
       agent: parsed.agent,
@@ -191,15 +186,13 @@ function evaluateReceipt(
       evidence: parsed.evidence,
       headShaMatches: null,
       issues,
-      prNumber: parsed.prNumber,
-      prNumberMatches: null,
       result: parsed.result,
       reviewedHeadSha: parsed.reviewedHeadSha,
       status: "unclassified",
     };
   }
 
-  if (!codeChanged) {
+  if (!codeChanged && !docsChanged) {
     return {
       agent: parsed.agent,
       agentsBlobSha: parsed.agentsBlobSha,
@@ -209,8 +202,6 @@ function evaluateReceipt(
       evidence: parsed.evidence,
       headShaMatches: null,
       issues,
-      prNumber: parsed.prNumber,
-      prNumberMatches: null,
       result: parsed.result,
       reviewedHeadSha: parsed.reviewedHeadSha,
       status: "not-required",
@@ -218,7 +209,9 @@ function evaluateReceipt(
   }
 
   if (!parsed.present) {
-    issues.push("Code-changing PRs must include the Documentation Writer Review section.");
+    issues.push(
+      "Pull requests that change code or documentation must include the Documentation Writer Review section.",
+    );
   } else {
     if (parsed.duplicateSections) {
       issues.push("The PR description contains more than one Documentation Writer Review section.");
@@ -240,9 +233,6 @@ function evaluateReceipt(
     if (!parsed.agent || looksLikePlaceholder(parsed.agent)) {
       issues.push("Record the agent surface that ran the documentation writer review.");
     }
-    if (parsed.prNumber === null) {
-      issues.push("Record this pull request number in the documentation review receipt.");
-    }
     if (!parsed.reviewedHeadSha) {
       issues.push("Refresh the hidden head SHA after the documentation writer review.");
     }
@@ -254,19 +244,11 @@ function evaluateReceipt(
     }
   }
 
-  const prNumberMatches =
-    parsed.prNumber !== null && expectedPrNumber !== null
-      ? parsed.prNumber === expectedPrNumber
-      : null;
-  if (prNumberMatches === false) {
-    issues.push("The receipt PR number does not match this pull request.");
-  }
-
   const headShaMatches = parsed.reviewedHeadSha
     ? headPrSha.toLowerCase().startsWith(parsed.reviewedHeadSha)
     : null;
   if (headShaMatches === false) {
-    issues.push("The documentation writer review is stale after a new implementation commit.");
+    issues.push("The documentation writer review is stale after a new commit.");
   }
 
   const normalizedAgentsBlob = expectedAgentsBlob?.trim().toLowerCase();
@@ -287,8 +269,6 @@ function evaluateReceipt(
     evidence: parsed.evidence,
     headShaMatches,
     issues,
-    prNumber: parsed.prNumber,
-    prNumberMatches,
     result: parsed.result,
     reviewedHeadSha: parsed.reviewedHeadSha,
     status: parsed.present ? (issues.length === 0 ? "valid" : "invalid") : "missing",
@@ -306,7 +286,6 @@ function parseReceipt(body: string): ParsedReceipt {
       duplicateFields: [],
       duplicateSections: false,
       evidence: null,
-      prNumber: null,
       present: false,
       result: null,
       reviewedHeadSha: null,
@@ -320,10 +299,10 @@ function parseReceipt(body: string): ParsedReceipt {
   const section = remaining.slice(0, nextHeading?.index ?? remaining.length);
   const lines = section.split(/\r?\n/u).map((line) => line.trim());
   const reviewCheckboxPattern =
-    /^- \[[ xX]\] Documentation writer subagent reviewed the completed implementation$/u;
+    /^- \[[ xX]\] Documentation writer subagent reviewed the completed (?:changes|implementation)$/u;
   const completionPattern =
-    /^- \[[xX]\] Documentation writer subagent reviewed the completed implementation$/u;
-  const duplicateFields = ["Result", "Evidence", "Agent", "PR"].filter(
+    /^- \[[xX]\] Documentation writer subagent reviewed the completed (?:changes|implementation)$/u;
+  const duplicateFields = ["Result", "Evidence", "Agent"].filter(
     (name) => fieldValues(lines, name).length > 1,
   );
   for (const name of ["docs-review-head-sha", "docs-review-agents-blob-sha"]) {
@@ -338,7 +317,6 @@ function parseReceipt(body: string): ParsedReceipt {
     resultMatch && RESULTS.has(resultMatch[1] as ReviewResult)
       ? (resultMatch[1] as ReviewResult)
       : null;
-  const prNumber = parsePrNumber(fieldValue(lines, "PR"));
   const reviewedHeadSha = parseSha(hiddenFieldValue(lines, "docs-review-head-sha"));
   const agentsBlobSha = parseSha(hiddenFieldValue(lines, "docs-review-agents-blob-sha"));
 
@@ -349,7 +327,6 @@ function parseReceipt(body: string): ParsedReceipt {
     duplicateFields,
     duplicateSections: matches.length > 1,
     evidence: nonEmpty(fieldValue(lines, "Evidence")),
-    prNumber,
     present: true,
     result,
     reviewedHeadSha,
@@ -379,12 +356,6 @@ function hiddenFieldValues(lines: string[], name: string): string[] {
     .map((line) => line.slice(prefix.length, -suffix.length).trim());
 }
 
-function parsePrNumber(value: string | null): number | null {
-  const normalized = value?.trim();
-  if (!normalized || !/^#[1-9]\d*$/u.test(normalized)) return null;
-  return Number(normalized.slice(1));
-}
-
 function parseSha(value: string | null): string | null {
   const normalized = value?.replace(/^`|`$/gu, "").trim().toLowerCase();
   return normalized && SHA_PATTERN.test(normalized) ? normalized : null;
@@ -412,7 +383,6 @@ function toReportRecord(pullRequest: GhPullRequest): ReportRecord {
     ...evaluateReceipt(
       pullRequest.body ?? "",
       classifyPrType(pullRequest.body ?? ""),
-      pullRequest.number,
       pullRequest.headRefOid,
     ),
   };
@@ -503,13 +473,19 @@ function formatDate(value: Date): string {
 }
 
 function buildReport(repository: string, since: string, through: string, records: ReportRecord[]) {
-  const eligible = records.filter((record) => record.codeChanged);
-  const unclassified = records.filter((record) => record.codeChanged === null);
+  const eligible = records.filter(
+    (record) => record.codeChanged === true || record.docsChanged === true,
+  );
+  const eligibleCode = eligible.filter((record) => record.codeChanged === true);
+  const eligibleDocsOnly = eligible.filter(
+    (record) => record.codeChanged === false && record.docsChanged === true,
+  );
+  const unclassified = records.filter(
+    (record) => record.codeChanged === null || record.docsChanged === null,
+  );
   const recorded = eligible.filter((record) => record.status !== "missing");
   const valid = eligible.filter((record) => record.status === "valid");
-  const fresh = recorded.filter(
-    (record) => record.prNumberMatches === true && record.headShaMatches === true,
-  );
+  const fresh = recorded.filter((record) => record.headShaMatches === true);
   const resultCounts: Record<ReviewResult, number> = {
     blocked: 0,
     "docs-updated": 0,
@@ -530,7 +506,9 @@ function buildReport(repository: string, since: string, through: string, records
     through,
     metrics: {
       totalPrs: records.length,
-      eligibleCodePrs: eligible.length,
+      eligiblePrs: eligible.length,
+      eligibleCodePrs: eligibleCode.length,
+      eligibleDocsOnlyPrs: eligibleDocsOnly.length,
       unclassifiedPrs: unclassified.length,
       recordedReceipts: recorded.length,
       receiptCoverage: ratio(recorded.length, eligible.length),
@@ -563,8 +541,6 @@ function renderCsv(records: ReportRecord[]): string {
     "receipt_status",
     "result",
     "agent",
-    "receipt_pr_number",
-    "pr_number_matches",
     "reviewed_head_sha",
     "head_pr_sha",
     "head_sha_matches",
@@ -585,8 +561,6 @@ function renderCsv(records: ReportRecord[]): string {
     record.status,
     record.result,
     record.agent,
-    record.prNumber,
-    record.prNumberMatches,
     record.reviewedHeadSha,
     record.headPrSha,
     record.headShaMatches,

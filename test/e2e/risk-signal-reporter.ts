@@ -39,7 +39,9 @@ function checkedOutSha(workspace: string): string {
   return execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
     cwd: workspace,
     encoding: "utf8",
+    killSignal: "SIGKILL",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: 5_000,
   }).trim();
 }
 

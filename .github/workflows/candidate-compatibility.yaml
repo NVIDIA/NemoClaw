@@ -348,6 +348,13 @@ jobs:
             '
           fi
 
+      - id: artifact_safety
+        name: Validate final OpenShell gateway auth contract artifacts
+        if: ${{ always() }}
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract
+        run: node --experimental-strip-types --no-warnings controller/tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"
+
       - name: Upload live evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -356,7 +363,7 @@ jobs:
           path: |
             candidate-results/live-openshell-gateway-auth-contract.json
             candidate-live-observed.json
-            candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract/
+            ${{ steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path || '' }}
           if-no-files-found: error
           retention-days: 30
 
