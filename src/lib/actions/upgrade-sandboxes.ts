@@ -186,10 +186,10 @@ function isPreparedRecoveryCandidate(
 // the second read is dropped rather than rebuilt from a possibly stale backup.
 // A non-Ready phase on the second read remains eligible because prepared-backup
 // restore intent explicitly targets sandboxes stuck in those phases.
-// Any confirmation preflight or listing failure deliberately aborts the whole
-// command, even when other candidates were already observed. Continuing after
-// target-gateway evidence becomes unavailable could mix stale and current state
-// in one destructive recovery run, so uncorroborated absence always fails closed.
+// In the mutating path, a confirmation preflight or listing failure aborts the
+// command. Continuing after target-gateway evidence becomes unavailable could
+// mix stale and current state in one destructive recovery run. Check mode uses
+// the non-mutating list path and reports an unreachable sandbox as unobserved.
 async function confirmAbsentRecoveryCandidates(
   absentCandidates: registry.SandboxEntry[],
   selectedGatewayName: string,
