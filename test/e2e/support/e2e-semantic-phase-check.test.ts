@@ -173,6 +173,7 @@ describe("semantic E2E phase checker", () => {
               observesOutput: false,
               outputIgnored: false,
               tracksActivity: false,
+              tracksLifecycle: false,
             },
           ],
           forwardedTestModules: ["test/e2e/live/launchable-smoke.test.ts"],
@@ -404,6 +405,7 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
         boundary: "spawnObservedChild",
         observesOutput: true,
         tracksActivity: true,
+        tracksLifecycle: true,
       }),
     ]);
 
@@ -457,12 +459,74 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
     const conditionalLifecycle = scanDirectChildProcessSource(
       OBSERVED_CHILD_PROCESS_SOURCE,
       canonicalSource.replace(
-        'child.once("close", () => {\n    try {\n      finishActivity();',
-        'child.once("close", () => {\n    try {\n      if (false) finishActivity();',
+        'child.once("close", (code, signal) => {\n    try {\n      finishActivity();',
+        'child.once("close", (code, signal) => {\n    try {\n      if (false) finishActivity();',
       ),
     );
     expect(conditionalLifecycle.calls[0]).toEqual(
       expect.objectContaining({ tracksActivity: false }),
+    );
+
+    const missingLifecycleStart = scanDirectChildProcessSource(
+      OBSERVED_CHILD_PROCESS_SOURCE,
+      canonicalSource.replace(
+        "finishChildLifecycle = options.progress.beginChildLifecycle();",
+        "finishChildLifecycle = NOOP_CHILD_LIFECYCLE_REPORTER;",
+      ),
+    );
+    expect(missingLifecycleStart.calls[0]).toEqual(
+      expect.objectContaining({ tracksLifecycle: false }),
+    );
+
+    const unconditionalLaunchFailure = scanDirectChildProcessSource(
+      OBSERVED_CHILD_PROCESS_SOURCE,
+      canonicalSource.replace(
+        "if (!childSpawned) childLaunchFailed = true;",
+        "childLaunchFailed = true;",
+      ),
+    );
+    expect(unconditionalLaunchFailure.calls[0]).toEqual(
+      expect.objectContaining({ tracksLifecycle: false }),
+    );
+
+    const preconfirmedLaunch = scanDirectChildProcessSource(
+      OBSERVED_CHILD_PROCESS_SOURCE,
+      canonicalSource.replace("let childSpawned = false;", "let childSpawned = true;"),
+    );
+    expect(preconfirmedLaunch.calls[0]).toEqual(
+      expect.objectContaining({ tracksLifecycle: false }),
+    );
+
+    const payloadBearingTerminal = scanDirectChildProcessSource(
+      OBSERVED_CHILD_PROCESS_SOURCE,
+      canonicalSource.replace(': "exited-nonzero",', ": `exited-nonzero-${String(code)}`,"),
+    );
+    expect(payloadBearingTerminal.calls[0]).toEqual(
+      expect.objectContaining({ tracksLifecycle: false }),
+    );
+
+    const missingLifecycleFailures = validateCollectedSemanticPhaseModule({
+      relativeModuleId: "test/e2e/live/observed-child-lifecycle-contract.test.ts",
+      errors: [],
+      tests: [{ fullName: "audits child lifecycle checkpoints", phases: ["prepare", "verify"] }],
+      source: {
+        directChildProcessCalls: missingLifecycleStart.calls,
+        importsDirectTest: false,
+        importsSharedTest: true,
+        phaseCalls: [
+          {
+            file: "test/e2e/live/observed-child-lifecycle-contract.test.ts",
+            label: "verify",
+            line: 1,
+          },
+        ],
+        testPhaseBodies: [],
+      },
+    });
+    expect(missingLifecycleFailures).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/must emit canonical content-free lifecycle checkpoints/u),
+      ]),
     );
 
     const conditionalOutput = scanDirectChildProcessSource(
@@ -587,6 +651,20 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
       expect.stringMatching(/must use a reviewed progress-capability callsite/u),
     ]);
 
+    const lifecycleCapabilityCallsite = scanDirectChildProcessSource(
+      FAKE_OPENAI_SOURCE,
+      `${canonicalSource}\nexport function bypassObservedChild(options: FakeOpenAiCompatibleServerOptions) {\n  options.progress.beginChildLifecycle();\n}\n`,
+    );
+    expect(lifecycleCapabilityCallsite.auditFailures).toEqual([
+      expect.stringMatching(/reserved for the canonical observed-child boundary/u),
+    ]);
+
+    const supportLifecycleProbe = scanDirectChildProcessSource(
+      path.join(REPO_ROOT, "test/e2e/support/lifecycle-probe.fixture.ts"),
+      "export function probe(progress: { beginChildLifecycle(): () => void }) { progress.beginChildLifecycle(); }",
+    );
+    expect(supportLifecycleProbe.auditFailures).toEqual([]);
+
     const escapedWrapper = scanDirectChildProcessSource(
       FAKE_OPENAI_SOURCE,
       `${canonicalSource}\nconst wrapperBag = { spawnObservedChild };\nconst wrapperList = [spawnObservedChild];\nexport { spawnObservedChild };\nvoid [wrapperBag, wrapperList];\n`,
@@ -668,6 +746,51 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
         progressSource.replace("return Object.freeze(progress);", "return progress;"),
       ).auditFailures,
     ).toEqual([expect.stringMatching(/privately brand, register, and freeze/u)]);
+    expect(
+      scanDirectChildProcessSource(
+        TEST_PROGRESS_SOURCE,
+        progressSource.replace(
+          "  beginChildLifecycle: () => ChildLifecycleTerminalReporter;\n",
+          "",
+        ),
+      ).auditFailures,
+    ).toEqual([expect.stringMatching(/zero-argument child lifecycle capability/u)]);
+    expect(
+      scanDirectChildProcessSource(
+        TEST_PROGRESS_SOURCE,
+        progressSource.replace(
+          "    beginChildLifecycle() {",
+          "    beginChildLifecycle(_label: string) {",
+        ),
+      ).auditFailures,
+    ).toEqual([expect.stringMatching(/synchronously start and freeze idempotent/u)]);
+    expect(
+      scanDirectChildProcessSource(
+        TEST_PROGRESS_SOURCE,
+        progressSource.replace(
+          "      return Object.freeze(reportTerminal);",
+          "      return reportTerminal;",
+        ),
+      ).auditFailures,
+    ).toEqual([expect.stringMatching(/synchronously start and freeze idempotent/u)]);
+    expect(
+      scanDirectChildProcessSource(
+        TEST_PROGRESS_SOURCE,
+        progressSource.replace("        if (terminalReported) return;\n", ""),
+      ).auditFailures,
+    ).toEqual([expect.stringMatching(/synchronously start and freeze idempotent/u)]);
+    expect(
+      scanDirectChildProcessSource(
+        TEST_PROGRESS_SOURCE,
+        progressSource.replace("        terminalReported = true;\n", ""),
+      ).auditFailures,
+    ).toEqual([expect.stringMatching(/synchronously start and freeze idempotent/u)]);
+    expect(
+      scanDirectChildProcessSource(
+        TEST_PROGRESS_SOURCE,
+        progressSource.replace('  | "closed-unknown";', '  | "raw-exit-code";'),
+      ).auditFailures,
+    ).toEqual([expect.stringMatching(/fixed content-free terminal vocabulary/u)]);
 
     const observedSource = fs.readFileSync(OBSERVED_CHILD_PROCESS_SOURCE, "utf8");
     expect(

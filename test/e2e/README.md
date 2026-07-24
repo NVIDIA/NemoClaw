@@ -63,16 +63,35 @@ standard runners even though they use the trusted workflow definition from
 `main`.
 
 Exact-head PR-gate dispatches use a bounded swap fallback for the hosted
-Hermes image-building lanes that remain on those standard runners. The live
-Vitest helper activates the fallback only when GitHub Actions supplies a
-validated lowercase 40-hex checkout SHA. It reuses at least 32 GiB of active
-swap when available; otherwise, it creates one fixed 32 GiB swap file under
-`/mnt` before agent-turn latency, Hermes inference switch and shields, the
-Hermes Bedrock and stable MCP shards, or the `hermes-e2e`, `hermes-dashboard`,
-and Hermes security-posture tests. Setup failure stops before Vitest. Scheduled
-and ordinary manual `main` runs, larger-runner executions, rebuild lanes with
+Hermes image-building lanes that remain on those standard runners. The trusted
+workflow provisions the fallback as the first job step, before checking out or
+executing the candidate revision. It requires a controller-supplied lowercase
+40-hex checkout SHA, matching trusted workflow and dispatch revisions, and an
+ephemeral GitHub-hosted Linux x64 runner. Candidate code cannot supply the
+program or arguments passed to `sudo`.
+
+The trusted step requires at least 32 GiB (34,359,738,368 bytes) of usable swap.
+It reuses active swap that meets this requirement.
+Otherwise, it preserves at least 16 GiB of available disk capacity under
+`/mnt`, creates a root-owned mode-`0700` directory, and creates an exclusive
+randomized mode-`0600` file.
+The file allocation is 32 GiB plus 4,096 bytes (34,359,742,464 bytes).
+The additional 4,096 bytes keep the usable swap capacity at or above 32 GiB
+after formatting.
+Setup failure stops before candidate checkout and removes partial state only
+after proving the file inactive or successfully disabling it.
+After `swapon` succeeds, the trusted step makes up to five activation
+observations, one second apart.
+If visibility remains stale, cleanup treats the file as active.
+Cleanup removes it only after `swapoff` succeeds.
+Successful state is discarded with the ephemeral runner.
+
+The fallback covers agent-turn latency, Hermes inference switch and shields,
+the Hermes Bedrock and stable MCP shards, and the `hermes-e2e`,
+`hermes-dashboard`, and Hermes security-posture tests. Scheduled and ordinary
+manual `main` runs, larger-runner executions, rebuild lanes with
 workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
-shards do not use this fallback.
+shards do not use it.
 
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
@@ -289,13 +308,14 @@ revision, or closed PR can leave the controller green while coordination is
 failed or cancelled and the native job is non-passing. Only a successful native
 `E2E / PR Gate` for the current head and base satisfies the required check. An
 eligible prerequisite-CI failure records the versioned retry reason
-`prerequisite-ci`. A selected child records `child-cancelled` only when a
-trusted GitHub-hosted runner-loss annotation is bound to the exact failed job
-and workflow commit and no other terminal classification was produced.
-Cancellation alone is not retryable. Assertion failures and other selected-E2E
-outcomes do not receive a retry reason. An unexpected controller error still
-fails the controller workflow and fails coordination closed, which prevents
-the native job from passing.
+`prerequisite-ci`. A selected child records `child-cancelled` only when the
+controller authenticates either a trusted GitHub-hosted runner-loss annotation
+or the exact terminal-shutdown fallback against the failed job and workflow
+commit, and no other terminal classification was produced. Cancellation alone
+is not retryable. Assertion failures and other selected-E2E outcomes do not
+receive a retry reason. An unexpected controller error still fails the
+controller workflow and fails coordination closed, which prevents the native
+job from passing.
 
 On open, synchronization, reopen, transition out of draft, or base retarget,
 `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate Coordination` for
@@ -559,24 +579,28 @@ attempt, workflow commit, job check, standard hosted runner group, and runner
 name. The controller accepts one canonical runner-loss failure annotation bound
 to `.github` at that workflow commit.
 
-When GitHub emits a generic cancellation instead, the controller requires
-exactly one failure annotation whose message is `The operation was canceled.`
-The annotation must use `.github`, equal start and end lines, null columns, and
-empty title and detail fields. Every annotation must use a blob URL bound to the
-same workflow commit. The controller accepts at most 20 annotations, bounds
-each text field, and limits the normalized annotation evidence to 64 KiB. This
-permits trusted bounded non-failure notices beside the sole failure annotation
-without allowing annotation output to exhaust the coordinator.
+When GitHub emits a generic terminal result instead, the controller requires
+exactly one failure annotation. Its message must be
+`The operation was canceled.` for one completed `cancelled` workload step or
+`Process completed with exit code 143.` for one completed `failure` workload
+step. The annotation must use `.github`, equal start and end lines, null
+columns, and empty title and detail fields. Every annotation must use a blob URL
+bound to the same workflow commit. The controller accepts at most 20
+annotations, bounds each text field, and limits the normalized annotation
+evidence to 64 KiB. This permits trusted bounded non-failure notices beside the
+sole failure annotation without allowing annotation output to exhaust the
+coordinator.
 
-GitHub Actions creates this `.github` failure annotation after the hosted runner
-shuts down; NemoClaw workflow code cannot replace its generic message with the
-canonical lost-communication annotation. The classifier test `accepts the
-exact authenticated terminal shutdown block from run 29988226653` preserves
-the observed fallback contract. Remove the fallback and that test together
-only after GitHub's documented Jobs or Checks API contract provides an
-authenticated structured runner-loss reason for this exact shutdown path.
+GitHub Actions creates these `.github` failure annotations after the hosted
+runner shuts down; NemoClaw workflow code cannot replace their generic messages
+with the canonical lost-communication annotation. The classifier tests
+`accepts the exact authenticated terminal shutdown block from run 29988226653`
+and `accepts the exit-143 hosted shutdown from run 30026115852` preserve the
+two observed fallback contracts. Remove a fallback and its test together only
+after GitHub's documented Jobs or Checks API contract provides an authenticated
+structured runner-loss reason for that shutdown path.
 
-The generic-cancellation fallback also authenticates the job log. The
+The terminal-shutdown fallback also authenticates the job log. The
 controller requests the GitHub job-log endpoint and accepts only its signed
 HTTPS redirect to GitHub Actions result storage. It does not forward the
 repository token to that signed URL. A metadata request must return plain,
@@ -585,19 +609,21 @@ controller then reads at most the final 64 KiB with `If-Match` and requires an
 exact partial-content range, length, and matching ETag.
 
 The authenticated tail must end with exactly one line feed after the
-timestamped shutdown error, operation-cancelled error, and orphan-cleanup
-record, in that order. Up to 64 unique orphan-process termination records may
-follow the cleanup record. Each record must contain a positive process ID and a
-bounded process name. The record timestamps must not move backward. The
-job must start no later than the cancelled step. The shutdown must occur at or
-after that step starts, and the cancellation second must equal the step's
-completion time. Cleanup must not precede cancellation. Cleanup and
-orphan-process records must finish no later than the job completion time.
+timestamped shutdown error, matching operation-cancelled or exit-143 error, and
+orphan-cleanup record, in that order. Up to 64 unique orphan-process termination
+records may follow the cleanup record. Each record must contain a positive
+process ID and a bounded process name. The record timestamps must not move
+backward. The job must start no later than the interrupted step. The shutdown
+must occur at or after that step starts, and the terminal-error second must
+equal the step's completion time. Cleanup must not precede the terminal error.
+Cleanup and orphan-process records must finish no later than the job completion
+time.
 
-A generic cancellation without this log contract, timeout, unknown runner
-identity, self-hosted or custom runner group, ordinary failed step, another
-non-passing job, incomplete pagination, or mismatched annotation identity
-fails closed without a retry.
+A generic terminal result without this log contract, an ordinary exit 143
+without the exact preceding shutdown block, timeout, unknown runner identity,
+self-hosted or custom runner group, ordinary failed step, another non-passing
+job, incomplete pagination, or mismatched annotation identity fails closed
+without a retry.
 
 Before the one-time retry dispatch, the controller revalidates the unchanged
 internal PR head and base, original child, current coordination-check lineage,
@@ -607,6 +633,15 @@ completed child after each read and requires identical evidence fingerprints,
 including pagination state, log ETag, log length, and log-tail hash. After the
 second classification, it validates the live PR head and base and the current
 coordination-check lineage again.
+
+The source coordination check binds that original child through the
+controller-generated `Selected E2E run <run-id>` summary. The summary label,
+linked run ID, repository, and exact Actions run URL must agree. GitHub may set
+the check details URL to either that exact child run or the canonical
+`/runs/<check-id>` URL for the source check. A malformed selected-run prefix or
+any mismatch fails closed. Compatibility checks that predate the selected-run
+summary remain eligible only when their details URL is the exact child Actions
+run URL.
 
 The controller reserves a distinct replacement coordination check before
 dispatch so the native observer can follow the retry without mutating completed
@@ -709,7 +744,8 @@ provisions the same swap file on GitHub Actions when a trusted control-plane
 run uses the workflow definition from `main`. Those paths build large Hermes
 image layers and can otherwise exhaust the runner's default memory and swap
 during Docker layer export. Other E2E jobs keep the standard runner memory
-configuration.
+configuration except for the exact-head Hermes PR-gate fallback described in
+[Larger-runner routing](#larger-runner-routing).
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first

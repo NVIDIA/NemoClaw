@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
-import { isTestProgressCapability, type TestProgressCapability } from "./progress.ts";
+import {
+  type ChildLifecycleOutcome,
+  type ChildLifecycleTerminalReporter,
+  isTestProgressCapability,
+  type TestProgressCapability,
+} from "./progress.ts";
 
 export interface ChildProcessProgress extends TestProgressCapability {
   activity(label: string): (() => void) | void;
@@ -14,6 +19,10 @@ export interface ObservedChildProcessOptions {
   progress: ChildProcessProgress;
   spawn: SpawnOptions;
 }
+
+const NOOP_CHILD_LIFECYCLE_REPORTER: ChildLifecycleTerminalReporter = Object.freeze(
+  (_outcome: ChildLifecycleOutcome) => undefined,
+);
 
 /**
  * The single direct asynchronous child-process boundary used by live E2E code.
@@ -35,12 +44,24 @@ export function spawnObservedChild(
     // Progress diagnostics must never change process execution.
   }
 
+  let finishChildLifecycle = NOOP_CHILD_LIFECYCLE_REPORTER;
+  try {
+    finishChildLifecycle = options.progress.beginChildLifecycle();
+  } catch {
+    // Progress diagnostics must never change process execution.
+  }
+
   let child: ChildProcess;
   try {
     child = spawn(command, [...args], options.spawn);
   } catch (error) {
     try {
       finishActivity();
+    } catch {
+      // Progress diagnostics must never replace the spawn failure.
+    }
+    try {
+      finishChildLifecycle("spawn-failed");
     } catch {
       // Progress diagnostics must never replace the spawn failure.
     }
@@ -61,9 +82,32 @@ export function spawnObservedChild(
       // Child contents never cross this timestamp-only observer boundary.
     }
   });
-  child.once("close", () => {
+  let childSpawned = false;
+  let childLaunchFailed = false;
+  child.once("spawn", () => {
+    childSpawned = true;
+  });
+  child.once("error", () => {
+    if (!childSpawned) childLaunchFailed = true;
+  });
+  child.once("close", (code, signal) => {
     try {
       finishActivity();
+    } catch {
+      // Progress diagnostics must never change process completion.
+    }
+    try {
+      finishChildLifecycle(
+        childLaunchFailed
+          ? "spawn-failed"
+          : signal !== null
+            ? "signaled"
+            : code === 0
+              ? "exited-zero"
+              : code === null
+                ? "closed-unknown"
+                : "exited-nonzero",
+      );
     } catch {
       // Progress diagnostics must never change process completion.
     }
