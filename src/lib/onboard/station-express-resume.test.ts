@@ -1011,6 +1011,8 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
 
   it("restores install-vllm without Station state or inherited model overrides", async () => {
     const originalEnv: NodeJS.ProcessEnv = {
+      NEMOCLAW_STATION_EXPRESS: "1",
+      NEMOCLAW_POLICY_MODE: "suggested",
       NEMOCLAW_PROVIDER: "",
       NEMOCLAW_VLLM_MODEL: sparkModelEnv,
       NEMOCLAW_MODEL: sparkServedModel,

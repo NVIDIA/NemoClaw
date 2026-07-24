@@ -776,8 +776,10 @@ function expectedEnvironment(
 ): ExpectedResumeEnvironment | null {
   if (intent.kind === "spark") {
     const expected: ExpectedResumeEnvironment = {
+      [STATION_EXPRESS_ENV]: null,
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_YES: "1",
+      NEMOCLAW_POLICY_MODE: null,
       NEMOCLAW_SANDBOX_NAME: intent.sandboxName,
     };
     if (includeProviderSelection) {
