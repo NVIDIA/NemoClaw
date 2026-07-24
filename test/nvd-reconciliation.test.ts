@@ -525,7 +525,10 @@ describe("advisory early-warning CLI --nvd-records", () => {
       const inventoryPath = path.join(tempRoot, "inventory.json");
       fs.writeFileSync(
         inventoryPath,
-        JSON.stringify([{ name: "fast-uri", version: "3.1.2" }, { name: "", version: "1.0.0" }]),
+        JSON.stringify([
+          { name: "fast-uri", version: "3.1.2" },
+          { name: "", version: "1.0.0" },
+        ]),
       );
       expect(() => runScanCli(["--inventory", inventoryPath, "--list-packages"])).toThrow(
         /entry 1 .* missing a non-empty string "name"/,
