@@ -1,15 +1,14 @@
-# Optional overlay for load-test — same 40% target and fast scale-up as values-step2-hpa.yaml.
-# Kept for ./scripts/hpa-load-test.sh (-f values-load-test-hpa.yaml); uses shorter scale-up periods.
+# Optional overlay for load-test — same 40% target as values-step2-hpa.yaml, with a
+# shorter scale-up period so the one-pod-at-a-time steps are visible within the test window.
 autoscaling:
   targetGPUUtilizationPercentage: 40
   behavior:
+    # One pod per reconcile (~10s here) — gradual scale-up instead of jumping
+    # straight to the replica count the raw GPU-utilization ratio would allow.
     scaleUp:
       stabilizationWindowSeconds: 0
       policies:
-        - type: Percent
-          value: 100
-          periodSeconds: 10
         - type: Pods
-          value: 4
+          value: 1
           periodSeconds: 10
       selectPolicy: Max

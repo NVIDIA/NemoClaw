@@ -56,9 +56,9 @@ service:
   # Agent HTTP port (CPU chart uses 8080 — keep charts on different ports)
   port: 8081
 
-# Optional Layer-7 routing through an existing ingress-nginx controller.
+# Layer-7 load balancing through ingress-nginx. install-hpa.sh installs the
+# ingress-nginx controller automatically when the cluster does not already have one.
 ingress:
-  enabled: false
   className: nginx
   annotations:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
@@ -159,7 +159,10 @@ loadTest:
 metrics:
   enabled: true
   path: /metrics
+  # Scraped by Prometheus so per-pod request/latency metrics (nemoclaw_llm_*) show up
+  # in Grafana out of the box. Default true so install/load-test/reset re-runs (plain
+  # `helm upgrade`, not --reuse-values) don't silently disable this on every re-apply.
   serviceMonitor:
-    enabled: false
+    enabled: true
     interval: 30s
     labels: {}

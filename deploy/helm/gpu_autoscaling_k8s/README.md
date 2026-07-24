@@ -5,7 +5,8 @@
 
 # NemoClaw Kubernetes GPU autoscaling
 
-This Helm chart runs an OpenAI-compatible Node.js proxy beside local Ollama inference for NemoClaw workloads. A Kubernetes Horizontal Pod Autoscaler (HPA) scales the pods, and each replica requests one NVIDIA GPU.
+This Helm chart uses Kubernetes to autoscale NemoClaw and NGINX to balance workloads. 
+A Kubernetes Horizontal Pod Autoscaler (HPA) scales the pods, and each replica requests one NVIDIA GPU.
 
 The HPA reads the per-pod `gpu_utilization_percent` custom metric. The metric pipeline is:
 
@@ -30,31 +31,12 @@ The default deployment uses:
 | Minimum replicas | `1` |
 | Maximum replicas | `4` |
 | GPU utilization target | `40%` |
+| Ingress class | `nginx` |
+| Ingress host | `nemoclaw.local` |
 
 The chart and load test were validated on a single-node MicroK8s cluster with four NVIDIA L40S GPUs. Set the maximum replica count to the number of allocatable GPUs in your cluster.
 
-## Architecture
-
-```text
-┌───────────────────────────────────────────────────────────┐
-│ Kubernetes GPU node                                       │
-│                                                           │
-│  ┌─────────────────────────────────────────────────────┐  │
-│  │ Agent pod                                           │  │
-│  │                                                     │  │
-│  │  ┌──────────────────┐    ┌───────────────────────┐ │  │
-│  │  │ Ollama           │◄───│ Node.js API proxy    │ │  │
-│  │  │ GPU inference    │    │ :8081                │ │  │
-│  │  │ :11434           │    │ health/API/metrics   │ │  │
-│  │  └──────────────────┘    └───────────────────────┘ │  │
-│  │                1 × nvidia.com/gpu                  │  │
-│  └─────────────────────────────────────────────────────┘  │
-│                                                           │
-│  HPA scales agent pods between 1 and 4 replicas           │
-└───────────────────────────────────────────────────────────┘
-```
-
-Ollama port `11434` is available only inside each pod. Clients use the agent Service on port `8081`.
+<img width="1334" height="920" alt="Screenshot 2026-06-09 at 7 01 28 PM" src="https://github.com/user-attachments/assets/a8380890-4074-43a6-968c-916b523199d2" />
 
 ## Prerequisites
 
@@ -77,7 +59,7 @@ kubectl get pods -n gpu-operator-resources \
   -l app=nvidia-dcgm-exporter
 ```
 
-For MicroK8s, the installer enables the GPU and Metrics Server add-ons when needed. On other Kubernetes distributions, install those components before running the installer.
+For MicroK8s, the installer enables the GPU and Metrics Server add-ons when needed. On other Kubernetes distributions, install those components before running the installer. The installer also installs the ingress-nginx controller when the cluster does not already have an `nginx` IngressClass.
 
 ## Install
 
@@ -94,9 +76,10 @@ The installer:
 2. Waits for Metrics Server to become ready.
 3. Installs Prometheus when it is missing.
 4. Installs Prometheus Adapter and the GPU metric rule.
-5. Deploys one Ollama-backed API proxy pod.
-6. Creates the GPU utilization HPA.
-7. Waits for the agent rollout and prints HPA status.
+5. Installs the ingress-nginx controller when the `nginx` IngressClass is missing.
+6. Deploys one Ollama-backed API proxy pod and the NGINX Ingress in front of it.
+7. Creates the GPU utilization HPA.
+8. Waits for the agent rollout and prints HPA status.
 
 Set the maximum replica count to the number of available GPUs:
 
@@ -111,6 +94,12 @@ ROLLOUT_TIMEOUT=1200 \
 INFERENCE_MODEL=llama3.2:3b \
 MAX_REPLICAS=4 \
 ./scripts/install-hpa.sh
+```
+
+Set a custom Ingress hostname:
+
+```bash
+INGRESS_HOST=nemoclaw.example.com ./scripts/install-hpa.sh
 ```
 
 ## Verify the deployment
@@ -190,9 +179,9 @@ The HPA adds replicas when average GPU utilization remains above the configured 
 
 ## Test scale-up and scale-down
 
-The load test sends chat-completion requests across running GPU pods, verifies the HPA replica count increases, removes the load, and verifies the HPA returns to one replica.
+`hpa-load-test.sh` generates a synthetic chat-completion workload to verify that the HPA actually autoscales the pod count, rather than relying on organic traffic. The load test sends chat-completion requests across running GPU pods, verifies the HPA replica count increases, removes the load, and verifies the HPA returns to one replica.
 
-Use at least two allocatable GPUs and set `TARGET_PODS` and `SCALE_UP_TARGET` to at least `2`. A one-GPU run cannot validate scale-up. HPA replica-count success confirms autoscaler behavior, but it does not by itself prove that every new replica completed inference successfully.
+Run the test with `TARGET_PODS` and `SCALE_UP_TARGET` set to your full allocatable GPU count (4 on the reference node). A one-GPU run cannot validate scale-up, and validating at a lower replica count (for example, 2) does not confirm the HPA and load generator can also reach the full count. HPA replica-count success confirms autoscaler behavior, but it does not by itself prove that every new replica completed inference successfully.
 
 Run the full test:
 
@@ -200,26 +189,18 @@ Run the full test:
 ./scripts/hpa-load-test.sh
 ```
 
-By default, `TARGET_PODS` is the number of allocatable GPUs. The test temporarily sets the HPA maximum to that value.
-
-Run a shorter two-GPU validation:
-
-```bash
-TARGET_PODS=2 \
-SCALE_UP_TARGET=2 \
-DURATION_SEC=180 \
-SCALE_UP_WAIT_LOOPS=36 \
-SCALE_DOWN_WAIT_LOOPS=28 \
-MAX_TOKENS=64 \
-./scripts/hpa-load-test.sh
-```
+By default, `TARGET_PODS` is the number of allocatable GPUs, so the test already targets your full GPU count without overrides.
 
 A successful run reports:
 
 ```text
-Scale-up OK: 2/2 replicas
-Load test complete: scaled to 2/2 GPU replicas and back to 1
+Scale-up OK: 4/4 replicas
+Load test complete: scaled to 4/4 GPU replicas and back to 1
 ```
+
+<img width="1888" height="826" alt="Screenshot 2026-06-09 at 7 02 00 PM" src="https://github.com/user-attachments/assets/4aa98eb1-58bd-4256-8539-df6f617d3016" />
+
+<img width="1450" height="336" alt="Screenshot 2026-06-09 at 7 39 36 PM" src="https://github.com/user-attachments/assets/a3ed1f62-256b-4b97-9c11-e01a74e5912b" />
 
 The script exits with a nonzero status if it does not reach the scale-up target or does not return to one replica.
 
@@ -291,7 +272,7 @@ Recover cluster:     ./scripts/cluster-recover.sh
 | `templates/hpa.yaml` | HPA resource |
 | `templates/deployment.yaml` | Ollama and agent pod |
 | `templates/service.yaml` | Agent ClusterIP Service |
-| `templates/ingress.yaml` | Optional ingress-nginx route |
+| `templates/ingress.yaml` | NGINX ingress route (always created) |
 
 Change the GPU HPA policy in `values-step2-hpa.yaml`:
 
@@ -305,6 +286,8 @@ autoscaling:
 ```
 
 The maximum replica count should not exceed the total allocatable GPU count when every pod requests one GPU.
+
+Scale-up adds one pod per reconcile (`scaleUp.policies: [{type: Pods, value: 1}]`) instead of jumping straight to the replica count the raw GPU-utilization ratio (`ceil(currentReplicas * current/target)`) would otherwise allow in a single step. Increase `value` in `scaleUp.policies` to allow larger jumps.
 
 ## GPU metric details
 
@@ -325,18 +308,84 @@ kubectl describe hpa nemoclaw-gpu-agent -n nemoclaw-gpu
 
 `ScalingActive=True` and `ValidMetricFound` confirm that the HPA can calculate a desired replica count from GPU utilization.
 
-## Grafana workload allocation
+## Traffic distribution
 
-Grafana can compare request traffic and GPU utilization across the HPA replicas.
+NGINX is the load balancer for this chart — every install creates an Ingress in front of the agent Service, and `install-hpa.sh` installs the ingress-nginx controller automatically when the cluster does not already have one. There is no toggle to disable it.
 
-Enable scraping of the agent `/metrics` endpoint while preserving the installed release settings:
+```text
+HTTP client
+  → ingress-nginx
+  → Service nemoclaw-gpu-agent:8081 (ClusterIP)
+  → ready agent pod
+  → local Ollama container
+  → assigned NVIDIA GPU
+```
+
+ingress-nginx watches Kubernetes endpoints and adds newly ready HPA replicas to its upstream pool. This chart uses a standard Kubernetes Ingress and keeps the application Service as `ClusterIP`.
+
+### NGINX ingress
+
+Verify that ingress-nginx and its `nginx` IngressClass are running after `install-hpa.sh` completes:
 
 ```bash
-helm upgrade nemoclaw-gpu . \
-  --namespace nemoclaw-gpu \
-  --reset-then-reuse-values \
-  --set metrics.serviceMonitor.enabled=true
+kubectl get pods -n ingress-nginx
+kubectl get ingressclass nginx
+kubectl get ingress -n nemoclaw-gpu
 ```
+
+Set a custom hostname at install time, or re-run on an existing release — `install-hpa.sh` is idempotent:
+
+```bash
+INGRESS_HOST=nemoclaw.example.com ./scripts/install-hpa.sh
+```
+
+The default NGINX annotations allow long inference requests and streaming responses:
+
+```yaml
+ingress:
+  className: nginx
+  host: nemoclaw.local
+  path: /
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+```
+
+Verify the route without requiring an external load balancer:
+
+```bash
+kubectl port-forward \
+  -n ingress-nginx \
+  service/ingress-nginx-controller \
+  8080:80
+```
+
+In another terminal:
+
+```bash
+curl -s -H 'Host: nemoclaw.local' \
+  http://127.0.0.1:8080/healthz
+```
+
+Rate limiting is disabled by default because it can suppress the load that drives autoscaling. Enable it only when the limit is intentionally part of the deployment policy:
+
+```yaml
+ingress:
+  annotations:
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+```
+
+The Ingress does not add authentication or TLS automatically. Do not expose the endpoint publicly until you configure both.
+
+NGINX selects a ready backend for each request. It cannot move an inference request that is already running when the HPA adds a new pod, so long-lived requests may still produce temporary utilization differences between GPUs.
+
+## Grafana workload allocation
+
+Grafana can compare request traffic and GPU utilization across the HPA replicas. Scraping of the agent `/metrics` endpoint is enabled by default (`metrics.serviceMonitor.enabled: true`), so no extra setup is needed after `install-hpa.sh`.
 
 Forward the Grafana Service:
 
@@ -390,257 +439,11 @@ sum by (pod) (
 )
 ```
 
-### Inference errors by pod
-
-```promql
-sum by (pod) (
-  rate(nemoclaw_llm_requests_total{
-    namespace="nemoclaw-gpu",
-    result="error"
-  }[5m])
-)
-```
-
-### Rolling p95 inference latency by pod
-
-```promql
-avg by (pod) (
-  nemoclaw_llm_latency_p95_milliseconds{
-    namespace="nemoclaw-gpu"
-  }
-)
-```
-
-### Requested GPUs by pod
-
-```promql
-sum by (pod) (
-  kube_pod_container_resource_requests{
-    namespace="nemoclaw-gpu",
-    resource="nvidia_com_gpu"
-  }
-)
-```
-
 Add the request-rate and GPU-utilization queries to the same Explore view to see whether traffic and GPU work are distributed across replicas. When the HPA scales up, a new pod should appear after it becomes ready. A `rate(...)` result requires at least two Prometheus scrapes.
 
-If a query returns no data:
+If the request-rate graph shows only one pod (or stops updating) while GPU utilization shows all pods, check `kubectl get servicemonitor -n nemoclaw-gpu`. Anything that runs a plain `helm upgrade` without `--reuse-values` (custom scripts, manual re-installs) resets `metrics.serviceMonitor.enabled` to the chart default, which is `true`; if it was manually forced to `false` re-run `install-hpa.sh` or `helm upgrade` with `--set metrics.serviceMonitor.enabled=true` to restore it.
 
-1. Wait for at least two Prometheus scrape intervals.
-2. Generate inference traffic.
-3. Confirm the Grafana time range includes the traffic.
-4. Confirm the ServiceMonitor exists:
 
-   ```bash
-   kubectl get servicemonitor nemoclaw-gpu-agent -n nemoclaw-gpu
-   ```
-
-5. Try the raw metric name first:
-
-   ```promql
-   nemoclaw_llm_requests_total
-   ```
-
-## Traffic distribution
-
-The chart always creates a `ClusterIP` Service:
-
-```text
-In-cluster client
-  → nemoclaw-gpu-agent:8081
-  → ready agent pod
-  → local Ollama container
-  → assigned NVIDIA GPU
-```
-
-The Service automatically adds new endpoints when HPA-created pods become ready. Kubernetes balances new connections; it does not route based on GPU utilization.
-
-### Optional NGINX ingress
-
-The optional Ingress adds Layer-7 HTTP routing in front of the Service. ingress-nginx watches Kubernetes endpoints and adds newly ready HPA replicas to its upstream pool.
-
-```text
-HTTP client
-  → ingress-nginx
-  → nemoclaw-gpu-agent:8081
-  → ready GPU pod
-  → local Ollama container
-```
-
-This follows the endpoint-discovery and Layer-7 load-balancing approach described in [Deploying NVIDIA Triton at Scale with MIG and Kubernetes](https://developer.nvidia.com/blog/deploying-nvidia-triton-at-scale-with-mig-and-kubernetes/). The older example used a dedicated NGINX Plus deployment and a headless Service. This chart uses a standard Kubernetes Ingress and keeps the application Service as `ClusterIP`.
-
-The application chart does not install a cluster-wide ingress controller. Verify that ingress-nginx and its `nginx` IngressClass exist:
-
-```bash
-kubectl get pods -n ingress-nginx
-kubectl get ingressclass nginx
-```
-
-If your cluster does not already have ingress-nginx:
-
-```bash
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-helm repo update ingress-nginx
-helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-  --namespace ingress-nginx \
-  --create-namespace
-```
-
-Enable the Ingress after installing the GPU HPA:
-
-```bash
-helm upgrade nemoclaw-gpu . \
-  --namespace nemoclaw-gpu \
-  --reset-then-reuse-values \
-  --set ingress.enabled=true \
-  --set ingress.host=nemoclaw.local
-```
-
-`--reset-then-reuse-values` adds the new Ingress defaults while retaining the installed GPU replica cap, model, and other release overrides.
-
-The default NGINX annotations allow long inference requests and streaming responses:
-
-```yaml
-ingress:
-  enabled: true
-  className: nginx
-  host: nemoclaw.local
-  path: /
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-buffering: "off"
-    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
-```
-
-Verify the route without requiring an external load balancer:
-
-```bash
-kubectl port-forward \
-  -n ingress-nginx \
-  service/ingress-nginx-controller \
-  8080:80
-```
-
-In another terminal:
-
-```bash
-curl -s -H 'Host: nemoclaw.local' \
-  http://127.0.0.1:8080/healthz
-```
-
-Rate limiting is disabled by default because it can suppress the load that drives autoscaling. Enable it only when the limit is intentionally part of the deployment policy:
-
-```yaml
-ingress:
-  annotations:
-    nginx.ingress.kubernetes.io/limit-rps: "20"
-    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
-```
-
-The Ingress does not add authentication or TLS automatically. Do not expose the endpoint publicly until you configure both.
-
-NGINX selects a ready backend for each request. It cannot move an inference request that is already running when the HPA adds a new pod, so long-lived requests may still produce temporary utilization differences between GPUs.
-
-## Troubleshooting
-
-### No allocatable GPU
-
-```bash
-kubectl describe nodes
-kubectl get pods -n gpu-operator-resources
-```
-
-Verify that the NVIDIA device plugin is running and that node capacity includes `nvidia.com/gpu`.
-
-### HPA target is unknown
-
-Check each stage of the metric pipeline:
-
-```bash
-kubectl get pods -n gpu-operator-resources \
-  -l app=nvidia-dcgm-exporter
-kubectl get pods -n monitoring
-kubectl get apiservice v1beta1.custom.metrics.k8s.io
-kubectl get --raw \
-  '/apis/custom.metrics.k8s.io/v1beta1/namespaces/nemoclaw-gpu/pods/*/gpu_utilization_percent'
-```
-
-Re-run the installer after all components are ready:
-
-```bash
-./scripts/install-hpa.sh
-```
-
-### Agent pod is not ready
-
-The first model pull can take several minutes:
-
-```bash
-kubectl get pods -n nemoclaw-gpu
-kubectl logs -n nemoclaw-gpu \
-  deployment/nemoclaw-gpu-agent \
-  -c ollama
-```
-
-Retry with a longer timeout:
-
-```bash
-ROLLOUT_TIMEOUT=1200 ./scripts/install-hpa.sh
-```
-
-### HPA does not scale up
-
-Verify that:
-
-1. More than one GPU is allocatable.
-2. `maxReplicas` is greater than one.
-3. The custom metric returns a value.
-4. GPU utilization exceeds the target.
-5. New pods can request another GPU.
-
-```bash
-kubectl describe hpa nemoclaw-gpu-agent -n nemoclaw-gpu
-kubectl get events -n nemoclaw-gpu --sort-by=.lastTimestamp
-```
-
-### HPA does not scale down
-
-The default scale-down stabilization window is 180 seconds. Wait for the window to expire after load stops:
-
-```bash
-kubectl get hpa -n nemoclaw-gpu -w
-```
-
-Use the reset script if a load test was interrupted:
-
-```bash
-./scripts/hpa-reset.sh
-```
-
-### Repeated rollout failures
-
-```bash
-./scripts/cluster-recover.sh
-```
-
-Review the script before running it because recovery removes and recreates workload resources.
-
-## Directory layout
-
-```text
-deploy/helm/gpu_autoscaling_k8s/
-├── Chart.yaml
-├── README.md
-├── values.yaml
-├── values-step2-hpa.yaml
-├── values-load-test-hpa.yaml
-├── files/
-├── monitoring/
-├── scripts/
-└── templates/
-```
 
 ## Uninstall
 

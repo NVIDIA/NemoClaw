@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Install GPU HPA (DCGM → prometheus-adapter → gpu_utilization_percent).
+# Install GPU HPA (DCGM → prometheus-adapter → gpu_utilization_percent) and the
+# ingress-nginx controller that load-balances traffic across HPA replicas.
 # Script output is HPA-focused only; see ../README.md for full operations.
 #
 # Usage:
@@ -21,6 +22,11 @@ RELEASE="${RELEASE:-nemoclaw-gpu}"
 MONITORING_NS="${MONITORING_NS:-monitoring}"
 PROM_RELEASE="${PROM_RELEASE:-kube-prometheus}"
 ADAPTER_RELEASE="${ADAPTER_RELEASE:-prometheus-adapter}"
+INGRESS_NS="${INGRESS_NS:-ingress-nginx}"
+INGRESS_RELEASE="${INGRESS_RELEASE:-ingress-nginx}"
+INGRESS_CLASS="${INGRESS_CLASS:-nginx}"
+INGRESS_HELM_TIMEOUT="${INGRESS_HELM_TIMEOUT:-5m}"
+INGRESS_HOST="${INGRESS_HOST:-}"
 DEPLOYMENT="${DEPLOYMENT:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_agent_deployment)}"
 HPA_NAME="${HPA_NAME:-${DEPLOYMENT}}"
 HPA_VALUES="${HPA_VALUES:-${CHART_DIR}/values-step2-hpa.yaml}"
@@ -103,9 +109,43 @@ ensure_prometheus_stack() {
 
 INFERENCE_MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
 
+ensure_ingress_nginx() {
+  local class_exists=0
+  kubectl get ingressclass "${INGRESS_CLASS}" >/dev/null 2>&1 && class_exists=1
+
+  if ! helm status "${INGRESS_RELEASE}" -n "${INGRESS_NS}" >/dev/null 2>&1 && [[ "${class_exists}" == "1" ]]; then
+    # IngressClass already provided by something this script does not manage — leave it alone.
+    return 0
+  fi
+
+  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx >/dev/null 2>&1 || true
+  helm repo update ingress-nginx >/dev/null 2>&1 || helm repo update >/dev/null 2>&1
+
+  # controller.metrics.* exposes NGINX's own request/latency stats (nginx_ingress_controller_*)
+  # to Prometheus via a ServiceMonitor — separate from the per-pod GPU/app metrics.
+  helm upgrade --install "${INGRESS_RELEASE}" ingress-nginx/ingress-nginx \
+    --namespace "${INGRESS_NS}" \
+    --create-namespace \
+    --set controller.ingressClassResource.name="${INGRESS_CLASS}" \
+    --set controller.metrics.enabled=true \
+    --set controller.metrics.serviceMonitor.enabled=true \
+    --timeout "${INGRESS_HELM_TIMEOUT}" \
+    --wait >/dev/null
+
+  kubectl wait --for=condition=ready pod \
+    -l "app.kubernetes.io/component=controller,app.kubernetes.io/instance=${INGRESS_RELEASE}" \
+    -n "${INGRESS_NS}" \
+    --timeout=300s >/dev/null 2>&1 || true
+
+  kubectl get ingressclass "${INGRESS_CLASS}" >/dev/null 2>&1 || {
+    echo "ingress-nginx installed but IngressClass ${INGRESS_CLASS} not found — Ingress cannot route traffic" >&2
+    exit 1
+  }
+}
+
 helm_install() {
   hpa_common_gpu_helm_upgrade "${RELEASE}" "${CHART_DIR}" "${NAMESPACE}" "${HPA_VALUES}" \
-    "${MIN_REPLICAS}" "${MAX_REPLICAS}" "${GPU_TARGET}" "${INFERENCE_MODEL}"
+    "${MIN_REPLICAS}" "${MAX_REPLICAS}" "${GPU_TARGET}" "${INFERENCE_MODEL}" "${INGRESS_HOST}"
 }
 
 if command -v microk8s >/dev/null 2>&1; then
@@ -127,6 +167,7 @@ kubectl get pods -n gpu-operator-resources -l app=nvidia-dcgm-exporter 2>/dev/nu
 }
 
 ensure_prometheus_stack
+ensure_ingress_nginx
 
 hpa_common_gpu_recreate_stale_workload "${NAMESPACE}" "${DEPLOYMENT}" "${DEPLOYMENT}"
 

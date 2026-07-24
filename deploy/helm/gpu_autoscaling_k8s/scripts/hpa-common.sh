@@ -359,20 +359,27 @@ hpa_common_gpu_helm_upgrade() {
   local max="${6:-4}"
   local gpu_target="${7:-40}"
   local inference_model="${8:-llama3.2:3b}"
+  local ingress_host="${9:-}"
 
-  helm upgrade --install "${release}" "${chart_dir}" \
-    --namespace "${ns}" \
-    --create-namespace \
-    --set namespace.create=false \
-    -f "${hpa_values}" \
-    --set inference.model="${inference_model}" \
-    --set probes.readinessChecksInference=true \
-    --set autoscaling.enabled=true \
-    --set autoscaling.mode=gpu \
-    --set autoscaling.minReplicas="${min}" \
-    --set autoscaling.maxReplicas="${max}" \
-    --set "autoscaling.targetGPUUtilizationPercentage=${gpu_target}" \
-    >/dev/null
+  local helm_args=(
+    upgrade --install "${release}" "${chart_dir}"
+    --namespace "${ns}"
+    --create-namespace
+    --set namespace.create=false
+    -f "${hpa_values}"
+    --set inference.model="${inference_model}"
+    --set probes.readinessChecksInference=true
+    --set autoscaling.enabled=true
+    --set autoscaling.mode=gpu
+    --set autoscaling.minReplicas="${min}"
+    --set autoscaling.maxReplicas="${max}"
+    --set "autoscaling.targetGPUUtilizationPercentage=${gpu_target}"
+  )
+  if [[ -n "${ingress_host}" ]]; then
+    helm_args+=(--set "ingress.host=${ingress_host}")
+  fi
+
+  helm "${helm_args[@]}" >/dev/null
 }
 
 hpa_common_clear_stuck_pods() {

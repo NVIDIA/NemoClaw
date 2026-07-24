@@ -9,14 +9,14 @@ autoscaling:
   mode: gpu
   targetGPUUtilizationPercentage: 40
   behavior:
+    # One pod per reconcile (~15s sync period) — visible, gradual scale-up
+    # instead of jumping straight to the replica count the raw GPU-utilization
+    # ratio would allow (ceil(currentReplicas * current/target)).
     scaleUp:
       stabilizationWindowSeconds: 0
       policies:
-        - type: Percent
-          value: 100
-          periodSeconds: 15
         - type: Pods
-          value: 4
+          value: 1
           periodSeconds: 15
       selectPolicy: Max
     scaleDown:
