@@ -2870,6 +2870,16 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
+
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
         continue-on-error: true
@@ -2882,16 +2892,6 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
-
-      - name: Add swap for Hermes image rebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
 
       - name: Run Hermes rebuild live test
         # Preserves the checked-out CLI, Docker/OpenShell, Hermes base-image
@@ -2984,6 +2984,16 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
+
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
         continue-on-error: true
@@ -2996,16 +3006,6 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
-
-      - name: Add swap for Hermes image rebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
 
       - name: Run Hermes stale-base rebuild live test
         # Uses NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1, preserving issue #3025's

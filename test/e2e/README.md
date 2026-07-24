@@ -186,7 +186,8 @@ The OpenClaw matrix entries for `mcp-bridge`,
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
 
-- an `initialize` endpoint after workspace preparation;
+- an `initialize` endpoint after workspace preparation and any fixed-capacity
+  rebuild swap;
 - a distinct `scenario-start` for every test handled by the execution;
 - a `periodic` sample on an approximately 60-second fixed cadence;
 - a `phase` sample before each semantic phase transition and when the final
@@ -205,7 +206,9 @@ records exist to reserve the last slot for `finalize`. A missing, historical-v1,
 already-finalized, full, or invalid ledger permanently disables comparison
 sampling for that test progress instance. In `rebuild-hermes` and
 `rebuild-hermes-stale-base`, where legacy phase resource evidence is configured,
-the existing five-minute full snapshot then becomes the best-effort fallback.
+the workflow establishes its 32 GiB swap before `initialize` so the ledger sees
+one stable swap capacity. If canonical sampling becomes unavailable, the
+existing five-minute full snapshot becomes the best-effort fallback.
 That full profile may run `ps`, `docker stats`, and `docker system df`
 sequentially with a 15-second timeout each, or 45 seconds in the worst case;
 canonical sampling suppresses this heavier collection while it remains active.
