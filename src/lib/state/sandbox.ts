@@ -1483,9 +1483,9 @@ function restoreSandboxStateInternal(
       localDirs.splice(localDirs.indexOf(d), 1);
     }
   }
-  // Only manifests that explicitly distinguish failed backups from absent
-  // directories can safely authorize stale-content cleanup. Older manifests
-  // leave this field absent, so preserve their historical restore behavior.
+  // Only manifests that distinguish failed backups from absent directories can
+  // authorize cleanup without deleting data that a failed backup did not capture.
+  // Older manifests leave this field absent, so preserve their historical restore behavior.
   const failedBackupDirs = new Set(manifest.failedBackupDirs ?? []);
   const localDirSet = new Set(localDirs);
   const staleContentDirs =
