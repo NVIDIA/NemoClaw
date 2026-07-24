@@ -6,6 +6,7 @@ import * as dockerImage from "../../adapters/docker/image";
 import * as agentDefs from "../../agent/defs";
 import * as agentOnboard from "../../agent/onboard";
 import * as gatewayRuntime from "../../gateway-runtime-action";
+import { SANDBOX_BASE_BUILD_PROVENANCE_LABEL } from "../../sandbox-base-image";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
@@ -16,6 +17,15 @@ import {
   pinRebuildAgentBaseImageForRecreate,
   warnUnpreservedUserManagedFiles,
 } from "./rebuild-flow-helpers";
+
+const baseImageMocks = vi.hoisted(() => ({
+  inspectLocalImageMetadata: vi.fn(),
+}));
+
+vi.mock("../../sandbox-base-image", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox-base-image")>()),
+  inspectLocalImageMetadata: baseImageMocks.inspectLocalImageMetadata,
+}));
 
 function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> {
   return {
@@ -250,6 +260,25 @@ describe("rebuild agent base image preflight", () => {
       imageRef: platformRef,
       overrideEnvVar,
     });
+  });
+
+  it("surfaces a build-provenance trusted override for a temporary local rebuild handoff", () => {
+    const inputHashRef = "nemoclaw-hermes-sandbox-base-local:3ef2ca87";
+    const rebuildRef = `nemoclaw-hermes-sandbox-base-local:rebuild-343338-${"c".repeat(16)}-image-${"d".repeat(64)}`;
+    const provenance = `${"e".repeat(64)}.${"f".repeat(64)}`;
+    const { pinAgentSandboxBaseImageRef } = mockBaseImagePreflight(inputHashRef);
+    pinAgentSandboxBaseImageRef.mockReturnValue(rebuildRef);
+    baseImageMocks.inspectLocalImageMetadata.mockReturnValueOnce({
+      Config: { Labels: { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance } },
+    });
+
+    const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
+      resolutionHint: { key: "stale-base" } as never,
+    });
+
+    expect(baseImageMocks.inspectLocalImageMetadata).toHaveBeenCalledWith(rebuildRef);
+    expect(result.imageRef).toBe(rebuildRef);
+    expect(result.trustedLocalOverride).toEqual({ ref: rebuildRef, provenance });
   });
 
   it("disposes a temporary recreate handoff at most once (#7144)", () => {

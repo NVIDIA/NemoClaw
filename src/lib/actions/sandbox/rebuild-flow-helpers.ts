@@ -32,7 +32,12 @@ import {
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
-import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
+import {
+  inspectLocalImageMetadata,
+  SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
+  type SandboxBaseImageResolutionMetadata,
+  type TrustedLocalBaseImageOverride,
+} from "../../sandbox-base-image";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
@@ -62,7 +67,7 @@ export type RebuildAgentBaseImagePreflight = {
   overrideEnvVar: string | null;
   resolutionMetadata?: SandboxBaseImageResolutionMetadata;
   disposeImageRef?: () => boolean;
-  trustedLocalOverride?: import("../../sandbox-base-image").TrustedLocalBaseImageOverride;
+  trustedLocalOverride?: TrustedLocalBaseImageOverride;
   trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
 };
 
@@ -314,6 +319,23 @@ export function ensureRebuildAgentBaseImage(
       needsTemporaryHandoff && imageRef && imageRef !== result.imageTag
         ? createTemporaryBaseImageHandoffDisposer(imageRef)
         : undefined;
+    let handoffTrustedOverride: TrustedLocalBaseImageOverride | undefined;
+    if (
+      needsTemporaryHandoff &&
+      imageRef &&
+      imageRef !== result.imageTag &&
+      !result.trustedLocalOverride
+    ) {
+      const inspected = inspectLocalImageMetadata(imageRef);
+      const labels =
+        inspected?.Config?.Labels && typeof inspected.Config.Labels === "object"
+          ? (inspected.Config.Labels as Record<string, unknown>)
+          : {};
+      const provenance = labels[SANDBOX_BASE_BUILD_PROVENANCE_LABEL];
+      if (typeof provenance === "string") {
+        handoffTrustedOverride = { ref: imageRef, provenance };
+      }
+    }
     const resolutionMetadata =
       result.resolutionMetadata ??
       explicitOverrideResolution ??
@@ -326,7 +348,11 @@ export function ensureRebuildAgentBaseImage(
       overrideEnvVar,
       ...(resolutionMetadata ? { resolutionMetadata } : {}),
       ...(disposeImageRef ? { disposeImageRef } : {}),
-      ...(result.trustedLocalOverride ? { trustedLocalOverride: result.trustedLocalOverride } : {}),
+      ...(result.trustedLocalOverride
+        ? { trustedLocalOverride: result.trustedLocalOverride }
+        : handoffTrustedOverride
+          ? { trustedLocalOverride: handoffTrustedOverride }
+          : {}),
       ...(imageRef && resolutionMetadata && isImmutableRemoteBaseImageRef(imageRef)
         ? { trustedRemoteOverride: { ref: imageRef, resolutionMetadata } }
         : {}),
