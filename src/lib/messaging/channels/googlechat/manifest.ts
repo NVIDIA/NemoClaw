@@ -13,7 +13,7 @@ export const googlechatManifest = {
   schemaVersion: 1,
   id: "googlechat",
   displayName: "Google Chat",
-  description: "Google Chat (Chat API) bot messaging",
+  description: "Google Chat (Chat API) bot messaging (experimental)",
   enrollmentNotes: [
     "┃  GOOGLE CHAT — appPrincipal",
     "┃",
