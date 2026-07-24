@@ -136,11 +136,21 @@ function buildOpenClawExtensionsCleanupCommand(
   ].join(" && ");
 }
 
+function buildStaleStateDirContentsCleanupCommand(dir: string, dirName: string): string {
+  const target = shellQuote(`${dir}/${dirName}`);
+  return (
+    `d=${target}; ` +
+    'if [ -d "$d" ] && [ ! -L "$d" ]; then ' +
+    'find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; fi'
+  );
+}
+
 export function buildRestoreCleanupCommand(
   dir: string,
   localDirs: readonly string[],
   managedExtensionDirs: readonly string[],
   requiredExtensionDirs: ReadonlySet<string>,
+  staleContentDirs: readonly string[] = [],
 ): string {
   const preserveManagedExtensions = managedExtensionDirs.length > 0;
   const commands: string[] = [];
@@ -152,6 +162,12 @@ export function buildRestoreCleanupCommand(
     commands.push(
       buildOpenClawExtensionsCleanupCommand(dir, managedExtensionDirs, requiredExtensionDirs),
     );
+  }
+  const localDirSet = new Set(localDirs);
+  for (const dirName of staleContentDirs) {
+    if (localDirSet.has(dirName)) continue;
+    if (preserveManagedExtensions && dirName === "extensions") continue;
+    commands.push(buildStaleStateDirContentsCleanupCommand(dir, dirName));
   }
   return commands.length > 0 ? commands.join(" && ") : ":";
 }

@@ -90,6 +90,10 @@ RUN set -eu; \
 RUN /opt/hermes/.venv/bin/python -c \
     'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
 
+RUN chmod -R a+rX /opt/hermes/.venv \
+    && test -r /opt/hermes/.venv/pyvenv.cfg \
+    && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
+
 # Published base images can lag Dockerfile.base while local feature branches
 # still layer this final image on top. Invalid state: the selected base has
 # Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
