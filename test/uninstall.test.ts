@@ -12,11 +12,21 @@ const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
 describe("uninstall CLI flags", () => {
   function writeFakeTools(fakeBin: string) {
     fs.mkdirSync(fakeBin);
-    for (const cmd of ["npm", "openshell", "docker", "ollama", "pgrep"]) {
+    for (const cmd of ["npm", "docker", "ollama", "pgrep"]) {
       fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", {
         mode: 0o755,
       });
     }
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+case "$*" in
+  "gateway list -o json") printf '[{"name":"nemoclaw"}]\\n' ;;
+esac
+exit 0
+`,
+      { mode: 0o755 },
+    );
   }
 
   function seedPreservedState(tmp: string): string {
