@@ -104,7 +104,7 @@ export function buildInferenceProviderMenu(
     });
   }
 
-  if (input.isWsl && !input.hasWindowsOllama) {
+  if (input.isWsl && !input.hasWindowsOllama && !input.isWindowsHostOllama) {
     options.push({
       key: "install-windows-ollama",
       label: input.windowsHostInstallLabel,
