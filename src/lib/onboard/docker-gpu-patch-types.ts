@@ -18,6 +18,9 @@ type DockerRenameFn = (
   opts?: DockerRunOptions,
 ) => DockerRunResult;
 type DockerLogsFn = (containerName: string, opts?: { tail?: number; timeout?: number }) => string;
+type ContainerDnsProbeFn = (
+  opts?: import("./preflight").ProbeContainerDnsOpts,
+) => import("./preflight").DnsProbeResult;
 
 export type DockerGpuPatchDeps = {
   dockerCapture?: DockerCaptureFn;
@@ -34,6 +37,8 @@ export type DockerGpuPatchDeps = {
   homedir?: () => string;
   now?: () => Date;
   detectSandboxFallbackDns?: () => string | null;
+  /** Probe the exact fallback resolver before destructive recreation. */
+  probeContainerDns?: ContainerDnsProbeFn;
   /**
    * Resolve the host group ID(s) that own the Jetson/Tegra GPU device nodes
    * (`/dev/nvmap`, `/dev/nvhost-*`). Used by the Jetson recreate to grant the
