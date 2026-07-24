@@ -180,6 +180,24 @@ describe("handleFinalizationState", () => {
     );
   });
 
+  it("refreshes dashboard forwarding after finalization work and before verification", async () => {
+    const { deps, calls } = createDeps();
+    const agent = { name: "openclaw" };
+
+    await handleFinalizationState({
+      ...baseOptions(deps),
+      agent,
+      webSearchEnabled: true,
+    });
+
+    const refreshOrder = calls.ensureAgentDashboard.mock.invocationCallOrder[0];
+    expect(refreshOrder).toBeGreaterThan(calls.recoverProcesses.mock.invocationCallOrder[0]);
+    expect(refreshOrder).toBeGreaterThan(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]);
+    expect(refreshOrder).toBeGreaterThan(calls.autoPairScopeApproval.mock.invocationCallOrder[0]);
+    expect(refreshOrder).toBeGreaterThan(calls.verifyWebSearch.mock.invocationCallOrder[0]);
+    expect(refreshOrder).toBeLessThan(calls.verify.mock.invocationCallOrder[0]);
+  });
+
   it("skips dashboard and gateway verification for terminal agents without forwards", async () => {
     const { deps, calls } = createDeps();
     const agent = {

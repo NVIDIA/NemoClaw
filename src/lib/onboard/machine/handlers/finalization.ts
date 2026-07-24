@@ -143,10 +143,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
 
-  if (agent && manageDashboard) {
-    deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
-  }
-
   const allStagedMigrated =
     stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((key) => migratedLegacyKeys.has(key));
   const unmigratedLegacyKeys = stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key));
@@ -182,6 +178,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // not-yet-applied `brave` preset (#3626). Best-effort; never blocks.
   if (webSearchEnabled && manageDashboard) {
     deps.verifyWebSearchInsideSandbox(sandboxName, agent);
+  }
+
+  if (agent && manageDashboard) {
+    // Recovery and policy checks can terminate a previously-live forward.
+    // Refresh it at the verification handoff so onboard returns a reachable dashboard.
+    deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
   }
 
   await deps.recordPostVerifyStarted();
