@@ -11,6 +11,7 @@ import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-
 import { buildChildEnv } from "./redaction.ts";
 import type { SecretStore } from "./secrets.ts";
 import { superviseChild } from "./shell/supervisor.ts";
+import type { AbortSignalSource } from "./shell-probe.ts";
 
 export type DockerCommandResult = {
   command: string[];
@@ -104,7 +105,7 @@ export class DockerProbe {
     private readonly redact: SecretStore["redact"],
     private readonly runDocker?: DockerProbeRunner,
     private readonly progress?: ChildProcessProgress,
-    private readonly signal?: AbortSignal,
+    private readonly signal?: AbortSignalSource,
   ) {
     this.dockerConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-config-"));
   }
@@ -113,6 +114,7 @@ export class DockerProbe {
     args: string[],
     options: DockerProbeRunOptions = { artifactName: "docker" },
   ): Promise<DockerCommandResult> {
+    const signal = typeof this.signal === "function" ? this.signal() : this.signal;
     fs.mkdirSync(this.dockerConfigDir, { recursive: true });
     const command = ["docker", ...args];
     const timeoutMs = options.timeoutMs ?? 30_000;
@@ -163,7 +165,7 @@ export class DockerProbe {
       const supervised = await superviseChild(child, {
         timeoutMs,
         killGraceMs: 1_000,
-        signal: this.signal,
+        signal,
         onStdout: (chunk) => {
           if (outputExceeded) return;
           const next = appendBoundedOutput(stdout, chunk);

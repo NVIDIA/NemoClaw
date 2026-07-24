@@ -10,6 +10,7 @@ const RUNNER_LOSS_MESSAGE =
   "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.";
 const RUNNER_SHUTDOWN_MESSAGE =
   "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
+const EXIT_143_MESSAGE = "Process completed with exit code 143.";
 const JOB_STARTED_AT = "2026-07-23T07:26:56Z";
 const CANCELLED_STEP_STARTED_AT = "2026-07-23T07:27:43Z";
 const CANCELLED_STEP_COMPLETED_AT = "2026-07-23T07:32:49Z";
@@ -39,6 +40,14 @@ function genericCancellationAnnotation() {
   };
 }
 
+function exit143Annotation(message = EXIT_143_MESSAGE) {
+  return {
+    ...runnerLossAnnotation(message),
+    startLine: 34,
+    endLine: 34,
+  };
+}
+
 function orphanProcessLogLine(index: number, pid = index + 1, processName = `node-${pid}`) {
   return `2026-07-23T07:32:50.${String(1_000_000 + index).padStart(
     7,
@@ -62,6 +71,16 @@ function runnerShutdownLogEvidence(tail = runnerShutdownLogTail()) {
     totalBytes: new TextEncoder().encode(tail).byteLength,
     tail,
   };
+}
+
+function exit143ShutdownLogTail() {
+  return [
+    `2026-07-23T17:08:00.1259536Z ##[error]${RUNNER_SHUTDOWN_MESSAGE}`,
+    `2026-07-23T17:08:00.1346243Z ##[error]${EXIT_143_MESSAGE}`,
+    "2026-07-23T17:08:00.7221761Z Cleaning up orphan processes",
+    "2026-07-23T17:08:00.7978522Z Terminate orphan process: pid (2509) (node)",
+    "",
+  ].join("\n");
 }
 
 function hostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
@@ -120,16 +139,87 @@ function hostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function legacyHostedRunnerLossJob(id: number, runnerId: number) {
+function legacyHostedRunnerLossJob(
+  id: number,
+  runnerId: number,
+  overrides: Record<string, unknown> = {},
+) {
   return hostedRunnerLossJob({
     id,
     runnerId,
     runnerName: `GitHub Actions ${runnerId}`,
     steps: [
       { name: "Set up job", status: "completed", conclusion: "success" },
-      { name: "Run live test", status: "in_progress", conclusion: null },
+      {
+        name: "Run live test",
+        status: "in_progress",
+        conclusion: null,
+        startedAt: CANCELLED_STEP_STARTED_AT,
+        completedAt: null,
+      },
       { name: "Upload artifacts", status: "pending", conclusion: null },
     ],
+    ...overrides,
+  });
+}
+
+function exit143HostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
+  const tail = exit143ShutdownLogTail();
+  return hostedRunnerLossJob({
+    id: 89_271_065_810,
+    name: "security-posture (hermes, e2e-hermes-security-posture)",
+    runnerId: 1_021_384_642,
+    runnerName: "GitHub Actions 1021384642",
+    startedAt: "2026-07-23T16:41:05Z",
+    completedAt: "2026-07-23T17:08:02Z",
+    annotations: [
+      exit143Annotation(),
+      {
+        ...runnerLossAnnotation("Docker Hub credentials are withheld for this ref."),
+        startLine: 53,
+        endLine: 53,
+        annotationLevel: "notice",
+      },
+    ],
+    logEvidence: runnerShutdownLogEvidence(tail),
+    steps: [
+      {
+        name: "Set up job",
+        status: "completed",
+        conclusion: "success",
+        startedAt: "2026-07-23T16:41:06Z",
+        completedAt: "2026-07-23T16:41:15Z",
+      },
+      {
+        name: "Run security posture live Vitest test",
+        status: "completed",
+        conclusion: "failure",
+        startedAt: "2026-07-23T16:41:51Z",
+        completedAt: "2026-07-23T17:08:00Z",
+      },
+      {
+        name: "Upload security posture artifacts",
+        status: "completed",
+        conclusion: "skipped",
+        startedAt: "2026-07-23T17:08:00Z",
+        completedAt: "2026-07-23T17:08:00Z",
+      },
+      {
+        name: "Clean up Docker auth",
+        status: "completed",
+        conclusion: "skipped",
+        startedAt: "2026-07-23T17:08:00Z",
+        completedAt: "2026-07-23T17:08:00Z",
+      },
+      {
+        name: "Complete job",
+        status: "completed",
+        conclusion: "success",
+        startedAt: "2026-07-23T17:08:00Z",
+        completedAt: "2026-07-23T17:08:00Z",
+      },
+    ],
+    ...overrides,
   });
 }
 
@@ -167,6 +257,10 @@ describe("PR E2E hosted-runner-loss classifier", () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it("accepts the exit-143 hosted shutdown from run 30026115852", () => {
+    expect(confirmsRunnerLoss({ jobs: [exit143HostedRunnerLossJob()] })).toBe(true);
   });
 
   it("accepts a bounded orphan-process suffix after the terminal shutdown block", () => {
@@ -237,7 +331,7 @@ describe("PR E2E hosted-runner-loss classifier", () => {
     ).toBe(true);
   });
 
-  it("accepts two strict standard-hosted legacy markers from run 29964500642", () => {
+  it("accepts two canonical standard-hosted legacy markers from run 29964500642", () => {
     expect(
       confirmsRunnerLoss({
         jobs: [
@@ -246,6 +340,19 @@ describe("PR E2E hosted-runner-loss classifier", () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it("rejects generic shutdown-log evidence for a legacy stranded workload step", () => {
+    expect(
+      confirmsRunnerLoss({
+        jobs: [
+          legacyHostedRunnerLossJob(89_073_235_001, 1_021_276_370, {
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(),
+          }),
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("allows an unrelated notice beside the sole canonical failure annotation", () => {
@@ -286,6 +393,55 @@ describe("PR E2E hosted-runner-loss classifier", () => {
           hostedRunnerLossJob({
             annotations: [],
             logEvidence: runnerShutdownLogEvidence(),
+          }),
+        ],
+      },
+    },
+    {
+      label: "an exit-143 failure has no preceding hosted-runner shutdown",
+      options: {
+        jobs: [
+          exit143HostedRunnerLossJob({
+            logEvidence: runnerShutdownLogEvidence(
+              `2026-07-23T17:08:00.1346243Z ##[error]${EXIT_143_MESSAGE}\n`,
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "a shutdown reports an exit code other than 143",
+      options: {
+        jobs: [
+          exit143HostedRunnerLossJob({
+            annotations: [exit143Annotation("Process completed with exit code 137.")],
+            logEvidence: runnerShutdownLogEvidence(
+              exit143ShutdownLogTail().replaceAll("exit code 143", "exit code 137"),
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "an exit-143 annotation accompanies a normal failed step",
+      options: {
+        jobs: [
+          exit143HostedRunnerLossJob({
+            logEvidence: undefined,
+          }),
+        ],
+      },
+    },
+    {
+      label: "the exit-143 terminal timestamp does not match the failed step",
+      options: {
+        jobs: [
+          exit143HostedRunnerLossJob({
+            steps: exit143HostedRunnerLossJob().steps.map((step) =>
+              step.conclusion === "failure"
+                ? { ...step, completedAt: "2026-07-23T17:07:59Z" }
+                : step,
+            ),
           }),
         ],
       },

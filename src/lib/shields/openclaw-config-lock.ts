@@ -64,6 +64,7 @@ type GuardSummary = {
   files?: string[];
   chattrApplied?: boolean;
   configSha256?: string;
+  hashSynthesized?: boolean;
   recovery?: string;
   originalLocked?: boolean;
 };
@@ -72,6 +73,7 @@ export type OpenClawConfigGuardResult = {
   issues: string[];
   chattrApplied: boolean;
   configSha256?: string;
+  hashSynthesized?: boolean;
   recovery?: string;
   originalLocked?: boolean;
 };
@@ -102,6 +104,13 @@ function stringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function printableExcerpt(value: string, maxLength: number): string {
+  return [...value.slice(0, maxLength)]
+    .map((character) => (/^[\x20-\x7e]$/.test(character) ? character : " "))
+    .join("")
+    .trim();
+}
+
 function schemaIssuePaths(payload: unknown): string[] {
   if (!payload || typeof payload !== "object") return [];
   const issues = (payload as { issues?: unknown }).issues;
@@ -111,10 +120,7 @@ function schemaIssuePaths(payload: unknown): string[] {
     if (!issue || typeof issue !== "object") continue;
     const path = (issue as { path?: unknown }).path;
     if (typeof path !== "string") continue;
-    const sanitized = [...path.slice(0, 256)]
-      .map((character) => (/^[\x20-\x7e]$/.test(character) ? character : " "))
-      .join("")
-      .trim();
+    const sanitized = printableExcerpt(path, 256);
     if (sanitized && !paths.includes(sanitized)) paths.push(sanitized);
   }
   return paths;
@@ -223,6 +229,7 @@ export function parseOpenClawConfigGuardOutput(
       (record.files === undefined || stringArray(record.files)) &&
       (record.chattrApplied === undefined || typeof record.chattrApplied === "boolean") &&
       (record.configSha256 === undefined || typeof record.configSha256 === "string") &&
+      (record.hashSynthesized === undefined || typeof record.hashSynthesized === "boolean") &&
       (record.recovery === undefined || typeof record.recovery === "string") &&
       (record.originalLocked === undefined || typeof record.originalLocked === "boolean")
     ) {
@@ -283,13 +290,17 @@ export function parseOpenClawConfigGuardOutput(
   return {
     issues: [
       ...issues.map(
-        (issue) => `OpenClaw config guard ${action} [${issue.code}] ${issue.path}: ${issue.detail}`,
+        (issue) =>
+          `OpenClaw config guard ${action} [${printableExcerpt(issue.code, 64)}] ${printableExcerpt(issue.path, 256)}: ${printableExcerpt(issue.detail, 2048)}`,
       ),
       ...contractIssues,
     ],
     chattrApplied: summary?.status === "ok" && summary.chattrApplied === true,
     ...(summary?.status === "ok" && summary.configSha256
       ? { configSha256: summary.configSha256 }
+      : {}),
+    ...(summary?.status === "ok" && summary.hashSynthesized === true
+      ? { hashSynthesized: true }
       : {}),
     ...(summary?.status === "ok" && summary.recovery ? { recovery: summary.recovery } : {}),
     ...(summary?.status === "ok" && typeof summary.originalLocked === "boolean"

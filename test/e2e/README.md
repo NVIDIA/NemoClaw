@@ -67,7 +67,8 @@ Hermes image-building lanes that remain on those standard runners. The trusted
 workflow provisions the fallback as the first job step, before checking out or
 executing the candidate revision. It requires a controller-supplied lowercase
 40-hex checkout SHA, matching trusted workflow and dispatch revisions, and an
-ephemeral GitHub-hosted Linux x64 runner.
+ephemeral GitHub-hosted Linux x64 runner. Candidate code cannot supply the
+program or arguments passed to `sudo`.
 
 The trusted step requires at least 32 GiB (34,359,738,368 bytes) of usable swap.
 It reuses active swap that meets this requirement.
@@ -79,22 +80,11 @@ The additional 4,096 bytes keep the usable swap capacity at or above 32 GiB
 after formatting.
 Setup failure stops before candidate checkout and removes partial state only
 after proving the file inactive or successfully disabling it.
-After `swapon` succeeds, both rollout paths make up to five activation
+After `swapon` succeeds, the trusted step makes up to five activation
 observations, one second apart.
 If visibility remains stale, cleanup treats the file as active.
 Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
-
-This rollout adds the trusted pre-checkout setup.
-During rollout, the PR temporarily retains the reviewed live Vitest helper.
-The helper exists only because the PR must validate against the older workflow
-definition on `main` before this change lands.
-The compatibility path runs only when GitHub Actions supplies a validated
-lowercase 40-hex checkout SHA.
-When the trusted step already provides 32 GiB of usable swap, the helper exits
-before it creates its fixed swap file.
-A follow-up must remove the candidate-side helper and its compatibility tests
-after this change lands.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
 the Hermes Bedrock and stable MCP shards, and the `hermes-e2e`,
@@ -190,25 +180,83 @@ scenario shards, and `hermes-inference-switch`, which runs both listed modes.
 The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 
-Each execution writes two best-effort numeric samples to
-`runner-comparison.jsonl`, one after workspace preparation and one from an
-`always()` finalizer before artifact checking and upload. The finalizer writes
-`runner-comparison-summary.json` only when both samples are valid, monotonic,
-and have the same target and shard identity. The summary contains the sampled
-post-prepare time window, average CPU utilization and logical CPU capacity,
-memory availability and endpoint usage, the available root-cgroup memory peak,
-and workspace free-space and growth values. Unsupported measurements are `null`.
-Endpoint memory and workspace samples do not establish the true maximum or
-minimum between those two observations. The root-cgroup peak is a lifetime
-counter that includes Docker siblings but can also include host activity before
-the measured window. Compare it only across runs with the same runner setup.
+Each execution writes one bounded, ordered v2 time series to the canonical
+`runner-comparison.jsonl` ledger. It contains:
+
+- an `initialize` endpoint after workspace preparation;
+- a distinct `scenario-start` for every test handled by the execution;
+- a `periodic` sample on an approximately 60-second fixed cadence;
+- a `phase` sample before each semantic phase transition and when the final
+  phase stops; and
+- a `finalize` endpoint from an `always()` step immediately before artifact
+  checking and upload.
+
+The progress pulse owns both stall reporting and periodic comparison sampling,
+so it never creates a second timer. Phase samples that cross a periodic deadline
+consume that slot, and delayed probes skip missed slots instead of producing a
+catch-up burst. Each successful append also prints one bounded
+`E2E_RUNNER_COMPARISON_SAMPLE` line in the job log.
+
+The v2 ledger accepts at most 256 samples. Ordinary sampling stops once 255
+records exist to reserve the last slot for `finalize`. A missing, historical-v1,
+already-finalized, full, or invalid ledger permanently disables comparison
+sampling for that test progress instance. In `rebuild-hermes` and
+`rebuild-hermes-stale-base`, where legacy phase resource evidence is configured,
+the existing five-minute full snapshot then becomes the best-effort fallback.
+That full profile may run `ps`, `docker stats`, and `docker system df`
+sequentially with a 15-second timeout each, or 45 seconds in the worst case;
+canonical sampling suppresses this heavier collection while it remains active.
+Other lanes stop canonical sampling without creating a second evidence stream.
+Historical v1 ledgers and summaries remain readable, but a v1 ledger cannot be
+extended or mixed with v2 samples.
+
+Probe cost depends on the sample kind. `initialize` and `finalize` read only
+kernel and filesystem sources and launch no child process. `periodic` adds one
+one-second `ps` probe and does not call Docker. `scenario-start` and `phase`
+samples add the same bounded process probe plus two-second `docker stats` and
+`docker system df` probes. The emitted schema contains only numeric fields,
+fixed process classes (`docker-buildkit`, `openshell`, or `other`), and fixed
+sample metadata, including the explicit target and shard labels. It never
+records process or container names, command lines, child output, or arbitrary
+environment and secret values. Docker memory evidence is reduced to the largest
+retained container value; maximum Docker CPU considers every row in the bounded
+command output.
+
+The finalizer validates the complete ledger before writing
+`runner-comparison-summary.json`. The v2 summary reports the sampled
+post-prepare window; CPU average and busiest interval; one-minute load;
+available, cached, reclaimable, swap, root-cgroup current/peak/limit, and
+endpoint OOM-counter evidence; memory and I/O pressure; workspace bytes and
+inodes; Docker image, container, and build-cache usage; largest container
+memory and CPU; and the largest fixed process class by RSS. Extrema include the
+semantic phase where they were observed when attribution is sound. CPU
+intervals ending at a `scenario-start` remain unattributed because they can
+span two tests, and extrema whose selected observation is `initialize` have a
+`null` phase. OOM deltas are also `null` unless both endpoint counters are
+available. Unsupported or unreadable measurements are `null`.
+
+The root-cgroup peak is a lifetime counter that includes Docker siblings but
+can also include host activity before the measured window. Compare it only
+across runs with the same runner setup. Canonical v2 `memory.availableKb` comes
+only from `/proc/meminfo` `MemAvailable` and is `null` when that field is
+unavailable. Separately, the adjacent progress/stall resource line falls back
+to the portable free-memory value and labels that value as `memory free`.
+
+The comparison time series is diagnostic-only and is not an input to terminal
+classification or retry policy. Low available or free memory never implies an
+OOM. OOM classification or attribution still requires the existing positive
+OOM evidence, and the single retry remains limited to positive runner-loss
+evidence.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
 hard runner loss can prevent finalization or artifact upload. When you compare
 standard and larger runners, use runs with the same commit SHA, workflow
 inputs, target, and shard. Pair the artifact with the GitHub Actions runner
-label, queue time, result, and usage or cost metadata. This telemetry does not
-maintain rolling history or write to the GitHub Actions step summary.
+label, queue time, result, and usage or cost metadata. The ledger is a time
+series for one execution only; this telemetry does not maintain cross-run
+rolling history or write to the GitHub Actions step summary. Both output files
+are private regular files on the runner (`0600`) with strict per-line and total
+size limits.
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
@@ -318,13 +366,14 @@ revision, or closed PR can leave the controller green while coordination is
 failed or cancelled and the native job is non-passing. Only a successful native
 `E2E / PR Gate` for the current head and base satisfies the required check. An
 eligible prerequisite-CI failure records the versioned retry reason
-`prerequisite-ci`. A selected child records `child-cancelled` only when a
-trusted GitHub-hosted runner-loss annotation is bound to the exact failed job
-and workflow commit and no other terminal classification was produced.
-Cancellation alone is not retryable. Assertion failures and other selected-E2E
-outcomes do not receive a retry reason. An unexpected controller error still
-fails the controller workflow and fails coordination closed, which prevents
-the native job from passing.
+`prerequisite-ci`. A selected child records `child-cancelled` only when the
+controller authenticates either a trusted GitHub-hosted runner-loss annotation
+or the exact terminal-shutdown fallback against the failed job and workflow
+commit, and no other terminal classification was produced. Cancellation alone
+is not retryable. Assertion failures and other selected-E2E outcomes do not
+receive a retry reason. An unexpected controller error still fails the
+controller workflow and fails coordination closed, which prevents the native
+job from passing.
 
 On open, synchronization, reopen, transition out of draft, or base retarget,
 `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate Coordination` for
@@ -588,24 +637,28 @@ attempt, workflow commit, job check, standard hosted runner group, and runner
 name. The controller accepts one canonical runner-loss failure annotation bound
 to `.github` at that workflow commit.
 
-When GitHub emits a generic cancellation instead, the controller requires
-exactly one failure annotation whose message is `The operation was canceled.`
-The annotation must use `.github`, equal start and end lines, null columns, and
-empty title and detail fields. Every annotation must use a blob URL bound to the
-same workflow commit. The controller accepts at most 20 annotations, bounds
-each text field, and limits the normalized annotation evidence to 64 KiB. This
-permits trusted bounded non-failure notices beside the sole failure annotation
-without allowing annotation output to exhaust the coordinator.
+When GitHub emits a generic terminal result instead, the controller requires
+exactly one failure annotation. Its message must be
+`The operation was canceled.` for one completed `cancelled` workload step or
+`Process completed with exit code 143.` for one completed `failure` workload
+step. The annotation must use `.github`, equal start and end lines, null
+columns, and empty title and detail fields. Every annotation must use a blob URL
+bound to the same workflow commit. The controller accepts at most 20
+annotations, bounds each text field, and limits the normalized annotation
+evidence to 64 KiB. This permits trusted bounded non-failure notices beside the
+sole failure annotation without allowing annotation output to exhaust the
+coordinator.
 
-GitHub Actions creates this `.github` failure annotation after the hosted runner
-shuts down; NemoClaw workflow code cannot replace its generic message with the
-canonical lost-communication annotation. The classifier test `accepts the
-exact authenticated terminal shutdown block from run 29988226653` preserves
-the observed fallback contract. Remove the fallback and that test together
-only after GitHub's documented Jobs or Checks API contract provides an
-authenticated structured runner-loss reason for this exact shutdown path.
+GitHub Actions creates these `.github` failure annotations after the hosted
+runner shuts down; NemoClaw workflow code cannot replace their generic messages
+with the canonical lost-communication annotation. The classifier tests
+`accepts the exact authenticated terminal shutdown block from run 29988226653`
+and `accepts the exit-143 hosted shutdown from run 30026115852` preserve the
+two observed fallback contracts. Remove a fallback and its test together only
+after GitHub's documented Jobs or Checks API contract provides an authenticated
+structured runner-loss reason for that shutdown path.
 
-The generic-cancellation fallback also authenticates the job log. The
+The terminal-shutdown fallback also authenticates the job log. The
 controller requests the GitHub job-log endpoint and accepts only its signed
 HTTPS redirect to GitHub Actions result storage. It does not forward the
 repository token to that signed URL. A metadata request must return plain,
@@ -614,19 +667,21 @@ controller then reads at most the final 64 KiB with `If-Match` and requires an
 exact partial-content range, length, and matching ETag.
 
 The authenticated tail must end with exactly one line feed after the
-timestamped shutdown error, operation-cancelled error, and orphan-cleanup
-record, in that order. Up to 64 unique orphan-process termination records may
-follow the cleanup record. Each record must contain a positive process ID and a
-bounded process name. The record timestamps must not move backward. The
-job must start no later than the cancelled step. The shutdown must occur at or
-after that step starts, and the cancellation second must equal the step's
-completion time. Cleanup must not precede cancellation. Cleanup and
-orphan-process records must finish no later than the job completion time.
+timestamped shutdown error, matching operation-cancelled or exit-143 error, and
+orphan-cleanup record, in that order. Up to 64 unique orphan-process termination
+records may follow the cleanup record. Each record must contain a positive
+process ID and a bounded process name. The record timestamps must not move
+backward. The job must start no later than the interrupted step. The shutdown
+must occur at or after that step starts, and the terminal-error second must
+equal the step's completion time. Cleanup must not precede the terminal error.
+Cleanup and orphan-process records must finish no later than the job completion
+time.
 
-A generic cancellation without this log contract, timeout, unknown runner
-identity, self-hosted or custom runner group, ordinary failed step, another
-non-passing job, incomplete pagination, or mismatched annotation identity
-fails closed without a retry.
+A generic terminal result without this log contract, an ordinary exit 143
+without the exact preceding shutdown block, timeout, unknown runner identity,
+self-hosted or custom runner group, ordinary failed step, another non-passing
+job, incomplete pagination, or mismatched annotation identity fails closed
+without a retry.
 
 Before the one-time retry dispatch, the controller revalidates the unchanged
 internal PR head and base, original child, current coordination-check lineage,
@@ -636,6 +691,15 @@ completed child after each read and requires identical evidence fingerprints,
 including pagination state, log ETag, log length, and log-tail hash. After the
 second classification, it validates the live PR head and base and the current
 coordination-check lineage again.
+
+The source coordination check binds that original child through the
+controller-generated `Selected E2E run <run-id>` summary. The summary label,
+linked run ID, repository, and exact Actions run URL must agree. GitHub may set
+the check details URL to either that exact child run or the canonical
+`/runs/<check-id>` URL for the source check. A malformed selected-run prefix or
+any mismatch fails closed. Compatibility checks that predate the selected-run
+summary remain eligible only when their details URL is the exact child Actions
+run URL.
 
 The controller reserves a distinct replacement coordination check before
 dispatch so the native observer can follow the retry without mutating completed

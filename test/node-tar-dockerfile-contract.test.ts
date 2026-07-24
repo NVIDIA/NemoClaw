@@ -36,6 +36,13 @@ function completedStage(source: string): string {
   return source.slice(finalStageStart);
 }
 
+function namedStage(source: string, name: string): string {
+  const stageStart = source.indexOf(`FROM scratch AS ${name}`);
+  assert(stageStart >= 0, `Dockerfile must contain the ${name} stage`);
+  const nextStage = source.indexOf("\nFROM ", stageStart);
+  return source.slice(stageStart, nextStage >= 0 ? nextStage : undefined);
+}
+
 describe("node-tar image remediation contract", () => {
   it("binds the remediation lifecycle to the affected upstream Node image pins", () => {
     const pinnedBaseSources = ["Dockerfile.base", "agents/hermes/Dockerfile.base"]
@@ -66,29 +73,38 @@ describe("node-tar image remediation contract", () => {
     dockerfiles,
   )("patches npm before use and scans the completed $file filesystem", (entry) => {
     const { file, installsPatchDownloader, installsWithNpm } = entry;
-    const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
-    const reviewedCopy = source.indexOf(
+    const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const source = completedStage(dockerfile);
+    const patchPayloadLayer = source.indexOf("RUN --mount=type=bind,from=hermes-npm-patch-payload");
+    const scanPayloadLayer = source.indexOf("RUN --mount=type=bind,from=hermes-scan-payload");
+    const patchInputStage =
+      patchPayloadLayer >= 0 ? namedStage(dockerfile, "hermes-npm-patch-payload") : source;
+    const scanInputStage =
+      scanPayloadLayer >= 0 ? namedStage(dockerfile, "hermes-scan-payload") : source;
+    const reviewedCopy = patchInputStage.indexOf(
       "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
     );
-    const patchCopy = source.indexOf(
+    const patchCopy = patchInputStage.indexOf(
       "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
     );
     const patchRun = source.indexOf(
       "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
-    const scanCopy = source.indexOf(
+    const scanCopy = scanInputStage.indexOf(
       "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
     );
     const scanRun = source.indexOf(
       "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
     );
+    const patchInputReady = patchPayloadLayer >= 0 ? patchPayloadLayer : patchCopy;
+    const scanInputReady = scanPayloadLayer >= 0 ? scanPayloadLayer : scanCopy;
 
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
     expect(patchCopy, file).toBeGreaterThan(reviewedCopy);
-    expect(patchRun, file).toBeGreaterThan(patchCopy);
+    expect(patchRun, file).toBeGreaterThan(patchInputReady);
     const aptInstall = source.indexOf(
       "RUN apt-get update && apt-get install -y --no-install-recommends",
-      patchCopy,
+      patchInputReady,
     );
     const curlPackage = source.indexOf("curl=8.14.1-2+deb13u4", aptInstall);
     const aptInstallCleanup = source.indexOf("&& rm -rf /var/lib/apt/lists/*", curlPackage);
@@ -99,8 +115,9 @@ describe("node-tar image remediation contract", () => {
         aptInstallCleanup < patchRun,
       file,
     ).toBe(installsPatchDownloader);
-    expect(scanCopy, file).toBeGreaterThan(patchRun);
-    expect(scanRun, file).toBeGreaterThan(scanCopy);
+    expect(scanCopy, file).toBeGreaterThanOrEqual(0);
+    expect(scanInputReady, file).toBeGreaterThan(patchRun);
+    expect(scanRun, file).toBeGreaterThan(scanInputReady);
     expect(source, file).toContain("> /usr/local/share/nemoclaw/node-tar-inventory.json");
 
     const executableSource = source.replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length));
