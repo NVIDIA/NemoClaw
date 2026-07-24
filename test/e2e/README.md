@@ -90,11 +90,11 @@ Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
-the Hermes Bedrock and stable MCP shards, and the `hermes-e2e`,
-`hermes-dashboard`, `hermes-discord`, and Hermes security-posture tests. Rebuild
-lanes with workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and
-non-Hermes shards do not use it. Candidate-authored workflow definitions and
-fork-owned runs cannot reach it.
+the Hermes Bedrock and stable MCP shards, the Hermes common-egress and channel
+stop/start shards, and the `hermes-e2e`, `hermes-dashboard`, `hermes-discord`,
+and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
+dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes shards do not use it.
+Candidate-authored workflow definitions and fork-owned runs cannot reach it.
 
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner

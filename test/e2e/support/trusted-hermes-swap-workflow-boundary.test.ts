@@ -34,6 +34,8 @@ type SwapWorkflow = {
 const PROTECTED_JOBS = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "common-egress-agent",
   "hermes-dashboard",
   "hermes-discord",
   "hermes-e2e",
@@ -521,6 +523,15 @@ describe("trusted Hermes swap workflow boundary", () => {
     const bedrockProvision = trustedSwapStep(workflow, "bedrock-runtime-compatible-anthropic");
     bedrockProvision.run = "sudo bash tools/e2e/live-vitest-invocation.mts";
 
+    const channelsProvision = trustedSwapStep(workflow, "channels-stop-start");
+    channelsProvision.if = channelsProvision.if!.replace(" && matrix.agent == 'hermes'", "");
+
+    const commonEgressProvision = trustedSwapStep(workflow, "common-egress-agent");
+    commonEgressProvision.if = commonEgressProvision.if!.replace(
+      " && matrix.scenario == 'hermes-open-reference'",
+      "",
+    );
+
     const hermesE2eProvision = trustedSwapStep(workflow, "hermes-e2e");
     hermesE2eProvision.if = hermesE2eProvision.if!.replace(
       " && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,')))",
@@ -537,6 +548,8 @@ describe("trusted Hermes swap workflow boundary", () => {
         "agent-turn-latency trusted Hermes swap step must preserve its fail-closed shape",
         "agent-turn-latency trusted Hermes swap step must run before candidate checkout",
         "hermes-e2e trusted Hermes swap step must preserve the trusted main guard",
+        "channels-stop-start trusted Hermes swap step must preserve the trusted main guard",
+        "common-egress-agent trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must bind only trusted workflow, checkout, and runner identity",
         "bedrock-runtime-compatible-anthropic trusted Hermes swap step must preserve the fixed privileged program",
