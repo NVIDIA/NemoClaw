@@ -342,7 +342,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalize).toHaveBeenCalledWith(true);
     expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledWith(
       "unready-box",
-      expect.objectContaining({ beforeProbe: expect.any(Function), timeoutSeconds: 30 }),
+      expect.objectContaining({ beforeProbe: expect.any(Function), timeoutSeconds: 180 }),
     );
     expect(runOpenshell).not.toHaveBeenCalled();
   });

@@ -84,6 +84,8 @@ For a local Docker-driver sandbox whose container still uses the legacy keepaliv
 
 NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check, and attempts to restore it if that proof fails.
 The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
+After a transactional recreation, NemoClaw uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) for OpenShell to re-register the sandbox before starting the primary dashboard or API host forward.
+A definitive managed-health failure still stops immediately; if re-registration does not complete within the budget, the forward stays stopped.
 
 For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
 If recovery cannot repair a sandbox that needs credentials or a current controller contract, rebuild it.

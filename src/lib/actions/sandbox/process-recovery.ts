@@ -16,6 +16,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { sleepSeconds, waitUntil } from "../../core/wait";
+import { SANDBOX_READY_TIMEOUT_SECS } from "../../onboard/env";
 import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
@@ -1195,7 +1196,10 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       ? (() => {
           const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
             beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
-            timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
+            timeoutSeconds: Math.max(
+              gatewayRecoveryTimeoutSeconds(recoveryAgent),
+              SANDBOX_READY_TIMEOUT_SECS,
+            ),
           };
           const readiness =
             waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady

@@ -721,7 +721,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   const startB = await command(host, [SANDBOX_B, "start"], {
     artifactName: "phase-4-nemoclaw-start-sandbox-b",
     env: commandEnv(),
-    timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+    timeoutMs: PHASE_TIMEOUT_MS,
   });
   expect(startB.exitCode, resultText(startB)).toBe(0);
   const restoredForwardBAfterStart = await waitForForwardOwner(
