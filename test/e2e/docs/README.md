@@ -255,9 +255,9 @@ test/e2e/
   matches are drawn only from the trusted controller workflow and scripts.
   Other or mixed internal
   control-plane revisions require a maintainer-authorized run for the PR SHA; only
-  its verified evidence can pass coordination. Risky forks retain the audited
-  credentialed-E2E skip approval. See [NemoClaw E2E CI](../README.md) for the
-  full lifecycle.
+  its verified evidence can pass coordination. Risky forks require protected
+  approval before the trusted workflow runs their exact repository and SHA with
+  E2E credentials. See [NemoClaw E2E CI](../README.md) for the full lifecycle.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with

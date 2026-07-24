@@ -141,6 +141,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     "jobs",
     "pr_number",
     "checkout_sha",
+    "checkout_repository",
     "base_sha",
     "workflow_sha",
     "plan_hash",
@@ -190,6 +191,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   }
   const expectedStepEnvironment = {
     BASE_SHA: "${{ inputs.base_sha }}",
+    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     JOBS: "${{ inputs.jobs }}",
@@ -208,6 +210,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
@@ -220,6 +223,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "'.state'",
     "'.head.repo.full_name // \"\"'",
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
   ]) {
@@ -248,15 +252,24 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
         step.name === "Check out trusted E2E workflow" &&
         step.if === PUBLICATION_REQUIRED_CONDITION &&
         step.with?.ref === "${{ github.sha }}";
+      const trustedCheckout =
+        trustedHermesFixtureCheckout ||
+        trustedReportHelperCheckout ||
+        trustedLaunchableLaneCheckout ||
+        trustedPublicationCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
-        !trustedHermesFixtureCheckout &&
-        !trustedReportHelperCheckout &&
-        !trustedLaunchableLaneCheckout &&
-        !trustedPublicationCheckout
+        !trustedCheckout
       ) {
         errors.push(`${jobName} checkout must use the selected PR commit`);
+      }
+      if (
+        step.uses?.startsWith("actions/checkout@") &&
+        !trustedCheckout &&
+        step.with?.repository !== "${{ inputs.checkout_repository || github.repository }}"
+      ) {
+        errors.push(`${jobName} checkout must use the selected PR head repository`);
       }
     }
   }
