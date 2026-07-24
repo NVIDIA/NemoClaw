@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { findAvailableDashboardPort } from "../../../src/lib/onboard/dashboard-port";
 import type { HostCliClient } from "../fixtures/clients/index.ts";
@@ -9,6 +11,7 @@ import {
   buildRebuildHermesCurrentBaseEnv,
   buildRebuildHermesCurrentBaseScript,
   buildRebuildHermesGatewayBootstrapScript,
+  cleanupRebuildHermesForward,
   GATEWAY_BOOTSTRAP_MARKER,
   parseRebuildHermesCurrentBaseResult,
   requirePublishedRebuildHermesCurrentBase,
@@ -16,7 +19,9 @@ import {
   requireRebuildHermesHostedInferenceRoute,
   resolveRebuildHermesCurrentBase,
   resolveRebuildHermesDashboardPort,
+  trackOptionalRebuildHermesDashboardPort,
 } from "../live/rebuild-hermes-bootstrap.ts";
+import { REBUILD_HERMES_PHASES } from "../live/rebuild-hermes-phases.ts";
 
 const RESOLUTION = {
   schema: 1,
@@ -277,5 +282,83 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(() => requireRebuildHermesDashboardPort(undefined, "registry dashboardPort")).toThrow(
       /valid non-API dashboard port/,
     );
+    const cleanupPorts = new Set<number>();
+    trackOptionalRebuildHermesDashboardPort(cleanupPorts, 18791);
+    trackOptionalRebuildHermesDashboardPort(cleanupPorts, undefined);
+    expect([...cleanupPorts]).toEqual([18791]);
+  });
+
+  it("stops only sandbox-owned Hermes forwards and fails closed on list errors (#7144)", async () => {
+    const own = fakeHost([
+      probe("SANDBOX BIND PORT PID STATUS\nhermes-box 127.0.0.1 18789 42 running"),
+      probe(""),
+    ]);
+    await expect(
+      cleanupRebuildHermesForward(own.host, envFactory, "secret", "hermes-box", 18789, ["secret"]),
+    ).resolves.toBe("stopped");
+    expect(own.command.mock.calls[1]?.[1]).toEqual(["forward", "stop", "18789", "hermes-box"]);
+
+    const other = fakeHost([
+      probe("SANDBOX BIND PORT PID STATUS\nother-box 127.0.0.1 18789 43 running"),
+    ]);
+    await expect(
+      cleanupRebuildHermesForward(other.host, envFactory, "secret", "hermes-box", 18789, [
+        "secret",
+      ]),
+    ).resolves.toBe("owned-other");
+    expect(other.command).toHaveBeenCalledTimes(1);
+
+    const absent = fakeHost([probe(""), probe("", 1, "forward not running")]);
+    await expect(
+      cleanupRebuildHermesForward(absent.host, envFactory, "secret", "hermes-box", 18789, [
+        "secret",
+      ]),
+    ).resolves.toBe("no-entry");
+    expect(absent.command.mock.calls[1]?.[1]).toEqual(["forward", "stop", "18789", "hermes-box"]);
+
+    const unavailable = fakeHost([probe("", 1, "gateway unavailable")]);
+    await expect(
+      cleanupRebuildHermesForward(unavailable.host, envFactory, "secret", "hermes-box", 18789, [
+        "secret",
+      ]),
+    ).rejects.toThrow(/gateway unavailable/);
+    expect(unavailable.command).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the live rebuild free of a disposable current sandbox (#7144)", () => {
+    const liveSource = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../live/rebuild-hermes.test.ts"),
+      "utf8",
+    );
+
+    expect(liveSource).toContain("resolveRebuildHermesCurrentBase({");
+    expect(liveSource).toContain("bootstrapRebuildHermesGateway({");
+    expect(liveSource).toContain("await requireRebuildHermesHostedInferenceRoute(");
+    expect(liveSource).not.toContain('host.nemoclaw(["onboard"');
+    expect(liveSource).not.toContain("phase-1-delete-current-sandbox");
+    expect(liveSource).not.toContain("phase-1-remove-initial-hermes-image");
+    expect(liveSource).not.toContain("phase-1-stop-hermes-forward");
+    expect(liveSource).not.toContain('"--cleanup-gateway"');
+    expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 18789 "$SANDBOX_NAME"');
+    expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 8642 "$SANDBOX_NAME"');
+
+    const bootstrap = liveSource.indexOf("const gatewayBootstrap = await");
+    const seed = liveSource.indexOf("const sessionSummary = seedRegistryAndSession(");
+    const routeRecheck = liveSource.indexOf(
+      "const routeBeforeRebuild = await requireRebuildHermesHostedInferenceRoute(",
+    );
+    const rebuild = liveSource.indexOf("const rebuild = await host.nemoclaw(");
+    expect([bootstrap, seed, routeRecheck, rebuild].every((index) => index >= 0)).toBe(true);
+    expect(bootstrap).toBeLessThan(seed);
+    expect(seed).toBeLessThan(routeRecheck);
+    expect(routeRecheck).toBeLessThan(rebuild);
+  });
+
+  it("retains the eight-phase rebuild contract with truthful bootstrap coverage (#7144)", () => {
+    expect(REBUILD_HERMES_PHASES).toHaveLength(8);
+    expect(REBUILD_HERMES_PHASES[1]).toBe(
+      "prepare trusted gateway inference and the current Hermes base",
+    );
+    expect(REBUILD_HERMES_PHASES).not.toContain("onboard the current Hermes sandbox");
   });
 });

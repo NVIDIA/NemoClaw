@@ -8,6 +8,7 @@ import { parseGatewayInference } from "../../../src/lib/inference/config";
 import {
   type CreateSandboxDashboardPortInput,
   type CreateSandboxDashboardPortResult,
+  findDashboardForwardOwner,
   resolveCreateSandboxDashboardPort,
 } from "../../../src/lib/onboard/dashboard-port";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types";
@@ -258,20 +259,37 @@ export async function cleanupRebuildHermesForward(
   host: HostCliClient,
   envFactory: RebuildHermesChildEnvFactory,
   apiKey: string | undefined,
+  sandboxName: string,
   port: number,
   redactionValues: string[],
-): Promise<void> {
-  const result = await host.command(host.openshellCommandPath, ["forward", "stop", String(port)], {
-    artifactName: `cleanup-hermes-rebuild-resources-forward-stop-${port}`,
+): Promise<"stopped" | "owned-other" | "no-entry"> {
+  const list = await host.command(host.openshellCommandPath, ["forward", "list"], {
+    artifactName: `cleanup-hermes-rebuild-resources-forward-list-${port}`,
     env: envFactory(apiKey),
     redactionValues,
-    timeoutMs: 3 * 60_000,
+    timeoutMs: 2 * 60_000,
   });
+  assertExitZero(list, `inspect Hermes forward ${port} ownership before cleanup`);
+  const owner = findDashboardForwardOwner(resultText(list), String(port));
+  if (owner !== null && owner !== sandboxName) {
+    return "owned-other";
+  }
+  const result = await host.command(
+    host.openshellCommandPath,
+    ["forward", "stop", String(port), sandboxName],
+    {
+      artifactName: `cleanup-hermes-rebuild-resources-forward-stop-${port}`,
+      env: envFactory(apiKey),
+      redactionValues,
+      timeoutMs: 3 * 60_000,
+    },
+  );
   assertCleanupSucceededOrAbsent(
     result,
     /no (?:active )?forward|forward[^\n]*(?:not found|not running)|forward stop[^\n]*not running/iu,
     `cleanup Hermes forward ${port}`,
   );
+  return owner === sandboxName ? "stopped" : "no-entry";
 }
 
 export async function resolveRebuildHermesCurrentBase(
@@ -357,6 +375,14 @@ export function requireRebuildHermesDashboardPort(value: unknown, label: string)
   return value;
 }
 
+export function trackOptionalRebuildHermesDashboardPort(ports: Set<number>, value: unknown): void {
+  try {
+    ports.add(requireRebuildHermesDashboardPort(value, "cleanup registry dashboardPort"));
+  } catch {
+    // Cleanup remains best-effort when a failed rebuild left malformed registry state.
+  }
+}
+
 export function resolveRebuildHermesDashboardPort(
   options: RebuildHermesDashboardPortOptions,
 ): CreateSandboxDashboardPortResult {
@@ -389,7 +415,7 @@ export async function bootstrapRebuildHermesGateway(
     process.execPath,
     ["-e", buildRebuildHermesGatewayBootstrapScript()],
     {
-      artifactName: "phase-2-bootstrap-hermes-gateway-inference",
+      artifactName: "phase-1-bootstrap-hermes-gateway-inference",
       cwd: REPO_ROOT,
       env: options.envFactory(options.apiKey, {
         NEMOCLAW_OPENSHELL_BIN: options.activeOpenshellBin,
@@ -409,7 +435,7 @@ export async function bootstrapRebuildHermesGateway(
     options.activeOpenshellBin,
     ["gateway", "info", "-g", "nemoclaw"],
     {
-      artifactName: "phase-2-gateway-probe",
+      artifactName: "phase-1-gateway-probe",
       env: options.envFactory(options.apiKey),
       redactionValues: options.redactionValues,
       timeoutMs: 30_000,
@@ -421,12 +447,12 @@ export async function bootstrapRebuildHermesGateway(
     options.envFactory,
     options.apiKey,
     options.expectedModel,
-    "phase-2-inference-route",
+    "phase-1-inference-route",
     options.redactionValues,
   );
 
   const forwardList = await options.host.command(options.activeOpenshellBin, ["forward", "list"], {
-    artifactName: "phase-2-forward-list-before-historical-sandbox",
+    artifactName: "phase-1-forward-list-before-historical-sandbox",
     env: options.envFactory(options.apiKey),
     redactionValues: options.redactionValues,
     timeoutMs: 2 * 60_000,
@@ -439,7 +465,7 @@ export async function bootstrapRebuildHermesGateway(
     sandboxName: options.sandboxName,
     forwardListOutput: resultText(forwardList),
   });
-  await options.artifacts.writeJson("phase-2-gateway-inference-bootstrap.json", {
+  await options.artifacts.writeJson("phase-1-gateway-inference-bootstrap.json", {
     gateway: "nemoclaw",
     route,
     requestedRoute: {
