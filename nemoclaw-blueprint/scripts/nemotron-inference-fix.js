@@ -98,10 +98,9 @@
 //   field (the endpoint returns `reasoning_content` either way), so the field
 //   carries no behavior to preserve.
 //
-//   Scope: the exact `nvidia/nemotron-3-ultra-550b-a55b` model ID reproduced
-//   in #6913. Prefix collisions and other Nemotron-3 IDs preserve their
-//   top-level `thinking` field unless their own accepted scope establishes the
-//   same endpoint contract.
+//   Scope: the `nvidia/nemotron-3-` model family. Ultra, Super, and Nano all
+//   reject the top-level field on NVIDIA Build, while unrelated models such as
+//   `openai/gpt-oss-120b` accept it and must remain untouched.
 //
 //   Source boundary: NemoClaw owns the sandbox preload that wraps outgoing
 //   chat-completions traffic. The `thinking` field originates in OpenClaw's
@@ -145,9 +144,9 @@
   // set `chat_template_kwargs.thinking` (a chat-template arg the endpoint
   // accepts); this strips the *top-level* `thinking` request field entirely.
   //
-  // Scope is the exact Ultra model ID accepted by #6913. Do not infer support
-  // for suffix variants or other Nemotron-3 models from this workaround.
-  var STRIP_TOP_LEVEL_THINKING_RE = /^nvidia\/nemotron-3-ultra-550b-a55b$/i;
+  // Scope is the Nemotron-3 family verified by #6913. Do not widen this to all
+  // NVIDIA endpoint models: some models accept and use top-level `thinking`.
+  var STRIP_TOP_LEVEL_THINKING_RE = /^nvidia\/nemotron-3-/i;
 
   // #4851: Ultra 550B silently drops intermediate steps from `content` when
   // asked to perform multi-step tasks without execution-capable tools —

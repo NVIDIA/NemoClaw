@@ -171,7 +171,7 @@ console.log(JSON.stringify(records));
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
   });
 
-  it("preload strips top-level `thinking` only for the exact Ultra model ID (#6913)", () => {
+  it("preload strips top-level `thinking` only for the Nemotron-3 family (#6913)", () => {
     const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
     const harness = `
 const http = require('http');
@@ -206,7 +206,7 @@ function send(mod, options, body) {
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }] }));
-send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b-other', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-4-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'deepseek-ai/deepseek-v4-pro', messages: [], thinking: { type: 'enabled' } }));
@@ -240,11 +240,11 @@ console.log(JSON.stringify(records));
     const ultraNone = JSON.parse(records[2].writes[0]);
     expect(ultraNone).toEqual(ultraObj);
 
-    // Prefix collisions and other Nemotron-3 IDs remain outside the accepted
-    // strip scope. Their pre-existing force_nonempty_content rewrite remains.
-    const prefixCollision = JSON.parse(records[3].writes[0]);
-    expect(prefixCollision).toEqual({
-      model: "nvidia/nemotron-3-ultra-550b-a55b-other",
+    // Adjacent Nemotron families remain outside the accepted strip scope. Their
+    // pre-existing force_nonempty_content rewrite remains.
+    const otherFamily = JSON.parse(records[3].writes[0]);
+    expect(otherFamily).toEqual({
+      model: "nvidia/nemotron-4-ultra-550b-a55b",
       messages: [{ role: "system", content: "x" }],
       thinking: { type: "enabled" },
       chat_template_kwargs: { force_nonempty_content: true },
@@ -254,7 +254,6 @@ console.log(JSON.stringify(records));
     expect(superObj).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "system", content: "x" }],
-      thinking: { type: "enabled" },
       chat_template_kwargs: { force_nonempty_content: true },
     });
 
@@ -262,7 +261,6 @@ console.log(JSON.stringify(records));
     expect(nanoBool).toEqual({
       model: "nvidia/nemotron-3-nano-30b-a3b",
       messages: [{ role: "system", content: "x" }],
-      thinking: true,
       chat_template_kwargs: { force_nonempty_content: true },
     });
 
