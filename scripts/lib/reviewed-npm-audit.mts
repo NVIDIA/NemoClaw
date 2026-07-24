@@ -48,6 +48,30 @@ export type AuditPolicyResult = Readonly<{
   unacceptedBlockingAdvisories: readonly DirectFinding[];
 }>;
 
+export type AuditEndpoints = Readonly<{
+  configuredRegistry: string | null;
+  bulkAdvisoryEndpoint: string | null;
+  note: string;
+}>;
+
+export type AuditProvenance = Readonly<{
+  schemaVersion: 1;
+  scanner: Readonly<{ name: "npm audit"; npmVersion: string; nodeVersion: string }>;
+  registry: AuditEndpoints;
+  run: Readonly<{ startedAt: string; finishedAt: string }>;
+  graph: Readonly<{ label: string; packageSpecs: readonly string[] }>;
+  rawReportPath: string;
+  advisoryIds: readonly string[];
+  failure?: string;
+}>;
+
+export type AuditProvenanceContext = Readonly<{
+  label: string;
+  nodeVersion: string;
+  npmVersion: string;
+  packageSpecs: readonly string[];
+}>;
+
 const EXCEPTION_KEYS = new Set([
   "advisory",
   "compensatingControls",
@@ -66,6 +90,7 @@ const ADVISORY_ID = /^(?:GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}|CVE-\d{4}-\d+|
 const GRAPH_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const MAX_EXCEPTION_LIFETIME_DAYS = 30;
+const GHSA_ID_IN_URL = /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/gi;
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -270,6 +295,101 @@ export function exceedsAuditThreshold(
   );
 }
 
+export function deriveAuditEndpoints(configuredRegistry: string): AuditEndpoints {
+  const candidate = configuredRegistry.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return {
+      configuredRegistry: null,
+      bulkAdvisoryEndpoint: null,
+      note: "the configured registry could not be safely recorded for this run, so the audit endpoint is unknown.",
+    };
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return {
+      configuredRegistry: null,
+      bulkAdvisoryEndpoint: null,
+      note: "the configured registry could not be safely recorded for this run, so the audit endpoint is unknown.",
+    };
+  }
+  parsed.username = "";
+  parsed.password = "";
+  const safeRegistry = parsed.toString();
+  const base = safeRegistry.replace(/\/+$/, "");
+  return {
+    configuredRegistry: safeRegistry,
+    bulkAdvisoryEndpoint: `${base}/-/npm/v1/security/advisories/bulk`,
+    note: "npm audit posts the dependency graph to the bulk advisory endpoint of the configured registry; on request failure npm reports no advisory data.",
+  };
+}
+
+export function extractAdvisoryIds(report: Record<string, unknown>): readonly string[] {
+  const ids = new Set<string>();
+  const vulnerabilities = report.vulnerabilities;
+  const findings =
+    typeof vulnerabilities === "object" &&
+    vulnerabilities !== null &&
+    !Array.isArray(vulnerabilities)
+      ? Object.values(vulnerabilities)
+      : [];
+  for (const finding of findings) {
+    const via = (finding as Record<string, unknown> | null)?.via;
+    if (!Array.isArray(via)) continue;
+    for (const cause of via) {
+      if (typeof cause !== "object" || cause === null) continue;
+      const url = (cause as Record<string, unknown>).url;
+      if (typeof url !== "string") continue;
+      for (const match of url.match(GHSA_ID_IN_URL) ?? []) {
+        ids.add(`GHSA${match.slice(4).toLowerCase()}`);
+      }
+    }
+  }
+  return [...ids].sort();
+}
+
+export function buildAuditProvenance(
+  input: Readonly<{
+    failure?: string;
+    finishedAt: string;
+    label: string;
+    nodeVersion: string;
+    npmVersion: string;
+    packageSpecs: readonly string[];
+    rawReportPath: string;
+    registry: string;
+    report: Record<string, unknown>;
+    startedAt: string;
+  }>,
+): AuditProvenance {
+  return {
+    schemaVersion: 1,
+    scanner: { name: "npm audit", npmVersion: input.npmVersion, nodeVersion: input.nodeVersion },
+    registry: deriveAuditEndpoints(input.registry),
+    run: { startedAt: input.startedAt, finishedAt: input.finishedAt },
+    graph: { label: input.label, packageSpecs: input.packageSpecs },
+    rawReportPath: input.rawReportPath,
+    advisoryIds: extractAdvisoryIds(input.report),
+    ...(input.failure === undefined ? {} : { failure: input.failure }),
+  };
+}
+
+export function provenanceSidecarPath(reportPath: string): string {
+  return `${reportPath.replace(/\.json$/, "")}.provenance.json`;
+}
+
+function configuredNpmRegistry(directory: string): string {
+  const result = spawnSync("npm", ["config", "get", "registry"], {
+    cwd: directory,
+    encoding: "utf-8",
+    env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return result.error || result.status !== 0 ? "" : result.stdout.trim();
+}
+
 function advisoryId(value: Readonly<Record<string, unknown>>): string {
   const url = nonEmptyString(value.url, "npm audit advisory URL");
   const match = url.match(/\/advisories\/([^/]+)$/u);
@@ -445,13 +565,18 @@ export function runReviewedNpmAudit(
     directory: string;
     exceptionFile: string;
     graph: string;
+    provenance?: AuditProvenanceContext;
     reportFile?: string;
     resultFile?: string;
     threshold: Severity;
     throwOnBlock?: boolean;
   }>,
 ): AuditPolicyResult {
+  if (options.provenance && !options.reportFile) {
+    throw new Error("reviewed npm audit provenance requires a report file");
+  }
   const exceptionRegistry = readAuditExceptionRegistry(options.exceptionFile);
+  const startedAt = new Date().toISOString();
   const result = spawnSync("npm", ["audit", "--omit=dev", "--json"], {
     cwd: options.directory,
     encoding: "utf-8",
@@ -459,9 +584,35 @@ export function runReviewedNpmAudit(
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const finishedAt = new Date().toISOString();
   if (result.error) throw result.error;
   if (options.reportFile) fs.writeFileSync(options.reportFile, result.stdout);
-  const report = parseAuditReport(result);
+  let report: Record<string, unknown> = {};
+  let auditFailure: Error | undefined;
+  try {
+    report = parseAuditReport(result);
+  } catch (error) {
+    auditFailure = error instanceof Error ? error : new Error(String(error));
+  }
+  if (options.provenance && options.reportFile) {
+    const provenance = buildAuditProvenance({
+      failure: auditFailure?.message,
+      finishedAt,
+      label: options.provenance.label,
+      nodeVersion: options.provenance.nodeVersion,
+      npmVersion: options.provenance.npmVersion,
+      packageSpecs: options.provenance.packageSpecs,
+      rawReportPath: path.basename(options.reportFile),
+      registry: configuredNpmRegistry(options.directory),
+      report,
+      startedAt,
+    });
+    fs.writeFileSync(
+      provenanceSidecarPath(options.reportFile),
+      `${JSON.stringify(provenance, null, 2)}\n`,
+    );
+  }
+  if (auditFailure) throw auditFailure;
   const policyResult = evaluateAuditPolicy({
     directory: options.directory,
     exceptionPolicy: exceptionRegistry.policy,
