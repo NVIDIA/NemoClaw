@@ -91,7 +91,7 @@ export interface GatewayHostRuntime {
   ): void;
   attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
   bindGatewayOwner(owner: GatewayOwner): void;
-  /** HTTPS endpoint of the gateway this process operates. */
+  /** Local endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
   getGatewayOwner(): GatewayOwner;
   resetGatewayOwnerBinding(): void;

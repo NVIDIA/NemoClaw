@@ -3164,7 +3164,8 @@ For Hermes setups, uninstall inspects the selected gateway's managed port-forwar
 If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
 On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains NemoClaw-owned Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
-This directory is separate from a declared external gateway state directory, which uninstall does not remove.
+Keep a declared external gateway state directory outside that NemoClaw-owned path.
+Uninstall does not otherwise target the declared external directory.
 
 | Flag | Effect |
 |---|---|

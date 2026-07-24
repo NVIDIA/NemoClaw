@@ -68,10 +68,14 @@ The declaration uses the following fields.
 |---|---|
 | `version` | Contract version. Only `1` is supported. |
 | `mode` | `nemoclaw-managed` or `externally-supervised`. |
-| `endpoint` | Exact bare origin for an externally supervised gateway. Use `http` or `https`, a numeric IPv4 or IPv6 loopback address, and the gateway port that this NemoClaw process uses. Credentials, DNS names such as `localhost`, paths, query strings, and fragments are rejected. |
-| `stateDir` | Absolute external gateway state directory. For HTTPS, it contains the client trust bundle. |
+| `endpoint` | Exact bare origin for an externally supervised gateway. Use `http` or `https`, host `127.0.0.1` or `[::1]`, and the gateway port that this NemoClaw process uses. Credentials, DNS names such as `localhost`, paths, query strings, and fragments are rejected. |
+| `stateDir` | Absolute external gateway state directory. Keep it outside NemoClaw-owned state paths such as `~/.local/state/nemoclaw`; uninstall removes those owned paths and does not otherwise target the declared external directory. For HTTPS, it contains the client trust bundle. |
 | `supervisor` | Required for `externally-supervised` and rejected for `nemoclaw-managed`. `kind` is `systemd-system` or `systemd-user`. `serviceName` names one `.service` unit, and `execPath` is the absolute gateway executable path. |
 | `requiredCapabilities` | Capabilities onboarding needs. Supported values are `gateway.health`, `sandbox.create`, `sandbox.exec`, and `gpu.passthrough`. |
+
+`requiredCapabilities` is checked against the capabilities implemented by this NemoClaw build.
+OpenShell does not expose capability discovery, so this field does not probe or attest capabilities on the running gateway.
+The listener, supervisor, identity, and health checks below validate the live gateway separately.
 
 The endpoint port must match `NEMOCLAW_GATEWAY_PORT`.
 When the endpoint omits a port, `http` resolves to port `80` and `https` resolves to port `443` for this comparison.
@@ -182,9 +186,16 @@ It does not transfer process ownership to NemoClaw.
 ## Fix a failure
 
 Resolve an external gateway failure through the declared supervisor.
+For `systemd-system`, inspect the declared service with:
 
 ```bash
 systemctl status openshell-gateway.service
+```
+
+For `systemd-user`, use the user manager:
+
+```bash
+systemctl --user status openshell-gateway.service
 ```
 
 Bring the supervised gateway up, leave exactly one verified process holding the configured port, and rerun `nemoclaw onboard`.

@@ -40,7 +40,6 @@ export const GATEWAY_MANAGEMENT_ENV_VAR = "NEMOCLAW_GATEWAY_MANAGEMENT";
 
 export type GatewayManagementMode = "nemoclaw-managed" | "externally-supervised";
 
-/** How the external supervisor runs the gateway, and how to recognize it. */
 /**
  * Supervisor kinds NemoClaw can authoritatively bind a listening PID to. Only
  * systemd is supported in v1: an opaque "external" supervisor offers no way to
@@ -52,6 +51,7 @@ export const SUPPORTED_GATEWAY_SUPERVISOR_KINDS = ["systemd-system", "systemd-us
 
 export type GatewaySupervisorKind = (typeof SUPPORTED_GATEWAY_SUPERVISOR_KINDS)[number];
 
+/** How the external supervisor runs the gateway, and how to recognize it. */
 export interface GatewaySupervisorDeclaration {
   kind: GatewaySupervisorKind;
   /** Unit (or equivalent) name the platform supervisor manages. */
@@ -65,7 +65,7 @@ export interface GatewayManagementDeclaration {
   mode: GatewayManagementMode;
   /** Required only when an external supervisor owns the gateway. */
   endpoint: string | null;
-  /** External gateway state root containing the client TLS bundle. */
+  /** External gateway state root; for HTTPS, contains the client TLS bundle. */
   stateDir: string | null;
   /** Required for `externally-supervised`; must be absent for `nemoclaw-managed`. */
   supervisor: GatewaySupervisorDeclaration | null;
