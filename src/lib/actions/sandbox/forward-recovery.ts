@@ -3,8 +3,8 @@
 
 import { spawnSync } from "node:child_process";
 
-import { captureOpenshell, isCommandTimeout, runOpenshell } from "../../adapters/openshell/runtime";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { captureOpenshell, isCommandTimeout, runOpenshell } from "../../adapters/openshell/runtime";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
