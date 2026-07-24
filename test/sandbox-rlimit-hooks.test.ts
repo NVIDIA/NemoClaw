@@ -602,7 +602,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       const fixtureOwner = fs.statSync(startBin);
       const replay = dockerRunCommandBetween(
         dockerfile,
-        "# Copy startup script and the secret-boundary validator.",
+        "# Apply runtime modes to the startup script and secret-boundary validator.",
         "# Wrap the hermes CLI",
       )
         .replaceAll("/usr/local/bin/nemoclaw-start", startBin)

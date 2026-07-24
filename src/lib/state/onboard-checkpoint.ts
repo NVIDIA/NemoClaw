@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+import { SUPPORTED_GATEWAY_CAPABILITIES } from "../core/gateway-capabilities";
 import { isObjectRecord } from "../core/json-types";
+import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { isOnboardMachineState } from "../onboard/machine/transitions";
@@ -12,6 +15,8 @@ import {
   type CheckpointDecision,
   type CheckpointEffectGroupName,
   type CheckpointEffectGroupRecord,
+  type CheckpointGatewayAuthority,
+  type CheckpointGatewaySupervisor,
   type CheckpointLoadResult,
   type CheckpointMessagingSelection,
   type CheckpointProviderBinding,
@@ -122,6 +127,104 @@ function parseProviderBindings(value: unknown): CheckpointProviderBinding[] | nu
   return bindings;
 }
 
+function parseGatewaySupervisor(value: unknown): CheckpointGatewaySupervisor | null {
+  if (!isObjectRecord(value)) return null;
+  const kind = value.kind;
+  const serviceName = readString(value.serviceName);
+  const execPath = readString(value.execPath);
+  if (kind !== "systemd-system" && kind !== "systemd-user") return null;
+  if (!serviceName || !/^[A-Za-z0-9][A-Za-z0-9:_.@-]*\.service$/.test(serviceName)) return null;
+  if (!execPath || !path.isAbsolute(execPath)) return null;
+  return { kind, serviceName, execPath };
+}
+
+function parseGatewayAuthorityValue(value: unknown): CheckpointGatewayAuthority | null {
+  if (!isObjectRecord(value)) return null;
+  const gatewayName = readString(value.gatewayName);
+  const gatewayPort = value.gatewayPort;
+  const mode = value.mode;
+  const source = value.source;
+  const endpoint = value.endpoint === null ? null : readString(value.endpoint);
+  const stateDir = value.stateDir === null ? null : readString(value.stateDir);
+  const requiredCapabilities = readStringArray(value.requiredCapabilities);
+  if (
+    !gatewayName ||
+    !Number.isInteger(gatewayPort) ||
+    Number(gatewayPort) < 1 ||
+    Number(gatewayPort) > 65535
+  ) {
+    return null;
+  }
+  const canonicalName =
+    gatewayPort === DEFAULT_GATEWAY_PORT ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`;
+  if (gatewayName !== canonicalName) return null;
+  if (mode !== "nemoclaw-managed" && mode !== "externally-supervised") return null;
+  if (source !== "declared" && source !== "packaged-service" && source !== "standalone")
+    return null;
+  if (!requiredCapabilities) return null;
+  if (
+    requiredCapabilities.some(
+      (capability) =>
+        !SUPPORTED_GATEWAY_CAPABILITIES.includes(
+          capability as (typeof SUPPORTED_GATEWAY_CAPABILITIES)[number],
+        ),
+    )
+  ) {
+    return null;
+  }
+
+  if (mode === "nemoclaw-managed") {
+    if (endpoint !== null || stateDir !== null || value.supervisor !== null) return null;
+    return {
+      gatewayName,
+      gatewayPort: Number(gatewayPort),
+      mode,
+      source,
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities,
+    };
+  }
+
+  if (source !== "declared" || !endpoint || !stateDir || !path.isAbsolute(stateDir)) return null;
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    return null;
+  }
+  if (
+    (parsedEndpoint.protocol !== "http:" && parsedEndpoint.protocol !== "https:") ||
+    !["127.0.0.1", "[::1]", "::1"].includes(parsedEndpoint.hostname) ||
+    parsedEndpoint.username ||
+    parsedEndpoint.password ||
+    parsedEndpoint.search ||
+    parsedEndpoint.hash ||
+    (parsedEndpoint.pathname && parsedEndpoint.pathname !== "/")
+  ) {
+    return null;
+  }
+  const endpointPort = parsedEndpoint.port
+    ? Number(parsedEndpoint.port)
+    : parsedEndpoint.protocol === "https:"
+      ? 443
+      : 80;
+  if (endpointPort !== gatewayPort) return null;
+  const supervisor = parseGatewaySupervisor(value.supervisor);
+  if (!supervisor) return null;
+  return {
+    gatewayName,
+    gatewayPort: Number(gatewayPort),
+    mode,
+    source,
+    endpoint: parsedEndpoint.origin,
+    stateDir,
+    supervisor,
+    requiredCapabilities,
+  };
+}
+
 function parseBindings(value: unknown): CheckpointBindings | null {
   if (!isObjectRecord(value)) return null;
   const credentialEnvs = readStringArray(value.credentialEnvs);
@@ -137,7 +240,10 @@ function requireDecision<T>(
   return parseCheckpointDecision(raw, parseValue);
 }
 
-function parseCurrentSchema(value: Record<string, unknown>): OnboardCheckpoint | null {
+function parseSchema(
+  value: Record<string, unknown>,
+  gatewayAuthorityRaw: unknown,
+): OnboardCheckpoint | null {
   const sessionId = readString(value.sessionId);
   const machineState = value.machineState;
   const updatedAt = readCanonicalIsoTimestamp(value.updatedAt);
@@ -148,9 +254,12 @@ function parseCurrentSchema(value: Record<string, unknown>): OnboardCheckpoint |
   const webSearch = requireDecision(value.webSearch, parseWebSearchValue);
   const messaging = requireDecision(value.messaging, parseMessagingValue);
   const resourceProfile = requireDecision(value.resourceProfile, parseResourceProfileValue);
+  const gatewayAuthority = requireDecision(gatewayAuthorityRaw, parseGatewayAuthorityValue);
   const effectGroups = parseEffectGroups(value.effectGroups);
   const bindings = parseBindings(value.bindings);
-  if (!sandboxIdentity || !webSearch || !messaging || !resourceProfile) return null;
+  if (!sandboxIdentity || !webSearch || !messaging || !resourceProfile || !gatewayAuthority) {
+    return null;
+  }
   if (!effectGroups || !bindings) return null;
 
   return {
@@ -162,6 +271,7 @@ function parseCurrentSchema(value: Record<string, unknown>): OnboardCheckpoint |
     webSearch,
     messaging,
     resourceProfile,
+    gatewayAuthority,
     effectGroups,
     bindings,
   };
@@ -179,8 +289,12 @@ export function inspectCheckpoint(raw: unknown): CheckpointLoadResult {
     return { status: "unsupported_future", foundVersion: version };
   }
   if (version === CHECKPOINT_SCHEMA_VERSION) {
-    const checkpoint = parseCurrentSchema(raw);
+    const checkpoint = parseSchema(raw, raw.gatewayAuthority);
     return checkpoint ? { status: "loaded", checkpoint } : { status: "corrupt" };
+  }
+  if (version === 1) {
+    const checkpoint = parseSchema(raw, { kind: "unset" });
+    return checkpoint ? { status: "migrated", checkpoint, fromVersion: 1 } : { status: "corrupt" };
   }
   return { status: "corrupt" };
 }
@@ -195,6 +309,7 @@ export function serializeCheckpoint(checkpoint: OnboardCheckpoint): Record<strin
     webSearch: checkpoint.webSearch,
     messaging: checkpoint.messaging,
     resourceProfile: checkpoint.resourceProfile,
+    gatewayAuthority: checkpoint.gatewayAuthority,
     effectGroups: checkpoint.effectGroups,
     bindings: checkpoint.bindings,
   };

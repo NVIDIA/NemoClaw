@@ -8,6 +8,7 @@ const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }));
 
 vi.mock("node:child_process", () => ({ spawnSync: spawnSyncMock }));
 
+import { withStdoutRedirectedToStderr } from "../src/lib/cli/stdout-guard";
 import {
   type RunOpenshellInstallDeps,
   runOpenshellInstall,
@@ -48,6 +49,17 @@ describe("runOpenshellInstall progress streaming (#4431)", () => {
     runOpenshellInstall(makeDeps());
     const options = spawnSyncMock.mock.calls[0][2];
     expect(options.stdio).not.toContain("pipe");
+  });
+
+  it("keeps installer progress off machine-readable stdout", async () => {
+    spawnSyncMock.mockReturnValue({ status: 0 });
+
+    await withStdoutRedirectedToStderr(async () => {
+      runOpenshellInstall(makeDeps());
+    });
+
+    const options = spawnSyncMock.mock.calls[0][2];
+    expect(options.stdio).toEqual(["ignore", process.stderr, "inherit"]);
   });
 
   it("normalizes relative component overrides before changing the installer cwd", () => {

@@ -19,6 +19,7 @@ import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import { describeGatewayOwner, type GatewayOwnerDescription } from "../onboard/gateway-ownership";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -299,6 +300,7 @@ export interface DebugSessionSummary {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  gatewayAuthority: GatewayOwnerDescription | null;
   machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
 }
@@ -790,16 +792,17 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
 
   if (normalized.stationExpressIntent) {
+    const intent = normalized.stationExpressIntent;
     const providerComplete = normalized.steps.provider_selection?.status === "complete";
     const providerBound = Boolean(
-      normalized.stationExpressIntent.servedModel &&
-        normalized.stationExpressIntent.checkpointModel,
+      intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
     );
     if (
       providerComplete !== providerBound ||
       (providerComplete &&
-        (normalized.provider !== "vllm-local" ||
-          normalized.model !== normalized.stationExpressIntent.servedModel)) ||
+        (intent.kind === "spark" ||
+          normalized.provider !== "vllm-local" ||
+          normalized.model !== intent.servedModel)) ||
       (!providerComplete && (normalized.provider !== null || normalized.model !== null))
     ) {
       return null;
@@ -1384,8 +1387,13 @@ function markStepCompleteWithOptions(
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    // Spark managed-vLLM Express intents (#7231) carry no receipt/served state
+    // and exist only to re-arm the install on resume, so clear them once
+    // provider selection completes instead of binding a Station selection.
+    const sparkExpressComplete =
+      stepName === "provider_selection" && session.stationExpressIntent?.kind === "spark";
     const stationExpressIntent =
-      stepName === "provider_selection" && session.stationExpressIntent
+      stepName === "provider_selection" && session.stationExpressIntent && !sparkExpressComplete
         ? bindStationExpressProviderSelection(
             session.stationExpressIntent,
             safeUpdates.provider,
@@ -1401,6 +1409,7 @@ function markStepCompleteWithOptions(
     session.failure = null;
     Object.assign(session, safeUpdates);
     if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
+    else if (sparkExpressComplete) session.stationExpressIntent = null;
     const nextState = nextMachineStateAfterCompletedStep(stepName, session);
     shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
     if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
@@ -1602,7 +1611,10 @@ export function completeSession(
   let wasComplete = false;
   let receiptGeneration: string | null = null;
   let updatedSession = updateSession((session) => {
-    const intentReceiptGeneration = session.stationExpressIntent?.receiptGeneration ?? null;
+    const intentReceiptGeneration =
+      session.stationExpressIntent?.kind === "spark"
+        ? null
+        : (session.stationExpressIntent?.receiptGeneration ?? null);
     receiptGeneration = session.stationExpressReceiptRetirement ?? intentReceiptGeneration;
     if (intentReceiptGeneration) {
       assertStationExpressInstallerResumeMatches(intentReceiptGeneration);
@@ -1689,6 +1701,10 @@ export function summarizeForDebug(
   session: Session | null = loadSession(),
 ): DebugSessionSummary | null {
   if (!session) return null;
+  const gatewayAuthority =
+    session.checkpoint?.gatewayAuthority.kind === "selected"
+      ? describeGatewayOwner(session.checkpoint.gatewayAuthority.value)
+      : null;
   return {
     version: session.version,
     sessionId: session.sessionId,
@@ -1715,6 +1731,7 @@ export function summarizeForDebug(
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
+    gatewayAuthority,
     machine: session.machine,
     steps: Object.fromEntries(
       Object.entries(session.steps).map(([name, step]) => [
