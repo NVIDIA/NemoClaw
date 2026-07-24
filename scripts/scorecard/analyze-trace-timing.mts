@@ -4,7 +4,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import zlib from "node:zlib";
+
+import { readValidatedArtifactZipEntry } from "./read-artifact-zip.mts";
 
 type SemverTag = { name: string; major: number; minor: number; patch: number; sha?: string };
 type Threshold = { minDeltaMs: number; minPercent: number };
@@ -46,17 +47,6 @@ type TraceTimingResult = {
   budgetWarningMessage: string | null;
   budgetStatus: string;
 };
-type ZipSummaryEntry = {
-  creatorSystem: number;
-  flags: number;
-  compressionMethod: number;
-  expectedCrc: number;
-  compressedSize: number;
-  uncompressedSize: number;
-  diskStart: number;
-  externalAttributes: number;
-  localHeaderOffset: number;
-};
 type GitHubDeps = { github: any; context: any; core?: { warning?: (message: string) => void } };
 type TraceTimingServices = {
   findLatestCompletedE2eRunForReleaseTag: (deps: GitHubDeps, tag: SemverTag) => Promise<any | null>;
@@ -71,9 +61,6 @@ const MAX_TRACE_SUMMARY_BYTES = 1024 * 1024;
 const MAX_TRACE_ARCHIVE_ENTRIES = 1000;
 const TRACE_ARCHIVE_REJECTION_WARNING =
   "Trace timing artifact ZIP validation failed; ignoring the malformed or unsupported archive.";
-const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
-const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
-const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
 const ONBOARD_PERFORMANCE_BUDGET_FILE = "ci/onboard-performance-budget.json";
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const ONBOARD_PHASE_PREFIX = "nemoclaw.onboard.phase.";
@@ -531,30 +518,6 @@ async function findLatestCompletedE2eRunForReleaseTag(
   return null;
 }
 
-function findZipEndOfCentralDirectory(archive: Buffer): number {
-  const minimumOffset = Math.max(0, archive.length - 22 - 0xffff);
-  for (let offset = archive.length - 22; offset >= minimumOffset; offset -= 1) {
-    if (
-      archive.readUInt32LE(offset) === ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE &&
-      offset + 22 + archive.readUInt16LE(offset + 20) === archive.length
-    ) {
-      return offset;
-    }
-  }
-  return -1;
-}
-
-function crc32(data: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of data) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
 // GitHub creates the workflow artifact ZIP outside this repository, and the
 // cloud-onboard artifact intentionally contains diagnostics beside the trusted
 // timing summary. Parse only the exact root-level summary in-process so the
@@ -562,115 +525,10 @@ function crc32(data: Buffer): number {
 // production-shape multi-entry regression test is the removal guard; retire
 // this parser if GitHub provides a verified single-file artifact API.
 function readValidatedTraceSummaryArchive(archive: Buffer): string | null {
-  const endOffset = findZipEndOfCentralDirectory(archive);
-  if (endOffset < 0) return null;
-
-  const diskNumber = archive.readUInt16LE(endOffset + 4);
-  const centralDirectoryDisk = archive.readUInt16LE(endOffset + 6);
-  const entriesOnDisk = archive.readUInt16LE(endOffset + 8);
-  const totalEntries = archive.readUInt16LE(endOffset + 10);
-  const centralDirectorySize = archive.readUInt32LE(endOffset + 12);
-  const centralDirectoryOffset = archive.readUInt32LE(endOffset + 16);
-  if (
-    diskNumber !== 0 ||
-    centralDirectoryDisk !== 0 ||
-    entriesOnDisk !== totalEntries ||
-    totalEntries < 1 ||
-    totalEntries > MAX_TRACE_ARCHIVE_ENTRIES ||
-    centralDirectoryOffset + centralDirectorySize !== endOffset
-  ) {
-    return null;
-  }
-
-  const expectedFileName = Buffer.from(TRACE_SUMMARY_FILE, "utf8");
-  let centralEntryOffset = centralDirectoryOffset;
-  let target: ZipSummaryEntry | null = null;
-  for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
-    if (
-      centralEntryOffset + 46 > endOffset ||
-      archive.readUInt32LE(centralEntryOffset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE
-    ) {
-      return null;
-    }
-    const fileNameLength = archive.readUInt16LE(centralEntryOffset + 28);
-    const extraLength = archive.readUInt16LE(centralEntryOffset + 30);
-    const commentLength = archive.readUInt16LE(centralEntryOffset + 32);
-    const centralEntryEnd = centralEntryOffset + 46 + fileNameLength + extraLength + commentLength;
-    if (centralEntryEnd > endOffset) return null;
-    const fileName = archive.subarray(
-      centralEntryOffset + 46,
-      centralEntryOffset + 46 + fileNameLength,
-    );
-    if (fileName.equals(expectedFileName)) {
-      if (target !== null) return null;
-      target = {
-        creatorSystem: archive.readUInt8(centralEntryOffset + 5),
-        flags: archive.readUInt16LE(centralEntryOffset + 8),
-        compressionMethod: archive.readUInt16LE(centralEntryOffset + 10),
-        expectedCrc: archive.readUInt32LE(centralEntryOffset + 16),
-        compressedSize: archive.readUInt32LE(centralEntryOffset + 20),
-        uncompressedSize: archive.readUInt32LE(centralEntryOffset + 24),
-        diskStart: archive.readUInt16LE(centralEntryOffset + 34),
-        externalAttributes: archive.readUInt32LE(centralEntryOffset + 38),
-        localHeaderOffset: archive.readUInt32LE(centralEntryOffset + 42),
-      };
-    }
-    centralEntryOffset = centralEntryEnd;
-  }
-  if (centralEntryOffset !== endOffset || target === null) return null;
-
-  const {
-    creatorSystem,
-    flags,
-    compressionMethod,
-    expectedCrc,
-    compressedSize,
-    uncompressedSize,
-    diskStart,
-    externalAttributes,
-    localHeaderOffset,
-  } = target;
-  const unixFileType = (externalAttributes >>> 16) & 0xf000;
-  if (
-    diskStart !== 0 ||
-    (flags & 0x1) !== 0 ||
-    (compressionMethod !== 0 && compressionMethod !== 8) ||
-    compressedSize > MAX_TRACE_SUMMARY_BYTES ||
-    uncompressedSize > MAX_TRACE_SUMMARY_BYTES ||
-    (creatorSystem !== 0 && creatorSystem !== 3) ||
-    (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
-    localHeaderOffset + 30 > centralDirectoryOffset ||
-    archive.readUInt32LE(localHeaderOffset) !== ZIP_LOCAL_FILE_SIGNATURE
-  ) {
-    return null;
-  }
-
-  const localFlags = archive.readUInt16LE(localHeaderOffset + 6);
-  const localCompressionMethod = archive.readUInt16LE(localHeaderOffset + 8);
-  const localFileNameLength = archive.readUInt16LE(localHeaderOffset + 26);
-  const localExtraLength = archive.readUInt16LE(localHeaderOffset + 28);
-  const localFileName = archive.subarray(
-    localHeaderOffset + 30,
-    localHeaderOffset + 30 + localFileNameLength,
-  );
-  const compressedDataOffset = localHeaderOffset + 30 + localFileNameLength + localExtraLength;
-  const compressedDataEnd = compressedDataOffset + compressedSize;
-  if (
-    localFlags !== flags ||
-    localCompressionMethod !== compressionMethod ||
-    !localFileName.equals(expectedFileName) ||
-    compressedDataEnd > centralDirectoryOffset
-  ) {
-    return null;
-  }
-
-  const compressedData = archive.subarray(compressedDataOffset, compressedDataEnd);
-  const summary =
-    compressionMethod === 0
-      ? Buffer.from(compressedData)
-      : zlib.inflateRawSync(compressedData, { maxOutputLength: MAX_TRACE_SUMMARY_BYTES });
-  if (summary.length !== uncompressedSize || crc32(summary) !== expectedCrc) return null;
-  return summary.toString("utf8");
+  return readValidatedArtifactZipEntry(archive, TRACE_SUMMARY_FILE, {
+    maxBytes: MAX_TRACE_SUMMARY_BYTES,
+    maxEntries: MAX_TRACE_ARCHIVE_ENTRIES,
+  });
 }
 
 function readValidatedTraceSummaryZip(
