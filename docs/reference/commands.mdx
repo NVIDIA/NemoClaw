@@ -2472,6 +2472,9 @@ Host-side wrapper around `openshell sandbox download` that checks the live sandb
 The command confirms that the source is a file or directory before it downloads.
 If the command cannot confirm the source type, it exits without downloading.
 The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
+An existing destination directory is resolved to its canonical path before publication.
+The command refuses an existing file destination that is a symbolic link and a new destination below a symbolic-link parent.
+Regular files are published through a private temporary entry and atomically replace an existing regular file.
 Relative host destinations resolve against the caller's working directory.
 Absolute host destinations do not use caller-working-directory resolution.
 With no `host-dest` the destination defaults to the current directory.

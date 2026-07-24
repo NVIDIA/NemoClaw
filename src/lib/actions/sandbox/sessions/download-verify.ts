@@ -112,8 +112,8 @@ export function resolveDownloadArtifactPath(
 /**
  * Confirm a reported-success download produced an artifact at `hostPath`
  * (a file or a directory — the download command supports both). Unlike
- * {@link assertDownloadedFile}, this does not require a regular file, so it is
- * safe for directory downloads.
+ * {@link assertDownloadedFile}, this check accepts file and directory
+ * artifacts.
  *
  * `hostPath` must be a fresh staging path that did not exist before the
  * download. A pre-existing path could hold a stale artifact from an earlier
