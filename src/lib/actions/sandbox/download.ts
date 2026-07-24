@@ -77,6 +77,9 @@ export async function downloadFromSandbox(
   // download` can exit 0 without writing anything (e.g. a rejected
   // out-of-workspace source; NVIDIA/OpenShell#2456), and this command
   // otherwise trusts that exit code.
+  // Keep this verification after OpenShell fixes that issue: NemoClaw's
+  // wrapper independently requires a fresh artifact from this invocation
+  // before it publishes anything to the requested host destination.
   const sourceKind = probeSandboxSourceKind(opts.sandboxName, sandboxPath);
   if (sourceKind === "missing") {
     throw new Error(
