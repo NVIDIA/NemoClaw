@@ -5,6 +5,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
 import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
+import { teardownSandboxDashboardForward } from "./forward-recovery";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 
 // Lazy adapter accessor, same pattern as docker-driver-sandbox-recovery.ts:
@@ -28,6 +29,19 @@ function isAtRest(status: string): boolean {
   return AT_REST_STATUS_PREFIXES.some((prefix) => status.startsWith(prefix));
 }
 
+function teardownDashboardForwardBestEffort(
+  sandboxName: string,
+  teardown: typeof teardownSandboxDashboardForward,
+  warn: (message: string) => void,
+): void {
+  try {
+    teardown(sandboxName);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    warn(`  Warning: could not release the dashboard port-forward: ${detail}`);
+  }
+}
+
 export type SandboxLifecycleResult = {
   exitCode: number;
   message?: string;
@@ -39,6 +53,7 @@ export interface SandboxStopDeps {
   printDockerRuntimeDownGuidance?: typeof printDockerRuntimeDownGuidance;
   findLabeledSandboxContainers?: typeof findLabeledSandboxContainers;
   stopSandboxChannels?: typeof stopSandboxChannels;
+  teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
   dockerStop?: DockerStopFn;
   log?: (message: string) => void;
   warn?: (message: string) => void;
@@ -138,6 +153,15 @@ export function stopSandbox(
   const stoppable = containers.filter((container) => !isAtRest(container.status));
   if (stoppable.length === 0) {
     log(`  Sandbox '${sandboxName}' is already stopped.`);
+    // Idempotent teardown: an earlier stop may have left the dashboard forward
+    // alive (e.g. openshell was unreachable then, or the forward was orphaned by
+    // a raw `docker stop`). Release it here too so a repeated stop always
+    // converges on no leftover listener (#7227).
+    teardownDashboardForwardBestEffort(
+      sandboxName,
+      deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+      warn,
+    );
     log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
     return { exitCode: 0 };
   }
@@ -180,6 +204,17 @@ export function stopSandbox(
       message: `  docker stop failed for: ${failures.join(", ")}.`,
     };
   }
+
+  // Release the host-side dashboard port-forward this sandbox created. Without
+  // this, the `ssh -L` listener stays alive after the container is stopped, so
+  // `status` misreports the cleanly-stopped sandbox as a foreign
+  // `sandbox_dashboard_port_conflict` and `start`/`recover` contend with the
+  // still-held port (#7227). Best-effort — the container is already stopped.
+  teardownDashboardForwardBestEffort(
+    sandboxName,
+    deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+    warn,
+  );
 
   log(`  Sandbox '${sandboxName}' stopped. Workspace state is preserved.`);
   log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
