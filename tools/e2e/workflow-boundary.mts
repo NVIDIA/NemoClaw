@@ -39,11 +39,20 @@ import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-wo
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
-import { validateTrustedHermesSwapWorkflow } from "./trusted-hermes-swap-workflow-boundary.mts";
+import {
+  validateTrustedHermesSwapHelperSource,
+  validateTrustedHermesSwapWorkflow,
+} from "./trusted-hermes-swap-workflow-boundary.mts";
 import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
+const DEFAULT_LIVE_VITEST_INVOCATION_PATH = join(
+  REPO_ROOT,
+  "tools",
+  "e2e",
+  "live-vitest-invocation.mts",
+);
 const DEFAULT_DOCKER_HUB_AUTH_ACTION_PATH = join(
   REPO_ROOT,
   ".github",
@@ -4798,5 +4807,8 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     ...validateDockerHubAuthAction(),
     ...validateHostDependencyAction(),
     ...validateE2eWorkflow(readWorkflowRecord(workflowPath)),
+    ...validateTrustedHermesSwapHelperSource(
+      readFileSync(DEFAULT_LIVE_VITEST_INVOCATION_PATH, "utf8"),
+    ),
   ];
 }
