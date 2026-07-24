@@ -86,6 +86,19 @@ re-listing them (the dedupe state lives in the open issue body), so close it
 only once the listed advisories are resolved for the inventory. The workflow is
 non-blocking by design and never fails a build.
 
+Signals that carry a CVE id are reconciled against NVD in the same run
+(supplementary only — see the NVD reconciliation section above):
+
+- The workflow queries at most 20 CVE ids per run, spaced 7 seconds apart, to
+  respect the unauthenticated NVD rate limit of roughly five requests per 30
+  seconds; when the cap truncates the list it says so in the run log rather
+  than skipping silently. An NVD outage or rate-limit degrades gracefully to
+  an `NVD: unavailable` annotation — deliberately unlike the GitHub advisory
+  fetch, which fails loudly because signals cannot be computed without it.
+- NVD annotations extend the rolling issue's line text only. The dedupe key
+  (advisory id plus package) is unchanged, so a line appended before its NVD
+  annotation was available is not re-appended later.
+
 ## Proposed policy defaults (pending maintainer confirmation)
 
 The following defaults answer #7338's open policy questions. They are
