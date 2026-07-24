@@ -54,9 +54,10 @@ shape unchanged.
   in CI) remains enabled and authoritative for exact npm package/version-range
   decisions. The early-warning path only triggers investigation and rescanning.
 
-`scripts/advisory-early-warning-scan.mts` is the CLI over the module. It reads
-only local files, exits 0 whether or not signals are found, and never mutates
-anything:
+`scripts/advisory-early-warning-scan.mts` is the CLI over the module.
+It reads only local files and exits 0 whether or not signals are found.
+It does not modify input files or external state.
+With `--output`, it writes the requested local signals file:
 
 ```sh
 # List inventory package names (one per line), the input for advisory queries.
@@ -111,9 +112,10 @@ Each reviewed npm audit report now has a `*.provenance.json` sidecar
 the WeChat locked runtime graph audit) recording:
 
 - scanner identity: `npm audit`, npm version, Node.js version;
-- the configured registry plus the derived bulk advisory endpoint npm posts
-  the dependency graph to (npm >= 7 has no quick-audit fallback: on request
-  failure npm reports no advisory data, and the note records this);
+- the configured registry, with URL credentials removed, plus the derived bulk
+  advisory endpoint npm posts the dependency graph to (npm >= 7 has no
+  quick-audit fallback: on request failure npm reports no advisory data, and
+  the note records this);
 - run start and finish timestamps (ISO 8601);
 - the audited graph label and committed package specs;
 - the raw machine-readable report path (`rawReportPath`, by convention

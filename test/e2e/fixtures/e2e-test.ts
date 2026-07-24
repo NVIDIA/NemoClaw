@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { test as base, expect } from "vitest";
-
+import { appendRunnerComparisonSample } from "../../../tools/e2e/runner-comparison.mts";
 import {
   appendResourcePhaseBaseline,
   collectResourceSnapshot,
@@ -111,7 +111,14 @@ export const test = base.extend<E2ETargetFixtures>({
   },
   progress: [
     async ({ artifacts, onTestFinished, secrets, task }, use) => {
-      const targetId = process.env.E2E_TARGET_ID;
+      const targetId = process.env.E2E_TARGET_ID || process.env.GITHUB_JOB;
+      const comparisonTargetId =
+        process.env.NEMOCLAW_RUN_LIVE_E2E === "1" &&
+        process.env.E2E_ARTIFACT_DIR &&
+        process.env.E2E_TARGET_ID
+          ? process.env.E2E_TARGET_ID
+          : null;
+      const shardId = process.env.NEMOCLAW_E2E_SHARD;
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
       const phasePlan = task.meta.e2ePhases;
       assert.ok(
@@ -120,8 +127,8 @@ export const test = base.extend<E2ETargetFixtures>({
       );
       const declaredPhasePlan = phasePlan ?? SUPPORT_PHASES;
       const declaredFinalPhase = declaredPhasePlan.at(-1) as string;
-      let reachedDeclaredFinal = !phasePlan;
-      const baseProgress = startTestProgress(task.name, declaredPhasePlan, {
+      const progress = startTestProgress(task.name, declaredPhasePlan, {
+        targetId,
         terminalPhase: E2E_TEARDOWN_PHASE,
         taskStatus: () => ({
           errorCount: task.result?.errors?.length ?? 0,
@@ -143,14 +150,16 @@ export const test = base.extend<E2ETargetFixtures>({
                 appendResourcePhaseBaseline(baselinePath, resourcePhaseLabel(targetId, phase)),
             }
           : {}),
+        ...(comparisonTargetId
+          ? {
+              recordResourceSample: (
+                phase: string,
+                kind: "periodic" | "scenario-start" | "phase",
+              ) =>
+                appendRunnerComparisonSample(resourcePhaseLabel(comparisonTargetId, phase), kind),
+            }
+          : {}),
       });
-      const progress: TestProgress = {
-        ...baseProgress,
-        phase(label) {
-          baseProgress.phase(label);
-          if (label === declaredFinalPhase) reachedDeclaredFinal = true;
-        },
-      };
       const completeSupportPlan = phasePlan
         ? () => undefined
         : () => {
@@ -162,14 +171,14 @@ export const test = base.extend<E2ETargetFixtures>({
         finalized = true;
         const outcome = outcomeForTaskState(task.result?.state);
         completeSupportPlan();
-        const completedPhasePlan = reachedDeclaredFinal;
+        const completedPhasePlan = !phasePlan || progress.hasReached(declaredFinalPhase);
         if (!progress.isComplete()) progress.phase(E2E_TEARDOWN_PHASE);
         const phaseOutcome = outcome === "passed" && !completedPhasePlan ? "failed" : outcome;
         progress.stop(phaseOutcome);
         await artifacts.writeJson("test-progress.json", {
           ...progress.summary(),
-          ...(process.env.E2E_TARGET_ID ? { targetId: process.env.E2E_TARGET_ID } : {}),
-          ...(process.env.NEMOCLAW_E2E_SHARD ? { shardId: process.env.NEMOCLAW_E2E_SHARD } : {}),
+          ...(targetId ? { targetId } : {}),
+          ...(shardId ? { shardId } : {}),
         });
         assert.ok(
           outcome !== "passed" || completedPhasePlan,
@@ -180,12 +189,20 @@ export const test = base.extend<E2ETargetFixtures>({
     },
     { auto: true },
   ],
-  docker: async ({ artifacts, secrets, skip }, use) => {
-    const probe = new DockerProbe(artifacts, (text, extra) => secrets.redact(text, extra));
+  docker: async ({ artifacts, cleanup, progress, secrets, skip }, use) => {
+    const probe = new DockerProbe(
+      artifacts,
+      (text, extra) => secrets.redact(text, extra),
+      undefined,
+      progress,
+      () => cleanup.currentSignal(),
+    );
     await use(new DockerPrerequisite(probe, skip));
   },
-  cleanup: async ({ artifacts, progress, secrets }, use) => {
-    const cleanup = new CleanupRegistry((text) => secrets.redact(text));
+  cleanup: async ({ artifacts, progress, secrets, signal }, use) => {
+    const cleanup = new CleanupRegistry((text) => secrets.redact(text), progress, {
+      testSignal: signal,
+    });
     try {
       await use(cleanup);
     } finally {
@@ -195,14 +212,13 @@ export const test = base.extend<E2ETargetFixtures>({
       assertCleanupPassed(result);
     }
   },
-  shellProbe: async ({ artifacts, progress, secrets, signal }, use) => {
+  shellProbe: async ({ artifacts, cleanup, progress, secrets }, use) => {
     await use(
       new ShellProbe({
         artifacts,
+        progress,
         redact: (text, extraValues) => secrets.redact(text, extraValues),
-        signal,
-        onOutput: progress.onOutput,
-        onActivity: progress.activity,
+        signal: () => cleanup.currentSignal(),
       }),
     );
   },
@@ -221,8 +237,8 @@ export const test = base.extend<E2ETargetFixtures>({
   provider: async ({ shellProbe }, use) => {
     await use(new ProviderClient(shellProbe));
   },
-  inference: async ({ artifacts, provider, secrets }, use) => {
-    const inference = await createE2EInferenceAdapter({ artifacts, provider, secrets });
+  inference: async ({ artifacts, progress, provider, secrets }, use) => {
+    const inference = await createE2EInferenceAdapter({ artifacts, progress, provider, secrets });
     try {
       await use(inference);
     } finally {

@@ -166,7 +166,7 @@ export class SandboxClient {
    *
    * Used exclusively by recovery E2E targets (#2701). Removes:
    *   - /tmp/nemoclaw-proxy-env.sh (the NODE_OPTIONS chain export file)
-   *   - the seven --require preload guard scripts written by the entrypoint
+   *   - the five --require preload guard scripts written by the entrypoint
    */
   async wipeGuardChain(
     name: string,
@@ -181,9 +181,7 @@ export class SandboxClient {
       "/tmp/nemoclaw-ciao-network-guard.js",
       "/tmp/nemoclaw-slack-channel-guard.js",
       "/tmp/nemoclaw-http-proxy-fix.js",
-      "/tmp/nemoclaw-ws-proxy-fix.js",
       "/tmp/nemoclaw-nemotron-inference-fix.js",
-      "/tmp/nemoclaw-seccomp-guard.js",
     ];
     const result = await this.exec(name, removeCommand, {
       artifactName: `sandbox-wipe-guard-chain-${name}`,
