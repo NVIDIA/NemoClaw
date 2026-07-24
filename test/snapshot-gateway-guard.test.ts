@@ -195,7 +195,7 @@ function makeVmRestoreToEnv(
 
   const cloneReadyMarker = path.join(home, "clone-1-ready");
   const cloneRunningMarker = path.join(home, "clone-1-running");
-  const dockerLifecycleLog = path.join(home, "docker-lifecycle.log");
+  const gatewayLifecycleLog = path.join(home, "gateway-lifecycle.log");
   writeExecutable(path.join(localBin, "openshell"), [
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
@@ -227,12 +227,12 @@ function makeVmRestoreToEnv(
     "exit 0",
   ]);
 
-  // Model the direct-container lifecycle used after restore. Keep the
+  // Model the supervisor-mediated gateway lifecycle used after restore. Keep the
   // kubectl-via-gateway probe rejected so an image-resolution regression
-  // remains distinguishable from the expected clone stop/start.
+  // remains distinguishable from the expected clone gateway restart.
   writeExecutable(path.join(localBin, "docker"), [
     `CLONE_RUNNING_MARKER=${JSON.stringify(cloneRunningMarker)}`,
-    `LIFECYCLE_LOG=${JSON.stringify(dockerLifecycleLog)}`,
+    `LIFECYCLE_LOG=${JSON.stringify(gatewayLifecycleLog)}`,
     'if [ "$1" = "ps" ]; then',
     '  target=""; format=""; all_states=0',
     "  for arg do",
@@ -253,18 +253,10 @@ function makeVmRestoreToEnv(
     "  fi",
     "  exit 0",
     "fi",
-    'if [ "$1" = "stop" ] && [ "$2" = "openshell-clone-1" ]; then',
-    '  printf "stop %s\\n" "$2" >> "$LIFECYCLE_LOG"',
-    '  rm -f "$CLONE_RUNNING_MARKER"',
-    "  exit 0",
-    "fi",
-    'if [ "$1" = "start" ] && [ "$2" = "openshell-clone-1" ]; then',
-    '  printf "start %s\\n" "$2" >> "$LIFECYCLE_LOG"',
-    '  touch "$CLONE_RUNNING_MARKER"',
-    "  exit 0",
-    "fi",
     'if [ "$1" = "exec" ]; then',
     '  case "$*" in',
+    '    *"/usr/local/bin/nemoclaw-gateway-control restart "*) printf "restart clone-1\\n" >> "$LIFECYCLE_LOG"; printf "GATEWAY_PID=123\\n"; exit 0 ;;',
+    '    *"/usr/local/bin/nemoclaw-gateway-control probe "*) printf "GATEWAY_PID=123\\n"; exit 0 ;;',
     '    *"/usr/bin/id -u sandbox"*) printf "1000\\n"; exit 0 ;;',
     '    *"/usr/bin/id -g sandbox"*) printf "1000\\n"; exit 0 ;;',
     "  esac",
@@ -278,6 +270,7 @@ function makeVmRestoreToEnv(
 
   return {
     HOME: home,
+    NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
     PATH: `${localBin}:${process.env.PATH ?? ""}`,
   };
 }
@@ -317,12 +310,12 @@ describe("snapshot VM-driver gateway guard", () => {
     expect(seed.out).toContain("Snapshot v1 name=baseline created");
 
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
-    expect(r.code).toBe(0);
+    expect(r.code, r.out).toBe(0);
     expect(r.out).not.toContain("could not resolve");
     expect(r.out).not.toContain("kubectl-must-not-run");
     expect(r.out).toContain("openshell/sandbox-from:fast-path-test");
-    expect(fs.readFileSync(path.join(env.HOME, "docker-lifecycle.log"), "utf8")).toBe(
-      "stop openshell-clone-1\nstart openshell-clone-1\n",
+    expect(fs.readFileSync(path.join(env.HOME, "gateway-lifecycle.log"), "utf8")).toBe(
+      "restart clone-1\n",
     );
   }, 15000);
 

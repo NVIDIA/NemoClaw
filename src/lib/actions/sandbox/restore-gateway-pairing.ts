@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { verifyRestoredSandboxGatewayPairing } from "../../adapters/openshell/restore-gateway-pairing";
+import type { GatewayRestartResult } from "./gateway-restart";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
 export type RestoreGatewayPairingDeps = {
-  restartRestoredSandboxRuntime: (sandboxName: string) => Promise<void>;
+  restartRestoredSandboxGateway: (sandboxName: string) => void;
   warmupScopeUpgrade: (sandboxName: string) => void;
   autoPairScopeApproval: (sandboxName: string) => void;
   verifyGatewayPairing: (sandboxName: string) => boolean;
@@ -16,28 +17,26 @@ export type RestoreGatewayPairingDeps = {
 // remaining operator.write upgrade. Permit one bounded recovery pass.
 const RESTORE_GATEWAY_PAIRING_ATTEMPTS = 2;
 
-type RestoredSandboxRuntimeRestartDeps = {
-  stopSandbox: (sandboxName: string) => { exitCode: number; message?: string };
-  startSandbox: (sandboxName: string) => Promise<{ exitCode: number; message?: string }>;
+type RestoredSandboxGatewayRestartDeps = {
+  restartSandboxGateway: (
+    sandboxName: string,
+    options?: { quiet?: boolean },
+  ) => GatewayRestartResult;
 };
 
-function defaultRestoredSandboxRuntimeRestartDeps(): RestoredSandboxRuntimeRestartDeps {
-  const { stopSandbox }: typeof import("./stop") = require("./stop");
-  const { startSandbox }: typeof import("./start") = require("./start");
-  return { stopSandbox, startSandbox };
+function defaultRestoredSandboxGatewayRestartDeps(): RestoredSandboxGatewayRestartDeps {
+  const { restartSandboxGateway }: typeof import("./process-recovery") =
+    require("./process-recovery");
+  return { restartSandboxGateway };
 }
 
-export async function restartRestoredSandboxRuntime(
+export function restartRestoredSandboxGateway(
   sandboxName: string,
-  deps: RestoredSandboxRuntimeRestartDeps = defaultRestoredSandboxRuntimeRestartDeps(),
-): Promise<void> {
-  const stopped = deps.stopSandbox(sandboxName);
-  if (stopped.exitCode !== 0) {
-    throw new Error(stopped.message ?? "could not stop the restored sandbox runtime");
-  }
-  const started = await deps.startSandbox(sandboxName);
-  if (started.exitCode !== 0) {
-    throw new Error(started.message ?? "could not restart the restored sandbox runtime");
+  deps: RestoredSandboxGatewayRestartDeps = defaultRestoredSandboxGatewayRestartDeps(),
+): void {
+  const result = deps.restartSandboxGateway(sandboxName, { quiet: true });
+  if (!result.ok) {
+    throw new Error(`${result.failureLayer}: ${result.detail}`);
   }
 }
 
@@ -45,7 +44,7 @@ function defaultRestoreGatewayPairingDeps(): RestoreGatewayPairingDeps {
   const warmup: typeof import("./auto-pair-warmup") = require("./auto-pair-warmup");
   const connect: typeof import("./connect") = require("./connect");
   return {
-    restartRestoredSandboxRuntime,
+    restartRestoredSandboxGateway,
     warmupScopeUpgrade: warmup.runSandboxScopeWarmupRun,
     autoPairScopeApproval: connect.runConnectAutoPairApprovalPass,
     verifyGatewayPairing: (sandboxName) =>
@@ -59,9 +58,9 @@ export async function establishRestoredSandboxGatewayPairing(
 ): Promise<void> {
   try {
     // Clone creation starts the agent before the snapshot replaces its runtime
-    // state. Restart through the normal lifecycle so the restored state is
-    // observed from boot before pairing is verified.
-    await deps.restartRestoredSandboxRuntime(targetSandbox);
+    // state. Restart through the existing supervisor boundary so the restored
+    // state is observed without replacing the OpenShell control-plane session.
+    deps.restartRestoredSandboxGateway(targetSandbox);
     for (let attempt = 0; attempt < RESTORE_GATEWAY_PAIRING_ATTEMPTS; attempt += 1) {
       deps.warmupScopeUpgrade(targetSandbox);
       deps.autoPairScopeApproval(targetSandbox);

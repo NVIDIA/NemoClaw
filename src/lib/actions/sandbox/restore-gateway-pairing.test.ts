@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   establishRestoredSandboxGatewayPairing,
-  restartRestoredSandboxRuntime,
+  restartRestoredSandboxGateway,
 } from "./restore-gateway-pairing";
 
 afterEach(() => {
@@ -15,7 +15,7 @@ afterEach(() => {
 describe("establishRestoredSandboxGatewayPairing", () => {
   it("restarts restored runtime before provoking and approving the scope upgrade (#7431)", async () => {
     const order: string[] = [];
-    const restartRestoredSandboxRuntime = vi.fn(async () => {
+    const restartRestoredSandboxGateway = vi.fn(() => {
       order.push("restart");
     });
     const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
@@ -26,13 +26,13 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     });
 
     await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxRuntime,
+      restartRestoredSandboxGateway,
       warmupScopeUpgrade,
       autoPairScopeApproval,
       verifyGatewayPairing,
     });
 
-    expect(restartRestoredSandboxRuntime).toHaveBeenCalledWith("beta");
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledWith("beta");
     expect(warmupScopeUpgrade).toHaveBeenCalledWith("beta");
     expect(autoPairScopeApproval).toHaveBeenCalledWith("beta");
     expect(verifyGatewayPairing).toHaveBeenCalledWith("beta");
@@ -53,7 +53,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       });
 
     await establishRestoredSandboxGatewayPairing("beta", {
-      restartRestoredSandboxRuntime: vi.fn(async () => {
+      restartRestoredSandboxGateway: vi.fn(() => {
         order.push("restart");
       }),
       warmupScopeUpgrade: vi.fn(() => order.push("warmup")),
@@ -79,14 +79,14 @@ describe("establishRestoredSandboxGatewayPairing", () => {
 
     await expect(
       establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxRuntime: vi.fn(async () => {
-          throw new Error("container did not restart");
+        restartRestoredSandboxGateway: vi.fn(() => {
+          throw new Error("gateway did not restart");
         }),
         warmupScopeUpgrade,
         autoPairScopeApproval,
         verifyGatewayPairing,
       }),
-    ).rejects.toThrow("container did not restart");
+    ).rejects.toThrow("gateway did not restart");
     expect(warmupScopeUpgrade).not.toHaveBeenCalled();
     expect(autoPairScopeApproval).not.toHaveBeenCalled();
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
@@ -101,7 +101,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
 
     await expect(
       establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxRuntime: vi.fn(async () => {}),
+        restartRestoredSandboxGateway: vi.fn(() => {}),
         warmupScopeUpgrade,
         autoPairScopeApproval,
         verifyGatewayPairing,
@@ -118,7 +118,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
 
     await expect(
       establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxRuntime: vi.fn(async () => {}),
+        restartRestoredSandboxGateway: vi.fn(() => {}),
         warmupScopeUpgrade,
         autoPairScopeApproval,
         verifyGatewayPairing,
@@ -130,42 +130,29 @@ describe("establishRestoredSandboxGatewayPairing", () => {
   });
 });
 
-describe("restartRestoredSandboxRuntime", () => {
-  it("stops and starts the restored clone through its normal lifecycle (#7431)", async () => {
-    const order: string[] = [];
+describe("restartRestoredSandboxGateway", () => {
+  it("restarts through the existing supervisor-mediated gateway lifecycle (#7431)", () => {
+    const restartSandboxGateway = vi.fn(() => ({
+      ok: true as const,
+      restarted: true as const,
+      healthPassed: true as const,
+      forwardRecovered: true,
+    }));
 
-    await restartRestoredSandboxRuntime("beta", {
-      stopSandbox: (sandboxName) => {
-        order.push(`stop:${sandboxName}`);
-        return { exitCode: 0 };
-      },
-      startSandbox: async (sandboxName) => {
-        order.push(`start:${sandboxName}`);
-        return { exitCode: 0 };
-      },
-    });
+    restartRestoredSandboxGateway("beta", { restartSandboxGateway });
 
-    expect(order).toEqual(["stop:beta", "start:beta"]);
+    expect(restartSandboxGateway).toHaveBeenCalledWith("beta", { quiet: true });
   });
 
-  it("does not start when the restored clone cannot stop (#7431)", async () => {
-    const startSandbox = vi.fn(async () => ({ exitCode: 0 }));
-
-    await expect(
-      restartRestoredSandboxRuntime("beta", {
-        stopSandbox: () => ({ exitCode: 1, message: "stop failed" }),
-        startSandbox,
+  it("propagates the classified gateway restart failure (#7431)", () => {
+    expect(() =>
+      restartRestoredSandboxGateway("beta", {
+        restartSandboxGateway: () => ({
+          ok: false,
+          failureLayer: "health timeout",
+          detail: "gateway process did not become healthy",
+        }),
       }),
-    ).rejects.toThrow("stop failed");
-    expect(startSandbox).not.toHaveBeenCalled();
-  });
-
-  it("fails when the restored clone cannot start (#7431)", async () => {
-    await expect(
-      restartRestoredSandboxRuntime("beta", {
-        stopSandbox: () => ({ exitCode: 0 }),
-        startSandbox: async () => ({ exitCode: 1, message: "start failed" }),
-      }),
-    ).rejects.toThrow("start failed");
+    ).toThrow("health timeout: gateway process did not become healthy");
   });
 });
