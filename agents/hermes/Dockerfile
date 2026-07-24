@@ -36,6 +36,7 @@ COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py
+COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts
 COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
 COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py
@@ -213,6 +214,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
+    && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
@@ -263,6 +265,51 @@ db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_LATEST")
 rows = db.list_sessions_rich(limit=1)
 assert rows and rows[0]["id"] == session_id, rows
 assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
+PY
+
+# Hermes v0.18.0's bundled Langfuse plugin rejects OpenShell resolver
+# placeholders before the SDK can construct its Basic-auth headers. Accept only
+# the exact public/secret placeholder bound to the matching standard Langfuse
+# key; raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
+# fails closed when the pinned upstream source shape changes.
+ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=4933b6d02b699d05d27047c81477112754f672e502afa4bd9bc72efde2f974a7
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-hermes-langfuse-credentials.mts hash mismatch (update NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256)" >&2; exit 1; }
+RUN node --experimental-strip-types \
+        /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
+        /opt/hermes/plugins/observability/langfuse/__init__.py \
+    && /opt/hermes/.venv/bin/python - <<'PY'
+import importlib.util
+import sys
+
+path = "/opt/hermes/plugins/observability/langfuse/__init__.py"
+spec = importlib.util.spec_from_file_location("nemoclaw_langfuse_contract", path)
+assert spec and spec.loader
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+validate = module._validate_langfuse_key
+assert validate("HERMES_LANGFUSE_PUBLIC_KEY", "pk-lf-public") is None
+assert validate("HERMES_LANGFUSE_SECRET_KEY", "sk-lf-secret") is None
+assert validate(
+    "HERMES_LANGFUSE_PUBLIC_KEY",
+    "openshell:resolve:env:LANGFUSE_PUBLIC_KEY",
+) is None
+assert validate(
+    "HERMES_LANGFUSE_SECRET_KEY",
+    "openshell:resolve:env:v1_LANGFUSE_SECRET_KEY",
+) is None
+assert validate(
+    "HERMES_LANGFUSE_PUBLIC_KEY",
+    "openshell:resolve:env:LANGFUSE_SECRET_KEY",
+) is not None
+assert validate(
+    "HERMES_LANGFUSE_SECRET_KEY",
+    "openshell:resolve:env:v1_LANGFUSE_PUBLIC_KEY",
+) is not None
 PY
 
 # Cryptographic integrity gate for the security-critical Python entrypoints:
