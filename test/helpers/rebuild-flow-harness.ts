@@ -289,9 +289,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   const agentName = overrides.agentName ?? "openclaw";
-  const agentBaseImageRef = `nemoclaw-${agentName}-base:test`;
+  const agentDisplayName =
+    agentName === "langchain-deepagents-code"
+      ? "Deep Agents Code"
+      : agentName === "hermes"
+        ? "Hermes Agent"
+        : "OpenClaw";
+  const agentBaseImageId = `sha256:${"a".repeat(64)}`;
+  const agentBaseImageRef = `nemoclaw-${agentName}-sandbox-base-local:image-${agentBaseImageId.slice("sha256:".length)}`;
   const agentDef = {
     name: agentName,
+    displayName: agentDisplayName,
     expectedVersion: "0.2.0",
     dockerfileBasePath: "/tmp/Dockerfile.base",
     runtime: { kind: "terminal" },
@@ -308,7 +316,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ok: true,
     imageTag: null,
   });
-  const agentBaseImageId = `sha256:${"a".repeat(64)}`;
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],
@@ -347,7 +354,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureAgentBaseImageSpy = vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
     imageTag: agentBaseImageRef,
     built: true,
-    ...(agentName === "langchain-deepagents-code" ? { trustedLocalOverride } : {}),
+    trustedLocalOverride,
   });
   const restoreTrustedAgentBaseImageOverrideSpy = vi.fn();
   const pinTrustedAgentBaseImageOverrideForOperationSpy = vi
@@ -360,13 +367,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       ? null
       : ({ name: sessionAgentName } as never),
   );
-  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(
-    agentName === "langchain-deepagents-code"
-      ? "Deep Agents Code"
-      : agentName === "hermes"
-        ? "Hermes Agent"
-        : "OpenClaw",
-  );
+  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(agentDisplayName);
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
     async (...args: unknown[]) => {
       const gatewayName =

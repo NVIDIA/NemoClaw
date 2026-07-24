@@ -1,0 +1,286 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up Deep Agents Trace Export"
+sidebar-title: "Set Up Trace Export"
+description: "Enable Deep Agents trace export and configure a host OpenTelemetry collector."
+description-agent: "Sets up Deep Agents trace export. Use when enabling observability, recovering the OTLP policy, binding a local collector, or exporting to LangSmith."
+keywords: ["set up deep agents otlp", "nemoclaw observability collector", "langsmith otel collector"]
+content:
+  type: "how_to"
+---
+Enable Deep Agents trace export, then configure an operator-owned collector on the host.
+This example uses Linux with Docker and the OpenTelemetry Collector Contrib `0.155.0` image.
+Do not publish the unauthenticated receiver as `0.0.0.0:4318` on the host.
+For general image and configuration-file mechanics, refer to [Install the Collector with Docker](https://opentelemetry.io/docs/collector/install/docker/).
+
+<Warning>
+Review [Understand Deep Agents Trace Export](understand-deepagents-trace-export) before enabling the exporter.
+The traces can contain sensitive application data, and the local receiver has no authentication.
+</Warning>
+
+## Enable Trace Export
+
+Set the sandbox name in the host shell.
+Opt in during initial onboarding:
+
+```bash
+export SANDBOX_NAME=my-dcode
+nemo-deepagents onboard --name "$SANDBOX_NAME" --observability
+```
+
+NemoClaw records the choice with the onboarding session and sandbox.
+Resume and rebuild operations preserve the choice.
+
+To enable tracing on an existing sandbox, use the transactional rebuild opt-in.
+Finish active `dcode` tasks because Deep Agents Code backup refuses to capture state while a task is running.
+The transaction preserves declared agent state, managed MCP providers, and adapter state while it recreates the sandbox.
+
+```bash
+export SANDBOX_NAME=my-dcode
+nemo-deepagents "$SANDBOX_NAME" rebuild --observability --yes
+```
+
+Changing the setting requires a new sandbox process because it changes the startup environment.
+
+## Recover a Skipped Policy
+
+Balanced and Open policy tiers add the `observability-otlp-local` preset during onboarding.
+The Restricted tier suppresses it.
+`NEMOCLAW_POLICY_MODE=skip` skips policy application and reconciliation during non-interactive onboarding.
+On a new sandbox, either choice leaves the preset inactive.
+On an existing sandbox, skip mode leaves the live policy unchanged.
+
+Inspect the effective policy:
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" policy list
+```
+
+If `observability-otlp-local` is not active, preview and apply it:
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" policy add observability-otlp-local --dry-run
+nemo-deepagents "$SANDBOX_NAME" policy add observability-otlp-local --yes
+```
+
+The preset permits only `POST /v1/traces` to `host.openshell.internal:4318` from `/opt/venv/bin/python3*`.
+On the Restricted tier, the next onboarding or rebuild reconciliation removes this manually added preset unless you change tiers.
+
+## Create LangSmith Credentials
+
+LangSmith is one possible downstream backend for the backend-neutral receiver.
+Create a workspace-scoped service key when your LangSmith plan supports service keys.
+Otherwise, create a personal access token for the collector.
+Record the target workspace ID because the configuration sends `X-Tenant-Id`.
+For current key types and the workspace ID location, refer to [Create an account and API key](https://docs.langchain.com/langsmith/create-account-api-key).
+
+Set the credential only in the host shell that starts the collector.
+The following endpoint is for the default US LangSmith Cloud deployment:
+
+```bash
+read -rsp "LangSmith API key: " LANGSMITH_API_KEY
+printf '\n'
+export LANGSMITH_API_KEY
+export LANGSMITH_WORKSPACE_ID='replace-with-workspace-id'
+export LANGSMITH_PROJECT=nemoclaw-dcode
+export LANGSMITH_OTLP_TRACES_ENDPOINT=https://api.smith.langchain.com/otel/v1/traces
+```
+
+Choose the endpoint for the LangSmith Cloud deployment:
+
+- Default US: `https://api.smith.langchain.com/otel/v1/traces`
+- EU: `https://eu.api.smith.langchain.com/otel/v1/traces`
+- GCP-hosted APAC: `https://apac.api.smith.langchain.com/otel/v1/traces`
+- AWS-hosted US: `https://aws.api.smith.langchain.com/otel/v1/traces`
+
+For a self-hosted deployment, append `/api/v1/otel/v1/traces` to the LangSmith instance origin.
+The self-hosted OTLP base is `/api/v1/otel`, and the traces exporter adds `/v1/traces`.
+Organization-scoped service keys require the `X-Tenant-Id` header.
+For endpoint guidance and supported field mappings, refer to [Trace with OpenTelemetry](https://docs.langchain.com/langsmith/trace-with-opentelemetry).
+
+## Find the Private Host Bind Address
+
+Resolve `host.openshell.internal` from the target sandbox.
+Verify that the resulting private IPv4 address belongs to a host interface.
+The following command fails when the address is empty, public, or not assigned to the host:
+
+```bash
+OTLP_BIND_IP="$(
+  nemo-deepagents "$SANDBOX_NAME" exec -- \
+    sh -lc "getent ahostsv4 host.openshell.internal | awk 'NR == 1 { print \$1 }'"
+)"
+
+if [ -z "$OTLP_BIND_IP" ]; then
+  printf '%s\n' 'Could not resolve host.openshell.internal from the sandbox.' >&2
+  exit 1
+fi
+
+case "$OTLP_BIND_IP" in
+  10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
+  *)
+    printf 'Refusing non-private collector bind address: %s\n' "$OTLP_BIND_IP" >&2
+    exit 1
+    ;;
+esac
+
+if ! ip -o -4 address show \
+  | awk '{ sub(/\/.*/, "", $4); print $4 }' \
+  | grep -Fxq "$OTLP_BIND_IP"; then
+  printf 'Address is not assigned to this host: %s\n' "$OTLP_BIND_IP" >&2
+  exit 1
+fi
+
+printf 'Collector bind address: %s\n' "$OTLP_BIND_IP"
+```
+
+Binding to the bridge address prevents ordinary LAN exposure.
+Other trusted local containers can still have a route to it.
+Use a host firewall or ACL when the Docker host runs containers outside your trust boundary.
+NemoClaw does not support shared multi-user hosts as a security boundary.
+
+## Configure the Collector
+
+Create an owner-only directory:
+
+```bash
+export OTEL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nemoclaw/otel"
+install -d -m 700 "$OTEL_CONFIG_DIR"
+```
+
+Save this configuration as `$OTEL_CONFIG_DIR/collector.yaml`.
+The `debug` exporter records receipt counts without printing complete span payloads.
+Add organization-required filtering or redaction processors before `batch`.
+For one LangSmith example, refer to [Trace redaction through an OpenTelemetry Collector](https://docs.langchain.com/langsmith/otel-gateway-trace-redaction).
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: basic
+  otlphttp/langsmith:
+    traces_endpoint: "${env:LANGSMITH_OTLP_TRACES_ENDPOINT}"
+    headers:
+      x-api-key: "${env:LANGSMITH_API_KEY}"
+      Langsmith-Project: "${env:LANGSMITH_PROJECT}"
+      X-Tenant-Id: "${env:LANGSMITH_WORKSPACE_ID}"
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug, otlphttp/langsmith]
+```
+
+Restrict the configuration:
+
+```bash
+chmod 600 "$OTEL_CONFIG_DIR/collector.yaml"
+```
+
+The receiver uses `0.0.0.0` only inside the collector container.
+The Docker command publishes it on the exact private bridge address.
+
+## Validate and Start the Collector
+
+Pull the pinned Contrib image.
+Validate the effective configuration before starting the long-running collector.
+The commands run the collector as the current host user so it can read the owner-only configuration.
+
+```bash
+export COLLECTOR_IMAGE=ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.155.0@sha256:4935caa35e9a4cb387e35732e8fb22b2b5759af8d12e7043357f03837f6e8df5
+: "${LANGSMITH_API_KEY:?Set LANGSMITH_API_KEY in this host shell.}"
+: "${LANGSMITH_WORKSPACE_ID:?Set LANGSMITH_WORKSPACE_ID in this host shell.}"
+: "${LANGSMITH_PROJECT:?Set LANGSMITH_PROJECT in this host shell.}"
+: "${LANGSMITH_OTLP_TRACES_ENDPOINT:?Set LANGSMITH_OTLP_TRACES_ENDPOINT in this host shell.}"
+: "${OTLP_BIND_IP:?Run the private bind address step first.}"
+: "${OTEL_CONFIG_DIR:?Run the collector configuration step first.}"
+docker pull "$COLLECTOR_IMAGE"
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --memory 512m \
+  --pids-limit 128 \
+  --env LANGSMITH_API_KEY \
+  --env LANGSMITH_WORKSPACE_ID \
+  --env LANGSMITH_PROJECT \
+  --env LANGSMITH_OTLP_TRACES_ENDPOINT \
+  --mount "type=bind,src=${OTEL_CONFIG_DIR}/collector.yaml,dst=/etc/otelcol-contrib/config.yaml,readonly" \
+  "$COLLECTOR_IMAGE" \
+  validate --config=/etc/otelcol-contrib/config.yaml
+```
+
+An invalid configuration exits nonzero and identifies the field that needs correction.
+Start the collector only after validation succeeds:
+
+```bash
+docker run --detach \
+  --name nemoclaw-otel-langsmith \
+  --restart unless-stopped \
+  --user "$(id -u):$(id -g)" \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --memory 512m \
+  --pids-limit 128 \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  --publish "${OTLP_BIND_IP}:4318:4318/tcp" \
+  --publish 127.0.0.1:13133:13133/tcp \
+  --env LANGSMITH_API_KEY \
+  --env LANGSMITH_WORKSPACE_ID \
+  --env LANGSMITH_PROJECT \
+  --env LANGSMITH_OTLP_TRACES_ENDPOINT \
+  --mount "type=bind,src=${OTEL_CONFIG_DIR}/collector.yaml,dst=/etc/otelcol-contrib/config.yaml,readonly" \
+  "$COLLECTOR_IMAGE" \
+  --config=/etc/otelcol-contrib/config.yaml
+
+unset LANGSMITH_API_KEY
+```
+
+Users who control the Docker daemon can inspect the collector process and environment.
+Use your organization's container secret injection mechanism when Docker operator access is outside the credential trust boundary.
+
+Verify the health endpoint and published receiver address:
+
+```bash
+curl -fsS http://127.0.0.1:13133/
+docker port nemoclaw-otel-langsmith 4318/tcp
+docker logs --tail 30 nemoclaw-otel-langsmith
+```
+
+The port output must show `$OTLP_BIND_IP`, not `0.0.0.0` or `[::]`.
+
+## Next Steps
+
+- [Verify Deep Agents Trace Export](verify-deepagents-trace-export) confirms local and remote delivery.
+- [Manage Deep Agents Trace Export](manage-deepagents-trace-export) covers stop, disable, reconfiguration, and removal operations.
+- [Understand Deep Agents Trace Export](understand-deepagents-trace-export) explains capture and trust boundaries.
+- [Network Policies](../reference/network-policies#local-otlp-trace-export) documents the local collector preset.

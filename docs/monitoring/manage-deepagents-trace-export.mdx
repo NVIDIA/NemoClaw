@@ -1,0 +1,71 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Manage Deep Agents Trace Export"
+sidebar-title: "Manage Trace Export"
+description: "Stop, disable, reconfigure, or remove Deep Agents trace export and its host collector."
+description-agent: "Manages Deep Agents trace export. Use when stopping the collector, revoking reachability, disabling instrumentation, rotating collector settings, or removing the collector."
+keywords: ["manage deep agents traces", "disable nemoclaw observability", "remove otel collector"]
+content:
+  type: "how_to"
+---
+Manage sandbox instrumentation and the operator-owned host collector as separate lifecycle controls.
+NemoClaw does not start, stop, upgrade, or remove the collector.
+
+## Set the Sandbox Name
+
+Set the target sandbox in the host shell:
+
+```bash
+export SANDBOX_NAME=my-dcode
+```
+
+## Stop or Restart the Collector
+
+Stop and restart the collector without changing the sandbox:
+
+```bash
+docker stop nemoclaw-otel-langsmith
+docker start nemoclaw-otel-langsmith
+```
+
+While the collector is stopped, trace delivery fails open and Deep Agents Code continues working.
+
+## Revoke Collector Reachability
+
+Remove the policy preset to revoke collector reachability immediately:
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" policy remove observability-otlp-local --yes
+```
+
+Removing the preset does not clear the recorded observability choice.
+A later rebuild restores the preset on Balanced and Open tiers.
+The Restricted tier continues to suppress it.
+
+## Disable Trace Export
+
+Disable instrumentation persistently with a transactional rebuild:
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" rebuild --no-observability --yes
+```
+
+Finish active `dcode` tasks before running the rebuild.
+NemoClaw preserves declared agent state, managed MCP providers, and adapter state.
+
+## Remove or Reconfigure the Collector
+
+Remove the collector only after every sandbox that uses it has tracing disabled or the preset removed:
+
+```bash
+docker rm -f nemoclaw-otel-langsmith
+```
+
+Recreate the collector after changing its configuration, endpoint, project, workspace, or API key.
+
+## Related Topics
+
+- [Set Up Deep Agents Trace Export](set-up-deepagents-trace-export) configures the policy and collector.
+- [Verify Deep Agents Trace Export](verify-deepagents-trace-export) proves local and remote delivery.
+- [Understand Deep Agents Trace Export](understand-deepagents-trace-export) explains fail-open behavior and trust boundaries.

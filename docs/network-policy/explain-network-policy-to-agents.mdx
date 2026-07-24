@@ -1,0 +1,96 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Explain Network Policy to Agents"
+sidebar-title: "Explain Policy to Agents"
+description: "Generate a redacted policy summary that helps an agent classify network failures."
+description-agent: "Explains the active network policy to sandbox agents. Use when generating a redacted policy summary, interpreting verification status, or classifying network failures."
+keywords: ["nemoclaw policy explain", "agent network policy context", "POLICY.md"]
+content:
+  type: "how_to"
+skill:
+  priority: 10
+---
+Use `policy explain` to give a sandbox agent a compact, redacted view of its active network policy.
+The summary helps the agent distinguish policy denials, missing credentials, unsupported capabilities, and upstream failures.
+
+## Print the Policy Context
+
+Print the redacted summary:
+
+```bash
+$$nemoclaw my-assistant policy explain
+```
+
+Pass `--json` when a tool needs a structured object:
+
+```bash
+$$nemoclaw my-assistant policy explain --json
+```
+
+<AgentOnly variant="openclaw">
+During OpenClaw onboarding, NemoClaw writes the rendered context to `/sandbox/.openclaw/workspace/POLICY.md`.
+It refreshes that file after `policy add` or `policy remove`.
+Refresh the file without changing policy:
+
+```bash
+$$nemoclaw my-assistant policy explain --write
+```
+</AgentOnly>
+<AgentOnly variant="hermes">
+For Hermes, use the printed Markdown or JSON through an operator-controlled prompt or file workflow.
+The `--write` target is the OpenClaw workspace and is not a Hermes agent-context integration.
+</AgentOnly>
+
+## Understand Redaction
+
+The summary includes the recorded tier, applied presets, allowed host categories, known presets that are not applied, and policy management commands.
+It also explains the support boundaries between NemoClaw, OpenShell, and the agent.
+
+The output omits network rule bodies, credential metadata, and binary allowlists.
+It includes only host stems and category-level summaries.
+NemoClaw drops private, loopback, link-local, metadata, unique-local, reserved, CGNAT, benchmarking, and internal-suffix hosts from `allowedHostCategories`.
+It reports their count in `redactedHostCount`.
+
+## Interpret Verification Status
+
+Each active preset includes a `verification` value:
+
+| Status | Meaning |
+|--------|---------|
+| `verified` | The registry lists the preset, and the gateway confirms enforcement. |
+| `registry-only` | The registry lists the preset, but the gateway does not enforce it. Treat the allowed hosts as unverified. |
+| `gateway-only` | The gateway enforces a preset that the registry does not list. |
+| `gateway-unavailable` | NemoClaw could not probe the gateway. Treat the report as advisory until the gateway is reachable. |
+
+## Classify a Failed Request
+
+The classifier evaluates conditions in this order:
+
+1. `unsupported` means the active agent does not offer the asserted capability.
+   Surface the limitation without retrying.
+2. `missing-approval` with high confidence means a host on an applied preset returned HTTP 401.
+   The network path is open, but credentials are missing or invalid.
+3. `missing-approval` with low confidence means a host on an applied preset returned HTTP 403.
+   Confirm credentials, then inspect the effective policy for a method, path, protocol, or binary denial.
+4. `blocked-by-policy` means no applied preset allows the host or the request returned a network-block error.
+   Apply an applicable preset or create a custom preset.
+5. `unknown` means no classification matched.
+   Surface the underlying error.
+
+Network-block error codes include `EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`, and `EAI_AGAIN`.
+A block code on a host from a `registry-only` or `gateway-unavailable` preset produces a low-confidence policy verdict.
+A block code on a host from a verified preset stays `unknown` because the gateway already confirmed enforcement.
+
+Each verdict includes `confidence` set to `high` or `low`.
+Low confidence means the agent must report multiple possibilities instead of treating one next step as authoritative.
+
+For `blocked-by-policy`, run `$$nemoclaw <name> policy add <preset>` or follow [Custom Preset Files](customize-network-policy#custom-preset-files).
+For `missing-approval`, confirm the API token and scopes.
+For `unsupported`, surface the limitation without retrying.
+
+## Related Topics
+
+- [Apply Policy Presets](configure-policies/apply-policy-presets) changes the recorded preset set.
+- [Create Custom Policy Presets](configure-policies/create-custom-policy-presets) adds a reviewed custom destination.
+- [Network Policies](../reference/network-policies) explains policy enforcement and tiers.
