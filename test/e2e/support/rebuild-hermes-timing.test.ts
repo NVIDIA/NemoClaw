@@ -18,7 +18,7 @@ function timelineHarness() {
     sampleResourceEvidence: () => "E2E_RESOURCE_SNAPSHOT {}",
     recordResourceBaseline: () => {},
     sampleResources: () => ({
-      freeMemoryBytes: 0,
+      availableMemoryBytes: 0,
       processRssBytes: 0,
       totalMemoryBytes: 0,
       workspaceFreeBytes: 0,

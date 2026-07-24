@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // Docker-image/entrypoint boundary: build the NemoClaw sandbox image, start
 // short-lived containers through the real ENTRYPOINT, then read the patched
@@ -14,6 +16,8 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 const TEST_TIMEOUT_MS = 45 * 60 * 1000;
 const DOCKER_BUFFER_BYTES = 20 * 1024 * 1024;
 const DOCKER_REQUIRED_MESSAGE = "Docker is required for runtime override coverage";
+const DOCKER_COMMAND_TIMEOUT_MS = 5 * 60_000;
+const DOCKER_BUILD_TIMEOUT_MS = 30 * 60_000;
 
 type CommandResult = {
   status: number | null;
@@ -52,25 +56,46 @@ const MANAGED_INFERENCE_SAFEGUARD_COMPACTION = {
   truncateAfterCompaction: true,
 };
 
-function commandResult(result: ReturnType<typeof spawnSync>): CommandResult {
+type ObservableCommandRunner = (
+  command: string,
+  args: string[],
+  artifactName: string,
+  timeoutMs?: number,
+) => Promise<CommandResult>;
+
+function commandResult(result: ShellProbeResult): CommandResult {
   return {
-    status: result.status,
-    stdout:
-      typeof result.stdout === "string" ? result.stdout : (result.stdout?.toString("utf8") ?? ""),
-    stderr:
-      typeof result.stderr === "string" ? result.stderr : (result.stderr?.toString("utf8") ?? ""),
-    error: result.error,
+    status: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
   };
 }
 
-function run(command: string, args: string[]): CommandResult {
-  return commandResult(
-    spawnSync(command, args, {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      maxBuffer: DOCKER_BUFFER_BYTES,
-    }),
-  );
+async function runObserved(
+  host: HostCliClient,
+  command: string,
+  args: string[],
+  artifactName: string,
+  timeoutMs = DOCKER_COMMAND_TIMEOUT_MS,
+): Promise<CommandResult> {
+  try {
+    return commandResult(
+      await host.command(command, args, {
+        artifactName: `runtime-overrides-${artifactName}`,
+        captureLimitBytes: DOCKER_BUFFER_BYTES,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs,
+        cwd: REPO_ROOT,
+      }),
+    );
+  } catch (error) {
+    return {
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
 }
 
 function spawnResultText(result: CommandResult): string {
@@ -141,24 +166,26 @@ function dockerRunArgs(image: string, env: Record<string, string>, script: strin
   ];
 }
 
-function runContainer(
+async function runContainer(
+  run: ObservableCommandRunner,
   dockerLog: string[],
   image: string,
   label: string,
   env: Record<string, string>,
   script: string,
-): CommandResult {
-  const result = run("docker", dockerRunArgs(image, env, script));
+): Promise<CommandResult> {
+  const result = await run("docker", dockerRunArgs(image, env, script), label);
   dockerLog.push(formatLog(label, result));
   return result;
 }
 
-function captureConfig(
+async function captureConfig(
+  run: ObservableCommandRunner,
   dockerLog: string[],
   image: string,
   label: string,
   env: Record<string, string> = {},
-): OpenClawConfig {
+): Promise<OpenClawConfig> {
   let lastResult: CommandResult | undefined;
   let lastError: Error | undefined;
   // Preserve the former shell test's Docker/ENTRYPOINT stdout tolerance: very short
@@ -166,7 +193,8 @@ function captureConfig(
   // though the JSON is written to fd3. Keep this local retry until the startup
   // capture path no longer uses tee for container stdout/stderr fanout.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const result = runContainer(
+    const result = await runContainer(
+      run,
       dockerLog,
       image,
       `${label} config capture attempt ${attempt}`,
@@ -188,15 +216,17 @@ function captureConfig(
   );
 }
 
-function runConfigHashCheck(
+async function runConfigHashCheck(
+  run: ObservableCommandRunner,
   dockerLog: string[],
   image: string,
   label: string,
   env: Record<string, string> = {},
-): string {
+): Promise<string> {
   // Keep the one-shot container alive long enough for its tiny fd3 marker to
   // drain through Docker attach; the JSON capture above is naturally larger.
-  const result = runContainer(
+  const result = await runContainer(
+    run,
     dockerLog,
     image,
     `${label} config hash check`,
@@ -207,8 +237,13 @@ function runConfigHashCheck(
   return result.stdout.trim();
 }
 
-function assertManagedInferenceCompactionRuntime(dockerLog: string[], image: string): void {
-  const result = runContainer(
+async function assertManagedInferenceCompactionRuntime(
+  run: ObservableCommandRunner,
+  dockerLog: string[],
+  image: string,
+): Promise<void> {
+  const result = await runContainer(
+    run,
     dockerLog,
     image,
     "managed inference compaction runtime validation",
@@ -233,38 +268,48 @@ sleep 0.1`,
   expect(proof.compaction).toEqual(MANAGED_INFERENCE_SAFEGUARD_COMPACTION);
 }
 
-function runOverrideStderr(
+async function runOverrideStderr(
+  run: ObservableCommandRunner,
   dockerLog: string[],
   image: string,
   label: string,
   env: Record<string, string>,
-): string {
-  const result = runContainer(dockerLog, image, label, env, "true");
+): Promise<string> {
+  const result = await runContainer(run, dockerLog, image, label, env, "true");
   return result.stderr;
 }
 
-function dockerAvailable(): CommandResult {
-  return run("docker", ["info"]);
+function dockerAvailable(run: ObservableCommandRunner): Promise<CommandResult> {
+  return run("docker", ["info"], "docker-info", 30_000);
 }
 
-function buildImage(dockerLog: string[], image: string): void {
-  const inspect = run("docker", ["image", "inspect", image]);
+async function buildImage(
+  run: ObservableCommandRunner,
+  dockerLog: string[],
+  image: string,
+): Promise<void> {
+  const inspect = await run("docker", ["image", "inspect", image], `inspect-${image}`, 30_000);
   dockerLog.push(formatLog(`inspect ${image}`, inspect));
   if (inspect.status === 0) return;
 
-  const build = run("docker", [
-    "build",
-    "-t",
-    image,
-    "-f",
-    path.join(REPO_ROOT, "Dockerfile"),
-    "--build-arg",
-    "NEMOCLAW_DISABLE_DEVICE_AUTH=1",
-    "--build-arg",
-    `NEMOCLAW_BUILD_ID=${Date.now()}`,
-    "--quiet",
-    REPO_ROOT,
-  ]);
+  const build = await run(
+    "docker",
+    [
+      "build",
+      "-t",
+      image,
+      "-f",
+      path.join(REPO_ROOT, "Dockerfile"),
+      "--build-arg",
+      "NEMOCLAW_DISABLE_DEVICE_AUTH=1",
+      "--build-arg",
+      `NEMOCLAW_BUILD_ID=${Date.now()}`,
+      "--quiet",
+      REPO_ROOT,
+    ],
+    `build-${image}`,
+    DOCKER_BUILD_TIMEOUT_MS,
+  );
   dockerLog.push(formatLog(`build ${image}`, build));
   expect(build.status, spawnResultText(build)).toBe(0);
 }
@@ -286,10 +331,12 @@ test(
       ],
     },
   },
-  async ({ artifacts, progress, secrets, skip }) => {
+  async ({ artifacts, host, progress, secrets, skip }) => {
     const dockerLog: string[] = [];
     const image = process.env.NEMOCLAW_TEST_IMAGE ?? `nemoclaw-runtime-overrides-${process.pid}`;
     const cleanupImage = process.env.NEMOCLAW_TEST_IMAGE === undefined;
+    const run: ObservableCommandRunner = (command, args, artifactName, timeoutMs) =>
+      runObserved(host, command, args, artifactName, timeoutMs);
 
     try {
       await artifacts.target.declare({
@@ -306,7 +353,7 @@ test(
         ],
       });
 
-      const docker = dockerAvailable();
+      const docker = await dockerAvailable(run);
       dockerLog.push(formatLog("docker info", docker));
       if (docker.status !== 0) {
         await artifacts.target.complete({
@@ -320,67 +367,67 @@ test(
         skip(DOCKER_REQUIRED_MESSAGE);
       }
 
-      buildImage(dockerLog, image);
+      await buildImage(run, dockerLog, image);
 
       progress.phase("capture the baseline OpenClaw config");
-      const baseline = captureConfig(dockerLog, image, "baseline");
+      const baseline = await captureConfig(run, dockerLog, image, "baseline");
       const baselineModel = primaryModel(baseline);
       const baselineFirstModel = firstProviderModel(baseline);
       const baselineContextWindow = baselineFirstModel.contextWindow;
       const baselineOriginCount = allowedOrigins(baseline).length;
 
-      assertManagedInferenceCompactionRuntime(dockerLog, image);
-      expect(runConfigHashCheck(dockerLog, image, "baseline")).toBe("OK");
+      await assertManagedInferenceCompactionRuntime(run, dockerLog, image);
+      expect(await runConfigHashCheck(run, dockerLog, image, "baseline")).toBe("OK");
 
       progress.phase("apply valid runtime overrides");
       const overrideModel = "anthropic/claude-sonnet-4-6";
-      const modelOverride = captureConfig(dockerLog, image, "model override", {
+      const modelOverride = await captureConfig(run, dockerLog, image, "model override", {
         NEMOCLAW_MODEL_OVERRIDE: overrideModel,
       });
       expect(primaryModel(modelOverride)).toBe(overrideModel);
       expect(
-        runConfigHashCheck(dockerLog, image, "model override", {
+        await runConfigHashCheck(run, dockerLog, image, "model override", {
           NEMOCLAW_MODEL_OVERRIDE: overrideModel,
         }),
       ).toBe("OK");
 
-      const apiOverride = captureConfig(dockerLog, image, "inference API override", {
+      const apiOverride = await captureConfig(run, dockerLog, image, "inference API override", {
         NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
       });
       expect(firstProvider(apiOverride).api).toBe("anthropic-messages");
       expect(
-        runConfigHashCheck(dockerLog, image, "inference API override", {
+        await runConfigHashCheck(run, dockerLog, image, "inference API override", {
           NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
         }),
       ).toBe("OK");
 
-      const contextOverride = captureConfig(dockerLog, image, "context window override", {
+      const contextOverride = await captureConfig(run, dockerLog, image, "context window override", {
         NEMOCLAW_MODEL_OVERRIDE: overrideModel,
         NEMOCLAW_CONTEXT_WINDOW: "32768",
       });
       expect(firstProviderModel(contextOverride).contextWindow).toBe(32768);
 
-      const maxTokensOverride = captureConfig(dockerLog, image, "max tokens override", {
+      const maxTokensOverride = await captureConfig(run, dockerLog, image, "max tokens override", {
         NEMOCLAW_MODEL_OVERRIDE: overrideModel,
         NEMOCLAW_MAX_TOKENS: "16384",
       });
       expect(firstProviderModel(maxTokensOverride).maxTokens).toBe(16384);
 
-      const reasoningOverride = captureConfig(dockerLog, image, "reasoning override", {
+      const reasoningOverride = await captureConfig(run, dockerLog, image, "reasoning override", {
         NEMOCLAW_MODEL_OVERRIDE: overrideModel,
         NEMOCLAW_REASONING: "true",
       });
       expect(firstProviderModel(reasoningOverride).reasoning).toBe(true);
 
       const corsOrigin = "https://custom.example.com:9999";
-      const corsOverride = captureConfig(dockerLog, image, "CORS origin override", {
+      const corsOverride = await captureConfig(run, dockerLog, image, "CORS origin override", {
         NEMOCLAW_CORS_ORIGIN: corsOrigin,
       });
       expect(allowedOrigins(corsOverride)).toContain(corsOrigin);
       expect(allowedOrigins(corsOverride).length).toBeGreaterThan(baselineOriginCount);
 
       progress.phase("exercise the combined override transaction");
-      const combined = captureConfig(dockerLog, image, "combined overrides", {
+      const combined = await captureConfig(run, dockerLog, image, "combined overrides", {
         NEMOCLAW_MODEL_OVERRIDE: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         NEMOCLAW_CONTEXT_WINDOW: "65536",
         NEMOCLAW_MAX_TOKENS: "8192",
@@ -397,42 +444,42 @@ test(
 
       progress.phase("reject invalid override values");
       expect(
-        runOverrideStderr(dockerLog, image, "invalid model override", {
+        await runOverrideStderr(run, dockerLog, image, "invalid model override", {
           NEMOCLAW_MODEL_OVERRIDE: "bad\u0001model",
         }),
       ).toContain("control characters");
       expect(
-        runOverrideStderr(dockerLog, image, "invalid context window", {
+        await runOverrideStderr(run, dockerLog, image, "invalid context window", {
           NEMOCLAW_MODEL_OVERRIDE: "test",
           NEMOCLAW_CONTEXT_WINDOW: "notanumber",
         }),
       ).toContain("must be a positive integer");
       expect(
-        runOverrideStderr(dockerLog, image, "invalid max tokens", {
+        await runOverrideStderr(run, dockerLog, image, "invalid max tokens", {
           NEMOCLAW_MODEL_OVERRIDE: "test",
           NEMOCLAW_MAX_TOKENS: "abc",
         }),
       ).toContain("must be a positive integer");
       expect(
-        runOverrideStderr(dockerLog, image, "invalid reasoning", {
+        await runOverrideStderr(run, dockerLog, image, "invalid reasoning", {
           NEMOCLAW_MODEL_OVERRIDE: "test",
           NEMOCLAW_REASONING: "maybe",
         }),
       ).toContain('must be "true" or "false"');
       expect(
-        runOverrideStderr(dockerLog, image, "invalid CORS origin", {
+        await runOverrideStderr(run, dockerLog, image, "invalid CORS origin", {
           NEMOCLAW_CORS_ORIGIN: "ftp://evil.com",
         }),
       ).toContain("must start with http");
       expect(
-        runOverrideStderr(dockerLog, image, "invalid inference API", {
+        await runOverrideStderr(run, dockerLog, image, "invalid inference API", {
           NEMOCLAW_MODEL_OVERRIDE: "test",
           NEMOCLAW_INFERENCE_API_OVERRIDE: "graphql",
         }),
       ).toContain("openai-completions");
 
       progress.phase("confirm rejected overrides preserve the baseline");
-      const rejected = captureConfig(dockerLog, image, "rejected override", {
+      const rejected = await captureConfig(run, dockerLog, image, "rejected override", {
         NEMOCLAW_MODEL_OVERRIDE: "test",
         NEMOCLAW_CONTEXT_WINDOW: "notanumber",
       });
@@ -447,7 +494,11 @@ test(
       });
     } finally {
       if (cleanupImage) {
-        const cleanup = run("docker", ["image", "rm", "-f", image]);
+        const cleanup = await run(
+          "docker",
+          ["image", "rm", "-f", image],
+          `cleanup-${image}`,
+        );
         dockerLog.push(formatLog(`cleanup ${image}`, cleanup));
       }
       await artifacts.writeText("docker.log", `${secrets.redact(dockerLog.join("\n\n"))}\n`);
