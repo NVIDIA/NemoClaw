@@ -18,7 +18,7 @@
 #   node:22-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to exact Debian trixie versions
-#   gosu 1.19           — pinned release + per-arch sha256 checksum
+#   gosu 1.19           — pinned source built with a patched Go toolchain
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
 #     users               stable contract with OpenShell
 #   .openclaw dirs      — directory structure is dictated by the OpenClaw
@@ -38,7 +38,8 @@
 #
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
-#   3. gosu upgrade                 — update URL, checksum, and version
+#   3. gosu/Go toolchain upgrade    — update source commit/archive checksum,
+#                                      Go version, and per-architecture Go hashes
 #   4. node:22-trixie-slim digest rotated — update-docker-pin.sh updates all
 #                                      Dockerfile and Dockerfile.base
 #   5. New .openclaw subdirectory   — add mkdir below
@@ -49,6 +50,21 @@
 # Expected rebuild frequency: every few weeks to months, driven mostly
 # by OpenClaw CLI version bumps or the weekly docker-pin-check.
 # ────────────────────────────────────────────────────────────────────────
+
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS perl-cve-backport-builder
+
+ARG DEBIAN_SNAPSHOT=20260724T000000Z
+ENV DEBIAN_FRONTEND=noninteractive
+
+COPY scripts/build-perl-cve-backport.sh /usr/local/bin/build-perl-cve-backport
+
+RUN chmod 0755 /usr/local/bin/build-perl-cve-backport \
+    && DEBIAN_SNAPSHOT="$DEBIAN_SNAPSHOT" /usr/local/bin/build-perl-cve-backport prepare
+
+COPY scripts/patches/perl/CVE-2026-12087.patch /opt/nemoclaw/perl-cve-patches/CVE-2026-12087.patch
+COPY scripts/patches/perl/CVE-2026-13221.patch /opt/nemoclaw/perl-cve-patches/CVE-2026-13221.patch
+
+RUN /usr/local/bin/build-perl-cve-backport build
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
@@ -80,24 +96,73 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
 
+COPY --from=perl-cve-backport-builder /out/debs/ /tmp/perl-cve-debs/
+COPY --from=perl-cve-backport-builder /out/metadata/ /usr/local/share/nemoclaw/perl-cve-backport/
+
+# Install the four Perl binary packages as one ABI-compatible cohort. The
+# custom build is based on Debian 5.40.1-8 and adds the Socket and regex fixes
+# that are not yet published for trixie.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/perl-cve-debs/*.deb \
+    && for package in perl perl-base perl-modules-5.40 libperl5.40; do \
+        test "$(dpkg-query -W -f='${Version}' "$package")" = "5.40.1-8+nemoclaw1" \
+            || exit 1; \
+    done \
+    && perl -MSocket=pack_ip_mreq_source,INADDR_ANY -e \
+        'eval { pack_ip_mreq_source("\xe0\0\0\2", "\x0a", INADDR_ANY) }; die "short Socket source accepted\n" unless $@ =~ /Bad arg length/' \
+    && perl -e \
+        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+    && storable_so="$(find /usr/lib -path '*/auto/Storable/Storable.so' -type f -print -quit)" \
+    && test -n "$storable_so" \
+    && grep -aFq 'Invalid count of hook data items' "$storable_so" \
+    && chmod 0444 /usr/local/share/nemoclaw/perl-cve-backport/* \
+    && rm -rf /tmp/perl-cve-debs /var/lib/apt/lists/*
+
 # gosu for privilege separation (gateway vs sandbox user).
-# Install from GitHub release with checksum verification instead of
-# Debian's packaged gosu can lag upstream. Pinned to 1.19 (2025-09).
-# Binary release asset downloads can be slower than hash fetches; keep
-# longer bounded transfer timeouts while preserving checksum verification.
+# Build the pinned 1.19 source with Go 1.26.5. The published 1.19 binaries were
+# built with Go 1.24.6, which scanners correctly associate with GO-2026-4868
+# even though gosu does not contain the affected loop shape. Building from the
+# reviewed source also removes the inapplicable crypto/tls version finding.
 # hadolint ignore=DL4006
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
-        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
-        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
+        amd64) go_asset="go1.26.5.linux-amd64.tar.gz"; go_sha256="5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053" ;; \
+        arm64) go_asset="go1.26.5.linux-arm64.tar.gz"; go_sha256="fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49" ;; \
         *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
     esac \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
-        -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
-    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
-    && chmod +x /usr/local/bin/gosu \
-    && gosu --version
+        -o /tmp/go.tar.gz "https://go.dev/dl/${go_asset}" \
+    && echo "${go_sha256}  /tmp/go.tar.gz" | sha256sum -c - \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o /tmp/gosu.tar.gz \
+        "https://codeload.github.com/tianon/gosu/tar.gz/6456aaa0f3c854d199d0f037f068eb97515b7513" \
+    && echo "33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b  /tmp/gosu.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/go.tar.gz -C /tmp \
+    && tar -xzf /tmp/gosu.tar.gz -C /tmp \
+    && CGO_ENABLED=0 GOOS=linux "/tmp/go/bin/go" \
+        -C /tmp/gosu-6456aaa0f3c854d199d0f037f068eb97515b7513 build \
+        -trimpath -buildvcs=false -ldflags="-d -w" -o /usr/local/bin/gosu . \
+    && install -d -m 0755 /usr/local/share/licenses/gosu /usr/local/share/nemoclaw \
+    && install -m 0444 \
+        /tmp/gosu-6456aaa0f3c854d199d0f037f068eb97515b7513/LICENSE \
+        /usr/local/share/licenses/gosu/LICENSE \
+    && "/tmp/go/bin/go" version -m /usr/local/bin/gosu \
+        > /usr/local/share/nemoclaw/gosu-buildinfo.txt \
+    && "/tmp/go/bin/go" tool nm /usr/local/bin/gosu > /tmp/gosu.nm \
+    && ! grep -Eq 'crypto/(tls|x509)' /tmp/gosu.nm \
+    && printf '%s\n' \
+        'version=1.19' \
+        'source_commit=6456aaa0f3c854d199d0f037f068eb97515b7513' \
+        'source_sha256=33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b' \
+        'go_version=go1.26.5' \
+        > /usr/local/share/nemoclaw/gosu-source.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/gosu-buildinfo.txt \
+        /usr/local/share/nemoclaw/gosu-source.txt \
+    && /usr/local/bin/gosu --version | grep -F '1.19 (go1.26.5 on linux/' \
+    && rm -rf /tmp/go /tmp/go.tar.gz /tmp/gosu.tar.gz /tmp/gosu.nm \
+        /tmp/gosu-6456aaa0f3c854d199d0f037f068eb97515b7513
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot

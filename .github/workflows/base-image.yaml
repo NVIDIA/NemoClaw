@@ -32,6 +32,9 @@ on:
       - "ci/npm-audit-exceptions.json"
       # Dockerfile.base validates min_openclaw_version from this file at build time.
       - "nemoclaw-blueprint/blueprint.yaml"
+      - "scripts/build-perl-cve-backport.sh"
+      - "scripts/patches/perl/CVE-2026-12087.patch"
+      - "scripts/patches/perl/CVE-2026-13221.patch"
       - "scripts/lib/openclaw-npm-remediation.mts"
       - "scripts/lib/reviewed-npm-audit.mts"
       - "scripts/lib/reviewed-npm-archive.mts"
