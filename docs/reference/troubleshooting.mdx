@@ -1631,6 +1631,26 @@ If the sandbox still cannot start or reports that no baseline is available, rebu
 $$nemoclaw <name> rebuild
 ```
 
+### `shields up` or `shields down` fails after `.config-hash` was removed
+
+`/sandbox/.openclaw/.config-hash` is the integrity sidecar for `openclaw.json`; deleting it during a manual config edit removes the file the shields guard captures alongside the config.
+A stale hash never blocks shields: locking regenerates the record from the current `openclaw.json` bytes.
+On current sandboxes, a truly absent `.config-hash` is also tolerated by `$$nemoclaw <name> shields up` from the default mutable state: the guard synthesizes the hash from the current `openclaw.json` under the frozen tree and the lock proceeds.
+Only a truly absent file is repaired; an unexpected file type at that name still fails closed.
+`$$nemoclaw <name> shields down` does not synthesize the hash: with the file missing it fails closed without modifying the config.
+Run `shields up` first, or regenerate the hash as in the manual-edit workflow, before taking shields down.
+
+Sandboxes created by an older NemoClaw release keep the older guard baked into the container image, where a missing `.config-hash` makes the transition fail closed and quarantine `openclaw.json` by renaming it to `.nemoclaw-rejected-openclaw.json-<random>` in the same directory.
+The config bytes are preserved, not deleted.
+To recover, upgrade the NemoClaw CLI first, restore the config from the quarantine copy while shields are down, and then rebuild so the sandbox picks up the current guard:
+
+```bash
+docker exec <container> ls -a /sandbox/.openclaw
+$$nemoclaw <name> rebuild --yes
+```
+
+Rebuilding with an old CLI restages the old guard, so upgrade before rebuilding.
+
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
