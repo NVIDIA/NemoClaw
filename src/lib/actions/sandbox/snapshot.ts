@@ -1076,7 +1076,8 @@ async function runSnapshotRestoreUnlocked(
       printHermesGatewayRestoreHint(
         targetSandbox,
         registry.getSandbox(targetSandbox)?.agent,
-        result.restoredFiles.length,
+        result.restoredFiles,
+        resolvedSnapshot?.stateFiles ?? [],
       );
     } else {
       console.error(`  Restore failed.`);

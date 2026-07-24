@@ -3,8 +3,13 @@
 
 import { CLI_NAME } from "../../cli/branding";
 
+interface SnapshotStateFile {
+  path: string;
+  strategy: "copy" | "sqlite_backup";
+}
+
 /**
- * Recommend a gateway restart after restoring Hermes state files.
+ * Recommend a gateway restart after restoring a Hermes SQLite state file.
  *
  * The restored SQLite databases replace files the running Hermes gateway
  * still holds open, so it serves pre-restore state until it reopens them
@@ -13,11 +18,17 @@ import { CLI_NAME } from "../../cli/branding";
 export function printHermesGatewayRestoreHint(
   sandboxName: string,
   agentName: string | null | undefined,
-  restoredFileCount: number,
+  restoredFiles: readonly string[],
+  snapshotStateFiles: readonly SnapshotStateFile[],
   writeLine: (message: string) => void = console.log,
 ): void {
-  if (agentName !== "hermes" || restoredFileCount === 0) return;
+  if (agentName !== "hermes") return;
+  const restoredFileSet = new Set(restoredFiles);
+  const restoredSqliteDatabase = snapshotStateFiles.some(
+    (stateFile) => stateFile.strategy === "sqlite_backup" && restoredFileSet.has(stateFile.path),
+  );
+  if (!restoredSqliteDatabase) return;
   writeLine(
-    `  Restored state databases are picked up after a gateway restart: run \`${CLI_NAME} ${sandboxName} gateway restart\``,
+    `  Restart the gateway to open the restored state databases: run \`${CLI_NAME} ${sandboxName} gateway restart\``,
   );
 }

@@ -62,11 +62,11 @@ export function buildStateFileRestoreCommand(
       'trap \'rm -f "$tmp" "$staged"\' EXIT',
       'cat > "$tmp"',
       'chmod 600 "$tmp"',
-      `umask 0007; /usr/bin/python3 -I -S -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$staged"`,
+      `(umask 0007; /usr/bin/python3 -I -S -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$staged")`,
       'chmod 660 "$staged"',
       'mv -f "$staged" "$dst"',
       'rm -f -- "${dst}-wal" "${dst}-shm"',
-    ].join("; ");
+    ].join(" && ");
   }
 
   const steps = [

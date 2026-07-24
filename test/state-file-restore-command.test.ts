@@ -58,36 +58,15 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
     expect(cmd).not.toMatch(/(?:^|[; ])python3 -c/u);
   });
 
-  it("stages SQLite restores and replaces the live database atomically (#7312)", () => {
-    const cmd = sandboxState.buildStateFileRestoreCommand(
-      "/sandbox/.hermes",
-      { path: "runtime/state.db", strategy: "sqlite_backup" },
-      false,
-    );
-
-    // Python validates the backup into a staged copy this user owns; it never
-    // opens the gateway-owned live database for writing.
-    expect(cmd).toContain(".nemoclaw-sqlite-staged.XXXXXX");
-    expect(cmd).toContain('"$tmp" "$staged"');
-    expect(cmd).not.toContain('"$tmp" "$dst"');
-    expect(cmd).not.toContain("os.chmod");
-
-    // The mode fix targets the staged copy before the swap, and the stale
-    // WAL/SHM sidecars of the replaced database are dropped after it.
-    const chmodIdx = cmd.indexOf('chmod 660 "$staged"');
-    const swapIdx = cmd.indexOf('mv -f "$staged" "$dst"');
-    const sidecarIdx = cmd.indexOf('rm -f -- "${dst}-wal" "${dst}-shm"');
-    expect(chmodIdx).toBeGreaterThanOrEqual(0);
-    expect(swapIdx).toBeGreaterThan(chmodIdx);
-    expect(sidecarIdx).toBeGreaterThan(swapIdx);
-
-    // Both symlink guards stay in place ahead of any write.
-    expect(cmd).toContain("refusing symlinked state parent");
-    expect(cmd).toContain("refusing symlinked sqlite target");
-  });
-
   const SANDBOX_PYTHON = "/usr/bin/python3";
   const canRunSqliteRestore = process.platform === "linux" && fs.existsSync(SANDBOX_PYTHON);
+  const makeDb = (file: string, table: string) => {
+    const result = spawnSync(SANDBOX_PYTHON, [
+      "-c",
+      `import sqlite3; c = sqlite3.connect(${JSON.stringify(file)}); c.execute("CREATE TABLE ${table}(x)"); c.commit(); c.close()`,
+    ]);
+    expect(result.status).toBe(0);
+  };
 
   it.skipIf(!canRunSqliteRestore)(
     "restores over a gateway-owned SQLite database the restoring user cannot write (#7312)",
@@ -95,11 +74,6 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-restore-"));
       try {
         const dst = path.join(dir, "state.db");
-        const makeDb = (file: string, table: string) =>
-          spawnSync(SANDBOX_PYTHON, [
-            "-c",
-            `import sqlite3; c = sqlite3.connect(${JSON.stringify(file)}); c.execute("CREATE TABLE ${table}(x)"); c.commit(); c.close()`,
-          ]);
         makeDb(dst, "live");
         // The Hermes gateway creates the live database as the gateway user
         // with no group-write bit; group-read-only reproduces that boundary
@@ -127,6 +101,94 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
         expect(fs.existsSync(`${dst}-wal`)).toBe(false);
         expect(fs.existsSync(`${dst}-shm`)).toBe(false);
         expect(fs.statSync(dst).mode & 0o777).toBe(0o660);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(!canRunSqliteRestore)(
+    "preserves the live SQLite database and sidecars when backup validation fails (#7312)",
+    () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-restore-invalid-"));
+      try {
+        const dst = path.join(dir, "state.db");
+        makeDb(dst, "live");
+        const originalDatabase = fs.readFileSync(dst);
+        fs.chmodSync(dst, 0o440);
+        fs.writeFileSync(`${dst}-wal`, "live wal");
+        fs.writeFileSync(`${dst}-shm`, "live shm");
+
+        const cmd = sandboxState.buildStateFileRestoreCommand(
+          dir,
+          { path: "state.db", strategy: "sqlite_backup" },
+          false,
+        );
+        const result = spawnSync("sh", ["-c", cmd], {
+          input: Buffer.from("not a sqlite database"),
+        });
+
+        expect(result.status).not.toBe(0);
+        expect(fs.readFileSync(dst)).toEqual(originalDatabase);
+        expect(fs.statSync(dst).mode & 0o777).toBe(0o440);
+        expect(fs.readFileSync(`${dst}-wal`, "utf8")).toBe("live wal");
+        expect(fs.readFileSync(`${dst}-shm`, "utf8")).toBe("live shm");
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(!canRunSqliteRestore)(
+    "refuses a symlinked SQLite state parent without writing through it (#7312)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-parent-link-"));
+      try {
+        const realParent = path.join(root, "real");
+        const linkedParent = path.join(root, "linked");
+        fs.mkdirSync(realParent);
+        fs.symlinkSync(realParent, linkedParent, "dir");
+
+        const cmd = sandboxState.buildStateFileRestoreCommand(
+          linkedParent,
+          { path: "state.db", strategy: "sqlite_backup" },
+          false,
+        );
+        const result = spawnSync("sh", ["-c", cmd], {
+          input: Buffer.from("not a sqlite database"),
+        });
+
+        expect(result.status).toBe(10);
+        expect(fs.readdirSync(realParent)).toEqual([]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(!canRunSqliteRestore)(
+    "refuses a symlinked SQLite target without replacing its destination (#7312)",
+    () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-target-link-"));
+      try {
+        const realDatabase = path.join(dir, "real.db");
+        const linkedDatabase = path.join(dir, "state.db");
+        makeDb(realDatabase, "live");
+        const originalDatabase = fs.readFileSync(realDatabase);
+        fs.symlinkSync(realDatabase, linkedDatabase);
+
+        const cmd = sandboxState.buildStateFileRestoreCommand(
+          dir,
+          { path: "state.db", strategy: "sqlite_backup" },
+          false,
+        );
+        const result = spawnSync("sh", ["-c", cmd], {
+          input: Buffer.from("not a sqlite database"),
+        });
+
+        expect(result.status).toBe(11);
+        expect(fs.lstatSync(linkedDatabase).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(realDatabase)).toEqual(originalDatabase);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
