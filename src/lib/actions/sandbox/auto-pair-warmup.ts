@@ -64,12 +64,15 @@ export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
 // (or the bounded deadline elapses) before returning — closing the race where
 // the approval pass that runs immediately after could otherwise list devices
 // before the gateway has registered the upgrade. The poll bounds are
-// interpolated so the cap is asserted on real values, not source text.
+// interpolated so the cap is asserted on real values, not source text. OpenClaw
+// 2026.7.1 otherwise omits CLI device identity for loopback shared-token auth
+// before a stored device credential exists; force pairing only on the provoke.
 export const WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
-openclaw agent --agent main -m "ping" \\
+NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
+  openclaw agent --agent main -m "ping" \\
   --session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)" >/dev/null 2>&1 || true
 command -v python3 >/dev/null 2>&1 || exit 0
 OPENCLAW_BIN="$(command -v openclaw)"

@@ -3,19 +3,21 @@
 
 # Security Sweep Workflow
 
-Review a security-sensitive item before it enters the normal fast path.
+Review a security-sensitive item before normal PR processing.
 
 ## Step 1: Identify the Security Item
 
-The morning triage and `find-review-pr` already surface security-labeled PRs. Start from the item selected in the day loop's action step. If running standalone, check the triage queue for PRs touching risky areas (see [RISKY-AREAS.md](RISKY-AREAS.md)).
+Start with the item selected by the maintainer-day loop.
+For a separate review, check the triage queue for PRs that touch [risky areas](RISKY-AREAS.md).
 
 ## Step 2: Gather Context
 
-Read the PR or issue, all comments, CodeRabbit findings, PR Review Advisor feedback, linked items, changed files, diff, current checks, and recent relevant `main` commits.
+Read the PR or issue, comments, automated-review findings, linked items, changed files, and diff.
+Read the check results and related `main` commits.
 
 ## Step 3: Classify Risk
 
-Which bucket applies?
+Classify the risk:
 
 - **escape or policy bypass**
 - **credential or secret exposure**
@@ -24,24 +26,39 @@ Which bucket applies?
 - **input validation or SSRF weakness**
 - **test gap in risky code**
 
-If none apply, route back to normal action selection.
+If no risk class applies, return to action selection.
 
-## Step 4: Deep Security Pass
+## Step 4: Review security
 
-Load `security-code-review` for the nine-category review whenever the item changes behavior in a security-sensitive area. Do not skip this step just because the diff is small.
+Load `nemoclaw-maintainer-security-code-review` when the item changes behavior in a security-sensitive area.
+Run all nine categories, including for a small diff.
 
 ## Step 5: Decide Action
 
 ### Salvage-now
 
-All true: risk is understood, fix is small/local, required tests are clear, no unresolved design question. Follow [SALVAGE-PR.md](SALVAGE-PR.md) and [TEST-GAPS.md](TEST-GAPS.md).
+Use salvage when all these conditions are true:
+
+- The risk is understood.
+- The fix is small and local.
+- The required tests are known.
+- No design question remains.
+
+Follow [SALVAGE-PR.md](SALVAGE-PR.md) and [TEST-GAPS.md](TEST-GAPS.md).
 
 ### Blocked
 
-Any true: fix changes core trust assumptions, review found real vulnerability needing redesign, PR adds risk without tests, reviewer disagreement. Summarize blocker clearly; do not approve.
+Block approval when one of these conditions is true:
+
+- The fix changes a trust assumption.
+- The review finds a vulnerability that needs redesign.
+- The PR adds risk without tests.
+- Reviewers disagree about the security effect.
+
+Report the blocker. Do not approve.
 
 ## Notes
 
-- Backlog reduction never outranks a credible security concern.
-- No security-sensitive approvals without both deep review and tests.
-- Use full GitHub links.
+- A security concern takes priority over backlog reduction.
+- Do not approve a security-sensitive change until the security review and tests pass.
+- Use GitHub links.

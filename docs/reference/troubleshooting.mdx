@@ -1485,6 +1485,9 @@ openshell sandbox list
 $$nemoclaw <name> status
 ```
 
+If onboarding instead reports that the sandbox "did not re-register with OpenShell after policy application," the same timeout controls that post-policy command-readiness probe.
+Raise the budget before retrying, then inspect the same gateway and sandbox status if re-registration still fails.
+
 ### Sandbox onboard fails with "entered Error phase before it became ready"
 
 Onboarding ends with:
@@ -1631,6 +1634,31 @@ If the sandbox still cannot start or reports that no baseline is available, rebu
 $$nemoclaw <name> rebuild
 ```
 
+### `shields up` or `shields down` fails after `.config-hash` was removed
+
+`/sandbox/.openclaw/.config-hash` is the integrity sidecar for `openclaw.json`; deleting it during a manual config edit removes the file the shields guard captures alongside the config.
+From the default mutable posture, `$$nemoclaw <name> shields up` regenerates a stale hash from the current `openclaw.json` bytes.
+On sandboxes with the updated guard, the same command synthesizes a truly absent `.config-hash` under the frozen tree.
+Only a truly absent file is repaired; an unexpected file type at that name still fails closed.
+`$$nemoclaw <name> shields down` does not synthesize the hash: with the file missing it fails closed without modifying the config.
+If shields are already up, another `shields up` also fails closed when the hash is missing.
+Do not use mutable-posture synthesis to recover a locked sandbox.
+
+Sandboxes created by an older NemoClaw release keep the older guard baked into the container image, where a missing `.config-hash` makes the transition fail closed and quarantine `openclaw.json` by renaming it to `.nemoclaw-rejected-openclaw.json-<random>` in the same directory.
+The config bytes are preserved, not deleted.
+Upgrade the NemoClaw CLI before either recovery path because an older CLI restages the older guard.
+To preserve the quarantined settings, copy the file to the host before rebuilding:
+
+```bash
+docker exec <container> ls -a /sandbox/.openclaw
+docker cp <container>:/sandbox/.openclaw/<quarantine-file> ./openclaw.json.recovered
+$$nemoclaw <name> rebuild --yes
+```
+
+After the rebuild, inspect `./openclaw.json.recovered` and reapply required settings with the host-side `config set` command.
+Do not overwrite the regenerated `openclaw.json` with an unreviewed quarantine copy.
+To discard the quarantined settings, upgrade the CLI and run `$$nemoclaw <name> rebuild --yes` without copying the file.
+
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
@@ -1763,7 +1791,7 @@ Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gate
 A NemoClaw sandbox has two intentional permission states for `/sandbox/.openclaw`; `700/600` is not one of them:
 
 - **Mutable default:** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
-- **Host-locked state:** `openclaw.json` is read-only for in-sandbox writers and the config dir is owned by `root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `nemoclaw <sandbox> config set` flow described in [`openclaw config set` fails with a permission error on Brev](#openclaw-config-set-fails-with-a-permission-error-on-brev).
+- **Host-locked state:** `openclaw.json` is read-only for in-sandbox writers and the config dir is owned by `root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `$$nemoclaw <sandbox> config set` flow described in [`openclaw config set` or `unset` is blocked inside the sandbox](#openclaw-config-set-or-unset-is-blocked-inside-the-sandbox).
 - **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `$$nemoclaw <sandbox> doctor --fix` or a sandbox restart.
 
 ### Discord bot logs in, but the channel still does not work
@@ -2315,6 +2343,11 @@ Identify the matching path before applying the recovery guidance.
 | The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics, repair the NVIDIA Container Toolkit/CDI configuration, clean up the failed sandbox, and rerun onboarding. |
 | A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
 
+For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that exact `--dns` path before it stops the original container.
+If the probe confirms that the resolver is unreachable, recreation stops and leaves the original container in place.
+An IPv6-only upstream list does not become a compatibility override; NemoClaw preserves Docker's default resolver path instead.
+Containers with explicit DNS settings or host networking keep their existing DNS path and do not use the fallback probe.
+
 #### Ordinary native Linux bounded fallback
 
 Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default.
@@ -2401,7 +2434,7 @@ If you run other services on Spark that expect port 3000, bind them to a differe
 <a id="windows-wsl-2"></a>
 ## Windows Subsystem for Linux
 
-For environment setup steps, refer to [Windows Prerequisites](../get-started/prerequisites/windows-preparation).
+For environment setup steps, refer to [Windows Prerequisites](../get-started/additional-setup/windows-preparation).
 
 ### `wsl --install --no-distribution` returns Forbidden (403)
 
@@ -2537,7 +2570,7 @@ OLLAMA_CONTEXT_LENGTH=64000 ollama serve
 
 </AgentOnly>
 
-For additional troubleshooting, refer to the [Windows Setup](../get-started/prerequisites/windows-preparation) page.
+For additional troubleshooting, refer to the [Windows Setup](../get-started/additional-setup/windows-preparation) page.
 <AgentOnly variant="openclaw">
 For first-time OpenClaw setup, refer to the [Quickstart](../get-started/quickstart).
 </AgentOnly>
@@ -2550,93 +2583,6 @@ For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/qu
 Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
-
-<AgentOnly variant="openclaw">
-
-## Brev
-
-For Brev setup instructions, refer to [Brev Web UI](../deployment/brev-web-ui).
-
-### Most OpenClaw skills show as blocked
-
-After deploying NemoClaw on Brev, the Skills page in the OpenClaw gateway dashboard shows most bundled skills with a `blocked` status.
-Only three skills are available by default: `healthcheck`, `skill-creator`, and `weather`.
-
-Skills are blocked for one of three reasons.
-
-- The skill requires a macOS-only binary (`memo`, `remindctl`, `grizzly`, and similar) that is not available on the Linux (GCP) instance Brev provisions.
-- The skill requires a CLI binary that is not pre-installed in the sandbox image, such as `gh` for the GitHub skill.
-- The skill requires API credentials that have not been configured, such as a Notion API key or Discord bot token.
-
-Skills that require macOS-only binaries cannot be enabled on Brev.
-Skills that require additional CLI binaries require a custom sandbox image rebuild.
-
-For credentials, use the supported host-side setup flow.
-Rerun onboarding for inference or web search credentials, or use `$$nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
-To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
-
-```bash
-$$nemoclaw <name> rebuild
-```
-
-After the rebuild completes, return to the Skills page to confirm the skill status has changed from `blocked` to `ready`.
-
-### `openclaw config set` fails with a permission error on Brev
-
-When the sandbox config has been locked from the host, `openclaw.json` is owned by root and mounted read-only inside the sandbox.
-Running `openclaw config set` inside the sandbox then returns:
-
-```text
-EACCES: permission denied, open '/sandbox/.openclaw/openclaw.json'
-```
-
-In the default sandbox state, `openclaw.json` is writable by the sandbox user.
-If you see this error, use the host-side config command instead:
-
-```bash
-$$nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
-```
-
-Refer to [Commands](commands) for the full list of supported configuration keys.
-
-### OpenClaw dashboard is unreachable after extended uptime on Brev
-
-After leaving NemoClaw running for an extended period on Brev, the OpenClaw dashboard may return `ERR_CONNECTION_RESET` or fail to load in the browser.
-The agent may still respond on messaging channels such as Telegram or Slack while the dashboard is unreachable.
-
-<Warning title="Back up your workspace first">
-
-Take a snapshot before running onboard to protect your workspace files.
-
-```bash
-$$nemoclaw <name> snapshot create
-```
-
-</Warning>
-
-Re-run onboarding to restore dashboard connectivity:
-
-```bash
-$$nemoclaw onboard
-```
-
-Depending on current sandbox state, onboarding may prompt before recreating resources.
-
-### Skill install buttons do not work on Brev
-
-Clicking **Install** on a skill in the OpenClaw gateway dashboard on Brev shows no response or fails silently.
-
-Skill installation runs against the sandbox environment.
-Installing packages on the Brev host does not make them available inside the sandbox.
-To install a skill dependency, add it to the sandbox image and rebuild:
-
-```bash
-$$nemoclaw <name> rebuild
-```
-
-After the rebuild completes, return to the Skills page to confirm the skill is ready.
-
-</AgentOnly>
 
 <AgentOnly variant="hermes">
 

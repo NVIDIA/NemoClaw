@@ -52,6 +52,7 @@ describe("MessagingHookRegistry", () => {
       "wechat.ilinkLogin",
       "wechat.seedOpenClawAccount",
       "wechat.healthCheck",
+      "whatsapp.statusHealth",
     ]);
   });
 

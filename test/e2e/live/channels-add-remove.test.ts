@@ -363,10 +363,24 @@ async function telegramEgressProbe(
   return { result, status: "inconclusive" };
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "channels add/remove telegram updates registry, gateway, policy, and sandbox state",
-  testTimeoutOptions(TEST_TIMEOUT_MS),
-  async ({ artifacts, cleanup, environment, host, lifecycle, onboard, sandbox }) => {
+  {
+    ...testTimeoutOptions(TEST_TIMEOUT_MS),
+    meta: {
+      e2ePhases: [
+        "prepare clean channel lifecycle sandbox",
+        "onboard OpenClaw without Telegram",
+        "verify baseline channel absence",
+        "add Telegram and rebuild sandbox",
+        "validate active Telegram integration",
+        "remove Telegram and rebuild sandbox",
+        "validate Telegram removal",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, environment, host, lifecycle, onboard, progress, sandbox }) => {
     if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
       throw new Error(
         `channels-add-remove live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
@@ -378,6 +392,7 @@ test(
       apiKey: BASELINE_API_KEY,
       host: "0.0.0.0",
       model: BASELINE_MODEL,
+      progress,
       publicHost: "host.openshell.internal",
       requireAuth: true,
     });
@@ -445,13 +460,16 @@ test(
       }),
     );
 
+    progress.phase("onboard OpenClaw without Telegram");
     await onboardWithLocalBaseline(host, baseline.baseUrl);
     await expectSandboxReady(sandbox, "phase-1-sandbox-ready-after-onboard");
 
+    progress.phase("verify baseline channel absence");
     await expectProvider(host, "absent", "phase-2-provider-get-baseline");
     await expectOpenClawTelegram(sandbox, false, "phase-2-openclaw-json-baseline");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-2-policy-list-baseline");
 
+    progress.phase("add Telegram and rebuild sandbox");
     const add = await host.nemoclaw([SANDBOX_NAME, "channels", "add", "telegram"], {
       artifactName: "phase-3-channels-add-telegram",
       env: channelEnv(),
@@ -488,6 +506,7 @@ test(
       delayMs: 5_000,
     });
 
+    progress.phase("validate active Telegram integration");
     await expectPolicyPreset(host, "telegram", "applied", "phase-4-policy-list-after-add");
     await expectOpenClawTelegram(sandbox, true, "phase-4-openclaw-json-after-add");
     await expectProvider(host, "present", "phase-4-provider-get-after-add");
@@ -507,6 +526,7 @@ test(
       );
     }
 
+    progress.phase("remove Telegram and rebuild sandbox");
     const remove = await host.nemoclaw([SANDBOX_NAME, "channels", "remove", "telegram"], {
       artifactName: "phase-5-channels-remove-telegram",
       env: channelEnv({ COMPATIBLE_API_KEY: apiKey }),
@@ -531,6 +551,7 @@ test(
       delayMs: 5_000,
     });
 
+    progress.phase("validate Telegram removal");
     await expectOpenClawTelegram(sandbox, false, "phase-6-openclaw-json-after-remove");
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");

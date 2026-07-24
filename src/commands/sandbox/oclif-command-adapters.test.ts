@@ -340,6 +340,39 @@ describe("sandbox oclif command adapters", () => {
     }
   });
 
+  it("redacts token-shaped values from the doctor --json report", async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    mocks.runSandboxDoctor.mockResolvedValueOnce({
+      schemaVersion: 1,
+      sandbox: "alpha",
+      status: "fail",
+      failed: 1,
+      warnings: 0,
+      checks: [
+        {
+          group: "Gateway",
+          label: "Gateway status",
+          status: "fail",
+          detail: "connect failed: Authorization: Bearer sk-abc123DEF456ghi789 (HTTP 401)",
+        },
+      ],
+    });
+
+    try {
+      const report = (await SandboxDoctorCliCommand.run(["alpha", "--json"], rootDir)) as {
+        checks: Array<{ detail: string }>;
+      };
+      expect(process.exitCode).toBe(1);
+      expect(report.checks[0]?.detail).toBe(
+        "connect failed: Authorization: Bearer <REDACTED> (HTTP 401)",
+      );
+      expect(JSON.stringify(report)).not.toContain("sk-abc123DEF456ghi789");
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it("keeps doctor --json stdout clean while diagnostics recovery prints progress", async () => {
     const report = {
       schemaVersion: 1,

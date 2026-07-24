@@ -10,6 +10,7 @@ import {
   spawnSync,
 } from "node:child_process";
 
+import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 
 export type OpenshellSpawnSync = (
@@ -75,6 +76,8 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const SEMVER_PATTERN = /(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/;
+
 export function parseVersionFromText(value = "", versionCommand?: string): string | null {
   const text = String(value || "");
   const commandToken = versionCommand?.trim().split(/\s+/, 1)[0] ?? "";
@@ -88,13 +91,13 @@ export function parseVersionFromText(value = "", versionCommand?: string): strin
       executableSeen = true;
       const versionMatch = line
         .slice(executableMatch.index + executableMatch[0].length)
-        .match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+        .match(SEMVER_PATTERN);
       if (versionMatch) return versionMatch[1];
     }
     if (executableSeen) return null;
   }
 
-  const match = text.match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+  const match = text.match(SEMVER_PATTERN);
   return match ? match[1] : null;
 }
 
@@ -185,7 +188,7 @@ export function runOpenshellCommand(
     cwd: opts.cwd,
     env: openshellSpawnEnv(opts),
     encoding: "utf-8",
-    stdio: opts.stdio ?? "inherit",
+    stdio: redirectInheritedChildStdoutToStderr(opts.stdio ?? "inherit"),
     input: opts.input,
     timeout: opts.timeout,
   });

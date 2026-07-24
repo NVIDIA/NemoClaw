@@ -40,6 +40,7 @@ export function createRebuildRouteHandoff(
     provider: route.provider,
     model: route.model,
     endpointUrl: route.endpointUrl,
+    endpointSource: route.endpointSource ?? null,
     preferredInferenceApi: route.preferredInferenceApi,
     source: "registry",
   });
@@ -112,6 +113,7 @@ function freezeRoute(route: RegistryInferenceRoute): RegistryInferenceRoute {
     provider: route.provider,
     model: route.model,
     endpointUrl: route.endpointUrl,
+    endpointSource: route.endpointSource ?? null,
     preferredInferenceApi: route.preferredInferenceApi,
     source: "registry",
   });
@@ -122,6 +124,7 @@ function routesMatch(left: RegistryInferenceRoute, right: RegistryInferenceRoute
     left.provider === right.provider &&
     left.model === right.model &&
     left.endpointUrl === right.endpointUrl &&
+    (left.endpointSource ?? null) === (right.endpointSource ?? null) &&
     left.preferredInferenceApi === right.preferredInferenceApi
   );
 }

@@ -53,7 +53,7 @@ describe("handleSandboxState", () => {
     });
     calls.setupMessaging.mockResolvedValue(["telegram"]);
 
-    const result = await handleSandboxState(baseOptions(deps));
+    const result = await handleSandboxState({ ...baseOptions(deps), fresh: true });
 
     expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
       sandboxName: "my-assistant",
@@ -82,6 +82,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: "onboard",
         extraProviders: [],
       },
     );
@@ -147,6 +148,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {
         web_search_provider: {
           completedAt: "2026-01-01T00:00:00.000Z",
@@ -531,6 +533,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: null,
         extraProviders: [],
       },
     );
@@ -602,6 +605,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -642,6 +646,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -675,6 +680,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -716,6 +722,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionDeclined(),
       messaging: decisionDeclined(),
       resourceProfile: decisionSelected({ cpu: "4", memory: "8Gi" }),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -792,6 +799,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: null,
         extraProviders: [],
       },
     );
@@ -1010,6 +1018,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: null,
         extraProviders: [],
         reuseRegisteredCredentials: true,
       },
@@ -1131,6 +1140,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: null,
         extraProviders: [],
         reuseRegisteredCredentials: true,
       },

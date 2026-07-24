@@ -20,7 +20,7 @@ const ENV_ASSIGNMENT_PATTERN = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=/gm;
 const STRUCTURED_CREDENTIAL_KEY_PATTERN =
   /["']?(?:apiKey|api_key|accessToken|access_token|secretKey|secret_key|bearerToken|bearer_token)["']?\s*[:=]\s*["'][^"']+["']/i;
 
-// OpenClaw 2026.6.10 persists an environment variable name, rather than its
+// OpenClaw 2026.7.1 persists an environment variable name, rather than its
 // resolved value, in generated agents/*/agent/models.json provider entries.
 // Keep bare/braced names bounded to provider credentials used by NemoClaw or
 // OpenClaw's ambient AWS auth. An explicitly prefixed secretref-env marker can
