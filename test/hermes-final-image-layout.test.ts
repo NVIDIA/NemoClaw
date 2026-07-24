@@ -26,6 +26,11 @@ const HERMES_INTEGRITY_FILES = [
     source: "agents/hermes/finalize-tirith-marker.py",
     target: "/usr/local/lib/nemoclaw/finalize-tirith-marker.py",
   },
+  {
+    arg: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
+    source: "agents/hermes/patch-langfuse-credentials.mts",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
+  },
 ] as const;
 
 type LegacyDataFixture =
