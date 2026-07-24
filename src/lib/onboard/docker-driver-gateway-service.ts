@@ -132,9 +132,17 @@ export function getNemoclawOpenShellGatewayUserServicePath(
   );
 }
 
-function getNemoclawOpenShellGatewayUserServiceBinaryPaths(home = os.homedir()): string[] {
+function getNemoclawOpenShellGatewayUserServiceBinaryPaths(
+  home = os.homedir(),
+  env?: NodeJS.ProcessEnv,
+): string[] {
+  const configured = env?.XDG_BIN_HOME?.trim();
+  const userBinHome =
+    configured && path.isAbsolute(configured)
+      ? path.normalize(configured)
+      : path.join(home, ".local", "bin");
   return [
-    path.join(home, ".local", "bin", "openshell-gateway"),
+    path.join(userBinHome, "openshell-gateway"),
     ...getOpenShellGatewayUserServiceBinaryPaths(),
   ];
 }
@@ -313,7 +321,7 @@ function resolveOpenShellGatewayUserService(
     manager: "systemd",
     serviceName: NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
     statusCommand: `systemctl --user status ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}`,
-    trustedBinaryPaths: getNemoclawOpenShellGatewayUserServiceBinaryPaths(home),
+    trustedBinaryPaths: getNemoclawOpenShellGatewayUserServiceBinaryPaths(home, env),
     trustedUnitPaths: [servicePath],
   };
 }

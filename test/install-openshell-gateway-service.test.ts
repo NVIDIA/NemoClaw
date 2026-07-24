@@ -100,6 +100,20 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(path.join(home, ".config", "systemd", "user"))).toBe(false);
   });
 
+  it("stages a user-local binary from an absolute XDG bin home (#6903)", () => {
+    const home = makeTempRoot();
+    const xdgBinHome = path.join(home, "custom-bin");
+    const gatewayBin = path.join(xdgBinHome, "openshell-gateway");
+    fs.mkdirSync(xdgBinHome, { recursive: true });
+    writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+
+    const result = stageService(home, gatewayBin, { XDG_BIN_HOME: xdgBinHome });
+    const unit = fs.readFileSync(servicePath(home), "utf-8");
+
+    expect(result.status).toBe(0);
+    expect(unit).toContain(`ExecStart=${gatewayBin}`);
+  });
+
   it("leaves custom gateway ports on the detached lifecycle (#6903)", () => {
     const home = makeTempRoot();
     const result = stageService(home, userGatewayBin(home), { NEMOCLAW_GATEWAY_PORT: "18080" });

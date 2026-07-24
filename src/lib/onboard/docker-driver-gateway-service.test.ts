@@ -232,6 +232,30 @@ describe("docker-driver-gateway-service", () => {
     ]);
   });
 
+  it("trusts a NemoClaw systemd unit using an absolute XDG bin home (#6903)", () => {
+    const home = "/home/nvidia";
+    const xdgBinHome = "/opt/nvidia/user-bin";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const gatewayBin = `${xdgBinHome}/openshell-gateway`;
+
+    const result = startOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home, XDG_BIN_HOME: xdgBinHome },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: systemdSpawn([], servicePath, gatewayBin),
+    });
+
+    expect(result).toMatchObject({
+      manager: "systemd",
+      serviceName: "nemoclaw-openshell-gateway",
+      started: true,
+    });
+  });
+
   it("identifies the active trusted NemoClaw systemd gateway process (#6903)", () => {
     const home = "/home/nvidia";
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;

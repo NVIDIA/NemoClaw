@@ -1296,8 +1296,13 @@ resolve_openshell_gateway_bin_for_service() {
 
 trusted_openshell_gateway_bin_for_service() {
   local gateway_bin="${1:-}"
+  local user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  if [[ "$user_bin_home" != /* ]]; then
+    user_bin_home="${HOME}/.local/bin"
+  fi
+  user_bin_home="${user_bin_home%/}"
   case "$gateway_bin" in
-    "${HOME}/.local/bin/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+    "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
       return 0
       ;;
     *)
