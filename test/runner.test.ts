@@ -1028,10 +1028,12 @@ describe("regression guards", () => {
 
       expect(baseSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
       expect(runtimeSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
+      const baseRuntimeStageStart = baseSrc.lastIndexOf("\nFROM ");
+      expect(baseRuntimeStageStart).toBeGreaterThan(-1);
       const runtimeStageStart = runtimeSrc.indexOf("# Stage 3: Runtime image");
       expect(runtimeStageStart).toBeGreaterThan(-1);
       for (const [source, stageStart] of [
-        [baseSrc, 0],
+        [baseSrc, baseRuntimeStageStart],
         [runtimeSrc, runtimeStageStart],
       ] as const) {
         const fromIndex = source.indexOf("\nFROM ", stageStart);

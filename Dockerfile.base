@@ -169,7 +169,7 @@ RUN apt-get update \
     && perl -MSocket=pack_ip_mreq_source -e \
         'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
     && perl -e \
-        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
     && git --version \
     && test -z "$(dpkg --audit)"
 
