@@ -3,7 +3,11 @@
 //
 // Shared Prometheus helpers for agent /metrics (LLM latency, HTTP counters).
 
-const LLM_LATENCY_WINDOW = Number(process.env.LLM_LATENCY_WINDOW_SIZE || 128);
+const configuredLlmLatencyWindow = Number(process.env.LLM_LATENCY_WINDOW_SIZE ?? "128");
+const LLM_LATENCY_WINDOW =
+  Number.isSafeInteger(configuredLlmLatencyWindow) && configuredLlmLatencyWindow > 0
+    ? Math.min(configuredLlmLatencyWindow, 10_000)
+    : 128;
 const llmDurationsMs = [];
 let llmDurationSumSec = 0;
 let llmDurationCount = 0;
@@ -13,13 +17,16 @@ const llmHistogramBucketsSec = [0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300];
 const llmHistogramCounts = Array.from({ length: llmHistogramBucketsSec.length + 1 }, () => 0);
 
 export function recordLlmLatency(durationMs, ok) {
-  const sec = Math.max(0, durationMs) / 1000;
+  // Normalize once so the rolling window (p50/p95/avg) and the cumulative
+  // counters/histogram below always agree on the same finite, non-negative value.
+  const normalizedMs = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+  const sec = normalizedMs / 1000;
   llmDurationSumSec += sec;
   llmDurationCount += 1;
   if (ok) llmRequestsOk += 1;
   else llmRequestsError += 1;
 
-  llmDurationsMs.push(durationMs);
+  llmDurationsMs.push(normalizedMs);
   if (llmDurationsMs.length > LLM_LATENCY_WINDOW) llmDurationsMs.shift();
 
   let bucketIdx = llmHistogramBucketsSec.findIndex((bound) => sec <= bound);
