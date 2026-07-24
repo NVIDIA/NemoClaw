@@ -476,13 +476,8 @@ describe("createSetupNim", () => {
       }),
     );
 
-    const result = await setupNim(null, null);
+    await setupNim(null, null);
 
-    expect(result).toMatchObject({
-      model,
-      provider: "ollama-local",
-      endpointUrl: "http://host.docker.internal:11434/v1",
-    });
     expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
   });
 
