@@ -42,7 +42,7 @@ describe("CLI debug command", () => {
   );
 
   it(
-    "debug --quick reports the selected gateway authority without its private state path",
+    "debug --quick reports the selected gateway authority without its private state path (#6576)",
     testTimeoutOptions(30_000),
     ({ resources }) => {
       const env = createDebugCommandTestEnv(resources, "nemoclaw-cli-debug-authority-");

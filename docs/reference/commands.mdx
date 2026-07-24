@@ -3139,10 +3139,20 @@ $$nemoclaw gc [--dry-run] [--yes|-y|--force]
 
 ### `$$nemoclaw uninstall`
 
-Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
+Run `uninstall.sh` to remove NemoClaw sandboxes, local gateway resources, related images and containers, and local state.
 The CLI runs the local `uninstall.sh` shipped with the installed npm package.
 If that local script is missing, the CLI does not auto-fetch a remote copy.
 It prints the versioned URL of the matching `uninstall.sh` so you can download, review, and run it manually.
+
+When the gateway is externally supervised, uninstall preserves its process, Docker resources, and OpenShell binaries.
+It still deletes the selected sandboxes and attempts to remove the modern local gateway registration.
+When no sibling gateways remain, it also deletes NemoClaw provider registrations.
+It does not use the legacy `gateway destroy` command for that gateway.
+<AgentOnly variant="openclaw">
+
+Refer to [Declare the OpenShell Gateway Lifecycle Authority](../deployment/gateway-lifecycle-authority).
+
+</AgentOnly>
 
 Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
@@ -3152,7 +3162,8 @@ For Local Ollama setups, uninstall also stops matching Ollama auth proxy process
 For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched.
 If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
-On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
+On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains NemoClaw-owned Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
+This directory is separate from a declared external gateway state directory, which uninstall does not remove.
 
 | Flag | Effect |
 |---|---|
@@ -3203,7 +3214,11 @@ Decision matrix:
 The preserved entries survive uninstall as inert files on disk.
 Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot restore` can use them.
 
-Preserving `sandboxes.json` does not make the recorded sandboxes recoverable on their own: uninstall removes the gateway registration, provider registrations, and Docker image those records depend on.
+The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own.
+Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration.
+When no sibling gateways remain, it also deletes provider registrations.
+For a NemoClaw-managed gateway, it also removes the Docker image.
+For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources.
 Uninstall warns about this at preserve time.
 After reinstalling, the installer reports such records as not found on their recorded gateway instead of claiming they were recovered; run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it.
 Pass `--destroy-user-data` at uninstall time if you prefer to purge the registry along with its dependencies.

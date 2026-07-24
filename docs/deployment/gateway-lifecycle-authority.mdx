@@ -165,6 +165,17 @@ The external attachment path has no standalone fallback.
 Recovery and rebuild guard every start branch, including non-default port recovery.
 The gateway state handler validates and attaches instead of starting, stopping, restarting, destroying, or replacing the gateway.
 
+Stop, final-sandbox cleanup, and uninstall reload the declaration before gateway teardown.
+When a valid checkpoint exists, they compare the current authority with that checkpoint.
+The comparison uses the exact gateway name and port.
+If the authority changed, teardown stops before it scans listeners or changes gateway runtime resources.
+
+`nemoclaw stop` does not scan or signal the externally supervised gateway.
+Final-sandbox cleanup can stop local dashboard forwards and remove the modern local gateway registration.
+It does not signal the gateway, use the legacy `gateway destroy` fallback, or remove its Docker volumes.
+Uninstall can delete the selected sandboxes, providers, and local registration.
+It keeps the externally supervised gateway process, Docker resources, and OpenShell binaries.
+
 Registering and selecting the validated endpoint changes only the local OpenShell gateway registration used by downstream commands.
 It does not transfer process ownership to NemoClaw.
 

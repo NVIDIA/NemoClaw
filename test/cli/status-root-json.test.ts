@@ -160,7 +160,7 @@ describe("CLI root status JSON", () => {
     }
   });
 
-  it("status text identifies the selected management mode and redacted owner", () => {
+  it("status text identifies the selected management mode and redacted owner (#6576)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-authority-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
