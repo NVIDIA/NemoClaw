@@ -19,6 +19,7 @@ const RUNTIME_SUMMARY_SCHEMA = "nemoclaw.e2e_runtime_summary.v1";
 const WORKFLOW_FILE = "e2e.yaml";
 const HISTORY_RUN_LIMIT = 10;
 const HISTORY_QUERY_LIMIT = 20;
+const FLAKE_WATCH_LIMIT = 5;
 const MAX_SUMMARY_BYTES = 512 * 1024;
 const MAX_SUMMARY_ROWS = 200;
 const MAX_PHASES_PER_ROW = 32;
@@ -55,7 +56,9 @@ function isBoundedString(value: unknown): value is string {
 }
 
 function isDuration(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= MAX_DURATION_MS;
+  return (
+    typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= MAX_DURATION_MS
+  );
 }
 
 function isOutcome(value: unknown): value is RuntimeOutcome {
@@ -253,10 +256,7 @@ function formatDelta(currentMs: number, priorMs: number): string {
 function isSignificantRegression(currentMs: number, priorMs: number): boolean {
   const deltaMs = currentMs - priorMs;
   const percent = priorMs > 0 ? (deltaMs / priorMs) * 100 : 0;
-  return (
-    deltaMs >= RUNTIME_REGRESSION_MIN_DELTA_MS &&
-    percent >= RUNTIME_REGRESSION_MIN_PERCENT
-  );
+  return deltaMs >= RUNTIME_REGRESSION_MIN_DELTA_MS && percent >= RUNTIME_REGRESSION_MIN_PERCENT;
 }
 
 function sampleFor(
@@ -269,15 +269,19 @@ function sampleFor(
 }
 
 function outcomeRates(rows: readonly RuntimeHistorySample[]): string {
-  const counts = {
-    passed: rows.filter((row) => row.outcome === "passed").length,
-    failed: rows.filter((row) => row.outcome === "failed").length,
-    skipped: rows.filter((row) => row.outcome === "skipped").length,
-  };
+  const counts = countOutcomes(rows);
   const total = rows.length;
   if (total === 0) return "n/a";
   const rate = (count: number) => `${Math.round((count / total) * 100)}%`;
   return `${rate(counts.passed)}/${rate(counts.failed)}/${rate(counts.skipped)} (${counts.passed}/${counts.failed}/${counts.skipped})`;
+}
+
+function countOutcomes(rows: readonly RuntimeHistorySample[]) {
+  return {
+    passed: rows.filter((row) => row.outcome === "passed").length,
+    failed: rows.filter((row) => row.outcome === "failed").length,
+    skipped: rows.filter((row) => row.outcome === "skipped").length,
+  };
 }
 
 function failureStreak(
@@ -305,6 +309,74 @@ function commonFailedPhase(rows: readonly RuntimeHistorySample[]): string {
       rightCount - leftCount || leftLabel.localeCompare(rightLabel),
   )[0];
   return mostCommon ? `${mostCommon[0]} (${mostCommon[1]})` : "n/a";
+}
+
+function outcomeFlips(rows: readonly RuntimeHistorySample[]): number {
+  const outcomes = rows
+    .map((row) => row.outcome)
+    .filter((outcome): outcome is "passed" | "failed" => outcome !== "skipped");
+  return outcomes.slice(1).filter((outcome, index) => outcome !== outcomes[index]).length;
+}
+
+function formatFlakeWatch(
+  currentRows: readonly RuntimeHistorySample[],
+  priorSummaries: readonly RuntimeSummaryArtifact[],
+): string[] {
+  const rows = currentRows
+    .flatMap((current) => {
+      const observed = [
+        current,
+        ...priorSummaries.flatMap((summary) => {
+          const prior = sampleFor(summary, current);
+          return prior ? [prior] : [];
+        }),
+      ];
+      const counts = countOutcomes(observed);
+      if (counts.passed === 0 || counts.failed === 0) return [];
+      const executed = counts.passed + counts.failed;
+      return [
+        {
+          current,
+          observed,
+          counts,
+          failureRate: Math.round((counts.failed / executed) * 100),
+          flips: outcomeFlips(observed),
+          streak: failureStreak(current, priorSummaries),
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        right.flips - left.flips ||
+        right.counts.failed - left.counts.failed ||
+        right.failureRate - left.failureRate ||
+        right.observed.length - left.observed.length ||
+        left.current.target.localeCompare(right.current.target) ||
+        left.current.scenario.localeCompare(right.current.scenario),
+    )
+    .slice(0, FLAKE_WATCH_LIMIT);
+
+  const lines = [
+    "",
+    "### Nightly flake watch",
+    "",
+    "Tests that both passed and failed across the current run and available nightly history. Ranked by pass/fail flips, then failures; skips do not affect the failure rate or flip count.",
+    "",
+  ];
+  if (rows.length === 0) {
+    lines.push("No tests both passed and failed in the available nightly window.");
+    return lines;
+  }
+  lines.push(
+    "| Target | Scenario | Runs | P/F/S | Failure rate | Pass/fail flips | Failure streak | Common failed phase |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+  );
+  for (const row of rows) {
+    lines.push(
+      `| ${escapeCell(row.current.target)} | ${escapeCell(row.current.scenario)} | ${row.observed.length} | ${row.counts.passed}/${row.counts.failed}/${row.counts.skipped} | ${row.failureRate}% | ${row.flips} | ${row.streak} | ${escapeCell(commonFailedPhase(row.observed))} |`,
+    );
+  }
+  return lines;
 }
 
 function significantRegressions(
@@ -390,6 +462,7 @@ export function formatRuntimeHistory(
       `| ${escapeCell(current.target)} | ${escapeCell(current.scenario)} | ${priorRows.length} | ${seconds(current.durationMs)} | ${seconds(priorMedian)} | ${seconds(percentile(durations, 0.95))} | ${formatDelta(current.durationMs, priorMedian)} | ${current.outcome} | ${outcomeRates(priorRows)} | ${failureStreak(current, sortedPrior)} | ${escapeCell(commonFailedPhase([current, ...priorRows]))} | ${escapeCell(significantRegressions(current, priorRows))} |`,
     );
   }
+  lines.push(...formatFlakeWatch(currentRows, sortedPrior));
   return `${lines.join("\n")}\n`;
 }
 

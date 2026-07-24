@@ -161,6 +161,12 @@ graph as the live targets:
   the current run, and the most common failed phase across the compared runs.
   It marks a total or phase regression only when the current duration exceeds
   the prior median by both at least 20% and at least 30 seconds.
+- A separate flake watch shows at most five current tests that both passed and
+  failed across the current run and up to ten prior completed scheduled runs.
+  It ranks them by pass/fail flips and then failure count. It reports
+  pass/fail/skip counts, failure rate, pass/fail flips, current failure streak,
+  and the most common failed phase. The failure-rate denominator and
+  pass/fail-flip count exclude skips.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.

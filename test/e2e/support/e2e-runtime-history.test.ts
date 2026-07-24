@@ -67,6 +67,10 @@ describe("E2E rolling runtime history", () => {
     expect(markdown).toContain("failed | 33%/67%/0% (1/2/0) | 3 |");
     expect(markdown).toContain("build Hermes image (3)");
     expect(markdown).toContain("⚠ total +70.0s (+63.6%); build Hermes image +55.0s (+84.6%)");
+    expect(markdown).toContain("### Nightly flake watch");
+    expect(markdown).toContain(
+      "| rebuild-hermes | rebuild Hermes from source | 4 | 1/3/0 | 75% | 1 | 3 | build Hermes image (3) |",
+    );
   });
 
   it("does not flag small changes that miss either regression threshold", () => {
@@ -81,6 +85,42 @@ describe("E2E rolling runtime history", () => {
     expect(markdown).toContain("+1.0s (+0.8%)");
     expect(markdown).toContain("| — |");
     expect(markdown).not.toContain("⚠");
+  });
+
+  it("bounds the flake watch and excludes consistently passing or failing tests", () => {
+    const intermittent = Array.from({ length: 6 }, (_, index) =>
+      runtimeSample({
+        target: `target-${index}`,
+        scenario: `scenario-${index}`,
+        outcome: "failed",
+      }),
+    );
+    const current = [
+      ...intermittent,
+      runtimeSample({ target: "always-fails", scenario: "broken", outcome: "failed" }),
+      runtimeSample({ target: "always-passes", scenario: "healthy" }),
+    ];
+    const prior = [
+      createRuntimeSummary(
+        1,
+        "2026-07-23T00:00:00.000Z",
+        current.map((row) => ({
+          ...row,
+          outcome: row.target === "always-fails" ? "failed" : "passed",
+        })),
+      ),
+    ];
+
+    const flakeWatch = formatRuntimeHistory(current, prior).split(
+      "### Nightly flake watch\n",
+    )[1] as string;
+
+    for (let index = 0; index < 5; index += 1) {
+      expect(flakeWatch).toContain(`| target-${index} | scenario-${index} |`);
+    }
+    expect(flakeWatch).not.toContain("| target-5 | scenario-5 |");
+    expect(flakeWatch).not.toContain("always-fails");
+    expect(flakeWatch).not.toContain("always-passes");
   });
 
   it("writes a private bounded current summary when prior history is unavailable", async () => {
