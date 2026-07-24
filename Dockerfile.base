@@ -244,6 +244,7 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 
 # Upgrade the complete private npm tree so its sigstore, brace-expansion, and
 # picomatch packages meet the reviewed security floors.
+# hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 

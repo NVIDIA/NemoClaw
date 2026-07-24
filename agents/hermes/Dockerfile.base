@@ -74,6 +74,7 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 
 # Upgrade the complete private npm tree before npm processes the
 # checksum-pinned Hermes release lockfiles.
+# hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 

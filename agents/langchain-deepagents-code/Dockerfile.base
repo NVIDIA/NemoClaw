@@ -44,6 +44,7 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 
 # Replace the complete private npm tree so managed-terminal npm commands use
 # the reviewed dependency set.
+# hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
