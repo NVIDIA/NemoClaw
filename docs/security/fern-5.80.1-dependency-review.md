@@ -7,24 +7,19 @@ Review date: 2026-07-23
 
 ## Decision
 
-Pin the documentation tool to `fern-api@5.80.1`. This replaces `5.72.1`
-without changing a supported NemoClaw runtime or product integration. All
-production, staging, pull-request preview, validation, and local preview
-commands read the exact version from `fern/fern.config.json`.
+Pin the documentation tool to `fern-api@5.80.1`.
+This replaces `5.72.1` without changing a supported NemoClaw runtime or product integration.
+All production, staging, pull-request preview, validation, and local preview commands read the exact version from `fern/fern.config.json`.
 
-The upgrade spans 21 adjacent published versions and 225 source commits. The
-review found no unresolved high-severity concerns. The only accepted residuals
-are pre-existing properties of the upstream package: its optional BAML
-dependency uses a compatible range, and its provenance does not include an
-SBOM or the complete build dependency graph. The point-in-time dependency
-closure is identical for `5.72.1` and `5.80.1` except for the root package
-version and integrity.
+The upgrade spans 21 adjacent published versions and 225 source commits.
+The review found no unresolved high-severity concerns.
+The only accepted residuals are pre-existing properties of the upstream package: its optional BAML dependency uses a compatible range, and its provenance does not include an SBOM or the complete build dependency graph.
+The point-in-time dependency closure is identical for `5.72.1` and `5.80.1` except for the root package version and integrity.
 
 ## Reviewed identities
 
-The npm registry is the artifact authority. Fern does not publish semantic Git
-tags for these CLI versions, so the npm provenance source commits define the
-release boundaries.
+The npm registry is the artifact authority.
+Fern does not publish semantic Git tags for these CLI versions, so the npm provenance source commits define the release boundaries.
 
 | Identity | Value |
 | --- | --- |
@@ -39,21 +34,19 @@ release boundaries.
 | Target provenance workflow | `.github/workflows/publish-cli.yml` |
 | Target provenance run | `30038076483`, attempt `1`, successful push to `main` |
 
-The current and target archives each contain only `cli.cjs`, `package.json`,
-and `LICENSE`. `cli.cjs` is the only executable. Neither archive contains
-links, devices, unsafe paths, install scripts, a `NOTICE` file, or an SBOM.
+The current and target archives each contain only `cli.cjs`, `package.json`, and `LICENSE`.
+`cli.cjs` is the only executable.
+Neither archive contains links, devices, unsafe paths, install scripts, a `NOTICE` file, or an SBOM.
 Both packages declare Apache-2.0 and expose `fern` through `cli.cjs`.
 
-`npm audit signatures` reports zero invalid and zero missing signatures for
-both installed graphs. Their npm signatures and SLSA provenance bind the
-registry artifacts to the source commits above. The target provenance run
-completed successfully with the attested head commit on `main`.
+`npm audit signatures` reports zero invalid and zero missing signatures for both installed graphs.
+Their npm signatures and SLSA provenance bind the registry artifacts to the source commits above.
+The target provenance run completed successfully with the attested head commit on `main`.
 
 ## Complete source range ledger
 
-Every adjacent comparison is contiguous: each target is ahead of its source
-with `behind_by=0`, and local ancestry checks agree. A full sanitized upstream
-clone passed `git fsck --full --strict`; no upstream code was executed.
+Every adjacent comparison is contiguous: each target is ahead of its source with `behind_by=0`, and local ancestry checks agree.
+A full sanitized upstream clone passed `git fsck --full --strict`; no upstream code was executed.
 
 | Range and source commits | Commits | NemoClaw-relevant change |
 | --- | ---: | --- |
@@ -79,16 +72,14 @@ clone passed `git fsck --full --strict`; no upstream code was executed.
 | `5.79.0` (`1d6a7e7`) to `5.80.0` (`35b6f73`) | 26 | Optional navigation availability badges, disabled by default and absent from NemoClaw config. |
 | `5.80.0` (`35b6f73`) to `5.80.1` (`76de91e`) | 21 | Preserve nested `allOf` descriptions in generated API docs; no NemoClaw API import. |
 
-The repository's documented release-ledger collector is not present on the
-reviewed `main` branch. The audit therefore used equivalent read-only npm
-registry and GitHub API evidence plus the sanitized local clone. This method
-exception changes how the ledger was collected, not its release boundaries or
-coverage.
+The repository's documented release-ledger collector is not present on the reviewed `main` branch.
+The audit therefore used equivalent read-only npm registry and GitHub API evidence plus the sanitized local clone.
+This method exception changes how the ledger was collected, not its release boundaries or coverage.
 
 ## Dependency closure and advisory result
 
-Lifecycle scripts were disabled while materializing both exact graphs. Each
-graph contains 11 packages:
+Lifecycle scripts were disabled while materializing both exact graphs.
+Each graph contains 11 packages:
 
 - `@boundaryml/baml@0.219.0`;
 - eight matching `@boundaryml/baml-*` platform packages at `0.219.0`;
@@ -96,57 +87,48 @@ graph contains 11 packages:
 - the selected `fern-api` version.
 
 All transitive versions and licenses are identical between current and target.
-The BAML packages are MIT and Scarf is Apache-2.0. `npm audit --omit=dev`
-reports zero info, low, moderate, high, or critical findings for both graphs.
+The BAML packages are MIT and Scarf is Apache-2.0.
+`npm audit --omit=dev` reports zero info, low, moderate, high, or critical findings for both graphs.
 
-The package declares optional `@boundaryml/baml@^0.219.0`, so a future fresh
-`npx` install could select a later compatible BAML release. This is a
-pre-existing reproducibility residual, not a change introduced by `5.80.1`.
-NemoClaw pins Fern exactly, uses it only as contributor and CI documentation
-tooling, and does not ship this graph in its CLI, plugin, blueprint, or runtime
-images.
+The package declares optional `@boundaryml/baml@^0.219.0`, so a future fresh `npx` install could select a later compatible BAML release.
+This is a pre-existing reproducibility residual, not a change introduced by `5.80.1`.
+NemoClaw pins Fern exactly, uses it only as contributor and CI documentation tooling, and does not ship this graph in its CLI, plugin, blueprint, or runtime images.
 
 ## Downstream contract audit
 
-`fern/fern.config.json` is the single version authority. The following
-consumers all read that file before constructing an exact
-`fern-api@<version>` selector:
+`fern/fern.config.json` is the single version authority.
+The following consumers all read that file before constructing an exact `fern-api@<version>` selector:
 
-- the `docs:deps`, `docs:validate`, `docs:live`, and `docs:preview:watch` npm
-  scripts;
+- the `docs:deps`, `docs:validate`, `docs:live`, and `docs:preview:watch` npm scripts;
 - public and staging publication;
 - pull-request previews;
 - staging preview deletion.
 
-No lockfile, generated manifest, workflow input, environment default, cache
-key, or runtime image contains a second production Fern version. The synthetic
-`3.67.1` in `test/fern-preview-config.test.ts` is an opaque unit-test input,
-not a production selector.
+No lockfile, generated manifest, workflow input, environment default, cache key, or runtime image contains a second production Fern version.
+The synthetic `3.67.1` in `test/fern-preview-config.test.ts` is an opaque unit-test input, not a production selector.
 
-NemoClaw has no Fern API definition or generator manifest. Its Fern tree
-contains only the docs configuration, theme assets, components, and CSS.
-Consequently, the OpenAPI, webhook, SDK generator, and multi-API changes in the
-range cannot affect a shipped artifact.
+NemoClaw has no Fern API definition or generator manifest.
+Its Fern tree contains only the docs configuration, theme assets, components, and CSS.
+Consequently, the OpenAPI, webhook, SDK generator, and multi-API changes in the range cannot affect a shipped artifact.
 
-The CLI emits human-readable logs, but NemoClaw does not parse them. Workflows
-use the process exit status; the pull-request preview workflow captures output
-only to publish the preview URL. The upstream log-level reduction therefore
-does not change a machine-consumed contract.
+The CLI emits human-readable logs, but NemoClaw does not parse them.
+Workflows use the process exit status; the pull-request preview workflow captures output only to publish the preview URL.
+The upstream log-level reduction therefore does not change a machine-consumed contract.
 
 ## Concern ledger
 
 | ID | Severity | Failure mode | Evidence and disposition |
 | --- | --- | --- | --- |
-| `FERN-1` | Medium | Changed publish logging could break an output parser. | No consumer parses publish log text. Exit status and preview URL behavior remain authoritative. No impact. |
-| `FERN-2` | Medium | MDX compilation during `fern check` could expose invalid current docs. | `npm run docs` passes with the target CLI. Current and target report the same two pre-existing warnings and zero errors. Runtime proof. |
-| `FERN-3` | Medium | Theme upload or preview behavior could target the wrong organization or URL. | Upstream adds organization scoping and regression tests. NemoClaw's staging deletion workflow remains covered with executed fake-CLI arguments. Runtime proof. |
-| `FERN-4` | Low | Incremental local preview state could serve stale content. | The change is limited to `docs dev` content reloads and does not persist release state. Local preview remains an advisory developer surface. No impact. |
-| `FERN-5` | Low | New sitemap or navigation options could change the published site by default. | Both settings are optional; availability badges default to false, and neither key is present in `fern/docs.yml`. No impact. |
-| `FERN-6` | Low | API importer and generator changes could alter generated SDK or API documentation. | NemoClaw has no Fern API definition or generator manifest. No impact. |
-| `FERN-7` | Medium | The target archive or dependency graph could be substituted or add a vulnerable package. | Registry integrity, npm signatures, SLSA provenance, successful producer run, archive structure, licenses, and both exact graphs were verified. Resolved. |
-| `FERN-8` | Low | A hard-coded test version could drift from the production version authority. | The staging workflow test now derives its expected exact selector from `fern/fern.config.json`. Resolved. |
-| `FERN-9` | Low | A persisted cache or migration could retain incompatible Fern state. | Fern caches and generated docs are disposable build outputs; no migration, rollback data, or product state is involved. No impact. |
-| `FERN-10` | Low | Live sandbox E2E exclusion could leave a runtime behavior untested. | Fern is docs-only tooling and never runs inside a NemoClaw sandbox. Docs validation and workflow contract tests are the relevant lanes. Excluded. |
+| `FERN-1` | Medium | Changed publish logging could break an output parser | No consumer parses publish log text; exit status and preview URL behavior remain authoritative, so there is no impact. |
+| `FERN-2` | Medium | MDX compilation during `fern check` could expose invalid current docs | `npm run docs` passes with the target CLI, and current and target report the same two pre-existing warnings and zero errors, which resolves the concern with runtime proof. |
+| `FERN-3` | Medium | Theme upload or preview behavior could target the wrong organization or URL | Upstream adds organization scoping and regression tests, while NemoClaw's staging deletion workflow remains covered with executed fake-CLI arguments as runtime proof. |
+| `FERN-4` | Low | Incremental local preview state could serve stale content | The change is limited to `docs dev` content reloads, does not persist release state, and leaves local preview as an advisory developer surface, so there is no impact. |
+| `FERN-5` | Low | New sitemap or navigation options could change the published site by default | Both settings are optional, availability badges default to false, and neither key is present in `fern/docs.yml`, so there is no impact. |
+| `FERN-6` | Low | API importer and generator changes could alter generated SDK or API documentation | NemoClaw has no Fern API definition or generator manifest, so there is no impact. |
+| `FERN-7` | Medium | The target archive or dependency graph could be substituted or add a vulnerable package | Registry integrity, npm signatures, SLSA provenance, the successful producer run, archive structure, licenses, and both exact graphs were verified, which resolves the concern. |
+| `FERN-8` | Low | A hard-coded test version could drift from the production version authority | The staging workflow test now derives its expected exact selector from `fern/fern.config.json`, which resolves the concern. |
+| `FERN-9` | Low | A persisted cache or migration could retain incompatible Fern state | Fern caches and generated docs are disposable build outputs with no migration, rollback data, or product state, so there is no impact. |
+| `FERN-10` | Low | Live sandbox E2E exclusion could leave a runtime behavior untested | Fern is docs-only tooling that never runs inside a NemoClaw sandbox, so docs validation and workflow contract tests are the relevant lanes and live E2E is excluded. |
 
 Unresolved high-severity concerns: `0`.
 
@@ -165,14 +147,11 @@ Completed audit evidence:
 - source-shape validation reported no unapproved source-shape tests;
 - Vitest project membership was exact across all eight projects;
 - `npm run docs` passed with `fern-api@5.80.1`.
-- `npm run check:diff` passed after generating the isolated worktree's local
-  compiled artifacts.
+- `npm run check:diff` passed after generating the isolated worktree's local compiled artifacts.
 
-`fern check --warnings` reports zero errors and the same two warnings under
-both `5.72.1` and `5.80.1`: unauthenticated local validation cannot check
-remote redirects, and the existing light-theme accent contrast is 2.41:1.
-Neither warning is introduced by this dependency change. Authenticated
-publication and preview checks remain GitHub gates.
+`fern check --warnings` reports zero errors and the same two warnings under both `5.72.1` and `5.80.1`: unauthenticated local validation cannot check remote redirects, and the existing light-theme accent contrast is 2.41:1.
+Neither warning is introduced by this dependency change.
+Authenticated publication and preview checks remain GitHub gates.
 
 Before merge, the reviewed PR head must still pass:
 
@@ -180,6 +159,4 @@ Before merge, the reviewed PR head must still pass:
 - automated review with no unresolved actionable finding;
 - documentation writer review tied to the final pushed head.
 
-No live E2E, sandbox build, migration, rollback, compatibility shim, or
-changelog entry is required because the dependency is not part of a supported
-runtime or user-visible product behavior.
+No live E2E, sandbox build, migration, rollback, compatibility shim, or changelog entry is required because the dependency is not part of a supported runtime or user-visible product behavior.
