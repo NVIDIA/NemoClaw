@@ -121,6 +121,7 @@ RUN set -eu; \
             exit 1; \
         fi; \
     fi; \
+    rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp; \
     test -d "$hermes_web_dist"
 
 ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
@@ -694,7 +695,15 @@ RUN check_metadata() { \
         [ "$actual" = "$expected" ] \
             || { echo "ERROR: $path metadata is $actual, expected $expected" >&2; return 1; }; \
     }; \
-    check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
+    check_absent() { \
+        path="$1"; \
+        { [ ! -e "$path" ] && [ ! -L "$path" ]; } \
+            || { echo "ERROR: build-only Hermes cache leaked into the final image: $path" >&2; return 1; }; \
+    }; \
+    check_absent /root/.npm \
+    && check_absent /root/.cache/electron \
+    && check_absent /root/.cache/node-gyp \
+    && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \
