@@ -485,11 +485,8 @@ hpa_common_verify_hpa_bounds() {
     return 1
   fi
 
-  local spec_min spec_max desired deploy_spec
-  spec_min="$(kubectl get "horizontalpodautoscaler/${hpa_name}" -n "${ns}" -o jsonpath='{.spec.minReplicas}' 2>/dev/null || echo 0)"
-  spec_max="$(kubectl get "horizontalpodautoscaler/${hpa_name}" -n "${ns}" -o jsonpath='{.spec.maxReplicas}' 2>/dev/null || echo 0)"
+  local desired
   desired="$(kubectl get "horizontalpodautoscaler/${hpa_name}" -n "${ns}" -o jsonpath='{.status.desiredReplicas}' 2>/dev/null || echo "")"
-  deploy_spec="$(kubectl get "deployment/${deploy}" -n "${ns}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")"
 
   hpa_common_enforce_replica_floor "${ns}" "${deploy}" "${min}"
 

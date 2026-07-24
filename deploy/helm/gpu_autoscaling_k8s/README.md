@@ -5,7 +5,7 @@
 
 # NemoClaw Kubernetes GPU autoscaling
 
-This Helm chart uses Kubernetes to autoscale NemoClaw and NGINX to balance workloads. 
+This Helm chart uses Kubernetes to autoscale NemoClaw and NGINX to balance workloads.
 A Kubernetes Horizontal Pod Autoscaler (HPA) scales the pods, and each replica requests one NVIDIA GPU.
 
 The HPA reads the per-pod `gpu_utilization_percent` custom metric. The metric pipeline is:
@@ -442,8 +442,6 @@ sum by (pod) (
 Add the request-rate and GPU-utilization queries to the same Explore view to see whether traffic and GPU work are distributed across replicas. When the HPA scales up, a new pod should appear after it becomes ready. A `rate(...)` result requires at least two Prometheus scrapes.
 
 If the request-rate graph shows only one pod (or stops updating) while GPU utilization shows all pods, check `kubectl get servicemonitor -n nemoclaw-gpu`. Anything that runs a plain `helm upgrade` without `--reuse-values` (custom scripts, manual re-installs) resets `metrics.serviceMonitor.enabled` to the chart default, which is `true`; if it was manually forced to `false` re-run `install-hpa.sh` or `helm upgrade` with `--set metrics.serviceMonitor.enabled=true` to restore it.
-
-
 
 ## Uninstall
 

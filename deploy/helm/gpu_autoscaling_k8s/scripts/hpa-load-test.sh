@@ -83,6 +83,7 @@ ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-900}"
 DEPLOYMENT="${DEPLOYMENT:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_agent_deployment)}"
 SERVICE="${SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_agent_service)}"
 SERVICE_PORT="${SERVICE_PORT:-8081}"
+# shellcheck disable=SC2034 # passed by name to hpa_common_log_hpa_if_changed
 LAST_HPA_LINE=""
 
 require_cmd kubectl

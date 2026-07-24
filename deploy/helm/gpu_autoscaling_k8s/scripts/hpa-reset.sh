@@ -100,8 +100,8 @@ hpa_common_kick_deployment "${NAMESPACE}" "${DEPLOYMENT}" || hpa_common_gpu_helm
 hpa_common_verify_hpa_bounds "${NAMESPACE}" "${DEPLOYMENT}" "${HPA_NAME}" "${MIN_REPLICAS}" "${MAX_REPLICAS}" || true
 
 if [[ "${WAIT_ROLLOUT}" == "1" ]]; then
-  hpa_common_wait_rollout "${DEPLOYMENT}" "${NAMESPACE}" "${ROLLOUT_TIMEOUT}" || \
-    hpa_common_diagnose_rollout "${NAMESPACE}" "${DEPLOYMENT}"
+  hpa_common_wait_rollout "${DEPLOYMENT}" "${NAMESPACE}" "${ROLLOUT_TIMEOUT}" \
+    || hpa_common_diagnose_rollout "${NAMESPACE}" "${DEPLOYMENT}"
 fi
 
 hpa_common_print_hpa "${NAMESPACE}"

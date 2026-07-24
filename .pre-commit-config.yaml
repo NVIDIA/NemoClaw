@@ -143,6 +143,8 @@ repos:
       - id: check-case-conflict
         priority: 10
       - id: check-yaml
+        # Helm templates use Go templating ({{ ... }}) that isn't valid standalone YAML.
+        exclude: ^deploy/helm/.*/templates/
         priority: 10
       - id: check-toml
         priority: 10

@@ -4,7 +4,7 @@
 set -eu
 
 MODEL="${OLLAMA_MODEL:?OLLAMA_MODEL required}"
-HOST="${OLLAMA_HOST:-0.0.0.0:11434}"
+export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:11434}"
 
 ollama serve &
 SERVE_PID=$!
