@@ -100,6 +100,32 @@ export function modelFitsAvailableMemory(tag: string, gpu: GpuInfo | null): bool
   return entry.requiredMemoryMB <= memory;
 }
 
+export interface OllamaModelCapacity {
+  requiredMemoryMB: number | null;
+  downloadSizeBytes: number | null;
+  fits: boolean | null;
+}
+
+/**
+ * Registry-only capacity facts for a menu entry: required GPU memory,
+ * download size, and whether the tag fits the host's currently available
+ * memory. Reads the registry synchronously so the model menu can annotate
+ * every line without a per-model network probe. Unknown tags return all
+ * `null`; `fits` is `null` when host memory is unknown.
+ */
+export function describeOllamaModelCapacity(tag: string, gpu: GpuInfo | null): OllamaModelCapacity {
+  const entry = findOllamaModelEntry(tag);
+  if (!entry) {
+    return { requiredMemoryMB: null, downloadSizeBytes: null, fits: null };
+  }
+  const memory = effectiveGpuMemoryMB(gpu);
+  return {
+    requiredMemoryMB: entry.requiredMemoryMB,
+    downloadSizeBytes: entry.downloadSizeBytes,
+    fits: memory == null ? null : modelFitsAvailableMemory(tag, gpu),
+  };
+}
+
 /**
  * Bootstrap model tags the host can plausibly load right now. Always
  * includes `SMALLEST_OLLAMA_MODEL_TAG` so the menu has at least one

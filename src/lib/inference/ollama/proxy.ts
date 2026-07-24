@@ -30,7 +30,13 @@ const {
   probeOllamaModelCapabilities,
   validateOllamaModel,
 } = require("../local");
-const { anyRegistryModelFits, modelFitsAvailableMemory } = require("../ollama-model-registry");
+const {
+  anyRegistryModelFits,
+  describeOllamaModelCapacity,
+  effectiveGpuMemoryMB,
+  modelFitsAvailableMemory,
+} = require("../ollama-model-registry");
+const { formatBytes } = require("./model-size");
 const { isOllamaAuthProxyCommandLine }: typeof import("./process") = require("./process");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
@@ -494,6 +500,25 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   };
 }
 
+function formatOllamaMemoryMB(memoryMB: number): string {
+  return formatBytes(memoryMB * 1024 * 1024);
+}
+
+function annotateOllamaModelOption(tag: string, gpu: GpuInfo | null): string {
+  const facts = describeOllamaModelCapacity(tag, gpu);
+  const parts: string[] = [];
+  if (typeof facts.downloadSizeBytes === "number") {
+    parts.push(`${formatBytes(facts.downloadSizeBytes)} download`);
+  }
+  if (typeof facts.requiredMemoryMB === "number") {
+    parts.push(`~${formatOllamaMemoryMB(facts.requiredMemoryMB)} VRAM`);
+  }
+  if (facts.fits === false) {
+    parts.push("exceeds available memory");
+  }
+  return parts.length > 0 ? `  (${parts.join(" · ")})` : "";
+}
+
 async function promptOllamaModel(
   gpu: GpuInfo | null = null,
   promptOptions: { defaultModel?: string | null; excludeModels?: ReadonlySet<string> } = {},
@@ -533,8 +558,12 @@ async function promptOllamaModel(
 
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
+  const availableMemoryMB = effectiveGpuMemoryMB(gpu);
+  if (typeof availableMemoryMB === "number") {
+    console.log(`  Available GPU memory: ${formatOllamaMemoryMB(availableMemoryMB)}.`);
+  }
   options.forEach((option: string, index: number) => {
-    console.log(`    ${index + 1}) ${option}`);
+    console.log(`    ${index + 1}) ${option}${annotateOllamaModelOption(option, gpu)}`);
   });
   console.log(`    ${options.length + 1}) Other...`);
   if (!usingInstalled) {
