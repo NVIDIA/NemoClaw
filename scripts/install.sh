@@ -3652,11 +3652,6 @@ NODE
     printf '%s' "__unknown__"
     return 0
   fi
-  ctx="$(sed -n 's/.*"currentContext"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -n1)"
-  if [ -n "$ctx" ]; then
-    printf '%s' "$ctx"
-    return 0
-  fi
   printf '%s' "__unknown__"
 }
 
