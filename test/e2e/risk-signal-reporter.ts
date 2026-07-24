@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { TestModule, TestSpecification } from "vitest/node";
+import type { TestModule, TestSpecification, Vitest } from "vitest/node";
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
 import {
   classifyLiveTestOutcome,
@@ -88,8 +88,11 @@ function matchesNamePattern(fullName: string, pattern: RegExp | undefined): bool
 
 function testNamePatternForRun(
   specifications: ReadonlyArray<TestSpecification>,
+  globalTestNamePattern: RegExp | undefined,
 ): RegExp | undefined {
-  const [first, ...rest] = specifications.map((specification) => specification.testNamePattern);
+  const [first = globalTestNamePattern, ...rest] = specifications.map(
+    (specification) => specification.testNamePattern ?? globalTestNamePattern,
+  );
   if (
     rest.some((pattern) => pattern?.source !== first?.source || pattern?.flags !== first?.flags)
   ) {
@@ -202,6 +205,7 @@ export function writeRiskSignal(
 export default class E2eRiskSignalReporter implements Reporter {
   private readonly environment: RiskSignalEnvironment | null;
   private readonly outcomeFile: string | null;
+  private globalTestNamePattern: RegExp | undefined;
   private testNamePattern: RegExp | undefined;
   private processTimedOut = false;
 
@@ -210,9 +214,13 @@ export default class E2eRiskSignalReporter implements Reporter {
     this.outcomeFile = configuredLiveTestOutcomeFile(process.env);
   }
 
+  onInit(vitest: Vitest): void {
+    this.globalTestNamePattern = vitest.getGlobalTestNamePattern();
+  }
+
   onTestRunStart(specifications: ReadonlyArray<TestSpecification>): void {
     this.processTimedOut = false;
-    this.testNamePattern = testNamePatternForRun(specifications);
+    this.testNamePattern = testNamePatternForRun(specifications, this.globalTestNamePattern);
     if (!this.outcomeFile) return;
     fs.mkdirSync(path.dirname(this.outcomeFile), { recursive: true });
     writeLiveTestOutcome(this.outcomeFile, "none");

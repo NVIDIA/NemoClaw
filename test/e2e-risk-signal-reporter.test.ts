@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { TestModule, TestSpecification } from "vitest/node";
+import type { TestModule, TestSpecification, Vitest } from "vitest/node";
 import {
   classifyLiveTestOutcome,
   configuredLiveTestOutcomeFile,
@@ -155,7 +155,7 @@ describe("E2E risk signal reporter", () => {
     }
   });
 
-  it("applies the configured name pattern through the reporter lifecycle", () => {
+  it("uses the global CLI name pattern when the specification does not carry one", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
     try {
       vi.stubEnv("E2E_ARTIFACT_DIR", dir);
@@ -166,9 +166,12 @@ describe("E2E risk signal reporter", () => {
       vi.stubEnv("NEMOCLAW_E2E_SHARD", "live-probes");
 
       const reporter = new E2eRiskSignalReporter();
+      reporter.onInit({
+        getGlobalTestNamePattern: () => /^network-policy:.+probes$/u,
+      } as Vitest);
       reporter.onTestRunStart([
         {
-          testNamePattern: /^network-policy:.+probes$/u,
+          testNamePattern: undefined,
         } as TestSpecification,
       ]);
       reporter.onTestRunEnd(
