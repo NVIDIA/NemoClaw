@@ -32,6 +32,7 @@ vi.mock("node:child_process", () => ({
 const EXPECTED_SHA = "a".repeat(40);
 const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
+const ORIGINAL_PROCESS_EXIT_CODE = process.exitCode;
 
 function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pending">): TestModule {
   return {
@@ -86,6 +87,8 @@ function environment(artifactDir: string): RiskSignalEnvironment {
 
 describe("E2E risk signal reporter", () => {
   afterEach(() => {
+    process.exitCode = ORIGINAL_PROCESS_EXIT_CODE;
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -237,6 +240,97 @@ describe("E2E risk signal reporter", () => {
       );
 
       expect(signal).toMatchObject({ passed: 0, failed: 0, skipped: 0, pending: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the configured name pattern matches no tests", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      vi.stubEnv("E2E_ARTIFACT_DIR", dir);
+      vi.stubEnv("E2E_TARGET_ID", "mcp-bridge");
+      vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", EXPECTED_SHA);
+      vi.stubEnv("NEMOCLAW_E2E_PLAN_HASH", PLAN_HASH);
+      vi.stubEnv("NEMOCLAW_E2E_CORRELATION_ID", CORRELATION_ID);
+      vi.stubEnv("NEMOCLAW_E2E_SHARD", "openclaw");
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const reporter = new E2eRiskSignalReporter();
+      reporter.onInit({
+        config: { testNamePattern: /^mcp-bridge$/u },
+      } as Vitest);
+      reporter.onTestRunEnd(
+        [moduleWithNamedStates([{ fullName: "mcp-bridge-hermes", state: "skipped" }])],
+        [],
+        "passed",
+      );
+
+      const signal = JSON.parse(
+        fs.readFileSync(path.join(dir, RISK_SIGNAL_FILE), "utf8"),
+      ) as Record<string, unknown>;
+      expect(signal).toMatchObject({
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+        pending: 0,
+        runReason: "failed",
+      });
+      expect(process.exitCode).toBe(1);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("matched no tests"));
+
+      reporter.onTestRunEnd(
+        [moduleWithNamedStates([{ fullName: "mcp-bridge", state: "passed" }])],
+        [],
+        "passed",
+      );
+      const mergedSignal = JSON.parse(
+        fs.readFileSync(path.join(dir, RISK_SIGNAL_FILE), "utf8"),
+      ) as Record<string, unknown>;
+      expect(mergedSignal).toMatchObject({
+        passed: 1,
+        failed: 0,
+        skipped: 0,
+        pending: 0,
+        runReason: "failed",
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a selected skipped test as matched evidence", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      vi.stubEnv("E2E_ARTIFACT_DIR", dir);
+      vi.stubEnv("E2E_TARGET_ID", "mcp-bridge");
+      vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", EXPECTED_SHA);
+      vi.stubEnv("NEMOCLAW_E2E_PLAN_HASH", PLAN_HASH);
+      vi.stubEnv("NEMOCLAW_E2E_CORRELATION_ID", CORRELATION_ID);
+      vi.stubEnv("NEMOCLAW_E2E_SHARD", "openclaw");
+
+      const reporter = new E2eRiskSignalReporter();
+      reporter.onInit({
+        config: { testNamePattern: /^mcp-bridge$/u },
+      } as Vitest);
+      reporter.onTestRunEnd(
+        [moduleWithNamedStates([{ fullName: "mcp-bridge", state: "skipped" }])],
+        [],
+        "passed",
+      );
+
+      const signal = JSON.parse(
+        fs.readFileSync(path.join(dir, RISK_SIGNAL_FILE), "utf8"),
+      ) as Record<string, unknown>;
+      expect(signal).toMatchObject({
+        passed: 0,
+        failed: 0,
+        skipped: 1,
+        pending: 0,
+        runReason: "passed",
+      });
+      expect(process.exitCode).toBe(ORIGINAL_PROCESS_EXIT_CODE);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

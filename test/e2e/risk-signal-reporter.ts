@@ -16,6 +16,7 @@ import {
   configuredRiskSignalEnvironment,
   type E2eRiskSignal,
   RISK_SIGNAL_FILE,
+  type RiskSignalCounts,
   type RiskSignalEnvironment,
   writeRiskSignalCounts,
 } from "../../tools/e2e/risk-signal.ts";
@@ -58,6 +59,18 @@ function failedTestErrors(testModules: ReadonlyArray<TestModule>): unknown[] {
   return errors;
 }
 
+function writeSelectedRiskSignal(
+  environment: RiskSignalEnvironment,
+  selectedCounts: RiskSignalCounts,
+  unhandledErrors: ReadonlyArray<unknown>,
+  runReason: TestRunEndReason,
+): E2eRiskSignal {
+  // Each call represents a separate Vitest command in the same job/shard;
+  // Vitest has already collapsed retries inside that command. The shared
+  // writer sums invocations and keeps failures sticky.
+  return writeRiskSignalCounts(environment, selectedCounts, unhandledErrors.length, runReason);
+}
+
 export function outcomeForRun(
   testModules: ReadonlyArray<TestModule>,
   unhandledErrors: ReadonlyArray<unknown>,
@@ -80,13 +93,10 @@ export function writeRiskSignal(
   runReason: TestRunEndReason,
   testNamePattern?: RegExp,
 ): E2eRiskSignal {
-  // Each call represents a separate Vitest command in the same job/shard;
-  // Vitest has already collapsed retries inside that command. The shared
-  // writer sums invocations and keeps failures sticky.
-  return writeRiskSignalCounts(
+  return writeSelectedRiskSignal(
     environment,
     counts(testModules, testNamePattern),
-    unhandledErrors.length,
+    unhandledErrors,
     runReason,
   );
 }
@@ -124,13 +134,29 @@ export default class E2eRiskSignalReporter implements Reporter {
     unhandledErrors: ReadonlyArray<unknown>,
     reason: TestRunEndReason,
   ): void {
+    const selectedCounts = counts(testModules, this.testNamePattern);
+    const selectorMatchedNothing =
+      this.testNamePattern !== undefined &&
+      selectedCounts.passed +
+        selectedCounts.failed +
+        selectedCounts.skipped +
+        selectedCounts.pending ===
+        0;
+    const effectiveReason: TestRunEndReason = selectorMatchedNothing ? "failed" : reason;
+
+    if (selectorMatchedNothing) {
+      console.error(
+        `E2E test selector ${String(this.testNamePattern)} matched no tests; failing closed.`,
+      );
+      process.exitCode = 1;
+    }
     if (this.environment) {
-      writeRiskSignal(this.environment, testModules, unhandledErrors, reason, this.testNamePattern);
+      writeSelectedRiskSignal(this.environment, selectedCounts, unhandledErrors, effectiveReason);
     }
     if (this.outcomeFile) {
       writeLiveTestOutcome(
         this.outcomeFile,
-        outcomeForRun(testModules, unhandledErrors, reason, this.processTimedOut),
+        outcomeForRun(testModules, unhandledErrors, effectiveReason, this.processTimedOut),
       );
     }
   }

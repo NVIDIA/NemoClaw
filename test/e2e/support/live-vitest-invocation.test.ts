@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildLiveVitestArgs,
   LIVE_VITEST_PROJECT,
+  MCP_BRIDGE_TEST_PATH,
   type LiveVitestSpawner,
   RISK_SIGNAL_REPORTER,
+  resolveLiveSelector,
   runLiveVitestCommand,
   validateLiveProject,
   validateLiveSelector,
@@ -102,6 +104,50 @@ describe("validateLiveSelector (#6961)", () => {
     ]) {
       expect(() => validateLiveSelector(bad)).toThrow(/unsupported character/);
     }
+  });
+});
+
+describe("resolveLiveSelector (#6904)", () => {
+  it.each([
+    ["openclaw", "^mcp-bridge$"],
+    ["hermes", "^mcp-bridge-hermes$"],
+    ["deepagents", "^mcp-bridge-deepagents$"],
+  ])("infers the reviewed %s selector for trusted base-workflow compatibility", (agent, expected) => {
+    expect(
+      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: agent,
+      }),
+    ).toBe(expected);
+    expect(
+      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, expected, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: agent,
+      }),
+    ).toBe(expected);
+  });
+
+  it("keeps the existing OpenClaw default for local MCP runs", () => {
+    expect(resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {})).toBe("^mcp-bridge$");
+  });
+
+  it("rejects an unsupported MCP agent or mismatched explicit selector", () => {
+    expect(() =>
+      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: "all",
+      }),
+    ).toThrow(/unsupported NEMOCLAW_MCP_BRIDGE_AGENT/u);
+    expect(() =>
+      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, "^mcp-bridge-hermes$", {
+        NEMOCLAW_MCP_BRIDGE_AGENT: "openclaw",
+      }),
+    ).toThrow(/does not match agent/u);
+  });
+
+  it("does not infer selectors for unrelated live tests", () => {
+    expect(
+      resolveLiveSelector("test/e2e/live/diagnostics.test.ts", undefined, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: "hermes",
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -202,6 +248,22 @@ describe("runLiveVitestCommand (#6961)", () => {
     expect(() => runLiveVitestCommand(validArgs, spawn)).toThrow(launchError);
   });
 
+  it("passes the inferred MCP selector to Vitest when trusted base YAML omits it", () => {
+    let spawned: Parameters<LiveVitestSpawner> | undefined;
+    const spawn: LiveVitestSpawner = (...args) => {
+      spawned = args;
+      return { status: 0 };
+    };
+
+    expect(
+      runLiveVitestCommand(["run", "--test-path", MCP_BRIDGE_TEST_PATH], spawn, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: "hermes",
+      }),
+    ).toBe(0);
+    expect(spawned?.[1]).toContain("-t");
+    expect(spawned?.[1]).toContain("^mcp-bridge-hermes$");
+  });
+
   it.each([
     [
       "unknown option",
@@ -243,5 +305,33 @@ describe("runLiveVitestCommand (#6961)", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('expected "run"');
+  });
+
+  it("fails closed when a selector matches no live tests", () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, NEMOCLAW_RUN_LIVE_E2E: "1" };
+    delete env.E2E_ARTIFACT_DIR;
+    delete env.E2E_TARGET_ID;
+    delete env.E2E_TEST_OUTCOME_FILE;
+    delete env.NEMOCLAW_E2E_CORRELATION_ID;
+    delete env.NEMOCLAW_E2E_EXPECTED_SHA;
+    delete env.NEMOCLAW_E2E_PLAN_HASH;
+    delete env.NEMOCLAW_E2E_SHARD;
+
+    const result = spawnSync(
+      TSX,
+      [
+        LIVE_VITEST_TOOL,
+        "run",
+        "--test-path",
+        "test/e2e/live/registry-targets.test.ts",
+        "--selector",
+        "^definitely-no-such-live-test$",
+      ],
+      { encoding: "utf8", env, timeout: 30_000 },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("matched no tests");
   });
 });
