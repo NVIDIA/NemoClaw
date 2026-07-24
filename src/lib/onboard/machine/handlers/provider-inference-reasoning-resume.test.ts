@@ -37,6 +37,8 @@ describe("resumed compatible-endpoint reasoning flag (#7462)", () => {
     expect(calls.log).toHaveBeenCalledWith(
       expect.stringContaining("Ignoring NEMOCLAW_REASONING=true"),
     );
+    // The message must name the recorded value, not only honor it internally.
+    expect(calls.log).toHaveBeenCalledWith(expect.stringContaining("recorded as reasoning=false"));
     expect(calls.log).toHaveBeenCalledWith(
       expect.stringContaining("nemoclaw onboard --fresh --name <sandbox> --recreate-sandbox"),
     );
