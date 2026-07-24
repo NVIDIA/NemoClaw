@@ -75,6 +75,7 @@ describe("downloadFromSandbox", () => {
       sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
       hostDest: expectedHostDest,
     });
+    expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 
   it("defaults the host destination to the caller cwd when omitted", async () => {

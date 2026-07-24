@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./cli/helpers";
 
@@ -61,25 +61,22 @@ describe("sandbox download/upload CLI wrappers", () => {
 
   it("defaults the host destination to the caller cwd when omitted", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-download-default-"));
-    const expectedHostDest = path.join(process.cwd(), "nemoclaw-download-default-test-artifact");
+    const artifactName = `nemoclaw-download-default-${path.basename(home)}`;
+    const expectedHostDest = path.join(process.cwd(), artifactName);
     try {
       writeSandboxRegistry(home);
       const openshellLog = path.join(home, "openshell-calls.log");
       const localBin = buildStubOpenshell(home, openshellLog);
 
-      const result = runWithEnv(
-        "alpha download /sandbox/.openclaw/nemoclaw-download-default-test-artifact 2>&1",
-        {
-          HOME: home,
-          PATH: `${localBin}:${process.env.PATH || ""}`,
-        },
-      );
+      const result = runWithEnv(`alpha download /sandbox/.openclaw/${artifactName} 2>&1`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
       expect(result.code).toBe(0);
 
       const calls = fs.readFileSync(openshellLog, "utf8");
-      expect(calls).toMatch(
-        /sandbox download alpha \/sandbox\/\.openclaw\/nemoclaw-download-default-test-artifact .*nemoclaw-download-.*\/artifact/,
-      );
+      expect(calls).toContain(`sandbox download alpha /sandbox/.openclaw/${artifactName} `);
+      expect(calls).toMatch(/nemoclaw-download-.*\/artifact/);
       expect(fs.readFileSync(expectedHostDest, "utf8")).toBe("downloaded");
     } finally {
       fs.rmSync(expectedHostDest, { force: true });

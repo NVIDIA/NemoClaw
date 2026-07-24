@@ -212,6 +212,9 @@ describe("publishDownloadArtifact", () => {
     expect(() => publishDownloadArtifact(staged, destination, "dir")).toThrow(
       /destination path '.*linked' is a symbolic link/,
     );
+    const linkedDestination = path.join(destination, "linked");
+    expect(fs.lstatSync(linkedDestination).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(linkedDestination)).toBe(outside);
     expect(fs.readdirSync(outside)).toEqual([]);
   });
 
@@ -227,6 +230,8 @@ describe("publishDownloadArtifact", () => {
     expect(() => publishDownloadArtifact(staged, destination, "file")).toThrow(
       /destination path '.*linked-parent' is a symbolic link/,
     );
+    expect(fs.lstatSync(linkedParent).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(linkedParent)).toBe(outside);
     expect(fs.existsSync(path.join(outside, "fresh.txt"))).toBe(false);
   });
 
@@ -241,6 +246,8 @@ describe("publishDownloadArtifact", () => {
     expect(() => publishDownloadArtifact(staged, destination, "file")).toThrow(
       /destination path '.*destination\.txt' is a symbolic link/,
     );
+    expect(fs.lstatSync(destination).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(destination)).toBe(outside);
     expect(fs.readFileSync(outside, "utf8")).toBe("outside");
   });
 
@@ -259,7 +266,7 @@ describe("publishDownloadArtifact", () => {
     expect(fs.readFileSync(outside, "utf8")).toBe("outside");
   });
 
-  it("atomically replaces an existing regular file", () => {
+  it("replaces an existing regular file", () => {
     const staged = path.join(dir, "staged.txt");
     const destination = path.join(dir, "destination.txt");
     fs.writeFileSync(staged, "new");
