@@ -43,12 +43,12 @@ vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
 }));
 
 import {
-  createSandboxBaseImageResolutionKey,
   createSandboxBaseImageBuildProvenanceKey,
+  createSandboxBaseImageResolutionKey,
   OPENSHELL_SANDBOX_MIN_GLIBC,
   resolveSandboxBaseImage,
-  SandboxBaseImageResolutionError,
   SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
+  SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
 } from "./sandbox-base-image";
 
@@ -323,6 +323,46 @@ describe("sandbox base-image warm resolution", () => {
       metadata: { imageId, source: "local" },
     });
     expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+  });
+
+  it("accepts a temporary rebuild handoff override backed by the current build proof", () => {
+    const options = resolutionOptions();
+    const imageId = `sha256:${"c".repeat(64)}`;
+    const handoffRef = `nemoclaw-sandbox-base-local:rebuild-343338-${"a".repeat(16)}-image-${"c".repeat(64)}`;
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"d".repeat(64)}`;
+    dockerMocks.imageInspectFormat.mockImplementation((format: string) =>
+      format === "{{.Id}}"
+        ? imageId
+        : JSON.stringify({
+            Id: imageId,
+            RepoDigests: [],
+            Os: "linux",
+            Architecture: "amd64",
+            Config: {
+              Labels: {
+                [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance,
+              },
+            },
+          }),
+    );
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+      env: {
+        ...options.env,
+        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: handoffRef,
+      },
+      trustedLocalOverride: { ref: handoffRef, provenance },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: handoffRef,
+      digest: null,
+      source: "local",
+      metadata: { imageId, source: "local" },
+    });
     expect(dockerMocks.pull).not.toHaveBeenCalled();
   });
 

@@ -158,9 +158,15 @@ function isExpectedRemoteBaseImageRef(imageName: string, imageRef: string): bool
 function contentAddressedLocalImageId(localTag: string, imageRef: string): string | null {
   const localImageName = localTag.replace(/:[^/:]+$/, "");
   const prefix = `${localImageName}:image-`;
-  if (!imageRef.startsWith(prefix)) return null;
-  const digest = imageRef.slice(prefix.length);
-  return /^[0-9a-f]{64}$/.test(digest) ? `sha256:${digest}` : null;
+  if (imageRef.startsWith(prefix)) {
+    const digest = imageRef.slice(prefix.length);
+    return /^[0-9a-f]{64}$/.test(digest) ? `sha256:${digest}` : null;
+  }
+  if (imageRef.startsWith(`${localImageName}:rebuild-`)) {
+    const match = imageRef.match(/-image-([0-9a-f]{64})$/);
+    return match ? `sha256:${match[1]}` : null;
+  }
+  return null;
 }
 
 function resolveContentAddressedLocalOverride(
