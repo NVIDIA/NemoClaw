@@ -126,6 +126,87 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
+  // source-shape-contract: compatibility -- Grouped payload layers preserve the measured Hermes layer budget without invalidating earlier build work
+  it("keeps repository payload layers at their cache boundaries (#7144)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
+    const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
+    const finalStage = stages[finalStageIndex] ?? "";
+    const payloadLayers = [
+      "RUN --mount=type=bind,from=hermes-npm-patch-payload,source=/,target=/run/nemoclaw-payload",
+      "RUN --mount=type=bind,from=hermes-agent-payload,source=/,target=/run/nemoclaw-payload",
+      "RUN --mount=type=bind,from=hermes-runtime-payload,source=/,target=/run/nemoclaw-payload",
+      "RUN --mount=type=bind,from=hermes-wrapper-payload,source=/,target=/run/nemoclaw-payload",
+      "RUN --mount=type=bind,from=hermes-scan-payload,source=/,target=/run/nemoclaw-payload",
+    ];
+
+    for (const payloadLayer of payloadLayers) {
+      const stageName = payloadLayer.match(/,from=([^,]+)/u)?.[1];
+      const payloadStart = finalStage.indexOf(payloadLayer);
+      const payloadBlock = finalStage.slice(payloadStart, finalStage.indexOf("\n\n", payloadStart));
+      expect(stages.some((stage) => stage.startsWith(`FROM scratch AS ${stageName}`))).toBe(true);
+      expect(payloadBlock).toContain("/bin/bash -euo pipefail -c");
+      expect(payloadBlock).toContain("tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \\");
+      expect(payloadBlock).toContain(
+        "| tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -;",
+      );
+      expect(payloadBlock.match(/stat -c "%u:%g:%a:%n"/gu)).toHaveLength(2);
+      expect(payloadBlock).toContain(
+        '[[ "$payload_metadata_before" == "$payload_metadata_after" ]]',
+      );
+      expect(payloadBlock).not.toMatch(/\b(?:mktemp|trap|rm)\b/u);
+    }
+    expect(finalStageIndex).toBe(stages.length - 1);
+    expect(finalStage.match(/^RUN --mount=.*$/gmu)).toEqual(
+      payloadLayers.map((payloadLayer) => `${payloadLayer} \\`),
+    );
+    expect(finalStage).not.toMatch(/^(?:ADD|COPY)\b/mu);
+    expect(finalStage.indexOf(payloadLayers[0])).toBeLessThan(
+      finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
+    );
+    expect(finalStage.indexOf(payloadLayers[1])).toBeGreaterThan(
+      finalStage.indexOf("RUN _hermes_certifi="),
+    );
+    expect(finalStage.indexOf(payloadLayers[1])).toBeLessThan(
+      finalStage.indexOf("RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/"),
+    );
+    expect(finalStage.indexOf(payloadLayers[2])).toBeGreaterThan(
+      finalStage.indexOf("RUN find /opt/nemoclaw-hermes-config"),
+    );
+    expect(finalStage.indexOf(payloadLayers[2])).toBeLessThan(
+      finalStage.indexOf("RUN chmod -R a+rX /opt/nemoclaw-blueprint/"),
+    );
+    expect(finalStage.indexOf(payloadLayers[3])).toBeGreaterThan(
+      finalStage.indexOf('"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"'),
+    );
+    expect(finalStage.indexOf(payloadLayers[3])).toBeLessThan(
+      finalStage.indexOf("RUN test -x /usr/bin/python3"),
+    );
+    expect(finalStage.indexOf(payloadLayers[4])).toBeGreaterThan(
+      finalStage.indexOf('RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]'),
+    );
+    expect(finalStage.indexOf(payloadLayers[4])).toBeLessThan(
+      finalStage.indexOf("RUN check_metadata()"),
+    );
+    for (const metadataContract of [
+      "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
+      "/opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444'",
+      "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
+      "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
+      "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
+      "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
+      "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
+    ]) {
+      expect(finalStage).toContain(`check_metadata ${metadataContract}`);
+    }
+    expect(finalStage.indexOf("RUN check_metadata()")).toBeGreaterThan(
+      finalStage.indexOf(payloadLayers[4]),
+    );
+    expect(finalStage.indexOf("RUN check_metadata()")).toBeLessThan(
+      finalStage.indexOf("node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts"),
+    );
+  });
+
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image
   it("keeps security entrypoint hashes synchronized with the copied files", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");

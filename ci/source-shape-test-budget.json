@@ -283,6 +283,11 @@
     },
     {
       "file": "test/hermes-final-image-layout.test.ts",
+      "test": "keeps repository payload layers at their cache boundaries (#7144)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/hermes-final-image-layout.test.ts",
       "test": "keeps security entrypoint hashes synchronized with the copied files",
       "category": "security"
     },
