@@ -48,6 +48,14 @@ type GatewayStartResult = {
 };
 
 export type GatewayRecoveryDeps = {
+  /**
+   * Fail closed before any recovery branch starts a gateway process an external
+   * supervisor owns (#6576).
+   */
+  assertGatewayStartAllowed(
+    exitOnFailure: boolean,
+    target: { gatewayName: string; gatewayPort: number },
+  ): void;
   getGatewayClusterContainerState?(gatewayName: string): string;
   getGatewayStartEnv(): Record<string, string>;
   runCaptureOpenshell(args: string[], opts?: RunCaptureOpenshellOptions): string;
@@ -262,6 +270,11 @@ export async function startGatewayForRecovery(
   deps: GatewayRecoveryDeps,
 ): Promise<void> {
   const target = resolveGatewayRecoveryTarget(options);
+  // Guard every recovery branch, including the cross-port / non-default-name
+  // path below that reaches `openshell gateway start` without going through
+  // startGatewayWithOptions. Resolve and bind the requested target first: the
+  // process-global gateway can name a different port during sandbox recovery.
+  deps.assertGatewayStartAllowed(false, target);
   const linuxDockerDriverEnabled = (
     deps.isLinuxDockerDriverGatewayEnabled ?? isLinuxDockerDriverGatewayEnabled
   )();
