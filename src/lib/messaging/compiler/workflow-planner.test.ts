@@ -862,6 +862,37 @@ describe("MessagingWorkflowPlanner", () => {
     expect(rebuilt?.networkPolicy.entries).toMatchObject([
       { channelId: "voiceclaw", presetName: "voiceclaw" },
     ]);
+    expect(rebuilt?.credentialBindings).toContainEqual(
+      expect.objectContaining({
+        channelId: "voiceclaw",
+        providerName: "demo-voiceclaw-nvidia-speech",
+        providerEnvKey: "NVIDIA_API_KEY",
+        placeholder: "openshell:resolve:env:NVIDIA_API_KEY",
+      }),
+    );
+    expect(rebuilt?.buildSteps).toContainEqual({
+      channelId: "voiceclaw",
+      kind: "package-install",
+      outputId: "openclawVoiceCallPlugin",
+      required: true,
+      value: {
+        manager: "openclaw-plugin",
+        spec: "npm:@openclaw/voice-call@{{openclaw.version}}",
+        pin: true,
+      },
+    });
+    expect(rebuilt?.runtimeSetup?.nodePreloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: "voiceclaw",
+          module: "openclaw-nvidia-speech",
+        }),
+        expect.objectContaining({
+          channelId: "voiceclaw",
+          module: "openclaw-voicecall-gather-tts",
+        }),
+      ]),
+    );
 
     const removed = await planner().buildChannelRemovePlanFromSandboxEntry({
       sandboxName: "demo",
@@ -876,9 +907,13 @@ describe("MessagingWorkflowPlanner", () => {
     expect(removed).toMatchObject({
       workflow: "remove-channel",
       channels: [],
+      credentialBindings: [],
       networkPolicy: { presets: [], entries: [] },
       agentRender: [],
+      buildSteps: [],
+      runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       stateUpdates: [],
+      healthChecks: [],
     });
   });
 
