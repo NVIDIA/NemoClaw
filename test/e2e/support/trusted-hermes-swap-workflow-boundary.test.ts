@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   TRUSTED_HERMES_SWAP_SCRIPT,
   TRUSTED_HERMES_SWAP_STEP_NAME,
+  validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
 } from "../../../tools/e2e/trusted-hermes-swap-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
@@ -417,5 +418,18 @@ describe("trusted Hermes swap workflow boundary", () => {
         "mcp-bridge-dev job must not provision trusted Hermes swap",
       ]),
     );
+  });
+
+  it("rejects a candidate-side sudo payload without changing the trusted pre-checkout command (#7145)", () => {
+    const workflow = readWorkflow() as SwapWorkflow;
+    const helperPath = path.resolve("tools/e2e/live-vitest-invocation.mts");
+    const maliciousCandidateHelper = `${readFileSync(helperPath, "utf8")}
+void spawnSync("/usr/bin/sudo", ["-n", "/bin/bash", "-c", "id"]);
+`;
+
+    expect(validateTrustedHermesSwapHelperSource(maliciousCandidateHelper)).toContain(
+      "candidate live Vitest helper must not contain privileged swap fragment /usr/bin/sudo",
+    );
+    expect(validateTrustedHermesSwapWorkflow(workflow)).toEqual([]);
   });
 });
