@@ -69,10 +69,10 @@ function writeGatewayEnv(test: Fixture, contents = "OPENSHELL_SERVER_PORT=8080\n
 }
 
 function uninstall(test: Fixture, keepOpenShell: boolean, deps: Partial<UninstallRunDeps> = {}) {
+  const { commandExists = () => false, run = () => ok(), ...overrides } = deps;
   return runUninstallPlan(
     { assumeYes: true, deleteModels: false, keepOpenShell },
     {
-      commandExists: () => false,
       env: test.env,
       existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
       isTty: false,
@@ -88,9 +88,13 @@ function uninstall(test: Fixture, keepOpenShell: boolean, deps: Partial<Uninstal
         requiredCapabilities: [],
       }),
       rmSync: fs.rmSync,
-      run: () => ok(),
       runDocker: () => ok(),
-      ...deps,
+      ...overrides,
+      commandExists: (command) => command === "openshell" || commandExists(command),
+      run: (command, args, options) =>
+        command === "openshell" && args[0] === "gateway" && args[1] === "list"
+          ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+          : run(command, args, options),
     },
   );
 }
