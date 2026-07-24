@@ -421,6 +421,9 @@ Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 family is a conservative path boundary that includes non-documentation files
 under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
 policy, dependency and test configuration, and preparation and upload actions.
+Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
+the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
+through cold onboarding and a real first turn.
 The Deep Agents Code headless-inference check additionally selects the exact
 `ubuntu-repo-cloud-langchain-deepagents-code` typed target. That target is
 hashed into the risk plan beside the control-plane floor jobs, so the
