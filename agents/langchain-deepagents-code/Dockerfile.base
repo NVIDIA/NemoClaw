@@ -7,6 +7,21 @@
 # Node for NemoClaw build-time config generation, Python, shell tools, and a
 # hash-locked deepagents-code install with the NVIDIA provider extra.
 
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS perl-cve-backport-builder
+
+ARG DEBIAN_SNAPSHOT=20260724T000000Z
+ENV DEBIAN_FRONTEND=noninteractive
+
+COPY scripts/build-perl-cve-backport.sh /usr/local/bin/build-perl-cve-backport
+
+RUN chmod 0755 /usr/local/bin/build-perl-cve-backport \
+    && DEBIAN_SNAPSHOT="$DEBIAN_SNAPSHOT" /usr/local/bin/build-perl-cve-backport prepare
+
+COPY scripts/patches/perl/CVE-2026-12087.patch /opt/nemoclaw/perl-cve-patches/CVE-2026-12087.patch
+COPY scripts/patches/perl/CVE-2026-13221.patch /opt/nemoclaw/perl-cve-patches/CVE-2026-13221.patch
+
+RUN /usr/local/bin/build-perl-cve-backport build
+
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
@@ -34,6 +49,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ripgrep=14.1.1-1+b4 \
         vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=perl-cve-backport-builder /out/debs/ /tmp/perl-cve-debs/
+COPY --from=perl-cve-backport-builder /out/metadata/ /usr/local/share/nemoclaw/perl-cve-backport/
+
+# Install the patched Perl packages as one ABI-compatible cohort.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/perl-cve-debs/*.deb \
+    && for package in perl perl-base perl-modules-5.40 libperl5.40; do \
+        test "$(dpkg-query -W -f='${Version}' "$package")" = "5.40.1-8+nemoclaw1" \
+            || exit 1; \
+    done \
+    && perl -MSocket=pack_ip_mreq_source,INADDR_ANY -e \
+        'eval { pack_ip_mreq_source("\xe0\0\0\2", "\x0a", INADDR_ANY) }; die "short Socket source accepted\n" unless $@ =~ /Bad arg length/' \
+    && perl -e \
+        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+    && storable_so="$(find /usr/lib -path '*/auto/Storable/Storable.so' -type f -print -quit)" \
+    && test -n "$storable_so" \
+    && grep -aFq 'Invalid count of hook data items' "$storable_so" \
+    && chmod 0444 /usr/local/share/nemoclaw/perl-cve-backport/* \
+    && rm -rf /tmp/perl-cve-debs /var/lib/apt/lists/*
 
 # Node remains available to the managed terminal at runtime, so remediate
 # npm's private node-tar copy after curl is installed even though Deep Agents

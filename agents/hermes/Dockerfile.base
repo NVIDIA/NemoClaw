@@ -13,10 +13,26 @@
 # ── When to rebuild ─────────────────────────────────────────────
 #   1. Hermes version bump      — run scripts/update-hermes-agent.sh
 #   2. New apt package needed   — add it to the apt-get install list
-#   3. gosu upgrade             — update URL, checksum, and version
+#   3. gosu/Go toolchain upgrade — update source commit/archive checksum,
+#                                   Go version, and per-architecture Go hashes
 #   4. node:24-trixie-slim digest rot — update-docker-pin.sh updates all
 #   5. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
+
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS perl-cve-backport-builder
+
+ARG DEBIAN_SNAPSHOT=20260724T000000Z
+ENV DEBIAN_FRONTEND=noninteractive
+
+COPY scripts/build-perl-cve-backport.sh /usr/local/bin/build-perl-cve-backport
+
+RUN chmod 0755 /usr/local/bin/build-perl-cve-backport \
+    && DEBIAN_SNAPSHOT="$DEBIAN_SNAPSHOT" /usr/local/bin/build-perl-cve-backport prepare
+
+COPY scripts/patches/perl/CVE-2026-12087.patch /opt/nemoclaw/perl-cve-patches/CVE-2026-12087.patch
+COPY scripts/patches/perl/CVE-2026-13221.patch /opt/nemoclaw/perl-cve-patches/CVE-2026-13221.patch
+
+RUN /usr/local/bin/build-perl-cve-backport build
 
 FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c
 
@@ -61,6 +77,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --from=perl-cve-backport-builder /out/debs/ /tmp/perl-cve-debs/
+COPY --from=perl-cve-backport-builder /out/metadata/ /usr/local/share/nemoclaw/perl-cve-backport/
+
+# Install the patched Perl packages as one ABI-compatible cohort.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/perl-cve-debs/*.deb \
+    && for package in perl perl-base perl-modules-5.40 libperl5.40; do \
+        test "$(dpkg-query -W -f='${Version}' "$package")" = "5.40.1-8+nemoclaw1" \
+            || exit 1; \
+    done \
+    && perl -MSocket=pack_ip_mreq_source,INADDR_ANY -e \
+        'eval { pack_ip_mreq_source("\xe0\0\0\2", "\x0a", INADDR_ANY) }; die "short Socket source accepted\n" unless $@ =~ /Bad arg length/' \
+    && perl -e \
+        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+    && storable_so="$(find /usr/lib -path '*/auto/Storable/Storable.so' -type f -print -quit)" \
+    && test -n "$storable_so" \
+    && grep -aFq 'Invalid count of hook data items' "$storable_so" \
+    && chmod 0444 /usr/local/share/nemoclaw/perl-cve-backport/* \
+    && rm -rf /tmp/perl-cve-debs /var/lib/apt/lists/*
+
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 
@@ -70,19 +106,48 @@ COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# gosu for privilege separation (gateway vs sandbox user).
-# Identical to OpenClaw base — pinned to 1.19 with checksum.
+# gosu for privilege separation (gateway vs sandbox user). Build the pinned
+# 1.19 source with Go 1.26.5 instead of retaining the Go 1.24.6 release binary.
 # hadolint ignore=DL4006
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
-        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
-        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
+        amd64) go_asset="go1.26.5.linux-amd64.tar.gz"; go_sha256="5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053" ;; \
+        arm64) go_asset="go1.26.5.linux-arm64.tar.gz"; go_sha256="fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49" ;; \
         *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
-    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
-    && chmod +x /usr/local/bin/gosu \
-    && gosu --version
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o /tmp/go.tar.gz "https://go.dev/dl/${go_asset}" \
+    && echo "${go_sha256}  /tmp/go.tar.gz" | sha256sum -c - \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o /tmp/gosu.tar.gz \
+        "https://codeload.github.com/tianon/gosu/tar.gz/6456aaa0f3c854d199d0f037f068eb97515b7513" \
+    && echo "33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b  /tmp/gosu.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/go.tar.gz -C /tmp \
+    && tar -xzf /tmp/gosu.tar.gz -C /tmp \
+    && CGO_ENABLED=0 GOOS=linux "/tmp/go/bin/go" \
+        -C /tmp/gosu-6456aaa0f3c854d199d0f037f068eb97515b7513 build \
+        -trimpath -buildvcs=false -ldflags="-d -w" -o /usr/local/bin/gosu . \
+    && install -d -m 0755 /usr/local/share/licenses/gosu /usr/local/share/nemoclaw \
+    && install -m 0444 \
+        /tmp/gosu-6456aaa0f3c854d199d0f037f068eb97515b7513/LICENSE \
+        /usr/local/share/licenses/gosu/LICENSE \
+    && "/tmp/go/bin/go" version -m /usr/local/bin/gosu \
+        > /usr/local/share/nemoclaw/gosu-buildinfo.txt \
+    && "/tmp/go/bin/go" tool nm /usr/local/bin/gosu > /tmp/gosu.nm \
+    && ! grep -Eq 'crypto/(tls|x509)' /tmp/gosu.nm \
+    && printf '%s\n' \
+        'version=1.19' \
+        'source_commit=6456aaa0f3c854d199d0f037f068eb97515b7513' \
+        'source_sha256=33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b' \
+        'go_version=go1.26.5' \
+        > /usr/local/share/nemoclaw/gosu-source.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/gosu-buildinfo.txt \
+        /usr/local/share/nemoclaw/gosu-source.txt \
+    && /usr/local/bin/gosu --version | grep -F '1.19 (go1.26.5 on linux/' \
+    && rm -rf /tmp/go /tmp/go.tar.gz /tmp/gosu.tar.gz /tmp/gosu.nm \
+        /tmp/gosu-6456aaa0f3c854d199d0f037f068eb97515b7513
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # gateway is a member of the sandbox group so it can read Hermes config files

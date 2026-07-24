@@ -67,6 +67,26 @@
       "category": "security"
     },
     {
+      "file": "test/container-cve-remediation.test.ts",
+      "test": "binds the Perl backport script to the reviewed patch bytes",
+      "category": "security"
+    },
+    {
+      "file": "test/container-cve-remediation.test.ts",
+      "test": "builds gosu from one checksum-pinned source and patched Go toolchain",
+      "category": "security"
+    },
+    {
+      "file": "test/container-cve-remediation.test.ts",
+      "test": "installs and verifies the patched Perl cohort in every base image",
+      "category": "security"
+    },
+    {
+      "file": "test/container-cve-remediation.test.ts",
+      "test": "rebuilds base images when any remediation input changes",
+      "category": "security"
+    },
+    {
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
