@@ -129,12 +129,46 @@ describe("excludeSandboxBaseline (#7178)", () => {
 
   it("excludes with a bound digest when acknowledged via --force", async () => {
     await excludeSandboxBaseline("alpha", { key: "nous_research", force: true });
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Support impact: Hermes public metadata lookup and agent updates may stop working.",
+      ),
+    );
     expect(promptMock).not.toHaveBeenCalled();
     expect(excludeBaselineEntryMock).toHaveBeenCalledWith(
       "alpha",
       "nous_research",
       expect.any(String),
     );
+  });
+
+  it("discloses the affected feature before interactive acknowledgement", async () => {
+    promptMock.mockImplementation(async () => {
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Support impact: Hermes public metadata lookup and agent updates may stop working.",
+        ),
+      );
+      return "n";
+    });
+
+    await excludeSandboxBaseline("alpha", { key: "nous_research" });
+
+    expect(promptMock).toHaveBeenCalledOnce();
+    expect(excludeBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an entry has no reviewed feature disclosure", async () => {
+    vi.spyOn(policies, "getSandboxBaselineEntry").mockReturnValue({ name: "future_entry" });
+    const code = await captureExit(() =>
+      excludeSandboxBaseline("alpha", { key: "future_entry", force: true }),
+    );
+
+    expect(code).toBe(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("has no supported-feature impact disclosure"),
+    );
+    expect(excludeBaselineEntryMock).not.toHaveBeenCalled();
   });
 
   it("does not mutate on --dry-run", async () => {

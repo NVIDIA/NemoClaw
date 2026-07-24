@@ -19,9 +19,41 @@ export const BASELINE_EXCLUSION_SUPPORT_IMPACT =
 
 const PROTECTED_BASELINE_EXCLUSION_KEYS = new Set(["managed_inference"]);
 
+const BASELINE_EXCLUSION_FEATURE_IMPACTS: Readonly<
+  Record<string, Readonly<Record<string, string>>>
+> = {
+  openclaw: {
+    nvidia: "Direct NVIDIA API inference may stop working.",
+    openclaw_gateway_dialback:
+      "OpenClaw sessions_spawn and multi-agent delegation may stop working.",
+    clawhub: "ClawHub authentication and skill or plugin discovery may stop working.",
+    openclaw_api: "OpenClaw authentication and plugin discovery may stop working.",
+    openclaw_docs: "In-sandbox access to OpenClaw documentation may stop working.",
+    npm_registry: "OpenClaw plugin installation from npm may stop working.",
+  },
+  hermes: {
+    nvidia: "Direct NVIDIA API inference may stop working.",
+    nous_research: "Hermes public metadata lookup and agent updates may stop working.",
+    pypi: "Hermes skill or plugin dependency installation through pip may stop working.",
+  },
+  "langchain-deepagents-code": {
+    github: "Git operations and GitHub API or source access may stop working.",
+    pypi: "Python package installation through pip may stop working.",
+  },
+};
+
 /** Baseline entries that remain mandatory for the managed sandbox contract. */
 export function isProtectedBaselineExclusionKey(key: string): boolean {
   return PROTECTED_BASELINE_EXCLUSION_KEYS.has(key);
+}
+
+/**
+ * Entry-specific supported features that an exclusion can disable. Missing
+ * metadata must block exclusion so a newly added baseline entry cannot bypass
+ * the operator disclosure requirement.
+ */
+export function getBaselineExclusionFeatureImpact(agent: string, key: string): string | null {
+  return BASELINE_EXCLUSION_FEATURE_IMPACTS[agent]?.[key] ?? null;
 }
 
 export interface BaselineExclusionRequest {

@@ -41,8 +41,8 @@ import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config"
 import { getMessagingToken } from "../../onboard/messaging-token";
 import * as policies from "../../policy";
 import {
-  BASELINE_EXCLUSION_SUPPORT_IMPACT,
   digestBaselineEntry,
+  getBaselineExclusionFeatureImpact,
   isProtectedBaselineExclusionKey,
   listBaselineEntryKeys,
   renderBaselineEntryScope,
@@ -1780,12 +1780,20 @@ async function excludeSandboxBaselineUnlocked(
     process.exit(1);
   }
 
+  const featureImpact = getBaselineExclusionFeatureImpact(baseline.agent, key);
+  if (!featureImpact) {
+    console.error(
+      `  Baseline entry '${key}' has no supported-feature impact disclosure and cannot be excluded safely.`,
+    );
+    process.exit(1);
+  }
+
   printBaselineEntryScope(
     `  Excluding baseline entry '${key}' from '${sandboxName}' removes:`,
     key,
     entry,
   );
-  console.log(`  ${YW}${BASELINE_EXCLUSION_SUPPORT_IMPACT}${R}`);
+  console.log(`  ${YW}Support impact: ${featureImpact}${R}`);
 
   const digest = digestBaselineEntry(entry);
   if (dryRun) {
