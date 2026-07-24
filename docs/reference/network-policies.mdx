@@ -304,7 +304,9 @@ $$nemoclaw <sandbox-name> policy exclude <key> --dry-run
 $$nemoclaw <sandbox-name> policy exclude <key> --force
 ```
 
-The command prints every endpoint, method/path rule, and binary the exclusion removes, and requires explicit acknowledgement (`--force` in non-interactive use).
+The command prints every endpoint, method/path rule, and binary the exclusion removes.
+It also names the supported features that may stop working before it requires explicit acknowledgement (`--force` in non-interactive use).
+NemoClaw refuses to exclude an entry that does not have a reviewed feature-impact disclosure, so a new baseline entry cannot bypass this review.
 The versioned exclusion record is bound to the reviewed entry content and active agent, recorded in the sandbox registry, and replayed on rebuild.
 If the sandbox's active agent changes, NemoClaw requires you to clear or review the exclusion again instead of applying an approval from another agent baseline.
 NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies the exact live result before publishing the durable intent.

@@ -1828,6 +1828,8 @@ Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox
 ### `$$nemoclaw <name> policy exclude`
 
 Persistently exclude one exact entry from the agent baseline policy after previewing the egress and support impact that the change removes.
+The preview names the supported features that may stop working.
+The command refuses an entry that does not have a reviewed feature-impact disclosure.
 The versioned exclusion record is bound to the reviewed baseline content and active agent, then replayed during rebuild.
 If the active agent or entry changes, rebuild fails closed until you clear or review the exclusion again.
 The command refuses to exclude a key that an applied preset already owns, because removing that live key would also remove the preset's access.
