@@ -3816,11 +3816,10 @@ export async function startPrGate(
         token,
         FORK_E2E_AUTHORIZATION_TITLE,
         [
-          `This fork PR diff (PR SHA \`${command.headSha}\`, base SHA \`${ciIdentity.baseSha}\`) selected credential-bearing E2E checks (${selectionSummary}).`,
+          `Review scope: PR #${pull.number}; head repository \`${command.headRepository}\`; head SHA \`${command.headSha}\`; base SHA \`${ciIdentity.baseSha}\`; ${selectionSummary}; deterministic plan \`${plan.planHash}\`.`,
           "No selected E2E job or target ran. No repository credential was exposed to fork code.",
           `An authorized E2E reviewer must review the exact fork code and risk plan. Open ${gateRunLink}, choose Review deployments, and approve the \`${FORK_E2E_APPROVAL_ENVIRONMENT}\` environment. Approval authorizes the selected fork code to run with E2E credentials. GitHub records the reviewer and optional comment.`,
           "If Review deployments is absent, configure the protected environment. Then, update the PR to create a new PR SHA and run fresh PR CI.",
-          `Deterministic plan: \`${plan.planHash}\`.`,
         ].join("\n\n"),
       );
       emitE2EApprovalOutputs(

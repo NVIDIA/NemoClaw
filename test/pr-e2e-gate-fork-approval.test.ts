@@ -384,6 +384,12 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(JSON.stringify(pending?.body)).toContain(
         "Approval authorizes the selected fork code to run with E2E credentials.",
       );
+      expect(JSON.stringify(pending?.body)).toContain("Review scope: PR #42");
+      expect(JSON.stringify(pending?.body)).toContain("head repository `contributor/NemoClaw`");
+      expect(JSON.stringify(pending?.body)).toContain(`head SHA \`${HEAD_SHA}\``);
+      expect(JSON.stringify(pending?.body)).toContain(`base SHA \`${BASE_SHA}\``);
+      expect(JSON.stringify(pending?.body)).toContain("jobs:");
+      expect(JSON.stringify(pending?.body)).toContain("deterministic plan");
       expect(fs.readFileSync(outputPath, "utf8")).toContain(
         [
           "approval_mode=start-approved-fork",
