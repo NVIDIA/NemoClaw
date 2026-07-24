@@ -930,12 +930,12 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 RUN --mount=type=bind,from=openclaw-runtime-payload,source=/,target=/run/nemoclaw-payload \
     /bin/bash -euo pipefail -c ' \
         payload_metadata_before="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts \
         )"; \
         tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
             | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
         payload_metadata_after="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts \
         )"; \
         [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
             || { echo "ERROR: runtime payload changed parent directory ownership or mode" >&2; exit 1; } \

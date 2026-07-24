@@ -34,7 +34,8 @@ describe("OpenClaw final image layout", () => {
       {
         stage: "openclaw-runtime-payload",
         copies: 19,
-        metadata: "/ /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw",
+        metadata:
+          "/ /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts",
       },
     ] as const;
 
