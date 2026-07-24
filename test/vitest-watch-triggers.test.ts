@@ -40,6 +40,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/spark-install-workflow-boundary.test.ts",
+  "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
   "test/e2e/support/tunnel-lifecycle-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
   "test/e2e/support/workflow-plan.test.ts",
