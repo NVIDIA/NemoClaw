@@ -586,19 +586,38 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
 }
 
 const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
+const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
 
 function normalizeOpenshellStructuredError(value: string): string {
   return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-function isExactlyRetryableOpenshellSandboxNotReady(
-  result: ReturnType<typeof captureOpenshell>,
-): boolean {
+function hasRetryableOpenshellResultShape(result: ReturnType<typeof captureOpenshell>): boolean {
   return (
     result.status === 1 &&
     !result.error &&
     String(result.stdout ?? "").trim() === "" &&
-    normalizeOpenshellStructuredError(String(result.stderr ?? "")) === OPENSHELL_SANDBOX_NOT_READY
+    String(result.stderr ?? "").trim() !== ""
+  );
+}
+
+function isRetryableOpenshellReRegistrationState(
+  result: ReturnType<typeof captureOpenshell>,
+): boolean {
+  if (!hasRetryableOpenshellResultShape(result)) return false;
+  const error = normalizeOpenshellStructuredError(String(result.stderr));
+  if (error === OPENSHELL_SANDBOX_NOT_READY) return true;
+
+  // OpenShell 0.0.85 can keep the recreated sandbox's cached phase at Ready
+  // while its replacement supervisor session is still registering. Its exec
+  // RPC waits 15 seconds for that session, then returns one of these specific
+  // Unavailable errors. Both are control-plane re-registration states; all
+  // other OpenShell failures remain terminal.
+  return (
+    error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
+    error.includes("supervisor relay failed: status: Unavailable") &&
+    (error.includes("supervisor session not connected") ||
+      error.includes("supervisor session disconnected"))
   );
 }
 
@@ -694,7 +713,7 @@ function waitForRecreatedSandboxOpenShellReadyResult(
       timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
     });
     if (result.status === 0 && !result.error) return { ready: true };
-    if (!isExactlyRetryableOpenshellSandboxNotReady(result)) {
+    if (!isRetryableOpenshellReRegistrationState(result)) {
       return { failure: "openshell-readiness-failure", ready: false };
     }
     if (attempt === maxAttempts) {

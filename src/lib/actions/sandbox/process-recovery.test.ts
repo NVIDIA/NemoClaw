@@ -13,13 +13,21 @@ import {
 const OPENSHELL_SANDBOX_NOT_READY_STDERR = `Error:   × code: 'The system is not in a state required for the operation's
   │ execution', message: "sandbox is not ready"
 `;
+const OPENSHELL_SUPERVISOR_NOT_CONNECTED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "supervisor
+  │ relay failed: status: Unavailable, message: \\"supervisor session not
+  │ connected\\", details: [], metadata: MetadataMap { headers: {} }"
+`;
+const OPENSHELL_SUPERVISOR_DISCONNECTED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "supervisor
+  │ relay failed: status: Unavailable, message: \\"supervisor session
+  │ disconnected\\", details: [], metadata: MetadataMap { headers: {} }"
+`;
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it("retries only the structured not-ready state until OpenShell accepts the sandbox", () => {
+  it("retries the structured not-ready state until OpenShell accepts the sandbox", () => {
     const notReady = {
       status: 1,
       output: OPENSHELL_SANDBOX_NOT_READY_STDERR.trim(),
@@ -52,6 +60,38 @@ describe("recreated sandbox OpenShell readiness", () => {
         includeStreams: true,
       }),
     );
+    expect(beforeProbe).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([3, 3]);
+  });
+
+  it("retries the exact supervisor reconnect states exposed during direct recreation", () => {
+    const reconnecting = [
+      OPENSHELL_SUPERVISOR_NOT_CONNECTED_STDERR,
+      OPENSHELL_SUPERVISOR_DISCONNECTED_STDERR,
+    ].map((stderr) => ({
+      status: 1,
+      output: stderr.trim(),
+      stdout: "",
+      stderr,
+    }));
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce(reconnecting[0])
+      .mockReturnValueOnce(reconnecting[1])
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(true);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
     expect(beforeProbe).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([3, 3]);
   });
