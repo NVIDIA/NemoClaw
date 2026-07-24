@@ -42,12 +42,15 @@ Review the [Prerequisites](prerequisites) before you begin.
 
     ```bash
     export NEMOCLAW_AGENT=langchain-deepagents-code
+    export NEMOCLAW_SANDBOX_NAME=my-deepagents
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    Choose an inference provider and model, provide its credential when prompted, and give the sandbox a name such as `my-deepagents`.
+    If the installer offers Express, you can accept it to use managed local inference for that platform.
+    Otherwise, choose an inference provider and model, then provide its credential when prompted.
+    The install command uses `my-deepagents` as the sandbox name.
     Accept the suggested network policy tier for a first run.
   </Step>
 
@@ -69,22 +72,32 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 </Steps>
 
-## Considerations
+## Installation and Runtime Details
 
-Use these details after the first sandbox is running.
+Use these details when you need more control during setup or after the first sandbox is running.
 
 <AccordionGroup>
+  <Accordion title="Use Docker and supported platforms">
+    Review [Prerequisites](prerequisites) for Docker requirements and the setup-oriented platform table.
+    If the installer prints a `newgrp docker` command, run that command before you retry the installer.
+    On macOS, start Docker Desktop or Colima first.
+
+    Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
+    Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
+
+    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
+    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+
+    Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles, Station choices, and headless setup.
+    Refer to [Platform Support](../reference/platform-support) for current validation status.
+  </Accordion>
+
   <Accordion title="Onboarding and runtime behavior">
 
 ### Installation and Onboarding Details
 
 The hosted installer follows the last-known-good (`lkg`) release tag by default, so the install command selects the maintained Deep Agents-capable build without a version override.
 If NemoClaw is already installed, run `nemo-deepagents onboard` to start Deep Agents onboarding directly.
-
-On Linux, install Docker, start it, and confirm that the current shell can reach it before onboarding builds the sandbox image.
-The installer can install Docker, start the service, and add your user to the `docker` group.
-If it changes group membership, run the printed `newgrp docker` command before rerunning the installer.
-On macOS, start Docker Desktop or Colima before you run the installer.
 
 You can use the canonical agent ID or a short alias instead of `nemo-deepagents`.
 

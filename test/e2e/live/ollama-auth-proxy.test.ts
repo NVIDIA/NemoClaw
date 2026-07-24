@@ -8,17 +8,20 @@
  * persisted token, container reachability, and token-divergence repair logic.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-
+import { type ChildProcessOwner, ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const PROXY_SCRIPT = path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.mts");
@@ -48,35 +51,71 @@ function token(): string {
   return randomBytes(24).toString("hex");
 }
 
+const childOwners = new WeakMap<ChildProcess, ChildProcessOwner>();
+const loggedArtifactWrites = new WeakMap<ChildProcess, Promise<void>>();
+const CHILD_PROCESS_OWNER_OPTIONS = {
+  forceTimeoutMs: 3_000,
+  gracefulTimeoutMs: 3_000,
+} as const;
+
 async function terminate(child: ChildProcess | undefined): Promise<void> {
-  if (!child || child.killed || child.exitCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      if (!child.killed && child.exitCode === null) child.kill("SIGKILL");
-      resolve();
-    }, 3_000);
-    child.once("exit", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
+  if (!child) return;
+  const owner = childOwners.get(child) ?? ownChildProcess(child, CHILD_PROCESS_OWNER_OPTIONS);
+  await owner.terminate();
+  await loggedArtifactWrites.get(child);
 }
 
 function spawnLogged(
   command: string,
   args: string[],
-  logPath: string,
+  artifacts: ArtifactSink,
+  artifactName: string,
   env: NodeJS.ProcessEnv,
+  progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability,
+  activityName: string,
 ): ChildProcess {
-  fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  const out = fs.openSync(logPath, "a");
-  const child = spawn(command, args, {
-    cwd: REPO_ROOT,
-    env: { ...process.env, ...env },
-    stdio: ["ignore", out, out],
+  try {
+    progress.event(`command ${activityName} started`);
+  } catch {
+    // Progress diagnostics must never change process execution.
+  }
+  const child = spawnObservedChild(command, args, {
+    activityLabel: `command: ${activityName}`,
+    progress,
+    spawn: {
+      cwd: REPO_ROOT,
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   });
-  child.once("exit", () => fs.closeSync(out));
+  childOwners.set(child, ownChildProcess(child, CHILD_PROCESS_OWNER_OPTIONS));
+  const outputLimit = 1024 * 1024;
+  let stdout = "";
+  let stderr = "";
+  const append = (current: string, chunk: Buffer): string =>
+    `${current}${chunk.toString("utf8")}`.slice(-outputLimit);
+  const observe = (stream: "stdout" | "stderr", chunk: Buffer): void => {
+    if (stream === "stdout") stdout = append(stdout, chunk);
+    else stderr = append(stderr, chunk);
+  };
+  child.stdout?.on("data", (chunk: Buffer) => observe("stdout", chunk));
+  child.stderr?.on("data", (chunk: Buffer) => observe("stderr", chunk));
+  const artifactWrite = new Promise<void>((resolve, reject) => {
+    child.once("close", () => {
+      void Promise.all([
+        artifacts.writeText(`process/${artifactName}.stdout.txt`, stdout),
+        artifacts.writeText(`process/${artifactName}.stderr.txt`, stderr),
+      ]).then(() => resolve(), reject);
+    });
+  });
+  loggedArtifactWrites.set(child, artifactWrite);
+  child.once("close", () => {
+    try {
+      progress.event(`command ${activityName} stopped`);
+    } catch {
+      // Progress diagnostics must never change process cleanup.
+    }
+  });
   return child;
 }
 
@@ -155,7 +194,19 @@ function readTokenFileChecked(tokenFile: string): { mode: string; token: string 
 
 test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and recovers", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host }) => {
+  meta: {
+    e2ePhases: [
+      "confirm proxy script Node and curl prerequisites",
+      "install and start Ollama with the test model",
+      "start the tokenized Ollama auth proxy",
+      "enforce proxy authentication",
+      "proxy OpenAI and native Ollama inference",
+      "restart the proxy with its persisted token",
+      "prove the container network boundary",
+      "repair divergent token state",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress }) => {
   await artifacts.target.declare({
     id: "ollama-auth-proxy",
     boundary: "real host Ollama + real Node auth proxy + curl + optional Docker reachability",
@@ -198,6 +249,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   });
   await expectCommandZero(curlVersion, "curl --version");
 
+  progress.phase("install and start Ollama with the test model");
   const ollamaExists = await host.command("bash", ["-lc", "command -v ollama"], {
     artifactName: "phase-2-command-v-ollama",
     env: commandEnv(),
@@ -235,9 +287,15 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
     },
   );
 
-  ollama = spawnLogged("ollama", ["serve"], artifacts.pathFor("ollama.log"), {
-    OLLAMA_HOST: `127.0.0.1:${OLLAMA_PORT}`,
-  });
+  ollama = spawnLogged(
+    "ollama",
+    ["serve"],
+    artifacts,
+    "ollama",
+    { OLLAMA_HOST: `127.0.0.1:${OLLAMA_PORT}` },
+    progress,
+    "ollama-serve",
+  );
   await new Promise((resolve) => setTimeout(resolve, 3_000));
   const tagsStatus = await curlStatus(host, `http://127.0.0.1:${OLLAMA_PORT}/api/tags`, {
     artifactName: "phase-2-ollama-tags-status",
@@ -251,14 +309,24 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   });
   await expectCommandZero(pull, `ollama pull ${MODEL}`);
 
+  progress.phase("start the tokenized Ollama auth proxy");
   const proxyToken = token();
+  artifacts.addRedactionValues([proxyToken]);
   fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
   await writeFile(tokenFile, `${proxyToken}\n`, { mode: 0o600 });
-  proxy = spawnLogged("node", [PROXY_SCRIPT], artifacts.pathFor("ollama-auth-proxy.log"), {
-    OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
-    OLLAMA_PROXY_PORT: String(PROXY_PORT),
-    OLLAMA_PROXY_TOKEN: proxyToken,
-  });
+  proxy = spawnLogged(
+    "node",
+    [PROXY_SCRIPT],
+    artifacts,
+    "ollama-auth-proxy",
+    {
+      OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+      OLLAMA_PROXY_PORT: String(PROXY_PORT),
+      OLLAMA_PROXY_TOKEN: proxyToken,
+    },
+    progress,
+    "ollama-auth-proxy",
+  );
   await new Promise((resolve) => setTimeout(resolve, 2_000));
 
   const correctAuth = `Bearer ${proxyToken}`;
@@ -267,6 +335,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   });
   expect(aliveStatus).toMatch(/^[1-9][0-9]{2}$/u);
 
+  progress.phase("enforce proxy authentication");
   expect(
     await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/generate`, {
       artifactName: "phase-4-unauthenticated-generate-status",
@@ -294,6 +363,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
     }),
   ).toBe("401");
 
+  progress.phase("proxy OpenAI and native Ollama inference");
   const chatPayload = JSON.stringify({
     model: MODEL,
     messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
@@ -327,6 +397,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   expect(persistedTokenFile.mode).toBe("600");
   expect(persistedTokenFile.token).toBe(proxyToken);
 
+  progress.phase("restart the proxy with its persisted token");
   await terminate(proxy);
   proxy = undefined;
   const deadStatus = await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/tags`, {
@@ -338,12 +409,15 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   proxy = spawnLogged(
     "node",
     [PROXY_SCRIPT],
-    artifacts.pathFor("ollama-auth-proxy-restarted.log"),
+    artifacts,
+    "ollama-auth-proxy-restarted",
     {
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
       OLLAMA_PROXY_PORT: String(PROXY_PORT),
       OLLAMA_PROXY_TOKEN: persistedToken,
     },
+    progress,
+    "ollama-auth-proxy-restarted",
   );
   await new Promise((resolve) => setTimeout(resolve, 2_000));
   expect(
@@ -364,6 +438,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   await expectCommandZero(recover, "chat completions after proxy restart");
   expect(JSON.parse(recover.stdout).choices).toBeTruthy();
 
+  progress.phase("prove the container network boundary");
   const dockerInfo = await host.command("docker", ["info"], {
     artifactName: "phase-8-docker-info",
     env: commandEnv(),
@@ -420,7 +495,9 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
     expect(directBackendReachability.exitCode, resultText(directBackendReachability)).not.toBe(0);
   }
 
+  progress.phase("repair divergent token state");
   const divergentToken = `divergent-${token()}`;
+  artifacts.addRedactionValues([divergentToken]);
   await writeFile(tokenFile, `${divergentToken}\n`, { mode: 0o600 });
   const oldTokenModels = await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/v1/models`, {
     artifactName: "phase-9-old-token-models-status",
@@ -437,12 +514,15 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   proxy = spawnLogged(
     "node",
     [PROXY_SCRIPT],
-    artifacts.pathFor("ollama-auth-proxy-divergent.log"),
+    artifacts,
+    "ollama-auth-proxy-divergent",
     {
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
       OLLAMA_PROXY_PORT: String(PROXY_PORT),
       OLLAMA_PROXY_TOKEN: divergentToken,
     },
+    progress,
+    "ollama-auth-proxy-divergent",
   );
   await new Promise((resolve) => setTimeout(resolve, 2_000));
   expect(

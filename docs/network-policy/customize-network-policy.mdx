@@ -26,7 +26,7 @@ Refer to [Agent cannot reach a host-side HTTP service](../reference/troubleshoot
 <Warning>
 Adding a host to the egress policy permits a connection only when the endpoint, port, method, and binary rules match.
 OpenShell still applies SSRF protection separately, so it can deny a request when the final address resolves to a loopback, private, link-local, or otherwise blocked internal range.
-If a package installer or browser runtime download still fails with an SSRF-style denial after you add the public host, install that binary into the sandbox image at build time with [`$$nemoclaw onboard --from`](/reference/commands#--from-dockerfile) instead of relying on runtime egress.
+If a package installer or browser runtime download still fails with an SSRF-style denial after you add the public host, install that binary into the sandbox image at build time with [`$$nemoclaw onboard --from`](../reference/commands#--from-dockerfile) instead of relying on runtime egress.
 </Warning>
 
 ## Prerequisites
@@ -148,6 +148,64 @@ Provider-composed `_provider_*` entries are excluded because OpenShell reserves 
 Existing presets and the baseline remain in place.
 The preset file under `presets/` also persists across sandbox recreations.
 
+### Custom Recipe for Raw TLS Passthrough with `tls: skip`
+
+OpenShell's egress proxy terminates TLS for allowed HTTPS endpoints so it can inspect traffic.
+The proxy creates a new TLS connection to the upstream, including for endpoints with `access: full`.
+Some Cloudflare-fronted upstreams reset that new handshake.
+The host remains allowed, but clients report `ECONNRESET` or a TLS error such as `curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL`.
+Protocols that require direct TLS negotiation can fail in the same way.
+For example, WhatsApp's HTTP/1.1-only Noise-over-WebSocket handshake cannot use the proxy's HTTP/2 ALPN negotiation.
+
+Use a raw L4 CONNECT tunnel when the endpoint requires direct TLS negotiation.
+Set `access: full` and `tls: skip`.
+The proxy passes the encrypted bytes without modification, and the sandbox client negotiates TLS with the upstream:
+
+```yaml
+preset:
+  name: cf-fronted-api
+  description: "Cloudflare-fronted API that resets re-originated TLS"
+network_policies:
+  cf_fronted_api:
+    name: cf_fronted_api
+    endpoints:
+      - host: api.example.com
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/local/bin/node }
+```
+
+Save the file as `nemoclaw-blueprint/policies/presets/cf-fronted-api.yaml`.
+The filename without `.yaml` must match `preset.name`.
+Apply the catalog preset to the running sandbox by name:
+
+```bash
+$$nemoclaw my-assistant policy-add cf-fronted-api
+```
+
+The preset catalog reads `preset.name`, but `policy-add <name>` loads `presets/<name>.yaml`.
+If these values differ, the catalog can list a preset that `policy-add` cannot load.
+After you edit the preset file, run the same command again.
+`policy-add` compares the preset with the live policy and applies the changed content.
+
+The maintained `whatsapp` channel preset uses this structure for `web.whatsapp.com`.
+Refer to `src/lib/messaging/channels/whatsapp/policy/openclaw.yaml` for an example.
+It combines `tls: skip` tunnel endpoints with inspected `protocol: rest` endpoints.
+
+<Warning>
+`tls: skip` disables L7 inspection and egress-boundary credential resolution for that endpoint.
+The proxy cannot filter the HTTP method, path, or body after it creates the tunnel.
+Endpoint `rules` therefore cannot constrain what the agent sends through the tunnel.
+The proxy also cannot replace an OpenShell credential placeholder inside the encrypted request.
+This recipe does not unblock endpoints that require both raw passthrough and egress-boundary credential resolution.
+The declared host, port, and `binaries` scope remain in effect.
+Use `tls: skip` only for the exact hosts that require raw passthrough.
+Do not use a broad wildcard.
+Keep L7 inspection for every endpoint that supports it.
+</Warning>
+
 ### Custom Recipe: URL-Based MCP Server
 
 Adding a Streamable HTTP MCP server URL to OpenClaw (for example `https://mcp.example.com/mcp`) can result in the sandbox proxy denying the CONNECT tunnel with `HTTP 403 Forbidden` because the target host is not in the default allowlist.
@@ -183,13 +241,15 @@ network_policies:
       - { path: /usr/local/bin/node }
 ```
 
-Save it under `nemoclaw-blueprint/policies/presets/my-mcp.yaml` and apply it to the running sandbox:
+Save it as `nemoclaw-blueprint/policies/presets/my-mcp.yaml`.
+The filename without `.yaml` must match `preset.name`.
+Apply it to the running sandbox by name:
 
 ```bash
-$$nemoclaw my-assistant policy-add --from-file nemoclaw-blueprint/policies/presets/my-mcp.yaml
+$$nemoclaw my-assistant policy-add my-mcp
 ```
 
-NemoClaw prompts for confirmation because the preset targets a custom host that is not part of the vetted allowlist, then reports `Widening sandbox egress — adding: mcp.example.com`.
+NemoClaw previews the effective egress scope that the preset would open, including `mcp.example.com`, and prompts for confirmation before applying.
 For a publicly routed host that passes the separate SSRF checks, re-invoke the MCP tool and confirm that the CONNECT tunnel to `mcp.example.com:443` succeeds.
 
 <Note>

@@ -27,9 +27,8 @@ Read its comment and verify each claim against code, tests, and workflow evidenc
 Apply a confirmed problem to the related gate. Ask the user about ambiguous or design-changing advice.
 Advisor labels, absence, and comment source do not affect `check-gates.ts` or `allPass`.
 
-Apply [NemoClaw Technical English](../../../CONTRIBUTING.md#nemoclaw-technical-english) to changed comments, test titles, PR discussion, changelog entries, and Announcements.
-During the changed-text pilot, a language finding blocks only when ambiguity can change behavior, security, data safety, test meaning, or release meaning.
-Treat other findings as suggestions and include a proposed rewrite.
+Follow the [NemoClaw Writing Guide](../../../WRITING.md) for changed comments, test titles, PR discussion, changelog entries, and Announcements.
+The guide defines which language findings can block and how to write a suggestion.
 
 ## Quality expectations (block if violated, but fixable via salvage)
 
@@ -67,7 +66,7 @@ Delete the released label when no open item has it. Do not rename or reuse it.
 ## Not priorities
 
 - **Code style and formatting** — Do not block or delay a PR for style. Do not change unrelated formatting.
-- **Unrelated language cleanup** — Do not expand the PR beyond changed text during the technical-English pilot.
+- **Unrelated language cleanup** — Do not expand the PR beyond changed text.
 - **Documentation completeness** — not required for approval unless the PR changes user-facing behavior.
 - **Architecture style** — Reduce future merge conflicts. Do not add style-only refactors.
 

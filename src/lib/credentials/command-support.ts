@@ -3,6 +3,9 @@
 
 import { recoverNamedGatewayRuntime } from "../actions/global";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
+import { GATEWAY_PORT } from "../core/ports";
+import { resolveGatewayName } from "../onboard/gateway-binding";
+import { resolveGatewayCredentialMutationAuthority } from "../onboard/gateway-teardown-authority";
 
 export { isBridgeProviderName } from "./provider-list";
 
@@ -30,6 +33,15 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
   ];
 }
 
+export function credentialsGatewayAuthorityFailureLines(error: unknown): string[] {
+  const detail = error instanceof Error ? error.message : String(error);
+  return [
+    "  Refusing to change provider credentials because the gateway lifecycle authority could not be revalidated.",
+    `  ${detail}`,
+    `  Run '${CLI_NAME} onboard' to bind the current gateway authority before retrying.`,
+  ];
+}
+
 export async function recoverGatewayOrExit(
   kind: "query" | "reach",
   reportFailure: (lines: readonly string[]) => void = (lines) =>
@@ -40,4 +52,22 @@ export async function recoverGatewayOrExit(
 
   reportFailure(credentialsGatewayRecoveryFailureLines(kind));
   return false;
+}
+
+export async function recoverGatewayForCredentialMutationOrExit(
+  reportFailure: (lines: readonly string[]) => void = (lines) =>
+    lines.forEach((line) => console.error(line)),
+): Promise<boolean> {
+  if (!(await recoverGatewayOrExit("reach", reportFailure))) return false;
+
+  try {
+    resolveGatewayCredentialMutationAuthority({
+      gatewayName: resolveGatewayName(GATEWAY_PORT),
+      gatewayPort: GATEWAY_PORT,
+    });
+    return true;
+  } catch (error) {
+    reportFailure(credentialsGatewayAuthorityFailureLines(error));
+    return false;
+  }
 }

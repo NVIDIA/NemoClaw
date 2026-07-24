@@ -49,7 +49,7 @@ import {
   verifyRebuildHermesOldBaseFixture,
 } from "./rebuild-hermes-old-base-fixture.ts";
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
-import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
+import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
@@ -90,6 +90,7 @@ const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
 const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
+const PRE_REBUILD_API_SERVER_KEY = createHash("sha256").update(MARKER_CONTENT).digest("hex");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
@@ -130,7 +131,7 @@ const DOCKER_PULL_TIMEOUT_MS = 20 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 const SANDBOX_CREATE_TIMEOUT_MS = 10 * 60_000;
 const REBUILD_TIMEOUT_MS = 45 * 60_000;
-const LIVE_TIMEOUT_MS = 100 * 60_000;
+const LIVE_TIMEOUT_MS = 70 * 60_000;
 // Long Docker and onboard commands can become noisy when they wedge. Keep a
 // generous diagnostic tail without letting a stuck child exhaust the hosted
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.
@@ -304,7 +305,7 @@ async function bestEffortPrecleanHermesResources(
   await host.nemoclaw([SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
     artifactName: `${artifactName}-nemoclaw-destroy`,
     env: testEnv(apiKey),
-    redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN],
+    redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
     timeoutMs: 3 * 60_000,
   });
   await host.command(
@@ -328,7 +329,7 @@ async function bestEffortPrecleanHermesResources(
         CURRENT_BASE_REUSE_TAG,
         OLD_BASE_TAG,
       }),
-      redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN],
+      redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
       timeoutMs: 3 * 60_000,
     },
   );
@@ -343,7 +344,7 @@ function hermesCleanupEnv(apiKey: string | undefined): NodeJS.ProcessEnv {
 }
 
 function hermesCleanupRedactions(apiKey: string | undefined): string[] {
-  return [apiKey ?? "", DISCORD_FAKE_TOKEN];
+  return [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
 }
 
 async function cleanupHermesNemoClawSandbox(
@@ -419,7 +420,7 @@ async function waitForSandboxReady(
     const list = await host.command("openshell", ["sandbox", "list"], {
       artifactName: `${artifactPrefix}-sandbox-list-${attempt}`,
       env: testEnv(apiKey),
-      redactionValues: [apiKey],
+      redactionValues: [apiKey, PRE_REBUILD_API_SERVER_KEY],
       timeoutMs: 30_000,
     });
     switch (new RegExp(`${SANDBOX_NAME}.*Ready`).test(resultText(list))) {
@@ -627,12 +628,11 @@ test(STALE_BASE_REBUILD
   ? "rebuild-hermes: stale base cache is refreshed while Hermes state survives rebuild"
   : "rebuild-hermes: historical base rebuild preserves messaging state and selects current base", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: { e2ePhases: REBUILD_HERMES_PHASES },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-  const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
+  const redactionValues = [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
   const expectedVersion = expectedHermesVersion();
-  const progress = startRebuildHermesProgress("setup");
-  cleanup.trackDisposable("stop Hermes rebuild progress", progress.stop);
 
   const registrySnapshot = snapshotFile(REGISTRY_FILE);
   const sessionSnapshot = snapshotFile(SESSION_FILE);
@@ -754,9 +754,8 @@ test(STALE_BASE_REBUILD
   cleanup.trackDisposable(`destroy Hermes rebuild sandbox ${SANDBOX_NAME}`, () =>
     cleanupHermesNemoClawSandbox(host, apiKey),
   );
-  cleanup.trackDisposable("mark Hermes rebuild cleanup progress", () => progress.phase("cleanup"));
 
-  progress.phase("phase 1 current onboard");
+  progress.phase("onboard the current Hermes sandbox");
   const cliProbe = await host.nemoclaw(["--help"], {
     artifactName: "phase-1-cli-probe",
     env: testEnv(apiKey),
@@ -855,7 +854,7 @@ test(STALE_BASE_REBUILD
     timeoutMs: OPENSHELL_TIMEOUT_MS,
   });
 
-  progress.phase("phase 2 old base fixture pull");
+  progress.phase("pull and verify the historical Hermes base fixture");
   const pullOldBase = await host.command(
     "docker",
     ["pull", REBUILD_HERMES_OLD_BASE_FIXTURE.imageRef],
@@ -971,6 +970,7 @@ test(STALE_BASE_REBUILD
     buildRebuildHermesOldSandboxDockerfile({
       baseTag: OLD_BASE_TAG,
       baseResolutionMetadata: STALE_BASE_REBUILD ? oldBaseResolutionMetadata : null,
+      apiServerKey: PRE_REBUILD_API_SERVER_KEY,
       discordPlaceholder: DISCORD_PLACEHOLDER,
       kanbanTaskTitle: KANBAN_TASK_TITLE,
     }),
@@ -999,7 +999,7 @@ test(STALE_BASE_REBUILD
     );
     expectExitZero(provider, "OpenShell Discord provider create/update");
 
-    progress.phase("phase 3 old sandbox create");
+    progress.phase("create the historical Hermes sandbox");
     const createOldSandbox = await host.command(
       "openshell",
       [
@@ -1053,7 +1053,7 @@ test(STALE_BASE_REBUILD
     label: `release old Hermes base tag ${OLD_BASE_TAG}`,
   });
 
-  progress.phase("phase 4 seed rebuild state");
+  progress.phase("seed persistent Hermes state and registry metadata");
   const seededKanban = await host.command(
     "openshell",
     [
@@ -1077,7 +1077,6 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(seededKanban, "verify historical Hermes kanban seed before rebuild");
   expect(resultText(seededKanban)).toContain(KANBAN_TASK_TITLE);
-
   const writeMarker = await host.command(
     "openshell",
     [
@@ -1188,9 +1187,9 @@ test(STALE_BASE_REBUILD
     OPENSHELL_TIMEOUT_MS,
   );
 
+  progress.phase("prepare the current-base rebuild condition");
   switch (STALE_BASE_REBUILD) {
     case false: {
-      progress.phase("phase 5 current base reuse");
       await artifacts.writeText(
         "phase-5-current-base-reuse.txt",
         `Reusing phase 1 Hermes base ${phase1BaseResolution.ref} (${phase1BaseResolution.digest ?? phase1BaseResolution.imageId}) through verified alias ${CURRENT_BASE_REUSE_TAG}; rebuild must canonicalize it to the official digest without constructing it again.\n`,
@@ -1198,7 +1197,6 @@ test(STALE_BASE_REBUILD
       break;
     }
     case true: {
-      progress.phase("phase 5 stale base setup");
       const classification =
         staleBaseClassification ?? fail("stale rebuild lane did not classify its old base hint");
       await artifacts.writeText(
@@ -1209,7 +1207,7 @@ test(STALE_BASE_REBUILD
     }
   }
 
-  progress.phase("phase 6 nemoclaw rebuild");
+  progress.phase("rebuild the Hermes sandbox");
   const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
     artifactName: "phase-6-nemoclaw-rebuild-hermes",
     env: testEnv(apiKey, {
@@ -1272,7 +1270,7 @@ test(STALE_BASE_REBUILD
   ).toBe(true);
   expect(resultText(oldImageInspect)).toMatch(/No such (?:image|object)(?::|\s)/iu);
 
-  progress.phase("phase 7 verification");
+  progress.phase("validate upgraded state inference and backup hygiene");
   const restoredMarker = await host.command(
     "openshell",
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", MARKER_FILE],
@@ -1473,7 +1471,7 @@ test(STALE_BASE_REBUILD
     true,
   );
   const leaks = listCredentialLeakPaths(sandboxBackupRoot, {
-    extraSecrets: [apiKey, DISCORD_FAKE_TOKEN],
+    extraSecrets: [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
   });
   await artifacts.writeJson("phase-7-backup-credential-scan.json", {
     backupRoot: sandboxBackupRoot,

@@ -134,9 +134,7 @@ export function verifyWechatRuntimeLock(
       throw new Error(`${location} metadata does not match the reviewed lock`);
     }
     const packageName = location.slice("node_modules/".length);
-    const installedMetadata = packageMetadata(
-      path.join(installedRoot, location, "package.json"),
-    );
+    const installedMetadata = packageMetadata(path.join(installedRoot, location, "package.json"));
     if (installedMetadata.version !== expectedRecord.version) {
       throw new Error(
         `installed ${packageName}@${installedMetadata.version} does not match locked ${expectedRecord.version}`,

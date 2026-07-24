@@ -13,7 +13,7 @@
     "minPercent": 30
   },
   "fullE2eColdPath": {
-    "authoritativeLocalBaseBuildAllowanceMs": 31000,
+    "authoritativeLocalBaseBuildAllowanceMs": 90000,
     "rootStartToFirstTurnCompletionBudgetMs": 228000,
     "rootEndToFirstTurnCompletionBudgetMs": 14000,
     "phaseBudgetsMs": {

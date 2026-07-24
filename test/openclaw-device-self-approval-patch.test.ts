@@ -150,7 +150,7 @@ function selfApprovalOptions() {
 }
 
 describe("OpenClaw bounded device self-approval patch (#4462)", () => {
-  it("applies and audits exactly one CLI, gateway, and canonical-state target", () => {
+  it("applies and audits each reviewed CLI, gateway, and canonical-state target", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-self-approval-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -158,17 +158,148 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     try {
       const freshAudit = runPatch(dist, true);
       expect(freshAudit.status, `${freshAudit.stdout}${freshAudit.stderr}`).toBe(0);
-      expect(freshAudit.stdout).toContain("3 OK · 0 missing");
+      expect(freshAudit.stdout).toContain("5 OK · 0 missing");
       expect(freshAudit.stdout).toContain("would-apply");
 
       const apply = runPatch(dist);
       expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
       const appliedAudit = runPatch(dist, true);
       expect(appliedAudit.status, `${appliedAudit.stdout}${appliedAudit.stderr}`).toBe(0);
-      expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(3);
+      expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(5);
 
       const secondApply = runPatch(dist);
       expect(secondApply.status, `${secondApply.stdout}${secondApply.stderr}`).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("retains a stored CLI identity while preserving bootstrap and backend shared auth", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-identity-bootstrap-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "call-fixture.js"), "utf8");
+      const runtime = runFixture<{
+        setForceDevicePairing(value: boolean): void;
+        setStoredOperatorDeviceAuthToken(value: boolean): void;
+        shouldOmitDeviceIdentityForGatewayCall(params: Record<string, unknown>): boolean;
+      }>(
+        source,
+        "({ setForceDevicePairing, setStoredOperatorDeviceAuthToken, shouldOmitDeviceIdentityForGatewayCall })",
+      );
+      const cliParams = {
+        authMode: "token",
+        opts: { clientName: "cli", mode: "cli" },
+        token: "loopback-token",
+        url: "ws://127.0.0.1:18789",
+      };
+      const backendParams = {
+        authMode: "token",
+        opts: { clientName: "gateway-client", mode: "backend" },
+        token: "loopback-token",
+        url: "ws://127.0.0.1:18789",
+      };
+
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(cliParams)).toBe(true);
+      runtime.setForceDevicePairing(true);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(cliParams)).toBe(false);
+      runtime.setForceDevicePairing(false);
+      runtime.setStoredOperatorDeviceAuthToken(true);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(cliParams)).toBe(false);
+      runtime.setStoredOperatorDeviceAuthToken(false);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(cliParams)).toBe(true);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(backendParams)).toBe(true);
+      expect(
+        runtime.shouldOmitDeviceIdentityForGatewayCall({
+          ...backendParams,
+          url: "wss://gateway.example.test",
+        }),
+      ).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades a force-only patched local base with stored-device identity retention", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-identity-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      const callFile = path.join(dist, "call-fixture.js");
+      const source = fs.readFileSync(callFile, "utf8");
+      const target = [
+        "function shouldOmitDeviceIdentityForGatewayCall(params) {",
+        "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
+      ].join("\n");
+      const forceOnly = [
+        "function shouldOmitDeviceIdentityForGatewayCall(params) {",
+        '\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") return false; // nemoclaw: force device identity for loopback pairing bootstrap (#4462)',
+        "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
+      ].join("\n");
+      expect(source).toContain(target);
+      fs.writeFileSync(callFile, source.replace(target, forceOnly));
+
+      const apply = runPatch(dist);
+      expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
+      const patched = fs.readFileSync(callFile, "utf8");
+      expect(patched.match(/force device identity for loopback pairing bootstrap/gu)).toHaveLength(
+        1,
+      );
+      expect(
+        patched.match(
+          /retain stored CLI device identity for loopback shared-token scope enforcement/gu,
+        ),
+      ).toHaveLength(1);
+      expect(runPatch(dist).status).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("routes only a bounded CLI device-token scope mismatch into canonical pairing", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-auth-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "message-handler-fixture.js"), "utf8");
+      const connect = runFixture<
+        (
+          params: Record<string, unknown>,
+          verify: () => Promise<Record<string, unknown>>,
+        ) => Promise<Record<string, unknown>>
+      >(source, "connect");
+      const scopeMismatch = async () => ({ ok: false, reason: "scope_mismatch" });
+
+      await expect(
+        connect(
+          { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+          scopeMismatch,
+        ),
+      ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
+      for (const candidate of [
+        { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
+        { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
+        { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
+        {
+          client: { id: "cli", mode: "cli" },
+          role: "operator",
+          scopes: ["operator.write", "operator.write"],
+        },
+      ]) {
+        await expect(connect(candidate, scopeMismatch)).resolves.toMatchObject({ authOk: false });
+      }
+      await expect(
+        connect(
+          { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+          async () => ({ ok: false, reason: "token-mismatch" }),
+        ),
+      ).resolves.toMatchObject({ authOk: false });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
