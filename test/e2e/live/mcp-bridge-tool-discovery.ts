@@ -8,6 +8,42 @@ import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { FakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
 
+export async function assertAuthenticatedMcpDiscovery(
+  fakeMcp: FakeMcpHttpsServer,
+  options: {
+    requestOffset: number;
+    expectedSecret: string;
+    label: string;
+  },
+): Promise<void> {
+  await expect
+    .poll(
+      () => {
+        const requests = fakeMcp.requests.slice(options.requestOffset);
+        const observed = (rpcMethod: "initialize" | "tools/list") =>
+          requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.path === "/mcp" &&
+              request.rpcMethod === rpcMethod &&
+              request.auth === `Bearer ${options.expectedSecret}`,
+          );
+        return {
+          initialized: observed("initialize"),
+          toolsListed: observed("tools/list"),
+          requests: requests.map((request) => ({
+            method: request.method,
+            path: request.path,
+            rpcMethod: request.rpcMethod,
+            credentialRewritten: request.auth === `Bearer ${options.expectedSecret}`,
+          })),
+        };
+      },
+      { interval: 500, timeout: 90_000, message: options.label },
+    )
+    .toMatchObject({ initialized: true, toolsListed: true });
+}
+
 export async function assertAuthenticatedMcpToolDiscovery(
   host: HostCliClient,
   fakeMcp: FakeMcpHttpsServer,

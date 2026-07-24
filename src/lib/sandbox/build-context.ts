@@ -125,6 +125,7 @@ function stageOptimizedSandboxBuildContext(
   const stagedNemoclawDir = path.join(buildCtx, "nemoclaw");
   const sourceBlueprintDir = path.join(rootDir, "nemoclaw-blueprint");
   const stagedBlueprintDir = path.join(buildCtx, "nemoclaw-blueprint");
+  const stagedCiDir = path.join(buildCtx, "ci");
   const stagedScriptsDir = path.join(buildCtx, "scripts");
 
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), stagedDockerfile);
@@ -134,6 +135,13 @@ function stageOptimizedSandboxBuildContext(
   );
   stageOpenClawRuntimeGraphs(rootDir, buildCtx);
   stageMcpToolDiscoveryRuntime(rootDir, buildCtx);
+
+  fs.mkdirSync(stagedCiDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "ci", "npm-audit-exceptions.json"),
+    path.join(stagedCiDir, "npm-audit-exceptions.json"),
+  );
+  normalizeReadModesForDockerCopy(stagedCiDir);
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
   for (const fileName of [
@@ -181,6 +189,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "checks", "node-tar-image-scan.mts"),
+    path.join(stagedScriptsDir, "checks", "node-tar-image-scan.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
@@ -273,6 +285,18 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "extract-semver.sh"),
+    path.join(stagedScriptsDir, "extract-semver.sh"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-shared-state-permissions.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-shared-state-permissions.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-bundled-npm-tar.mts"),
+    path.join(stagedScriptsDir, "patch-bundled-npm-tar.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "verify-wechat-runtime-lock.mts"),
     path.join(stagedScriptsDir, "verify-wechat-runtime-lock.mts"),
   );
@@ -280,6 +304,14 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "reviewed-npm-audit.mts"),
+    path.join(stagedScriptsDir, "lib", "reviewed-npm-audit.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "openclaw-npm-remediation.mts"),
+    path.join(stagedScriptsDir, "lib", "openclaw-npm-remediation.mts"),
   );
   normalizeReadModesForDockerCopy(stagedScriptsDir);
 

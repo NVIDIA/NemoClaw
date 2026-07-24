@@ -7,7 +7,10 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../lib/adapters/openshell/tim
 import { CLI_NAME } from "../../lib/cli/branding";
 import { yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-import { isBridgeProviderName, recoverGatewayOrExit } from "../../lib/credentials/command-support";
+import {
+  isBridgeProviderName,
+  recoverGatewayForCredentialMutationOrExit,
+} from "../../lib/credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../lib/credentials/store";
 import {
   deleteProviderWithRecovery,
@@ -65,7 +68,8 @@ export default class CredentialsResetCommand extends NemoClawCommand {
       }
     }
 
-    if (!(await recoverGatewayOrExit("reach", (lines) => this.failWithLines(lines)))) return;
+    if (!(await recoverGatewayForCredentialMutationOrExit((lines) => this.failWithLines(lines))))
+      return;
 
     // `provider delete` trips on FailedPrecondition when the provider is still
     // attached to a sandbox (e.g. `<sandbox>-brave-search` after onboard). The

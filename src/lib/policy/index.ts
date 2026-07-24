@@ -13,6 +13,7 @@ import YAML from "yaml";
 // Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { loadAgent } from "../agent/defs";
+import { CLI_NAME } from "../cli/branding";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -1541,7 +1542,12 @@ function selectFromList(
         return;
       }
       if (applied.includes(item.name)) {
+        // The picker has no live-policy context to classify drift; the named
+        // path (policy-add <preset>) re-applies edited presets (#7323).
         process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
+        process.stderr.write(
+          `  If its preset file changed, run '${CLI_NAME} <sandbox> policy-add ${item.name}' to re-apply it.\n`,
+        );
         resolve(null);
         return;
       }

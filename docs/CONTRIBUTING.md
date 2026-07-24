@@ -203,6 +203,16 @@ Commit and push normally so the Git hooks run, then run:
 npm run docs
 ```
 
+After the documentation changes and build are complete, run a documentation writer subagent.
+Give it the changed pages, the documentation intent, and the build evidence.
+Ask it to verify the changes against this guide and `WRITING.md`.
+The review must cover terminology, structure, voice, and code-sample presentation.
+Apply any required corrections.
+Rerun the applicable documentation validation.
+Commit the reviewed changes.
+Then complete the pull-request template's Documentation Writer Review receipt with the reviewed head SHA.
+Rerun the review after any later commit because the receipt is tied to the exact pull-request head.
+
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
 If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run check:diff` once to reproduce those checks before opening the PR.
 The command uses `origin/main`, so refresh it with `git fetch origin main` first.
@@ -254,8 +264,8 @@ position: 1
 ## Style Guide
 
 Write like you are explaining something to a colleague. Be direct, specific, and concise.
-Apply the [NemoClaw Technical English profile](../CONTRIBUTING.md#nemoclaw-technical-english) to changed prose.
-The profile defines shared terminology, sentence rules, rewrite examples, and the changed-text pilot.
+Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
+The guide defines shared terms, sentence rules, rewrite examples, and review policy.
 The rules below add documentation-specific voice, formatting, and product-name conventions.
 
 ### Voice and Tone

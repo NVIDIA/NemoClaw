@@ -275,6 +275,22 @@ export function getDockerGpuPatchNetworkMode(
   return networkOverride === "host" ? "host" : "preserve";
 }
 
+/**
+ * Return the compatibility resolver that clone construction will inject.
+ * Keep this decision shared with the pre-mutation DNS probe so explicit DNS
+ * and host networking cannot be tested against an override they will not use.
+ */
+export function getDockerGpuCloneFallbackDns(
+  inspect: DockerContainerInspect,
+  options: DockerGpuCloneRunOptions = {},
+): string | null {
+  const host = inspect.HostConfig || {};
+  const networkMode = options.networkMode ?? host.NetworkMode;
+  if (networkMode === "host" || stringArray(host.Dns).length > 0) return null;
+  const fallback = String(options.sandboxFallbackDns ?? "").trim();
+  return fallback || null;
+}
+
 export function sameContainerId(
   left: string | null | undefined,
   right: string | null | undefined,
@@ -397,9 +413,8 @@ export function buildDockerGpuCloneRunArgs(
     const dnsServers = stringArray(host.Dns);
     for (const dns of dnsServers) args.push("--dns", dns);
     for (const dnsSearch of stringArray(host.DnsSearch)) args.push("--dns-search", dnsSearch);
-    if (dnsServers.length === 0 && options.sandboxFallbackDns) {
-      args.push("--dns", options.sandboxFallbackDns);
-    }
+    const fallbackDns = getDockerGpuCloneFallbackDns(inspect, options);
+    if (fallbackDns) args.push("--dns", fallbackDns);
   }
 
   pushNumberFlag(args, "--memory", host.Memory);

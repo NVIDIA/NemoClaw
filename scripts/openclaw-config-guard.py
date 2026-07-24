@@ -3264,6 +3264,48 @@ def _preflight_restart(opened: OpenConfig, identity: Identity) -> None:
     _assert_config_binding(opened)
 
 
+_hash_synthesized = False
+
+
+def _write_hash_record(opened: OpenConfig, config_data: bytes, identity: Identity) -> None:
+    digest = hashlib.sha256(config_data).hexdigest()
+    _force_replace_bytes(
+        opened,
+        ".config-hash",
+        f"{digest}  openclaw.json\n".encode("ascii"),
+        identity,
+    )
+
+
+def _repair_absent_hash_for_lock(opened: OpenConfig, identity: Identity) -> None:
+    """Synthesize a truly absent .config-hash before lock-from-mutable capture.
+
+    On lock-from-mutable the canonical pair is regenerated from openclaw.json
+    bytes regardless of the stored hash content, so an absent sidecar carries
+    less signal than the tolerated stale-content case. The repair fires only on
+    true ENOENT under the frozen tree: a planted symlink, directory, fifo, or
+    hardlink at the name is seen as existing and falls through to the existing
+    fail-closed rejections.
+    """
+
+    global _hash_synthesized
+    try:
+        os.stat(".config-hash", dir_fd=opened.config_fd, follow_symlinks=False)
+        return
+    except FileNotFoundError:
+        pass
+    _verify_dir_posture(
+        opened.config_fd,
+        opened.config_path,
+        identity.root_uid,
+        identity.root_gid,
+        0o700,
+    )
+    config = _snapshot_file(opened, "openclaw.json")
+    _write_hash_record(opened, config.data, identity)
+    _hash_synthesized = True
+
+
 def _force_fail_closed_lock(opened: OpenConfig, identity: Identity) -> list[str]:
     errors: list[str] = []
     targets: tuple[FileSnapshot, FileSnapshot] | None = None
@@ -3291,22 +3333,37 @@ def _force_fail_closed_lock(opened: OpenConfig, identity: Identity) -> list[str]
             except Exception as force_exc:
                 errors.append(f"forced fresh pair: {force_exc}")
         else:
-            # No bounded pair could be captured. Sever each canonical path
-            # rather than retaining an attacker-held writable inode.
-            for name in CONFIG_FILES:
-                try:
-                    os.rename(
-                        name,
-                        f".nemoclaw-rejected-{name.lstrip('.')}-{secrets.token_hex(16)}",
-                        src_dir_fd=opened.config_fd,
-                        dst_dir_fd=opened.config_fd,
+            published = False
+            try:
+                config = _snapshot_file(opened, "openclaw.json")
+                _force_replace_bytes(opened, "openclaw.json", config.data, identity)
+                _write_hash_record(opened, config.data, identity)
+                _snapshot_pair(opened)
+                published = True
+            except Exception as publish_exc:
+                errors.append(f"config-only publish: {publish_exc}")
+            if not published:
+                # No bounded config could be republished. Sever each canonical
+                # path rather than retaining an attacker-held writable inode.
+                for name in CONFIG_FILES:
+                    rejected = (
+                        f".nemoclaw-rejected-{name.lstrip('.')}-{secrets.token_hex(16)}"
                     )
-                except FileNotFoundError:
-                    # A concurrently absent canonical name is already severed.
-                    pass
-                except Exception as file_exc:
-                    errors.append(f"{name}: {file_exc}")
-            os.fsync(opened.config_fd)
+                    try:
+                        os.rename(
+                            name,
+                            rejected,
+                            src_dir_fd=opened.config_fd,
+                            dst_dir_fd=opened.config_fd,
+                        )
+                    except FileNotFoundError:
+                        # A concurrently absent canonical name is already severed.
+                        pass
+                    except Exception as file_exc:
+                        errors.append(f"{name}: {file_exc}")
+                    else:
+                        errors.append(f"{name}: quarantined as {rejected}")
+                os.fsync(opened.config_fd)
     try:
         _commit_locked_dirs(opened, identity)
     except Exception as exc:
@@ -3385,6 +3442,7 @@ def _transition(
             freeze_started = True
             _freeze(opened, identity)
             _settle_pending_transaction_for_lock(opened, identity)
+            _repair_absent_hash_for_lock(opened, identity)
             source = _snapshot_raw_pair(opened)
             targets, _digest = _canonical_targets(source, identity, locked=True)
             _install_stored_pair(opened, targets)
@@ -4200,6 +4258,7 @@ def main(argv: list[str] | None = None) -> int:
                     "files": list(CONFIG_FILES),
                     "chattrApplied": False,
                     **({"configSha256": new_digest} if new_digest is not None else {}),
+                    **({"hashSynthesized": True} if _hash_synthesized else {}),
                     **({"recovery": recovery} if recovery is not None else {}),
                     **(
                         {"originalLocked": original_locked}

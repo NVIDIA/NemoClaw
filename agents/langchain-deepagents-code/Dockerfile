@@ -8,7 +8,7 @@
 ARG BASE_IMAGE
 ARG NEMOCLAW_CORPORATE_CA_B64=
 
-FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS mcp-tool-discovery-runtime
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
 ARG NEMOCLAW_CORPORATE_CA_B64
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -30,6 +30,14 @@ RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtim
     && test -z "$discovery_unsafe"
 
 USER root
+
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+# The final managed image owns the shipped dependency boundary independently
+# of base freshness. Reassert the idempotent npm-private node-tar fix here.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
 
 RUN set -eu; \
     dcode_path="$(command -v dcode 2>/dev/null || true)"; \
@@ -198,6 +206,14 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
+
+# Gate the completed local filesystem for dynamically built managed images.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:deepagents-code \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
 
 USER sandbox
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]

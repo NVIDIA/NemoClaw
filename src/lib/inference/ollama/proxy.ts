@@ -10,6 +10,9 @@ import type { PulledModelDiscoveryDeps } from "./model-discovery";
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../runner");
+const {
+  redirectInheritedChildStdoutToStderr,
+}: typeof import("../../cli/stdout-guard") = require("../../cli/stdout-guard");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { isNonInteractiveEnv }: typeof import("../../core/non-interactive") =
   require("../../core/non-interactive");
@@ -613,7 +616,7 @@ function pullOllamaModelViaCli(model: string): boolean {
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
     cwd: ROOT,
     encoding: "utf8",
-    stdio: "inherit",
+    stdio: redirectInheritedChildStdoutToStderr("inherit"),
     timeout: timeoutMs,
     env: buildSubprocessEnv(),
   });

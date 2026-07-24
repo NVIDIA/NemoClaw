@@ -13,8 +13,10 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - License: MIT
 - Locked production graph: `package-lock.json` (lockfile version 3)
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
+- Security overrides: `@hono/node-server@2.0.11` and `fast-uri@3.1.4`
 
 The same SDK version and integrity are already present in the separately locked OpenClaw `mcporter` dependency graph. This runtime keeps a direct lock because Hermes and LangChain Deep Agents Code must not depend on OpenClaw's adapter package.
+The SDK's client entry points do not bundle its Hono server adapter or AJV's URI validator into the names-only runtime, but those transitive packages remain in the install graph that the image audits. The exact overrides keep that reviewed graph clear of `GHSA-frvp-7c67-39w9` and `GHSA-v2hh-gcrm-f6hx` without changing the SDK client pin.
 
 ## Build and audit contract
 
@@ -27,6 +29,11 @@ Review evidence on 2026-07-14:
 
 - `npm audit --omit=dev --audit-level=low`: 0 vulnerabilities
 - Pre-build `npm audit signatures`: 98 packages with verified registry signatures and 10 packages with verified attestations
+
+Refresh evidence on 2026-07-24:
+
+- `npm audit --omit=dev --audit-level=low`: 0 vulnerabilities
+- Pre-build `npm audit signatures`: 98 packages with verified registry signatures and 11 packages with verified attestations
 
 ## Updating
 

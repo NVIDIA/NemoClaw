@@ -769,6 +769,9 @@ usage() {
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip express install prompt on supported platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
+  printf "    HF_TOKEN                      Optional Hugging Face read token for managed-vLLM downloads\n"
+  printf "                                  Create one at https://huggingface.co/settings/tokens and export it before curl | bash.\n"
+  printf "    HUGGING_FACE_HUB_TOKEN        Compatibility alias for HF_TOKEN\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
   printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
@@ -2986,7 +2989,11 @@ ensure_docker() {
     printf "\n"
     info "Docker group membership is not active in this shell yet. To finish:"
     info "  1) Run: newgrp docker   (or log out and log back in)"
-    info "  2) Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
+    if [[ "${_STATION_LOCAL_VLLM_SELECTED:-}" == "1" ]]; then
+      info "  2) Re-run: $(station_local_vllm_resume_command)"
+    else
+      info "  2) Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
+    fi
     exit 0
   fi
 
@@ -3070,7 +3077,7 @@ validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the validated Station express boundary. Use generic Ubuntu 24.04 ARM64, stock DGX OS 7.2.0, 7.4.0, or 7.5.0, or an explicitly qualified Station factory image."
+      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x NVIDIA DGX GB300WS profile."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
@@ -3534,6 +3541,14 @@ station_express_resume_command() {
   fi
 }
 
+load_station_vllm_conflict_helpers() {
+  declare -F handle_station_vllm_conflict >/dev/null 2>&1 && return 0
+  local helper="${SCRIPT_DIR}/lib/station-vllm-conflict.sh"
+  [[ -f "$helper" ]] || error "Station vLLM conflict helper is missing: ${helper}"
+  # shellcheck source=lib/station-vllm-conflict.sh
+  . "$helper"
+}
+
 clear_station_express_resume() {
   local state_file state_dir claim claim_name claim_mode entry entry_mode unexpected_entry
   state_file="$(station_express_resume_file)" || return 0
@@ -3664,7 +3679,7 @@ ensure_station_express_host() {
       ;;
     *)
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-        warn "Proceeding with explicit --force-station-install intent; DGX release metadata qualification is bypassed, but Station GB300 hardware and factory-runtime health checks remain required."
+        warn "Proceeding with explicit --force-station-install intent; only DGX release metadata qualification is bypassed. Station GB300 hardware, workload quiescence, and factory-runtime health checks remain required."
         info "Validating the existing Station GPU and local container runtime. Host packages, the NVIDIA driver, and runtime configuration will not be changed."
       else
         info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
@@ -3689,6 +3704,10 @@ ensure_station_express_host() {
       info "After signing in again, rerun the accepted Station Express recipe:"
       info "$(station_express_resume_command)"
       exit 11
+      ;;
+    12)
+      load_station_vllm_conflict_helpers
+      handle_station_vllm_conflict
       ;;
     *)
       error "DGX Station host preparation failed. Review the station-bootstrap log above, correct the reported host state, and rerun the installer."
@@ -3720,6 +3739,7 @@ describe_express_install() {
   local platform="$1"
   local inference_summary=""
   local inference_disclosure=""
+  local show_hf_authentication="0"
   local sandbox_summary=""
   local tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local policy_summary=""
@@ -3736,12 +3756,19 @@ describe_express_install() {
       ;;
     "DGX Station")
       if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+        show_hf_authentication="1"
         inference_summary="managed local vLLM with DeepSeek V4 Flash"
         inference_disclosure="Managed vLLM pulls the configured Station image/model and runs a local inference container."
       elif [ -n "$(printf "%s" "${NEMOCLAW_VLLM_MODEL:-}" | tr -d '[:space:]')" ]; then
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
         inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local inference container."
+        case "$(printf "%s" "${NEMOCLAW_VLLM_MODEL}" | tr '[:upper:]' '[:lower:]')" in
+          deepseek-v4-flash | deepseek-ai/deepseek-v4-flash | nemotron-3-ultra-550b-a55b | nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4)
+            show_hf_authentication="1"
+            ;;
+        esac
       else
+        show_hf_authentication="1"
         inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
         inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
       fi
@@ -3757,14 +3784,14 @@ describe_express_install() {
           ;;
         *)
           if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
+            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
           else
             printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
           fi
           ;;
       esac
       printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
-      printf "  DGX Station remains Deferred; one DGX OS 7.5 GB300 physical validation passed, with repeat clean-host qualification and CI coverage still pending.\n"
+      printf "  DGX Station is Tested with limitations across qualified profiles on one physical DGX Station GB300; dual-Station configurations are not yet validated, and dedicated CI coverage is not available.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
@@ -3799,9 +3826,28 @@ describe_express_install() {
   if [ -n "$inference_disclosure" ]; then
     printf "  %s\n" "$inference_disclosure"
   fi
+  if [ "$show_hf_authentication" = "1" ]; then
+    describe_hf_download_authentication
+  fi
   printf "  Sandbox name: %s.\n" "$sandbox_summary"
   printf "  It runs onboarding non-interactively, but still prompts for sudo when host setup needs it.\n"
   printf "  Sandbox policy: suggested mode, tier '%s'. This uses the %s.\n" "$tier" "$policy_summary"
+}
+
+describe_hf_download_authentication() {
+  local hf_token="${HF_TOKEN:-}"
+  local hugging_face_hub_token="${HUGGING_FACE_HUB_TOKEN:-}"
+  if [[ -n "${hf_token//[[:space:]]/}" || -n "${hugging_face_hub_token//[[:space:]]/}" ]]; then
+    printf "  Hugging Face model download: authenticated.\n"
+    printf "  The token value is not displayed and is passed only to the temporary model downloader.\n"
+    return 0
+  fi
+
+  printf "  Hugging Face authentication is optional for this public model but recommended for this large download.\n"
+  printf "  Anonymous downloads may be rate-limited with HTTP 429.\n"
+  printf "  Create a read token at https://huggingface.co/settings/tokens.\n"
+  printf "  Before restarting the installer, run: export HF_TOKEN=<read-token>\n"
+  printf "  The token is passed only to the temporary model downloader.\n"
 }
 
 maybe_offer_express_install() {
@@ -3954,6 +4000,11 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
+  load_station_vllm_conflict_helpers
+  if consume_station_local_vllm_resume; then
+    info "Resuming the selected manual Local vLLM setup."
+  fi
+
   # Validate the gateway port before the banner, notice acceptance, downloads,
   # or any other installer side effect.
   resolve_nemoclaw_gateway_port >/dev/null
@@ -4065,6 +4116,9 @@ finalize_install() {
   print_done
   if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
     error "Installation incomplete: one or more existing sandboxes failed to upgrade. See the recovery guidance above."
+  fi
+  if [[ "${_STATION_LOCAL_VLLM_SELECTED:-}" == "1" ]]; then
+    clear_station_local_vllm_resume
   fi
 }
 

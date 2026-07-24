@@ -12,7 +12,6 @@ import type { McpBridgeEntry } from "../../state/registry";
 import {
   buildMcpToolDiscoveryCommand,
   classifyMcpToolDiscoveryResult,
-  discoverMcpTools,
   MCP_TOOL_DISCOVERY_RUNTIME_PATH,
   toolDiscoveryReadinessSkipDetail,
 } from "./mcp-bridge-tool-discovery";

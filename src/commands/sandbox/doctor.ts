@@ -5,6 +5,7 @@ import { Args, Flags } from "@oclif/core";
 import { runSandboxDoctor } from "../../lib/actions/sandbox/doctor";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { withStdoutRedirectedToStderr } from "../../lib/cli/stdout-guard";
+import { redactForLog } from "../../lib/security/redact";
 
 export default class SandboxDoctorCliCommand extends NemoClawCommand {
   static id = "sandbox:doctor";
@@ -48,7 +49,11 @@ export default class SandboxDoctorCliCommand extends NemoClawCommand {
         runSandboxDoctor(args.sandboxName, ["--json"], { quietJson: true }),
       );
       if (report && report.failed > 0) process.exitCode = 1;
-      return report;
+      // Parity with `sandbox status --json` (#4310): redact the returned
+      // report itself so programmatic consumers of the resolved value — not
+      // just the logJson-printed stdout (#3657) — never see token-shaped
+      // values in check details.
+      return redactForLog(report);
     }
     const doctorArgs = flags.fix ? ["--fix"] : [];
     await runSandboxDoctor(args.sandboxName, doctorArgs, { quietJson: false });
