@@ -98,14 +98,14 @@ export function resolveDownloadArtifactPath(
   hostDest: string,
   sourceKind: SandboxSourceKind,
 ): string {
+  const existingDirectory = fs.existsSync(hostDest) && fs.statSync(hostDest).isDirectory();
+  const directoryTarget =
+    hostDest.endsWith(path.sep) || hostDest.endsWith("/") || existingDirectory;
+  const resolvedDirectory = existingDirectory ? fs.realpathSync(hostDest) : hostDest;
   if (sourceKind === "dir") {
-    return hostDest;
+    return resolvedDirectory;
   }
-  const destIsDirectoryTarget =
-    hostDest.endsWith(path.sep) ||
-    hostDest.endsWith("/") ||
-    (fs.existsSync(hostDest) && fs.statSync(hostDest).isDirectory());
-  return destIsDirectoryTarget ? path.join(hostDest, path.basename(sandboxPath)) : hostDest;
+  return directoryTarget ? path.join(resolvedDirectory, path.basename(sandboxPath)) : hostDest;
 }
 
 /**
@@ -114,11 +114,9 @@ export function resolveDownloadArtifactPath(
  * {@link assertDownloadedFile}, this does not require a regular file, so it is
  * safe for directory downloads.
  *
- * Only meaningful for a `hostPath` that did not exist before the download:
- * run against a pre-existing path the check is vacuous — it would accept a
- * stale artifact and mask the exit-0/no-write race. Callers that download to
- * a caller-chosen destination must check pre-existence themselves and warn
- * instead of asserting (see `downloadFromSandbox`).
+ * `hostPath` must be a fresh staging path that did not exist before the
+ * download. A pre-existing path could hold a stale artifact from an earlier
+ * transfer and make this check vacuous.
  *
  * @throws if nothing exists at `hostPath` — i.e. openshell exited 0 without
  * writing, the #7367 race.
@@ -132,4 +130,50 @@ export function assertDownloadArtifactExists(
       `Failed to download '${remoteLabel}' from sandbox '${sandboxName}': openshell reported success (exit 0) but nothing was written to '${hostPath}'.`,
     );
   }
+}
+
+function assertNoSymlinkInDestinationPath(destinationRoot: string, destination: string): void {
+  const root = path.resolve(destinationRoot);
+  let candidate = path.resolve(destination);
+  const relative = path.relative(root, candidate);
+  if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Refusing to publish the download outside '${destinationRoot}'.`);
+  }
+  while (true) {
+    try {
+      if (fs.lstatSync(candidate).isSymbolicLink()) {
+        throw new Error(
+          `Refusing to publish the download to '${destination}': destination path '${candidate}' is a symbolic link.`,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+    if (candidate === root) {
+      return;
+    }
+    const parent = path.dirname(candidate);
+    candidate = parent;
+  }
+}
+
+/**
+ * Copy a verified staging artifact to its caller-selected destination without
+ * following an existing destination symlink.
+ */
+export function publishDownloadArtifact(
+  stagedArtifact: string,
+  expectedArtifact: string,
+  sourceKind: SandboxSourceKind,
+): void {
+  fs.cpSync(stagedArtifact, expectedArtifact, {
+    recursive: sourceKind === "dir",
+    force: true,
+    filter: (_source, destination) => {
+      assertNoSymlinkInDestinationPath(expectedArtifact, destination);
+      return true;
+    },
+  });
 }

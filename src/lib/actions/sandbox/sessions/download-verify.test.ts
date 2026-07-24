@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertDownloadArtifactExists,
   assertDownloadedFile,
+  publishDownloadArtifact,
   resolveDownloadArtifactPath,
 } from "./download-verify";
 
@@ -111,7 +112,7 @@ describe("resolveDownloadArtifactPath", () => {
 
   it("joins the source basename when the dest is an existing directory (file source)", () => {
     expect(resolveDownloadArtifactPath("/sandbox/a/b.txt", dir, "file")).toBe(
-      path.join(dir, "b.txt"),
+      path.join(fs.realpathSync(dir), "b.txt"),
     );
   });
 
@@ -123,7 +124,20 @@ describe("resolveDownloadArtifactPath", () => {
   });
 
   it("returns the dest itself for a directory source (contents extract into it)", () => {
-    expect(resolveDownloadArtifactPath("/sandbox/a/mydir", dir, "dir")).toBe(dir);
+    expect(resolveDownloadArtifactPath("/sandbox/a/mydir", dir, "dir")).toBe(fs.realpathSync(dir));
+  });
+
+  it("resolves an existing symbolic-link directory before publication", () => {
+    const linkedDir = path.join(dir, "linked");
+    const actualDir = path.join(dir, "actual");
+    fs.mkdirSync(actualDir);
+    fs.symlinkSync(actualDir, linkedDir);
+
+    const canonicalDir = fs.realpathSync(actualDir);
+    expect(resolveDownloadArtifactPath("/sandbox/a/mydir", linkedDir, "dir")).toBe(canonicalDir);
+    expect(resolveDownloadArtifactPath("/sandbox/a/file.txt", linkedDir, "file")).toBe(
+      path.join(canonicalDir, "file.txt"),
+    );
   });
 });
 
@@ -157,5 +171,47 @@ describe("assertDownloadArtifactExists", () => {
     expect(() =>
       assertDownloadArtifactExists(target, { remoteLabel: "/sandbox/x", sandboxName: "alpha" }),
     ).toThrow(/reported success \(exit 0\) but nothing was written to/);
+  });
+});
+
+describe("publishDownloadArtifact", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-7367-publish-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("merges a staged directory into an existing destination directory", () => {
+    const staged = path.join(dir, "staged");
+    const destination = path.join(dir, "destination");
+    fs.mkdirSync(staged);
+    fs.mkdirSync(destination);
+    fs.writeFileSync(path.join(staged, "new.txt"), "new");
+    fs.writeFileSync(path.join(destination, "existing.txt"), "existing");
+
+    publishDownloadArtifact(staged, destination, "dir");
+
+    expect(fs.readFileSync(path.join(destination, "new.txt"), "utf8")).toBe("new");
+    expect(fs.readFileSync(path.join(destination, "existing.txt"), "utf8")).toBe("existing");
+  });
+
+  it("rejects a destination path that traverses a symbolic link", () => {
+    const staged = path.join(dir, "staged");
+    const outside = path.join(dir, "outside");
+    const destination = path.join(dir, "destination");
+    fs.mkdirSync(path.join(staged, "linked"), { recursive: true });
+    fs.mkdirSync(outside);
+    fs.mkdirSync(destination);
+    fs.writeFileSync(path.join(staged, "linked", "new.txt"), "new");
+    fs.symlinkSync(outside, path.join(destination, "linked"));
+
+    expect(() => publishDownloadArtifact(staged, destination, "dir")).toThrow(
+      /destination path '.*linked' is a symbolic link/,
+    );
+    expect(fs.readdirSync(outside)).toEqual([]);
   });
 });

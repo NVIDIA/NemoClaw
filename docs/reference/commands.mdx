@@ -2468,9 +2468,12 @@ The in-sandbox staging artefact is additionally created with `umask 077` and rem
 
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
-Host-side wrapper around `openshell sandbox download` that adds a live-sandbox readiness check.
-The sandbox source path is forwarded to OpenShell verbatim; a relative host destination is resolved against the caller's working directory before it reaches OpenShell, so the downloaded file lands where the user invoked the CLI from rather than inside the install directory.
-Absolute host destinations pass through unchanged, and the OpenShell transport keeps its file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour).
+Host-side wrapper around `openshell sandbox download` that checks the live sandbox.
+The command confirms that the source is a file or directory before it downloads.
+If the command cannot confirm the source type, it exits without downloading.
+The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
+Relative host destinations resolve against the caller's working directory.
+Absolute host destinations do not use caller-working-directory resolution.
 With no `host-dest` the destination defaults to the current directory.
 
 <AgentOnly variant="openclaw">
