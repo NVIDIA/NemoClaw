@@ -28,7 +28,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(4);
+    expect(first.version).toBe(5);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -188,6 +188,19 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((item) => item.id)).toContain(family);
     expect(riskPlanRequiredJobIds(result)).toEqual(expect.arrayContaining(jobs));
+  });
+
+  it("selects cold full E2E for repository-root OpenClaw image changes (#6660)", () => {
+    const rootImage = plan("Dockerfile");
+    const adjacentImage = plan("Dockerfile.base");
+
+    expect(rootImage.families.map((family) => family.id)).toEqual([
+      "platform-install",
+      "openclaw-image",
+    ]);
+    expect(riskPlanRequiredJobIds(rootImage)).toEqual(["cloud-onboard", "full-e2e"]);
+    expect(adjacentImage.families.map((family) => family.id)).toEqual(["platform-install"]);
+    expect(riskPlanRequiredJobIds(adjacentImage)).toEqual(["cloud-onboard"]);
   });
 
   it.each([
