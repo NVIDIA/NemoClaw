@@ -65,6 +65,8 @@ const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
     ) +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
+const ROUTE_PROBE_TERMINAL_CONTROL_RE =
+  /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])|[\x00-\x1F\x7F-\x9F]/g;
 
 /**
  * Normalizes optional token-budget overrides while preserving safe defaults for
@@ -124,6 +126,10 @@ function routeDriverLabel(driver: string | null | undefined): string {
   return driver === "docker" || driver === "kubernetes" || driver === "vm" ? driver : "sandbox";
 }
 
+function safeRouteProbeDetail(detail: string, redact: (value: string) => string): string {
+  return compactText(redact(detail.replace(ROUTE_PROBE_TERMINAL_CONTROL_RE, ""))).slice(0, 800);
+}
+
 function verifyCompatibleEndpointSandboxRoute(
   options: CompatibleEndpointSandboxRouteOptions,
 ): void {
@@ -170,7 +176,7 @@ function verifyCompatibleEndpointSandboxRoute(
       `  inference.local is unavailable through the OpenShell ${routeDriverLabel(options.openshellDriver)} gateway path (BROKEN ${httpStatus}).`,
     );
   } else {
-    const detail = compactText(options.redact(route.detail)).slice(0, 800);
+    const detail = safeRouteProbeDetail(route.detail, options.redact);
     console.error("  OpenShell could not establish a trusted sandbox inference route probe.");
     if (detail) console.error(`  ${detail}`);
   }

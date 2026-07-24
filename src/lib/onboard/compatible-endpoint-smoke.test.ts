@@ -217,6 +217,43 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(diagnostics).not.toContain("\u001b");
   });
 
+  it("strips terminal controls before redacting unavailable probe details", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr:
+        "raw\u001b[31m-secret\u001b[0m\u001b]8;;https://attacker.example\u0007click\u001b]8;;\u0007",
+    }));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${String(code)}`);
+    });
+
+    expect(() =>
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "smoke-sandbox",
+        provider: "compatible-endpoint",
+        model: "gpt-5",
+        runOpenshell,
+        redact: (value) => value.replaceAll("raw-secret", "<redacted>"),
+        messagingChannels: [],
+        agent: { name: "openclaw" },
+        openshellDriver: "kubernetes",
+      }),
+    ).toThrow("exit 1");
+
+    const diagnostics = error.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(diagnostics).toContain(
+      "OpenShell could not establish a trusted sandbox inference route probe.",
+    );
+    expect(diagnostics).toContain("<redacted>");
+    expect(diagnostics).not.toContain("raw-secret");
+    expect(diagnostics).not.toContain("attacker.example");
+    expect(diagnostics).not.toContain("\u001b");
+    expect(diagnostics).not.toContain("\u0007");
+  });
+
   it("builds a sandbox script that checks managed provider routing", () => {
     const script = buildCompatibleEndpointSandboxSmokeScript("provider/model'");
 
