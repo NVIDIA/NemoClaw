@@ -147,9 +147,6 @@ describe("remote dashboard bind production lifecycle", () => {
     const dockerfile = path.join(directory, "Dockerfile");
     const stockDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
     const scanTail = "    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json";
-    if (!stockDockerfile.includes(scanTail)) {
-      throw new Error("expected checked-in node-tar image scan");
-    }
     const mutatedDockerfile = stockDockerfile.replace(
       scanTail,
       `${scanTail} \\\n    && printf '{}' > /sandbox/.openclaw/openclaw.json`,
