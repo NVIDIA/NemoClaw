@@ -1,16 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assertDownloadArtifactExists,
   assertDownloadedFile,
   publishDownloadArtifact,
   resolveDownloadArtifactPath,
 } from "./download-verify";
+
+vi.mock("node:child_process", { spy: true });
+const actualChildProcess =
+  await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
 describe("assertDownloadedFile", () => {
   let dir: string;
@@ -233,6 +238,35 @@ describe("publishDownloadArtifact", () => {
     expect(fs.lstatSync(linkedParent).isSymbolicLink()).toBe(true);
     expect(fs.readlinkSync(linkedParent)).toBe(outside);
     expect(fs.existsSync(path.join(outside, "fresh.txt"))).toBe(false);
+  });
+
+  it("rejects a destination parent swapped for a symbolic link before publication", () => {
+    const staged = path.join(dir, "staged.txt");
+    const destinationParent = path.join(dir, "destination");
+    const movedParent = path.join(dir, "moved-destination");
+    const outside = path.join(dir, "outside");
+    const destination = path.join(destinationParent, "fresh.txt");
+    fs.writeFileSync(staged, "payload");
+    fs.mkdirSync(destinationParent);
+    fs.mkdirSync(outside);
+
+    let swapped = false;
+    const spawnSync = vi
+      .spyOn(childProcess, "spawnSync")
+      .mockImplementation((command, args, options) => {
+        fs.renameSync(destinationParent, movedParent);
+        fs.symlinkSync(outside, destinationParent);
+        swapped = true;
+        return actualChildProcess.spawnSync(command, args, options);
+      });
+
+    expect(() => publishDownloadArtifact(staged, destination, "file")).toThrow(
+      /could not enter the pinned destination directory|changed before atomic publication/,
+    );
+    spawnSync.mockRestore();
+    expect(swapped).toBe(true);
+    expect(fs.existsSync(path.join(outside, "fresh.txt"))).toBe(false);
+    expect(fs.existsSync(path.join(movedParent, "fresh.txt"))).toBe(false);
   });
 
   it("rejects an existing symbolic-link file without changing its target", () => {

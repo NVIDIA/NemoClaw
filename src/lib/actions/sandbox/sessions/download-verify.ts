@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as childProcess from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -287,6 +288,97 @@ function assertPrivateEntry(
   }
 }
 
+const PINNED_DIRECTORY_RENAME_SCRIPT = `
+const fs = require("node:fs");
+const [
+  temporaryName,
+  destinationName,
+  expectedDirectoryDev,
+  expectedDirectoryIno,
+  expectedTemporaryDev,
+  expectedTemporaryIno,
+] = process.argv.slice(1);
+const sameIdentity = (stat, dev, ino) =>
+  String(stat.dev) === dev && String(stat.ino) === ino;
+const directoryStat = fs.statSync(".");
+if (
+  !directoryStat.isDirectory() ||
+  !sameIdentity(directoryStat, expectedDirectoryDev, expectedDirectoryIno)
+) {
+  process.exit(70);
+}
+const temporaryStat = fs.lstatSync(temporaryName);
+if (
+  !temporaryStat.isFile() ||
+  temporaryStat.nlink !== 1 ||
+  !sameIdentity(temporaryStat, expectedTemporaryDev, expectedTemporaryIno)
+) {
+  process.exit(71);
+}
+try {
+  if (fs.lstatSync(destinationName).isSymbolicLink()) {
+    process.exit(72);
+  }
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+fs.renameSync(temporaryName, destinationName);
+`;
+
+// The child establishes its current directory from the destination path, then
+// confirms that directory still matches the parent's pinned descriptor before
+// using relative names. Once established, the child's current directory stays
+// anchored to that directory even if its host path is renamed or replaced.
+function renameWithinPinnedDirectory(
+  temporaryPath: string,
+  destination: string,
+  parent: DirectoryHandle,
+  temporary: { dev: number; ino: number },
+): void {
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [
+      "-e",
+      PINNED_DIRECTORY_RENAME_SCRIPT,
+      path.basename(temporaryPath),
+      path.basename(destination),
+      String(parent.dev),
+      String(parent.ino),
+      String(temporary.dev),
+      String(temporary.ino),
+    ],
+    {
+      cwd: parent.path,
+      encoding: "utf8",
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+    },
+  );
+  if (result.error) {
+    throw new Error(
+      `Refusing to publish the download to '${destination}': could not enter the pinned destination directory.`,
+      { cause: result.error },
+    );
+  }
+  if (result.status === 70) {
+    throw new Error(
+      `Refusing to publish the download to '${destination}': destination directory '${parent.path}' changed before atomic publication.`,
+    );
+  }
+  if (result.status === 71) {
+    throw new Error(
+      `Refusing to publish the download to '${destination}': private publication entry changed before atomic publication.`,
+    );
+  }
+  if (result.status === 72) {
+    throw symlinkDestinationError(destination, destination);
+  }
+  if (result.status !== 0) {
+    const detail = result.stderr.trim() || `publisher exited with status ${result.status}`;
+    throw new Error(`Failed to publish the download to '${destination}': ${detail}`);
+  }
+}
+
 function copyRegularFileToDescriptor(source: string, destinationFd: number): fs.Stats {
   const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
   const nonBlock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
@@ -354,7 +446,7 @@ function replaceWithPrivateEntry(
 
     assertDirectoryIdentity(parent, destination);
     assertSafeDestinationEntry(destination);
-    fs.renameSync(temporaryPath, destination);
+    renameWithinPinnedDirectory(temporaryPath, destination, parent, temporaryStat);
     temporaryExists = false;
     assertDirectoryIdentity(parent, destination);
   } finally {
