@@ -93,6 +93,8 @@ function k8sGet(path) {
   const token = fs.readFileSync(tokenPath, "utf8");
   const ca = fs.readFileSync(caPath);
   return new Promise((resolve) => {
+    // codeql[js/file-access-to-http] -- in-cluster K8s API auth: token/ca come from the
+    // kubelet-projected service-account files and are sent only to KUBERNETES_SERVICE_HOST.
     const req = https.request(
       {
         hostname: process.env.KUBERNETES_SERVICE_HOST,
@@ -465,6 +467,8 @@ async function ask(target, questions, stats) {
   let lastErr;
   for (let attempt = 0; attempt <= REQUEST_RETRIES; attempt++) {
     try {
+      // codeql[js/file-access-to-http] -- `q` is the synthetic sample-question payload
+      // this load generator bundles/reads by design, not attacker-controlled file data.
       const res = await fetch(`${target}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

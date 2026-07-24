@@ -84,7 +84,8 @@ ingress:
   # cert for ingress.host; a bare `helm install` of this chart does not set it.
   allowInsecureHttp: false
   # Basic auth in front of the completion proxy, which has no authentication of its own.
-  # On by default. Leaving password empty auto-generates a random one on first install and
+  # On by default. Leaving password unset (null, not an empty string — this is intentional,
+  # not an accidentally-blank credential) auto-generates a random one on first install and
   # reuses it across `helm upgrade` re-runs (install-hpa.sh/hpa-load-test.sh/hpa-reset.sh
   # never pass --reuse-values) so the credential doesn't rotate underneath you. Retrieve it
   # with `kubectl get secret <fullname>-agent-ingress-auth -o jsonpath='{.data.password}' |
@@ -92,7 +93,7 @@ ingress:
   auth:
     enabled: true
     username: admin
-    password: ""
+    password: null
     existingSecret: ""
 
 # Local GPU inference via Ollama sidecar (same pattern as NemoClaw GPU E2E / Ollama onboard)
