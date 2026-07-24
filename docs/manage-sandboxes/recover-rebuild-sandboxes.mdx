@@ -173,6 +173,15 @@ Use this recovery path only when losing the state that could not be backed up is
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
 A detached auto-lock timer remains the recovery authority until NemoClaw commits a successful shields-up state, including when the host rebuild process exits unexpectedly.
 
+<AgentOnly variant="openclaw">
+If a failed shields transition on a sandbox from an older NemoClaw release quarantined the OpenClaw config, the bytes are preserved as `/sandbox/.openclaw/.nemoclaw-rejected-openclaw.json-<random>` rather than deleted.
+Upgrade the NemoClaw CLI before rebuilding because an older CLI restages the older in-container guard.
+To preserve settings, copy the quarantine file out of the container before `rebuild --yes`.
+After the rebuild, inspect that copy and reapply required settings with the host-side `config set` command.
+To discard the quarantined settings, upgrade the CLI and run `rebuild --yes` to create a known-good baseline.
+Sandboxes with the updated guard report quarantine filenames and synthesize a missing `.config-hash` only during `shields up` from the default mutable posture.
+</AgentOnly>
+
 <AgentOnly variant="hermes">
 For an older Hermes image that predates sealed shields transitions, only the rebuild workflow may use the descriptor-safe compatibility transition needed to archive and replace the sandbox.
 That transition verifies the strict and compatibility hashes and publishes fresh config inodes before changing their lock posture, while ordinary `shields up` and `shields down` commands continue to refuse the older protocol.

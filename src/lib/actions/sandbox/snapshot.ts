@@ -73,6 +73,7 @@ import {
   usesGatewayMetadataProbe,
 } from "./sandbox-gateway-routing";
 import { formatSnapshotBaselineExclusionSummary } from "./snapshot-baseline-exclusion-summary";
+import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -1127,6 +1128,12 @@ async function runSnapshotRestoreUnlocked(
     if (result.success) {
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
+      );
+      printHermesGatewayRestoreHint(
+        targetSandbox,
+        registry.getSandbox(targetSandbox)?.agent,
+        result.restoredFiles,
+        resolvedSnapshot?.stateFiles ?? [],
       );
     } else {
       console.error(`  Restore failed.`);
