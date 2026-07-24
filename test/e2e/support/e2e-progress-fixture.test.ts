@@ -8,13 +8,33 @@ import path from "node:path";
 
 import { expect, it } from "vitest";
 import { assertPhaseLabel } from "../../../tools/e2e/runner-pressure-core.mts";
-import { E2E_TEARDOWN_PHASE, resourcePhaseLabel } from "../fixtures/e2e-test.ts";
+import {
+  E2E_TEARDOWN_PHASE,
+  resourcePhaseLabel,
+  runnerComparisonSampleIntervalMs,
+} from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ProgressSummary } from "../fixtures/progress.ts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const FIXTURE = "test/e2e/support/fixtures/e2e-progress.fixture.test.ts";
 const ARTIFACT_SLUG = "automatic-progress-fixture-writes-completed-target-and-shard-evidence";
+
+it.each([
+  "rebuild-hermes",
+  "rebuild-hermes-stale-base",
+])("samples runner pressure every 15 seconds for %s (#7144)", (targetId) => {
+  expect(runnerComparisonSampleIntervalMs(targetId)).toBe(15_000);
+});
+
+it.each([
+  "hermes-dashboard",
+  "hermes-discord",
+  "hermes-shields-config",
+  null,
+])("keeps the 60-second runner-pressure cadence for %s (#7144)", (targetId) => {
+  expect(runnerComparisonSampleIntervalMs(targetId)).toBe(60_000);
+});
 
 it("bounds long resource phase labels without losing deterministic identity", () => {
   const target = "openshell-gateway-auth-contract";

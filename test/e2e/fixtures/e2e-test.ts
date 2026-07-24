@@ -66,6 +66,16 @@ const SUPPORT_PHASES = [
 ] as const;
 export const E2E_TEARDOWN_PHASE = "release registered E2E resources";
 
+export function runnerComparisonSampleIntervalMs(targetId: string | null): number {
+  switch (targetId) {
+    case "rebuild-hermes":
+    case "rebuild-hermes-stale-base":
+      return 15_000;
+    default:
+      return 60_000;
+  }
+}
+
 export function resourcePhaseLabel(targetId: string, phase: string): string {
   const slug = (value: string, fallback: string) =>
     value
@@ -152,6 +162,7 @@ export const test = base.extend<E2ETargetFixtures>({
           : {}),
         ...(comparisonTargetId
           ? {
+              resourceSampleIntervalMs: runnerComparisonSampleIntervalMs(comparisonTargetId),
               recordResourceSample: (
                 phase: string,
                 kind: "periodic" | "scenario-start" | "phase",
