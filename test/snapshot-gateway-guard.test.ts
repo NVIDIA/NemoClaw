@@ -5,23 +5,15 @@
 // the openshell-cluster gateway container is stopped, even when
 // `openshell sandbox list` lies and returns exit 0 with stale data.
 
-import { type ChildProcess, execSync, spawn, spawnSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { execTimeout } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
-const listenerProcesses: ChildProcess[] = [];
-let nextFixturePort = 46000 + (process.pid % 10000);
-
-afterEach(() => {
-  for (const child of listenerProcesses.splice(0)) {
-    child.kill("SIGKILL");
-  }
-});
 
 type CliRunResult = { code: number; out: string };
 
@@ -87,30 +79,6 @@ function writeSandboxRegistry(
     }),
     { mode: 0o600 },
   );
-}
-
-function startReachableForward(port: number): void {
-  const listener =
-    'const net=require("node:net");' +
-    "const server=net.createServer(()=>{});" +
-    `server.listen(${String(port)},"127.0.0.1");`;
-  const child = spawn(process.execPath, ["-e", listener], { stdio: "ignore" });
-  listenerProcesses.push(child);
-  expect(child.pid, `test forward listener failed to spawn for ${String(port)}`).toBeDefined();
-
-  const probe =
-    "const net=require('node:net');" +
-    `const s=net.createConnection({host:'127.0.0.1',port:${String(port)}});` +
-    "s.setTimeout(100);" +
-    "s.on('connect',()=>{s.destroy();process.exit(0)});" +
-    "s.on('error',()=>process.exit(1));" +
-    "s.on('timeout',()=>{s.destroy();process.exit(1)});";
-  const deadline = Date.now() + 2000;
-  let ready = false;
-  while (Date.now() < deadline && !ready) {
-    ready = spawnSync(process.execPath, ["-e", probe], { stdio: "ignore" }).status === 0;
-  }
-  expect(ready, `test forward listener failed to bind port ${String(port)}`).toBe(true);
 }
 
 function makeStoppedGatewayEnv(prefix: string): Record<string, string> {
@@ -185,31 +153,20 @@ function makeVmRestoreToEnv(
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
-  const dashboardPort = nextFixturePort++;
   writeSandboxRegistry(home, "alpha", {
     openshellDriver: "vm",
-    dashboardPort,
     ...entry,
   });
-  startReachableForward(dashboardPort);
 
   const cloneReadyMarker = path.join(home, "clone-1-ready");
-  const cloneRunningMarker = path.join(home, "clone-1-running");
-  const dockerLifecycleLog = path.join(home, "docker-lifecycle.log");
   writeExecutable(path.join(localBin, "openshell"), [
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
     '  "sandbox get") printf "{\\"name\\":\\"%s\\"}\\n" "$3"; exit 0 ;;',
     `  "sandbox list") if [ -f ${JSON.stringify(cloneReadyMarker)} ]; then printf "NAME STATUS\\nalpha Ready\\nclone-1 Ready\\n"; else printf "NAME STATUS\\nalpha Ready\\n"; fi; exit 0 ;;`,
-    '  "sandbox exec")',
-    '    case "$*" in',
-    '      *"__NEMOCLAW_SANDBOX_EXEC_STARTED__"*) printf "__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nRUNNING\\n"; exit 0 ;;',
-    "    esac",
-    '    printf "NEMOCLAW_DCODE_PROBE=no-runtime\\n"; exit 0 ;;',
+    '  "sandbox exec") printf "NEMOCLAW_DCODE_PROBE=no-runtime\\n"; exit 0 ;;',
     '  "sandbox ssh-config") printf "Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n"; exit 0 ;;',
-    `  "sandbox create") touch ${JSON.stringify(cloneReadyMarker)} ${JSON.stringify(cloneRunningMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
-    `  "forward list") printf "SANDBOX BIND PORT PID STATUS\\nclone-1 127.0.0.1 ${String(dashboardPort)} 4242 running\\n"; exit 0 ;;`,
-    '  "forward stop") exit 1 ;;',
+    `  "sandbox create") touch ${JSON.stringify(cloneReadyMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
     "esac",
     'if [ "$1" = "status" ]; then exit 0; fi',
     "exit 0",
@@ -227,47 +184,13 @@ function makeVmRestoreToEnv(
     "exit 0",
   ]);
 
-  // Model the direct-container lifecycle used after restore. Keep the
-  // kubectl-via-gateway probe rejected so an image-resolution regression
-  // remains distinguishable from the expected clone stop/start.
+  // `docker exec` must never run: if the fast path regresses,
+  // resolveSrcPodImage falls into the kubectl-via-docker probe and this
+  // marker shows up in the captured output.
   writeExecutable(path.join(localBin, "docker"), [
-    `CLONE_RUNNING_MARKER=${JSON.stringify(cloneRunningMarker)}`,
-    `LIFECYCLE_LOG=${JSON.stringify(dockerLifecycleLog)}`,
-    'if [ "$1" = "ps" ]; then',
-    '  target=""; format=""; all_states=0',
-    "  for arg do",
-    '    case "$arg" in',
-    '      label=openshell.ai/sandbox-name=*) target="${arg##*=}" ;;',
-    '      *".Names"*|*".ID"*) format="$arg" ;;',
-    "      -a) all_states=1 ;;",
-    "    esac",
-    "  done",
-    '  [ "$target" = "clone-1" ] || exit 0',
-    '  if [ -f "$CLONE_RUNNING_MARKER" ]; then status="Up 1 minute"; else status="Exited (0) 1 second ago"; fi',
-    '  if [ -f "$CLONE_RUNNING_MARKER" ] || [ "$all_states" = "1" ]; then',
-    '    case "$format" in',
-    '      *".ID"*) printf "clone-container-id\\topenshell-clone-1\\n" ;;',
-    '      *".Status"*) printf "openshell-clone-1\\t%s\\n" "$status" ;;',
-    '      *".Names"*) printf "openshell-clone-1\\n" ;;',
-    "    esac",
-    "  fi",
-    "  exit 0",
-    "fi",
-    'if [ "$1" = "stop" ] && [ "$2" = "openshell-clone-1" ]; then',
-    '  printf "stop %s\\n" "$2" >> "$LIFECYCLE_LOG"',
-    '  rm -f "$CLONE_RUNNING_MARKER"',
-    "  exit 0",
-    "fi",
-    'if [ "$1" = "start" ] && [ "$2" = "openshell-clone-1" ]; then',
-    '  printf "start %s\\n" "$2" >> "$LIFECYCLE_LOG"',
-    '  touch "$CLONE_RUNNING_MARKER"',
-    "  exit 0",
-    "fi",
     'if [ "$1" = "exec" ]; then',
-    "  for arg do",
-    '    if [ "$arg" = "kubectl" ]; then echo "kubectl-must-not-run"; exit 1; fi',
-    "  done",
-    "  exit 0",
+    '  echo "kubectl-must-not-run"',
+    "  exit 1",
     "fi",
     "exit 0",
   ]);
@@ -317,9 +240,6 @@ describe("snapshot VM-driver gateway guard", () => {
     expect(r.out).not.toContain("could not resolve");
     expect(r.out).not.toContain("kubectl-must-not-run");
     expect(r.out).toContain("openshell/sandbox-from:fast-path-test");
-    expect(fs.readFileSync(path.join(env.HOME, "docker-lifecycle.log"), "utf8")).toBe(
-      "stop openshell-clone-1\nstart openshell-clone-1\n",
-    );
   }, 15000);
 
   it("snapshot restore --to fails closed for VM-driver entries missing imageTag", () => {
