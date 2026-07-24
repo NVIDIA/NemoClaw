@@ -62,13 +62,16 @@ no alternate checkout SHA is requested. PR-gate dispatches therefore remain on
 standard runners even though they use the trusted workflow definition from
 `main`.
 
-Exact-head PR-gate dispatches use a bounded swap fallback for the hosted
-Hermes image-building lanes that remain on those standard runners. The trusted
-workflow provisions the fallback as the first job step, before checking out or
-executing the candidate revision. It requires a controller-supplied lowercase
-40-hex checkout SHA, matching trusted workflow and dispatch revisions, and an
-ephemeral GitHub-hosted Linux x64 runner. Candidate code cannot supply the
-program or arguments passed to `sudo`.
+Exact-head PR-gate dispatches and direct scheduled or manual `main` runs use a
+bounded swap fallback for eligible hosted Hermes image-building lanes. The
+fallback does not change runner routing. The trusted workflow provisions the
+fallback as the first job step, before checking out or executing the selected
+revision. Exact-head mode requires a controller-supplied lowercase 40-hex
+checkout SHA plus matching trusted workflow and dispatch revisions. Direct-main
+mode rejects alternate checkout and workflow revisions and requires the
+workflow source to match the run revision. Both modes require an ephemeral
+GitHub-hosted Linux x64 runner. Candidate code cannot supply the program or
+arguments passed to `sudo`.
 
 The trusted step requires at least 32 GiB (34,359,738,368 bytes) of usable swap.
 It reuses active swap that meets this requirement.
@@ -88,19 +91,19 @@ Successful state is discarded with the ephemeral runner.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
 the Hermes Bedrock and stable MCP shards, and the `hermes-e2e`,
-`hermes-dashboard`, and Hermes security-posture tests. Scheduled and ordinary
-manual `main` runs, larger-runner executions, rebuild lanes with
+`hermes-dashboard`, and Hermes security-posture tests. Rebuild lanes with
 workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
-shards do not use it.
+shards do not use it. Candidate-authored workflow definitions and fork-owned
+runs cannot reach it.
 
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
 label; changing the PR checkout cannot safely grant itself that capacity.
-Remove the fallback only after the trusted controller routes exact-head PR
-gates to an ephemeral GitHub-hosted runner with at least 32 GB RAM without
-weakening the exact-SHA guard, and five consecutive runs of every protected
-lane complete without runner loss while runner-pressure telemetry reports less
-than 1 GiB of swap used.
+Remove the fallback only after trusted main and exact-head PR runs use
+ephemeral GitHub-hosted runners with at least 32 GB RAM without weakening the
+source guards, and five consecutive runs of every protected lane complete
+without runner loss while runner-pressure telemetry reports less than 1 GiB of
+swap used.
 
 The eligible set is limited to the measured or repeatedly interrupted heavy
 lanes:
@@ -801,8 +804,8 @@ memory-heavy image build. The rebuild fixture verifies that floor and
 provisions the same swap file on GitHub Actions when a trusted control-plane
 run uses the workflow definition from `main`. Those paths build large Hermes
 image layers and can otherwise exhaust the runner's default memory and swap
-during Docker layer export. Other E2E jobs keep the standard runner memory
-configuration except for the exact-head Hermes PR-gate fallback described in
+during Docker layer export. Other E2E jobs do not add workflow-managed swap
+except for the trusted Hermes main-workflow fallback described in
 [Larger-runner routing](#larger-runner-routing).
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
