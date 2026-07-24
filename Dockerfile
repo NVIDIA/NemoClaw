@@ -38,6 +38,59 @@ COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
 RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
     && /opt/nemoclaw/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
 
+# Group repository-owned files outside the final image so BuildKit can collapse
+# related payloads without invalidating earlier final-image work.
+FROM scratch AS openclaw-dependency-payload
+
+COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
+COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
+COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
+COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
+COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
+COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+FROM scratch AS openclaw-plugin-payload
+
+COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
+COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
+COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+
+FROM scratch AS openclaw-patch-payload
+
+COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
+COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
+COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
+COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
+COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
+COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
+COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
+COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
+
+FROM scratch AS openclaw-runtime-payload
+
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
+COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
+COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
+COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
+COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
+COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
+COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
+COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
+COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
+COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
+COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
+COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
+COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
+COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
+COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/messaging/ /src/lib/messaging/
+COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
+
 # Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
@@ -76,15 +129,15 @@ ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.
 # credential chains from attempting an impossible metadata discovery path.
 ENV AWS_EC2_METADATA_DISABLED=true
 
-COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
-COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
-COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
-COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
-COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
-COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
-COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
-COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
-COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+RUN --mount=type=bind,from=openclaw-dependency-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib)"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib)"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: dependency payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
 
 # The final image owns the shipped dependency boundary independently of base
 # freshness. Reassert the npm-private node-tar fix here; the helper is
@@ -182,10 +235,18 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 RUN npm ci --omit=dev
 
+# Materialize the built plugin and blueprint as one repository payload layer.
+RUN --mount=type=bind,from=openclaw-plugin-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /opt /opt/nemoclaw)"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /opt /opt/nemoclaw)"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: plugin payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
 # Copy built plugin and blueprint into the sandbox
-COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
-COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
-COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
 
 # The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
@@ -227,14 +288,20 @@ RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime \
         /usr/local/share/nemoclaw/wechat-npm-cache \
     && chmod -R a+rX,go-w /usr/local/lib/nemoclaw/wechat-runtime \
         /usr/local/share/nemoclaw/wechat-npm-cache
-COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
-COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
-COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
-COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
-COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
-COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
-COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
-COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
+RUN --mount=type=bind,from=openclaw-patch-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
+        )"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
+        )"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: patch payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
@@ -854,31 +921,27 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-share
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy startup script and shared sandbox initialisation library
-COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
-COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
-COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
-COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
-COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
-COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
-COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
-COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
-COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
-COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
-# Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
+# Materialize the startup scripts and shared sandbox runtime files together.
+# NODE_OPTIONS preload modules use a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
 # needs to read these files to install Node runtime preloads under /tmp.
 # Channel runtime preloads are authored as TypeScript and compiled in the
 # runtime-preload-builder stage before being flattened by filename for --require.
-COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
-COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
-COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
-COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
-COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
-COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
-COPY src/lib/messaging/ /src/lib/messaging/
-COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
+RUN --mount=type=bind,from=openclaw-runtime-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts \
+        )"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts \
+        )"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: runtime payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
+# Copy startup script and shared sandbox initialisation library
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
@@ -1546,7 +1609,23 @@ RUN set -eu; \
 # Gate the completed local filesystem too; CI repeats this scan in an isolated
 # container and retains evidence keyed to the final image ID.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
+RUN check_metadata() { \
+      metadata_path="$1"; \
+      expected_metadata="$2"; \
+      actual_metadata="$(stat -c '%U:%G:%a' "$metadata_path")"; \
+      if [ "$actual_metadata" != "$expected_metadata" ]; then \
+        echo "ERROR: payload metadata mismatch at $metadata_path: expected $expected_metadata, got $actual_metadata" >&2; \
+        exit 1; \
+      fi; \
+    } \
+    && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root:755' \
+    && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
+    && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \
+    && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
+    && check_metadata /usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500' \
+    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644' \
+    && check_metadata /scripts/checks/node-tar-image-scan.mts 'root:root:755' \
+    && install -d -m 0755 /usr/local/share/nemoclaw \
     && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
         --root / --image build:openclaw \
         > /usr/local/share/nemoclaw/node-tar-inventory.json \
