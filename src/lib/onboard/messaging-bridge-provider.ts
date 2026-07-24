@@ -401,8 +401,11 @@ function buildRefreshMaterial(
     ];
     // Scope comes from the profile's declared refresh scopes (single source of truth).
     if (profile.scopes[0]) material.push({ key: "scope", value: profile.scopes[0] });
-    const secretKeys =
-      profile.secretMaterialKeys.length > 0 ? [...profile.secretMaterialKeys] : ["private_key"];
+    // This strategy always emits private_key as material, so force it into the
+    // secret set (delivered via --secret-material-env, never argv) regardless of
+    // what the profile declares. A profile whose secretMaterialKeys omitted it
+    // would otherwise leak the key into argv.
+    const secretKeys = Array.from(new Set([...profile.secretMaterialKeys, "private_key"]));
     return { ok: true, material, secretKeys };
   }
   return { ok: false, reason: `unsupported refresh strategy '${profile.strategy}'` };

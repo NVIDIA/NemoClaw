@@ -183,6 +183,32 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(process.env[secretEnvName]).toBe(parentSecret);
   });
 
+  it("forces private_key off argv even when the profile omits it from secretMaterialKeys", () => {
+    // A misconfigured / edited / reused profile that marks other material secret
+    // but not private_key must still never leak the raw key into argv.
+    const misconfigured: MessagingBridgeProfile = {
+      ...GC_PROFILE,
+      secretMaterialKeys: ["client_email"],
+    };
+    const runOpenshell = vi.fn((_args: string[], _opts: { env?: NodeJS.ProcessEnv }) => ({
+      status: 0,
+    }));
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [misconfigured],
+    });
+    expect(result).toEqual({ ok: true });
+    const args = runOpenshell.mock.calls[0][0];
+    expect(args).toContain("--secret-material-env");
+    // The raw private key travels by env reference, never as a --material argv value.
+    expect(args.join(" ")).not.toContain("fake-test-private-key-material");
+    const options = runOpenshell.mock.calls[0][1];
+    expect(Object.values(options.env ?? {})).toContain("fake-test-private-key-material");
+  });
+
   it("fails closed when runOpenshell exits nonzero", () => {
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "gateway rejected the material" }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
