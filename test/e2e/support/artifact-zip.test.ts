@@ -11,10 +11,14 @@ describe("validated GitHub artifact ZIP reader", () => {
     const archive = artifactZip([
       { name: "diagnostics/log.txt", contents: "ignored" },
       { name: "summary.json", contents: '{"safe":true}' },
+      { name: "résumé.json", contents: '{"utf8":true}' },
     ]);
 
     expect(readValidatedArtifactZipEntry(archive, "summary.json", { maxBytes: 1_024 })).toBe(
       '{"safe":true}',
+    );
+    expect(readValidatedArtifactZipEntry(archive, "résumé.json", { maxBytes: 1_024 })).toBe(
+      '{"utf8":true}',
     );
     expect(readValidatedArtifactZipEntry(archive, "log.txt", { maxBytes: 1_024 })).toBeNull();
   });

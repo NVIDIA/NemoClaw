@@ -156,6 +156,22 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
+  it("rejects the scorecard runtime summary upload before its producer", () => {
+    const workflow = mutableWorkflow();
+    const scorecard = workflow.jobs.scorecard;
+    const upload = uploadStep(scorecard);
+    scorecard.steps!.splice(scorecard.steps!.indexOf(upload), 1);
+    const producerIndex = scorecard.steps!.findIndex(
+      (step) => step.name === "Generate E2E scorecard",
+    );
+    expect(producerIndex).toBeGreaterThanOrEqual(0);
+    scorecard.steps!.splice(producerIndex, 0, upload);
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "scorecard upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+    );
+  });
+
   it("rejects default, explicit-exception, caller-key, and caller-if drift", () => {
     const workflow = mutableWorkflow();
     const defaultJob = workflow.jobs["credential-migration"];

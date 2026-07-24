@@ -23,6 +23,7 @@ export function artifactZip(
   let localOffset = 0;
   for (const entry of entries) {
     const name = Buffer.from(entry.name, "utf8");
+    const utf8Flag = 0x0800;
     const contents = Buffer.from(entry.contents, "utf8");
     const compressed =
       compressionMethod === 8 ? zlib.deflateRawSync(contents) : Buffer.from(contents);
@@ -30,6 +31,7 @@ export function artifactZip(
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(utf8Flag, 6);
     local.writeUInt16LE(compressionMethod, 8);
     local.writeUInt32LE(checksum, 14);
     local.writeUInt32LE(compressed.length, 18);
@@ -41,6 +43,7 @@ export function artifactZip(
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(0x0314, 4);
     central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(utf8Flag, 8);
     central.writeUInt16LE(compressionMethod, 10);
     central.writeUInt32LE(checksum, 16);
     central.writeUInt32LE(compressed.length, 20);
