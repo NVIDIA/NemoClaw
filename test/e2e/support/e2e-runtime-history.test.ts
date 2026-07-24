@@ -14,7 +14,10 @@ import {
   formatRuntimeHistory,
   loadPriorNightlySummaries,
   normalizeRuntimeSummary,
+  RUNTIME_SUMMARY_ARTIFACT,
+  RUNTIME_SUMMARY_FILE,
 } from "../../../scripts/scorecard/analyze-runtime-history.mts";
+import { artifactZip } from "../../helpers/artifact-zip";
 
 function runtimeSample(overrides: Partial<RuntimeHistorySample> = {}): RuntimeHistorySample {
   return {
@@ -157,5 +160,34 @@ describe("E2E rolling runtime history", () => {
     );
     expect(paginate).toHaveBeenCalledOnce();
     expect(paginate.mock.calls[0]?.[1]).toMatchObject({ run_id: 122 });
+  });
+
+  it("rejects a runtime summary whose embedded run ID does not match its workflow run", async () => {
+    const summary = createRuntimeSummary(121, "2026-07-23T00:00:00.000Z", [runtimeSample()]);
+    const downloadArtifact = vi.fn().mockResolvedValue({
+      data: artifactZip([{ name: RUNTIME_SUMMARY_FILE, contents: JSON.stringify(summary) }]),
+    });
+    const summaries = await loadPriorNightlySummaries({
+      context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 123 },
+      github: {
+        paginate: vi
+          .fn()
+          .mockResolvedValue([{ expired: false, id: 456, name: RUNTIME_SUMMARY_ARTIFACT }]),
+        rest: {
+          actions: {
+            downloadArtifact,
+            listWorkflowRunArtifacts: {},
+            listWorkflowRuns: vi.fn().mockResolvedValue({
+              data: { workflow_runs: [{ id: 122 }] },
+            }),
+          },
+        },
+      },
+    });
+
+    expect(summaries).toEqual([]);
+    expect(downloadArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({ artifact_id: 456, archive_format: "zip" }),
+    );
   });
 });
