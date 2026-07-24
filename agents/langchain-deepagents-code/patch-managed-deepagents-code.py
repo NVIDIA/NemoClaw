@@ -748,86 +748,100 @@ def _run_single_hook(command, event, payload_bytes) -> None:
     del command, event, payload_bytes
 '''
 
+NON_INTERACTIVE_ERROR_MARKER = '''    except Exception as e:
+        logger.exception("Unexpected error during non-interactive execution")
+        console.print(
+            f"\\n[red]Unexpected error ({type(e).__name__}): "
+            f"{escape_markup(str(e))}[/red]"
+        )
+        return 1
+'''
+
+NON_INTERACTIVE_ERROR_PATCH = '''    except Exception:
+        _nemoclaw_report_non_interactive_error(thread_id, console)
+        return 1
+'''
+
 NON_INTERACTIVE_PATCH = r'''
 import logging as _nemoclaw_logging
+import os as _nemoclaw_os
 import re as _nemoclaw_re
-import uuid as _nemoclaw_uuid
+import sqlite3 as _nemoclaw_sqlite3
 
 # NemoClaw-managed Deep Agents Code hardening v2.
-_NEMOCLAW_KNOWN_PROVIDER_ERRORS = (
-    (_nemoclaw_re.compile(r"ResourceExhausted", _nemoclaw_re.IGNORECASE), "upstream_provider_capacity", True),
-    (_nemoclaw_re.compile(r"RateLimitError|429|rate.limit", _nemoclaw_re.IGNORECASE), "upstream_rate_limit", True),
-    (_nemoclaw_re.compile(r"timeout|deadline\s*exceeded|DeadlineExceeded", _nemoclaw_re.IGNORECASE), "upstream_timeout", True),
-    (_nemoclaw_re.compile(r"ConnectionError|connection\s*refused|ConnectionRefused", _nemoclaw_re.IGNORECASE), "upstream_connection", True),
+_NEMOCLAW_PROVIDER_CAPACITY_ERROR = _nemoclaw_re.compile(
+    r"""\bAPIError\(["']ResourceExhausted:\s*
+        Worker\s+local\s+total\s+request\s+limit\s+reached\s*
+        \(\d+/\d+\)""",
+    _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
 )
 
 _NEMOCLAW_MANAGED_STATE_DB = "/sandbox/.deepagents/.state/sessions.db"
 
 
-def _nemoclaw_classify_non_interactive_error(exc):
-    """Classify a non-interactive error by examining the exception and its cause chain.
-
-    Walks __cause__ and __context__ so that a generic RemoteException whose
-    chained cause is a provider error (e.g. ResourceExhausted) is still
-    classified correctly.
-    """
-    seen = set()
-    current = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        exc_type_name = type(current).__name__
-        for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
-            if pattern.search(exc_type_name):
-                return (category, retryable)
-        try:
-            exc_str = str(current)
-        except Exception:
-            exc_str = ""
-        for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
-            if exc_str and pattern.search(exc_str):
-                return (category, retryable)
-        # Prefer explicit cause; fall back to implicit context.
-        next_exc = getattr(current, "__cause__", None)
-        if next_exc is None:
-            next_exc = getattr(current, "__context__", None)
-        current = next_exc
-    return None
-
-
-def _nemoclaw_classify_from_persisted_errors():
-    """Read recent error entries from the managed LangGraph checkpoint DB.
-
-    LangGraph serializes remote exceptions and strips provider-specific causes.
-    The checkpoint DB retains the original error text in __error__ channel writes.
-    This function reads those entries to recover the real provider failure class.
-    Returns the classification tuple or None.
-    """
-    import os as _os
-    if not _os.path.isfile(_NEMOCLAW_MANAGED_STATE_DB):
+def _nemoclaw_classify_persisted_error(thread_id):
+    """Classify the observed provider-capacity error for one managed thread."""
+    if (
+        not isinstance(thread_id, str)
+        or not thread_id
+        or not _nemoclaw_os.path.isfile(_NEMOCLAW_MANAGED_STATE_DB)
+    ):
         return None
     try:
-        import sqlite3 as _sqlite3
-        conn = _sqlite3.connect(_NEMOCLAW_MANAGED_STATE_DB, timeout=2)
+        conn = _nemoclaw_sqlite3.connect(_NEMOCLAW_MANAGED_STATE_DB, timeout=2)
         conn.execute("PRAGMA query_only = ON")
         try:
             cursor = conn.execute(
-                "SELECT value FROM checkpoint_writes "
-                "WHERE channel = '__error__' "
-                "ORDER BY rowid DESC LIMIT 5"
+                "SELECT substr(value, 1, 4096) FROM writes "
+                "WHERE thread_id = ? AND channel = '__error__' "
+                "ORDER BY rowid DESC LIMIT 5",
+                (thread_id,),
             )
             for (value,) in cursor:
                 if not isinstance(value, (str, bytes)):
                     continue
-                text = value if isinstance(value, str) else value.decode("utf-8", errors="replace")
-                for pattern, category, retryable in _NEMOCLAW_KNOWN_PROVIDER_ERRORS:
-                    if pattern.search(text):
-                        return (category, retryable)
+                text = (
+                    value
+                    if isinstance(value, str)
+                    else value.decode("utf-8", errors="replace")
+                )
+                if _NEMOCLAW_PROVIDER_CAPACITY_ERROR.search(text):
+                    return ("ResourceExhausted", "upstream_provider_capacity", "true")
         finally:
             conn.close()
     except Exception:
-        # DB access failure is not actionable -- fall through silently.
+        # Diagnostics must not replace the original non-interactive exit result.
         pass
     return None
+
+
+def _nemoclaw_report_non_interactive_error(thread_id, console):
+    """Emit bounded diagnostics without logging the exception or checkpoint row."""
+    classified = _nemoclaw_classify_persisted_error(thread_id)
+    logger = _nemoclaw_logging.getLogger("nemoclaw.managed.non_interactive")
+    if classified:
+        error_class, category, retryable = classified
+        logger.warning(
+            "managed non-interactive error: error_class=%s category=%s "
+            "retryable=%s correlation_id=%s",
+            error_class,
+            category,
+            retryable,
+            thread_id,
+        )
+        console.print(
+            f"\n[red]Model request failed: {error_class} "
+            f"(correlation_id={thread_id})[/red]"
+        )
+        return
+    logger.warning(
+        "managed non-interactive error: error_class=unknown category=unknown "
+        "retryable=false correlation_id=%s",
+        thread_id,
+    )
+    console.print(
+        f"\n[red]Unexpected error (correlation_id={thread_id})[/red]"
+    )
 
 
 _nemoclaw_original_run_non_interactive = run_non_interactive
@@ -850,26 +864,7 @@ async def run_non_interactive(*args, **kwargs):
     kwargs["enable_interpreter"] = False
     kwargs["interpreter_ptc"] = None
     kwargs["rubric_model"] = None
-    try:
-        return await _nemoclaw_original_run_non_interactive(*args, **kwargs)
-    except Exception as exc:
-        _logger = _nemoclaw_logging.getLogger("nemoclaw.managed.non_interactive")
-        _corr_id = str(_nemoclaw_uuid.uuid4())
-        classified = _nemoclaw_classify_non_interactive_error(exc)
-        if classified is None:
-            classified = _nemoclaw_classify_from_persisted_errors()
-        if classified:
-            category, retryable = classified
-            _logger.warning(
-                "managed non-interactive error: category=%s retryable=%s correlation_id=%s",
-                category, retryable, _corr_id,
-            )
-        else:
-            _logger.warning(
-                "managed non-interactive error: category=unknown retryable=false correlation_id=%s",
-                _corr_id,
-            )
-        raise
+    return await _nemoclaw_original_run_non_interactive(*args, **kwargs)
 
 
 async def _run_startup_command(command, console, *, quiet: bool) -> None:
@@ -1466,6 +1461,7 @@ def main() -> None:
             ("status", STATUS_PATCH),
             ("welcome", WELCOME_PATCH),
             ("server", SERVER_PATCH),
+            ("non_interactive", NON_INTERACTIVE_PATCH),
         ):
             if texts[name].count(patch.lstrip()) != 1:
                 raise RuntimeError(
@@ -1475,6 +1471,11 @@ def main() -> None:
             raise RuntimeError(
                 "Managed package server override patch is incomplete in "
                 f"{paths['server']}"
+            )
+        if texts["non_interactive"].count(NON_INTERACTIVE_ERROR_PATCH) != 1:
+            raise RuntimeError(
+                "Managed package non-interactive error patch is incomplete in "
+                f"{paths['non_interactive']}"
             )
         return
     if marker_states != {False} or helper_path.exists():
@@ -1647,6 +1648,11 @@ def main() -> None:
             "Expected one Deep Agents Code explicit MCP config marker in "
             f"{paths['mcp_tools']}"
         )
+    if texts["non_interactive"].count(NON_INTERACTIVE_ERROR_MARKER) != 1:
+        raise RuntimeError(
+            "Expected one Deep Agents Code non-interactive error marker in "
+            f"{paths['non_interactive']}"
+        )
     transformed = dict(texts)
     transformed["entrypoint"] = texts["entrypoint"].replace(
         ENTRYPOINT_MARKER, ENTRYPOINT_PATCH, 1
@@ -1735,9 +1741,14 @@ def main() -> None:
     transformed["hooks"] = _append_patch(
         paths["hooks"], texts["hooks"], HOOKS_PATCH
     )
+    transformed_non_interactive = texts["non_interactive"].replace(
+        NON_INTERACTIVE_ERROR_MARKER,
+        NON_INTERACTIVE_ERROR_PATCH,
+        1,
+    )
     transformed["non_interactive"] = _append_patch(
         paths["non_interactive"],
-        texts["non_interactive"],
+        transformed_non_interactive,
         NON_INTERACTIVE_PATCH,
     )
 
