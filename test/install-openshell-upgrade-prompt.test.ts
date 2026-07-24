@@ -14,6 +14,77 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
+function runInstallerOpenshellVersionFlow(openshellBody?: string) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-flow-"));
+  const home = path.join(tmp, "home");
+  const bin = path.join(tmp, "bin");
+  const setupDir = path.join(tmp, "setup");
+  const registry = path.join(home, ".nemoclaw", "sandboxes.json");
+  const gatewayState = path.join(tmp, "gateway.state");
+  const installLog = path.join(tmp, "install.log");
+  const healthyOpenshell = path.join(tmp, "healthy-openshell");
+
+  fs.mkdirSync(path.dirname(registry), { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(setupDir, { recursive: true });
+  fs.writeFileSync(registry, '{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
+  fs.writeFileSync(gatewayState, "gateway-original\n");
+  writeExecutable(path.join(setupDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(
+    healthyOpenshell,
+    '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n',
+  );
+  if (openshellBody !== undefined) {
+    writeExecutable(path.join(bin, "openshell"), openshellBody);
+  }
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+SCRIPT_DIR="${setupDir}"
+resolve_nemoclaw_gateway_port() { printf '8080\\n'; }
+preflight_explicit_express_flags() { :; }
+print_banner() { :; }
+preflight_usage_notice_prompt() { :; }
+prepare_installer_host() { :; }
+step() { :; }
+install_nodejs() { :; }
+ensure_supported_runtime() { :; }
+fix_npm_permissions() { :; }
+preinstall_backup_and_retire_legacy_gateway() {
+  printf 'gateway-retired\\n' >"${gatewayState}"
+  printf '{"sandboxes":{}}\\n' >"${registry}"
+}
+install_nemoclaw() {
+  printf 'install\\n' >>"${installLog}"
+  if ! command_exists openshell; then
+    cp "${healthyOpenshell}" "${bin}/openshell"
+  fi
+}
+verify_nemoclaw() { :; }
+print_done() { :; }
+main --non-interactive --yes-i-accept-third-party-software`,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    },
+  );
+
+  return {
+    result,
+    gatewayState: fs.readFileSync(gatewayState, "utf-8"),
+    registry: fs.readFileSync(registry, "utf-8"),
+    installLog: fs.existsSync(installLog) ? fs.readFileSync(installLog, "utf-8") : "",
+  };
+}
+
 function runPreinstallUpgradeGuard(
   env: Record<string, string> = {},
   options: {
@@ -233,6 +304,24 @@ require_reportable_openshell_version`,
   const brokenOpenshell = "#!/usr/bin/env bash\nexit 1\n";
   const healthyOpenshell =
     '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n';
+
+  it("rejects a broken OpenShell before gateway or sandbox mutation (#7300)", () => {
+    const { result, gatewayState, registry, installLog } =
+      runInstallerOpenshellVersionFlow(brokenOpenshell);
+
+    expect(result.status, result.stdout + result.stderr).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("could not report its version");
+    expect(gatewayState).toBe("gateway-original\n");
+    expect(registry).toBe('{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
+    expect(installLog).toBe("");
+  });
+
+  it("installs OpenShell when no binary is present (#7300)", () => {
+    const { result, installLog } = runInstallerOpenshellVersionFlow();
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(installLog).toBe("install\n");
+  });
 
   it.skipIf(process.platform !== "linux")(
     "fails closed before onboarding when a present openshell cannot report its version (#7300)",

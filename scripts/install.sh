@@ -2003,14 +2003,8 @@ installed_openshell_version() {
   openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
-# Fail closed before onboarding when an openshell binary is present on PATH but
-# cannot report a version. Run at an unconditional point (after all install
-# steps, before onboarding): the source-checkout `if-missing` branch keeps a
-# present binary, and the preinstall version gate only runs when a sandbox is
-# registered (install.sh:2276) — so a no-sandbox run or a deferred install would
-# otherwise proceed against an undeterminable OpenShell version (#7300). An
-# absent binary is fine (it was installed on the force path); a binary that
-# reports a version is fine (the #3989 developer-autonomy case).
+# Fail closed when OpenShell is present but cannot report its version. An absent
+# binary is valid before install_nemoclaw; its caller validates again afterward.
 require_reportable_openshell_version() {
   command_exists openshell || return 0
   [ -n "$(installed_openshell_version 2>/dev/null || true)" ] && return 0
@@ -4006,6 +4000,7 @@ main() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
+  require_reportable_openshell_version
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw
