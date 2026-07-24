@@ -189,6 +189,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     apiKey: COMPATIBLE_API_KEY,
     host: "0.0.0.0",
     model: COMPATIBLE_MODEL,
+    progress,
     publicHost: "host.openshell.internal",
     requireAuth: true,
   });
