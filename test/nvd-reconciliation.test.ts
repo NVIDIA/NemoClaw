@@ -256,6 +256,38 @@ describe("NVD 2.0 record parsing", () => {
       "cpe:2.3:a:isaacs:node-tar:*:*:*:*:*:*:*:*",
     ]);
   });
+
+  it("collects vulnerable CPE criteria from nested configuration nodes", () => {
+    const vulnerableCriterion = "cpe:2.3:a:fastify:fast-uri:*:*:*:*:*:node.js:*:*";
+    const contextCriterion = "cpe:2.3:a:nodejs:node.js:-:*:*:*:*:*:*:*";
+    const response = {
+      vulnerabilities: [
+        {
+          cve: {
+            id: "CVE-2026-13676",
+            configurations: [
+              {
+                nodes: [
+                  {
+                    nodes: [
+                      {
+                        cpeMatch: [
+                          { vulnerable: true, criteria: vulnerableCriterion },
+                          { vulnerable: false, criteria: contextCriterion },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    expect(parsedRecord(response).cpeCriteria).toEqual([vulnerableCriterion]);
+  });
 });
 
 describe("CVE id derivation from GHSA advisory records", () => {

@@ -54,19 +54,28 @@ function collectVulnerableCpeCriteria(cve: Record<string, unknown>): string[] {
     if (typeof configuration !== "object" || configuration === null) continue;
     const nodes = (configuration as Record<string, unknown>).nodes;
     if (!Array.isArray(nodes)) continue;
-    for (const node of nodes) {
+    const pendingNodes = [...nodes];
+    const seenNodes = new Set<object>();
+    for (let index = 0; index < pendingNodes.length; index += 1) {
+      const node = pendingNodes[index];
       if (typeof node !== "object" || node === null) continue;
-      const matches = (node as Record<string, unknown>).cpeMatch;
-      if (!Array.isArray(matches)) continue;
-      for (const match of matches) {
-        if (typeof match !== "object" || match === null) continue;
-        const entry = match as Record<string, unknown>;
-        // Only cpeMatch entries flagged vulnerable name the vulnerable
-        // product; the rest are platform context ("running on/with").
-        if (entry.vulnerable !== true) continue;
-        const criterion = entry.criteria;
-        if (typeof criterion !== "string" || criterion.length === 0) continue;
-        if (!criteria.includes(criterion)) criteria.push(criterion);
+      if (seenNodes.has(node)) continue;
+      seenNodes.add(node);
+      const nodeRecord = node as Record<string, unknown>;
+      const childNodes = nodeRecord.nodes;
+      if (Array.isArray(childNodes)) pendingNodes.push(...childNodes);
+      const matches = nodeRecord.cpeMatch;
+      if (Array.isArray(matches)) {
+        for (const match of matches) {
+          if (typeof match !== "object" || match === null) continue;
+          const entry = match as Record<string, unknown>;
+          // Only cpeMatch entries flagged vulnerable name the vulnerable
+          // product; the rest are platform context ("running on/with").
+          if (entry.vulnerable !== true) continue;
+          const criterion = entry.criteria;
+          if (typeof criterion !== "string" || criterion.length === 0) continue;
+          if (!criteria.includes(criterion)) criteria.push(criterion);
+        }
       }
     }
   }
