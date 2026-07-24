@@ -186,7 +186,24 @@ describe("Hermes final image layout", () => {
       finalStage.indexOf('RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]'),
     );
     expect(finalStage.indexOf(payloadLayers[4])).toBeLessThan(
-      finalStage.indexOf("RUN install -d -m 0755 /usr/local/share/nemoclaw"),
+      finalStage.indexOf("RUN check_metadata()"),
+    );
+    for (const metadataContract of [
+      "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
+      "/opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444'",
+      "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
+      "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
+      "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
+      "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
+      "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
+    ]) {
+      expect(finalStage).toContain(`check_metadata ${metadataContract}`);
+    }
+    expect(finalStage.indexOf("RUN check_metadata()")).toBeGreaterThan(
+      finalStage.indexOf(payloadLayers[4]),
+    );
+    expect(finalStage.indexOf("RUN check_metadata()")).toBeLessThan(
+      finalStage.indexOf("node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts"),
     );
   });
 

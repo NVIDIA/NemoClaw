@@ -683,7 +683,21 @@ RUN --mount=type=bind,from=hermes-scan-payload,source=/,target=/run/nemoclaw-pay
             || { echo "ERROR: scan payload changed parent directory ownership or mode" >&2; exit 1; } \
     '
 
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
+RUN check_metadata() { \
+        path="$1"; \
+        expected="$2"; \
+        actual="$(stat -c '%U:%G %a' "$path")"; \
+        [ "$actual" = "$expected" ] \
+            || { echo "ERROR: $path metadata is $actual, expected $expected" >&2; return 1; }; \
+    }; \
+    check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
+    && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
+    && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
+    && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \
+    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
+    && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
+    && check_metadata /scripts/checks/node-tar-image-scan.mts 'root:root 755' \
+    && install -d -m 0755 /usr/local/share/nemoclaw \
     && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
         --root / --image build:hermes \
         > /usr/local/share/nemoclaw/node-tar-inventory.json \
