@@ -150,6 +150,7 @@ The trusted workflow definition comes from `main`; each PR-code checkout uses th
 The controller reads the approval history and requires one approval for that environment.
 The environment's required reviewers are the authorization allowlist.
 The controller also checks the PR number, head repository, PR SHA, base SHA, plan, pending coordination check, compatible `main`, and PR state.
+Immediately before dispatch, it confirms that the PR is open and that the PR SHA, base SHA, and coordination identity still match.
 
 Approval returns coordination to `Running <count> E2E check(s)`.
 The gate passes only after the selected jobs and targets return verified passing evidence.
