@@ -14,6 +14,7 @@ import {
 } from "../../../tools/e2e/credential-free-tests.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
+import { testTimeoutOptions } from "../../helpers/timeouts";
 
 type Workflow = {
   jobs: Record<
@@ -40,24 +41,28 @@ function validateMutatedWorkflow(mutator: (workflow: Workflow) => void): string[
 }
 
 describe("shared E2E workflow boundary", () => {
-  it("keeps every tagged credential-free test visible to Vitest discovery", () => {
-    const declaredFiles = fs
-      .globSync(["**/*.test.js", "**/*.test.ts"], {
-        cwd: process.cwd(),
-        exclude: ["**/dist/**", "**/node_modules/**"],
-      })
-      .filter((file) => {
-        const source = fs.readFileSync(path.join(process.cwd(), file), "utf8");
-        return stripCredentialFreeTestDeclarations(source) !== source;
-      })
-      .sort();
+  it(
+    "keeps every tagged credential-free test visible to Vitest discovery",
+    testTimeoutOptions(15_000),
+    () => {
+      const declaredFiles = fs
+        .globSync(["**/*.test.js", "**/*.test.ts"], {
+          cwd: process.cwd(),
+          exclude: ["**/dist/**", "**/node_modules/**"],
+        })
+        .filter((file) => {
+          const source = fs.readFileSync(path.join(process.cwd(), file), "utf8");
+          return stripCredentialFreeTestDeclarations(source) !== source;
+        })
+        .sort();
 
-    expect(
-      discoverCredentialFreeTests()
-        .map(({ file }) => file)
-        .sort(),
-    ).toEqual(declaredFiles);
-  });
+      expect(
+        discoverCredentialFreeTests()
+          .map(({ file }) => file)
+          .sort(),
+      ).toEqual(declaredFiles);
+    },
+  );
 
   it("ratchets shared setup, tagged test execution, and aggregation", () => {
     const errors = validateMutatedWorkflow((workflow) => {

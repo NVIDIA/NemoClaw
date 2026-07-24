@@ -39,6 +39,7 @@ const REVIEWED_NPM_ARCHIVE_HELPER = path.join(
   "lib",
   "reviewed-npm-archive.mts",
 );
+const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REVIEWED_NPM_AUDIT_HELPER = path.join(REPO_ROOT, "scripts", "lib", "reviewed-npm-audit.mts");
 const UNPINNED_OPENCLAW_VERSION = "2026.7.2";
 const PINNED_OPENCLAW_VERSION = "2026.7.1";
@@ -174,6 +175,10 @@ function runInstallBlock(
     packFilename?: string | null;
     allowLegacyFixture?: boolean;
     installedOpenClawVersion?: string;
+    installedOpenClawVersionPrefix?: string;
+    installedOpenClawVersionSuffix?: string;
+    includeInstalledOpenClawVersion?: boolean;
+    openclawVersionCommandStatus?: number;
     installedMcporterVersion?: string;
     baseImage?: string;
     baseProvenance?: string | null;
@@ -195,6 +200,10 @@ function runInstallBlock(
     packFilename,
     allowLegacyFixture = false,
     installedOpenClawVersion = LEGACY_REBUILD_OPENCLAW_VERSION,
+    installedOpenClawVersionPrefix = "openclaw ",
+    installedOpenClawVersionSuffix = "",
+    includeInstalledOpenClawVersion = true,
+    openclawVersionCommandStatus = 0,
     installedMcporterVersion = PINNED_MCPORTER_VERSION,
     baseImage = "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     baseProvenance = null,
@@ -209,6 +218,7 @@ function runInstallBlock(
   const mcporterRuntime = path.join(tmp, "mcporter-runtime");
   const mcporterBin = path.join(tmp, "bin", "mcporter");
   const reviewedNpmExecutable = path.join(tmp, "bin", "reviewed-npm-fixture");
+  const openclawVersionExtractor = path.join(tmp, "bin", "extract-semver");
   const remediationHelper = path.join(tmp, "openclaw-npm-remediation.cjs");
   const auditHelper = path.join(tmp, "reviewed-npm-audit.cjs");
   const auditExceptionFile = path.join(tmp, "npm-audit-exceptions.json");
@@ -217,6 +227,8 @@ function runInstallBlock(
     .digest("hex");
   fs.mkdirSync(path.dirname(mcporterBin), { recursive: true });
   fs.mkdirSync(mcporterRuntime, { recursive: true });
+  fs.copyFileSync(OPENCLAW_VERSION_EXTRACTOR, openclawVersionExtractor);
+  fs.chmodSync(openclawVersionExtractor, 0o755);
   fs.copyFileSync(MCPORTER_LOCKFILE, path.join(mcporterRuntime, "package-lock.json"));
   fs.writeFileSync(blueprint, fs.readFileSync(BLUEPRINT, "utf-8"));
   fs.writeFileSync(auditExceptionFile, auditExceptionPolicy);
@@ -320,6 +332,10 @@ function runInstallBlock(
     `MCPORTER_0_7_3_TARBALL=${JSON.stringify(PINNED_MCPORTER_TARBALL)}`,
     `export NEMOCLAW_REVIEWED_NPM_EXECUTABLE=${JSON.stringify(reviewedNpmExecutable)}`,
     "export NODE_OPTIONS=",
+    `installed_openclaw_version_prefix=${JSON.stringify(installedOpenClawVersionPrefix)}`,
+    `installed_openclaw_version_suffix=${JSON.stringify(installedOpenClawVersionSuffix)}`,
+    `include_installed_openclaw_version=${includeInstalledOpenClawVersion ? "1" : "0"}`,
+    `openclaw_version_command_status=${openclawVersionCommandStatus}`,
     `installed_openclaw_version=${JSON.stringify(installedOpenClawVersion)}`,
     `installed_mcporter_version=${JSON.stringify(installedMcporterVersion)}`,
     "node() {",
@@ -327,7 +343,11 @@ function runInstallBlock(
     '  if [ "${1:-}" = "--input-type=module" ] && [ "${2:-}" = "-e" ] && printf "%s\\n" "${3:-}" | grep -q "StreamableHTTPServerTransport"; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  "$real_node" "$@"',
     "}",
-    `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw %s\\n' "$installed_openclaw_version"; else return 127; fi; }`,
+    "openclaw() {",
+    '  if [ "${1:-}" != "--version" ]; then return 127; fi',
+    '  if [ "$include_installed_openclaw_version" = "1" ]; then printf "%s%s%s\\n" "$installed_openclaw_version_prefix" "$installed_openclaw_version" "$installed_openclaw_version_suffix"; else printf "%s%s\\n" "$installed_openclaw_version_prefix" "$installed_openclaw_version_suffix"; fi',
+    '  return "$openclaw_version_command_status"',
+    "}",
     'mcporter() { if [ "${1:-}" = "--version" ]; then printf "%s\\n" "$installed_mcporter_version"; else return 127; fi; }',
     "codex-acp() { :; }",
     "stat() {",
@@ -375,6 +395,7 @@ function runInstallBlock(
       .replaceAll(OPENCLAW_BASE_PROVENANCE_PATH, provenancePath)
       .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterRuntime)
       .replaceAll("/usr/local/bin/mcporter", mcporterBin)
+      .replaceAll("/usr/local/lib/nemoclaw/extract-semver", openclawVersionExtractor)
       .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
       .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper)
       .replaceAll("/scripts/lib/reviewed-npm-audit.mts", auditHelper)
@@ -922,6 +943,8 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
             installedOpenClawVersion: PINNED_OPENCLAW_VERSION,
+            installedOpenClawVersionPrefix: "OpenClaw v",
+            installedOpenClawVersionSuffix: " (abcdef)",
             committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
             registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
             baseProvenance: openClawBaseProvenance(),
@@ -1197,6 +1220,57 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).not.toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
         expect(provenanceExists).toBe(false);
+      });
+
+      it("rejects malformed OpenClaw version output before archive work", () => {
+        const { result, calls } = runInstallBlock(
+          extractRunBlock(
+            DOCKERFILE,
+            "# OPENCLAW_VERSION is the NemoClaw runtime build target",
+            "# Patch OpenClaw media fetch",
+          ),
+          {
+            openclawVersion: PINNED_OPENCLAW_VERSION,
+            installedOpenClawVersion: PINNED_OPENCLAW_VERSION,
+            installedOpenClawVersionPrefix: "OpenClaw development build",
+            includeInstalledOpenClawVersion: false,
+            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            baseProvenance: openClawBaseProvenance(),
+          },
+        );
+
+        expect(result.status).not.toBe(0);
+        expect(`${result.stdout}${result.stderr}`).toContain(
+          "Could not parse OpenClaw version output",
+        );
+        expect(calls).not.toContain("npm pack");
+        expect(calls).not.toContain("npm install");
+      });
+
+      it("rejects a failed OpenClaw version command before archive work", () => {
+        const { result, calls } = runInstallBlock(
+          extractRunBlock(
+            DOCKERFILE,
+            "# OPENCLAW_VERSION is the NemoClaw runtime build target",
+            "# Patch OpenClaw media fetch",
+          ),
+          {
+            openclawVersion: PINNED_OPENCLAW_VERSION,
+            installedOpenClawVersion: PINNED_OPENCLAW_VERSION,
+            openclawVersionCommandStatus: 1,
+            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            baseProvenance: openClawBaseProvenance(),
+          },
+        );
+
+        expect(result.status).not.toBe(0);
+        expect(`${result.stdout}${result.stderr}`).toContain(
+          "Could not execute openclaw --version",
+        );
+        expect(calls).not.toContain("npm pack");
+        expect(calls).not.toContain("npm install");
       });
 
       it("rejects npm pack filenames outside the fresh pack directories", () => {

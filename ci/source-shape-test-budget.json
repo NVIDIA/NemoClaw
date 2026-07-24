@@ -272,9 +272,19 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
+      "test": "keeps the fixed privileged program before candidate checkout in every protected job (#7145)",
+      "category": "security"
+    },
+    {
       "file": "test/fetch-guard-patch-regression.test.ts",
       "test": "requires classifier review and integrity evidence when the OpenClaw build pin changes",
       "category": "security"
+    },
+    {
+      "file": "test/hermes-final-image-layout.test.ts",
+      "test": "keeps repository payload layers at their cache boundaries (#7144)",
+      "category": "compatibility"
     },
     {
       "file": "test/hermes-final-image-layout.test.ts",

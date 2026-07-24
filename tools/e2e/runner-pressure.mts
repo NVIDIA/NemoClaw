@@ -53,8 +53,10 @@ import {
   parseCgroupMemoryEvents,
   parseCgroupScalar,
   parseClassificationLine,
-  parseDockerStats,
+  parseCpuTicks,
+  parseDockerStatsEvidence,
   parseDockerSystemDf,
+  parseLargestClassifiedProcess,
   parseLoadAverages,
   parseMeminfo,
   parsePressure,
@@ -75,7 +77,8 @@ const BASELINE_FILE_MAX_BYTES = 4096;
 const PHASE_BASELINES_FILE_MAX_BYTES = 128 * BASELINE_FILE_MAX_BYTES;
 const CLASSIFICATION_FILE_MAX_BYTES = 2048;
 const DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS = 15_000;
-const QUICK_RESOURCE_COMMAND_TIMEOUT_MS = 3_000;
+const RESOURCE_COMMAND_MAX_BUFFER_BYTES = 256 * 1024;
+type ResourceCommandTimeoutMs = 1_000 | 2_000 | 3_000 | 15_000;
 
 function readTextOrNull(path: string): string | null {
   try {
@@ -88,16 +91,21 @@ function readTextOrNull(path: string): string | null {
 function runOrNull(
   command: string,
   args: string[],
-  timeout: 3_000 | 15_000 = DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS,
+  timeout: ResourceCommandTimeoutMs = DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS,
 ): string | null {
   try {
     const result = spawnSync(command, args, {
       encoding: "utf-8",
       killSignal: "SIGKILL",
+      maxBuffer: RESOURCE_COMMAND_MAX_BUFFER_BYTES,
       timeout:
-        timeout === QUICK_RESOURCE_COMMAND_TIMEOUT_MS
-          ? QUICK_RESOURCE_COMMAND_TIMEOUT_MS
-          : DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS,
+        timeout === 1_000
+          ? 1_000
+          : timeout === 2_000
+            ? 2_000
+            : timeout === 3_000
+              ? 3_000
+              : DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS,
     });
     return result.status === 0 ? (result.stdout ?? null) : null;
   } catch {
@@ -105,35 +113,124 @@ function runOrNull(
   }
 }
 
-function collectDisk(): ResourceSnapshot["disk"] {
+export type ResourceSnapshotProfile =
+  | "full"
+  | "comparison-endpoint"
+  | "comparison-periodic"
+  | "comparison-phase";
+
+export interface ResourceSnapshotCommandPlan {
+  processTimeoutMs: ResourceCommandTimeoutMs | null;
+  containerTimeoutMs: ResourceCommandTimeoutMs | null;
+  dockerDiskTimeoutMs: ResourceCommandTimeoutMs | null;
+}
+
+export function resourceSnapshotCommandPlan(
+  profile: ResourceSnapshotProfile,
+): ResourceSnapshotCommandPlan {
+  if (profile === "comparison-endpoint") {
+    return { processTimeoutMs: null, containerTimeoutMs: null, dockerDiskTimeoutMs: null };
+  }
+  if (profile === "comparison-periodic") {
+    return { processTimeoutMs: 1_000, containerTimeoutMs: null, dockerDiskTimeoutMs: null };
+  }
+  if (profile === "comparison-phase") {
+    return { processTimeoutMs: 1_000, containerTimeoutMs: 2_000, dockerDiskTimeoutMs: 2_000 };
+  }
+  return {
+    processTimeoutMs: DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS,
+    containerTimeoutMs: DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS,
+    dockerDiskTimeoutMs: DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS,
+  };
+}
+
+export interface ResourceSnapshotSources {
+  now: () => Date;
+  readText: (file: string) => string | null;
+  run: (command: string, args: string[], timeout: ResourceCommandTimeoutMs) => string | null;
+  statfs: (directory: string) => {
+    bavail: number | bigint;
+    blocks: number | bigint;
+    bsize: number | bigint;
+    ffree: number | bigint;
+    files: number | bigint;
+  };
+}
+
+const defaultSnapshotSources: ResourceSnapshotSources = {
+  now: () => new Date(),
+  readText: readTextOrNull,
+  run: runOrNull,
+  statfs: (directory) => fs.statfsSync(directory),
+};
+
+function checkedProduct(left: number | bigint, right: number | bigint): number | null {
+  const product = Number(left) * Number(right);
+  return Number.isSafeInteger(product) && product >= 0 ? product : null;
+}
+
+function safeInteger(value: number | bigint): number | null {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function collectDisk(sources: ResourceSnapshotSources): ResourceSnapshot["disk"] {
   try {
-    const stat = fs.statfsSync(process.cwd());
+    const stat = sources.statfs(process.cwd());
     return {
-      freeBytes: Number(stat.bavail) * Number(stat.bsize),
-      totalBytes: Number(stat.blocks) * Number(stat.bsize),
-      inodesFree: Number(stat.ffree),
-      inodesTotal: Number(stat.files),
+      freeBytes: checkedProduct(stat.bavail, stat.bsize),
+      totalBytes: checkedProduct(stat.blocks, stat.bsize),
+      inodesFree: safeInteger(stat.ffree),
+      inodesTotal: safeInteger(stat.files),
     };
   } catch {
     return null;
   }
 }
 
-export function collectResourceSnapshot(phase: string): ResourceSnapshot {
-  const meminfoText = readTextOrNull("/proc/meminfo");
-  const loadText = readTextOrNull("/proc/loadavg");
-  const current = readTextOrNull(`${CGROUP_ROOT}/memory.current`);
-  const peak = readTextOrNull(`${CGROUP_ROOT}/memory.peak`);
-  const limit = readTextOrNull(`${CGROUP_ROOT}/memory.max`);
-  const events = readTextOrNull(`${CGROUP_ROOT}/memory.events`);
-  const memoryPressure = readTextOrNull(`${CGROUP_ROOT}/memory.pressure`);
-  const ioPressure = readTextOrNull(`${CGROUP_ROOT}/io.pressure`);
-  const psText = runOrNull("ps", ["-eo", "rss="]);
-  const statsText = runOrNull("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
-  const dfText = runOrNull("docker", ["system", "df", "--format", "{{json .}}"]);
+export function collectResourceSnapshot(
+  phase: string,
+  profile: ResourceSnapshotProfile = "full",
+  sources: ResourceSnapshotSources = defaultSnapshotSources,
+): ResourceSnapshot {
+  const commandPlan = resourceSnapshotCommandPlan(profile);
+  const meminfoText = sources.readText("/proc/meminfo");
+  const cpuText = sources.readText("/proc/stat");
+  const loadText = sources.readText("/proc/loadavg");
+  const current = sources.readText(`${CGROUP_ROOT}/memory.current`);
+  const peak = sources.readText(`${CGROUP_ROOT}/memory.peak`);
+  const limit = sources.readText(`${CGROUP_ROOT}/memory.max`);
+  const events = sources.readText(`${CGROUP_ROOT}/memory.events`);
+  const memoryPressure = sources.readText(`${CGROUP_ROOT}/memory.pressure`);
+  const ioPressure = sources.readText(`${CGROUP_ROOT}/io.pressure`);
+  const psText =
+    commandPlan.processTimeoutMs === null
+      ? null
+      : sources.run("ps", ["-eo", "rss=,comm="], commandPlan.processTimeoutMs);
+  const statsText =
+    commandPlan.containerTimeoutMs === null
+      ? null
+      : sources.run(
+          "docker",
+          ["stats", "--no-stream", "--format", "{{json .}}"],
+          commandPlan.containerTimeoutMs,
+        );
+  const dfText =
+    commandPlan.dockerDiskTimeoutMs === null
+      ? null
+      : sources.run(
+          "docker",
+          ["system", "df", "--format", "{{json .}}"],
+          commandPlan.dockerDiskTimeoutMs,
+        );
+  const dockerStats =
+    statsText === null
+      ? { containers: [], maximumCpuPercent: null }
+      : parseDockerStatsEvidence(statsText);
   return {
     phase,
-    at: new Date().toISOString(),
+    at: sources.now().toISOString(),
+    cpu: cpuText === null ? null : parseCpuTicks(cpuText),
     meminfo: meminfoText === null ? null : parseMeminfo(meminfoText),
     load: loadText === null ? null : parseLoadAverages(loadText),
     cgroup:
@@ -148,9 +245,11 @@ export function collectResourceSnapshot(phase: string): ResourceSnapshot {
     memoryPressure: memoryPressure === null ? null : parsePressure(memoryPressure),
     ioPressure: ioPressure === null ? null : parsePressure(ioPressure),
     topProcesses: psText === null ? [] : parseTopProcesses(psText),
-    containers: statsText === null ? [] : parseDockerStats(statsText),
+    largestProcess: psText === null ? null : parseLargestClassifiedProcess(psText),
+    containers: dockerStats.containers,
+    maximumContainerCpuPercent: dockerStats.maximumCpuPercent,
     dockerDisk: dfText === null ? null : parseDockerSystemDf(dfText),
-    disk: collectDisk(),
+    disk: collectDisk(sources),
   };
 }
 
@@ -267,7 +366,7 @@ function runClassify(): void {
   const baseline = selectFailureBaseline(initialBaseline, readPhaseBaselines(), current);
   const meminfoText = readTextOrNull("/proc/meminfo");
   const meminfo = meminfoText === null ? null : parseMeminfo(meminfoText);
-  const disk = collectDisk();
+  const disk = collectDisk(defaultSnapshotSources);
   const classified = classifyFailure({
     testOutcome: readLiveTestOutcome(
       assertEvidencePath(process.env.E2E_TEST_OUTCOME_FILE, "E2E_TEST_OUTCOME_FILE"),
