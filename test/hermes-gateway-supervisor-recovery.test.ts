@@ -548,6 +548,36 @@ echo "state=1 lock=1 owner_active=1 token_match=0 original_locked=0 recovery_saf
 });
 
 describe("Hermes supervised auxiliary recovery", () => {
+  it("keeps restart bookkeeping alive when the dashboard log tail is absent (#7484)", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'id() { [ "${1:-}" = "-u" ] && printf "1000\\n"; }',
+      'hermes_tracked_role_is_current() { [ "$2" != "0" ] && [ "$1" != "dashboard-log" ]; }',
+      extractShellFunction(source, "refresh_hermes_supervised_child_pids"),
+      extractShellFunction(source, "mark_hermes_gateway_stopped"),
+      "GATEWAY_PID=4242",
+      'GATEWAY_PID_START_IDENTITY="777"',
+      "DASHBOARD_PID=202",
+      "SOCAT_PID=101",
+      "DASHBOARD_SOCAT_PID=303",
+      "GATEWAY_LOG_TAIL_PID=404",
+      "DASHBOARD_LOG_TAIL_PID=0",
+      "INTERNAL_PORT=18642",
+      "DASHBOARD_INTERNAL_PORT=19119",
+      "PUBLIC_PORT=8642",
+      "DASHBOARD_PUBLIC_PORT=18789",
+      "SANDBOX_WAIT_PID=4242",
+      "SANDBOX_CHILD_PIDS=()",
+      "set -e",
+      "mark_hermes_gateway_stopped",
+      'trace "survived:gateway=$GATEWAY_PID:wait=${SANDBOX_WAIT_PID:-}:children=${SANDBOX_CHILD_PIDS[*]}"',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("survived:gateway=0:wait=:children=202 101 303 404");
+  });
+
   it("rejects public health from a relay that loses its tracked identity during the probe", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
@@ -682,6 +712,9 @@ describe("Hermes supervised auxiliary recovery", () => {
     expect(result.stdout.match(/^stop:/gm)).toHaveLength(5);
     expect(result.stdout).toContain("quarantine");
     expect(result.stderr).toContain("5 exits in 60s window");
+    expect(result.stderr).toContain(
+      "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
+    );
     expect(result.stdout).not.toContain("unexpected-auxiliary");
   });
 
@@ -1132,6 +1165,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "start_hermes_dashboard_sandbox_user() { trace start-dashboard; DASHBOARD_PID=404; DASHBOARD_SOCAT_PID=505; }",
       'start_socat_forwarder() { trace "start-forward:$*"; return 0; }',
+      "ensure_dashboard_log_stream() { trace dashboard-log; }",
       "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
@@ -1163,6 +1197,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "stop:303",
       "stop:202",
       "start-dashboard",
+      "dashboard-log",
       "gateway-log",
       "success",
       "final-dashboard:404",
@@ -1183,6 +1218,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       'start_socat_forwarder() { trace "start-forward:$*"; printf -v "$4" 111; return 0; }',
       "start_hermes_dashboard_sandbox_user() { trace unexpected-dashboard-start; return 1; }",
+      "ensure_dashboard_log_stream() { trace dashboard-log; }",
       "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
@@ -1213,6 +1249,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "live:202",
       "live:303",
       "listener:303:18789",
+      "dashboard-log",
       "gateway-log",
       "success",
       "final-api-bridge:111",
@@ -1232,6 +1269,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "start_hermes_dashboard_sandbox_user() { trace start-dashboard; DASHBOARD_PID=404; DASHBOARD_SOCAT_PID=505; }",
       'start_socat_forwarder() { trace "unexpected-forward:$*"; return 1; }',
+      "ensure_dashboard_log_stream() { trace dashboard-log; }",
       "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
@@ -1261,6 +1299,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "stop:303",
       "stop:202",
       "start-dashboard",
+      "dashboard-log",
       "gateway-log",
       "success",
     ]);
