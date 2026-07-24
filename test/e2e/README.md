@@ -150,10 +150,26 @@ graph as the live targets:
   retired. Any future issue escalation should use a separately reviewed
   exceptional threshold, such as the same lane failing twice consecutively or
   remaining broken for 24 hours, rather than posting on every failed schedule.
-- `scorecard` writes the scheduled/manual result summary, adds this run's
-  semantic phase runtime table, compares the trusted cloud-onboard timing
-  summary with the latest prior-release `e2e.yaml` run, and posts to the daily
-  or full-run Slack route.
+- `scorecard` writes the scheduled/manual result summary and posts it to the
+  daily or full-run Slack route. The summary:
+  - adds this run's semantic phase runtime table;
+  - compares each of the ten slowest current tests with up to ten prior
+    completed scheduled runs; and
+  - compares the trusted cloud-onboard timing summary with the latest
+    prior-release `e2e.yaml` run.
+- The nightly comparison reads only validated `e2e-runtime-summary.json`
+  artifacts retained for 14 days. Manual runs can display the comparison but
+  never enter its baseline. The table reports the current outcome, prior median
+  and p95, prior pass/fail/skip counts and rates, the failure streak including
+  the current run, and the most common failed phase across the compared runs.
+  It marks a total or phase regression only when the current duration exceeds
+  the prior median by both at least 20% and at least 30 seconds.
+- A separate flake watch shows at most five current tests that both passed and
+  failed across the current run and up to ten prior completed scheduled runs.
+  It ranks them by pass/fail flips and then failure count. It reports
+  pass/fail/skip counts, failure rate, pass/fail flips, current failure streak,
+  and the most common failed phase. The failure-rate denominator and
+  pass/fail-flip count exclude skips.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
@@ -325,12 +341,13 @@ npm run test:runtime-audit -- path/to/run-1 path/to/run-2
 The audit groups each test by target and optional shard, ranks the groups by
 p95 runtime, and reports variability plus the slowest observed phase's duration
 and outcome. Scheduled and ordinary manual runs include the same table for that
-run in the GitHub Actions scorecard summary. Keep phase
-labels specific to test behavior, call `progress.phase("literal phase label")`
-at the declared boundaries in order, and transition through the final
-test-declared phase on every passing path. Both fixtures reject a passing test
-that never reaches that phase; only the stateful live fixture enters its
-resource-release phase automatically.
+run in the GitHub Actions scorecard summary. Their nightly trend uses only the
+bounded timing and outcome summary rather than downloading historical raw test
+artifacts. Keep phase labels specific to test behavior, call
+`progress.phase("literal phase label")` at the declared boundaries in order,
+and transition through the final test-declared phase on every passing path.
+Both fixtures reject a passing test that never reaches that phase; only the
+stateful live fixture enters its resource-release phase automatically.
 Validate phase coverage without executing test bodies with:
 
 ```bash
