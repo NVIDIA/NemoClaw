@@ -713,7 +713,11 @@ function waitForRecreatedSandboxOpenShellReadyResult(
       timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
     });
     if (result.status === 0 && !result.error) return { ready: true };
-    if (!isRetryableOpenshellReRegistrationState(result)) {
+    // This probe executes only `true`, so an OpenShell process timeout has no
+    // mutation outcome to reconcile. Treat that exact timeout as inconclusive
+    // and retry behind the pinned managed-health guard on the next iteration.
+    // All other unexpected OpenShell failures remain definitive.
+    if (!isRetryableOpenshellReRegistrationState(result) && !isCommandTimeout(result)) {
       return { failure: "openshell-readiness-failure", ready: false };
     }
     if (attempt === maxAttempts) {

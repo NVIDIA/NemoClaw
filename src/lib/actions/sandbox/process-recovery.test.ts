@@ -117,27 +117,33 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([]);
   });
 
-  it("does not retry an outcome-uncertain OpenShell timeout", () => {
+  it("retries the no-op OpenShell readiness probe after a command timeout (#7273)", () => {
     const timeoutError = Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: null,
-      output: "",
-      stdout: "",
-      stderr: "",
-      error: timeoutError,
-    }));
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: null,
+        output: "",
+        stdout: "",
+        stderr: "",
+        error: timeoutError,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
 
     expect(
       waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
-    ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
-    expect(sleeps).toEqual([]);
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
   });
 
   it("rechecks the pinned managed guard before every readiness retry", () => {
