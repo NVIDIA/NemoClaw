@@ -612,7 +612,11 @@ function isRetryableOpenshellReRegistrationState(
   // while its replacement supervisor session is still registering. Its exec
   // RPC waits 15 seconds for that session, then returns one of these specific
   // Unavailable errors. Both are control-plane re-registration states; all
-  // other OpenShell failures remain terminal.
+  // other OpenShell failures remain terminal. NemoClaw cannot repair this
+  // OpenShell-owned phase/session state without bypassing the control plane.
+  // Remove these matches when supported OpenShell versions publish Ready only
+  // after the replacement session is registered, or report the standard
+  // sandbox-not-ready state until registration completes.
   return (
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     error.includes("supervisor relay failed: status: Unavailable") &&
