@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { ProgressSummary } from "../test/e2e/fixtures/progress.ts";
+import type { ProgressPhase, ProgressSummary } from "../test/e2e/fixtures/progress.ts";
 
 export interface RuntimeAuditRow {
   target: string;
@@ -17,6 +17,7 @@ export interface RuntimeAuditRow {
   variabilityMs: number;
   slowestPhase: string;
   slowestPhaseMs: number;
+  slowestPhaseOutcome: "passed" | "failed" | "skipped";
 }
 
 function isProgressSummary(value: unknown): value is ProgressSummary {
@@ -36,6 +37,7 @@ function isProgressSummary(value: unknown): value is ProgressSummary {
       (phase) =>
         phase &&
         typeof phase.label === "string" &&
+        (phase.outcome === "passed" || phase.outcome === "failed" || phase.outcome === "skipped") &&
         typeof phase.durationMs === "number" &&
         Number.isFinite(phase.durationMs) &&
         phase.durationMs >= 0,
@@ -100,9 +102,9 @@ export function auditTestRuntime(roots: readonly string[]): RuntimeAuditRow[] {
       if (!first) throw new Error("runtime audit group is unexpectedly empty");
       const durations = runs.map((run) => run.durationMs as number).sort((a, b) => a - b);
       const phases = runs.flatMap((run) => run.phases);
-      const slowestPhase = phases.reduce(
+      const slowestPhase = phases.reduce<Pick<ProgressPhase, "label" | "durationMs" | "outcome">>(
         (slowest, phase) => (phase.durationMs > slowest.durationMs ? phase : slowest),
-        { label: "n/a", durationMs: 0 },
+        { label: "n/a", durationMs: 0, outcome: "skipped" as const },
       );
       const medianMs = median(durations);
       const p95Ms = percentile(durations, 0.95);
@@ -116,6 +118,7 @@ export function auditTestRuntime(roots: readonly string[]): RuntimeAuditRow[] {
         variabilityMs: Math.max(0, p95Ms - medianMs),
         slowestPhase: slowestPhase.label,
         slowestPhaseMs: slowestPhase.durationMs,
+        slowestPhaseOutcome: slowestPhase.outcome,
       };
     })
     .sort((a, b) => b.p95Ms - a.p95Ms || b.variabilityMs - a.variabilityMs);
@@ -132,8 +135,18 @@ export function formatRuntimeAudit(rows: readonly RuntimeAuditRow[]): string {
   ];
   for (const row of rows) {
     lines.push(
-      `| ${row.target.replaceAll("|", "\\|")} | ${row.scenario.replaceAll("|", "\\|")} | ${row.runs} | ${seconds(row.medianMs)}s | ${seconds(row.p95Ms)}s | ${seconds(row.maxMs)}s | ${seconds(row.variabilityMs)}s | ${row.slowestPhase.replaceAll("|", "\\|")} (${seconds(row.slowestPhaseMs)}s) |`,
+      `| ${row.target.replaceAll("|", "\\|")} | ${row.scenario.replaceAll("|", "\\|")} | ${row.runs} | ${seconds(row.medianMs)}s | ${seconds(row.p95Ms)}s | ${seconds(row.maxMs)}s | ${seconds(row.variabilityMs)}s | ${row.slowestPhase.replaceAll("|", "\\|")} (${seconds(row.slowestPhaseMs)}s, ${row.slowestPhaseOutcome}) |`,
     );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatRuntimeAuditSummary(rows: readonly RuntimeAuditRow[]): string {
+  const lines = ["## E2E Test Phase Runtime", "", "This run's semantic phase timing summary.", ""];
+  if (rows.length === 0) {
+    lines.push("No `test-progress.json` artifacts were available for this run.");
+  } else {
+    lines.push(formatRuntimeAudit(rows).trimEnd());
   }
   return `${lines.join("\n")}\n`;
 }

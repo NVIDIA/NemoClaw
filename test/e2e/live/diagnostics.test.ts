@@ -46,17 +46,13 @@ function redactForAssertion(text: string, apiKey: string): string {
     .replace(/nvapi-[A-Za-z0-9_-]{10,}/g, "<REDACTED>");
 }
 
-function runRawNodeCliForLeakAssertion(
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  timeoutMs: number,
-): RawCommandResult {
+function runRawNodeCliForLeakAssertion(args: string[], env: NodeJS.ProcessEnv): RawCommandResult {
   const result = spawnSync("node", [CLI_ENTRYPOINT, ...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     env,
     killSignal: "SIGKILL",
-    timeout: timeoutMs,
+    timeout: 60_000,
   });
   return {
     status: result.status,
@@ -333,7 +329,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   expect(resultText(status)).toMatch(/Model/i);
 
   progress.phase("audit and reset gateway credentials");
-  const rawCredentialsList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
+  const rawCredentialsList = runRawNodeCliForLeakAssertion(["credentials", "list"], env);
   const credentialsOutput = rawResultText(rawCredentialsList);
   const credentialsStdout = rawCredentialsList.stdout;
   expect(rawCredentialsList.status, redactForAssertion(credentialsOutput, apiKey)).toBe(0);
@@ -402,7 +398,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     expect(reset.exitCode, resultText(reset)).toBe(0);
     expect(reset.stdout, resultText(reset)).toContain(`Removed provider '${hosted.providerName}'`);
 
-    const rawPostResetList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
+    const rawPostResetList = runRawNodeCliForLeakAssertion(["credentials", "list"], env);
     const postResetOutput = rawResultText(rawPostResetList);
     expect(rawPostResetList.status, redactForAssertion(postResetOutput, apiKey)).toBe(0);
     expect(

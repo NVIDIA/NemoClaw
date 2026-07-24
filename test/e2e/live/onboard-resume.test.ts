@@ -163,7 +163,6 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
       "validate resumed sandbox state and corporate trust",
       "retry final verification after route repair",
       "compare implicit resume with fresh onboard",
-      "record the completed resume contract",
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox }) => {
@@ -231,6 +230,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
     apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
     host: "0.0.0.0",
     model: FAKE_COMPATIBLE_MODEL,
+    progress,
     publicHost: fakePublicHost,
     requireAuth: true,
     requireAuthModels: true,
@@ -599,6 +599,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
     host: "0.0.0.0",
     model: FAKE_COMPATIBLE_MODEL,
     port: fakePort,
+    progress,
     publicHost: fakePublicHost,
     requireAuth: true,
     requireAuthModels: true,
@@ -673,6 +674,5 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   expect(freshRun.exitCode, freshText).not.toBe(0);
   expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
   expect(freshText).not.toContain("(resume mode)");
-  progress.phase("record the completed resume contract");
   await artifacts.target.complete({ id: "onboard-resume", status: "passed" });
 });

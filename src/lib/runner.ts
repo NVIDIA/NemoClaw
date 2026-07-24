@@ -9,6 +9,7 @@ import type {
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
+import { redirectInheritedChildStdoutToStderr } from "./cli/stdout-guard";
 import { shellQuote } from "./core/shell-quote";
 import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "./name-validation";
 import { detectDockerHost } from "./platform";
@@ -95,6 +96,7 @@ function spawnAndHandle(
 ): SpawnResult {
   const safeFile = normalizeSpawnFile(file, "spawnAndHandle");
   const safeArgs = normalizeSpawnArgs(args, "spawnAndHandle");
+  const effectiveStdio = redirectInheritedChildStdoutToStderr(stdio);
   // All non-shell runner paths pass argv arrays and force shell=false; runShell
   // and runInteractiveShell enter here with a literal `bash -c` executable and
   // an explicitly named shell boundary. Extra environment values are filtered by
@@ -104,12 +106,12 @@ function spawnAndHandle(
   const result = spawnSync(safeFile, safeArgs, {
     ...opts,
     shell: false,
-    stdio,
+    stdio: effectiveStdio,
     cwd: ROOT,
     env: buildRunnerEnv(opts.env),
   });
   if (!opts.suppressOutput) {
-    writeRedactedResult(result, stdio);
+    writeRedactedResult(result, effectiveStdio);
   }
   if (result.error && !opts.ignoreError) {
     console.error(
@@ -169,7 +171,7 @@ function runArrayCmd(
     throw new Error(`${callerName}: shell option is forbidden when passing an argv array`);
   }
 
-  const stdio = stdioCfg ?? defaultStdio;
+  const stdio = redirectInheritedChildStdoutToStderr(stdioCfg ?? defaultStdio);
 
   // run() always uses argv arrays, rejects `shell: true` above, and validates
   // the executable/argv for process-spawn metacharacters such as NUL bytes.

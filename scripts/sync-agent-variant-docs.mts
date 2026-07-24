@@ -53,7 +53,9 @@ function main(): void {
   const generatedVariantPages = renderGeneratedAgentVariantPages();
 
   if (checkOnly) {
-    writeGeneratedFiles(generatedVariantPages);
+    if (!checkGeneratedFiles(generatedVariantPages)) {
+      process.exitCode = 1;
+    }
     return;
   }
 
@@ -472,6 +474,37 @@ function writeGeneratedFiles(files: RenderedFile[]): void {
     writeFileSync(file.path, file.contents);
     console.log(`Wrote ${path.relative(repoRoot, file.path)}`);
   }
+}
+
+function checkGeneratedFiles(files: RenderedFile[]): boolean {
+  const expectedPaths = new Set(files.map((file) => file.path));
+  let upToDate = true;
+
+  for (const file of files) {
+    const currentContents = readOptionalFile(file.path);
+    const relativePath = path.relative(repoRoot, file.path);
+    if (currentContents === file.contents) {
+      console.log(`${relativePath} is already up to date`);
+      continue;
+    }
+
+    upToDate = false;
+    const status = currentContents === null ? "Missing" : "Out of sync";
+    console.error(`${status} ${relativePath}`);
+  }
+
+  for (const filePath of listGeneratedFiles(generatedDocsRoot)) {
+    if (expectedPaths.has(filePath)) continue;
+    upToDate = false;
+    console.error(`Stale ${path.relative(repoRoot, filePath)}`);
+  }
+
+  if (!upToDate) {
+    console.error(
+      "Generated agent variant docs are out of sync. Run `npm run docs:sync-agent-variants`.",
+    );
+  }
+  return upToDate;
 }
 
 function pruneStaleGeneratedFiles(expectedPaths: Set<string>): void {

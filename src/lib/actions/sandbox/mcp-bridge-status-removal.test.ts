@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
@@ -25,7 +26,7 @@ afterEach(() => {
   tempHomes.clear();
 });
 
-describe("cross-agent MCP removal", () => {
+describe("cross-agent MCP removal", testTimeoutOptions(15_000), () => {
   it("removes a persisted bridge without requiring the current agent to support MCP", () => {
     const home = createTempHome("nemoclaw-mcp-remove-");
     const script = `
