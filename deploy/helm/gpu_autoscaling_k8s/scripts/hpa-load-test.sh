@@ -230,7 +230,7 @@ EOF
 
 kubectl delete configmap "${JOB_NAME}-scripts" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
 kubectl create configmap "${JOB_NAME}-scripts" -n "${NAMESPACE}" \
-  --from-file=load-generator.mjs="${CHART_DIR}/files/load-generator.mjs" \
+  --from-file=load-generator.ts="${CHART_DIR}/files/load-generator.ts" \
   --from-file=questions.txt="${CHART_DIR}/files/questions-sample.txt" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
@@ -252,7 +252,7 @@ spec:
       containers:
         - name: load-generator
           image: node:22-bookworm-slim@sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27
-          command: ["node", "/scripts/load-generator.mjs"]
+          command: ["node", "/scripts/load-generator.ts"]
           env:
             - name: TARGET_URL
               value: "http://${SERVICE}:${SERVICE_PORT}"
@@ -332,8 +332,8 @@ spec:
           configMap:
             name: ${JOB_NAME}-scripts
             items:
-              - key: load-generator.mjs
-                path: load-generator.mjs
+              - key: load-generator.ts
+                path: load-generator.ts
         - name: questions
           configMap:
             name: ${JOB_NAME}-scripts

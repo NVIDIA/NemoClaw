@@ -6,10 +6,10 @@ metadata:
   labels:
     {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
 data:
-  agent-server.mjs: |
-{{ .Files.Get "files/agent-server.mjs" | indent 4 }}
-  agent-metrics.mjs: |
-{{ .Files.Get "files/agent-metrics.mjs" | indent 4 }}
+  agent-server.ts: |
+{{ .Files.Get "files/agent-server.ts" | indent 4 }}
+  agent-metrics.ts: |
+{{ .Files.Get "files/agent-metrics.ts" | indent 4 }}
   ollama-start.sh: |
 {{ .Files.Get "files/ollama-start.sh" | indent 4 }}
   INFERENCE_BASE_URL: {{ .Values.inference.baseUrl | quote }}

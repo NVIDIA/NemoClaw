@@ -324,7 +324,13 @@ async function requirePodTargets(deadlineMs) {
       continue;
     }
     if (!REQUIRE_CHAT_PROBE) {
-      console.log(JSON.stringify({ event: "targetsReady", loadTargets: targets, readyzOk: podTargets.length }));
+      console.log(
+        JSON.stringify({
+          event: "targetsReady",
+          loadTargets: targets,
+          readyzOk: podTargets.length,
+        }),
+      );
       return targets;
     }
     for (const target of podTargets.length ? podTargets : targets) {

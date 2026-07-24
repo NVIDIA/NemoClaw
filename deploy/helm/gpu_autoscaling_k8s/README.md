@@ -396,7 +396,7 @@ ingress:
 
 ### Ingress security
 
-The completion proxy (`agent-server.mjs`) has no authentication of its own, so the chart
+The completion proxy (`agent-server.ts`) has no authentication of its own, so the chart
 enforces two things at the Ingress level:
 
 - **Basic auth is on by default** (`ingress.auth.enabled: true`). The chart auto-generates a

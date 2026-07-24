@@ -5,7 +5,7 @@
 // GPU agent pod: health + Prometheus metrics + OpenAI-compatible proxy to local Ollama.
 
 import http from "node:http";
-import { llmMetricsLines, recordLlmLatency } from "./agent-metrics.mjs";
+import { llmMetricsLines, recordLlmLatency } from "./agent-metrics.ts";
 
 const PORT = Number(process.env.PORT || 8081);
 const BASE_URL = (process.env.INFERENCE_BASE_URL || "http://127.0.0.1:11434/v1").replace(/\/$/, "");
