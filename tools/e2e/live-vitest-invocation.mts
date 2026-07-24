@@ -20,9 +20,11 @@ const { spawnExitCode } = processExit;
 export const LIVE_VITEST_PROJECT = "e2e-live";
 export const LIVE_TEST_ROOT = "test/e2e/live/";
 export const RISK_SIGNAL_REPORTER = "test/e2e/risk-signal-reporter.ts";
-// Credentialed E2E trusts the workflow from main but executes this helper from
-// the reviewed PR checkout, so exact-head resource setup must live here.
+// Keep this exact-head helper during the trusted workflow's first rollout
+// phase. Once the pre-checkout workflow step is on main, it provisions enough
+// swap for this helper to return before candidate-side privileged mutation.
 export const HERMES_E2E_SWAP_BYTES = 32 * 1024 * 1024 * 1024;
+export const HERMES_E2E_SWAP_FILE_BYTES = HERMES_E2E_SWAP_BYTES + 4096;
 export const HERMES_E2E_SWAP_FILE = "/mnt/nemoclaw-hermes-e2e.swap";
 
 const SHELL_METACHARACTER = /[^A-Za-z0-9_./^$=:@+-]/u;
@@ -39,16 +41,26 @@ const HERMES_SHARED_E2E_TARGETS = new Set(["hermes-dashboard", "hermes-e2e", "se
 const HERMES_MCP_BUILD_TEST = "test/e2e/live/mcp-bridge.test.ts";
 export const HERMES_E2E_SWAP_SCRIPT = `set -euo pipefail
 swap_file="$1"
-swap_size_bytes="$2"
+required_swap_bytes="$2"
+swap_file_bytes="$3"
+activation_observation_attempts=5
+activation_observation_delay_seconds=1
+swap_activation_succeeded=0
 
-case "$swap_size_bytes" in
+case "$required_swap_bytes" in
   ""|*[!0-9]*)
-    echo "Hermes E2E swap size must be an integer byte count" >&2
+    echo "Hermes E2E required swap size must be an integer byte count" >&2
+    exit 2
+    ;;
+esac
+case "$swap_file_bytes" in
+  ""|*[!0-9]*)
+    echo "Hermes E2E swap file size must be an integer byte count" >&2
     exit 2
     ;;
 esac
 
-active_swap_bytes="$(swapon --show --bytes --noheadings --output SIZE | awk '{ total += $1 } END { printf "%.0f", total }')"
+active_swap_bytes="$(swapon --show=SIZE --bytes --noheadings | awk '{ total += $1 } END { printf "%.0f", total }')"
 active_swap_bytes="\${active_swap_bytes:-0}"
 case "$active_swap_bytes" in
   ""|*[!0-9]*)
@@ -57,12 +69,12 @@ case "$active_swap_bytes" in
     ;;
 esac
 
-if (( active_swap_bytes >= swap_size_bytes )); then
+if (( active_swap_bytes >= required_swap_bytes )); then
   printf 'Hermes E2E swap is already sufficient: %s bytes active\\n' "$active_swap_bytes"
   exit 0
 fi
 
-active_swap_names="$(swapon --show --noheadings --raw --output NAME)"
+active_swap_names="$(swapon --show=NAME --noheadings --raw)"
 fixed_swap_active=0
 while IFS= read -r active_swap_name; do
   if [[ "$active_swap_name" == "$swap_file" ]]; then
@@ -78,7 +90,7 @@ rm -f -- "$swap_file"
 cleanup_partial_swap() {
   status="$?"
   if (( status != 0 )); then
-    if cleanup_swap_names="$(swapon --show --noheadings --raw --output NAME 2>/dev/null)"; then
+    if cleanup_swap_names="$(swapon --show=NAME --noheadings --raw 2>/dev/null)"; then
       cleanup_swap_active=0
       while IFS= read -r cleanup_swap_name; do
         if [[ "$cleanup_swap_name" == "$swap_file" ]]; then
@@ -86,7 +98,7 @@ cleanup_partial_swap() {
           break
         fi
       done <<< "$cleanup_swap_names"
-      if (( cleanup_swap_active == 1 )); then
+      if (( cleanup_swap_active == 1 || swap_activation_succeeded == 1 )); then
         if swapoff "$swap_file" 2>/dev/null; then
           rm -f -- "$swap_file" || true
         else
@@ -104,21 +116,42 @@ cleanup_partial_swap() {
 }
 trap cleanup_partial_swap EXIT
 
-fallocate -l "$swap_size_bytes" "$swap_file"
+fallocate -l "$swap_file_bytes" "$swap_file"
 chmod 0600 "$swap_file"
 mkswap "$swap_file"
 swapon "$swap_file"
+swap_activation_succeeded=1
 
-active_swap_bytes="$(swapon --show --bytes --noheadings --output SIZE | awk '{ total += $1 } END { printf "%.0f", total }')"
-active_swap_bytes="\${active_swap_bytes:-0}"
-case "$active_swap_bytes" in
-  ""|*[!0-9]*)
-    echo "Unable to verify active swap capacity" >&2
-    exit 2
-    ;;
-esac
-if (( active_swap_bytes < swap_size_bytes )); then
-  printf 'Hermes E2E swap provisioning failed: %s of %s bytes active\\n' "$active_swap_bytes" "$swap_size_bytes" >&2
+observe_provisioned_swap() {
+  activation_observation_attempt=1
+  while (( activation_observation_attempt <= activation_observation_attempts )); do
+    provisioned_swap_active=0
+    if active_swap_names="$(swapon --show=NAME --noheadings --raw 2>/dev/null)"; then
+      while IFS= read -r active_swap_name; do
+        if [[ "$active_swap_name" == "$swap_file" ]]; then
+          provisioned_swap_active=1
+          break
+        fi
+      done <<< "$active_swap_names"
+    fi
+    if observed_swap_bytes="$(swapon --show=SIZE --bytes --noheadings 2>/dev/null | awk '{ total += $1 } END { printf "%.0f", total }')"; then
+      observed_swap_bytes="\${observed_swap_bytes:-0}"
+      if [[ "$observed_swap_bytes" != *[!0-9]* ]] &&
+        (( provisioned_swap_active == 1 && observed_swap_bytes >= required_swap_bytes )); then
+        active_swap_bytes="$observed_swap_bytes"
+        return 0
+      fi
+    fi
+    if (( activation_observation_attempt < activation_observation_attempts )); then
+      sleep "$activation_observation_delay_seconds"
+    fi
+    activation_observation_attempt=$((activation_observation_attempt + 1))
+  done
+  return 1
+}
+
+if ! observe_provisioned_swap; then
+  printf 'Hermes E2E swap provisioning failed: required swap was not visible after %s attempts\\n' "$activation_observation_attempts" >&2
   exit 1
 fi
 
@@ -290,6 +323,7 @@ export function provisionHermesE2ESwap(
         "nemoclaw-hermes-e2e-swap",
         HERMES_E2E_SWAP_FILE,
         String(HERMES_E2E_SWAP_BYTES),
+        String(HERMES_E2E_SWAP_FILE_BYTES),
       ],
       { stdio: "inherit" },
     ),

@@ -39,6 +39,7 @@ import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-wo
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
+import { validateTrustedHermesSwapWorkflow } from "./trusted-hermes-swap-workflow-boundary.mts";
 import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -4124,6 +4125,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));
   errors.push(...validateSecurityPostureWorkflow(workflow));
   errors.push(...validateRunnerPressureWorkflow(workflow));
+  errors.push(...validateTrustedHermesSwapWorkflow(workflow));
   errors.push(...validateRunnerComparisonWorkflowBoundary(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
