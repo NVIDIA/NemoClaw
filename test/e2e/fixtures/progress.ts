@@ -62,6 +62,15 @@ export interface TestProgressTimeline {
 
 export type ProgressPhaseOutcome = "passed" | "failed" | "skipped";
 
+export type ChildLifecycleOutcome =
+  | "spawn-failed"
+  | "exited-zero"
+  | "exited-nonzero"
+  | "signaled"
+  | "closed-unknown";
+
+export type ChildLifecycleTerminalReporter = (outcome: ChildLifecycleOutcome) => void;
+
 const TEST_PROGRESS_CAPABILITY: unique symbol = Symbol("nemoclaw.test-progress");
 const TEST_PROGRESS_INSTANCES = new WeakSet<object>();
 
@@ -76,6 +85,7 @@ export interface TestProgressCapability {
 export interface TestProgress extends TestProgressCapability {
   onOutput: (event: ShellProbeOutputEvent) => void;
   activity: (label: string) => () => void;
+  beginChildLifecycle: () => ChildLifecycleTerminalReporter;
   /** Emit a content-free semantic status event. Never pass child output or request data. */
   event: (label: string) => void;
   phase: (label: string) => void;
@@ -86,7 +96,7 @@ export interface TestProgress extends TestProgressCapability {
   timeline: () => TestProgressTimeline;
 }
 
-export function isTestProgressCapability(value: unknown): value is TestProgressCapability {
+export function isTestProgressCapability(value: unknown): value is TestProgress {
   if (typeof value !== "object" || value === null || !TEST_PROGRESS_INSTANCES.has(value)) {
     return false;
   }
@@ -240,6 +250,7 @@ export function startTestProgress(
   const reachedPhases = new Set<string>([runtimePhasePlan[0] as string]);
   const activities = new Map<number, string>();
   let nextActivityId = 0;
+  let nextChildLifecycleOrdinal = 1;
   let phaseIndex = 0;
   let phaseStartedAt = scenarioStartedAt;
   let lastOutputAt: number | null = null;
@@ -303,6 +314,22 @@ export function startTestProgress(
       );
     } catch {
       // Diagnostics must not change the live test result.
+    }
+  };
+
+  const logChildLifecycleBestEffort = (
+    ordinal: number,
+    checkpoint: "started" | ChildLifecycleOutcome,
+  ) => {
+    try {
+      const current = now();
+      logLine(
+        `${phasePrefix()} child lifecycle ${ordinal}: ${checkpoint} (` +
+          `total ${formatElapsed(current - scenarioStartedAt)}; ` +
+          `phase ${formatElapsed(current - phaseStartedAt)})`,
+      );
+    } catch {
+      // Diagnostics must not change child-process execution.
     }
   };
 
@@ -468,6 +495,31 @@ export function startTestProgress(
         activityFinished = true;
         activities.delete(activityId);
       };
+    },
+    beginChildLifecycle() {
+      if (finishedAt !== null) {
+        return Object.freeze((_outcome: ChildLifecycleOutcome) => undefined);
+      }
+      const ordinal = nextChildLifecycleOrdinal;
+      nextChildLifecycleOrdinal += 1;
+      logChildLifecycleBestEffort(ordinal, "started");
+      let terminalReported = false;
+      const reportTerminal: ChildLifecycleTerminalReporter = (outcome) => {
+        if (terminalReported) return;
+        switch (outcome) {
+          case "spawn-failed":
+          case "exited-zero":
+          case "exited-nonzero":
+          case "signaled":
+          case "closed-unknown":
+            break;
+          default:
+            return;
+        }
+        terminalReported = true;
+        logChildLifecycleBestEffort(ordinal, outcome);
+      };
+      return Object.freeze(reportTerminal);
     },
     event(label) {
       if (finishedAt !== null) return;

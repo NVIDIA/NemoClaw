@@ -59,8 +59,10 @@ export interface ShellProbeDeps {
   artifacts: ArtifactSink;
   progress: ChildProcessProgress;
   redact: (text: string, extraValues?: string[]) => string;
-  signal: AbortSignal;
+  signal: AbortSignalSource;
 }
+
+export type AbortSignalSource = AbortSignal | (() => AbortSignal);
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -153,7 +155,7 @@ export class ShellProbe {
   private readonly artifacts: ArtifactSink;
   private readonly progress: ChildProcessProgress;
   private readonly redact: (text: string, extraValues?: string[]) => string;
-  private readonly signal: AbortSignal;
+  private readonly signal: AbortSignalSource;
 
   constructor(deps: ShellProbeDeps) {
     this.artifacts = deps.artifacts;
@@ -166,6 +168,7 @@ export class ShellProbe {
     trustedCommand: TrustedShellCommand,
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
+    const signal = typeof this.signal === "function" ? this.signal() : this.signal;
     const command = trustedCommand.command;
     const args = [...trustedCommand.args];
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -221,7 +224,7 @@ export class ShellProbe {
     const supervised = await superviseChild(child, {
       timeoutMs,
       killGraceMs,
-      signal: this.signal,
+      signal,
       onStdout: (chunk) => {
         stdout.append(chunk);
         try {
