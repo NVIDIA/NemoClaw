@@ -21,6 +21,9 @@ const OPENSHELL_SUPERVISOR_DISCONNECTED_STDERR = `Error:   × code: 'The service
   │ relay failed: status: Unavailable, message: \\"supervisor session
   │ disconnected\\", details: [], metadata: MetadataMap { headers: {} }"
 `;
+const OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR = `Error:   × status: DeadlineExceeded, message: "relay
+  │ open timed out", details: [], metadata: MetadataMap { headers: {} }
+`;
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
@@ -94,6 +97,55 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
     expect(beforeProbe).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([3, 3]);
+  });
+
+  it("retries when the connected supervisor misses OpenShell's relay deadline (#7227)", () => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR.trim(),
+        stdout: "",
+        stderr: OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it("does not retry an unrelated OpenShell deadline error", () => {
+    const stderr = `Error:   × status: DeadlineExceeded, message: "policy update timed out"`;
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 1,
+      output: stderr,
+      stdout: "",
+      stderr,
+    }));
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(false);
+    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
   });
 
   it("fails immediately on an unknown OpenShell error", () => {

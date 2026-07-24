@@ -587,6 +587,7 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
 
 const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
 const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
+const OPENSHELL_RELAY_OPEN_TIMED_OUT = 'message: "relay open timed out"';
 
 function normalizeOpenshellStructuredError(value: string): string {
   return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
@@ -609,20 +610,21 @@ function isRetryableOpenshellReRegistrationState(
   if (error === OPENSHELL_SANDBOX_NOT_READY) return true;
 
   // OpenShell 0.0.85 can keep the recreated sandbox's cached phase at Ready
-  // while its replacement supervisor session is still registering. Its exec
-  // RPC waits 15 seconds for that session, then returns one of these specific
-  // Unavailable errors. Both are control-plane re-registration states; all
-  // other OpenShell failures remain terminal. NemoClaw cannot repair this
-  // OpenShell-owned phase/session state without bypassing the control plane.
-  // Remove these matches when supported OpenShell versions publish Ready only
-  // after the replacement session is registered, or report the standard
-  // sandbox-not-ready state until registration completes.
-  return (
+  // while its replacement supervisor session is still registering. The exec
+  // RPC can fail before a session connects, after a session disconnects, or
+  // after the session connects but does not claim its reverse relay within
+  // OpenShell's 10-second relay deadline. These exact results are control-plane
+  // re-registration states; all other OpenShell failures remain terminal.
+  // NemoClaw cannot repair this OpenShell-owned phase/session state without
+  // bypassing the control plane. Remove these matches when supported OpenShell
+  // versions publish Ready only after the replacement session and relay are
+  // usable, or report the standard sandbox-not-ready state until then.
+  const sessionUnavailable =
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     error.includes("supervisor relay failed: status: Unavailable") &&
     (error.includes("supervisor session not connected") ||
-      error.includes("supervisor session disconnected"))
-  );
+      error.includes("supervisor session disconnected"));
+  return sessionUnavailable || error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT);
 }
 
 type RecreatedSandboxOpenShellReadinessFailure =
