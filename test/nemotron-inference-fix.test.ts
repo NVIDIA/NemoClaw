@@ -212,10 +212,12 @@ send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completio
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'deepseek-ai/deepseek-v4-pro', messages: [], thinking: { type: 'enabled' } }));
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'openai/gpt-oss-120b', messages: [], thinking: { type: 'enabled' } }));
+// Runtime provider markers override the stale image-baked provider after
+// the inference set command switches the managed route.
+send(http, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions', headers: { 'X-NemoClaw-Upstream-Provider': 'compatible-endpoint' } }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', hostname: 'inference.local', path: '/v1/chat/completions', headers: { 'x-nemoclaw-upstream-provider': 'nim-local' } }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'compatible-endpoint';
-send(http, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
-process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nim-local';
-send(https, { method: 'POST', hostname: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions', headers: { 'X-NemoClaw-Upstream-Provider': 'nvidia-prod' } }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
 delete process.env.NEMOCLAW_UPSTREAM_PROVIDER;
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: false }));
 console.log(JSON.stringify(records));
@@ -293,11 +295,17 @@ console.log(JSON.stringify(records));
 
     const compatibleEndpoint = JSON.parse(records[8].writes[0]);
     expect(compatibleEndpoint.thinking).toEqual({ type: "enabled" });
+    expect(records[8].removed).toContain("x-nemoclaw-upstream-provider");
 
     const localNim = JSON.parse(records[9].writes[0]);
     expect(localNim.thinking).toBe(true);
+    expect(records[9].removed).toContain("x-nemoclaw-upstream-provider");
 
-    const missingProvider = JSON.parse(records[10].writes[0]);
+    const switchedToBuild = JSON.parse(records[10].writes[0]);
+    expect(switchedToBuild.thinking).toBeUndefined();
+    expect(records[10].removed).toContain("x-nemoclaw-upstream-provider");
+
+    const missingProvider = JSON.parse(records[11].writes[0]);
     expect(missingProvider.thinking).toBe(false);
   });
 
@@ -327,22 +335,22 @@ async function main() {
   });
   await fetch('https://inference.local/v1/chat/completions', {
     method: 'POST',
+    headers: { 'X-NemoClaw-Upstream-Provider': 'nvidia-prod' },
     body: JSON.stringify({
       model: 'nvidia/nemotron-3-super-120b-a12b',
       messages: [{ role: 'system', content: 'x' }],
       thinking: true,
     }),
   });
-  process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'compatible-endpoint';
   await fetch('https://inference.local/v1/chat/completions', {
     method: 'POST',
+    headers: { 'X-NemoClaw-Upstream-Provider': 'compatible-endpoint' },
     body: JSON.stringify({
       model: 'nvidia/nemotron-3-super-120b-a12b',
       messages: [{ role: 'system', content: 'x' }],
       thinking: true,
     }),
   });
-  process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nvidia-prod';
   await fetch('https://inference.local/v1/chat/completions', {
     method: 'POST',
     headers: new Headers({ 'content-type': 'application/json', 'content-length': '999' }),
@@ -366,6 +374,7 @@ async function main() {
       record.headers instanceof Headers
         ? record.headers.get('content-length')
         : (record.headers && record.headers['content-length']) || null,
+    upstreamProvider: new Headers(record.headers || {}).get('x-nemoclaw-upstream-provider'),
   }))));
 }
 main().catch((err) => {
@@ -383,7 +392,9 @@ main().catch((err) => {
     expect(JSON.parse(records[0].body).chat_template_kwargs).toEqual({ thinking: false });
     expect(records[0].contentLength).toBeNull();
     expect(JSON.parse(records[1].body).thinking).toBeUndefined();
+    expect(records[1].upstreamProvider).toBeNull();
     expect(JSON.parse(records[2].body).thinking).toBe(true);
+    expect(records[2].upstreamProvider).toBeNull();
     expect(JSON.parse(records[3].body).chat_template_kwargs).toEqual({ thinking: false });
     expect(records[3].contentLength).toBeNull();
     expect(JSON.parse(records[4].body).chat_template_kwargs).toBeUndefined();

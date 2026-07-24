@@ -58,6 +58,9 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
           baseUrl: "https://inference.local",
           apiKey: "unused",
           api: "anthropic-messages",
+          headers: {
+            "X-NemoClaw-Upstream-Provider": "compatible-anthropic-endpoint",
+          },
           models: [
             {
               id: "claude-sonnet-proxy",
