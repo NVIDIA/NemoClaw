@@ -6,6 +6,7 @@ import { shellQuote } from "../../core/shell-quote";
 import type { McpBridgeEntry } from "../../state/registry";
 import type { McpBridgeStatus } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import type { CredentialResolutionProbeReadiness } from "./mcp-bridge-resolution-readiness";
 import {
   MCP_RUNTIME_SANITIZED_ENV_VARS,
   wrapMcpRuntimeCommand,
@@ -31,9 +32,7 @@ const MCP_TOOL_DISCOVERY_MAX_DETAIL_BYTES = 512;
 const MCP_TOOL_DISCOVERY_MAX_OUTPUT_BYTES = 256 * 1_024;
 const UNSAFE_TEXT = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
 
-export interface McpToolDiscoveryReadiness {
-  policyGatewayPresent: boolean | null;
-}
+export type McpToolDiscoveryReadiness = CredentialResolutionProbeReadiness;
 
 export interface McpToolDiscoveryCommand {
   command: string;
@@ -52,6 +51,15 @@ export function toolDiscoveryReadinessSkipDetail(
   }
   if (!readiness.policyGatewayPresent) {
     return "tool discovery skipped: the generated MCP policy does not match the effective gateway policy";
+  }
+  if (readiness.providerAttached === null) {
+    return "tool discovery skipped: provider attachment could not be inspected";
+  }
+  if (!readiness.providerAttached) {
+    return "tool discovery skipped: the credential provider is not attached to the sandbox";
+  }
+  if (!readiness.providerCredentialReady) {
+    return "tool discovery skipped: the OpenShell provider is absent or does not match the recorded credential binding";
   }
   return undefined;
 }

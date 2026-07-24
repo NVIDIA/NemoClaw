@@ -44,9 +44,13 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 let providerAttachmentState = "attached";
+let providerInspectionState = "present";
 let providerCredentialKey = "GITHUB_TOKEN";
 globalActions.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
+    if (providerInspectionState === "absent") {
+      return { status: 1, stdout: "", stderr: "provider not found" };
+    }
     return {
       status: 0,
       stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: " + providerCredentialKey + "\n",
@@ -411,6 +415,108 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       tools: ["alpha", "zeta"],
       truncated: false,
     });
+  });
+
+  it("skips authenticated discovery until provider readiness is verified (#6901)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-provider-readiness-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  activePolicyState = "match";
+  const outcomes = [];
+  for (const attachmentState of ["absent", "unknown"]) {
+    providerInspectionState = "present";
+    providerAttachmentState = attachmentState;
+    providerCredentialKey = "GITHUB_TOKEN";
+    executedSandboxCommands.length = 0;
+    const [status] = await bridge.statusMcpBridge("alpha", "github", {
+      discoverTools: true,
+    });
+    outcomes.push({
+      case: "attachment:" + attachmentState,
+      discovery: status.toolDiscovery,
+      discoveryCommands: executedSandboxCommands.filter(
+        (command) => command.includes("mcp-tool-discovery-runtime"),
+      ).length,
+    });
+  }
+  providerAttachmentState = "attached";
+  providerInspectionState = "absent";
+  providerCredentialKey = "GITHUB_TOKEN";
+  executedSandboxCommands.length = 0;
+  const [absentProvider] = await bridge.statusMcpBridge("alpha", "github", {
+    discoverTools: true,
+  });
+  outcomes.push({
+    case: "provider:absent",
+    discovery: absentProvider.toolDiscovery,
+    discoveryCommands: executedSandboxCommands.filter(
+      (command) => command.includes("mcp-tool-discovery-runtime"),
+    ).length,
+  });
+  providerInspectionState = "present";
+  providerCredentialKey = "WRONG_TOKEN";
+  executedSandboxCommands.length = 0;
+  const [wrongProvider] = await bridge.statusMcpBridge("alpha", "github", {
+    discoverTools: true,
+  });
+  outcomes.push({
+    case: "provider:wrong-shape",
+    discovery: wrongProvider.toolDiscovery,
+    discoveryCommands: executedSandboxCommands.filter(
+      (command) => command.includes("mcp-tool-discovery-runtime"),
+    ).length,
+  });
+  process.stdout.write(JSON.stringify(outcomes));
+`,
+    );
+    expect(JSON.parse(stdout)).toEqual([
+      {
+        case: "attachment:absent",
+        discovery: {
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail: "tool discovery skipped: the credential provider is not attached to the sandbox",
+        },
+        discoveryCommands: 0,
+      },
+      {
+        case: "attachment:unknown",
+        discovery: {
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail: "tool discovery skipped: provider attachment could not be inspected",
+        },
+        discoveryCommands: 0,
+      },
+      {
+        case: "provider:absent",
+        discovery: {
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail: "tool discovery skipped: provider attachment could not be inspected",
+        },
+        discoveryCommands: 0,
+      },
+      {
+        case: "provider:wrong-shape",
+        discovery: {
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail:
+            "tool discovery skipped: the OpenShell provider is absent or does not match the recorded credential binding",
+        },
+        discoveryCommands: 0,
+      },
+    ]);
   });
 
   it("runs both diagnostics only when --probe is explicit with --tools (#6901)", () => {

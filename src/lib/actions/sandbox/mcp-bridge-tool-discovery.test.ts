@@ -222,20 +222,29 @@ describe("MCP tool discovery host boundary (#6901)", () => {
   });
 
   it("gates network traffic on the existing policy and provider readiness", () => {
+    const ready = {
+      policyGatewayPresent: true,
+      providerAttached: true,
+      providerCredentialReady: true,
+    };
+    expect(toolDiscoveryReadinessSkipDetail({ ...ready, policyGatewayPresent: false })).toContain(
+      "policy does not match",
+    );
+    expect(toolDiscoveryReadinessSkipDetail({ ...ready, policyGatewayPresent: null })).toContain(
+      "could not be inspected",
+    );
+    expect(toolDiscoveryReadinessSkipDetail({ ...ready, providerAttached: null })).toContain(
+      "attachment could not be inspected",
+    );
+    expect(toolDiscoveryReadinessSkipDetail({ ...ready, providerAttached: false })).toContain(
+      "provider is not attached",
+    );
     expect(
       toolDiscoveryReadinessSkipDetail({
-        policyGatewayPresent: false,
+        ...ready,
+        providerCredentialReady: false,
       }),
-    ).toContain("policy does not match");
-    expect(
-      toolDiscoveryReadinessSkipDetail({
-        policyGatewayPresent: null,
-      }),
-    ).toContain("could not be inspected");
-    expect(
-      toolDiscoveryReadinessSkipDetail({
-        policyGatewayPresent: true,
-      }),
-    ).toBeUndefined();
+    ).toContain("does not match the recorded credential binding");
+    expect(toolDiscoveryReadinessSkipDetail(ready)).toBeUndefined();
   });
 });
