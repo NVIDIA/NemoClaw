@@ -30,6 +30,16 @@ function extractHermesInstallCommand(dockerfile: string): string {
   return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
 }
 
+function extractHermesIntegrityCommand(dockerfile: string): string {
+  const integrityStart = dockerfile.indexOf("# Cross-check the pinned release");
+  const installStart = dockerfile.indexOf("WORKDIR /opt/hermes", integrityStart);
+  expect(integrityStart).toBeGreaterThanOrEqual(0);
+  expect(installStart).toBeGreaterThan(integrityStart);
+  const match = dockerfile.slice(integrityStart, installStart).match(/RUN\s+set -eu;[\s\S]*$/m);
+  expect(match).not.toBeNull();
+  return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
+}
+
 function runLoggedShell(command: string, tmp: string) {
   const logPath = path.join(tmp, "calls.log");
   const scriptPath = path.join(tmp, "run-hermes-apt-layer.sh");
@@ -56,6 +66,9 @@ function runHermesInstallLayer(
 ) {
   const fixture = path.join(tmp, "hermes");
   const logPath = path.join(tmp, "calls.log");
+  const npmCache = path.join(tmp, "root-cache", "npm");
+  const electronCache = path.join(tmp, "root-cache", "electron");
+  const nodeGypCache = path.join(tmp, "root-cache", "node-gyp");
   const scriptPath = path.join(tmp, "run-hermes-install-layer.sh");
   const webLockfile = opts.webLockfile ?? "directory";
   fs.mkdirSync(path.join(fixture, "web"), { recursive: true });
@@ -71,6 +84,10 @@ function runHermesInstallLayer(
     workspace: () => undefined,
   } satisfies Record<typeof webLockfile, () => void>;
   writeWebLockfile[webLockfile]();
+  for (const cache of [npmCache, electronCache, nodeGypCache]) {
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, "build-only-cache"), "unused after image assembly\n");
+  }
   if (opts.whatsappBridge) {
     const bridgeDir = path.join(fixture, "scripts", "whatsapp-bridge");
     fs.mkdirSync(bridgeDir, { recursive: true });
@@ -114,12 +131,16 @@ function runHermesInstallLayer(
     'export HERMES_SEMVER="0.16.0"',
     'export HERMES_NPM_INTEGRITY="sha512-test"',
     'export HERMES_UV_EXTRAS="messaging mcp"',
-    command.replaceAll("/opt/hermes", fixture),
+    command
+      .replaceAll("/opt/hermes", fixture)
+      .replaceAll("/root/.npm", npmCache)
+      .replaceAll("/root/.cache/electron", electronCache)
+      .replaceAll("/root/.cache/node-gyp", nodeGypCache),
   ].join("\n");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
   const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-  return { result, calls };
+  return { cachePaths: [npmCache, electronCache, nodeGypCache], result, calls };
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
@@ -177,6 +198,57 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls).not.toContain("npm ci --prefix web");
       expect(calls).toContain("npm run build --workspace web");
       expect(calls).toContain("npm ci --omit=dev --prefer-offline --no-audit --no-fund");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("removes build-only caches in the Hermes dependency layer (#7144)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-build-cache-"));
+
+    try {
+      const command = extractHermesInstallCommand(dockerfile);
+      const { cachePaths, result } = runHermesInstallLayer(command, tmp);
+
+      expect(result.status, result.stderr).toBe(0);
+      for (const cachePath of cachePaths) {
+        expect(() => fs.lstatSync(cachePath)).toThrow();
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("uses and removes a disposable cache for the Hermes npm integrity lookup (#7144)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-integrity-cache-"));
+    const hermesRoot = path.join(tmp, "hermes");
+    const integrityCache = path.join(tmp, "integrity-cache");
+    const scriptPath = path.join(tmp, "run-hermes-integrity-layer.sh");
+    fs.mkdirSync(hermesRoot, { recursive: true });
+    fs.writeFileSync(path.join(hermesRoot, "pyproject.toml"), 'version = "0.16.0"\n');
+
+    try {
+      const command = extractHermesIntegrityCommand(dockerfile)
+        .replaceAll("/opt/hermes", hermesRoot)
+        .replaceAll("/tmp/hermes-npm-integrity-cache", integrityCache);
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `expected_cache=${JSON.stringify(integrityCache)}`,
+        'npm() { [ "${npm_config_cache:-}" = "$expected_cache" ] || return 41; mkdir -p "$npm_config_cache"; printf "lookup cache\\n" > "$npm_config_cache/entry"; printf "%s\\n" "$HERMES_NPM_INTEGRITY"; }',
+        'export HERMES_VERSION="v0.16.0"',
+        'export HERMES_SEMVER="0.16.0"',
+        'export HERMES_NPM_INTEGRITY="sha512-test"',
+        command,
+      ].join("\n");
+      fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(() => fs.lstatSync(integrityCache)).toThrow();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
