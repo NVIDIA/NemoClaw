@@ -236,4 +236,16 @@ describe("downloadFromSandbox", () => {
     expect(publishMock).not.toHaveBeenCalled();
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
+
+  it("removes the staging directory when verified artifact publication fails", async () => {
+    publishMock.mockImplementationOnce(() => {
+      throw new Error("publication failed");
+    });
+
+    await expect(
+      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
+    ).rejects.toThrow(/publication failed/);
+    expect(publishMock).toHaveBeenCalledWith(stagedArtifact, "/tmp/p", "file");
+    expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
+  });
 });
