@@ -8,7 +8,7 @@
 NemoClaw v0.0.64 improves sandbox restore, onboarding stability, inference routing, messaging setup, and release validation:
 
 - Snapshot restore preserves custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`, so restored sandboxes keep the custom egress rules that were recorded with the source sandbox.
-  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy).
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Create Custom Policy Presets](/user-guide/openclaw/network-policy/configure-policies/create-custom-policy-presets).
 - OpenClaw onboarding keeps Brave Search pinned to the NemoClaw-managed runtime and preserves the `BRAVE_API_KEY` placeholder through build doctor.
   Docker-driver gateway health checks now follow the entrypoint path that actually launches the in-container gateway, which avoids misleading health reports on host-gateway setups.
   For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).

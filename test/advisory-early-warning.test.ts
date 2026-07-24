@@ -72,6 +72,7 @@ describe("advisory early warning correlation", () => {
     expect(signals).toEqual([
       {
         advisoryId: "GHSA-4c8g-83qw-93j6",
+        cveId: "CVE-2026-13676",
         package: "fast-uri",
         vulnerableRange: ">= 3.0.0, < 3.1.3",
         matchedVersions: ["3.1.2"],
@@ -87,6 +88,7 @@ describe("advisory early warning correlation", () => {
     expect(signals).toEqual([
       {
         advisoryId: "GHSA-45rx-2jwx-cxfr",
+        cveId: "CVE-2026-59892",
         package: "fast-uri",
         vulnerableRange: "cpe:2.3:a:fastify:fast-uri:*:*",
         matchedVersions: ["3.1.2"],
