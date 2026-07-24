@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
+import { dockerRunCommandBetween } from "./helpers/dockerfile-command";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -28,38 +29,6 @@ const DEEPAGENTS_DOCKERFILE_BASE = path.join(
   "langchain-deepagents-code",
   "Dockerfile.base",
 );
-
-function dockerRunCommandBetween(
-  dockerfile: string,
-  startMarker: string,
-  endMarker: string,
-): string {
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(`Expected Dockerfile block between ${startMarker} and ${endMarker}`);
-  }
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  if (runIndex === -1 || runIndex > end) {
-    throw new Error(`Expected RUN instruction after ${startMarker}`);
-  }
-  const runLines: string[] = [];
-  for (const line of dockerfile.slice(runIndex, end).split("\n")) {
-    runLines.push(line);
-    if (!line.trimEnd().endsWith("\\")) {
-      break;
-    }
-  }
-  const lastLine = runLines[runLines.length - 1]?.trimEnd() ?? "";
-  if (lastLine.endsWith("\\")) {
-    throw new Error(`Expected complete RUN instruction before ${endMarker}`);
-  }
-  return runLines
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
-}
 
 function dockerHealthCommandBetween(
   dockerfile: string,
