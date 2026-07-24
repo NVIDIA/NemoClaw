@@ -104,6 +104,12 @@ $$nemoclaw my-assistant snapshot restore before-upgrade
 $$nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
+<AgentOnly variant="hermes">
+A running Hermes gateway keeps serving its pre-restore state databases until it reopens them.
+After a restore that includes Hermes state databases, the CLI prints a reminder to restart the gateway.
+Run `$$nemoclaw <name> gateway restart` to make the gateway open the restored databases.
+</AgentOnly>
+
 To clone a snapshot into a different sandbox name, pass `--to <name>`.
 If the destination sandbox already exists, NemoClaw refuses to overwrite it unless you pass `--force`:
 

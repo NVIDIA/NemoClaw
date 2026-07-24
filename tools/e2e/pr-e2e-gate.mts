@@ -4477,7 +4477,9 @@ export async function abandonRunnerLossRetrySource(
     const canonicalReservedReplacement =
       current?.status === "in_progress" &&
       current.conclusion === null &&
-      (current.details_url === null || current.details_url === undefined) &&
+      (current.details_url === null ||
+        current.details_url === undefined ||
+        current.details_url === `https://github.com/${repository}/runs/${current.id}`) &&
       current.output?.title === RESERVED_CHECK_TITLE &&
       current.output.summary === RESERVED_CHECK_SUMMARY;
     if (!sourceImmediatelyPrecedesCurrent || !canonicalReservedReplacement) {
