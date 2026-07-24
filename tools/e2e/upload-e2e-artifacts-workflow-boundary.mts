@@ -38,6 +38,16 @@ const GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+const SCORECARD_RUNTIME_UPLOAD_CONTRACT: WorkflowStep = {
+  name: "Upload E2E runtime summary",
+  if: "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}",
+  uses: UPLOAD_E2E_ARTIFACTS_ACTION,
+  with: {
+    name: "e2e-runtime-summary",
+    path: "${{ runner.temp }}/e2e-runtime-summary.json",
+  },
+};
+
 const SHARED_E2E_JOBS: ReadonlyMap<string, { targetId: string }> = new Map([
   [SHARED_E2E_JOB_ID, { targetId: "${{ matrix.id }}" }],
 ]);
@@ -374,6 +384,17 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     }
 
     const uploadSteps = jobSteps.filter((step) => step.uses === UPLOAD_E2E_ARTIFACTS_ACTION);
+    if (jobName === "scorecard") {
+      if (
+        uploadSteps.length !== 1 ||
+        !isDeepStrictEqual(uploadSteps[0], SCORECARD_RUNTIME_UPLOAD_CONTRACT)
+      ) {
+        errors.push(
+          "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+        );
+      }
+      continue;
+    }
     if (!expected) {
       if (uploadSteps.length > 0) {
         errors.push(`${jobName} must not use upload-e2e-artifacts`);
