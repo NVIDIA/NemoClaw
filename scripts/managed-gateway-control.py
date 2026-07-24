@@ -1771,6 +1771,8 @@ def _managed_failure_diagnostics() -> tuple[str, ...]:
                     reader, supervisor
                 )
     except (ControlError, OSError, PermissionError, ProcessLookupError):
+        # Diagnostics are best effort; keep fail-closed defaults when process
+        # state cannot be re-proven.
         pass
 
     diagnostics = [
