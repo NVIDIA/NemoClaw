@@ -190,7 +190,7 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual(expect.arrayContaining(jobs));
   });
 
-  it("runs cold full E2E for repository-root OpenClaw image changes (#6660)", () => {
+  it("selects cold full E2E for repository-root OpenClaw image changes (#6660)", () => {
     const rootImage = plan("Dockerfile");
     const adjacentImage = plan("Dockerfile.base");
 
