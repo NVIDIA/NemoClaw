@@ -1998,6 +1998,7 @@ run_preupgrade_backup() {
   NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" backup-all 2>&1
 }
 
+# Return nonzero when OpenShell is absent or its version command fails.
 installed_openshell_version() {
   command_exists openshell || return 1
   local version_output

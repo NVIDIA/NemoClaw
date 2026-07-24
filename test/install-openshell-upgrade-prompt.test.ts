@@ -14,7 +14,10 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-function runInstallerOpenshellVersionFlow(setupOpenshell: (bin: string) => void) {
+function runInstallerOpenshellVersionFlow(
+  setupOpenshell: (bin: string) => void,
+  installedOpenshellBody = '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n',
+) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-flow-"));
   const home = path.join(tmp, "home");
   const bin = path.join(tmp, "bin");
@@ -30,10 +33,7 @@ function runInstallerOpenshellVersionFlow(setupOpenshell: (bin: string) => void)
   fs.writeFileSync(registry, '{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
   fs.writeFileSync(gatewayState, "gateway-original\n");
   writeExecutable(path.join(setupDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n");
-  writeExecutable(
-    healthyOpenshell,
-    '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n',
-  );
+  writeExecutable(healthyOpenshell, installedOpenshellBody);
   setupOpenshell(bin);
 
   const result = spawnSync(
@@ -348,6 +348,18 @@ require_reportable_openshell_version`,
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(installLog).toBe("install\n");
+  });
+
+  it("rejects an installed OpenShell whose version command fails before onboarding (#7300)", () => {
+    const { result, installLog, openshellBody } = runInstallerOpenshellVersionFlow(
+      () => undefined,
+      versionPrintingBrokenOpenshell,
+    );
+
+    expect(result.status, result.stdout + result.stderr).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("could not report its version");
+    expect(installLog).toBe("install\n");
+    expect(openshellBody).toBe(versionPrintingBrokenOpenshell);
   });
 
   it.skipIf(process.platform !== "linux")(
