@@ -6,7 +6,10 @@ import path from "node:path";
 
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
-import { isBridgeProviderName, recoverGatewayOrExit } from "../credentials/command-support";
+import {
+  isBridgeProviderName,
+  recoverGatewayForCredentialMutationOrExit,
+} from "../credentials/command-support";
 import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { ROOT } from "../state/paths";
@@ -157,7 +160,7 @@ export async function runCredentialsAddAction(
   }
 
   const recoveryFailureLines: string[] = [];
-  const recovered = await recoverGatewayOrExit("reach", (lines) => {
+  const recovered = await recoverGatewayForCredentialMutationOrExit((lines) => {
     recoveryFailureLines.push(...lines);
   });
   if (!recovered) {
