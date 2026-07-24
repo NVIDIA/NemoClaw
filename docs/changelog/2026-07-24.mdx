@@ -18,7 +18,7 @@ NemoClaw v0.0.94 strengthens sandbox restore and update behavior, adds machine-r
 - `policy-add` now compares an already-applied catalog preset with the live policy.
   It exits without mutation when the content matches and previews the update when the preset changed.
   Network policy guidance now explains when an endpoint requires `tls: skip` raw TLS passthrough and identifies the lost L7 inspection and credential-resolution controls.
-  For more information, refer to [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy), [Common NemoClaw Integration Policy Examples](/user-guide/openclaw/network-policy/integration-policy-examples), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  For more information, refer to [Apply Policy Presets](/user-guide/openclaw/network-policy/configure-policies/apply-policy-presets), [Configure Raw TLS Passthrough](/user-guide/openclaw/network-policy/configure-policies/configure-raw-tls-passthrough), [Common NemoClaw Integration Policy Examples](/user-guide/openclaw/network-policy/integration-policy-examples), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Onboarding now supports `--events=jsonl` for a versioned, redacted stream of canonical state-machine events.
   The human-readable progress stream remains on standard error, and closing or slowing the event stream does not cancel onboarding.
   DGX Spark resume preserves the selected managed vLLM Express path, managed vLLM rejects a model that does not support the detected platform before downloads, and compatibility recovery selects and probes one usable IPv4 resolver.
