@@ -58,12 +58,20 @@ function telemetrySteps(workflow: Workflow, jobId: string): WorkflowStep[] {
 }
 
 describe("runner comparison E2E workflow boundary (#7145)", () => {
-  it("accepts 12 routed workflow lane identities / 13 concrete job executions", () => {
+  it("accepts 12 routed workflow lane identities / 15 concrete job executions", () => {
     const workflow = loadWorkflow();
 
     expect(validateRunnerComparisonWorkflowBoundary(workflow)).toEqual([]);
     expect(JOBS.flatMap((jobId) => telemetrySteps(workflow, jobId))).toHaveLength(JOBS.length * 2);
 
+    const commonEgressScenarios = workflow.jobs[
+      "common-egress-agent"
+    ]!.strategy!.matrix!.include?.map((entry) => entry.scenario);
+    expect(commonEgressScenarios).toEqual([
+      "openclaw-balanced-weather",
+      "openclaw-open-reference",
+      "hermes-open-reference",
+    ]);
     const mcpAgents = workflow.jobs["mcp-bridge"]!.strategy!.matrix!.agent as unknown[];
     expect(mcpAgents).toEqual(["openclaw", "hermes", "deepagents"]);
     const mcpLanes = mcpAgents.filter((agent) =>
@@ -74,15 +82,21 @@ describe("runner comparison E2E workflow boundary (#7145)", () => {
     ]!.strategy!.matrix!.include?.map((entry) => entry.mode);
     expect(inferenceSwitchModes).toEqual(["hosted", "anthropic"]);
     const routedLanes = JOBS.length - 1 + mcpLanes;
-    const concreteExecutions = routedLanes - 1 + inferenceSwitchModes!.length;
+    const concreteExecutions =
+      routedLanes + commonEgressScenarios!.length - 1 + inferenceSwitchModes!.length - 1;
     expect(routedLanes).toBe(12);
-    expect(concreteExecutions).toBe(13);
+    expect(concreteExecutions).toBe(15);
   });
 
-  it("locks the matrix topology that produces thirteen concrete executions", () => {
+  it("locks the matrix topology that produces fifteen concrete executions", () => {
     const workflow = loadWorkflow();
     workflow.jobs["mcp-bridge"]!.strategy!.matrix!.agent = ["openclaw", "hermes", "hermes"];
     workflow.jobs["channels-stop-start"]!.strategy!.matrix!.agent = ["openclaw", "openclaw"];
+    workflow.jobs["common-egress-agent"]!.strategy!.matrix!.include = [
+      { scenario: "openclaw-balanced-weather" },
+      { scenario: "openclaw-balanced-weather" },
+      { scenario: "hermes-open-reference" },
+    ];
     workflow.jobs["security-posture"]!.strategy!.matrix!.include = [
       { agent: "openclaw" },
       { agent: "openclaw" },
@@ -95,6 +109,7 @@ describe("runner comparison E2E workflow boundary (#7145)", () => {
     expect(validateRunnerComparisonWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "channels-stop-start matrix must contain exactly openclaw, hermes for runner comparison telemetry",
+        "common-egress-agent matrix must contain exactly openclaw-balanced-weather, openclaw-open-reference, hermes-open-reference for runner comparison telemetry",
         "mcp-bridge matrix must contain exactly openclaw, hermes, deepagents for runner comparison telemetry",
         "security-posture matrix must contain exactly openclaw, hermes for runner comparison telemetry",
         "hermes-inference-switch matrix must contain exactly hosted, anthropic for runner comparison telemetry",

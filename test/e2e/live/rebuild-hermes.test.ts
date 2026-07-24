@@ -131,7 +131,7 @@ const DOCKER_PULL_TIMEOUT_MS = 20 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 const SANDBOX_CREATE_TIMEOUT_MS = 10 * 60_000;
 const REBUILD_TIMEOUT_MS = 45 * 60_000;
-const LIVE_TIMEOUT_MS = 100 * 60_000;
+const LIVE_TIMEOUT_MS = 70 * 60_000;
 // Long Docker and onboard commands can become noisy when they wedge. Keep a
 // generous diagnostic tail without letting a stuck child exhaust the hosted
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.

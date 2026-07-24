@@ -4550,18 +4550,83 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Scheduled coverage for #6108 / #3513 / #3127. This exercises the complete
-  # managed v0.0.71 runtime with a custom plugin, then proves restart/rebuild
-  # persistence and target-side runtime-dependency replacement across devices.
+  # Scheduled release-baseline coverage for #6108. This runs independently of
+  # the current lifecycle lane so the exact v0.0.71 build does not extend that
+  # lane's critical path.
+  openclaw-plugin-runtime-exdev-release:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-plugin-runtime-exdev-release,') || contains(format(',{0},', inputs.targets), ',openclaw-plugin-runtime-exdev-release,') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 55
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "openclaw-plugin-runtime-exdev-release"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev-release
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-plugin-exdev-release"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Pre-pull release-matched Docker Hub builder image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
+
+      - name: Remove Docker auth before release-pinned fixture
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/docker-auth-cleanup.sh
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Run OpenClaw custom-plugin release baseline live test
+        run: |
+          set -euo pipefail
+          test -n "${DOCKER_CONFIG:-}"
+          test ! -e "${DOCKER_CONFIG}"
+          test -z "${DOCKERHUB_USERNAME:-}"
+          test -z "${DOCKERHUB_TOKEN:-}"
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
+            npx tsx tools/e2e/live-vitest-invocation.mts run \
+              --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
+              --selector release-baseline
+
+      - name: Upload OpenClaw plugin release baseline artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  # Scheduled current-lifecycle coverage for #6108 / #3513 / #3127. This
+  # proves restart/rebuild persistence and target-side runtime-dependency
+  # replacement across devices without waiting for the release baseline.
   openclaw-plugin-runtime-exdev:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-plugin-runtime-exdev,') || contains(format(',{0},', inputs.targets), ',openclaw-plugin-runtime-exdev,') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Three bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
-    # Vitest buffer need 110 minutes; allow 20 more for setup and teardown.
-    timeout-minutes: 130
+    # Two bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
+    # Vitest buffer need 85 minutes; allow 20 more for setup and teardown.
+    timeout-minutes: 105
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
@@ -4604,7 +4669,9 @@ jobs:
           test -z "${DOCKERHUB_USERNAME:-}"
           test -z "${DOCKERHUB_TOKEN:-}"
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts
+            npx tsx tools/e2e/live-vitest-invocation.mts run \
+              --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
+              --selector current-lifecycle
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
         if: always()
@@ -5622,6 +5689,7 @@ jobs:
         sandbox-survival,
         diagnostics,
         snapshot-commands,
+        openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
         openclaw-tui-chat-correlation,
         gateway-guard-recovery,
