@@ -4586,7 +4586,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
       finalizationDeps: {
         ensureAgentDashboardForward: (name, selectedAgent) =>
-          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
+          selectedAgent
+            ? ensureAgentDashboardForward(name, selectedAgent)
+            : ensureDashboardForward(name, process.env.CHAT_UI_URL),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,

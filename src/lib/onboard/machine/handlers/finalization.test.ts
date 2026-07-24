@@ -160,6 +160,36 @@ describe("handleFinalizationState", () => {
     });
   });
 
+  it("restores the default OpenClaw dashboard forward after process recovery", async () => {
+    let forwardLive = true;
+    const recoverProcesses = vi.fn(() => {
+      forwardLive = false;
+    });
+    const ensureDashboard = vi.fn(() => {
+      forwardLive = true;
+      return 18789;
+    });
+    const verify = vi.fn(async () => ({ ok: forwardLive }));
+    const { deps } = createDeps({
+      checkAndRecoverSandboxProcesses: recoverProcesses,
+      ensureAgentDashboardForward: ensureDashboard,
+      verifyDeployment: verify,
+      isDeploymentHealthy: vi.fn((result) => result.ok),
+    });
+
+    const result = await handleFinalizationState(baseOptions(deps));
+
+    expect(ensureDashboard).toHaveBeenCalledWith("my-assistant", null);
+    expect(ensureDashboard.mock.invocationCallOrder[0]).toBeGreaterThan(
+      recoverProcesses.mock.invocationCallOrder[0],
+    );
+    expect(ensureDashboard.mock.invocationCallOrder[0]).toBeLessThan(
+      verify.mock.invocationCallOrder[0],
+    );
+    expect(result.deploymentHealthy).toBe(true);
+    expect(result.stateResult.type).toBe("complete");
+  });
+
   it("ensures agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes" };

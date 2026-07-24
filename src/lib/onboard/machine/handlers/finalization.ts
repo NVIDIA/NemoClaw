@@ -22,7 +22,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
   deps: {
-    ensureAgentDashboardForward(sandboxName: string, agent: NonNullable<Agent>): number;
+    ensureAgentDashboardForward(sandboxName: string, agent: Agent): number;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
@@ -143,10 +143,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
 
-  if (agent && manageDashboard) {
-    deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
-  }
-
   const allStagedMigrated =
     stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((key) => migratedLegacyKeys.has(key));
   const unmigratedLegacyKeys = stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key));
@@ -166,6 +162,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    // Reconcile the forward after recovery because a policy-triggered restart
+    // can invalidate the forward created earlier in onboarding.
+    deps.ensureAgentDashboardForward(sandboxName, agent);
     // #4504-v2: provoke the operator.write scope upgrade now (throwaway agent
     // run) so the request is PENDING when the approval pass below clears it, and
     // the user's first real run connects without an embedded fallback.
