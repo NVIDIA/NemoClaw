@@ -24,6 +24,7 @@ export interface PolicyPresetEntry {
 
 export interface ActiveSandboxPolicyState {
   messaging?: { plan: SandboxMessagingPlan } | null;
+  openshellDriver?: string | null;
   policyTier?: string | null;
 }
 
@@ -66,6 +67,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       credentialEnv: string | null;
       messagingChannels: string[];
       agent: Agent;
+      openshellDriver?: string | null;
     }): void;
     preparePolicyPresetResumeSelection(
       sandboxName: string,
@@ -170,6 +172,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     credentialEnv,
     messagingChannels: policyMessagingChannels,
     agent,
+    openshellDriver: activeSandbox?.openshellDriver,
   });
 
   const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {

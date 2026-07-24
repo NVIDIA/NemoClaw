@@ -1537,8 +1537,10 @@ $$nemoclaw onboard
 If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the
 Responses API, unset it before re-running onboard.
 
-When you enable Telegram messaging with an OpenAI-compatible endpoint, onboarding also checks `inference.local` from inside the sandbox.
-If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.
+For OpenClaw, onboarding checks `inference.local` from inside the ready sandbox for every OpenAI-compatible endpoint before policy selection.
+This route probe accepts HTTP `200` through `499`, so it proves managed route access but not a successful model response.
+When messaging is enabled, onboarding runs a separate model-response smoke check.
+If either check fails, fix the reported route or model problem before testing the messaging channel again.
 
 Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone.
 It patches the config at container startup but does not update the Dockerfile ARG baked into the image.
@@ -1547,6 +1549,20 @@ A fresh `$$nemoclaw onboard` is the reliable fix.
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
+
+### Compatible endpoint onboarding reports `BROKEN 000`
+
+OpenClaw compatible-endpoint onboarding can stop with:
+
+```text
+OpenShell Docker proxy child environment or gateway path is unavailable (BROKEN 000).
+```
+
+This result means the sandbox-side probe could not establish the managed OpenShell proxy or gateway path.
+Verify that the OpenShell Docker gateway proxy is running and that sandbox exec children receive its HTTPS proxy and CA environment.
+Do not add `inference.local` to `/etc/hosts` or `NO_PROXY` because either change bypasses the managed inference and credential boundary.
+Do not treat this result as a direct DNS problem by changing Docker DNS, CoreDNS, or virtual machine networking.
+After you restore the managed proxy route, run `$$nemoclaw onboard --resume`.
 
 ### Tool calls appear as assistant text
 

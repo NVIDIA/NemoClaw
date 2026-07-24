@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { INFERENCE_ROUTE_PROBE_SCRIPT } from "../actions/sandbox/connect-inference-route-probe";
 import {
   runSmokeScript,
   writeFakeCurl,
@@ -21,12 +22,28 @@ import {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   shouldRunCompatibleEndpointSandboxSmoke,
+  shouldVerifyCompatibleEndpointSandboxRoute,
   spawnOutputToString,
   verifyCompatibleEndpointSandboxSmoke,
 } from "./compatible-endpoint-smoke";
 
 describe("compatible endpoint sandbox smoke helpers", () => {
-  it("runs only for OpenClaw compatible-endpoint sandboxes with messaging", () => {
+  it("requires the sandbox route for every OpenClaw compatible endpoint", () => {
+    expect(shouldVerifyCompatibleEndpointSandboxRoute("compatible-endpoint")).toBe(true);
+    expect(
+      shouldVerifyCompatibleEndpointSandboxRoute("compatible-endpoint", {
+        name: "openclaw",
+      }),
+    ).toBe(true);
+    expect(
+      shouldVerifyCompatibleEndpointSandboxRoute("compatible-endpoint", {
+        name: "hermes",
+      }),
+    ).toBe(false);
+    expect(shouldVerifyCompatibleEndpointSandboxRoute("nvidia-prod")).toBe(false);
+  });
+
+  it("runs the full model-response smoke only when OpenClaw messaging is enabled", () => {
     expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"])).toBe(true);
     expect(
       shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], {
@@ -52,6 +69,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   it("budgets the host command timeout for every retry attempt", () => {
     const runOpenshell = vi
       .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "OK 404" })
       .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
       .mockReturnValueOnce({
         status: 0,
@@ -68,10 +86,101 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     });
 
     expect(runOpenshell).toHaveBeenNthCalledWith(
-      2,
+      3,
       expect.any(Array),
       expect.objectContaining({ timeout: 225_000 }),
     );
+  });
+
+  it.each([
+    {
+      name: "OpenRouter-shaped endpoint",
+      endpointUrl: "https://openrouter.ai/api/v1",
+      model: "openai/gpt-5.4",
+    },
+    {
+      name: "Azure-shaped endpoint",
+      endpointUrl:
+        "https://example-resource.openai.azure.com/openai/deployments/gpt-5/chat/completions",
+      model: "gpt-5",
+    },
+  ])("accepts a healthy managed route for a $name without messaging (#7433)", (scenario) => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "OK 404", stderr: "" }));
+
+    verifyCompatibleEndpointSandboxSmoke({
+      sandboxName: "smoke-sandbox",
+      provider: "compatible-endpoint",
+      model: scenario.model,
+      endpointUrl: scenario.endpointUrl,
+      runOpenshell,
+      redact: (value) => value,
+      messagingChannels: [],
+      agent: { name: "openclaw" },
+      openshellDriver: "docker",
+    });
+
+    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        "smoke-sandbox",
+        "--",
+        "sh",
+        "-c",
+        INFERENCE_ROUTE_PROBE_SCRIPT,
+      ],
+      expect.objectContaining({
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 10_000,
+      }),
+    );
+  });
+
+  it("fails Docker BROKEN 000 as a secret-safe proxy path error without DNS repair (#7433)", () => {
+    const runOpenshell = vi.fn((_args: string[]) => ({
+      status: 0,
+      stdout: "BROKEN 000",
+      stderr: "",
+    }));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${String(code)}`);
+    });
+
+    expect(() =>
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "smoke-sandbox",
+        provider: "compatible-endpoint",
+        model: "gpt-5",
+        endpointUrl:
+          "https://example-resource.openai.azure.com/openai/deployments/gpt-5?sig=raw-secret",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        runOpenshell,
+        redact: (value) => value.replaceAll("raw-secret", "<redacted>"),
+        messagingChannels: [],
+        agent: { name: "openclaw" },
+        openshellDriver: "docker",
+      }),
+    ).toThrow("exit 1");
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(runOpenshell).toHaveBeenCalledOnce();
+    const routeCommand = (runOpenshell.mock.calls[0]?.[0] ?? []).join(" ");
+    expect(routeCommand).not.toContain("/etc/hosts");
+    expect(routeCommand).not.toContain("NO_PROXY");
+    expect(routeCommand).not.toMatch(/coredns|setup-dns-proxy|monkeypatch/i);
+    const diagnostics = error.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(diagnostics).toContain(
+      "OpenShell Docker proxy child environment or gateway path is unavailable (BROKEN 000).",
+    );
+    expect(diagnostics).toContain("Do not add inference.local to /etc/hosts or NO_PROXY");
+    expect(diagnostics).not.toContain("raw-secret");
+    expect(diagnostics).not.toContain("COMPATIBLE_API_KEY");
   });
 
   it("builds a sandbox script that checks managed provider routing", () => {

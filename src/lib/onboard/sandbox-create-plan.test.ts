@@ -780,6 +780,13 @@ describe("selected inference provider attachment (#7171)", () => {
     expect(providerArgsOf(result.createArgs)).toEqual([provider, "tavily-search"]);
   });
 
+  it("attaches compatible-endpoint to the sandbox create command (#7433)", () => {
+    const result = planWithInferenceProvider({
+      inferenceProvider: "compatible-endpoint",
+    });
+    expect(providerArgsOf(result.createArgs)).toEqual(["compatible-endpoint"]);
+  });
+
   it("emits the selected provider exactly once when it also appears as an extra provider", () => {
     const result = planWithInferenceProvider({
       inferenceProvider: "vllm-local",

@@ -50,6 +50,7 @@ function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConf
     load: vi.fn(() => session),
     activeSandbox: vi.fn(() => ({
       messaging: { plan: makeMessagingPlan("my-assistant", ["telegram"]) },
+      openshellDriver: "docker",
     })),
     mergeChannels: vi.fn(mergePolicyMessagingChannels),
     smoke: vi.fn(),
@@ -141,6 +142,7 @@ describe("handlePoliciesState", () => {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       messagingChannels: ["telegram"],
       agent: null,
+      openshellDriver: "docker",
     });
     expect(calls.startStep).toHaveBeenCalledWith("policies", {
       sandboxName: "my-assistant",

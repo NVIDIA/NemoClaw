@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
+import {
+  buildSandboxInferenceRouteProbeArgs,
+  parseSandboxInferenceRouteProbeResult,
+} from "../actions/sandbox/connect-inference-route-probe";
+import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
@@ -39,6 +44,15 @@ type CompatibleEndpointSmokeRun = (
   },
 ) => { status: number | null; stdout?: unknown; stderr?: unknown };
 
+type CompatibleEndpointSandboxRouteOptions = {
+  sandboxName: string;
+  provider: string;
+  runOpenshell: CompatibleEndpointSmokeRun;
+  redact: (value: string) => string;
+  agent?: CompatibleEndpointSmokeAgent;
+  openshellDriver?: string | null;
+};
+
 const COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS = 3;
 const COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS = 60;
 const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
@@ -69,18 +83,27 @@ function nonNegativeInt(value: number | undefined, fallback: number): number {
 }
 
 /**
+ * Returns whether onboarding must prove the compatible endpoint through the
+ * sandbox's managed inference route before it can report success.
+ */
+export function shouldVerifyCompatibleEndpointSandboxRoute(
+  provider: string | null | undefined,
+  agent: CompatibleEndpointSmokeAgent = null,
+): boolean {
+  return (agent?.name || "openclaw") === "openclaw" && provider === "compatible-endpoint";
+}
+
+/**
  * Returns whether onboarding should validate the compatible endpoint through
- * the OpenClaw sandbox instead of only checking host-side configuration.
+ * a full model response when messaging needs unattended inference.
  */
 export function shouldRunCompatibleEndpointSandboxSmoke(
   provider: string | null | undefined,
   messagingChannels: string[] | null | undefined,
   agent: CompatibleEndpointSmokeAgent = null,
 ): boolean {
-  const agentName = agent?.name || "openclaw";
   return (
-    agentName === "openclaw" &&
-    provider === "compatible-endpoint" &&
+    shouldVerifyCompatibleEndpointSandboxRoute(provider, agent) &&
     Array.isArray(messagingChannels) &&
     messagingChannels.length > 0
   );
@@ -97,6 +120,58 @@ export function spawnOutputToString(value: unknown): string {
   return String(value);
 }
 
+function verifyCompatibleEndpointSandboxRoute(
+  options: CompatibleEndpointSandboxRouteOptions,
+): void {
+  if (!shouldVerifyCompatibleEndpointSandboxRoute(options.provider, options.agent)) return;
+
+  console.log("  Verifying compatible endpoint inference.local route inside the sandbox...");
+  const routeProbeAgent =
+    typeof options.agent?.name === "string" ? { name: options.agent.name } : null;
+  const routeResult = options.runOpenshell(
+    buildSandboxInferenceRouteProbeArgs(options.sandboxName, routeProbeAgent),
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+    },
+  );
+  const route = parseSandboxInferenceRouteProbeResult({
+    status: routeResult.status,
+    output: spawnOutputToString(routeResult.stdout),
+    stderr: spawnOutputToString(routeResult.stderr),
+  });
+  if (route.healthy) {
+    console.log(
+      "  \u2713 Compatible endpoint inference.local route is reachable inside the sandbox",
+    );
+    return;
+  }
+
+  console.error("  Compatible endpoint sandbox route check failed.");
+  if (options.openshellDriver === "docker" && route.broken && route.httpStatus === 0) {
+    console.error(
+      "  OpenShell Docker proxy child environment or gateway path is unavailable (BROKEN 000).",
+    );
+    console.error(
+      "  Verify the Docker gateway proxy is running and sandbox exec children receive OpenShell's HTTPS proxy and CA environment.",
+    );
+    console.error(
+      "  Do not add inference.local to /etc/hosts or NO_PROXY; either bypasses the managed inference and credential boundary.",
+    );
+  } else if (route.broken) {
+    console.error(
+      `  inference.local is unavailable through the OpenShell ${options.openshellDriver || "sandbox"} gateway path (${route.detail}).`,
+    );
+  } else {
+    const detail = compactText(options.redact(route.detail)).slice(0, 800);
+    console.error("  OpenShell could not establish a trusted sandbox inference route probe.");
+    if (detail) console.error(`  ${detail}`);
+  }
+  process.exit(routeResult.status || 1);
+}
+
 export function verifyCompatibleEndpointSandboxSmoke(options: {
   sandboxName: string;
   provider: string;
@@ -107,18 +182,21 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   credentialEnv?: string | null;
   messagingChannels?: string[] | null;
   agent?: CompatibleEndpointSmokeAgent;
+  openshellDriver?: string | null;
 }): void {
+  if (!shouldVerifyCompatibleEndpointSandboxRoute(options.provider, options.agent)) return;
+
+  verifyCompatibleEndpointSandboxRoute(options);
   if (
     !shouldRunCompatibleEndpointSandboxSmoke(
       options.provider,
       options.messagingChannels,
       options.agent,
     )
-  ) {
+  )
     return;
-  }
 
-  console.log("  Verifying compatible endpoint through the messaging sandbox...");
+  console.log("  Verifying compatible endpoint model response through the messaging sandbox...");
 
   const providerResult = options.runOpenshell(["provider", "get", options.provider], {
     ignoreError: true,
@@ -137,7 +215,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
       `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
     console.error(
-      "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
+      "  The messaging sandbox would start, but agent turns would fail before reaching the model.",
     );
     if (providerDetails) {
       console.error(`  ${compactText(options.redact(providerDetails)).slice(0, 800)}`);
