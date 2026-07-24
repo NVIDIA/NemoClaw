@@ -27,6 +27,30 @@ const DEEPAGENTS_DOCKERFILE_BASE = path.join(
   "langchain-deepagents-code",
   "Dockerfile.base",
 );
+const BASE_APT_SECURITY_FUNCTIONS = [
+  'dpkg() { if [[ "$1" == "--print-architecture" ]]; then printf "arm64\\n"; fi; }',
+  [
+    "dpkg-query() {",
+    '  case "${*: -1}" in',
+    '    libexpat1) printf "2.8.2-1" ;;',
+    '    libjq1|jq) printf "1.8.2-1" ;;',
+    '    perl) printf "5.40.1-6" ;;',
+    "  esac",
+    "}",
+  ].join("\n"),
+  [
+    "curl() {",
+    '  local output=""',
+    "  while (( $# )); do",
+    '    if [[ "$1" == "-o" ]]; then output="$2"; shift 2; else shift; fi',
+    "  done",
+    '  : > "$output"',
+    "}",
+  ].join("\n"),
+  "sha256sum() { cat >/dev/null; }",
+  'jq() { if [[ "${1:-}" == "--version" ]]; then printf "jq-1.8.2\\n"; else cat >/dev/null; fi; }',
+  "python3() { return 0; }",
+];
 
 function dockerRunCommandBetween(
   dockerfile: string,
@@ -1069,6 +1093,7 @@ describe("sandbox provisioning: base runtime tools", () => {
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        ...BASE_APT_SECURITY_FUNCTIONS,
       ]);
       expect(result.status).toBe(0);
       expect(calls).toContain("apt-get update");
@@ -1103,6 +1128,7 @@ describe("sandbox provisioning: base runtime tools", () => {
     try {
       const { result } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        ...BASE_APT_SECURITY_FUNCTIONS,
       ]);
       expect(result.status).toBe(0);
       expect(fs.lstatSync(fakePyLink).isSymbolicLink()).toBe(true);
