@@ -6,6 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
+const OPENCLAW_VERSION_EXTRACTOR = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "scripts",
+  "extract-semver.sh",
+);
 
 export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.7.1";
 
@@ -28,7 +35,11 @@ export function dockerRunCommandBetween(startMarker: string, endMarker: string):
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n")
     .replace(/\\\n/g, " ")
-    .replace(/\\\s*$/, "");
+    .replace(/\\\s*$/, "")
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/extract-semver",
+      JSON.stringify(OPENCLAW_VERSION_EXTRACTOR),
+    );
 }
 
 function createSedWrapper(tmp: string): string {
