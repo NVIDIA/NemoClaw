@@ -328,7 +328,8 @@ $$nemoclaw my-dcode rebuild --no-observability --yes
 
 Removing the `observability-otlp-local` policy stops delivery immediately but does not clear the recorded opt-in.
 A later rebuild restores the preset on Balanced and Open tiers, while Restricted continues to suppress it.
-For the complete collector setup, privacy boundary, policy recovery, verification, and a host-side LangSmith exporter example, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#export-traces-through-a-local-collector).
+For policy recovery and the host-side LangSmith exporter example, refer to [Set Up Deep Agents Trace Export](/user-guide/deepagents/monitoring/set-up-deepagents-trace-export).
+Review [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/understand-deepagents-trace-export) for the privacy boundary, [Verify Deep Agents Trace Export](/user-guide/deepagents/monitoring/verify-deepagents-trace-export) for delivery checks, and [Manage Deep Agents Trace Export](/user-guide/deepagents/monitoring/manage-deepagents-trace-export) for lifecycle operations.
 
 </AgentOnly>
 
@@ -2468,9 +2469,16 @@ The in-sandbox staging artefact is additionally created with `umask 077` and rem
 
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
-Host-side wrapper around `openshell sandbox download` that adds a live-sandbox readiness check.
-The sandbox source path is forwarded to OpenShell verbatim; a relative host destination is resolved against the caller's working directory before it reaches OpenShell, so the downloaded file lands where the user invoked the CLI from rather than inside the install directory.
-Absolute host destinations pass through unchanged, and the OpenShell transport keeps its file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour).
+Host-side wrapper around `openshell sandbox download` that checks the live sandbox.
+The command confirms before and after transfer that the source remains a file or directory.
+Symbolic links, source-type changes, and other special source types are refused.
+If the command cannot confirm the source type, it exits without publishing.
+The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
+An existing destination directory is resolved to its canonical path before publication.
+The command refuses an existing file destination that is a symbolic link and a new destination below a symbolic-link parent.
+Regular files are published through a private temporary entry and atomically replace an existing regular file.
+Relative host destinations resolve against the caller's working directory.
+Absolute host destinations do not use caller-working-directory resolution.
 With no `host-dest` the destination defaults to the current directory.
 
 <AgentOnly variant="openclaw">
@@ -3156,7 +3164,7 @@ It prints the versioned URL of the matching `uninstall.sh` so you can download, 
 
 When the gateway is externally supervised, uninstall preserves its process, Docker resources, and OpenShell binaries.
 It still deletes the selected sandboxes and attempts to remove the modern local gateway registration.
-When no sibling gateways remain, it also deletes NemoClaw provider registrations.
+When uninstall confirms that no sibling gateways remain, it also deletes NemoClaw provider registrations.
 It does not use the legacy `gateway destroy` command for that gateway.
 <AgentOnly variant="openclaw">
 
@@ -3204,8 +3212,10 @@ The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-When no sibling gateways remain, uninstall also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
+When uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources.
+If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
+When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 
 `--yes` deliberately remains non-destructive for user data.
 It only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed entries.
@@ -3227,7 +3237,7 @@ Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot
 
 The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own.
 Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration.
-When no sibling gateways remain, it also deletes provider registrations.
+After uninstall confirms that no sibling gateways remain, it also deletes provider registrations.
 For a NemoClaw-managed gateway, it also removes the Docker image.
 For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources.
 Uninstall warns about this at preserve time.
@@ -3648,7 +3658,8 @@ Collector and exporter failures are non-fatal to agent work.
 Native LangSmith tracing and ambient OTLP configuration remain disabled in the sandbox.
 The explicit opt-in can export bounded prompts, responses, tool arguments, tool results, and operational metadata, so operators must treat trace payloads as sensitive application data.
 The collector must enforce the operator's filtering and redaction requirements before remote forwarding because the local policy applies to the managed Python interpreter and does not provide authenticated tenant identity.
-For the complete receiver contract and a runnable LangSmith collector setup, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#export-traces-through-a-local-collector).
+For a runnable LangSmith collector setup, refer to [Set Up Deep Agents Trace Export](/user-guide/deepagents/monitoring/set-up-deepagents-trace-export).
+For the receiver trust contract, refer to [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/understand-deepagents-trace-export).
 
 </AgentOnly>
 

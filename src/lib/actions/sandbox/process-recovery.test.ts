@@ -28,6 +28,9 @@ const OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR = `Error:   × code: '
   │ relay failed: status: DeadlineExceeded, message: \\"relay channel timed
   │ out\\", details: [], metadata: MetadataMap { headers: {} }"
 `;
+const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × status: Unavailable, message: "relay
+  │ channel dropped", details: [], metadata: MetadataMap { headers: {} }
+`;
 const OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR = `Error:   × code: 'The service is currently unavailable', message: "No such file
   │ or directory (os error 2)"
 `;
@@ -120,6 +123,33 @@ describe("recreated sandbox OpenShell readiness", () => {
         output: stderr.trim(),
         stdout: "",
         stderr,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it("retries when OpenShell drops the replacement supervisor's reverse relay", () => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR.trim(),
+        stdout: "",
+        stderr: OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR,
       })
       .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
     const beforeProbe = vi.fn(() => true);

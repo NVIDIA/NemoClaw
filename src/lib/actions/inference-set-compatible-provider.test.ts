@@ -214,6 +214,9 @@ describe("runInferenceSet compatible providers", () => {
       providers: {
         inference: {
           api: "openai-responses",
+          headers: {
+            "X-NemoClaw-Upstream-Provider": "compatible-endpoint",
+          },
           models: [{ id: "mock-responses-model", name: "inference/mock-responses-model" }],
         },
       },
