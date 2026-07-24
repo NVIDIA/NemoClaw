@@ -6,10 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import { type SetupPolicySelectionDeps, setupPoliciesWithSelection } from "./policy-selection";
 
 describe("policy selection after interrupted onboarding", () => {
-  it("reuses the recorded restricted tier before policy presets exist", async () => {
+  it("reuses the recorded tier and waits for sandbox re-registration after applying it (#7228)", async () => {
     const selectPolicyTier = vi.fn(async () => "balanced");
     const setPolicyTier = vi.fn();
     const syncPresetSelection = vi.fn();
+    const waitForSandboxReady = vi.fn(() => true);
     const onSelection = vi.fn();
     const deps = {
       policies: {
@@ -31,7 +32,7 @@ describe("policy selection after interrupted onboarding", () => {
       step: vi.fn(),
       note: vi.fn(),
       isNonInteractive: vi.fn(() => true),
-      waitForSandboxReady: vi.fn(() => true),
+      waitForSandboxReady,
       syncPresetSelection,
       selectPolicyTier,
       setPolicyTier,
@@ -55,5 +56,12 @@ describe("policy selection after interrupted onboarding", () => {
     expect(setPolicyTier).toHaveBeenCalledWith("alpha", "restricted");
     expect(onSelection).toHaveBeenCalledWith([]);
     expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], []);
+    expect(waitForSandboxReady).toHaveBeenCalledTimes(2);
+    expect(waitForSandboxReady.mock.invocationCallOrder[0]).toBeLessThan(
+      syncPresetSelection.mock.invocationCallOrder[0],
+    );
+    expect(waitForSandboxReady.mock.invocationCallOrder[1]).toBeGreaterThan(
+      syncPresetSelection.mock.invocationCallOrder[0],
+    );
   });
 });

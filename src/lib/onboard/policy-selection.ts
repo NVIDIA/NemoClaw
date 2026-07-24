@@ -230,6 +230,16 @@ export async function setupPoliciesWithSelection(
   return chosen;
 }
 
+function requireSandboxReady(
+  deps: SetupPolicySelectionDeps,
+  sandboxName: string,
+  stage: "before" | "after",
+): void {
+  if (deps.waitForSandboxReady(sandboxName)) return;
+  console.error(`  Sandbox '${sandboxName}' was not ready ${stage} policy application.`);
+  process.exit(1);
+}
+
 async function setupPoliciesWithSelectionInner(
   deps: SetupPolicySelectionDeps,
   sandboxName: string,
@@ -343,12 +353,10 @@ async function setupPoliciesWithSelectionInner(
   if (selectedPresets !== null) {
     const resumeSelection = chosen || [];
     if (onSelection) onSelection(resumeSelection);
-    if (!deps.waitForSandboxReady(sandboxName)) {
-      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-      process.exit(1);
-    }
+    requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [resume] Reapplying policy presets: ${resumeSelection.join(", ")}`);
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
+    requireSandboxReady(deps, sandboxName, "after");
     return resumeSelection;
   }
 
@@ -450,12 +458,10 @@ async function setupPoliciesWithSelectionInner(
     }
 
     if (onSelection) onSelection(chosen);
-    if (!deps.waitForSandboxReady(sandboxName)) {
-      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-      process.exit(1);
-    }
+    requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
+    requireSandboxReady(deps, sandboxName, "after");
     return chosen;
   }
 
@@ -489,13 +495,11 @@ async function setupPoliciesWithSelectionInner(
   );
 
   if (onSelection) onSelection(interactiveChoice);
-  if (!deps.waitForSandboxReady(sandboxName)) {
-    console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-    process.exit(1);
-  }
+  requireSandboxReady(deps, sandboxName, "before");
 
   const accessByName: Record<string, string> = {};
   for (const preset of resolvedPresets) accessByName[preset.name] = preset.access;
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
+  requireSandboxReady(deps, sandboxName, "after");
   return interactiveChoice;
 }
