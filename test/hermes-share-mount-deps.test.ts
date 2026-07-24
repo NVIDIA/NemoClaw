@@ -338,6 +338,7 @@ describe("Hermes share mount package parity (#2947)", () => {
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
+          'timeout() { shift; "$@"; }',
           `export HERMES_TUI_DIR=${JSON.stringify(path.join(hermesRoot, "ui-tui"))}`,
           `export HERMES_WEB_DIST=${JSON.stringify(path.join(hermesRoot, "hermes_cli", "web_dist"))}`,
           command,
