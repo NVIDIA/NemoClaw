@@ -195,7 +195,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -221,6 +221,25 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 
 `--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases.
 For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
+
+#### `--events=jsonl`
+
+Emit a read-only stream of canonical onboarding FSM events as JSON Lines on stdout.
+Each line is one JSON object with the version 1 envelope:
+
+```json
+{"schemaVersion":1,"session":"<session-id>","type":"state.entered","timestamp":"2026-07-13T12:34:56.789Z","payload":{"state":"inference","step":"inference","context":{"agent":"openclaw","sandboxName":"alpha","provider":"nvidia-prod","model":"nvidia/test-model","endpointOrigin":"https://integrate.api.nvidia.com","credentialEnv":"NVIDIA_API_KEY"},"error":null,"metadata":{}}}
+```
+
+In this mode, human progress remains available on stderr so stdout stays valid JSONL.
+Payloads contain only the existing bounded, redacted machine-event context: credential environment variable names may appear, but credential values and secret-bearing URL components are redacted.
+Treat new event `type` values and new payload fields as additive changes.
+A breaking envelope or field-semantics change increments `schemaVersion`.
+
+This surface observes the canonical onboarding session and does not accept input, cancel onboarding, or create another state machine.
+It does not provide event history, reconnect, or replay; use the existing `--resume` behavior after an interrupted onboarding process.
+Closing the output pipe or applying sustained backpressure disables observation without cancelling, rolling back, or otherwise changing onboarding.
+Without `--events=jsonl`, terminal output and behavior are unchanged.
 
 #### `--resume` and `--fresh`
 
