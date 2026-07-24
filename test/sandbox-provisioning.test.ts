@@ -1043,11 +1043,9 @@ describe("sandbox provisioning: base runtime tools", () => {
     const aptInstall = dockerfile.match(
       /^RUN apt-get update && apt-get install -y --no-install-recommends \\\n(?:.*\\\n)*.*$/m,
     )?.[0];
-
     expect(aptInstall).toBeDefined();
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });
-
   it("rejects a sandbox security package when its expected checksum changes", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-checksum-"));
@@ -1062,7 +1060,6 @@ describe("sandbox provisioning: base runtime tools", () => {
       .replaceAll("/tmp/nemoclaw-debian-security", path.join(tmp, "security-debs"))
       .replaceAll("/usr/local/bin/python", untouchedTail)
       .replaceAll("/usr/bin/python3", path.join(tmp, "python3"));
-
     try {
       const { result } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
@@ -1074,7 +1071,6 @@ describe("sandbox provisioning: base runtime tools", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
@@ -1095,7 +1091,6 @@ describe("sandbox provisioning: base runtime tools", () => {
       .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
-
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
@@ -1122,7 +1117,6 @@ describe("sandbox provisioning: base runtime tools", () => {
     fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
     fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
     fs.writeFileSync(fakePy3, "#!/bin/sh\necho 3.13\n", { mode: 0o755 });
-
     const command = dockerRunCommandBetween(
       dockerfile,
       "RUN apt-get update",
@@ -1132,7 +1126,6 @@ describe("sandbox provisioning: base runtime tools", () => {
       .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
-
     try {
       const { result } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',

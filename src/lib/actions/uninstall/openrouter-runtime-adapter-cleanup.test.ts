@@ -43,6 +43,10 @@ function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; o
 
 function defaultRun(command: string, args: readonly string[]): RunResult {
   switch (command) {
+    case "openshell":
+      return args[0] === "gateway" && args[1] === "list"
+        ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+        : ok("");
     case "lsof":
       return ok("");
     default:
