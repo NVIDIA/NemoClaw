@@ -588,6 +588,8 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
 const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
 const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
 const OPENSHELL_RELAY_OPEN_TIMED_OUT = 'message: "relay open timed out"';
+const OPENSHELL_SUPERVISOR_RELAY_DEADLINE = "supervisor relay failed: status: DeadlineExceeded";
+const OPENSHELL_RELAY_CHANNEL_TIMED_OUT = "relay channel timed out";
 
 function normalizeOpenshellStructuredError(value: string): string {
   return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
@@ -624,7 +626,13 @@ function isRetryableOpenshellReRegistrationState(
     error.includes("supervisor relay failed: status: Unavailable") &&
     (error.includes("supervisor session not connected") ||
       error.includes("supervisor session disconnected"));
-  return sessionUnavailable || error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT);
+  const relayChannelTimedOut =
+    error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
+    error.includes(OPENSHELL_SUPERVISOR_RELAY_DEADLINE) &&
+    error.includes(OPENSHELL_RELAY_CHANNEL_TIMED_OUT);
+  return (
+    sessionUnavailable || relayChannelTimedOut || error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT)
+  );
 }
 
 type RecreatedSandboxOpenShellReadinessFailure =

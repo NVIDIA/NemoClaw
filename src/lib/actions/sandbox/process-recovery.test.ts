@@ -24,6 +24,10 @@ const OPENSHELL_SUPERVISOR_DISCONNECTED_STDERR = `Error:   × code: 'The service
 const OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR = `Error:   × status: DeadlineExceeded, message: "relay
   │ open timed out", details: [], metadata: MetadataMap { headers: {} }
 `;
+const OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR = `Error:   × code: 'The service is currently unavailable', message: "supervisor
+  │ relay failed: status: DeadlineExceeded, message: \\"relay channel timed
+  │ out\\", details: [], metadata: MetadataMap { headers: {} }"
+`;
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
@@ -99,14 +103,17 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3, 3]);
   });
 
-  it("retries when the connected supervisor misses OpenShell's relay deadline (#7227)", () => {
+  it.each([
+    OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR,
+    OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR,
+  ])("retries when the connected supervisor misses OpenShell's relay deadline (#7227)", (stderr) => {
     const captureOpenshellImpl = vi
       .fn()
       .mockReturnValueOnce({
         status: 1,
-        output: OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR.trim(),
+        output: stderr.trim(),
         stdout: "",
-        stderr: OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR,
+        stderr,
       })
       .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
     const beforeProbe = vi.fn(() => true);
@@ -126,8 +133,12 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3]);
   });
 
-  it("does not retry an unrelated OpenShell deadline error", () => {
-    const stderr = `Error:   × status: DeadlineExceeded, message: "policy update timed out"`;
+  it.each([
+    `Error:   × status: DeadlineExceeded, message: "policy update timed out"`,
+    `Error:   × code: 'The service is currently unavailable', message: "supervisor
+  │ relay failed: status: DeadlineExceeded, message: \\"relay requester timed
+  │ out\\", details: [], metadata: MetadataMap { headers: {} }"`,
+  ])("does not retry an unrelated OpenShell deadline error", (stderr) => {
     const captureOpenshellImpl = vi.fn(() => ({
       status: 1,
       output: stderr,
