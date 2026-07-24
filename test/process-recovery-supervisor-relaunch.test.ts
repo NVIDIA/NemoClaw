@@ -14,12 +14,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function mockOpenClawSandbox(sandboxName: string) {
+function mockOpenClawSandbox(sandboxName: string, healthTimeoutSeconds = 30) {
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
     name: "openclaw",
     displayName: "OpenClaw",
     forwardPort: 18789,
-    healthProbe: { url: "http://127.0.0.1:18789/health", port: 18789, timeout_seconds: 30 },
+    healthProbe: {
+      url: "http://127.0.0.1:18789/health",
+      port: 18789,
+      timeout_seconds: healthTimeoutSeconds,
+    },
   } as never);
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: sandboxName,
@@ -300,8 +304,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
   });
 
-  it("retains a healthy replacement but does not start a forward when OpenShell stays unready", () => {
-    mockOpenClawSandbox("unready-box");
+  it("uses the sandbox readiness budget after a longer gateway health wait (#7273)", () => {
+    mockOpenClawSandbox("unready-box", 600);
     setImmediateRecoveryPolling();
     const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
