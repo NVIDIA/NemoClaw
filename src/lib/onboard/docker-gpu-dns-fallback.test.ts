@@ -103,10 +103,21 @@ describe("detectSandboxFallbackDns", () => {
       "10.20.30.53",
     ],
     [
-      "supports an IPv6 loopback stub with a unicast IPv6 upstream",
+      // Docker cannot reliably reach an IPv6 upstream from the container path,
+      // so this compatibility override ignores IPv6 and prefers the first
+      // usable IPv4, regardless of resolver ordering (#7172).
+      "prefers the first usable IPv4 over an earlier IPv6 upstream",
+      LOOPBACK_STUB,
+      "nameserver 2606:4700:4700::1111\nnameserver 169.254.169.253\n",
+      "169.254.169.253",
+    ],
+    [
+      // No usable IPv4 → return null and preserve Docker defaults rather than
+      // injecting an unreachable IPv6 resolver (#7172).
+      "returns null for an IPv6-only upstream list",
       "nameserver ::1\n",
       "nameserver 2001:4860:4860::8888\n",
-      "2001:4860:4860::8888",
+      null,
     ],
   ])("%s (resolver selection)", (_title, root, upstream, expected) => {
     expect(detectSandboxFallbackDns({ readFile: readSequence(root, upstream) })).toBe(expected);
