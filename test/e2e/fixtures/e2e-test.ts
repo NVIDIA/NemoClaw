@@ -174,18 +174,20 @@ export const test = base.extend<E2ETargetFixtures>({
     },
     { auto: true },
   ],
-  docker: async ({ artifacts, progress, secrets, signal, skip }, use) => {
+  docker: async ({ artifacts, cleanup, progress, secrets, skip }, use) => {
     const probe = new DockerProbe(
       artifacts,
       (text, extra) => secrets.redact(text, extra),
       undefined,
       progress,
-      signal,
+      () => cleanup.currentSignal(),
     );
     await use(new DockerPrerequisite(probe, skip));
   },
-  cleanup: async ({ artifacts, progress, secrets }, use) => {
-    const cleanup = new CleanupRegistry((text) => secrets.redact(text), progress);
+  cleanup: async ({ artifacts, progress, secrets, signal }, use) => {
+    const cleanup = new CleanupRegistry((text) => secrets.redact(text), progress, {
+      testSignal: signal,
+    });
     try {
       await use(cleanup);
     } finally {
@@ -195,13 +197,13 @@ export const test = base.extend<E2ETargetFixtures>({
       assertCleanupPassed(result);
     }
   },
-  shellProbe: async ({ artifacts, progress, secrets, signal }, use) => {
+  shellProbe: async ({ artifacts, cleanup, progress, secrets }, use) => {
     await use(
       new ShellProbe({
         artifacts,
         progress,
         redact: (text, extraValues) => secrets.redact(text, extraValues),
-        signal,
+        signal: () => cleanup.currentSignal(),
       }),
     );
   },
