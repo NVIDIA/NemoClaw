@@ -309,12 +309,12 @@
     return true;
   }
 
-  function patchJsonBody(raw) {
+  function patchJsonBody(raw, stripTopLevelThinking) {
     try {
       var body = JSON.parse(raw.toString('utf-8'));
       var changed = false;
       if (applyChatTemplateKwargs(body)) changed = true;
-      if (applyStripTopLevelThinking(body)) changed = true;
+      if (stripTopLevelThinking && applyStripTopLevelThinking(body)) changed = true;
       if (applyToolLessSystemPrompt(body)) changed = true;
       if (!changed) return null;
       return Buffer.from(JSON.stringify(body), 'utf-8');
@@ -343,6 +343,22 @@
 
   function isChatCompletionsFetch(input, init) {
     return isChatCompletionsPost(fetchMethod(input, init), fetchUrl(input));
+  }
+
+  function isManagedBuildHost(host) {
+    return /^inference\.local(?::\d+)?$/i.test(String(host || ''));
+  }
+
+  function isManagedBuildFetch(input) {
+    try {
+      return new URL(fetchUrl(input)).hostname.toLowerCase() === 'inference.local';
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function isManagedBuildRequest(options) {
+    return isManagedBuildHost(options.hostname || options.host);
   }
 
   function headersWithoutContentLength(headers) {
@@ -430,7 +446,7 @@
         return origFetch.apply(this, arguments);
       }
 
-      var modified = patchJsonBody(await rawPromise);
+      var modified = patchJsonBody(await rawPromise, isManagedBuildFetch(input));
       if (!modified) {
         return origFetch.apply(this, arguments);
       }
@@ -478,7 +494,7 @@
         }
 
         var raw = Buffer.concat(chunks);
-        var modified = patchJsonBody(raw);
+        var modified = patchJsonBody(raw, isManagedBuildRequest(options));
         var bodyToSend = modified || raw;
         if (modified && req.getHeader && req.setHeader) {
           req.removeHeader('content-length');
