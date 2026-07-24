@@ -889,8 +889,9 @@ Follow these steps to reconnect.
 
 1. Check the managed OpenShell gateway service.
 
-   If you set `NEMOCLAW_GATEWAY_PORT` to a custom port, skip this service check and continue with the NemoClaw recovery step using the same environment value.
-   Only the default port `8080` uses a managed service.
+   If a custom-port gateway is NemoClaw-managed, skip this service check and continue with the NemoClaw recovery step using the same environment value.
+   Only the default port `8080` uses a NemoClaw-managed service.
+   If the gateway is externally supervised, inspect and restart it through the supervisor declared by `NEMOCLAW_GATEWAY_MANAGEMENT`, regardless of port.
 
    On Apple Silicon macOS with Homebrew, inspect and restart the official formula service.
 

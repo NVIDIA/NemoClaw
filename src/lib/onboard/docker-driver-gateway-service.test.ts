@@ -406,7 +406,7 @@ describe("docker-driver-gateway-service", () => {
     ["manager unavailable", "daemon-reload", "Failed to connect to bus", true],
     ["foreign executable", "show", "", false],
     ["inactive service", "is-active", "inactive", false],
-  ])("handles a selected systemd service failure: %s (#6903)", (_case, failedCommand, detail, fallbackAllowed) => {
+  ])("returns the expected fallback decision for a selected systemd service failure: %s (#6903)", (_case, failedCommand, detail, fallbackAllowed) => {
     const result = startOpenShellGatewayUserService({
       commandExists: () => true,
       env: {},

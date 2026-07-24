@@ -189,17 +189,16 @@ export class LifecyclePhaseFixture {
    *      target's sandbox name and either stop it (default) or
    *      stop+rename it to a `*-nemoclaw-gpu-backup-*` sibling.
    *      The gateway runtime is stopped and restarted through the
-   *      OpenShell user service when the host exposes one, which
-   *      mirrors a reboot or user-manager restart. Hosts without a
-   *      visible user service fall back to the existing first-session
-   *      status/start path.
+   *      selected OpenShell user service, which mirrors a reboot or
+   *      user-manager restart. This target requires either the upstream
+   *      `openshell-gateway` service or the marked
+   *      `nemoclaw-openshell-gateway` service.
    *
    *   2. Invoke `nemoclaw <name> status` — the user-visible action
    *      that documented the regression in #4423. On unfixed `main`
    *      the destructive `missing` branch in `status.ts` wipes the
-   *      registry entry. On the PR-A fix branch the new Docker-driver
-   *      recovery helper restarts the labeled container before
-   *      stale-removal can fire. The preceding gateway restart must
+   *      registry entry. The Docker-driver recovery helper restarts the
+   *      labeled container before stale-removal can fire. The preceding gateway restart must
    *      make `openshell status` report the named gateway connected
    *      without running `nemoclaw onboard --resume`.
    *

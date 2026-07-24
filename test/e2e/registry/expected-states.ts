@@ -89,23 +89,20 @@ const onboardingFailurePolicyPresetsRequired: ExpectedState = {
 };
 
 // Post-reboot recovery contract. After the lifecycle phase restarts
-// the OpenShell gateway through the user service when available, then
+// the OpenShell gateway through the required user service, then
 // runs `nemoclaw <sandbox> status`, this target locks down:
 //
 //   * `cli` still installed.
 //   * `localRegistry` entry preserved: this is the user-visible
 //     regression target. The destructive `missing` branch wipes the
-//     entry; preservation here proves #4578's mitigation holds AND
-//     that PR-A's Docker-corroboration path (when added) does not
-//     regress that invariant.
+//     entry; preservation here proves #4578's mitigation and the
+//     Docker-corroboration path hold together.
 //   * `dockerSandboxContainer` still present: any recovery path must
 //     not delete the labeled container or its `*-nemoclaw-gpu-backup-*`
 //     sibling as a side effect.
 //
 //   * `gateway` healthy: the user-service path must restore the
-//     named OpenShell gateway without `nemoclaw onboard --resume`
-//     when persistence is available, with the documented first-
-//     session fallback used only when a user service is not exposed.
+//     named OpenShell gateway without `nemoclaw onboard --resume`.
 const postRebootRecoveryReady: ExpectedState = {
   id: "post-reboot-recovery-ready",
   cli: { installed: true },

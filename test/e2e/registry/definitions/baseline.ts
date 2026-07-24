@@ -161,13 +161,12 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     // Reboot-style Docker-driver recovery without a physical reboot:
     //   1. `docker stop` the labeled sandbox container.
     //   2. Stop the OpenShell gateway runtime, then restart it through
-    //      `openshell-gateway.service` when the host exposes the user
-    //      service. Hosts without a visible user service use the
-    //      documented first-session fallback path.
+    //      the required upstream `openshell-gateway` or marked
+    //      `nemoclaw-openshell-gateway` user service.
     //   3. Run `nemoclaw <name> status` so any destructive
     //      registry/container path runs against host-observable state.
     // The state-validation phase then asserts the typed
-    // `post-reboot-recovery-ready` contract: cli installed, named
+    // `post-reboot-recovery-ready` contract: CLI installed, named
     // gateway healthy, local registry entry preserved, and labeled
     // Docker container present (running, stopped, or a
     // `*-nemoclaw-gpu-backup-*` sibling).
@@ -178,8 +177,8 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     suiteIds: ["smoke"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     description:
-      "Post-reboot recovery guard: the gateway must recover through the user service " +
-      "or first-session fallback while preserving the local sandbox registry and container.",
+      "Post-reboot recovery guard: the gateway must recover through the required user service " +
+      "while preserving the local sandbox registry and container.",
   },
   {
     id: "ubuntu-repo-openai-compatible-openclaw",

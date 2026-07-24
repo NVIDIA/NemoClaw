@@ -28,8 +28,10 @@ $$nemoclaw uninstall
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance to uninstall (`nemoclaw` for port `8080`, or `nemoclaw-<port>` for a non-default port).
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
-Default-port uninstall removes only NemoClaw's marked Linux gateway unit and NemoClaw-managed entries in `openshell/gateway.env`.
+Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`.
+For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux gateway unit.
 It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries.
+For an externally supervised authority, uninstall preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
 
 <Note>
