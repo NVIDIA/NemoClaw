@@ -153,7 +153,9 @@ sys.exit(exit_code)
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected Windows WSL/);
-    expect(output).toMatch(/Express install will configure WSL-local Ollama/);
+    expect(output).toMatch(
+      /Express install will configure WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback/,
+    );
     expect(output).not.toMatch(/native Docker Engine detected/);
     expect(output).toMatch(/Using express install for Windows WSL/);
     expect(output).toMatch(
@@ -166,7 +168,9 @@ sys.exit(exit_code)
     const result = runWslExpressPrompt({ PATH: `${dockerBin}:${TEST_SYSTEM_PATH}` });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Express install will configure WSL-local Ollama/);
+    expect(output).toMatch(
+      /Express install will configure WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback/,
+    );
     expect(output).not.toMatch(/native Docker Engine detected/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,

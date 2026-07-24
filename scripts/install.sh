@@ -3671,9 +3671,9 @@ express_wsl_docker_target_is_local() {
 
 # Windows-host Ollama only works through LOCAL Docker Desktop WSL integration
 # (host.docker.internal routes to the Windows host). Native Docker Engine (#3695),
-# a remote/unknown target, or a failed probe can't reach it, so fall back to
-# WSL-local Ollama rather than auto-selecting install-windows-ollama, which aborts
-# onboarding at [3/8] (#7318).
+# a remote/unknown target, or a failed probe can't reach it, so use WSL-local
+# Ollama instead; the onboard provider setup fronts that loopback daemon with
+# the sandbox auth proxy when containers cannot reach host loopback (#7318).
 express_wsl_can_use_windows_host_ollama() {
   express_wsl_docker_target_is_local || return 1
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
@@ -3878,7 +3878,7 @@ describe_express_install() {
       if express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
       else
-        inference_summary="WSL-local Ollama"
+        inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
       fi
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
