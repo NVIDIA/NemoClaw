@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("establishRestoredSandboxGatewayPairing", () => {
-  it("restarts restored runtime before provoking and approving the scope upgrade (#7431)", async () => {
+  it("restarts the restored gateway before provoking and approving the scope upgrade (#7431)", async () => {
     const order: string[] = [];
     const restartRestoredSandboxGateway = vi.fn(() => {
       order.push("restart");
@@ -72,7 +72,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     ]);
   });
 
-  it("fails before pairing when the restored runtime cannot restart (#7431)", async () => {
+  it("fails before pairing when the restored gateway cannot restart (#7431)", async () => {
     const warmupScopeUpgrade = vi.fn();
     const autoPairScopeApproval = vi.fn();
     const verifyGatewayPairing = vi.fn(() => true);
