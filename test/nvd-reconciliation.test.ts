@@ -519,6 +519,22 @@ describe("advisory early-warning CLI --nvd-records", () => {
     }
   });
 
+  it("fails loudly on a malformed --inventory entry instead of shrinking the inventory", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nvd-reconciliation-"));
+    try {
+      const inventoryPath = path.join(tempRoot, "inventory.json");
+      fs.writeFileSync(
+        inventoryPath,
+        JSON.stringify([{ name: "fast-uri", version: "3.1.2" }, { name: "", version: "1.0.0" }]),
+      );
+      expect(() => runScanCli(["--inventory", inventoryPath, "--list-packages"])).toThrow(
+        /entry 1 .* missing a non-empty string "name"/,
+      );
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("emits unannotated signals when --nvd-records is not given", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nvd-reconciliation-"));
     try {

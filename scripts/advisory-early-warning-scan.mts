@@ -67,22 +67,35 @@ function loadNvdResponses(nvdRecordsPath: string): unknown[] {
 
 function loadInventoryOverride(inventoryPath: string): InventoryEntry[] {
   const parsed = JSON.parse(fs.readFileSync(inventoryPath, "utf-8")) as unknown;
-  const entries = Array.isArray(parsed) ? parsed : [];
-  const inventory: InventoryEntry[] = [];
-  for (const entry of entries) {
-    if (typeof entry !== "object" || entry === null) continue;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`--inventory file '${inventoryPath}' must contain a JSON array.`);
+  }
+  // A malformed entry fails the run instead of being skipped: silently
+  // shrinking the inventory would under-report advisories with no signal
+  // that anything was dropped.
+  return parsed.map((entry, index) => {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`--inventory entry ${index} in '${inventoryPath}' is not an object.`);
+    }
     const name = (entry as Record<string, unknown>).name;
     const version = (entry as Record<string, unknown>).version;
-    if (typeof name !== "string" || name.length === 0) continue;
-    if (typeof version !== "string" || version.length === 0) continue;
+    if (typeof name !== "string" || name.length === 0) {
+      throw new Error(
+        `--inventory entry ${index} in '${inventoryPath}' is missing a non-empty string "name".`,
+      );
+    }
+    if (typeof version !== "string" || version.length === 0) {
+      throw new Error(
+        `--inventory entry ${index} in '${inventoryPath}' is missing a non-empty string "version".`,
+      );
+    }
     const origin = (entry as Record<string, unknown>).origin;
-    inventory.push({
+    return {
       name,
       version,
       origin: typeof origin === "string" && origin.length > 0 ? origin : inventoryPath,
-    });
-  }
-  return inventory;
+    };
+  });
 }
 
 function describeNvd(signal: NvdAnnotatedSignal): string {
