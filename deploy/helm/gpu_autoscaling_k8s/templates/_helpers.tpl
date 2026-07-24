@@ -73,11 +73,26 @@ limits:
   memory: {{ .Values.gpuScaling.agentMemoryLimit | quote }}
 {{- end }}
 
+{{- /*
+One replica = one GPU in GPU mode, so the HPA must never be allowed to scale past
+maxGpus even if maxReplicas is set higher — extra pods would just sit Pending with
+no GPU to schedule onto. Use the lower of the two positive limits in that mode.
+*/}}
 {{- define "nemoclaw-gpu.hpaMaxReplicas" -}}
-{{- if gt (int .Values.autoscaling.maxReplicas) 0 -}}
-{{- int .Values.autoscaling.maxReplicas -}}
-{{- else if .Values.gpuScaling.oneReplicaPerGpu -}}
-{{- int .Values.autoscaling.maxGpus -}}
+{{- $maxReplicas := int .Values.autoscaling.maxReplicas -}}
+{{- $maxGpus := int .Values.autoscaling.maxGpus -}}
+{{- if .Values.gpuScaling.oneReplicaPerGpu -}}
+{{- if and (gt $maxReplicas 0) (gt $maxGpus 0) -}}
+{{- min $maxReplicas $maxGpus -}}
+{{- else if gt $maxGpus 0 -}}
+{{- $maxGpus -}}
+{{- else if gt $maxReplicas 0 -}}
+{{- $maxReplicas -}}
+{{- else -}}
+{{- 10 -}}
+{{- end -}}
+{{- else if gt $maxReplicas 0 -}}
+{{- $maxReplicas -}}
 {{- else -}}
 {{- 10 -}}
 {{- end -}}

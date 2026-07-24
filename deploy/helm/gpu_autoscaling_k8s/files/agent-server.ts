@@ -5,6 +5,8 @@
 // GPU agent pod: health + Prometheus metrics + OpenAI-compatible proxy to local Ollama.
 
 import http from "node:http";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { llmMetricsLines, recordLlmLatency } from "./agent-metrics.ts";
 
 const PORT = Number(process.env.PORT || 8081);
@@ -101,15 +103,26 @@ async function proxyChatCompletions(req, res) {
       signal: AbortSignal.timeout(300_000),
     });
     llmOk = hubRes.ok;
-    const text = await hubRes.text();
-    res.writeHead(hubRes.status, { "content-type": "application/json" });
-    res.end(text);
+    // Pipe the upstream body straight through (don't buffer with .text()) so
+    // "stream": true chat-completions reach the client incrementally, and forward
+    // its real content-type instead of forcing application/json on SSE responses.
+    const contentType = hubRes.headers.get("content-type") || "application/json";
+    res.writeHead(hubRes.status, { "content-type": contentType });
+    if (hubRes.body) {
+      await pipeline(Readable.fromWeb(hubRes.body), res);
+    } else {
+      res.end();
+    }
   } catch (err) {
     // Log the full error server-side only; the client gets a generic message so
     // internal details (upstream host/port, stack trace) never leave the pod.
     console.error("chat completion proxy error:", err);
-    res.writeHead(502, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "upstream inference request failed" }));
+    if (!res.headersSent) {
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "upstream inference request failed" }));
+    } else {
+      res.destroy();
+    }
   } finally {
     recordLlmLatency(performance.now() - llmStart, llmOk);
   }

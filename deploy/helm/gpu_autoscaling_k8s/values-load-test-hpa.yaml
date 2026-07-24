@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
 # Optional overlay for load-test — same 40% target as values-step2-hpa.yaml, with a
 # shorter scale-up period so the one-pod-at-a-time steps are visible within the test window.
 autoscaling:

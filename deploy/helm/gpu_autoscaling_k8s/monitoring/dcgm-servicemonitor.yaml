@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
 # Scrape NVIDIA DCGM exporter (already installed by microk8s enable gpu / GPU operator).
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

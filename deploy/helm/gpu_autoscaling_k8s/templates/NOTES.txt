@@ -1,3 +1,5 @@
+{{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
 HPA: kubectl get hpa -n {{ include "nemoclaw-gpu.namespace" . }} -w
 Pods: ./scripts/get-agent-pods.sh -n {{ include "nemoclaw-gpu.namespace" . }} -w  (per-pod GPU %)
 Ingress: kubectl get ingress {{ include "nemoclaw-gpu.fullname" . }}-agent -n {{ include "nemoclaw-gpu.namespace" . }}

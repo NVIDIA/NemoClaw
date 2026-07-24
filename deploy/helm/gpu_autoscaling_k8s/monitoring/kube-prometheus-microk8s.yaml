@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
 # Slim kube-prometheus-stack for single-node MicroK8s (GPU HPA via DCGM metrics).
 
 alertmanager:

@@ -254,8 +254,6 @@ spec:
           image: node:22-bookworm-slim@sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27
           command: ["node", "/scripts/load-generator.ts"]
           env:
-            - name: TARGET_URL
-              value: "http://${SERVICE}:${SERVICE_PORT}"
             - name: TARGET_PODS
               value: "${TARGET_PODS}"
             - name: HPA_TARGET_GPU

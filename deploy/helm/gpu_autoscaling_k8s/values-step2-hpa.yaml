@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
 # GPU HPA — one pod per GPU, scale on DCGM GPU utilization (%).
 # Requires: nvidia-dcgm-exporter + Prometheus + prometheus-adapter (install-hpa.sh sets up).
 

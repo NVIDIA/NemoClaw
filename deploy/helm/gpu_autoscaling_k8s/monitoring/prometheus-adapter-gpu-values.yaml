@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
 # prometheus-adapter: expose DCGM GPU utilization and agent LLM metrics to HPA.
 # DCGM_FI_DEV_GPU_UTIL is scraped from nvidia-dcgm-exporter (GPU operator).
 # Agent /metrics (inflight, LLM latency) require ServiceMonitor on nemoclaw-gpu-agent.
