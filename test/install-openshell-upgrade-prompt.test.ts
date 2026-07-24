@@ -29,10 +29,11 @@ function runInstallerOpenshellVersionFlow(
 
   fs.mkdirSync(path.dirname(registry), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
-  fs.mkdirSync(setupDir, { recursive: true });
+  fs.mkdirSync(path.join(setupDir, "lib"), { recursive: true });
   fs.writeFileSync(registry, '{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
   fs.writeFileSync(gatewayState, "gateway-original\n");
   writeExecutable(path.join(setupDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(path.join(setupDir, "lib", "station-vllm-conflict.sh"), "#!/usr/bin/env bash\n");
   writeExecutable(healthyOpenshell, installedOpenshellBody);
   setupOpenshell(bin);
 
