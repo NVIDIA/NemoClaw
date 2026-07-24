@@ -173,8 +173,11 @@ A detached auto-lock timer remains the recovery authority until NemoClaw commits
 
 <AgentOnly variant="openclaw">
 If a failed shields transition on a sandbox from an older NemoClaw release quarantined the OpenClaw config, the bytes are preserved as `/sandbox/.openclaw/.nemoclaw-rejected-openclaw.json-<random>` rather than deleted.
-Upgrade the NemoClaw CLI before rebuilding — rebuilding with an old CLI restages the old in-container guard — then restore the config from the quarantine copy or rebuild with `--yes` to recreate a known-good baseline.
-Current sandboxes report quarantine filenames in the shields error output and tolerate a missing `.config-hash` on lock by synthesizing it from `openclaw.json`.
+Upgrade the NemoClaw CLI before rebuilding because an older CLI restages the older in-container guard.
+To preserve settings, copy the quarantine file out of the container before `rebuild --yes`.
+After the rebuild, inspect that copy and reapply required settings with the host-side `config set` command.
+To discard the quarantined settings, upgrade the CLI and run `rebuild --yes` to create a known-good baseline.
+Sandboxes with the updated guard report quarantine filenames and synthesize a missing `.config-hash` only during `shields up` from the default mutable posture.
 </AgentOnly>
 
 <AgentOnly variant="hermes">

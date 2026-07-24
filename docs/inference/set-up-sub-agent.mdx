@@ -26,7 +26,7 @@ Use these paths inside the sandbox when you adapt an OpenClaw sub-agent setup:
 | Path | Purpose |
 |---|---|
 | `/sandbox/.openclaw/openclaw.json` | OpenClaw config, including `models.providers`, `agents.defaults`, and `agents.list`. |
-| `/sandbox/.openclaw/.config-hash` | Hash for `openclaw.json`. Keep it in sync after manual config edits so OpenClaw can detect the updated config. If it goes missing, the next `shields up` from the mutable state on a current sandbox synthesizes it from `openclaw.json`. |
+| `/sandbox/.openclaw/.config-hash` | Hash for `openclaw.json`. Keep it in sync after manual config edits so OpenClaw can detect the updated config. From the default mutable posture, the next `shields up` synthesizes a missing hash from `openclaw.json`. |
 | `/sandbox/.openclaw/agents/<agent-id>/agent/auth-profiles.json` | Per-agent provider credentials. Use this when a sub-agent calls an auxiliary provider directly. |
 | `/sandbox/.openclaw/workspace/` | Writable shared workspace path for files the primary agent passes to the sub-agent. |
 | `/tmp/gateway.log` | OpenClaw gateway log. Use it to confirm config reloads and diagnose sub-agent failures. |
@@ -121,7 +121,8 @@ Do not commit `/tmp/openclaw.updated.json` or any other file that contains a rea
 Upload the patched config and refresh the hash.
 In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof.
 Use NemoClaw runtime controls when the sandbox needs a hardened config posture after the manual edit.
-A stale hash never blocks shields — locking regenerates the record from the current config — and on a current sandbox even a deleted `.config-hash` is synthesized again on the next `shields up`, but keep the refresh step so OpenClaw detects the update immediately.
+From the default mutable posture, `shields up` regenerates a stale hash and synthesizes a missing hash.
+Keep the refresh step so OpenClaw detects the update immediately.
 
 ```bash
 docker exec --user root "$SANDBOX_CTR" chmod 644 /sandbox/.openclaw/openclaw.json
