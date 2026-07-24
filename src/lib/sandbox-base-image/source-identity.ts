@@ -17,6 +17,7 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "scripts/lib/reviewed-npm-archive.mts",
   "scripts/checks/node-tar-image-scan.mts",
   "scripts/patch-bundled-npm-tar.mts",
+  "scripts/upgrade-bundled-npm.mts",
 ];
 
 export function normalizeBaseImageInputPaths(rootDir: string, paths: string[] = []): string[] {

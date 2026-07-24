@@ -137,3 +137,36 @@ describe("node-tar image remediation contract", () => {
     ).toBe(true);
   });
 });
+
+describe("reviewed npm image remediation contract", () => {
+  it.each([
+    { file: "Dockerfile.base", installsWithNpm: true },
+    { file: "agents/hermes/Dockerfile.base", installsWithNpm: true },
+    { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
+  ])("upgrades npm before use in $file", ({ file, installsWithNpm }) => {
+    const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
+    const patchRun = source.indexOf(
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+    );
+    const upgradeCopy = source.indexOf(
+      "COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts",
+    );
+    const upgradeRun = source.indexOf(
+      "RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+    );
+
+    expect(upgradeCopy, file).toBeGreaterThanOrEqual(0);
+    expect(patchRun, file).toBeGreaterThan(upgradeCopy);
+    expect(upgradeRun, file).toBeGreaterThan(patchRun);
+
+    const executableSource = source.replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length));
+    const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
+      (match) => match.index,
+    );
+    expect(npmConsumers.length > 0, file).toBe(installsWithNpm);
+    expect(
+      npmConsumers.every((index) => index > upgradeRun),
+      file,
+    ).toBe(true);
+  });
+});
