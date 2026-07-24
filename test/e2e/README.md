@@ -63,16 +63,45 @@ standard runners even though they use the trusted workflow definition from
 `main`.
 
 Exact-head PR-gate dispatches use a bounded swap fallback for the hosted
-Hermes image-building lanes that remain on those standard runners. The live
-Vitest helper activates the fallback only when GitHub Actions supplies a
-validated lowercase 40-hex checkout SHA. It reuses at least 32 GiB of active
-swap when available; otherwise, it creates one fixed 32 GiB swap file under
-`/mnt` before agent-turn latency, Hermes inference switch and shields, the
-Hermes Bedrock and stable MCP shards, or the `hermes-e2e`, `hermes-dashboard`,
-and Hermes security-posture tests. Setup failure stops before Vitest. Scheduled
-and ordinary manual `main` runs, larger-runner executions, rebuild lanes with
+Hermes image-building lanes that remain on those standard runners. The trusted
+workflow provisions the fallback as the first job step, before checking out or
+executing the candidate revision. It requires a controller-supplied lowercase
+40-hex checkout SHA, matching trusted workflow and dispatch revisions, and an
+ephemeral GitHub-hosted Linux x64 runner.
+
+The trusted step requires at least 32 GiB (34,359,738,368 bytes) of usable swap.
+It reuses active swap that meets this requirement.
+Otherwise, it preserves at least 16 GiB of available disk capacity under
+`/mnt`, creates a root-owned mode-`0700` directory, and creates an exclusive
+randomized mode-`0600` file.
+The file allocation is 32 GiB plus 4,096 bytes (34,359,742,464 bytes).
+The additional 4,096 bytes keep the usable swap capacity at or above 32 GiB
+after formatting.
+Setup failure stops before candidate checkout and removes partial state only
+after proving the file inactive or successfully disabling it.
+After `swapon` succeeds, both rollout paths make up to five activation
+observations, one second apart.
+If visibility remains stale, cleanup treats the file as active.
+Cleanup removes it only after `swapoff` succeeds.
+Successful state is discarded with the ephemeral runner.
+
+This rollout adds the trusted pre-checkout setup.
+During rollout, the PR temporarily retains the reviewed live Vitest helper.
+The helper exists only because the PR must validate against the older workflow
+definition on `main` before this change lands.
+The compatibility path runs only when GitHub Actions supplies a validated
+lowercase 40-hex checkout SHA.
+When the trusted step already provides 32 GiB of usable swap, the helper exits
+before it creates its fixed swap file.
+A follow-up must remove the candidate-side helper and its compatibility tests
+after this change lands.
+
+The fallback covers agent-turn latency, Hermes inference switch and shields,
+the Hermes Bedrock and stable MCP shards, and the `hermes-e2e`,
+`hermes-dashboard`, and Hermes security-posture tests. Scheduled and ordinary
+manual `main` runs, larger-runner executions, rebuild lanes with
 workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
-shards do not use this fallback.
+shards do not use it.
 
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
@@ -709,7 +738,8 @@ provisions the same swap file on GitHub Actions when a trusted control-plane
 run uses the workflow definition from `main`. Those paths build large Hermes
 image layers and can otherwise exhaust the runner's default memory and swap
 during Docker layer export. Other E2E jobs keep the standard runner memory
-configuration.
+configuration except for the exact-head Hermes PR-gate fallback described in
+[Larger-runner routing](#larger-runner-routing).
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first
