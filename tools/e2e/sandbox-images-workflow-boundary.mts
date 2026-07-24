@@ -80,7 +80,7 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
     envName: "HERMES_BASE_IMAGE",
     jobName: "build-hermes-sandbox-image",
     label: "Hermes production image",
-    stepName: "Build Hermes production image",
+    stepName: "Validate Hermes production build args",
     target: "nemoclaw-hermes-production",
   },
   {
@@ -352,10 +352,10 @@ function validateSecretScopeAndRegistryWrites(
           errors.push(`${label} must not authenticate to a registry`);
         }
       }
-      if (
-        REGISTRY_WRITE.test(run) ||
-        String(step.uses ?? "").includes("docker/build-push-action")
-      ) {
+      const buildActionWritesRegistry =
+        String(step.uses ?? "").startsWith("docker/build-push-action@") &&
+        record(step.with).push !== false;
+      if (REGISTRY_WRITE.test(run) || buildActionWritesRegistry) {
         errors.push(`${label} must not write images to a registry`);
       }
     }
@@ -388,6 +388,41 @@ function validateGuardedProductionBuild(
   const expectedEnv = {
     [contract.envName]: `\${{ env.${contract.envName} }}`,
   };
+
+  if (contract.jobName === "build-hermes-sandbox-image") {
+    const expectedValidationRun = [
+      "set -euo pipefail",
+      `build_args=(${contract.args})`,
+      'scripts/check-production-build-args.sh "${build_args[@]}"',
+      "",
+    ].join("\n");
+    if (!isDeepStrictEqual(record(build.env), expectedEnv) || build.run !== expectedValidationRun) {
+      errors.push(`${contract.label} must validate the guarded build_args shape`);
+    }
+    const setupBuildx = requireStep(errors, contract.jobName, job, "Set up Docker Buildx");
+    if (!FULL_SHA_ACTION.test(setupBuildx.uses ?? "")) {
+      errors.push("Hermes producer must pin Docker Buildx setup by full action SHA");
+    }
+    const action = requireStep(errors, contract.jobName, job, "Build Hermes production image");
+    const actionWith = record(action.with);
+    if (
+      !FULL_SHA_ACTION.test(action.uses ?? "") ||
+      !String(action.uses).startsWith("docker/build-push-action@") ||
+      actionWith.context !== "." ||
+      actionWith.file !== "agents/hermes/Dockerfile" ||
+      actionWith.load !== true ||
+      actionWith.push !== false ||
+      actionWith.tags !== contract.target ||
+      actionWith["build-args"] !== "BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }}" ||
+      !String(actionWith["cache-from"] ?? "").startsWith("type=gha,scope=hermes-production-") ||
+      !String(actionWith["cache-to"] ?? "").startsWith("type=gha,mode=max,scope=hermes-production-")
+    ) {
+      errors.push(
+        "Hermes production image must use a pinned local-load Buildx action with GHA cache",
+      );
+    }
+    return;
+  }
 
   if (!isDeepStrictEqual(record(build.env), expectedEnv) || build.run !== expectedRun) {
     errors.push(`${contract.label} must use the guarded build_args shape under ${contract.target}`);
@@ -775,39 +810,50 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
 }
 
 function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkflow): void {
-  const jobName = "build-hermes-sandbox-image";
-  const job = workflow.jobs[jobName] ?? {};
-  if (job["timeout-minutes"] !== 150) {
-    errors.push("Hermes image job timeout must cover both inherited probe budgets");
+  const producerName = "build-hermes-sandbox-image";
+  const producer = workflow.jobs[producerName] ?? {};
+  const testJobName = "test-hermes-sandbox-image";
+  const testJob = workflow.jobs[testJobName] ?? {};
+  if (producer["timeout-minutes"] !== 30) {
+    errors.push("Hermes image producer must retain its 30-minute budget");
+  }
+  if (testJob["timeout-minutes"] !== 90) {
+    errors.push("Hermes image test consumer must retain its 90-minute budget");
+  }
+  if (testJob.needs !== producerName) {
+    errors.push("Hermes image tests must depend on the Hermes image producer");
   }
   for (const stepName of ["Set up Node", "Install root dependencies"]) {
-    if (steps(job).filter((step) => step.name === stepName).length !== 1) {
-      errors.push(`${jobName} must run '${stepName}' exactly once`);
+    if (steps(producer).some((step) => step.name === stepName)) {
+      errors.push(`${producerName} must not install Node dependencies`);
+    }
+    if (steps(testJob).filter((step) => step.name === stepName).length !== 1) {
+      errors.push(`${testJobName} must run '${stepName}' exactly once`);
     }
   }
   const secretBoundary = requireStep(
     errors,
-    jobName,
-    job,
+    testJobName,
+    testJob,
     "Run Hermes sandbox secret boundary test",
   );
   const rootEntrypoint = requireStep(
     errors,
-    jobName,
-    job,
+    testJobName,
+    testJob,
     "Run Hermes root entrypoint smoke Vitest test",
   );
   if (secretBoundary.id !== HERMES_SECRET_BOUNDARY_STEP_ID) {
     errors.push("Hermes secret boundary step must expose its outcome to the next probe");
   }
-  if (secretBoundary["timeout-minutes"] !== 60) {
-    errors.push("Hermes secret boundary must retain its 60-minute probe budget");
+  if (secretBoundary["timeout-minutes"] !== 45) {
+    errors.push("Hermes secret boundary must retain its 45-minute probe budget");
   }
   if (rootEntrypoint.if !== HERMES_ROOT_AFTER_SECRET_CONDITION) {
     errors.push("Hermes root entrypoint must run after either secret-boundary outcome");
   }
-  if (rootEntrypoint["timeout-minutes"] !== 45) {
-    errors.push("Hermes root entrypoint must retain its 45-minute probe budget");
+  if (rootEntrypoint["timeout-minutes"] !== 30) {
+    errors.push("Hermes root entrypoint must retain its 30-minute probe budget");
   }
   for (const [label, step, target, artifactDirectory] of [
     [
@@ -839,14 +885,24 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
     if (/\bdocker\s+build\b/u.test(step.run ?? "")) {
       errors.push(`${label} step must not rebuild the prebuilt image`);
     }
-    if (stepIndex(job, "Build Hermes production image") >= stepIndex(job, step.name ?? "")) {
-      errors.push(`${label} must run after the Hermes production image build`);
+    if (stepIndex(testJob, "Load Hermes production image") >= stepIndex(testJob, step.name ?? "")) {
+      errors.push(`${label} must run after loading the Hermes production image`);
     }
   }
 
-  const save = requireStep(errors, jobName, job, "Save Hermes production image");
+  const download = requireStep(errors, testJobName, testJob, "Download Hermes production image");
+  const load = requireStep(errors, testJobName, testJob, "Load Hermes production image");
   if (
-    steps(job).filter((step) => step.name === "Save Hermes production image").length !== 1 ||
+    record(download.with).name !== "hermes-isolation-image" ||
+    !(load.run ?? "").includes("/tmp/hermes-isolation-image.tar.gz | docker load") ||
+    !(load.run ?? "").includes("docker image inspect nemoclaw-hermes-production")
+  ) {
+    errors.push("Hermes image tests must download and load the producer artifact");
+  }
+
+  const save = requireStep(errors, producerName, producer, "Save Hermes production image");
+  if (
+    steps(producer).filter((step) => step.name === "Save Hermes production image").length !== 1 ||
     !(save.run ?? "").includes(
       "docker save nemoclaw-hermes-production | gzip > /tmp/hermes-isolation-image.tar.gz",
     ) ||
@@ -854,9 +910,9 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   ) {
     errors.push("Hermes producer must save and verify its production image exactly once");
   }
-  const upload = requireStep(errors, jobName, job, "Upload Hermes isolation image");
+  const upload = requireStep(errors, producerName, producer, "Upload Hermes isolation image");
   if (
-    steps(job).filter((step) => step.name === "Upload Hermes isolation image").length !== 1 ||
+    steps(producer).filter((step) => step.name === "Upload Hermes isolation image").length !== 1 ||
     !(upload.uses ?? "").startsWith("actions/upload-artifact@") ||
     !FULL_SHA_ACTION.test(upload.uses ?? "") ||
     !isDeepStrictEqual(record(upload.with), {
@@ -864,8 +920,8 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
       path: "/tmp/hermes-isolation-image.tar.gz",
       "retention-days": 1,
     }) ||
-    stepIndex(job, save.name ?? "") >= stepIndex(job, upload.name ?? "") ||
-    stepIndex(job, upload.name ?? "") >= stepIndex(job, CLEANUP_STEP_NAME)
+    stepIndex(producer, save.name ?? "") >= stepIndex(producer, upload.name ?? "") ||
+    stepIndex(producer, upload.name ?? "") >= stepIndex(producer, CLEANUP_STEP_NAME)
   ) {
     errors.push("Hermes producer must upload the saved production image before auth cleanup");
   }

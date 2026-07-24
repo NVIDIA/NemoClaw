@@ -20,6 +20,22 @@ before those targets run; local runners must provide it themselves.
   call their target E2E tests directly. The Ollama auth proxy target is
   selected through `.github/workflows/e2e.yaml`.
 
+## CI execution shape
+
+The sandbox image workflow builds the Hermes production image in the dedicated
+30-minute `build-hermes-sandbox-image` job. It uses full-SHA-pinned Buildx
+actions and a GitHub Actions cache scoped to the runner OS and architecture.
+The producer adds a bounded 32 GiB swap file and validates the guarded
+production build arguments before the build. It loads the image locally with
+registry writes disabled. After the build, it scans the completed image for
+node-tar and verifies the sandbox-readable installed files. It then uploads the
+compressed image as the one-day `hermes-isolation-image` artifact.
+
+The 90-minute `test-hermes-sandbox-image` job and the
+`state-dir-guard-metadata` job download and load that artifact instead of
+rebuilding the image. Within the Hermes test job, the secret-boundary and
+root-entrypoint steps have 45- and 30-minute budgets respectively.
+
 The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
 E2E tests when those boundaries are the behavior under test.
