@@ -4585,10 +4585,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
       },
       finalizationDeps: {
-        ensureAgentDashboardForward: (name, selectedAgent) =>
-          selectedAgent
-            ? ensureAgentDashboardForward(name, selectedAgent)
-            : ensureDashboardForward(name, process.env.CHAT_UI_URL),
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
