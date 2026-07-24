@@ -31,18 +31,21 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
       fs.mkdirSync(stateDir, { recursive: true });
-      if (scope === "scoped") {
-        fs.writeFileSync(
-          path.join(stateDir, "sandboxes.json"),
-          JSON.stringify({
-            defaultSandbox: "alpha",
-            sandboxes: {
-              alpha: { name: "alpha", gatewayName: "nemoclaw", gatewayPort: 8080 },
-              beta: { name: "beta", gatewayName: "nemoclaw-8091", gatewayPort: 8091 },
-            },
-          }),
-        );
-      }
+      const prepareScope = {
+        full: () => undefined,
+        scoped: () =>
+          fs.writeFileSync(
+            path.join(stateDir, "sandboxes.json"),
+            JSON.stringify({
+              defaultSandbox: "alpha",
+              sandboxes: {
+                alpha: { name: "alpha", gatewayName: "nemoclaw", gatewayPort: 8080 },
+                beta: { name: "beta", gatewayName: "nemoclaw-8091", gatewayPort: 8091 },
+              },
+            }),
+          ),
+      } as const;
+      prepareScope[scope]();
       const calls: Array<{ args: string[]; command: string }> = [];
       const dockerCalls: string[][] = [];
       const kill = vi.fn(() => true);
@@ -104,6 +107,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
 
   it("does not use legacy gateway destroy when external registration removal is unsupported (#6576)", () => {
     const calls: Array<{ args: string[]; command: string }> = [];
+    const responses = new Map<string, RunResult>([
+      [
+        "openshell gateway remove nemoclaw",
+        { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
+      ],
+    ]);
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
@@ -128,10 +137,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         rmSync: vi.fn(),
         run: (command, args) => {
           calls.push({ args, command });
-          if ([command, ...args].join(" ") === "openshell gateway remove nemoclaw") {
-            return { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" };
-          }
-          return ok();
+          return responses.get([command, ...args].join(" ")) ?? ok();
         },
         runDocker: () => ok(),
       },
