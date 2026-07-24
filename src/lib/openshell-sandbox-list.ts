@@ -111,6 +111,35 @@ export async function captureSandboxListWithGatewayPreflightOrExit(
   return recovery.result;
 }
 
+/**
+ * Read-only sandbox list scoped to a named gateway, for commands that must not
+ * mutate gateway state (e.g. `upgrade-sandboxes --check`, #7279). Unlike
+ * captureSandboxListWithGatewayPreflightOrExit it never recovers, starts, or
+ * `gateway select`s: it runs `sandbox list -g <name>`, which targets the named
+ * gateway without selecting it. State-RPC drift still blocks (shared detectors),
+ * but a down or unreachable gateway is non-fatal — its empty output makes the
+ * sandbox report as unobserved instead of triggering a gateway start.
+ */
+export function captureNamedGatewaySandboxListReadOnly(
+  context: SandboxListPreflightContext,
+  gatewayName: string,
+): SandboxListResult {
+  const options: CaptureSandboxListWithGatewayRecoveryOptions = { gatewayName };
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue(options);
+  if (preflightIssue) {
+    printOpenShellStateRpcIssue(preflightIssue, context);
+    process.exit(1);
+  }
+
+  const result = captureOpenshell(["sandbox", "list", "-g", gatewayName], { ignoreError: true });
+  const resultIssue = detectOpenShellStateRpcResultIssue(result, options);
+  if (resultIssue) {
+    printOpenShellStateRpcIssue(resultIssue, context);
+    process.exit(1);
+  }
+  return result;
+}
+
 export function printSandboxListFailureWithRecoveryContext(
   recoveryResult: SandboxListRecoveryResult,
 ): void {

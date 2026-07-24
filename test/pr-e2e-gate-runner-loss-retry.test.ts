@@ -34,6 +34,12 @@ const JOB_LOG_ETAG = '"hosted-runner-log"';
 const JOB_LOG_RANGE_BYTES = 64 * 1024;
 const RUNNER_SHUTDOWN_MESSAGE =
   "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
+const EXIT_143_MESSAGE = "Process completed with exit code 143.";
+const RESERVED_CHECK_OUTPUT = {
+  title: "Waiting for PR CI",
+  summary:
+    "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.",
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -87,6 +93,26 @@ function checkRun(id: number, overrides: Record<string, unknown> = {}) {
     app: { id: 15368 },
     ...overrides,
   };
+}
+
+function runnerLossSummary(runId = 23) {
+  const runUrl = `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`;
+  return [
+    `[Selected E2E run ${runId}](${runUrl}) concluded \`failure\`. No passing result was accepted.`,
+    "Runner-loss policy: retry once after confirmed GitHub-hosted runner loss.",
+    "",
+    RETRY_MARKER,
+  ].join("\n");
+}
+
+function canonicalRunnerLossCheck(id = 17, runId = 23) {
+  return checkRun(id, {
+    details_url: `https://github.com/NVIDIA/NemoClaw/runs/${id}`,
+    output: {
+      title: "Hermes security-posture failed",
+      summary: runnerLossSummary(runId),
+    },
+  });
 }
 
 function workflowRun(overrides: Record<string, unknown> = {}) {
@@ -143,6 +169,16 @@ function hostedRunnerLossJob(runId = 23) {
   };
 }
 
+function exit143HostedRunnerLossJob(runId = 23) {
+  const job = hostedRunnerLossJob(runId);
+  return {
+    ...job,
+    steps: job.steps.map((step) =>
+      step.conclusion === "cancelled" ? { ...step, conclusion: "failure" } : step,
+    ),
+  };
+}
+
 function runnerLossAnnotation() {
   return {
     path: ".github",
@@ -168,6 +204,15 @@ function genericCancellationAnnotation() {
   };
 }
 
+function exit143Annotation() {
+  return {
+    ...runnerLossAnnotation(),
+    start_line: 34,
+    end_line: 34,
+    message: EXIT_143_MESSAGE,
+  };
+}
+
 function runnerShutdownJobLog() {
   return [
     "x".repeat(JOB_LOG_RANGE_BYTES),
@@ -176,6 +221,13 @@ function runnerShutdownJobLog() {
     "2026-07-23T07:32:50.0577487Z Cleaning up orphan processes",
     "",
   ].join("\n");
+}
+
+function exit143ShutdownJobLog() {
+  return runnerShutdownJobLog().replace(
+    "##[error]The operation was canceled.",
+    `##[error]${EXIT_143_MESSAGE}`,
+  );
 }
 
 type JobLogFixture = {
@@ -276,8 +328,8 @@ function mutationResponse(request: RecordedGitHubRequest, id = 18): Response {
     checkRun(id, {
       status: "in_progress",
       conclusion: null,
-      details_url: null,
       ...(request.body as Record<string, unknown> | undefined),
+      details_url: `https://github.com/NVIDIA/NemoClaw/runs/${id}`,
     }),
   );
 }
@@ -333,10 +385,11 @@ function retryRoutes(
 ) {
   let historyRead = 0;
   let annotationRead = 0;
+  const source = canonicalRunnerLossCheck();
   const defaultHistories = [
-    [checkRun(17)],
-    [checkRun(17), checkRun(18, { status: "in_progress", conclusion: null, details_url: null })],
-    [checkRun(17), checkRun(18, { status: "in_progress", conclusion: null, details_url: null })],
+    [source],
+    [source, checkRun(18, { status: "in_progress", conclusion: null, details_url: null })],
+    [source, checkRun(18, { status: "in_progress", conclusion: null, details_url: null })],
   ];
   return createGitHubFetchRouter(
     [
@@ -449,7 +502,71 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     }
   });
 
-  it("dispatches the same plan once with fresh state and an independently bound check", async () => {
+  it.each([
+    {
+      label: "the canonical URL names another check",
+      source: {
+        ...canonicalRunnerLossCheck(),
+        details_url: "https://github.com/NVIDIA/NemoClaw/runs/999",
+      },
+    },
+    {
+      label: "the summary label and link name different runs",
+      source: {
+        ...canonicalRunnerLossCheck(),
+        output: {
+          title: "Hermes security-posture failed",
+          summary: runnerLossSummary().replace(
+            "actions/runs/23) concluded",
+            "actions/runs/24) concluded",
+          ),
+        },
+      },
+    },
+    {
+      label: "the selected run differs from the controller command",
+      source: canonicalRunnerLossCheck(17, 24),
+    },
+    {
+      label: "the details URL is unrelated",
+      source: {
+        ...canonicalRunnerLossCheck(),
+        details_url: "https://github.com/NVIDIA/NemoClaw/pull/7450",
+      },
+    },
+    {
+      label: "the details URL is missing",
+      source: {
+        ...canonicalRunnerLossCheck(),
+        details_url: null,
+      },
+    },
+    {
+      label: "a malformed selected-run prefix attempts legacy fallback",
+      source: checkRun(17, {
+        output: {
+          title: "Hermes security-posture failed",
+          summary: `[Selected E2E run invalid](${ORIGINAL_RUN_URL}) concluded \`failure\`.\n\n${RETRY_MARKER}`,
+        },
+      }),
+    },
+  ])("rejects retry authorization when $label", async ({ source }) => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      retryRoutes(requests, { histories: [[source]] }),
+    );
+
+    try {
+      await expect(retryRunnerLossPrGate(context.command)).rejects.toThrow(/does not authorize/u);
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("dispatches the same plan once from GitHub's canonical source-check URL", async () => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(retryRoutes(requests));
@@ -603,14 +720,7 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       retryRoutes(requests, {
-        histories: [
-          [
-            checkRun(16, {
-              details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/22",
-            }),
-            checkRun(17),
-          ],
-        ],
+        histories: [[canonicalRunnerLossCheck(16, 22), canonicalRunnerLossCheck(17, 23)]],
       }),
     );
 
@@ -844,6 +954,17 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
         details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/999",
       }),
     },
+    {
+      name: "selected-run summary",
+      source: canonicalRunnerLossCheck(17, 24),
+    },
+    {
+      name: "canonical check URL",
+      source: {
+        ...canonicalRunnerLossCheck(),
+        details_url: "https://github.com/NVIDIA/NemoClaw/runs/999",
+      },
+    },
   ])("fails closed when the source $name changes immediately before dispatch", async ({
     source,
   }) => {
@@ -977,9 +1098,17 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
   });
 
   it.each([
-    { label: "before reservation", replacement: false },
-    { label: "after a create response is lost", replacement: true },
-  ])("terminalizes retry setup $label with older retryable history", async ({ replacement }) => {
+    { label: "before reservation", replacement: false, replacementDetailsUrl: null },
+    { label: "after a lost create response", replacement: true, replacementDetailsUrl: null },
+    {
+      label: "after a create response is lost with GitHub's self check URL",
+      replacement: true,
+      replacementDetailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/18",
+    },
+  ])("terminalizes retry setup $label with older retryable history", async ({
+    replacement,
+    replacementDetailsUrl,
+  }) => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     const older = checkRun(16, {
@@ -989,16 +1118,12 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
         summary: "Prerequisite CI failed.\n\n<!-- nemoclaw-pr-e2e-retry:v1:prerequisite-ci -->",
       },
     });
-    const source = checkRun(17);
+    const source = canonicalRunnerLossCheck();
     const reserved = checkRun(18, {
       status: "in_progress",
       conclusion: null,
-      details_url: null,
-      output: {
-        title: "Waiting for PR CI",
-        summary:
-          "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.",
-      },
+      details_url: replacementDetailsUrl,
+      output: RESERVED_CHECK_OUTPUT,
     });
     const history = replacement ? [older, source, reserved] : [older, source];
     vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -1039,15 +1164,18 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     }
   });
 
-  it("rejects an ambiguous retry replacement without mutating either check", async () => {
+  it.each([
+    ["unexpected owner", null, { title: "Unexpected owner", summary: "Not canonical." }],
+    ["wrong self URL", "https://github.com/NVIDIA/NemoClaw/runs/999", RESERVED_CHECK_OUTPUT],
+  ])("rejects a reserved replacement with %s", async (_label, detailsUrl, output) => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     const source = checkRun(17);
     const ambiguous = checkRun(18, {
       status: "in_progress",
       conclusion: null,
-      details_url: null,
-      output: { title: "Unexpected owner", summary: "Not a canonical reservation." },
+      details_url: detailsUrl,
+      output,
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -1074,7 +1202,49 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     }
   });
 
-  it("writes the retry authorization marker for an authenticated shutdown log", async () => {
+  it("rejects retry cleanup when the canonical URL names another source check", async () => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    const source = {
+      ...canonicalRunnerLossCheck(),
+      details_url: "https://github.com/NVIDIA/NemoClaw/runs/999",
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(source),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(abandonRunnerLossRetrySource(17, 23, 1)).rejects.toThrow(
+        /exact runner-loss retry source/u,
+      );
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      label: "a cancelled workload",
+      job: hostedRunnerLossJob(),
+      annotation: genericCancellationAnnotation(),
+      log: runnerShutdownJobLog(),
+    },
+    {
+      label: "an exit-143 failed workload",
+      job: exit143HostedRunnerLossJob(),
+      annotation: exit143Annotation(),
+      log: exit143ShutdownJobLog(),
+    },
+  ])("writes the retry authorization marker for $label", async ({ job, annotation, log }) => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     const currentCheck = checkRun(17, {
@@ -1097,20 +1267,18 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
           githubFetchRoute(
             ({ url, method }) =>
               url.includes("/actions/runs/23/attempts/1/jobs?") && method === "GET",
-            () => githubResponse({ total_count: 1, jobs: [hostedRunnerLossJob()] }),
+            () => githubResponse({ total_count: 1, jobs: [job] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith(`/check-runs/${job.id}`) && method === "GET",
+            () => githubResponse(workflowJobCheckRun(job)),
           ),
           githubFetchRoute(
             ({ url, method }) =>
-              url.endsWith(`/check-runs/${hostedRunnerLossJob().id}`) && method === "GET",
-            () => githubResponse(workflowJobCheckRun(hostedRunnerLossJob())),
+              url.includes(`/check-runs/${job.id}/annotations?`) && method === "GET",
+            () => githubResponse([annotation]),
           ),
-          githubFetchRoute(
-            ({ url, method }) =>
-              url.includes(`/check-runs/${hostedRunnerLossJob().id}/annotations?`) &&
-              method === "GET",
-            () => githubResponse([genericCancellationAnnotation()]),
-          ),
-          ...jobLogRoutes(),
+          ...jobLogRoutes({ body: log }),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
             () => githubResponse(pullRequest()),

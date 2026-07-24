@@ -63,7 +63,14 @@ describe("final onboard flow runtime boundary", () => {
 
     expect(recordStateResult).not.toHaveBeenCalled();
     expect(recordInvalidatedStateResult).not.toHaveBeenCalled();
-    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(order).toEqual([
+      "openclaw",
+      "policies",
+      "disarm",
+      "set-default",
+      "agent-forward",
+      "verify",
+    ]);
     expect(harness.getSession()).toMatchObject({
       status: "complete",
       sandboxName: "my-sandbox",
@@ -110,7 +117,14 @@ describe("final onboard flow runtime boundary", () => {
 
     expect(recordStateResult).toHaveBeenCalled();
     expect(recordInvalidatedStateResult).toHaveBeenCalled();
-    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(order).toEqual([
+      "openclaw",
+      "policies",
+      "disarm",
+      "set-default",
+      "agent-forward",
+      "verify",
+    ]);
     expect(harness.getSession()).toMatchObject({
       status: "complete",
       sandboxName: "my-sandbox",
@@ -231,6 +245,7 @@ describe("final onboard flow runtime boundary", () => {
       "policies",
       "disarm",
       "set-default",
+      "agent-forward",
       "verify:slack,discord",
     ]);
   });
@@ -296,7 +311,14 @@ describe("final onboard flow runtime boundary", () => {
       }),
     ).rejects.toThrow("verification failed");
 
-    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(order).toEqual([
+      "openclaw",
+      "policies",
+      "disarm",
+      "set-default",
+      "agent-forward",
+      "verify",
+    ]);
     expect(printDashboard).not.toHaveBeenCalled();
     expect(harness.getSession()).toMatchObject({
       status: "in_progress",
