@@ -18,14 +18,18 @@ function isLoopbackResolver(ip: string): boolean {
 }
 
 function isUsableUpstreamResolver(ip: string): boolean {
-  if (isLoopbackResolver(ip) || ip === "0.0.0.0" || ip === "::") return false;
-  if (isIP(ip) === 4) {
-    const firstOctet = Number(ip.split(".")[0]);
-    // Keep unicast link-local resolvers: cloud hosts legitimately publish
-    // addresses such as the Route 53 Resolver at 169.254.169.253.
-    return firstOctet > 0 && firstOctet < 224;
-  }
-  return !/^ff/i.test(ip);
+  if (isLoopbackResolver(ip) || ip === "0.0.0.0") return false;
+  // This compatibility override injects the resolver via `docker run --dns`.
+  // Docker frequently cannot reach an IPv6 upstream from the container network
+  // path, so selecting one makes all sandbox DNS fail while the preflight probe
+  // (Docker defaults) still passes. Restrict to IPv4 and preserve Docker
+  // defaults when no usable IPv4 upstream exists; a capability-probed IPv6 path
+  // can be added separately (#7172).
+  if (isIP(ip) !== 4) return false;
+  const firstOctet = Number(ip.split(".")[0]);
+  // Keep unicast link-local resolvers: cloud hosts legitimately publish
+  // addresses such as the Route 53 Resolver at 169.254.169.253.
+  return firstOctet > 0 && firstOctet < 224;
 }
 
 /**

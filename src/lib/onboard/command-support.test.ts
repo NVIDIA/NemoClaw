@@ -41,3 +41,16 @@ describe("buildOnboardFlags --observability help", () => {
     expect(flags.observability.allowNo).toBe(true);
   });
 });
+
+describe("buildOnboardFlags --events help", () => {
+  it("exposes the JSONL observer only on the canonical onboard command", () => {
+    const onboardFlags = buildOnboardFlags({ includeEvents: true });
+    const aliasFlags = buildOnboardFlags();
+
+    expect(onboardFlags.events.description).toBe(
+      "Emit versioned read-only onboarding events as JSON Lines on stdout",
+    );
+    expect(onboardFlags.events.options).toEqual(["jsonl"]);
+    expect(aliasFlags.events).toBeUndefined();
+  });
+});
