@@ -116,6 +116,41 @@ function writeNoOtaFactoryRelease(
   return target;
 }
 
+function writeNoOtaDgxOs76Release(
+  overrides: Partial<{
+    pretty: string;
+    version: string;
+    buildDate: string;
+    platform: string;
+    otaMetadata: string;
+  }> = {},
+) {
+  const fields = {
+    pretty: "NVIDIA DGX GB300WS",
+    version: "7.6.0",
+    buildDate: "2026-07-14-13-59-06",
+    platform: "DGX Server for GALAXY-GB300",
+    otaMetadata: "",
+    ...overrides,
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-dgx-os-76-release-"));
+  const target = path.join(dir, "dgx-release");
+  fs.writeFileSync(
+    target,
+    [
+      'DGX_NAME="DGX GB300WS"',
+      `DGX_PRETTY_NAME="${fields.pretty}"`,
+      `DGX_SWBUILD_DATE="${fields.buildDate}"`,
+      `DGX_SWBUILD_VERSION="${fields.version}"`,
+      'DGX_COMMIT_ID="d0e99cc"',
+      fields.otaMetadata,
+      `DGX_PLATFORM="${fields.platform}"`,
+      "",
+    ].join("\n"),
+  );
+  return target;
+}
+
 function writeOtaUpgradedRelease(
   overrides: Partial<{ pretty: string; otaVersion: string; swbuildVersion: string }> = {},
 ) {
@@ -180,6 +215,54 @@ dgx_station_release_state "$DGX_RELEASE"
   });
 
   it.each([
+    ["7.6.0", "2026-07-14-13-59-06"],
+    ["7.6.1", "2026-08-01-00-00-00"],
+  ])("classifies no-OTA stock DGX OS %s without binding its build date (#7417)", (version, buildDate) => {
+    const release = writeNoOtaDgxOs76Release({ version, buildDate });
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+stat() { printf '0|0|644|256\n'; }
+dgx_station_release_state "$DGX_RELEASE"
+`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout).toBe("supported-dgx-os");
+  });
+
+  it.each([
+    ["different lineage", writeNoOtaDgxOs76Release({ pretty: "NVIDIA DGX Server" })],
+    ["older no-OTA version", writeNoOtaDgxOs76Release({ version: "7.5.0" })],
+    ["future release family", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
+    ["non-numeric patch", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
+    ["different platform", writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" })],
+    [
+      "partial OTA identity",
+      writeNoOtaDgxOs76Release({ otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }),
+    ],
+    [
+      "complete OTA history",
+      writeNoOtaDgxOs76Release({
+        otaMetadata: 'DGX_OTA_VERSION="7.6.0"\nDGX_OTA_DATE="Tue Jul 14 13:59:06 UTC 2026"',
+      }),
+    ],
+  ])("keeps no-OTA release metadata fail-closed with %s (#7417)", (_scenario, release) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+stat() { printf '0|0|644|256\n'; }
+dgx_station_release_state "$DGX_RELEASE"
+`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout).toBe("unsupported-dgx-os");
+  });
+
+  it.each([
     [
       "BaseOS build version drift",
       writeNoOtaFactoryRelease("colossus-baseos", { version: "7.5.0" }),
@@ -217,7 +300,8 @@ dgx_station_release_state "$DGX_RELEASE"
   });
 
   it.each([
-    ["unreviewed version", writeDgxReleaseFixture("7.6.0")],
+    ["out-of-scope OTA version", writeDgxReleaseFixture("7.6.0")],
+    ["future OTA version", writeDgxReleaseFixture("7.7.0")],
     [
       "unproven Station platform identity",
       writeDgxReleaseFixture("7.5.0", 'DGX_PLATFORM="Not Specified"'),
@@ -364,7 +448,8 @@ dgx_station_release_file_is_safe "$DGX_RELEASE"
 
   it.each([
     ["supported-dgx-os", writeDgxReleaseFixture("7.5.0")],
-    ["unsupported-dgx-os", writeDgxReleaseFixture("7.6.0")],
+    ["supported-dgx-os", writeNoOtaDgxOs76Release()],
+    ["unsupported-dgx-os", writeDgxReleaseFixture("7.7.0")],
   ])("classifies a present marker as %s", (expected, release) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -399,7 +484,8 @@ dgx_station_release_state "$DGX_RELEASE"
       "a non-workstation DGX Server identity",
       writeOtaUpgradedRelease({ pretty: "NVIDIA DGX Server" }),
     ],
-    ["an unreviewed latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.6.0" })],
+    ["an out-of-scope latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.6.0" })],
+    ["a future latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.7.0" })],
   ])("keeps a marker-less OTA host fail-closed with %s (#7103)", (_scenario, release) => {
     const { result } = runSourced(
       STATION_PREPARE,

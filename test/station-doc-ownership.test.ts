@@ -49,17 +49,33 @@ describe("DGX Station documentation ownership", () => {
       expect(prerequisites).not.toContain(version);
       expect(quickstart).not.toContain(version);
     }
-    for (const version of ["7.2.0", "7.4.0", "7.5.0"]) {
+    for (const version of ["7.2.0", "7.4.0", "7.5.0", "7.6.x"]) {
       expect(stationPreparation).toContain(version);
       expect(quickstart).not.toContain(version);
     }
     expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
+    expect(stationPreparation).toContain(
+      "OTA-form qualification uses the latest `DGX_OTA_VERSION`",
+    );
+    expect(stationPreparation).toContain("`DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`");
+    expect(stationPreparation).toContain("recognized GB300 hardware");
+    expect(stationPreparation).not.toMatch(/\b(?:0x)?31c[23]\b/i);
+    expect(stationPreparation).toContain("does not match the date against an exact build");
+    expect(stationPreparation).toContain(
+      "Full Station Express end-to-end qualification for the no-OTA DGX OS `7.6.x` profile is pending",
+    );
+    expect(stationPreparation).toContain(
+      "A resident `packagekitd` process alone does not block stock DGX OS",
+    );
     expect(quickstart).not.toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");
     expect(stationPreparation).toContain("metadata omits or varies fields");
     expect(stationPreparation).toContain("Remove the override after");
     expect(quickstart).not.toContain("--force-station-install");
     expect(platformSupport).toContain("explicit temporary metadata override");
+    expect(platformSupport).toContain(
+      "Full Station Express end-to-end qualification for the accepted no-OTA DGX OS `7.6.x` profile is pending",
+    );
     expect(platformSupport).toContain(
       "Physical validation on one DGX Station GB300 covers generic Ubuntu 24.04 ARM64",
     );

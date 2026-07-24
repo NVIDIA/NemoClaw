@@ -2315,6 +2315,11 @@ Identify the matching path before applying the recovery guidance.
 | The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics, repair the NVIDIA Container Toolkit/CDI configuration, clean up the failed sandbox, and rerun onboarding. |
 | A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
 
+For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that exact `--dns` path before it stops the original container.
+If the probe confirms that the resolver is unreachable, recreation stops and leaves the original container in place.
+An IPv6-only upstream list does not become a compatibility override; NemoClaw preserves Docker's default resolver path instead.
+Containers with explicit DNS settings or host networking keep their existing DNS path and do not use the fallback probe.
+
 #### Ordinary native Linux bounded fallback
 
 Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default.

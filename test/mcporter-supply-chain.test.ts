@@ -153,8 +153,16 @@ describe("mcporter image supply-chain controls", () => {
 
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-
-    expect(contents).toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
+    expect(contents).toContain(
+      "COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json",
+    );
+    expect(contents).toContain(
+      "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
+    );
+    expect(flattenedContents).toContain(
+      "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
+    );
+    expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
       `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter`,

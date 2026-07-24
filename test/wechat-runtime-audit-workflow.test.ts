@@ -52,7 +52,7 @@ function runAuditValidation(
 
   try {
     mutate({ targetRoot, runtimeDir });
-    return spawnSync("bash", [auditScript], {
+    const result = spawnSync("bash", [auditScript], {
       cwd: targetRoot,
       encoding: "utf8",
       env: {
@@ -62,9 +62,53 @@ function runAuditValidation(
         PATH: `${path.join(targetRoot, "bin")}${path.delimiter}${process.env.PATH ?? ""}`,
       },
     });
+    const provenancePath = path.join(
+      targetRoot,
+      "artifacts",
+      "wechat-runtime-audit",
+      "npm-audit.provenance.json",
+    );
+    return {
+      ...result,
+      provenance: fs.existsSync(provenancePath)
+        ? (JSON.parse(fs.readFileSync(provenancePath, "utf8")) as Record<string, unknown>)
+        : undefined,
+    };
   } finally {
     fs.rmSync(targetRoot, { force: true, recursive: true });
   }
+}
+
+function installFakeAuditNpm(
+  targetRoot: string,
+  auditOutput: Record<string, unknown> | string,
+  auditStatus: number,
+): void {
+  const binDir = path.join(targetRoot, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const npm = path.join(binDir, "npm");
+  fs.writeFileSync(
+    npm,
+    [
+      "#!/usr/bin/env node",
+      `const auditReport = ${JSON.stringify(
+        typeof auditOutput === "string" ? auditOutput : JSON.stringify(auditOutput),
+      )};`,
+      `const auditStatus = ${auditStatus};`,
+      "const args = process.argv.slice(2);",
+      'if (args[0] === "--version") {',
+      '  console.log("10.9.4");',
+      "  process.exit(0);",
+      "}",
+      'if (args.includes("audit")) {',
+      "  console.log(auditReport);",
+      "  process.exit(auditStatus);",
+      "}",
+      "process.exit(0);",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
 }
 
 function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
@@ -208,6 +252,37 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
       "locked package must resolve from the reviewed npm registry origin: node_modules/qrcode-terminal",
     );
     expect(result.stderr).not.toContain("npm-should-not-run");
+  });
+
+  it.each([
+    ["malformed npm output", "{not-json", 1, /parseable JSON report/],
+    [
+      "parseable npm error JSON",
+      { error: { code: "ECONNREFUSED", summary: "registry unreachable" } },
+      1,
+      /ECONNREFUSED/,
+    ],
+    ["missing vulnerability metadata", {}, 0, /complete vulnerability finding report/],
+    [
+      "an incomplete severity matrix",
+      {
+        metadata: {
+          vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0 },
+        },
+      },
+      0,
+      /complete vulnerability finding report/,
+    ],
+  ])("records provenance and fails closed for %s", (_label, auditReport, auditStatus, expectedFailure) => {
+    const result = runAuditValidation(({ targetRoot }) => {
+      installFakeAuditNpm(targetRoot, auditReport, auditStatus);
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.provenance).toMatchObject({
+      failure: expect.stringMatching(expectedFailure),
+      rawReportPath: "npm-audit.json",
+    });
   });
 
   it("keeps the image cache trusted and deletes the sandbox-writable copy", () => {

@@ -91,11 +91,10 @@ NemoClaw records the following fields in the Documentation Writer Review section
 - One result: `docs-updated`, `no-docs-needed`, or `blocked`.
 - Evidence that names the changed documentation or explains the result.
 - The agent product and surface that ran the review.
-- The pull-request number.
 - Hidden metadata for the reviewed head SHA and the `AGENTS.md` blob SHA.
 
 Keep one instance of each field.
-The pull-request number detects a receipt copied from another pull request.
+GitHub supplies the pull-request identity to the workflow and report.
 The head SHA binds the review to one pull-request revision.
 The `AGENTS.md` blob SHA records which repository instruction version the review covered.
 
@@ -109,7 +108,7 @@ Use the following sequence for a pull request that changes code or documentation
 6. Rerun the documentation review after any later commit.
 
 The `CI / Documentation Writer Review` workflow runs when a pull request opens or reopens, when its description is edited, or when it receives a new commit.
-It compares the receipt with the pull-request number, current head, and current `AGENTS.md` blob.
+It compares the receipt with the current head and current `AGENTS.md` blob.
 A new commit makes the previous receipt stale until the documentation writer subagent runs again and refreshes the metadata.
 The checker evaluates code-changing and documentation-only pull requests.
 For documentation-only changes, the receipt records the agent's review of writing rules and documentation style.
@@ -581,7 +580,7 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Routing prompts and skills point to the source instead of copying it.
 - Variant generation is deterministic and variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
-- Code-changing and documentation-only pull requests record a documentation-review result tied to the pull-request number, current head, and instruction version.
+- Code-changing and documentation-only pull requests record a documentation-review result tied to the current head and instruction version.
 - New commits invalidate the recorded review until the documentation writer subagent runs again.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
 - Release publication uses an approved immutable revision.

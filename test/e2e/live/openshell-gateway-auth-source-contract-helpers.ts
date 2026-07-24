@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawnSync } from "node:child_process";
 import { createPrivateKey, sign as signPayload } from "node:crypto";
 import fs from "node:fs";
 import http2 from "node:http2";
@@ -12,32 +12,21 @@ import path from "node:path";
 import type { buildDockerDriverGatewayLaunch as buildDockerDriverGatewayLaunchSource } from "../../../src/lib/onboard/docker-driver-gateway-launch";
 import type { ensureDockerDriverGatewayLocalTlsBundle as ensureDockerDriverGatewayLocalTlsBundleSource } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
 import { getDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
+import {
+  assertOpenShellGatewayAuthArtifactsSafe,
+  enforceOpenShellGatewayAuthArtifactSafety,
+} from "../../../tools/e2e/openshell-gateway-auth-artifact-safety.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 const DOCKER_GRPC_PROBE_IMAGE =
   "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
-
-const FORBIDDEN_AUTH_ARTIFACT_CONTENT: Array<{ label: string; pattern: RegExp }> = [
-  { label: "authorization header", pattern: /["']?authorization["']?\s*[:=]/i },
-  {
-    label: "Bearer JWT",
-    pattern: /\bBearer\s+[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/,
-  },
-  { label: "JWT signing-key path", pattern: /(?:^|[/\\])jwt[/\\]signing\.pem\b/i },
-  { label: "JWT key-id path", pattern: /(?:^|[/\\])jwt[/\\]kid\b/i },
-  { label: "gateway auth config path", pattern: /\bopenshell-gateway\.toml\b/i },
-  {
-    label: "gateway JWT configuration",
-    pattern: /\[openshell\.gateway\.gateway_jwt\]/i,
-  },
-  { label: "private key", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
-];
 
 type SkipFn = (message?: string) => void;
 
@@ -86,6 +75,7 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv = process.e
   const result = spawnSync(command, args, {
     encoding: "utf-8",
     env,
+    killSignal: "SIGKILL",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 60_000,
   });
@@ -100,41 +90,7 @@ function commandOutput(result: SpawnResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
-export function assertOpenShellGatewayAuthArtifactsSafe(rootDir: string): void {
-  const root = path.resolve(rootDir);
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const absolutePath = path.join(dir, entry.name);
-      const relativePath = path.relative(root, absolutePath).split(path.sep).join("/");
-      if (entry.isDirectory()) {
-        visit(absolutePath);
-        continue;
-      }
-      if (!entry.isFile()) {
-        throw new Error(
-          `Unsafe OpenShell auth-contract artifact '${relativePath}': non-regular file`,
-        );
-      }
-      if (
-        /^(?:.*\/)?jwt\/(?:signing\.pem|kid)$|(?:^|\/)openshell-gateway\.toml$/i.test(relativePath)
-      ) {
-        throw new Error(
-          `Unsafe OpenShell auth-contract artifact '${relativePath}': sensitive auth file name`,
-        );
-      }
-      const content = fs.readFileSync(absolutePath, "utf-8");
-      const forbidden = FORBIDDEN_AUTH_ARTIFACT_CONTENT.find(({ pattern }) =>
-        pattern.test(content),
-      );
-      if (forbidden) {
-        throw new Error(
-          `Unsafe OpenShell auth-contract artifact '${relativePath}': ${forbidden.label}`,
-        );
-      }
-    }
-  };
-  visit(root);
-}
+export { assertOpenShellGatewayAuthArtifactsSafe };
 
 export async function withOpenShellGatewayAuthArtifactSafety<T>(
   rootDir: string,
@@ -143,8 +99,15 @@ export async function withOpenShellGatewayAuthArtifactSafety<T>(
   try {
     return await operation();
   } finally {
-    assertOpenShellGatewayAuthArtifactsSafe(rootDir);
+    enforceOpenShellGatewayAuthArtifactSafety(rootDir);
   }
+}
+
+export function registerSandboxJwtArtifactRedaction(
+  artifacts: ArtifactSink,
+  sandboxToken: string,
+): void {
+  artifacts.addRedactionValues([sandboxToken]);
 }
 
 function resolveGatewayBin(): string | null {
@@ -313,14 +276,15 @@ function callGrpc(options: {
 
 async function waitForGatewayReady(options: {
   gateway: ChildProcess;
-  logs: () => string;
   port: number;
   stateDir: string;
 }): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (options.gateway.exitCode !== null) {
-      throw new Error(`openshell-gateway exited early:\n${options.logs()}`);
+      throw new Error(
+        "openshell-gateway exited before readiness; output is available in the redacted gateway artifact",
+      );
     }
     const health = await callGrpc({
       path: "/openshell.v1.OpenShell/Health",
@@ -336,7 +300,9 @@ async function waitForGatewayReady(options: {
     }
     await delay(500);
   }
-  throw new Error(`openshell-gateway did not become ready:\n${options.logs()}`);
+  throw new Error(
+    "openshell-gateway did not become ready; output is available in the redacted gateway artifact",
+  );
 }
 
 function parseTomlString(toml: string, key: string): string {
@@ -722,9 +688,18 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
   });
 
   let gatewayLog = "";
-  const gateway = spawn(launch.command, launch.args, {
-    env: launch.env,
-    stdio: ["ignore", "pipe", "pipe"],
+  try {
+    progress.event("OpenShell auth contract gateway started");
+  } catch {
+    // Progress diagnostics must never change gateway launch.
+  }
+  const gateway = spawnObservedChild(launch.command, launch.args, {
+    activityLabel: "command: openshell-auth-contract-gateway",
+    progress,
+    spawn: {
+      env: launch.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   });
   gateway.stdout?.on("data", (chunk: Buffer) => {
     gatewayLog += chunk.toString("utf-8");
@@ -732,87 +707,96 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
   gateway.stderr?.on("data", (chunk: Buffer) => {
     gatewayLog += chunk.toString("utf-8");
   });
+  gateway.once("close", () => {
+    try {
+      progress.event("OpenShell auth contract gateway stopped");
+    } catch {
+      // Progress diagnostics must never change gateway cleanup.
+    }
+  });
   cleanup.add("stop OpenShell auth contract gateway", () => stopGateway(gateway));
 
-  await waitForGatewayReady({
-    gateway,
-    logs: () => gatewayLog,
-    port,
-    stateDir,
-  });
+  try {
+    await waitForGatewayReady({
+      gateway,
+      port,
+      stateDir,
+    });
 
-  progress.phase("probe unauthenticated and mTLS-only access");
-  const noToken = noTokenContainerProbe(dockerBin, networkName, port, useHostNetwork);
-  await artifacts.writeJson("no-token-container-probe.json", noToken);
-  skipUnavailableProbeImage(noToken, skip);
-  expect(noTokenProbeWasRejected(noToken), commandOutput(noToken)).toBe(true);
+    progress.phase("probe unauthenticated and mTLS-only access");
+    const noToken = noTokenContainerProbe(dockerBin, networkName, port, useHostNetwork);
+    await artifacts.writeJson("no-token-container-probe.json", noToken);
+    skipUnavailableProbeImage(noToken, skip);
+    expect(noTokenProbeWasRejected(noToken), commandOutput(noToken)).toBe(true);
 
-  const configPath = String(launch.env.OPENSHELL_GATEWAY_CONFIG || "");
-  expect(configPath).toBe(path.join(stateDir, "openshell-gateway.toml"));
-  const sandboxId = "sandbox-auth-contract";
-  const mtlsOnlyContainerCall = sandboxTokenContainerProbe({
-    dockerBin,
-    networkName,
-    payload: getSandboxConfigRequest(sandboxId),
-    port,
-    stateDir,
-    useHostNetwork,
-  });
-  await artifacts.writeJson("mtls-only-container-probe.json", mtlsOnlyContainerCall);
-  skipUnavailableProbeImage(mtlsOnlyContainerCall, skip);
-  expect(
-    probeDidNotReturnSandboxConfig(mtlsOnlyContainerCall),
-    commandOutput(mtlsOnlyContainerCall),
-  ).toBe(true);
+    const configPath = String(launch.env.OPENSHELL_GATEWAY_CONFIG || "");
+    expect(configPath).toBe(path.join(stateDir, "openshell-gateway.toml"));
+    const sandboxId = "sandbox-auth-contract";
+    const mtlsOnlyContainerCall = sandboxTokenContainerProbe({
+      dockerBin,
+      networkName,
+      payload: getSandboxConfigRequest(sandboxId),
+      port,
+      stateDir,
+      useHostNetwork,
+    });
+    await artifacts.writeJson("mtls-only-container-probe.json", mtlsOnlyContainerCall);
+    skipUnavailableProbeImage(mtlsOnlyContainerCall, skip);
+    expect(
+      probeDidNotReturnSandboxConfig(mtlsOnlyContainerCall),
+      commandOutput(mtlsOnlyContainerCall),
+    ).toBe(true);
 
-  progress.phase("probe sandbox JWT authorization boundaries");
-  const sandboxToken = mintSandboxJwt({ configPath, sandboxId });
-  const sandboxCall = await callGrpc({
-    authorization: `Bearer ${sandboxToken}`,
-    path: "/openshell.v1.OpenShell/GetSandboxConfig",
-    payload: getSandboxConfigRequest(sandboxId),
-    port,
-    stateDir,
-  });
-  await artifacts.writeJson("sandbox-jwt-probe.json", sandboxCall);
-  expect(sandboxCall.httpStatus, JSON.stringify(sandboxCall)).toBe(200);
-  expect(sandboxCall.grpcStatus, JSON.stringify(sandboxCall)).toBeDefined();
-  expect(["7", "16"]).not.toContain(sandboxCall.grpcStatus);
+    progress.phase("probe sandbox JWT authorization boundaries");
+    const sandboxToken = mintSandboxJwt({ configPath, sandboxId });
+    registerSandboxJwtArtifactRedaction(artifacts, sandboxToken);
+    const sandboxCall = await callGrpc({
+      authorization: `Bearer ${sandboxToken}`,
+      path: "/openshell.v1.OpenShell/GetSandboxConfig",
+      payload: getSandboxConfigRequest(sandboxId),
+      port,
+      stateDir,
+    });
+    await artifacts.writeJson("sandbox-jwt-probe.json", sandboxCall);
+    expect(sandboxCall.httpStatus, JSON.stringify(sandboxCall)).toBe(200);
+    expect(sandboxCall.grpcStatus, JSON.stringify(sandboxCall)).toBeDefined();
+    expect(["7", "16"]).not.toContain(sandboxCall.grpcStatus);
 
-  const sandboxContainerCall = sandboxTokenContainerProbe({
-    authorization: `Bearer ${sandboxToken}`,
-    dockerBin,
-    networkName,
-    payload: getSandboxConfigRequest(sandboxId),
-    port,
-    stateDir,
-    useHostNetwork,
-  });
-  await artifacts.writeJson("sandbox-jwt-container-probe.json", sandboxContainerCall);
-  skipUnavailableProbeImage(sandboxContainerCall, skip);
-  expect(sandboxContainerCall.status, commandOutput(sandboxContainerCall)).toBe(0);
-  const sandboxContainerResult = JSON.parse(sandboxContainerCall.stdout.trim()) as GrpcResult;
-  expect(sandboxContainerResult.httpStatus, JSON.stringify(sandboxContainerResult)).toBe(200);
-  expect(sandboxContainerResult.grpcStatus, JSON.stringify(sandboxContainerResult)).toBeDefined();
-  expect(["7", "16"]).not.toContain(sandboxContainerResult.grpcStatus);
+    const sandboxContainerCall = sandboxTokenContainerProbe({
+      authorization: `Bearer ${sandboxToken}`,
+      dockerBin,
+      networkName,
+      payload: getSandboxConfigRequest(sandboxId),
+      port,
+      stateDir,
+      useHostNetwork,
+    });
+    await artifacts.writeJson("sandbox-jwt-container-probe.json", sandboxContainerCall);
+    skipUnavailableProbeImage(sandboxContainerCall, skip);
+    expect(sandboxContainerCall.status, commandOutput(sandboxContainerCall)).toBe(0);
+    const sandboxContainerResult = JSON.parse(sandboxContainerCall.stdout.trim()) as GrpcResult;
+    expect(sandboxContainerResult.httpStatus, JSON.stringify(sandboxContainerResult)).toBe(200);
+    expect(sandboxContainerResult.grpcStatus, JSON.stringify(sandboxContainerResult)).toBeDefined();
+    expect(["7", "16"]).not.toContain(sandboxContainerResult.grpcStatus);
 
-  const crossSandboxContainerCall = sandboxTokenContainerProbe({
-    authorization: `Bearer ${sandboxToken}`,
-    dockerBin,
-    networkName,
-    payload: getSandboxConfigRequest("sandbox-auth-contract-other"),
-    port,
-    stateDir,
-    useHostNetwork,
-  });
-  await artifacts.writeJson("cross-sandbox-jwt-container-probe.json", crossSandboxContainerCall);
-  skipUnavailableProbeImage(crossSandboxContainerCall, skip);
-  expect(
-    probeDidNotReturnSandboxConfig(crossSandboxContainerCall),
-    commandOutput(crossSandboxContainerCall),
-  ).toBe(true);
-
-  await artifacts.writeText("openshell-gateway.log", gatewayLog);
+    const crossSandboxContainerCall = sandboxTokenContainerProbe({
+      authorization: `Bearer ${sandboxToken}`,
+      dockerBin,
+      networkName,
+      payload: getSandboxConfigRequest("sandbox-auth-contract-other"),
+      port,
+      stateDir,
+      useHostNetwork,
+    });
+    await artifacts.writeJson("cross-sandbox-jwt-container-probe.json", crossSandboxContainerCall);
+    skipUnavailableProbeImage(crossSandboxContainerCall, skip);
+    expect(
+      probeDidNotReturnSandboxConfig(crossSandboxContainerCall),
+      commandOutput(crossSandboxContainerCall),
+    ).toBe(true);
+  } finally {
+    await artifacts.writeText("openshell-gateway.log", gatewayLog);
+  }
 }
 
 export async function runOpenShellGatewayAuthSourceContractScenario(

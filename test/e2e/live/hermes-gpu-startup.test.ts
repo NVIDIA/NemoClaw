@@ -329,6 +329,7 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
     forbiddenMarkers: [EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
     host: "0.0.0.0",
     model: FAKE_MODEL,
+    progress,
     publicHost: hostAddress,
     requireAuth: true,
   });

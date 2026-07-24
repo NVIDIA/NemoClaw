@@ -790,16 +790,17 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
 
   if (normalized.stationExpressIntent) {
+    const intent = normalized.stationExpressIntent;
     const providerComplete = normalized.steps.provider_selection?.status === "complete";
     const providerBound = Boolean(
-      normalized.stationExpressIntent.servedModel &&
-        normalized.stationExpressIntent.checkpointModel,
+      intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
     );
     if (
       providerComplete !== providerBound ||
       (providerComplete &&
-        (normalized.provider !== "vllm-local" ||
-          normalized.model !== normalized.stationExpressIntent.servedModel)) ||
+        (intent.kind === "spark" ||
+          normalized.provider !== "vllm-local" ||
+          normalized.model !== intent.servedModel)) ||
       (!providerComplete && (normalized.provider !== null || normalized.model !== null))
     ) {
       return null;
@@ -1384,8 +1385,13 @@ function markStepCompleteWithOptions(
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    // Spark managed-vLLM Express intents (#7231) carry no receipt/served state
+    // and exist only to re-arm the install on resume, so clear them once
+    // provider selection completes instead of binding a Station selection.
+    const sparkExpressComplete =
+      stepName === "provider_selection" && session.stationExpressIntent?.kind === "spark";
     const stationExpressIntent =
-      stepName === "provider_selection" && session.stationExpressIntent
+      stepName === "provider_selection" && session.stationExpressIntent && !sparkExpressComplete
         ? bindStationExpressProviderSelection(
             session.stationExpressIntent,
             safeUpdates.provider,
@@ -1401,6 +1407,7 @@ function markStepCompleteWithOptions(
     session.failure = null;
     Object.assign(session, safeUpdates);
     if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
+    else if (sparkExpressComplete) session.stationExpressIntent = null;
     const nextState = nextMachineStateAfterCompletedStep(stepName, session);
     shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
     if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
@@ -1602,7 +1609,10 @@ export function completeSession(
   let wasComplete = false;
   let receiptGeneration: string | null = null;
   let updatedSession = updateSession((session) => {
-    const intentReceiptGeneration = session.stationExpressIntent?.receiptGeneration ?? null;
+    const intentReceiptGeneration =
+      session.stationExpressIntent?.kind === "spark"
+        ? null
+        : (session.stationExpressIntent?.receiptGeneration ?? null);
     receiptGeneration = session.stationExpressReceiptRetirement ?? intentReceiptGeneration;
     if (intentReceiptGeneration) {
       assertStationExpressInstallerResumeMatches(intentReceiptGeneration);
