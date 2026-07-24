@@ -94,22 +94,29 @@ describe("sandbox GPU preflight routing", () => {
 
   it("falls back to Docker's default CDI spec dirs when docker info reports none (#7330)", () => {
     const getDockerCdiSpecDirs = vi.fn(() => []);
-    const findReadableNvidiaCdiSpecFiles = vi.fn((dirs: string[]) =>
-      dirs.includes("/etc/cdi") ? ["/etc/cdi/nvidia.yaml"] : [],
-    );
+    const findReadableNvidiaCdiSpecFiles = (dirs: string[]) =>
+      dirs.length === 2 && dirs[0] === "/etc/cdi" && dirs[1] === "/var/run/cdi"
+        ? ["/etc/cdi/nvidia.yaml"]
+        : [];
+    const exitProcess = (code: number): never => {
+      throw new Error(`exit:${code}`);
+    };
 
     expect(() =>
-      validateSandboxGpuPreflight(sandboxGpuConfig(), {
-        platform: "linux",
-        env: {},
-        release: "6.8.0-generic",
-        procVersion: "Linux version 6.8.0-generic",
-        dockerInfoFormat: vi.fn(),
-        getDockerCdiSpecDirs,
-        findReadableNvidiaCdiSpecFiles,
-      }),
+      validateSandboxGpuPreflight(
+        sandboxGpuConfig(),
+        {
+          platform: "linux",
+          env: {},
+          release: "6.8.0-generic",
+          procVersion: "Linux version 6.8.0-generic",
+          dockerInfoFormat: vi.fn(),
+          getDockerCdiSpecDirs,
+          findReadableNvidiaCdiSpecFiles,
+        },
+        exitProcess,
+      ),
     ).not.toThrow();
-    expect(findReadableNvidiaCdiSpecFiles).toHaveBeenCalledWith(["/etc/cdi", "/var/run/cdi"]);
   });
 
   it("still fails when the fallback CDI spec dirs hold no NVIDIA spec (#7330)", () => {
