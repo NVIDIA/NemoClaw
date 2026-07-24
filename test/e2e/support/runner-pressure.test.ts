@@ -328,15 +328,16 @@ describe("runner pressure collection profiles (#7146)", () => {
         ]).get(file) ?? null,
       run: (command, args, timeout) => {
         calls.push({ command, args, timeout });
-        if (command === "ps") return "13000 buildkitd\n";
-        if (args[0] === "stats") {
-          return `${JSON.stringify({ CPUPerc: "25%", MemUsage: "256MiB / 16GiB" })}\n`;
-        }
-        return [
+        const dockerDisk = [
           JSON.stringify({ Type: "Images", Size: "3GiB" }),
           JSON.stringify({ Type: "Containers", Size: "1GiB" }),
           JSON.stringify({ Type: "Build Cache", Size: "2GiB" }),
         ].join("\n");
+        const response = new Map([
+          ["ps", "13000 buildkitd\n"],
+          ["stats", `${JSON.stringify({ CPUPerc: "25%", MemUsage: "256MiB / 16GiB" })}\n`],
+        ]).get(command === "ps" ? command : (args[0] ?? ""));
+        return response ?? dockerDisk;
       },
       statfs: () => ({
         bavail: 25,

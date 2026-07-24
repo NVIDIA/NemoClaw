@@ -10,6 +10,10 @@ interface ScheduledTimer {
   callback: () => void;
 }
 
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 function progressHarness(
   record: NonNullable<TestProgressOptions["recordResourceSample"]>,
   clearFailures = 0,
@@ -34,11 +38,11 @@ function progressHarness(
       return { id, unref() {} };
     },
     clearTimer: (handle) => {
-      if (remainingClearFailures > 0) {
-        remainingClearFailures -= 1;
-        throw new Error("synthetic clear failure");
-      }
-      timers.delete((handle as { id: number }).id);
+      const shouldFail = remainingClearFailures > 0;
+      remainingClearFailures = Math.max(0, remainingClearFailures - 1);
+      return shouldFail
+        ? fail("synthetic clear failure")
+        : void timers.delete((handle as { id: number }).id);
     },
     logLine: (line) => {
       lines.push(line);
@@ -67,8 +71,7 @@ function progressHarness(
 
   const nextTimer = (): [number, ScheduledTimer] => {
     const selected = [...timers.entries()].sort((left, right) => left[1].atMs - right[1].atMs)[0];
-    if (!selected) throw new Error("no timer is scheduled");
-    return selected;
+    return selected ?? fail("no timer is scheduled");
   };
 
   return {
@@ -182,7 +185,7 @@ describe("canonical runner comparison progress sampling", () => {
   it("suppresses legacy full evidence at a stall between periodic deadlines (#7146)", () => {
     let periodicCalls = 0;
     const harness = progressHarness((_phase, kind) => {
-      if (kind === "periodic") periodicCalls += 1;
+      periodicCalls += Number(kind === "periodic");
       return true;
     });
     harness.options.stallThresholdMs = 310_000;
@@ -207,15 +210,14 @@ describe("canonical runner comparison progress sampling", () => {
     "throw",
   ] as const)("permanently falls back to legacy evidence when the collision append returns %s (#7146)", (failure) => {
     let periodicCalls = 0;
+    const failAtCollision = {
+      false: () => false,
+      throw: () => fail("ledger unavailable"),
+    } as const;
     const harness = progressHarness((_phase, kind) => {
-      if (kind === "periodic") {
-        periodicCalls += 1;
-        if (periodicCalls === 5) {
-          if (failure === "throw") throw new Error("ledger unavailable");
-          return false;
-        }
-      }
-      return true;
+      const isPeriodic = kind === "periodic";
+      periodicCalls += Number(isPeriodic);
+      return isPeriodic && periodicCalls === 5 ? failAtCollision[failure]() : true;
     });
     const progress = startTestProgress(
       "runner comparison fallback",
@@ -237,10 +239,9 @@ describe("canonical runner comparison progress sampling", () => {
     const periodicStarts: number[] = [];
     let state: ReturnType<typeof progressHarness>["state"];
     const harness = progressHarness((_phase, kind) => {
-      if (kind === "periodic") {
-        periodicStarts.push(state.now());
-        state.setClock(state.now() + 130_000);
-      }
+      const blockingDelayMs = Number(kind === "periodic") * 130_000;
+      kind === "periodic" ? periodicStarts.push(state.now()) : undefined;
+      state.setClock(state.now() + blockingDelayMs);
       return true;
     });
     state = harness.state;
@@ -264,7 +265,7 @@ describe("canonical runner comparison progress sampling", () => {
     let state: ReturnType<typeof progressHarness>["state"];
     const harness = progressHarness((_phase, kind) => {
       records.push({ atMs: state.now(), kind });
-      if (kind === "scenario-start") state.setClock(5_000);
+      state.setClock(state.now() + Number(kind === "scenario-start") * 5_000);
       return true;
     });
     state = harness.state;
@@ -286,7 +287,8 @@ describe("canonical runner comparison progress sampling", () => {
     let state: ReturnType<typeof progressHarness>["state"];
     const harness = progressHarness((phase, kind) => {
       records.push({ atMs: state.now(), kind, phase });
-      if (kind === "phase" && records.length === 2) state.setClock(64_000);
+      const crossesDeadline = kind === "phase" && records.length === 2;
+      state.setClock(crossesDeadline ? 64_000 : state.now());
       return true;
     });
     state = harness.state;
@@ -363,12 +365,13 @@ describe("canonical runner comparison progress sampling", () => {
           now: () => clockMs,
           setTimer: () => {
             timerCalls += 1;
-            if (timerCalls === 1) throw new Error("synthetic timer failure");
-            return {
-              unref() {
-                throw new Error("synthetic unref failure");
-              },
-            };
+            return timerCalls === 1
+              ? fail("synthetic timer failure")
+              : {
+                  unref() {
+                    throw new Error("synthetic unref failure");
+                  },
+                };
           },
           clearTimer: () => undefined,
           logLine: () => undefined,

@@ -21,6 +21,7 @@ import {
   RUNNER_COMPARISON_SUMMARY_FILE,
   type RunnerComparisonSample,
   type RunnerComparisonSampleV1,
+  type RunnerComparisonSummary,
   renderRunnerComparisonSummary,
   summarizeRunnerComparison,
 } from "../../../tools/e2e/runner-comparison-core.mts";
@@ -173,6 +174,13 @@ function runCli(
 
 function expectSuccess(result: ReturnType<typeof spawnSync>): void {
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+}
+
+function expectCurrentSummary(
+  summary: ReturnType<typeof summarizeRunnerComparison>,
+): RunnerComparisonSummary {
+  expect(summary.v).toBe(2);
+  return summary as RunnerComparisonSummary;
 }
 
 describe("runner comparison collection", () => {
@@ -591,9 +599,7 @@ describe("runner comparison summary", () => {
       }),
     ];
 
-    const summary = summarizeRunnerComparison(samples);
-    expect(summary.v).toBe(2);
-    if (summary.v !== 2) throw new Error("expected v2 summary");
+    const summary = expectCurrentSummary(summarizeRunnerComparison(samples));
     expect(summary.cpu.maximumBusy).toEqual({ percent: 90, phase: "build" });
     expect(summary.memory.minimumAvailable).toEqual({ kb: 100, phase: "build" });
     expect(summary.memory.maximumSwapUsed).toEqual({ kb: 450, phase: "build" });
@@ -610,31 +616,31 @@ describe("runner comparison summary", () => {
   });
 
   it("keeps the initialize-to-startup CPU window unattributed (#7146)", () => {
-    const summary = summarizeRunnerComparison([
-      currentSample(),
-      currentSample({
-        sequence: 1,
-        kind: "scenario-start",
-        phase: "build",
-        at: "2026-07-22T10:01:00.000Z",
-        cpu: { logicalCpuCount: 4, idleTicks: 45, totalTicks: 200 },
-      }),
-      currentSample({
-        sequence: 2,
-        kind: "phase",
-        phase: "build",
-        at: "2026-07-22T10:02:00.000Z",
-        cpu: { logicalCpuCount: 4, idleTicks: 135, totalTicks: 300 },
-      }),
-      currentSample({
-        sequence: 3,
-        kind: "finalize",
-        at: "2026-07-22T10:03:00.000Z",
-        cpu: { logicalCpuCount: 4, idleTicks: 225, totalTicks: 400 },
-      }),
-    ]);
-    expect(summary.v).toBe(2);
-    if (summary.v !== 2) throw new Error("expected v2 summary");
+    const summary = expectCurrentSummary(
+      summarizeRunnerComparison([
+        currentSample(),
+        currentSample({
+          sequence: 1,
+          kind: "scenario-start",
+          phase: "build",
+          at: "2026-07-22T10:01:00.000Z",
+          cpu: { logicalCpuCount: 4, idleTicks: 45, totalTicks: 200 },
+        }),
+        currentSample({
+          sequence: 2,
+          kind: "phase",
+          phase: "build",
+          at: "2026-07-22T10:02:00.000Z",
+          cpu: { logicalCpuCount: 4, idleTicks: 135, totalTicks: 300 },
+        }),
+        currentSample({
+          sequence: 3,
+          kind: "finalize",
+          at: "2026-07-22T10:03:00.000Z",
+          cpu: { logicalCpuCount: 4, idleTicks: 225, totalTicks: 400 },
+        }),
+      ]),
+    );
     expect(summary.cpu.maximumBusy).toEqual({ percent: 95, phase: null });
   });
 
@@ -678,13 +684,8 @@ describe("runner comparison summary", () => {
       }),
     ];
 
-    const firstStartWins = summarizeRunnerComparison(twoScenarioLedger(335));
-    const secondStartWins = summarizeRunnerComparison(twoScenarioLedger(141));
-    expect(firstStartWins.v).toBe(2);
-    expect(secondStartWins.v).toBe(2);
-    if (firstStartWins.v !== 2 || secondStartWins.v !== 2) {
-      throw new Error("expected v2 summaries");
-    }
+    const firstStartWins = expectCurrentSummary(summarizeRunnerComparison(twoScenarioLedger(335)));
+    const secondStartWins = expectCurrentSummary(summarizeRunnerComparison(twoScenarioLedger(141)));
     expect(firstStartWins.cpu.maximumBusy).toEqual({ percent: 95, phase: null });
     expect(secondStartWins.cpu.maximumBusy).toEqual({ percent: 97, phase: null });
     expect(secondStartWins.memory.minimumAvailable).toEqual({
@@ -708,9 +709,7 @@ describe("runner comparison summary", () => {
       at: "2026-07-22T10:02:00.000Z",
       cpu: { logicalCpuCount: 4, idleTicks: 120, totalTicks: 300 },
     });
-    const summary = summarizeRunnerComparison([initialize, phase, finalize]);
-    expect(summary.v).toBe(2);
-    if (summary.v !== 2) throw new Error("expected v2 summary");
+    const summary = expectCurrentSummary(summarizeRunnerComparison([initialize, phase, finalize]));
     expect(summary.load.maximumOneMinute).toEqual({ value: 99, phase: null });
     expect(() => summarizeRunnerComparison([initialize, phase])).toThrow("final sample");
     expect(() =>
@@ -735,9 +734,7 @@ describe("runner comparison summary", () => {
       at: "2026-07-22T10:02:00.000Z",
       memory: { rootCgroupOom: 5, rootCgroupOomKill: 2 },
     });
-    const summary = summarizeRunnerComparison([initialize, phase, finalize]);
-    expect(summary.v).toBe(2);
-    if (summary.v !== 2) throw new Error("expected v2 summary");
+    const summary = expectCurrentSummary(summarizeRunnerComparison([initialize, phase, finalize]));
     expect(summary.memory.cgroup).toMatchObject({ oomDelta: null, oomKillDelta: null });
   });
 
@@ -756,17 +753,18 @@ describe("runner comparison summary", () => {
       parseRunnerComparisonSummary(`${JSON.stringify(poisonedLegacy, null, 2)}\n`),
     ).toThrow();
 
-    const current = summarizeRunnerComparison([
-      currentSample(),
-      currentSample({
-        sequence: 1,
-        kind: "finalize",
-        at: "2026-07-22T10:01:00.000Z",
-        cpu: { logicalCpuCount: 4, idleTicks: 60, totalTicks: 200 },
-      }),
-    ]);
+    const current = expectCurrentSummary(
+      summarizeRunnerComparison([
+        currentSample(),
+        currentSample({
+          sequence: 1,
+          kind: "finalize",
+          at: "2026-07-22T10:01:00.000Z",
+          cpu: { logicalCpuCount: 4, idleTicks: 60, totalTicks: 200 },
+        }),
+      ]),
+    );
     expect(parseRunnerComparisonSummary(renderRunnerComparisonSummary(current))).toEqual(current);
-    if (current.v !== 2) throw new Error("expected v2 summary");
     const poisonedCurrent = structuredClone(current);
     poisonedCurrent.memory.totalKb = null;
     expect(() =>
