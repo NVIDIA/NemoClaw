@@ -6,6 +6,7 @@ import * as dockerImage from "../../adapters/docker/image";
 import * as agentDefs from "../../agent/defs";
 import * as agentOnboard from "../../agent/onboard";
 import * as gatewayRuntime from "../../gateway-runtime-action";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
@@ -135,7 +136,9 @@ describe("rebuild agent base image preflight", () => {
   });
 
   function mockBaseImagePreflight(imageRef: string) {
-    vi.spyOn(agentDefs, "loadAgent").mockReturnValue({ name: "hermes" } as never);
+    const loadAgent = vi
+      .spyOn(agentDefs, "loadAgent")
+      .mockReturnValue({ name: "hermes", displayName: "Hermes Agent" } as never);
     const ensureAgentBaseImage = vi
       .spyOn(agentOnboard, "ensureAgentBaseImage")
       .mockReturnValue({ imageTag: imageRef, built: true });
@@ -145,39 +148,57 @@ describe("rebuild agent base image preflight", () => {
     const pinAgentSandboxBaseImageRef = vi
       .spyOn(agentOnboard, "pinAgentSandboxBaseImageRef")
       .mockImplementation((_agentName, ref) => String(ref));
+    const bindLocalAgentBaseImageHandoffToResolution = vi
+      .spyOn(agentOnboard, "bindLocalAgentBaseImageHandoffToResolution")
+      .mockReturnValue(null);
     const dockerRmi = vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 } as never);
     return {
+      loadAgent,
       ensureAgentBaseImage,
       bindLocalAgentBaseImageToPinnedProvenance,
+      bindLocalAgentBaseImageHandoffToResolution,
       pinAgentSandboxBaseImageRef,
       dockerRmi,
     };
   }
 
   it("forces a repository-local build and returns its exact ref when no override exists", () => {
-    const imageRef = "nemoclaw-hermes-sandbox-base-local:12345678";
+    const imageRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
+    const trustedLocalOverride = {
+      ref: imageRef,
+      provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
+    };
     const { ensureAgentBaseImage } = mockBaseImagePreflight(imageRef);
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: imageRef,
+      built: true,
+      trustedLocalOverride,
+    });
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
 
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
       forceBaseImageRebuild: true,
     });
-    expect(result).toEqual({ ok: true, imageRef, overrideEnvVar });
+    expect(result).toEqual({
+      ok: true,
+      imageRef,
+      overrideEnvVar,
+      trustedLocalOverride,
+    });
   });
 
-  it("resolves an explicit caller override instead of replacing it during preflight", () => {
+  it("fails closed when an explicit local result lacks validated outer metadata", () => {
     process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:caller";
     const mutableRef = "nemoclaw-hermes-sandbox-base-local:resolved";
-    const immutableRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
-    const {
-      ensureAgentBaseImage,
-      bindLocalAgentBaseImageToPinnedProvenance,
-      pinAgentSandboxBaseImageRef,
-    } = mockBaseImagePreflight(mutableRef);
-    pinAgentSandboxBaseImageRef.mockReturnValue(immutableRef);
+    const rebuildRef = `nemoclaw-hermes-sandbox-base-local:rebuild-343338-${"b".repeat(16)}-image-${"a".repeat(64)}`;
+    const { ensureAgentBaseImage, pinAgentSandboxBaseImageRef, dockerRmi } =
+      mockBaseImagePreflight(mutableRef);
+    pinAgentSandboxBaseImageRef.mockReturnValue(rebuildRef);
 
-    const result = ensureRebuildAgentBaseImage("hermes", makeBail());
+    expect(() => ensureRebuildAgentBaseImage("hermes", makeBail())).toThrow(
+      "could not be bound to its rebuild handoff",
+    );
 
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
       forceBaseImageRebuild: false,
@@ -186,17 +207,10 @@ describe("rebuild agent base image preflight", () => {
       forceLocal: true,
       temporary: true,
     });
-    expect(bindLocalAgentBaseImageToPinnedProvenance).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "hermes" }),
-      immutableRef,
-    );
-    expect(result).toEqual({
-      ok: true,
-      imageRef: immutableRef,
-      overrideEnvVar,
-      disposeImageRef: expect.any(Function),
+    expect(dockerRmi).toHaveBeenCalledWith(rebuildRef, {
+      ignoreError: true,
+      suppressOutput: true,
     });
-    expect(disposeRebuildAgentBaseImagePreflight(result)).toBe(true);
   });
 
   it("proves a caller alias before resolving it as the pinned remote image (#7144)", () => {
@@ -250,6 +264,158 @@ describe("rebuild agent base image preflight", () => {
       imageRef: platformRef,
       overrideEnvVar,
     });
+  });
+
+  it("leases a temporary local handoff only from the stable outer resolution", () => {
+    const inputHashRef = "nemoclaw-hermes-sandbox-base-local:3ef2ca87";
+    const rebuildRef = `nemoclaw-hermes-sandbox-base-local:rebuild-343338-${"c".repeat(16)}-image-${"d".repeat(64)}`;
+    const provenance = `${"e".repeat(64)}.${"f".repeat(64)}`;
+    const resolutionMetadata = {
+      ref: inputHashRef,
+      digest: null,
+      source: "local",
+      imageId: `sha256:${"d".repeat(64)}`,
+    } as SandboxBaseImageResolutionMetadata;
+    const mocks = mockBaseImagePreflight(inputHashRef);
+    const {
+      bindLocalAgentBaseImageHandoffToResolution,
+      ensureAgentBaseImage,
+      pinAgentSandboxBaseImageRef,
+    } = mocks;
+    pinAgentSandboxBaseImageRef.mockReturnValue(rebuildRef);
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: inputHashRef,
+      built: false,
+      resolutionMetadata,
+      reusedResolutionHint: resolutionMetadata,
+    });
+    bindLocalAgentBaseImageHandoffToResolution.mockReturnValue({
+      ref: rebuildRef,
+      provenance,
+    });
+
+    try {
+      const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
+        resolutionHint: resolutionMetadata,
+      });
+
+      expect(bindLocalAgentBaseImageHandoffToResolution).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "hermes" }),
+        inputHashRef,
+        rebuildRef,
+        resolutionMetadata,
+        resolutionMetadata,
+      );
+      expect(result).toMatchObject({
+        imageRef: rebuildRef,
+        resolutionMetadata,
+        trustedLocalOverride: { ref: rebuildRef, provenance },
+      });
+    } finally {
+      for (const mock of Object.values(mocks)) mock.mockRestore();
+    }
+  });
+
+  it("force-rebuilds instead of trusting fresh fallback metadata after a local tag moved", () => {
+    const sourceRef = "nemoclaw-hermes-sandbox-base-local:3ef2ca87";
+    const imageId = `sha256:${"d".repeat(64)}`;
+    const canonicalRef = `nemoclaw-hermes-sandbox-base-local:image-${"d".repeat(64)}`;
+    const persistedHint = {
+      ref: sourceRef,
+      digest: null,
+      source: "local",
+      imageId: `sha256:${"a".repeat(64)}`,
+    } as SandboxBaseImageResolutionMetadata;
+    const freshFallbackMetadata = {
+      ...persistedHint,
+      imageId,
+    };
+    const forcedMetadata = {
+      ...freshFallbackMetadata,
+      ref: canonicalRef,
+    };
+    const forcedTrust = {
+      ref: canonicalRef,
+      provenance: `${"e".repeat(64)}.${"f".repeat(64)}`,
+    };
+    const {
+      bindLocalAgentBaseImageHandoffToResolution,
+      ensureAgentBaseImage,
+      pinAgentSandboxBaseImageRef,
+    } = mockBaseImagePreflight(sourceRef);
+    ensureAgentBaseImage
+      .mockReturnValueOnce({
+        imageTag: sourceRef,
+        built: false,
+        resolutionMetadata: freshFallbackMetadata,
+      })
+      .mockReturnValueOnce({
+        imageTag: canonicalRef,
+        built: true,
+        resolutionMetadata: forcedMetadata,
+        trustedLocalOverride: forcedTrust,
+      });
+    pinAgentSandboxBaseImageRef.mockReturnValue(canonicalRef);
+
+    const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
+      resolutionHint: persistedHint,
+    });
+
+    expect(bindLocalAgentBaseImageHandoffToResolution).not.toHaveBeenCalled();
+    expect(ensureAgentBaseImage).toHaveBeenCalledTimes(2);
+    expect(ensureAgentBaseImage).toHaveBeenNthCalledWith(2, expect.anything(), {
+      forceBaseImageRebuild: true,
+    });
+    expect(result).toMatchObject({
+      imageRef: canonicalRef,
+      resolutionMetadata: forcedMetadata,
+      trustedLocalOverride: forcedTrust,
+    });
+  });
+
+  it("reuses the canonical forced-build metadata on the next offline rebuild", () => {
+    const canonicalRef = `nemoclaw-hermes-sandbox-base-local:image-${"d".repeat(64)}`;
+    const resolutionMetadata = {
+      ref: canonicalRef,
+      digest: null,
+      source: "local",
+      imageId: `sha256:${"d".repeat(64)}`,
+    } as SandboxBaseImageResolutionMetadata;
+    const provenance = `${"e".repeat(64)}.${"f".repeat(64)}`;
+    const {
+      bindLocalAgentBaseImageHandoffToResolution,
+      ensureAgentBaseImage,
+      pinAgentSandboxBaseImageRef,
+    } = mockBaseImagePreflight(canonicalRef);
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: canonicalRef,
+      built: false,
+      resolutionMetadata,
+      reusedResolutionHint: resolutionMetadata,
+    });
+    pinAgentSandboxBaseImageRef.mockReturnValue(canonicalRef);
+    bindLocalAgentBaseImageHandoffToResolution.mockReturnValue({
+      ref: canonicalRef,
+      provenance,
+    });
+
+    const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
+      resolutionHint: resolutionMetadata,
+    });
+
+    expect(ensureAgentBaseImage).toHaveBeenCalledOnce();
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.anything(), {
+      forceBaseImageRebuild: false,
+      resolutionHint: resolutionMetadata,
+    });
+    expect(bindLocalAgentBaseImageHandoffToResolution).toHaveBeenCalledWith(
+      expect.anything(),
+      canonicalRef,
+      canonicalRef,
+      resolutionMetadata,
+      resolutionMetadata,
+    );
+    expect(result.trustedLocalOverride).toEqual({ ref: canonicalRef, provenance });
   });
 
   it("disposes a temporary recreate handoff at most once (#7144)", () => {
