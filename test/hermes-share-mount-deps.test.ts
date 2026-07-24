@@ -116,6 +116,15 @@ function runHermesInstallLayer(
     workspace: () => undefined,
   } satisfies Record<typeof webLockfile, () => void>;
   writeWebLockfile[webLockfile]();
+  const workspaceBuildTrees = [
+    ...(uiTuiLockfile === "workspace" ? ["ui-tui"] : []),
+    ...(webLockfile === "workspace" ? ["web"] : []),
+  ];
+  for (const uiDir of workspaceBuildTrees) {
+    const nodeModules = path.join(fixture, uiDir, "node_modules");
+    fs.mkdirSync(nodeModules, { recursive: true });
+    fs.writeFileSync(path.join(nodeModules, "build-only-dependency"), `${uiDir}\n`);
+  }
   for (const cache of [npmCache, electronCache, nodeGypCache]) {
     fs.mkdirSync(cache, { recursive: true });
     fs.writeFileSync(path.join(cache, "build-only-cache"), "unused after image assembly\n");
@@ -221,6 +230,7 @@ describe("Hermes share mount package parity (#2947)", () => {
   it("keeps only root runtime dependencies after building workspace UIs (#7144)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-ui-workspace-"));
+    const hermesRoot = path.join(tmp, "hermes");
 
     try {
       const command = extractHermesInstallCommand(dockerfile);
@@ -241,6 +251,9 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls.indexOf(cleanInstall)).toBeLessThan(calls.indexOf(runtimeInstall));
       expect(calls).not.toContain("npm ci --omit=dev --prefer-offline --no-audit --no-fund");
       expect(calls).not.toContain("--workspace=ui-tui --include-workspace-root");
+      expect(fs.existsSync(path.join(hermesRoot, "node_modules"))).toBe(true);
+      expect(fs.existsSync(path.join(hermesRoot, "ui-tui", "node_modules"))).toBe(false);
+      expect(fs.existsSync(path.join(hermesRoot, "web", "node_modules"))).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
