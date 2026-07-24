@@ -5,8 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
-import type { TestModule } from "vitest/node";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TestModule, TestSpecification } from "vitest/node";
 import {
   classifyLiveTestOutcome,
   configuredLiveTestOutcomeFile,
@@ -18,6 +18,7 @@ import {
 } from "../tools/e2e/live-test-outcome.mts";
 import {
   configuredEnvironment,
+  default as E2eRiskSignalReporter,
   outcomeForRun,
   RISK_SIGNAL_FILE,
   type RiskSignalEnvironment,
@@ -28,11 +29,38 @@ const EXPECTED_SHA = "a".repeat(40);
 const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 
+vi.mock("node:child_process", () => ({
+  execFileSync: vi.fn(() => "a".repeat(40)),
+}));
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pending">): TestModule {
   return {
     children: {
       *allTests() {
-        for (const state of states) yield { result: () => ({ state }) };
+        for (const [index, state] of states.entries()) {
+          yield { fullName: `test ${index}`, result: () => ({ state }) };
+        }
+      },
+    },
+  } as unknown as TestModule;
+}
+
+function moduleWithNamedStates(
+  tests: Array<{
+    fullName: string;
+    state: "passed" | "failed" | "skipped" | "pending";
+  }>,
+): TestModule {
+  return {
+    children: {
+      *allTests() {
+        for (const test of tests) {
+          yield { fullName: test.fullName, result: () => ({ state: test.state }) };
+        }
       },
     },
   } as unknown as TestModule;
@@ -42,7 +70,7 @@ function moduleWithFailedError(error: unknown): TestModule {
   return {
     children: {
       *allTests() {
-        yield { result: () => ({ state: "failed", errors: [error] }) };
+        yield { fullName: "failed test", result: () => ({ state: "failed", errors: [error] }) };
       },
     },
   } as unknown as TestModule;
@@ -122,6 +150,95 @@ describe("E2E risk signal reporter", () => {
       );
 
       expect(signal).toMatchObject({ passed: 2, skipped: 1, failed: 0, pending: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("applies the configured name pattern through the reporter lifecycle", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      vi.stubEnv("E2E_ARTIFACT_DIR", dir);
+      vi.stubEnv("E2E_TARGET_ID", "network-policy");
+      vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", EXPECTED_SHA);
+      vi.stubEnv("NEMOCLAW_E2E_PLAN_HASH", PLAN_HASH);
+      vi.stubEnv("NEMOCLAW_E2E_CORRELATION_ID", CORRELATION_ID);
+      vi.stubEnv("NEMOCLAW_E2E_SHARD", "live-probes");
+
+      const reporter = new E2eRiskSignalReporter();
+      reporter.onTestRunStart([
+        {
+          testNamePattern: /^network-policy:.+probes$/u,
+        } as TestSpecification,
+      ]);
+      reporter.onTestRunEnd(
+        [
+          moduleWithNamedStates([
+            {
+              fullName: "network-policy: restricted sandbox enforces live allow/deny policy probes",
+              state: "passed",
+            },
+            {
+              fullName:
+                "network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets",
+              state: "skipped",
+            },
+          ]),
+        ],
+        [],
+        "passed",
+      );
+
+      const signal = JSON.parse(
+        fs.readFileSync(path.join(dir, RISK_SIGNAL_FILE), "utf8"),
+      ) as Record<string, unknown>;
+      expect(signal).toMatchObject({ passed: 1, failed: 0, skipped: 0, pending: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts a selected test that skips", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      const signal = writeRiskSignal(
+        environment(dir),
+        [
+          moduleWithNamedStates([
+            {
+              fullName: "network-policy: restricted sandbox enforces live allow/deny policy probes",
+              state: "skipped",
+            },
+            {
+              fullName:
+                "network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets",
+              state: "skipped",
+            },
+          ]),
+        ],
+        [],
+        "passed",
+        /^network-policy:.+probes$/u,
+      );
+
+      expect(signal).toMatchObject({ passed: 0, failed: 0, skipped: 1, pending: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits no passing evidence when the name pattern matches no tests", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      const signal = writeRiskSignal(
+        environment(dir),
+        [moduleWithNamedStates([{ fullName: "selected elsewhere", state: "skipped" }])],
+        [],
+        "passed",
+        /^missing test$/u,
+      );
+
+      expect(signal).toMatchObject({ passed: 0, failed: 0, skipped: 0, pending: 0 });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
