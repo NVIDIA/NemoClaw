@@ -709,7 +709,7 @@ describe("backupAll", () => {
     exitSpy.mockRestore();
   });
 
-  it("skips a stranded orphan sandbox without tripping the strict gate (#6520)", async () => {
+  it("skips a stranded orphan sandbox without failing strict backup (#6520)", async () => {
     // Uninstall + reinstall strands a sandbox: gateway registration and
     // container removed, sandboxes.json preserved. There is nothing left to
     // back up, so strict backup-all must warn and move on instead of aborting

@@ -105,8 +105,7 @@ const defaultContainerAbsenceDeps: ContainerAbsenceDeps = {
   // as "no containers"), which suits its recovery callers but not an absence
   // proof. Run the same labeled listing status-checked instead: any spawn
   // error, timeout, or non-zero exit yields null, never "absent". ignoreError
-  // is load-bearing: without it runner.run() process.exits on the failed
-  // listing instead of letting the caller fail closed.
+  // prevents runner.run() from exiting the process when the listing fails.
   listLabeledContainerNames: (name) => {
     const result = dockerRun(
       [
@@ -136,20 +135,12 @@ const defaultContainerAbsenceDeps: ContainerAbsenceDeps = {
 };
 
 /**
- * Whether a registered docker-driver sandbox has no OpenShell-labeled container
- * on the host — the sandbox is stranded: its gateway registration and Docker
- * container were removed (for example by `nemoclaw uninstall`) while a preserved
- * sandboxes.json still records it, so no `docker start` can recover it and its
- * state can never be backed up (#6520).
+ * Returns true only when the registered sandbox uses Docker and a successful
+ * labeled `docker ps -a` returns no matching container.
  *
- * Fails closed: a non-docker driver, an unknown driver (registry read
- * failure), or a failed/timed-out labeled listing returns false — absence
- * must never be concluded from a swallowed `docker ps` error, so the listing
- * is status-checked rather than reusing findLabeledSandboxContainers. The
- * `docker ps -a` label filter is the reliable absent signal — immune to the
- * name prefix-collision and phase-vocabulary ambiguity that the gateway
- * `sandbox list` parsers carry — so `length === 0` is definitive only when
- * the listing itself succeeded.
+ * Returns false when the driver is not Docker, the registry read fails, or the
+ * Docker listing fails or times out. Callers must separately confirm gateway
+ * absence and same-gateway binding before classifying a sandbox as stranded.
  */
 export function isSandboxContainerDefinitivelyAbsent(
   sandboxName: string,
