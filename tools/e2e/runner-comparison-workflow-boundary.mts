@@ -134,7 +134,7 @@ function publicationIndex(jobSteps: readonly WorkflowStep[]): number {
 }
 
 /**
- * Keep the #7145 comparison to 12 routed workflow lane identities / 13
+ * Keep the #7145 comparison to 12 routed workflow lane identities / 15
  * concrete trusted-main job executions. Telemetry is best-effort, but it must
  * span the complete post-prepare job and finish before evidence is scanned or
  * uploaded.
@@ -144,6 +144,11 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
   const errors: string[] = [];
 
   requireExactMatrixValues(errors, jobs, "channels-stop-start", "agent", ["openclaw", "hermes"]);
+  requireExactMatrixValues(errors, jobs, "common-egress-agent", "scenario", [
+    "openclaw-balanced-weather",
+    "openclaw-open-reference",
+    "hermes-open-reference",
+  ]);
   requireExactMatrixValues(errors, jobs, "mcp-bridge", "agent", [
     "openclaw",
     "hermes",

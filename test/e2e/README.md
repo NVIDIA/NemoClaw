@@ -180,25 +180,83 @@ scenario shards, and `hermes-inference-switch`, which runs both listed modes.
 The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 
-Each execution writes two best-effort numeric samples to
-`runner-comparison.jsonl`, one after workspace preparation and one from an
-`always()` finalizer before artifact checking and upload. The finalizer writes
-`runner-comparison-summary.json` only when both samples are valid, monotonic,
-and have the same target and shard identity. The summary contains the sampled
-post-prepare time window, average CPU utilization and logical CPU capacity,
-memory availability and endpoint usage, the available root-cgroup memory peak,
-and workspace free-space and growth values. Unsupported measurements are `null`.
-Endpoint memory and workspace samples do not establish the true maximum or
-minimum between those two observations. The root-cgroup peak is a lifetime
-counter that includes Docker siblings but can also include host activity before
-the measured window. Compare it only across runs with the same runner setup.
+Each execution writes one bounded, ordered v2 time series to the canonical
+`runner-comparison.jsonl` ledger. It contains:
+
+- an `initialize` endpoint after workspace preparation;
+- a distinct `scenario-start` for every test handled by the execution;
+- a `periodic` sample on an approximately 60-second fixed cadence;
+- a `phase` sample before each semantic phase transition and when the final
+  phase stops; and
+- a `finalize` endpoint from an `always()` step immediately before artifact
+  checking and upload.
+
+The progress pulse owns both stall reporting and periodic comparison sampling,
+so it never creates a second timer. Phase samples that cross a periodic deadline
+consume that slot, and delayed probes skip missed slots instead of producing a
+catch-up burst. Each successful append also prints one bounded
+`E2E_RUNNER_COMPARISON_SAMPLE` line in the job log.
+
+The v2 ledger accepts at most 256 samples. Ordinary sampling stops once 255
+records exist to reserve the last slot for `finalize`. A missing, historical-v1,
+already-finalized, full, or invalid ledger permanently disables comparison
+sampling for that test progress instance. In `rebuild-hermes` and
+`rebuild-hermes-stale-base`, where legacy phase resource evidence is configured,
+the existing five-minute full snapshot then becomes the best-effort fallback.
+That full profile may run `ps`, `docker stats`, and `docker system df`
+sequentially with a 15-second timeout each, or 45 seconds in the worst case;
+canonical sampling suppresses this heavier collection while it remains active.
+Other lanes stop canonical sampling without creating a second evidence stream.
+Historical v1 ledgers and summaries remain readable, but a v1 ledger cannot be
+extended or mixed with v2 samples.
+
+Probe cost depends on the sample kind. `initialize` and `finalize` read only
+kernel and filesystem sources and launch no child process. `periodic` adds one
+one-second `ps` probe and does not call Docker. `scenario-start` and `phase`
+samples add the same bounded process probe plus two-second `docker stats` and
+`docker system df` probes. The emitted schema contains only numeric fields,
+fixed process classes (`docker-buildkit`, `openshell`, or `other`), and fixed
+sample metadata, including the explicit target and shard labels. It never
+records process or container names, command lines, child output, or arbitrary
+environment and secret values. Docker memory evidence is reduced to the largest
+retained container value; maximum Docker CPU considers every row in the bounded
+command output.
+
+The finalizer validates the complete ledger before writing
+`runner-comparison-summary.json`. The v2 summary reports the sampled
+post-prepare window; CPU average and busiest interval; one-minute load;
+available, cached, reclaimable, swap, root-cgroup current/peak/limit, and
+endpoint OOM-counter evidence; memory and I/O pressure; workspace bytes and
+inodes; Docker image, container, and build-cache usage; largest container
+memory and CPU; and the largest fixed process class by RSS. Extrema include the
+semantic phase where they were observed when attribution is sound. CPU
+intervals ending at a `scenario-start` remain unattributed because they can
+span two tests, and extrema whose selected observation is `initialize` have a
+`null` phase. OOM deltas are also `null` unless both endpoint counters are
+available. Unsupported or unreadable measurements are `null`.
+
+The root-cgroup peak is a lifetime counter that includes Docker siblings but
+can also include host activity before the measured window. Compare it only
+across runs with the same runner setup. Canonical v2 `memory.availableKb` comes
+only from `/proc/meminfo` `MemAvailable` and is `null` when that field is
+unavailable. Separately, the adjacent progress/stall resource line falls back
+to the portable free-memory value and labels that value as `memory free`.
+
+The comparison time series is diagnostic-only and is not an input to terminal
+classification or retry policy. Low available or free memory never implies an
+OOM. OOM classification or attribution still requires the existing positive
+OOM evidence, and the single retry remains limited to positive runner-loss
+evidence.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
 hard runner loss can prevent finalization or artifact upload. When you compare
 standard and larger runners, use runs with the same commit SHA, workflow
 inputs, target, and shard. Pair the artifact with the GitHub Actions runner
-label, queue time, result, and usage or cost metadata. This telemetry does not
-maintain rolling history or write to the GitHub Actions step summary.
+label, queue time, result, and usage or cost metadata. The ledger is a time
+series for one execution only; this telemetry does not maintain cross-run
+rolling history or write to the GitHub Actions step summary. Both output files
+are private regular files on the runner (`0600`) with strict per-line and total
+size limits.
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
