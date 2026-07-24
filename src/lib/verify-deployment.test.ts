@@ -436,6 +436,62 @@ describe("verifyDeployment", () => {
     expect(result.verification.gatewayVersion).toBe("2026.5.27");
   });
 
+  it("extracts the gateway version from decorated output (#5896)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("openclaw --version")
+          ? {
+              status: 0,
+              stdout: "Dependency 1.2.3\nOpenClaw v2026.5.27 (abcdef)\n",
+              stderr: "",
+            }
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    expect(result.verification.gatewayVersion).toBe("2026.5.27");
+  });
+
+  it("rejects malformed gateway version output (#5896)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("openclaw --version")
+          ? { status: 0, stdout: "OpenClaw development build\n", stderr: "" }
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    expect(result.verification.gatewayVersion).toBeNull();
+  });
+
+  it("rejects gateway versions with extra dotted components (#5896)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("openclaw --version")
+          ? { status: 0, stdout: "OpenClaw 2026.5.27.1\n", stderr: "" }
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    expect(result.verification.gatewayVersion).toBeNull();
+  });
+
+  it("rejects version output from a failed OpenClaw command (#5896)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("openclaw --version")
+          ? { status: 1, stdout: "OpenClaw v2026.5.27\n", stderr: "command failed" }
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    expect(result.verification.gatewayVersion).toBeNull();
+  });
+
   it("reports null version when gateway is down (skips version probe)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: () => ({ status: 0, stdout: "000", stderr: "" }),

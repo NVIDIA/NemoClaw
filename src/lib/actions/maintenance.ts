@@ -13,14 +13,21 @@ import {
   normalizeGarbageCollectImagesOptions,
 } from "../domain/lifecycle/options";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
+import {
+  classifyOrphanedRegistrySandboxes,
+  orphanedRegistryRemediation,
+  orphanedRegistrySummary,
+} from "../domain/maintenance/orphan-detection";
 import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
-import { parseReadySandboxNames } from "../runtime-recovery";
+import { parseLiveSandboxNames, parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
   backupStartedSandboxState,
+  isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
@@ -56,11 +63,53 @@ export async function backupAll(): Promise<void> {
     return;
   }
 
-  const liveList = await captureSandboxListWithGatewayPreflightOrExit({
-    action: "backing up registered sandboxes",
-    command: `${CLI_NAME} backup-all`,
-  });
+  // Pin the listing to the selected gateway (#6114/#6520): OpenShell's
+  // mutable current selection may be a sibling gateway, and an unpinned list
+  // would both misjudge readiness and let the orphan classifier below make a
+  // fail-open stranded call from another gateway's sandboxes.
+  const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
+  const liveList = await captureSandboxListWithGatewayPreflightOrExit(
+    {
+      action: "backing up registered sandboxes",
+      command: `${CLI_NAME} backup-all`,
+    },
+    { gatewayName: selectedGatewayName },
+  );
   const readyNames = parseReadySandboxNames(liveList.output || "");
+  // Source-of-truth review (#6520):
+  //
+  // - Invalid state: a sandbox the selected gateway does not observe, whose
+  //   persisted binding resolves to that gateway, and whose OpenShell-labeled
+  //   container is definitively absent is stranded. It has no state left to
+  //   back up, so counting it as a strict-gate skip would abort the
+  //   installer's pre-upgrade backup before its recovery phase
+  //   (recover_preexisting_sandboxes_before_onboard in scripts/install.sh)
+  //   that knows how to surface it ever runs.
+  // - Source boundary: the state is created by `nemoclaw uninstall`, which
+  //   removes the gateway registration and containers but deliberately
+  //   preserves sandboxes.json so a later reinstall can rebuild from it.
+  // - Source-fix constraint: backup-all must not reconcile the registry —
+  //   clearing a stranded record is owned by the recovery phase's
+  //   destroy/onboard guidance (and the user), and this gate runs before
+  //   that phase. Deleting records inside a backup command would destroy the
+  //   very evidence the recovery phase reports.
+  // - Removal condition: drop this exemption when install/uninstall
+  //   reconciles sandboxes.json against the gateway (stranded records can no
+  //   longer reach backup-all), or when the installer runs its recovery
+  //   phase before the strict pre-upgrade backup.
+  //
+  // The container-absence gate (checked per candidate at skip time and again
+  // after the confirming listing) makes the exemption race-safe: a
+  // reconnecting or sibling-healthy sandbox still has a container, and a
+  // candidate the gateway observes again reverts to a genuine strict skip.
+  const orphanNames = new Set(
+    classifyOrphanedRegistrySandboxes(sandboxes, {
+      observedNames: parseLiveSandboxNames(liveList.output || ""),
+      reconnectedNames: new Set(),
+      selectedGatewayName,
+      resolveGatewayBinding: resolveSandboxGatewayName,
+    }).map((sandbox) => sandbox.name),
+  );
 
   const skipUnreachable = shouldSkipUnreachableSandboxBackup(process.env);
   const requireAll = process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
@@ -69,6 +118,7 @@ export async function backupAll(): Promise<void> {
   let skipped = 0;
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
+  const strandedOrphans: string[] = [];
   for (const sb of sandboxes) {
     // A registered docker-driver sandbox whose container is merely stopped is
     // backupable: start it for the duration of the backup and return it to
@@ -78,6 +128,12 @@ export async function backupAll(): Promise<void> {
     if (!readyNames.has(sb.name)) {
       startedForBackup = startStoppedSandboxContainerForBackup(sb.name);
       if (!startedForBackup) {
+        if (orphanNames.has(sb.name) && isSandboxContainerDefinitivelyAbsent(sb.name)) {
+          // Tracked separately from `skipped` so the strict gate stays
+          // untripped: there is nothing to back up and nothing to start.
+          strandedOrphans.push(sb.name);
+          continue;
+        }
         console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
         skipped++;
         notRunningSkipped++;
@@ -176,10 +232,40 @@ export async function backupAll(): Promise<void> {
       failed++;
     }
   }
+  // The classification above is only as fresh as the pre-loop listing, and
+  // the backup loop can run for minutes. Confirm with a second pinned listing
+  // that every stranded candidate is still unobserved before accepting the
+  // exemption (same two-phase confirmation as upgrade-sandboxes, #6114); a
+  // candidate that reappeared reverts to the genuine strict skip it would
+  // otherwise have been.
+  let confirmedStranded = strandedOrphans;
+  if (strandedOrphans.length > 0) {
+    const confirmation = await captureSandboxListWithGatewayPreflightOrExit(
+      {
+        action: "confirming stranded sandboxes remain absent from the selected gateway",
+        command: `${CLI_NAME} backup-all`,
+      },
+      { gatewayName: selectedGatewayName },
+    );
+    const observedOnRecheck = parseLiveSandboxNames(confirmation.output || "");
+    confirmedStranded = strandedOrphans.filter(
+      (name) => !observedOnRecheck.has(name) && isSandboxContainerDefinitivelyAbsent(name),
+    );
+    const confirmedNames = new Set(confirmedStranded);
+    for (const name of strandedOrphans.filter((entry) => !confirmedNames.has(entry))) {
+      console.log(`  ${D}${notRunningBackupSkipMessage(name)}${R}`);
+      skipped++;
+      notRunningSkipped++;
+    }
+  }
   console.log("");
   console.log(`  Pre-upgrade backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`);
   if (backed > 0) {
     console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
+  }
+  if (confirmedStranded.length > 0) {
+    console.log(`  ${YW}${orphanedRegistrySummary(confirmedStranded)}${R}`);
+    console.log(`  ${D}${orphanedRegistryRemediation(CLI_NAME)}${R}`);
   }
   if (failed > 0) {
     if (unreachableRunning > 0) {
