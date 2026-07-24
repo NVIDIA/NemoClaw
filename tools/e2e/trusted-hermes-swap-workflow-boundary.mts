@@ -18,9 +18,10 @@ export const TRUSTED_HERMES_SWAP_STEP_NAME = "Provision trusted Hermes E2E swap"
 export const TRUSTED_HERMES_SWAP_STEP_ID = "trusted_hermes_swap";
 
 const TRUSTED_HERMES_SWAP_IF =
-  "github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != ''";
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
 const TRUSTED_HERMES_E2E_SELECTION =
   "(contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,'))";
+const TRUSTED_HERMES_E2E_ELIGIBILITY = `(github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && ${TRUSTED_HERMES_E2E_SELECTION}))`;
 const TRUSTED_HERMES_SWAP_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_HERMES_SWAP_ENV = {
   BASH_ENV: "/dev/null",
@@ -54,14 +55,28 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
   "  exit 1",
   "}",
   "",
-  'if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${EVENT_NAME}" != "workflow_dispatch" || "${REF}" != "refs/heads/main" ]]; then',
+  'if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then',
   '  fail "workflow must run from NVIDIA/NemoClaw main"',
   "fi",
-  'if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then',
-  '  fail "checkout SHA must be lowercase 40-hex"',
+  'if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then',
+  '  fail "workflow event must be schedule or workflow_dispatch"',
   "fi",
-  'if [[ ! "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${EXPECTED_WORKFLOW_SHA}" || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then',
-  '  fail "workflow source must match the trusted dispatch revision"',
+  "# Exact-head mode: controller-dispatched PR revision.",
+  'if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then',
+  '  if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then',
+  '    fail "checkout SHA must be lowercase 40-hex"',
+  "  fi",
+  '  if [[ ! "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${EXPECTED_WORKFLOW_SHA}" || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then',
+  '    fail "workflow source must match the trusted dispatch revision"',
+  "  fi",
+  "else",
+  "  # Direct-main mode: schedule or manual trigger on main.",
+  '  if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then',
+  '    fail "direct main runs must not request an alternate checkout or workflow revision"',
+  "  fi",
+  '  if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then',
+  '    fail "direct main workflow source must match the run revision"',
+  "  fi",
   "fi",
   'if [[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted" || "${RUNNER_OS_KIND}" != "Linux" || "${RUNNER_ARCH_KIND}" != "X64" ]]; then',
   '  fail "swap fallback requires an ephemeral GitHub-hosted Linux x64 runner"',
@@ -200,8 +215,11 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
 const JOB_CONDITIONS = {
   "agent-turn-latency": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
   "bedrock-runtime-compatible-anthropic": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
+  "channels-stop-start": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
+  "common-egress-agent": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.scenario == 'hermes-open-reference' }}`,
   "hermes-dashboard": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
-  "hermes-e2e": `\${{ ${TRUSTED_HERMES_SWAP_IF} && ${TRUSTED_HERMES_E2E_SELECTION} }}`,
+  "hermes-discord": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
+  "hermes-e2e": `\${{ ${TRUSTED_HERMES_SWAP_IF} && ${TRUSTED_HERMES_E2E_ELIGIBILITY} }}`,
   "hermes-inference-switch": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
   "hermes-shields-config": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
   "mcp-bridge": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
@@ -259,7 +277,7 @@ export function validateTrustedHermesSwapWorkflow(workflowValue: unknown): strin
       errors.push(`${jobName} trusted Hermes swap step must preserve its fixed name`);
     }
     if (provision.if !== expectedCondition) {
-      errors.push(`${jobName} trusted Hermes swap step must preserve the exact-head main guard`);
+      errors.push(`${jobName} trusted Hermes swap step must preserve the trusted main guard`);
     }
     if (provision.shell !== TRUSTED_HERMES_SWAP_SHELL) {
       errors.push(`${jobName} trusted Hermes swap step must use the isolated Bash shell`);

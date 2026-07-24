@@ -254,6 +254,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 _dotenv_loaded_values = {}
+CLI_MAX_RETRIES_KEY = "__deepagents_cli_max_retries__"
 
 
 def _preview_dotenv_environ(*, start_path=None):
