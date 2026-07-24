@@ -691,6 +691,7 @@ jobs:
           if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             fail "workflow event must be schedule or workflow_dispatch"
           fi
+          # Exact-head mode: controller-dispatched PR revision.
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
             if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
               fail "checkout SHA must be lowercase 40-hex"
@@ -699,6 +700,7 @@ jobs:
               fail "workflow source must match the trusted dispatch revision"
             fi
           else
+            # Direct-main mode: schedule or manual trigger on main.
             if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then
               fail "direct main runs must not request an alternate checkout or workflow revision"
             fi
