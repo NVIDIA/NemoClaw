@@ -105,8 +105,8 @@ function normalizeRunnerClass(
 ): JobTimingRow["runnerClass"] {
   if (!labels || labels.length === 0) return "unknown";
   const normalized = new Set(labels.map((label) => label.toLowerCase()));
-  if (normalized.has("ubuntu-latest")) return "standard";
   if (normalized.has("self-hosted")) return "unknown";
+  if (normalized.has("ubuntu-latest")) return "standard";
   return "larger";
 }
 

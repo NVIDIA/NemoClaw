@@ -190,7 +190,7 @@ describe("scorecard coordinator assembly", () => {
             completed_at: "2026-07-24T00:00:20Z",
             conclusion: "success",
             created_at: "invalid",
-            labels: ["self-hosted", "Linux"],
+            labels: ["self-hosted", "ubuntu-latest", "Linux"],
             name: "jetson-nvmap-gpu",
             started_at: "2026-07-24T00:00:10Z",
             status: "completed",
