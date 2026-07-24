@@ -159,6 +159,9 @@ function openDirectoryNoFollow(directory: string, destination: string): Director
   const directoryFlag = typeof fs.constants.O_DIRECTORY === "number" ? fs.constants.O_DIRECTORY : 0;
   let fd: number;
   try {
+    // This pins an existing directory read-only; it does not create a
+    // temporary file, even when the destination is below the OS temp root.
+    // lgtm[js/insecure-temporary-file]
     fd = fs.openSync(directory, fs.constants.O_RDONLY | directoryFlag | noFollow);
   } catch (error) {
     if (errnoCode(error) === "ELOOP") {
