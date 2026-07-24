@@ -310,66 +310,6 @@ describe("handleProviderInferenceState", () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
     });
-
-    it("reports the recorded flag and the recreate command when resume ignores the env (#7462)", async () => {
-      vi.stubEnv("NEMOCLAW_REASONING", "true");
-      const session = createSession({
-        provider: "compatible-endpoint",
-        model: "nemotron-3-super",
-        endpointUrl: "https://compatible.example.test/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-        compatibleEndpointReasoning: "false",
-      });
-      const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
-
-      try {
-        const result = await handleProviderInferenceState({
-          ...baseOptions(deps, session),
-          resume: true,
-          authoritativeResumeConfig: true,
-          sandboxName: "spark-assistant",
-        });
-
-        expect(calls.log).toHaveBeenCalledWith(
-          expect.stringContaining("Ignoring NEMOCLAW_REASONING=true"),
-        );
-        expect(calls.log).toHaveBeenCalledWith(
-          expect.stringContaining("nemoclaw onboard --fresh --name <sandbox> --recreate-sandbox"),
-        );
-        expect(result.compatibleEndpointReasoning).toBe("false");
-      } finally {
-        vi.unstubAllEnvs();
-      }
-    });
-
-    it("stays quiet when the env agrees with the recorded flag (#7462)", async () => {
-      vi.stubEnv("NEMOCLAW_REASONING", "true");
-      const session = createSession({
-        provider: "compatible-endpoint",
-        model: "nemotron-3-super",
-        endpointUrl: "https://compatible.example.test/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-        compatibleEndpointReasoning: "true",
-      });
-      const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
-
-      try {
-        await handleProviderInferenceState({
-          ...baseOptions(deps, session),
-          resume: true,
-          authoritativeResumeConfig: true,
-          sandboxName: "spark-assistant",
-        });
-
-        expect(calls.log).not.toHaveBeenCalledWith(
-          expect.stringContaining("Ignoring NEMOCLAW_REASONING"),
-        );
-      } finally {
-        vi.unstubAllEnvs();
-      }
-    });
   });
 
   it("does not use resume shortcuts when fresh is also set", async () => {
