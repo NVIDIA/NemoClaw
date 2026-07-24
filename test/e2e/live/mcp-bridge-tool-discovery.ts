@@ -49,9 +49,7 @@ export async function assertAuthenticatedMcpToolDiscovery(
   fakeMcp: FakeMcpHttpsServer,
   options: { sandboxName: string; artifactPrefix: string; hostSecret: string },
 ): Promise<void> {
-  const toolListRequestsBefore = fakeMcp.requests.filter(
-    (request) => request.rpcMethod === "tools/list",
-  ).length;
+  const requestOffset = fakeMcp.requests.length;
   const status = await host.nemoclaw(
     [options.sandboxName, "mcp", "status", "fake", "--tools", "--json"],
     {
@@ -83,12 +81,36 @@ export async function assertAuthenticatedMcpToolDiscovery(
     truncated: false,
   });
   expect(status.stdout).not.toContain(options.hostSecret);
-  const toolListRequests = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/list");
-  expect(toolListRequests).toHaveLength(toolListRequestsBefore + 2);
+  const discoveryRequests = fakeMcp.requests.slice(requestOffset);
+  const authenticatedRpcMethods = discoveryRequests
+    .filter(
+      (request) =>
+        request.method === "POST" &&
+        request.path === "/mcp" &&
+        request.auth === `Bearer ${options.hostSecret}`,
+    )
+    .map((request) => request.rpcMethod);
+  const initializeIndex = authenticatedRpcMethods.indexOf("initialize");
+  const initializedIndex = authenticatedRpcMethods.indexOf("notifications/initialized");
+  const firstToolListIndex = authenticatedRpcMethods.indexOf("tools/list");
+  expect(initializeIndex, "authenticated MCP discovery must initialize a session").toBeGreaterThan(
+    -1,
+  );
   expect(
-    toolListRequests
-      .slice(toolListRequestsBefore)
-      .every((request) => request.auth === `Bearer ${options.hostSecret}`),
-  ).toBe(true);
+    initializedIndex,
+    "authenticated MCP discovery must notify the server after initialization",
+  ).toBeGreaterThan(initializeIndex);
+  expect(
+    firstToolListIndex,
+    "authenticated MCP discovery must finish initialization before listing tools",
+  ).toBeGreaterThan(initializedIndex);
+
+  const toolListRequests = discoveryRequests.filter(
+    (request) => request.rpcMethod === "tools/list",
+  );
+  expect(toolListRequests).toHaveLength(2);
+  expect(toolListRequests.every((request) => request.auth === `Bearer ${options.hostSecret}`)).toBe(
+    true,
+  );
   expect(fakeMcp.requests.some((request) => request.rpcMethod === "tools/call")).toBe(false);
 }
