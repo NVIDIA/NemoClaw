@@ -6,6 +6,18 @@ import { describe, expect, it } from "vitest";
 import { readValidatedArtifactZipEntry } from "../../../scripts/scorecard/read-artifact-zip.mts";
 import { artifactZip } from "../../helpers/artifact-zip";
 
+const structuralMutations: Array<[string, (archive: Buffer, centralOffset: number) => void]> = [
+  ["link", (archive, centralOffset) => archive.writeUInt32LE(0xa0000000, centralOffset + 38)],
+  [
+    "encrypted",
+    (archive, centralOffset) => {
+      archive.writeUInt16LE(0x0801, 6);
+      archive.writeUInt16LE(0x0801, centralOffset + 8);
+    },
+  ],
+  ["local-header-mismatched", (archive) => archive.writeUInt16LE(8, 8)],
+];
+
 describe("validated GitHub artifact ZIP reader", () => {
   it("reads only the exact root-level entry from a multi-entry archive", () => {
     const archive = artifactZip([
@@ -58,5 +70,13 @@ describe("validated GitHub artifact ZIP reader", () => {
     expect(
       readValidatedArtifactZipEntry(corruptArchive, "summary.json", { maxBytes: 1_024 }),
     ).toBeNull();
+  });
+
+  it.each(structuralMutations)("rejects %s artifact entries", (_name, mutate) => {
+    const archive = artifactZip([{ name: "summary.json", contents: '{"safe":true}' }]);
+    const centralOffset = archive.readUInt32LE(archive.length - 6);
+    mutate(archive, centralOffset);
+
+    expect(readValidatedArtifactZipEntry(archive, "summary.json", { maxBytes: 1_024 })).toBeNull();
   });
 });
