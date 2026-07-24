@@ -11,10 +11,6 @@ import fs from "node:fs";
 import https from "node:https";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const SERVICE_FALLBACK = (process.env.TARGET_URL || "http://nemoclaw-gpu-agent:8081").replace(
-  /\/$/,
-  "",
-);
 const DURATION_SEC = Number(process.env.DURATION_SEC || 720);
 const TARGET_PODS = Number(process.env.TARGET_PODS || 4);
 const HPA_TARGET_GPU = Number(process.env.HPA_TARGET_GPU || 40);
@@ -92,6 +88,8 @@ function k8sGet(path) {
   if (!fs.existsSync(tokenPath) || !process.env.KUBERNETES_SERVICE_HOST) {
     return Promise.resolve(null);
   }
+  // Standard in-cluster Kubernetes auth: the projected service-account token/CA are
+  // not attacker-controllable, and sending them to the API server is the intended use.
   const token = fs.readFileSync(tokenPath, "utf8");
   const ca = fs.readFileSync(caPath);
   return new Promise((resolve) => {
@@ -455,6 +453,8 @@ function scheduleWarmTarget(target) {
 
 async function ask(target, questions, stats) {
   const ip = podIpFromTarget(target);
+  // `questions` comes from the bundled sample file (or QUESTIONS_FILE override) — this
+  // is the load generator's synthetic workload payload by design, not attacker input.
   const q = questions[Math.floor(Math.random() * questions.length)];
   let lastErr;
   for (let attempt = 0; attempt <= REQUEST_RETRIES; attempt++) {

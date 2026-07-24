@@ -172,7 +172,9 @@ ensure_ingress_nginx
 hpa_common_gpu_recreate_stale_workload "${NAMESPACE}" "${DEPLOYMENT}" "${DEPLOYMENT}"
 
 helm_install
-hpa_common_kick_deployment "${NAMESPACE}" "${DEPLOYMENT}" && helm_install || true
+# Grouped so `|| true` unambiguously covers the whole compound command (A && B),
+# not just B — this best-effort re-sync must never abort the script either way.
+{ hpa_common_kick_deployment "${NAMESPACE}" "${DEPLOYMENT}" && helm_install; } || true
 
 if ! hpa_common_wait_rollout "${DEPLOYMENT}" "${NAMESPACE}" "${ROLLOUT_TIMEOUT}"; then
   hpa_common_diagnose_rollout "${NAMESPACE}" "${DEPLOYMENT}"

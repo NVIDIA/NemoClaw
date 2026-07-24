@@ -310,9 +310,10 @@ require_cmd() {
 }
 
 # Match Helm fullname in templates/_helpers.tpl (release name contains chart name → use release only).
+# Driven entirely by the RELEASE/CHART_NAME env vars; no caller passes positional args.
 hpa_common_release_fullname() {
-  local release="${1:-${RELEASE:-nemoclaw-gpu}}"
-  local chart="${2:-${CHART_NAME:-nemoclaw-gpu}}"
+  local release="${RELEASE:-nemoclaw-gpu}"
+  local chart="${CHART_NAME:-nemoclaw-gpu}"
   if [[ "${release}" == *"${chart}"* ]]; then
     echo "${release}"
   else

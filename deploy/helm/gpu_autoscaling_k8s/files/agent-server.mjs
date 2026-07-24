@@ -62,8 +62,11 @@ async function proxyChatCompletions(req, res) {
     res.writeHead(hubRes.status, { "content-type": "application/json" });
     res.end(text);
   } catch (err) {
+    // Log the full error server-side only; the client gets a generic message so
+    // internal details (upstream host/port, stack trace) never leave the pod.
+    console.error("chat completion proxy error:", err);
     res.writeHead(502, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
+    res.end(JSON.stringify({ error: "upstream inference request failed" }));
   } finally {
     recordLlmLatency(performance.now() - llmStart, llmOk);
   }
