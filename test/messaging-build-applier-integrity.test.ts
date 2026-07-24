@@ -184,6 +184,8 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         "@openclaw/msteams@2026.7.1":
           "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz",
         "@openclaw/slack@2026.7.1": OPENCLAW_SLACK_2026_7_1_TARBALL,
+        "@openclaw/voice-call@2026.7.1":
+          "https://registry.npmjs.org/@openclaw/voice-call/-/voice-call-2026.7.1.tgz",
         "@openclaw/whatsapp@2026.7.1":
           "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz",
         "@tencent-weixin/openclaw-weixin@2.4.3":

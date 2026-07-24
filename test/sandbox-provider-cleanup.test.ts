@@ -39,6 +39,7 @@ describe("SANDBOX_PROVIDER_SUFFIXES", () => {
         "slack-bridge",
         "slack-app",
         "teams-bridge",
+        "voiceclaw-nvidia-speech",
         "brave-search",
         "tavily-search",
       ].sort(),
