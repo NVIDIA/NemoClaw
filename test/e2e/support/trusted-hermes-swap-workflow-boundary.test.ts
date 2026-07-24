@@ -35,6 +35,7 @@ const PROTECTED_JOBS = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
   "hermes-dashboard",
+  "hermes-discord",
   "hermes-e2e",
   "hermes-inference-switch",
   "hermes-shields-config",
