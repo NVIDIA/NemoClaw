@@ -108,6 +108,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
   it("does not use legacy gateway destroy when external registration removal is unsupported (#6576)", () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
+      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
       [
         "openshell gateway remove nemoclaw",
         { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
@@ -137,9 +138,6 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         rmSync: vi.fn(),
         run: (command, args) => {
           calls.push({ args, command });
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           return responses.get([command, ...args].join(" ")) ?? ok();
         },
         runDocker: () => ok(),
@@ -183,6 +181,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
   it("falls back to legacy gateway destroy only when gateway remove is unsupported", () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
+      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
       [
         "openshell gateway remove nemoclaw",
         { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
@@ -198,9 +197,6 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         rmSync: vi.fn(),
         run: (command, args) => {
           calls.push({ args, command });
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           return responses.get([command, ...args].join(" ")) ?? ok();
         },
         runDocker: () => ok(""),
@@ -219,6 +215,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const warnings: string[] = [];
     const responses = new Map<string, RunResult>([
+      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
       ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: "permission denied" }],
     ]);
     const result = runUninstallPlan(
@@ -231,9 +228,6 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         rmSync: vi.fn(),
         run: (command, args) => {
           calls.push({ args, command });
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           return responses.get([command, ...args].join(" ")) ?? ok();
         },
         runDocker: () => ok(""),
@@ -362,10 +356,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         rmSync: fs.rmSync,
         run: (command: string, args: string[]) => {
           runCalls.push(args);
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: `nemoclaw-${String(port)}` }]));
-          }
-          return ok();
+          return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+            ? ok(JSON.stringify([{ name: `nemoclaw-${String(port)}` }]))
+            : ok();
         },
         runDocker: () => ok(""),
       };

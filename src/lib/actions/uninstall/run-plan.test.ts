@@ -17,6 +17,12 @@ function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
 }
 
+function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
+  return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+    ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+    : ok();
+}
+
 const PROXY_CMDLINE = "/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\n";
 // Real-world: model-router is a Python venv script so the OS interposes the
 // interpreter — args[0]=python, args[1]=model-router (issue #5169).
@@ -63,12 +69,9 @@ describe("uninstall run plan", () => {
   it("applies a non-destructive uninstall run with fake tools", () => {
     const logs: string[] = [];
     const run = vi.fn((command: string, args: string[]) => {
-      if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-        return ok(JSON.stringify([{ name: "nemoclaw" }]));
-      }
       if (args[0] === "-c") return ok("/fake/bin/tool\n");
       if (args[0] === "-f") return ok("");
-      return ok();
+      return okWithKnownGatewayList(command, args);
     });
     const dockerCalls: string[][] = [];
     const runDocker = vi.fn((args: string[]) => {
@@ -410,9 +413,6 @@ describe("uninstall run plan", () => {
           log: (line) => logs.push(line),
           rmSync: vi.fn(),
           run: (command, args) => {
-            if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-              return ok(JSON.stringify([{ name: "nemoclaw" }]));
-            }
             if (command === "ps") {
               const result = stub(args);
               if (result) return result;
@@ -421,7 +421,7 @@ describe("uninstall run plan", () => {
             if (command === "lsof") return ok("");
             if (args[0] === "-c") return ok("/fake/bin/tool\n");
             if (args[0] === "-f") return ok("");
-            return ok();
+            return okWithKnownGatewayList(command, args);
           },
           runDocker: () => ok(""),
         },
@@ -461,9 +461,6 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
             return ok("55678\n");
           }
@@ -473,7 +470,7 @@ describe("uninstall run plan", () => {
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -505,9 +502,6 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
             return ok("77777\n");
           }
@@ -517,7 +511,7 @@ describe("uninstall run plan", () => {
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -553,9 +547,6 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "lsof" && args[0] === "-ti") {
             lsofPorts.push(args[1] ?? "");
             // Only return a hit when the scan is asking about the custom port.
@@ -568,7 +559,7 @@ describe("uninstall run plan", () => {
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -608,9 +599,6 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
             return ok("99999\n");
           }
@@ -620,7 +608,7 @@ describe("uninstall run plan", () => {
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -658,9 +646,6 @@ describe("uninstall run plan", () => {
           log: (line) => logs.push(line),
           rmSync: vi.fn(),
           run: (command, args) => {
-            if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-              return ok(JSON.stringify([{ name: "nemoclaw" }]));
-            }
             if (command === "ps") {
               const result = stub(args);
               if (result) return result;
@@ -668,7 +653,7 @@ describe("uninstall run plan", () => {
             if (command === "lsof") return ok("");
             if (args[0] === "-c") return ok("/fake/bin/tool\n");
             if (args[0] === "-f") return ok("");
-            return ok();
+            return okWithKnownGatewayList(command, args);
           },
           runDocker: () => ok(""),
         },
@@ -705,9 +690,6 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
             return ok("55679\n");
           }
@@ -720,7 +702,7 @@ describe("uninstall run plan", () => {
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -756,9 +738,6 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
             return ok("77888\n");
           }
@@ -771,7 +750,7 @@ describe("uninstall run plan", () => {
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -806,9 +785,6 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
             return ok("88888\n");
           }
@@ -821,7 +797,7 @@ describe("uninstall run plan", () => {
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -860,9 +836,6 @@ describe("uninstall run plan", () => {
           error: (line: string) => warnings.push(line),
           rmSync: vi.fn(),
           run: (command, args) => {
-            if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-              return ok(JSON.stringify([{ name: "nemoclaw" }]));
-            }
             if (command === "ps") {
               const result = stub(args);
               if (result) return result;
@@ -870,7 +843,7 @@ describe("uninstall run plan", () => {
             if (command === "lsof") return ok("");
             if (args[0] === "-c") return ok("/fake/bin/tool\n");
             if (args[0] === "-f") return ok("");
-            return ok();
+            return okWithKnownGatewayList(command, args);
           },
           runDocker: () => ok(""),
         },
@@ -900,12 +873,9 @@ describe("uninstall run plan", () => {
         error: (line: string) => warnings.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -929,13 +899,10 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "lsof") return ok("");
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -967,11 +934,8 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (args[0] === "swapoff") return { status: 1, stdout: "", stderr: "swapoff failed" };
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -996,14 +960,11 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           if (command === "openshell" && args[0] === "gateway" && args[1] === "remove") {
             return { status: 1, stdout: "", stderr: "gateway not found" };
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
@@ -1464,9 +1425,6 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-            return ok(JSON.stringify([{ name: "nemoclaw" }]));
-          }
           const psResult = psStub("9999887", {
             cmdline: "/home/test/.local/bin/openshell-gateway --port 8080\n",
             exited,
@@ -1482,7 +1440,7 @@ describe("uninstall run plan", () => {
           if (command === "lsof") return ok("");
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           if (args[0] === "-f") return ok("");
-          return ok();
+          return okWithKnownGatewayList(command, args);
         },
         runDocker: () => ok(""),
       },
