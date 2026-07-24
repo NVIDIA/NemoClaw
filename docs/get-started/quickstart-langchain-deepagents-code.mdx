@@ -166,6 +166,8 @@ They disable Deep Agents Code package update checks and the LangGraph server ver
 The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
 CLI and TUI model parameter overrides and custom rubric models are blocked.
+For headless runs, `--max-retries` remains available after Deep Agents Code validates the retry count.
+The managed boundary discards every other model parameter, including credentials, endpoints, and provider settings.
 Project and user-defined subagents remain available, but they inherit the managed chat model instead of accepting their own model override.
 MCP servers registered through `nemoclaw <sandbox-name> mcp add` remain available through NemoClaw's dedicated `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and OpenShell egress policy.
 Project and user MCP files are never auto-loaded.
