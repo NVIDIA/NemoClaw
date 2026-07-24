@@ -57,10 +57,10 @@ export interface DetachedForwardStartOptions {
   // only by `runDetachedForwardStartWithRetries`. Defaults to 3.
   maxRetries?: number;
   // Loopback port-liveness probe. Defaults to `probeLocalPortListening` (a
-  // synchronous Node TCP connect to 127.0.0.1:port). Consulted only as a
-  // fallback when openshell reports it could not track the backgrounded
-  // forward (see the poll loop). Injectable so unit tests need not open real
-  // sockets or spawn probe subprocesses.
+  // synchronous Node TCP connect to 127.0.0.1:port). The retry wrapper uses it
+  // to reject a listener that predates an attempt. The poll loop uses it only
+  // for listener-start and untracked-forward diagnostics. Injectable so unit
+  // tests need not open real sockets or spawn probe subprocesses.
   isPortListening?: (port: number) => boolean;
 }
 
@@ -89,8 +89,9 @@ export function looksLikeForwardPortConflict(diagnostic: string): boolean {
  * ssh client delegates the -L forward to the ControlMaster mux daemon and
  * exits, which openshell 0.0.72+ reports as "ssh exited before local forward
  * listener opened" even though the mux daemon holds the listener and serves
- * traffic. Confirmation still requires the live-port probe, so a genuinely
- * failed ssh (closed port) keeps timing out as before. See GitHub #6099.
+ * traffic. Confirmation still requires the live-port probe. A definitive
+ * listener failure with a closed port returns for bounded retry; other closed-
+ * port failures keep polling until the deadline. See GitHub #6099 and #7266.
  */
 export function looksLikeUntrackedForward(diagnostic: string): boolean {
   return /could not discover backgrounded ssh process|forward may be running but is not tracked|ssh exited before local forward listener opened|local forward listener was not reachable/i.test(
@@ -102,15 +103,16 @@ export function looksLikeUntrackedForward(diagnostic: string): boolean {
  * True only after openshell reports that the SSH process has definitively
  * stopped waiting for its local listener. Unlike the broader untracked-
  * forward diagnostic above, this means another list poll cannot make the
- * terminated attempt appear. A live-port probe must still run first because
- * a ControlMaster mux can own the listener after the child exits (#6099).
+ * terminated attempt appear. Successful ownership enumeration plus a live-port
+ * probe preserves the ControlMaster compatibility path after the child exits
+ * (#6099).
  *
  * Compatibility boundary: these exact diagnostics are emitted by the pinned
  * OpenShell 0.0.85 forward-start path tracked in #7266. Reassess this matcher
  * when NemoClaw's supported OpenShell range moves beyond 0.0.85, and remove it
  * once OpenShell either keeps the attempt alive until the listener is ready or
  * exposes a structured retryable outcome. Keep the fragments narrow so an
- * unrelated SSH or gateway failure cannot enter the cleanup-and-retry path.
+ * unrelated SSH or gateway failure cannot enter the listener-retry path.
  */
 export function looksLikeForwardListenerStartFailure(diagnostic: string): boolean {
   return /ssh exited before local forward listener opened|local forward listener did not open\b/i.test(
@@ -281,12 +283,15 @@ export function buildForwardStartProgressLogger(
 /**
  * Spawn `openshell forward start --background` as a detached child and wait
  * for the resulting forward to appear in `openshell forward list`. Returns
- * `ok: true` as soon as the live entry is observed, regardless of whether
- * the original spawn process has exited yet. Returns `ok: false` with a
- * captured diagnostic when:
+ * `ok: true` when the expected list entry appears, or under the established
+ * #6099 compatibility path after successful list enumeration and a live-port
+ * probe. Returns `ok: false` with a captured diagnostic when:
  *   - the spawn itself failed (ENOENT, permission denied, …);
  *   - the parent process wrote an EADDRINUSE-style error to stderr before
  *     the deadline (port conflict — retry path);
+ *   - a definitive listener failure makes the attempt eligible for retry;
+ *   - a foreign or otherwise unproven live listener creates an ownership
+ *     conflict;
  *   - the deadline expired without the forward appearing.
  *
  * The diagnostic file pair is removed before return, so the temp dir does
@@ -394,14 +399,11 @@ export function runDetachedForwardStartWithDiagnostics(
         isPortListening,
       });
       if (listenerOutcome) return listenerOutcome;
-      // Fallback for the "untracked forward" failure (GitHub #6099): openshell
-      // established the SSH tunnel but could not register/track it, so it never
-      // appears in `openshell forward list` even though the local port is
-      // already accepting connections and the dashboard is serving. When
-      // openshell says so AND the local forward port is live, treat the forward
-      // as confirmed instead of letting onboard time out and roll back a
-      // healthy sandbox. The EADDRINUSE conflict check above runs first, so a
-      // port held by a *different* process is never mistaken for our forward.
+      // Preserve the established "untracked forward" compatibility path
+      // (GitHub #6099). It requires openshell's narrow diagnostic, a successful
+      // list query with no foreign sandbox row, and a live local port. This is
+      // intentionally not widened to other diagnostics because the probe does
+      // not establish process identity.
       if (
         lastFetchError === null &&
         !listedForAnotherSandbox &&

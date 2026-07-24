@@ -582,10 +582,9 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     expect(isPortListening).toHaveBeenCalled();
   });
 
-  it("does not consult the port probe unless openshell reports an untracked forward", () => {
-    // A plain empty list (no "not tracked" notice) must NOT trigger the
-    // live-port fallback — otherwise an unrelated listener on the port could be
-    // mistaken for the forward. This guards the gate on looksLikeUntrackedForward.
+  it("does not run the post-spawn probe without a relevant diagnostic", () => {
+    // A plain empty list must not trigger the post-spawn live-port probe. The
+    // retry wrapper's separate pre-attempt probe is outside this helper.
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockReturnValue({ pid: 42 });
     const sleep = vi.fn();
