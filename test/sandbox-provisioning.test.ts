@@ -28,6 +28,11 @@ const DEEPAGENTS_DOCKERFILE_BASE = path.join(
   "Dockerfile.base",
 );
 
+function completedDockerStage(dockerfile: string): string {
+  const start = dockerfile.lastIndexOf("\nFROM ");
+  return start >= 0 ? dockerfile.slice(start) : dockerfile;
+}
+
 function dockerRunCommandBetween(
   dockerfile: string,
   startMarker: string,
@@ -1038,7 +1043,7 @@ describe("sandbox provisioning: base runtime tools", () => {
     ["Hermes", HERMES_DOCKERFILE_BASE],
     ["Deep Agents Code", DEEPAGENTS_DOCKERFILE_BASE],
   ])("installs pinned nftables for OpenShell bypass enforcement in %s", (_agent, file) => {
-    const dockerfile = fs.readFileSync(file, "utf-8");
+    const dockerfile = completedDockerStage(fs.readFileSync(file, "utf-8"));
     const aptInstall = dockerfile.match(
       /^RUN apt-get update && apt-get install -y --no-install-recommends \\\n(?:.*\\\n)*.*$/m,
     )?.[0];
@@ -1048,7 +1053,7 @@ describe("sandbox provisioning: base runtime tools", () => {
   });
 
   it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
-    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const dockerfile = completedDockerStage(fs.readFileSync(DOCKERFILE_BASE, "utf-8"));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
     const fakePy3 = path.join(tmp, "usr-bin", "python3");
@@ -1081,7 +1086,7 @@ describe("sandbox provisioning: base runtime tools", () => {
   });
 
   it("symlinks bare `python` to python3 so agent tool calls don't fail with command-not-found (#1452)", () => {
-    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const dockerfile = completedDockerStage(fs.readFileSync(DOCKERFILE_BASE, "utf-8"));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-pysymlink-"));
     const lists = path.join(tmp, "apt-lists");
     const fakePy3 = path.join(tmp, "usr-bin", "python3");
