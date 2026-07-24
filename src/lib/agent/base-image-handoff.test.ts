@@ -100,7 +100,6 @@ function installInspections(
   } = {},
 ): void {
   dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) => {
-    if (format !== "{{json .}}") return input.imageId;
     const handoff = ref === input.handoffRef && input.handoffRef !== input.sourceRef;
     const imageOverrides = handoff ? overrides.handoff : overrides.source;
     const provenance = handoff
@@ -110,18 +109,20 @@ function installInspections(
       : overrides.sourceProvenance === undefined
         ? input.provenance
         : overrides.sourceProvenance;
-    return JSON.stringify({
-      Id: input.imageId,
-      Os: input.metadata.os,
-      Architecture: input.metadata.architecture,
-      RepoDigests: [],
-      Config: {
-        Labels: {
-          ...(provenance ? { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance } : {}),
-        },
-      },
-      ...imageOverrides,
-    });
+    return format === "{{json .}}"
+      ? JSON.stringify({
+          Id: input.imageId,
+          Os: input.metadata.os,
+          Architecture: input.metadata.architecture,
+          RepoDigests: [],
+          Config: {
+            Labels: {
+              ...(provenance ? { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance } : {}),
+            },
+          },
+          ...imageOverrides,
+        })
+      : input.imageId;
   });
 }
 
