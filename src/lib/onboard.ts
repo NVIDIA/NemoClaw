@@ -3848,6 +3848,7 @@ async function setupPoliciesWithSelection(
         note,
         isNonInteractive,
         waitForSandboxReady,
+        waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
         syncPresetSelection,
         selectPolicyTier,
         setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),

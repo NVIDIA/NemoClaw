@@ -96,6 +96,7 @@ export type SetupPolicySelectionDeps = {
   note: (message: string) => void;
   isNonInteractive: () => boolean;
   waitForSandboxReady: (sandboxName: string) => boolean;
+  waitForSandboxControlPlaneReady: (sandboxName: string) => boolean;
   syncPresetSelection: (
     sandboxName: string,
     currentAppliedPresets: string[],
@@ -235,9 +236,16 @@ function requireSandboxReady(
   sandboxName: string,
   stage: "before" | "after",
 ): void {
-  if (deps.waitForSandboxReady(sandboxName)) return;
-  console.error(`  Sandbox '${sandboxName}' was not ready ${stage} policy application.`);
-  process.exit(1);
+  if (!deps.waitForSandboxReady(sandboxName)) {
+    console.error(`  Sandbox '${sandboxName}' was not ready ${stage} policy application.`);
+    process.exit(1);
+  }
+  if (stage === "after" && !deps.waitForSandboxControlPlaneReady(sandboxName)) {
+    console.error(
+      `  Sandbox '${sandboxName}' did not re-register with OpenShell after policy application.`,
+    );
+    process.exit(1);
+  }
 }
 
 async function setupPoliciesWithSelectionInner(

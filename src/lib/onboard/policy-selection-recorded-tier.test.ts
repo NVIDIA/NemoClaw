@@ -11,6 +11,7 @@ describe("policy selection after interrupted onboarding", () => {
     const setPolicyTier = vi.fn();
     const syncPresetSelection = vi.fn();
     const waitForSandboxReady = vi.fn(() => true);
+    const waitForSandboxControlPlaneReady = vi.fn(() => true);
     const onSelection = vi.fn();
     const deps = {
       policies: {
@@ -33,6 +34,7 @@ describe("policy selection after interrupted onboarding", () => {
       note: vi.fn(),
       isNonInteractive: vi.fn(() => true),
       waitForSandboxReady,
+      waitForSandboxControlPlaneReady,
       syncPresetSelection,
       selectPolicyTier,
       setPolicyTier,
@@ -62,6 +64,10 @@ describe("policy selection after interrupted onboarding", () => {
     );
     expect(waitForSandboxReady.mock.invocationCallOrder[1]).toBeGreaterThan(
       syncPresetSelection.mock.invocationCallOrder[0],
+    );
+    expect(waitForSandboxControlPlaneReady).toHaveBeenCalledOnce();
+    expect(waitForSandboxControlPlaneReady.mock.invocationCallOrder[0]).toBeGreaterThan(
+      waitForSandboxReady.mock.invocationCallOrder[1],
     );
   });
 });
