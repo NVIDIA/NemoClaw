@@ -22,8 +22,10 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 // fixture from e2e-test.ts so failures attach the per-target artifact root.
 
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
+const LIVE_TIMEOUT_MS = 2 * 60_000;
 
 test("openshell-version-pin: selects shipping 0.0.85 between older and too-new releases", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "prepare a mixed OpenShell release catalog",
@@ -425,6 +427,7 @@ async function runVersionPinTarget(
 }
 
 test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.85 via gh download", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "stage a too-new OpenShell installation",
@@ -440,6 +443,7 @@ test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.8
 });
 
 test("openshell-version-pin: falls back to curl when gh cannot fetch the pinned release", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "stage a too-new OpenShell installation",

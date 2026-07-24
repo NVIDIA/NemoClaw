@@ -18,14 +18,19 @@ const temporaryRoots: string[] = [];
 function progressProbe() {
   const lines: string[] = [];
   const timers: Array<() => void> = [];
+  let clockMs = 0;
   const progress = startTestProgress(
     "Bedrock command support",
     ["run Bedrock command", "verify Bedrock result"],
     {
       clearTimer: () => undefined,
       logLine: (line) => lines.push(line),
-      setTimer: (callback) => {
-        timers.push(callback);
+      now: () => clockMs,
+      setTimer: (callback, delayMs) => {
+        timers.push(() => {
+          clockMs += delayMs;
+          callback();
+        });
         return {};
       },
     },

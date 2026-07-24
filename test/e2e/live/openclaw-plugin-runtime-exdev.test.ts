@@ -13,7 +13,9 @@ import {
   hasRequiredOpenshellMessagingFeatures,
   REQUIRED_OPENSHELL_MCP_FEATURES,
 } from "../../../src/lib/onboard/openshell-feature-gate.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -24,6 +26,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 import {
   createOpenShellDriverConfigTestWrapper,
@@ -70,6 +73,10 @@ const NEMOCLAW_RELEASE_OPENSHELL_VERSION = "0.0.71";
 const CURRENT_OPENSHELL_VERSION = "0.0.85";
 const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
 const SANDBOX_BASE_IMAGE_REF = "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.71";
+const RELEASE_BUILDER_IMAGE_REF =
+  "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
+const CURRENT_BUILDER_IMAGE_REF =
+  "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-plugin-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
@@ -109,6 +116,9 @@ const EXDEV_PATTERNS = [
   /cross-device link not permitted/i,
 ];
 type WeatherFixtureVersion = "v1" | "v2" | "v3";
+
+const RELEASE_BASELINE_TEST_SELECTOR = "release-baseline";
+const CURRENT_LIFECYCLE_TEST_SELECTOR = "current-lifecycle";
 
 const GATEWAY_CATALOG_CALL_SOURCE = String.raw`
 import { Buffer } from "node:buffer";
@@ -454,14 +464,19 @@ function writeCustomPluginVersion(
   );
 }
 
-function createCustomPluginDockerfile(context: CustomPluginBuildContext): void {
+function createCustomPluginDockerfile(
+  context: CustomPluginBuildContext,
+  builderImageRef: string,
+): void {
   const sourceDockerfile = path.join(context.sourceRoot, "Dockerfile");
   const source = fs.readFileSync(sourceDockerfile, "utf8");
   const baseImageAnchor = "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n";
+  const builderImageAnchor = `FROM ${RELEASE_BUILDER_IMAGE_REF} AS builder\n`;
   const runtimeAnchor = "FROM ${BASE_IMAGE}\n";
   expect(
     source.match(/^ARG BASE_IMAGE=ghcr\.io\/nvidia\/nemoclaw\/sandbox-base:latest$/gm)?.length,
   ).toBe(1);
+  expect(source.split(builderImageAnchor)).toHaveLength(2);
   expect(source.match(/^FROM \$\{BASE_IMAGE\}$/gm)?.length, "expected one runtime stage").toBe(1);
   expect(
     source.match(/^ARG OPENCLAW_VERSION=([0-9.]+)$/m)?.[1],
@@ -474,6 +489,7 @@ function createCustomPluginDockerfile(context: CustomPluginBuildContext): void {
 
   const runtime = source
     .replace(baseImageAnchor, `ARG BASE_IMAGE=${SANDBOX_BASE_IMAGE_REF}\n`)
+    .replace(builderImageAnchor, `FROM ${builderImageRef} AS builder\n`)
     .replace(runtimeAnchor, "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n");
   const pluginDirName = path.basename(context.pluginDirPath);
   const versionSourceName = path.basename(context.versionSourcePath);
@@ -866,13 +882,264 @@ NODE`;
 
 const runtimeDepsReplacementProbe = trustedSandboxShellScript(runtimeDepsReplacementProbeSource);
 
-test("a custom OpenClaw plugin survives restart, recreation, and rebuild without EXDEV failures (#6108)", {
-  timeout: ONBOARD_TIMEOUT_MS * 3 + REBUILD_TIMEOUT_MS + 15 * 60_000,
+async function prepareCustomPluginSource(
+  host: HostCliClient,
+  cleanup: CleanupRegistry,
+  builderImageRef: string,
+): Promise<CustomPluginBuildContext> {
+  const context = createCustomPluginBuildContext();
+  cleanup.add("remove v0.0.71 custom-plugin source worktree", () =>
+    fs.rmSync(context.sourceParentDir, { recursive: true, force: true }),
+  );
+  const cloneRelease = await host.command(
+    "git",
+    [
+      "clone",
+      "--depth",
+      "1",
+      "--branch",
+      NEMOCLAW_RELEASE_TAG,
+      "--single-branch",
+      NEMOCLAW_SOURCE_REPOSITORY,
+      context.sourceRoot,
+    ],
+    {
+      artifactName: "clone-nemoclaw-v0-0-71-plugin-source",
+      env: liveEnv(),
+      timeoutMs: 180_000,
+    },
+  );
+  expect(cloneRelease.exitCode, resultText(cloneRelease)).toBe(0);
+  const releaseHead = await host.command("git", ["-C", context.sourceRoot, "rev-parse", "HEAD"], {
+    artifactName: "verify-nemoclaw-v0-0-71-plugin-source",
+    env: liveEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(releaseHead.exitCode, resultText(releaseHead)).toBe(0);
+  expect(releaseHead.stdout.trim()).toBe(NEMOCLAW_RELEASE_COMMIT);
+  createCustomPluginDockerfile(context, builderImageRef);
+  return context;
+}
+
+async function startDeploymentFixture(
+  artifacts: ArtifactSink,
+  cleanup: CleanupRegistry,
+  progress: TestProgress,
+): Promise<NodeJS.ProcessEnv> {
+  const fake = await startFakeOpenAiCompatibleServer({
+    apiKey: "nemoclaw-exdev-dummy-key",
+    host: "0.0.0.0",
+    model: "nemoclaw-exdev-probe",
+    progress,
+    publicHost: "host.openshell.internal",
+    responseText: "ok",
+  });
+  await artifacts.writeJson("fake-openai-compatible.json", { baseUrl: fake.baseUrl });
+  cleanup.add("close EXDEV compatible endpoint mock", async () => {
+    try {
+      await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
+    } finally {
+      await fake.close();
+    }
+  });
+
+  return liveEnv({
+    COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
+    NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
+    NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
+    NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
+    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+    NEMOCLAW_SANDBOX_BASE_IMAGE_REF: SANDBOX_BASE_IMAGE_REF,
+    NEMOCLAW_POLICY_MODE: "skip",
+    NEMOCLAW_PREFERRED_API: "openai-completions",
+    NEMOCLAW_PROVIDER: "custom",
+  });
+}
+
+async function requireDocker(
+  host: HostCliClient,
+  artifactName: string,
+  reason: string,
+  skip: (note?: string) => never,
+): Promise<void> {
+  const docker = await host.command("docker", ["info"], {
+    artifactName,
+    env: liveEnv(),
+    timeoutMs: 30_000,
+  });
+  if (docker.exitCode === 0) return;
+  if (process.env.GITHUB_ACTIONS === "true") {
+    throw new Error(`${reason}: ${resultText(docker)}`);
+  }
+  skip(reason);
+}
+
+test("the release-baseline custom plugin loads with its exact NemoClaw and OpenShell versions (#6108)", {
+  timeout: ONBOARD_TIMEOUT_MS + 15 * 60_000,
   meta: {
     e2ePhases: [
-      "confirm Docker CLI and clear the plugin sandbox",
+      "confirm Docker CLI and clear the release plugin sandbox",
       "clone and build the tagged plugin fixture",
       "install tagged OpenShell and onboard the release sandbox",
+      "verify the tagged plugin and remove the release sandbox",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  await artifacts.target.declare({
+    id: "openclaw-plugin-runtime-exdev-release",
+    boundary: "fresh-openclaw-sandbox-exec",
+    regressionTargets: ["#6108"],
+    contract: [
+      "the exact NemoClaw v0.0.71 checkout installs, builds, and reports its tagged CLI version",
+      "the tagged CLI uses OpenShell 0.0.71 with matching source, base image, and OpenClaw runtime",
+      "release-matched peer/dev dependencies prune private OpenClaw and link the host runtime",
+      "the release weather plugin loads from the custom image without an EXDEV bootstrap failure",
+    ],
+    selector: RELEASE_BASELINE_TEST_SELECTOR,
+    nemoclawSourceRelease: NEMOCLAW_RELEASE_TAG,
+    nemoclawSourceCommit: NEMOCLAW_RELEASE_COMMIT,
+    taggedOpenshellVersion: NEMOCLAW_RELEASE_OPENSHELL_VERSION,
+    sandboxBaseImageRef: SANDBOX_BASE_IMAGE_REF,
+    openclawVersion: WEATHER_OPENCLAW_VERSION,
+  });
+
+  await requireDocker(
+    host,
+    "prereq-docker-info-openclaw-plugin-exdev-release",
+    "Docker is required for the OpenClaw plugin release baseline",
+    skip,
+  );
+
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-delete-openclaw-plugin-exdev-release",
+      env: liveEnv(),
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-openclaw-plugin-exdev-release",
+    env: liveEnv(),
+    timeoutMs: 120_000,
+  });
+  await ignoreCleanupError(() =>
+    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+      artifactName: "pre-cleanup-openshell-delete-openclaw-plugin-exdev-release",
+      env: liveEnv(),
+      timeoutMs: 60_000,
+    }),
+  );
+
+  progress.phase("clone and build the tagged plugin fixture");
+  const customPluginContext = await prepareCustomPluginSource(
+    host,
+    cleanup,
+    RELEASE_BUILDER_IMAGE_REF,
+  );
+  await buildAndVerifyTaggedCli(host, customPluginContext);
+  progress.phase("install tagged OpenShell and onboard the release sandbox");
+  await stopOpenShellGatewayBeforeVersionSwitch(host, "existing");
+  const taggedPinnedOpenshell = await installAndResolvePinnedOpenShell(
+    host,
+    path.join(customPluginContext.sourceRoot, "scripts", "install-openshell.sh"),
+    "v0-0-71",
+    NEMOCLAW_RELEASE_OPENSHELL_VERSION,
+  );
+  const taggedOpenShellWrapper = createOpenShellTmpfsWrapper(taggedPinnedOpenshell.cli);
+  cleanup.add("remove v0.0.71 EXDEV OpenShell PATH wrapper", taggedOpenShellWrapper.remove);
+  const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress);
+  const taggedSandboxEnv = withOpenShellWrapperEnv(
+    deploymentEnv,
+    taggedOpenShellWrapper,
+    taggedPinnedOpenshell,
+  );
+
+  const taggedOnboard = await host.command(
+    "node",
+    [
+      customPluginContext.cliEntrypoint,
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes-i-accept-third-party-software",
+      "--no-gpu",
+      "--name",
+      SANDBOX_NAME,
+      "--from",
+      customPluginContext.dockerfilePath,
+    ],
+    {
+      artifactName: "v0-0-71-openclaw-plugin-onboard",
+      cwd: customPluginContext.sourceRoot,
+      env: taggedSandboxEnv,
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  const taggedOnboardText = resultText(taggedOnboard);
+  expect(taggedOnboard.exitCode, taggedOnboardText).toBe(0);
+  expect(taggedOnboardText).toContain("Deployment verified");
+
+  progress.phase("verify the tagged plugin and remove the release sandbox");
+  const taggedRuntimeVersion = await sandbox.exec(SANDBOX_NAME, ["openclaw", "--version"], {
+    artifactName: "v0-0-71-openclaw-version",
+    env: liveEnv(),
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  const taggedRuntimeVersionText = resultText(taggedRuntimeVersion);
+  expect(taggedRuntimeVersion.exitCode, taggedRuntimeVersionText).toBe(0);
+  expect(taggedRuntimeVersionText).toContain(EXPECTED_RELEASE_OPENCLAW_VERSION);
+  const taggedPlugin = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript("HOME=/sandbox openclaw plugins inspect weather --runtime --json"),
+    {
+      artifactName: "v0-0-71-weather-plugin-inspect",
+      env: liveEnv(),
+      timeoutMs: PROBE_TIMEOUT_MS,
+    },
+  );
+  expect(taggedPlugin.exitCode, resultText(taggedPlugin)).toBe(0);
+  const taggedPluginInspect = parseJsonFromText(
+    normalizeSandboxStdoutFrames(taggedPlugin.stdout),
+  ) as WeatherPluginInspect;
+  expect(taggedPluginInspect.plugin?.id).toBe("weather");
+  expect(taggedPluginInspect.plugin?.status).toBe("loaded");
+  expect(taggedPluginInspect.plugin?.toolNames).toContain("get_weather");
+
+  const taggedDestroy = await host.command(
+    "node",
+    [customPluginContext.cliEntrypoint, SANDBOX_NAME, "destroy", "--yes"],
+    {
+      artifactName: "v0-0-71-openclaw-plugin-destroy",
+      cwd: customPluginContext.sourceRoot,
+      env: taggedSandboxEnv,
+      timeoutMs: 120_000,
+    },
+  );
+  expect(taggedDestroy.exitCode, resultText(taggedDestroy)).toBe(0);
+
+  await artifacts.target.complete({
+    id: "openclaw-plugin-runtime-exdev-release",
+    taggedOnboardExitCode: taggedOnboard.exitCode,
+    taggedDestroyExitCode: taggedDestroy.exitCode,
+    assertions: {
+      taggedReleaseRuntimeMatched: taggedRuntimeVersionText.includes(
+        EXPECTED_RELEASE_OPENCLAW_VERSION,
+      ),
+      taggedReleasePluginLoaded:
+        taggedPluginInspect.plugin?.id === "weather" &&
+        taggedPluginInspect.plugin?.status === "loaded" &&
+        Array.isArray(taggedPluginInspect.plugin?.toolNames) &&
+        taggedPluginInspect.plugin.toolNames.includes("get_weather"),
+    },
+  });
+});
+
+test("the current-lifecycle custom plugin survives restart, recreation, and rebuild without EXDEV failures (#6108)", {
+  timeout: ONBOARD_TIMEOUT_MS * 2 + REBUILD_TIMEOUT_MS + 15 * 60_000,
+  meta: {
+    e2ePhases: [
+      "confirm Docker CLI and clear the current plugin sandbox",
+      "clone and prepare the current plugin fixture",
       "install current OpenShell and onboard plugin v1",
       "restart the gateway and confirm plugin v1",
       "recreate the sandbox with plugin v2",
@@ -886,10 +1153,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     boundary: "fresh-openclaw-sandbox-exec",
     regressionTargets: ["#6108", "#3513", "#3127"],
     contract: [
-      "the exact NemoClaw v0.0.71 checkout installs, builds, and reports its tagged CLI version",
-      "the tagged CLI uses OpenShell 0.0.71 with matching source, base image, and OpenClaw runtime",
-      "the current CLI reinstalls OpenShell 0.0.85 before current lifecycle coverage",
-      "release-matched peer/dev dependencies prune private OpenClaw and link the host runtime",
+      "the current CLI uses OpenShell 0.0.85 for current lifecycle coverage",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
       "custom-plugin v1 survives restart, recreation installs v2, and rebuild installs v3",
       "workspace state survives both onboarding recreation and rebuild",
@@ -899,27 +1163,20 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
       `legacy source-side staging fails with EXDEV across the same ${EXDEV_TMPFS_SOURCE} to plugin-runtime-deps boundary`,
       "OpenClaw-style target-side plugin runtime-deps replacement completes without EXDEV",
     ],
+    selector: CURRENT_LIFECYCLE_TEST_SELECTOR,
     nemoclawSourceRelease: NEMOCLAW_RELEASE_TAG,
     nemoclawSourceCommit: NEMOCLAW_RELEASE_COMMIT,
-    taggedOpenshellVersion: NEMOCLAW_RELEASE_OPENSHELL_VERSION,
     currentOpenshellVersion: CURRENT_OPENSHELL_VERSION,
     sandboxBaseImageRef: SANDBOX_BASE_IMAGE_REF,
     openclawVersion: WEATHER_OPENCLAW_VERSION,
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-openclaw-plugin-exdev",
-    env: liveEnv(),
-    timeoutMs: 30_000,
-  });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for the OpenClaw plugin EXDEV live guard: ${resultText(docker)}`,
-      );
-    }
-    skip("Docker is required for the OpenClaw plugin EXDEV live guard");
-  }
+  await requireDocker(
+    host,
+    "prereq-docker-info-openclaw-plugin-exdev",
+    "Docker is required for the OpenClaw plugin EXDEV live guard",
+    skip,
+  );
 
   expect(
     fs.existsSync(CLI_ENTRYPOINT),
@@ -954,160 +1211,16 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     }),
   );
 
-  progress.phase("clone and build the tagged plugin fixture");
+  progress.phase("clone and prepare the current plugin fixture");
   const policySourceSnapshot = snapshotPolicySources();
-  const customPluginContext = createCustomPluginBuildContext();
-  cleanup.add("remove v0.0.71 custom-plugin source worktree", () =>
-    fs.rmSync(customPluginContext.sourceParentDir, { recursive: true, force: true }),
-  );
-  const cloneRelease = await host.command(
-    "git",
-    [
-      "clone",
-      "--depth",
-      "1",
-      "--branch",
-      NEMOCLAW_RELEASE_TAG,
-      "--single-branch",
-      NEMOCLAW_SOURCE_REPOSITORY,
-      customPluginContext.sourceRoot,
-    ],
-    {
-      artifactName: "clone-nemoclaw-v0-0-71-plugin-source",
-      env: liveEnv(),
-      timeoutMs: 180_000,
-    },
-  );
-  expect(cloneRelease.exitCode, resultText(cloneRelease)).toBe(0);
-  const releaseHead = await host.command(
-    "git",
-    ["-C", customPluginContext.sourceRoot, "rev-parse", "HEAD"],
-    {
-      artifactName: "verify-nemoclaw-v0-0-71-plugin-source",
-      env: liveEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(releaseHead.exitCode, resultText(releaseHead)).toBe(0);
-  expect(releaseHead.stdout.trim()).toBe(NEMOCLAW_RELEASE_COMMIT);
-  createCustomPluginDockerfile(customPluginContext);
-  await buildAndVerifyTaggedCli(host, customPluginContext);
-
-  progress.phase("install tagged OpenShell and onboard the release sandbox");
-  await stopOpenShellGatewayBeforeVersionSwitch(host, "existing");
-  const taggedPinnedOpenshell = await installAndResolvePinnedOpenShell(
+  const customPluginContext = await prepareCustomPluginSource(
     host,
-    path.join(customPluginContext.sourceRoot, "scripts", "install-openshell.sh"),
-    "v0-0-71",
-    NEMOCLAW_RELEASE_OPENSHELL_VERSION,
+    cleanup,
+    CURRENT_BUILDER_IMAGE_REF,
   );
-  // OpenShell 0.0.71 predates the current 0.0.85 MCP capability marker.
-  // The tagged CLI's own onboarding preflight below owns this compatibility check.
-  const taggedOpenShellWrapper = createOpenShellTmpfsWrapper(taggedPinnedOpenshell.cli);
-  cleanup.add("remove v0.0.71 EXDEV OpenShell PATH wrapper", taggedOpenShellWrapper.remove);
-
-  // The OpenShell gateway reaches the fixture from its network namespace, so
-  // runner loopback is not routable from the readiness probe.
-  const fake = await startFakeOpenAiCompatibleServer({
-    apiKey: "nemoclaw-exdev-dummy-key",
-    host: "0.0.0.0",
-    model: "nemoclaw-exdev-probe",
-    progress,
-    publicHost: "host.openshell.internal",
-    responseText: "ok",
-  });
-  await artifacts.writeJson("fake-openai-compatible.json", { baseUrl: fake.baseUrl });
-  cleanup.add("close EXDEV compatible endpoint mock", async () => {
-    await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
-    await fake.close();
-  });
-
-  const deploymentEnv = liveEnv({
-    COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
-    NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
-    NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
-    NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
-    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    NEMOCLAW_SANDBOX_BASE_IMAGE_REF: SANDBOX_BASE_IMAGE_REF,
-    NEMOCLAW_POLICY_MODE: "skip",
-    NEMOCLAW_PREFERRED_API: "openai-completions",
-    NEMOCLAW_PROVIDER: "custom",
-  });
-  const taggedSandboxEnv = withOpenShellWrapperEnv(
-    deploymentEnv,
-    taggedOpenShellWrapper,
-    taggedPinnedOpenshell,
-  );
-
-  const taggedOnboard = await host.command(
-    "node",
-    [
-      customPluginContext.cliEntrypoint,
-      "onboard",
-      "--fresh",
-      "--non-interactive",
-      "--yes-i-accept-third-party-software",
-      "--no-gpu",
-      "--name",
-      SANDBOX_NAME,
-      "--from",
-      customPluginContext.dockerfilePath,
-    ],
-    {
-      artifactName: "v0-0-71-openclaw-plugin-onboard",
-      cwd: customPluginContext.sourceRoot,
-      env: taggedSandboxEnv,
-      timeoutMs: ONBOARD_TIMEOUT_MS,
-    },
-  );
-  const taggedOnboardText = resultText(taggedOnboard);
-  expect(taggedOnboard.exitCode, taggedOnboardText).toBe(0);
-  expect(taggedOnboardText).toContain("Deployment verified");
-  const taggedRuntimeVersion = await sandbox.exec(SANDBOX_NAME, ["openclaw", "--version"], {
-    artifactName: "v0-0-71-openclaw-version",
-    env: liveEnv(),
-    timeoutMs: PROBE_TIMEOUT_MS,
-  });
-  const taggedRuntimeVersionText = resultText(taggedRuntimeVersion);
-  expect(taggedRuntimeVersion.exitCode, taggedRuntimeVersionText).toBe(0);
-  expect(taggedRuntimeVersionText).toContain(EXPECTED_RELEASE_OPENCLAW_VERSION);
-  const taggedPlugin = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript("HOME=/sandbox openclaw plugins inspect weather --runtime --json"),
-    {
-      artifactName: "v0-0-71-weather-plugin-inspect",
-      env: liveEnv(),
-      timeoutMs: PROBE_TIMEOUT_MS,
-    },
-  );
-  expect(taggedPlugin.exitCode, resultText(taggedPlugin)).toBe(0);
-  const taggedPluginInspect = parseJsonFromText(
-    normalizeSandboxStdoutFrames(taggedPlugin.stdout),
-  ) as WeatherPluginInspect;
-  expect(taggedPluginInspect.plugin?.id).toBe("weather");
-  expect(taggedPluginInspect.plugin?.status).toBe("loaded");
-  expect(taggedPluginInspect.plugin?.toolNames).toContain("get_weather");
-  const taggedDestroy = await host.command(
-    "node",
-    [customPluginContext.cliEntrypoint, SANDBOX_NAME, "destroy", "--yes"],
-    {
-      artifactName: "v0-0-71-openclaw-plugin-destroy",
-      cwd: customPluginContext.sourceRoot,
-      env: taggedSandboxEnv,
-      timeoutMs: 120_000,
-    },
-  );
-  expect(taggedDestroy.exitCode, resultText(taggedDestroy)).toBe(0);
-  await ignoreCleanupError(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "v0-0-71-openclaw-plugin-delete-fallback",
-      env: taggedSandboxEnv,
-      timeoutMs: 60_000,
-    }),
-  );
-
+  const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress);
   progress.phase("install current OpenShell and onboard plugin v1");
-  await stopOpenShellGatewayBeforeVersionSwitch(host, "v0-0-71", taggedSandboxEnv);
+  await stopOpenShellGatewayBeforeVersionSwitch(host, "existing");
   const pinnedOpenshell = await installAndResolvePinnedOpenShell(
     host,
     path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
@@ -1261,8 +1374,6 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
 
   await artifacts.target.complete({
     id: "openclaw-plugin-runtime-exdev",
-    taggedOnboardExitCode: taggedOnboard.exitCode,
-    taggedDestroyExitCode: taggedDestroy.exitCode,
     onboardExitCode: onboard.exitCode,
     restartExitCode: restart.exitCode,
     recreateExitCode: recreate.exitCode,
@@ -1271,14 +1382,6 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     runtimeDepsProbeExitCode: probe.exitCode,
     testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
     assertions: {
-      taggedReleaseRuntimeMatched: taggedRuntimeVersionText.includes(
-        EXPECTED_RELEASE_OPENCLAW_VERSION,
-      ),
-      taggedReleasePluginLoaded:
-        taggedPluginInspect.plugin?.id === "weather" &&
-        taggedPluginInspect.plugin?.status === "loaded" &&
-        Array.isArray(taggedPluginInspect.plugin?.toolNames) &&
-        taggedPluginInspect.plugin.toolNames.includes("get_weather"),
       weatherAfterOnboard:
         weatherAfterOnboard.inspectLoaded &&
         weatherAfterOnboard.catalogToolIds.includes("get_weather") &&
