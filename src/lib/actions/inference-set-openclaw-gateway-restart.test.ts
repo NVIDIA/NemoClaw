@@ -124,6 +124,9 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
             baseUrl: "https://inference.local/v1",
             apiKey: "unused",
             api: "openai-completions",
+            headers: {
+              "X-NemoClaw-Upstream-Provider": "nvidia-prod",
+            },
             models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
           },
         },

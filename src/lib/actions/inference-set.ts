@@ -907,7 +907,7 @@ async function runInferenceSetWithoutHostLock(
       model,
       preferredInferenceApi || getPreferredInferenceApi(config),
       contextWindow ?? undefined,
-      entry.provider === provider ? undefined : provider,
+      provider,
     );
   }
 
