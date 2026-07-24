@@ -214,4 +214,44 @@ describe("publishDownloadArtifact", () => {
     );
     expect(fs.readdirSync(outside)).toEqual([]);
   });
+
+  it("rejects a fresh destination below a symbolic-link parent without writing the target", () => {
+    const staged = path.join(dir, "staged.txt");
+    const outside = path.join(dir, "outside");
+    const linkedParent = path.join(dir, "linked-parent");
+    const destination = path.join(linkedParent, "fresh.txt");
+    fs.writeFileSync(staged, "payload");
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, linkedParent);
+
+    expect(() => publishDownloadArtifact(staged, destination, "file")).toThrow(
+      /destination path '.*linked-parent' is a symbolic link/,
+    );
+    expect(fs.existsSync(path.join(outside, "fresh.txt"))).toBe(false);
+  });
+
+  it("rejects an existing symbolic-link file without changing its target", () => {
+    const staged = path.join(dir, "staged.txt");
+    const outside = path.join(dir, "outside.txt");
+    const destination = path.join(dir, "destination.txt");
+    fs.writeFileSync(staged, "new");
+    fs.writeFileSync(outside, "outside");
+    fs.symlinkSync(outside, destination);
+
+    expect(() => publishDownloadArtifact(staged, destination, "file")).toThrow(
+      /destination path '.*destination\.txt' is a symbolic link/,
+    );
+    expect(fs.readFileSync(outside, "utf8")).toBe("outside");
+  });
+
+  it("atomically replaces an existing regular file", () => {
+    const staged = path.join(dir, "staged.txt");
+    const destination = path.join(dir, "destination.txt");
+    fs.writeFileSync(staged, "new");
+    fs.writeFileSync(destination, "old");
+
+    publishDownloadArtifact(staged, destination, "file");
+
+    expect(fs.readFileSync(destination, "utf8")).toBe("new");
+  });
 });

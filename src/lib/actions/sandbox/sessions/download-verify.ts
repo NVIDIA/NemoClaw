@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -132,48 +133,298 @@ export function assertDownloadArtifactExists(
   }
 }
 
-function assertNoSymlinkInDestinationPath(destinationRoot: string, destination: string): void {
-  const root = path.resolve(destinationRoot);
-  let candidate = path.resolve(destination);
-  const relative = path.relative(root, candidate);
-  if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error(`Refusing to publish the download outside '${destinationRoot}'.`);
+interface DirectoryHandle {
+  fd: number;
+  path: string;
+  dev: number;
+  ino: number;
+}
+
+function errnoCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException).code;
+}
+
+function sameIdentity(left: { dev: number; ino: number }, right: { dev: number; ino: number }) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function symlinkDestinationError(destination: string, candidate: string): Error {
+  return new Error(
+    `Refusing to publish the download to '${destination}': destination path '${candidate}' is a symbolic link.`,
+  );
+}
+
+function openDirectoryNoFollow(directory: string, destination: string): DirectoryHandle {
+  const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+  const directoryFlag = typeof fs.constants.O_DIRECTORY === "number" ? fs.constants.O_DIRECTORY : 0;
+  let fd: number;
+  try {
+    fd = fs.openSync(directory, fs.constants.O_RDONLY | directoryFlag | noFollow);
+  } catch (error) {
+    if (errnoCode(error) === "ELOOP") {
+      throw symlinkDestinationError(destination, directory);
+    }
+    throw error;
   }
+  try {
+    const descriptorStat = fs.fstatSync(fd);
+    const pathStat = fs.lstatSync(directory);
+    if (
+      !descriptorStat.isDirectory() ||
+      pathStat.isSymbolicLink() ||
+      !pathStat.isDirectory() ||
+      !sameIdentity(descriptorStat, pathStat)
+    ) {
+      throw new Error(
+        `Refusing to publish the download to '${destination}': destination directory '${directory}' changed during validation.`,
+      );
+    }
+    return { fd, path: directory, dev: descriptorStat.dev, ino: descriptorStat.ino };
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+}
+
+function assertDirectoryIdentity(directory: DirectoryHandle, destination: string): void {
+  const descriptorStat = fs.fstatSync(directory.fd);
+  const pathStat = fs.lstatSync(directory.path);
+  if (
+    !descriptorStat.isDirectory() ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isDirectory() ||
+    !sameIdentity(directory, descriptorStat) ||
+    !sameIdentity(directory, pathStat)
+  ) {
+    throw new Error(
+      `Refusing to publish the download to '${destination}': destination directory '${directory.path}' changed during publication.`,
+    );
+  }
+}
+
+function ensureDirectoryNoFollow(directory: string, destination: string): DirectoryHandle {
+  const resolved = path.resolve(directory);
+  const missing: string[] = [];
+  let existing = resolved;
+
   while (true) {
     try {
-      if (fs.lstatSync(candidate).isSymbolicLink()) {
+      const stat = fs.lstatSync(existing);
+      if (stat.isSymbolicLink()) {
+        throw symlinkDestinationError(destination, existing);
+      }
+      if (!stat.isDirectory()) {
         throw new Error(
-          `Refusing to publish the download to '${destination}': destination path '${candidate}' is a symbolic link.`,
+          `Refusing to publish the download to '${destination}': destination path '${existing}' is not a directory.`,
         );
       }
+      break;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      if (errnoCode(error) !== "ENOENT") {
         throw error;
       }
+      const parent = path.dirname(existing);
+      if (parent === existing) {
+        throw error;
+      }
+      missing.unshift(path.basename(existing));
+      existing = parent;
     }
-    if (candidate === root) {
-      return;
+  }
+
+  let current = fs.realpathSync(existing);
+  let handle = openDirectoryNoFollow(current, destination);
+  try {
+    for (const component of missing) {
+      assertDirectoryIdentity(handle, destination);
+      const child = path.join(current, component);
+      try {
+        fs.mkdirSync(child);
+      } catch (error) {
+        if (errnoCode(error) !== "EEXIST") {
+          throw error;
+        }
+      }
+      const childHandle = openDirectoryNoFollow(child, destination);
+      assertDirectoryIdentity(handle, destination);
+      fs.closeSync(handle.fd);
+      handle = childHandle;
+      current = child;
     }
-    const parent = path.dirname(candidate);
-    candidate = parent;
+    return handle;
+  } catch (error) {
+    fs.closeSync(handle.fd);
+    throw error;
+  }
+}
+
+function assertSafeDestinationEntry(destination: string): void {
+  try {
+    if (fs.lstatSync(destination).isSymbolicLink()) {
+      throw symlinkDestinationError(destination, destination);
+    }
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+function assertPrivateEntry(
+  entryPath: string,
+  expected: { dev: number; ino: number },
+  destination: string,
+): void {
+  const stat = fs.lstatSync(entryPath);
+  if (!sameIdentity(expected, stat)) {
+    throw new Error(
+      `Refusing to publish the download to '${destination}': private publication entry changed during validation.`,
+    );
+  }
+}
+
+function copyRegularFileToDescriptor(source: string, destinationFd: number): fs.Stats {
+  const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+  const nonBlock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+  const sourceFd = fs.openSync(source, fs.constants.O_RDONLY | noFollow | nonBlock);
+  try {
+    const stat = fs.fstatSync(sourceFd);
+    const pathStat = fs.lstatSync(source);
+    if (
+      !stat.isFile() ||
+      pathStat.isSymbolicLink() ||
+      !pathStat.isFile() ||
+      !sameIdentity(stat, pathStat)
+    ) {
+      throw new Error(`Refusing to publish non-regular staged artifact '${source}'.`);
+    }
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let readPosition = 0;
+    while (true) {
+      const bytesRead = fs.readSync(sourceFd, buffer, 0, buffer.length, readPosition);
+      if (bytesRead === 0) break;
+      let written = 0;
+      while (written < bytesRead) {
+        written += fs.writeSync(destinationFd, buffer, written, bytesRead - written);
+      }
+      readPosition += bytesRead;
+    }
+    return stat;
+  } finally {
+    fs.closeSync(sourceFd);
+  }
+}
+
+function replaceWithPrivateEntry(
+  source: string,
+  destination: string,
+  parent: DirectoryHandle,
+  sourceStat: fs.Stats,
+): void {
+  const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+  const temporaryPath = path.join(
+    parent.path,
+    `.${path.basename(destination)}.nemoclaw-${process.pid}-${randomUUID()}.tmp`,
+  );
+  let temporaryFd: number | null = null;
+  let temporaryExists = false;
+  try {
+    assertDirectoryIdentity(parent, destination);
+    if (sourceStat.isSymbolicLink()) {
+      fs.symlinkSync(fs.readlinkSync(source), temporaryPath);
+      temporaryExists = true;
+      const temporaryStat = fs.lstatSync(temporaryPath);
+      if (!temporaryStat.isSymbolicLink()) {
+        throw new Error(`Refusing to publish changed staged symbolic link '${source}'.`);
+      }
+      assertDirectoryIdentity(parent, destination);
+      assertPrivateEntry(temporaryPath, temporaryStat, destination);
+    } else {
+      temporaryFd = fs.openSync(
+        temporaryPath,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+        0o600,
+      );
+      temporaryExists = true;
+      const temporaryStat = fs.fstatSync(temporaryFd);
+      if (!temporaryStat.isFile() || temporaryStat.nlink !== 1) {
+        throw new Error(`Refusing to publish through a non-private temporary file.`);
+      }
+      assertDirectoryIdentity(parent, destination);
+      assertPrivateEntry(temporaryPath, temporaryStat, destination);
+      const copiedStat = copyRegularFileToDescriptor(source, temporaryFd);
+      fs.fchmodSync(temporaryFd, copiedStat.mode & 0o777);
+      fs.fsyncSync(temporaryFd);
+      fs.closeSync(temporaryFd);
+      temporaryFd = null;
+      assertPrivateEntry(temporaryPath, temporaryStat, destination);
+    }
+
+    assertDirectoryIdentity(parent, destination);
+    assertSafeDestinationEntry(destination);
+    fs.renameSync(temporaryPath, destination);
+    temporaryExists = false;
+    assertDirectoryIdentity(parent, destination);
+  } finally {
+    if (temporaryFd !== null) fs.closeSync(temporaryFd);
+    if (temporaryExists) {
+      try {
+        assertDirectoryIdentity(parent, destination);
+        fs.unlinkSync(temporaryPath);
+      } catch {
+        // Leave an unreachable private entry rather than follow a changed path.
+      }
+    }
+  }
+}
+
+function publishEntry(source: string, destination: string): void {
+  const sourceStat = fs.lstatSync(source);
+  if (sourceStat.isDirectory()) {
+    const destinationDirectory = ensureDirectoryNoFollow(destination, destination);
+    try {
+      for (const entry of fs.readdirSync(source)) {
+        publishEntry(path.join(source, entry), path.join(destinationDirectory.path, entry));
+      }
+    } finally {
+      fs.closeSync(destinationDirectory.fd);
+    }
+    return;
+  }
+  if (!sourceStat.isFile() && !sourceStat.isSymbolicLink()) {
+    throw new Error(`Refusing to publish unsupported staged artifact '${source}'.`);
+  }
+
+  const parent = ensureDirectoryNoFollow(path.dirname(destination), destination);
+  try {
+    replaceWithPrivateEntry(
+      source,
+      path.join(parent.path, path.basename(destination)),
+      parent,
+      sourceStat,
+    );
+  } finally {
+    fs.closeSync(parent.fd);
   }
 }
 
 /**
- * Copy a verified staging artifact to its caller-selected destination without
- * following an existing destination symlink.
+ * Publish a verified staging artifact without following destination symlinks.
+ * Parent directories are pinned and revalidated, and file writes target a
+ * private O_EXCL descriptor (plus O_NOFOLLOW where available) before an atomic
+ * rename publishes the entry.
  */
 export function publishDownloadArtifact(
   stagedArtifact: string,
   expectedArtifact: string,
   sourceKind: SandboxSourceKind,
 ): void {
-  fs.cpSync(stagedArtifact, expectedArtifact, {
-    recursive: sourceKind === "dir",
-    force: true,
-    filter: (_source, destination) => {
-      assertNoSymlinkInDestinationPath(expectedArtifact, destination);
-      return true;
-    },
-  });
+  const stagedStat = fs.lstatSync(stagedArtifact);
+  if (sourceKind === "dir" && !stagedStat.isDirectory()) {
+    throw new Error(`Refusing to publish non-directory staged artifact '${stagedArtifact}'.`);
+  }
+  if (sourceKind === "file" && stagedStat.isDirectory()) {
+    throw new Error(`Refusing to publish directory staged artifact '${stagedArtifact}' as a file.`);
+  }
+  publishEntry(stagedArtifact, expectedArtifact);
 }

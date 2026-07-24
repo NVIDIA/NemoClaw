@@ -109,9 +109,6 @@ export async function downloadFromSandbox(
       remoteLabel: sandboxPath,
       sandboxName: opts.sandboxName,
     });
-    if (sourceKind === "file" && expectedArtifact !== hostDest) {
-      fs.mkdirSync(hostDest, { recursive: true });
-    }
     publishDownloadArtifact(stagedArtifact, expectedArtifact, sourceKind);
   } finally {
     fs.rmSync(stagingDir, { recursive: true, force: true });

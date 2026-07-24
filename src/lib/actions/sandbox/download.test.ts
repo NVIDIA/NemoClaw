@@ -14,13 +14,23 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
 }));
 
+vi.mock("./sessions/download-verify", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./sessions/download-verify")>();
+  return {
+    ...actual,
+    publishDownloadArtifact: vi.fn(),
+  };
+});
+
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { downloadFromSandbox } from "./download";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { publishDownloadArtifact } from "./sessions/download-verify";
 
 const runMock = runOpenshell as unknown as ReturnType<typeof vi.fn>;
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const ensureMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
+const publishMock = publishDownloadArtifact as unknown as ReturnType<typeof vi.fn>;
 const stagingDir = path.join(process.cwd(), ".tmp-download-staging");
 const stagedArtifact = path.join(stagingDir, "artifact");
 
@@ -33,13 +43,12 @@ beforeEach(() => {
   // override the probe result or the filesystem to exercise the failure paths.
   captureMock.mockReturnValue({ status: 0, output: "file" });
   ensureMock.mockClear();
+  publishMock.mockReset();
   vi.spyOn(fs, "existsSync").mockReturnValue(true);
   vi.spyOn(fs, "statSync").mockReturnValue({
     isDirectory: () => false,
   } as unknown as ReturnType<typeof fs.statSync>);
   vi.spyOn(fs, "mkdtempSync").mockReturnValue(stagingDir);
-  vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
-  vi.spyOn(fs, "cpSync").mockImplementation(() => undefined);
   vi.spyOn(fs, "rmSync").mockImplementation(() => undefined);
 });
 
@@ -61,11 +70,7 @@ describe("downloadFromSandbox", () => {
       ["sandbox", "download", "alpha", "/sandbox/.openclaw/workspace/SOUL.md", stagedArtifact],
       expect.objectContaining({ ignoreError: true, stdio: "inherit" }),
     );
-    expect(fs.cpSync).toHaveBeenCalledWith(stagedArtifact, expectedHostDest, {
-      recursive: false,
-      force: true,
-      filter: expect.any(Function),
-    });
+    expect(publishMock).toHaveBeenCalledWith(stagedArtifact, expectedHostDest, "file");
     expect(result).toEqual({
       sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
       hostDest: expectedHostDest,
@@ -77,11 +82,7 @@ describe("downloadFromSandbox", () => {
       isDirectory: () => true,
     });
     await downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x" });
-    expect(fs.cpSync).toHaveBeenCalledWith(stagedArtifact, path.join(process.cwd(), "x"), {
-      recursive: false,
-      force: true,
-      filter: expect.any(Function),
-    });
+    expect(publishMock).toHaveBeenCalledWith(stagedArtifact, path.join(process.cwd(), "x"), "file");
   });
 
   it("publishes to an absolute host destination unchanged", async () => {
@@ -90,11 +91,7 @@ describe("downloadFromSandbox", () => {
       sandboxPath: "/sandbox/x",
       hostDest: "/tmp/dl-default",
     });
-    expect(fs.cpSync).toHaveBeenCalledWith(stagedArtifact, "/tmp/dl-default", {
-      recursive: false,
-      force: true,
-      filter: expect.any(Function),
-    });
+    expect(publishMock).toHaveBeenCalledWith(stagedArtifact, "/tmp/dl-default", "file");
   });
 
   it("preserves a trailing separator on a relative directory destination", async () => {
@@ -104,7 +101,7 @@ describe("downloadFromSandbox", () => {
       hostDest: "./out/",
     });
     const hostDest = `${path.resolve(process.cwd(), "out")}${path.sep}`;
-    const publishArgs = (fs.cpSync as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    const publishArgs = publishMock.mock.calls[0];
     const publishedPath = publishArgs?.[1] as string;
     expect(hostDest.endsWith(path.sep) || hostDest.endsWith("/")).toBe(true);
     expect(publishedPath).toBe(path.join(hostDest, "x"));
@@ -149,22 +146,18 @@ describe("downloadFromSandbox", () => {
       downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/mydir", hostDest: "./o" }),
     ).resolves.toMatchObject({ sandboxPath: "/sandbox/mydir" });
     expect(runMock).toHaveBeenCalled();
-    expect(fs.cpSync).toHaveBeenCalledWith(stagedArtifact, path.resolve(process.cwd(), "o"), {
-      recursive: true,
-      force: true,
-      filter: expect.any(Function),
-    });
+    expect(publishMock).toHaveBeenCalledWith(
+      stagedArtifact,
+      path.resolve(process.cwd(), "o"),
+      "dir",
+    );
   });
 
   it("publishes over a pre-existing destination only after staged verification (#7367)", async () => {
     await expect(
       downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
     ).resolves.toMatchObject({ sandboxPath: "/sandbox/x" });
-    expect(fs.cpSync).toHaveBeenCalledWith(stagedArtifact, "/tmp/p", {
-      recursive: false,
-      force: true,
-      filter: expect.any(Function),
-    });
+    expect(publishMock).toHaveBeenCalledWith(stagedArtifact, "/tmp/p", "file");
   });
 
   it("publishes a fresh staged artifact to a fresh destination (#7367)", async () => {
@@ -176,11 +169,7 @@ describe("downloadFromSandbox", () => {
     await expect(
       downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
     ).resolves.toMatchObject({ sandboxPath: "/sandbox/x" });
-    expect(fs.cpSync).toHaveBeenCalledWith(stagedArtifact, "/tmp/p", {
-      recursive: false,
-      force: true,
-      filter: expect.any(Function),
-    });
+    expect(publishMock).toHaveBeenCalledWith(stagedArtifact, "/tmp/p", "file");
   });
 
   it("passes the source path as a positional arg to the probe (no shell interpolation)", async () => {
@@ -210,7 +199,7 @@ describe("downloadFromSandbox", () => {
     await expect(
       downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
     ).rejects.toThrow(/Failed to download.*\(exit 7\)/);
-    expect(fs.cpSync).not.toHaveBeenCalled();
+    expect(publishMock).not.toHaveBeenCalled();
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 
@@ -220,7 +209,7 @@ describe("downloadFromSandbox", () => {
     await expect(
       downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
     ).rejects.toThrow(/reported success \(exit 0\) but nothing was written/);
-    expect(fs.cpSync).not.toHaveBeenCalled();
+    expect(publishMock).not.toHaveBeenCalled();
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 });
