@@ -14,7 +14,7 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-function runInstallerOpenshellVersionFlow(openshellBody?: string) {
+function runInstallerOpenshellVersionFlow(setupOpenshell: (bin: string) => void) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-flow-"));
   const home = path.join(tmp, "home");
   const bin = path.join(tmp, "bin");
@@ -34,9 +34,7 @@ function runInstallerOpenshellVersionFlow(openshellBody?: string) {
     healthyOpenshell,
     '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n',
   );
-  if (openshellBody !== undefined) {
-    writeExecutable(path.join(bin, "openshell"), openshellBody);
-  }
+  setupOpenshell(bin);
 
   const result = spawnSync(
     "bash",
@@ -306,8 +304,11 @@ require_reportable_openshell_version`,
     '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n';
 
   it("rejects a broken OpenShell before gateway or sandbox mutation (#7300)", () => {
-    const { result, gatewayState, registry, installLog } =
-      runInstallerOpenshellVersionFlow(brokenOpenshell);
+    const { result, gatewayState, registry, installLog } = runInstallerOpenshellVersionFlow(
+      (bin) => {
+        writeExecutable(path.join(bin, "openshell"), brokenOpenshell);
+      },
+    );
 
     expect(result.status, result.stdout + result.stderr).not.toBe(0);
     expect(result.stderr + result.stdout).toContain("could not report its version");
@@ -317,7 +318,7 @@ require_reportable_openshell_version`,
   });
 
   it("installs OpenShell when no binary is present (#7300)", () => {
-    const { result, installLog } = runInstallerOpenshellVersionFlow();
+    const { result, installLog } = runInstallerOpenshellVersionFlow(() => undefined);
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(installLog).toBe("install\n");
