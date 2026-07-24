@@ -50,6 +50,7 @@ runner.run = (command) => {
 const originalSpawnSync = childProcess.spawnSync;
 childProcess.spawnSync = (...args) => {
   if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  if (args[0] === "nc") return { error: null, status: 0, stdout: "", stderr: "" };
   if (args[0] === "curl") {
     const argv = Array.isArray(args[1]) ? args[1] : [];
     return { status: 0, stdout: argv.includes("--config") ? "200" : "401", stderr: "" };
