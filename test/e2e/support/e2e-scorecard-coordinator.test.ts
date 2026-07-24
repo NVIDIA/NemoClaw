@@ -208,25 +208,28 @@ describe("scorecard coordinator assembly", () => {
     expect(summaryMarkdown).not.toContain("private-larger-runner-label");
   });
 
-  it("bounds the job timing table to the ten slowest rows", () => {
+  it("bounds the job timing table by combined queue and execution time", () => {
     const { summaryMarkdown } = coordinator.buildScorecard(
       coordinatorInput({
         apiJobs: Array.from({ length: 12 }, (_, index) => ({
-          completed_at: new Date(Date.UTC(2026, 6, 24, 0, 0, index + 1)).toISOString(),
+          completed_at: new Date(
+            Date.UTC(2026, 6, 24, 0, 0, index === 0 ? 21 : index + 1),
+          ).toISOString(),
           conclusion: "success",
           created_at: "2026-07-24T00:00:00.000Z",
           labels: ["ubuntu-latest"],
           name: `job-${String(index + 1).padStart(2, "0")}`,
-          started_at: "2026-07-24T00:00:00.000Z",
+          started_at: index === 0 ? "2026-07-24T00:00:20.000Z" : "2026-07-24T00:00:00.000Z",
           status: "completed",
         })),
       }),
     );
 
+    expect(summaryMarkdown).toContain("| job-01 | standard | success | 20.0s | 1.0s |");
     expect(summaryMarkdown).toContain("| job-12 | standard | success | 0.0s | 12.0s |");
-    expect(summaryMarkdown).toContain("| job-03 | standard | success | 0.0s | 3.0s |");
+    expect(summaryMarkdown).toContain("| job-04 | standard | success | 0.0s | 4.0s |");
+    expect(summaryMarkdown).not.toContain("| job-03 |");
     expect(summaryMarkdown).not.toContain("| job-02 |");
-    expect(summaryMarkdown).not.toContain("| job-01 |");
   });
 });
 
