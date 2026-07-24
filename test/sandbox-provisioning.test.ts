@@ -15,7 +15,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
-import { dockerRunCommandBetween } from "./helpers/dockerfile-command";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -29,6 +28,38 @@ const DEEPAGENTS_DOCKERFILE_BASE = path.join(
   "langchain-deepagents-code",
   "Dockerfile.base",
 );
+
+function dockerRunCommandBetween(
+  dockerfile: string,
+  startMarker: string,
+  endMarker: string,
+): string {
+  const start = dockerfile.indexOf(startMarker);
+  const end = dockerfile.indexOf(endMarker, start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(`Expected Dockerfile block between ${startMarker} and ${endMarker}`);
+  }
+  const runIndex = dockerfile.indexOf("RUN ", start);
+  if (runIndex === -1 || runIndex > end) {
+    throw new Error(`Expected RUN instruction after ${startMarker}`);
+  }
+  const runLines: string[] = [];
+  for (const line of dockerfile.slice(runIndex, end).split("\n")) {
+    runLines.push(line);
+    if (!line.trimEnd().endsWith("\\")) {
+      break;
+    }
+  }
+  const lastLine = runLines[runLines.length - 1]?.trimEnd() ?? "";
+  if (lastLine.endsWith("\\")) {
+    throw new Error(`Expected complete RUN instruction before ${endMarker}`);
+  }
+  return runLines
+    .join("\n")
+    .trim()
+    .replace(/^RUN\s+/, "")
+    .replace(/\\\n/g, " ");
+}
 
 function dockerHealthCommandBetween(
   dockerfile: string,
@@ -1012,11 +1043,9 @@ describe("sandbox provisioning: base runtime tools", () => {
     const aptInstall = dockerfile.match(
       /^RUN apt-get update && apt-get install -y --no-install-recommends \\\n(?:.*\\\n)*.*$/m,
     )?.[0];
-
     expect(aptInstall).toBeDefined();
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });
-
   it("rejects a sandbox security package when its expected checksum changes", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-checksum-"));
@@ -1031,7 +1060,6 @@ describe("sandbox provisioning: base runtime tools", () => {
       .replaceAll("/tmp/nemoclaw-debian-security", path.join(tmp, "security-debs"))
       .replaceAll("/usr/local/bin/python", untouchedTail)
       .replaceAll("/usr/bin/python3", path.join(tmp, "python3"));
-
     try {
       const { result } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
@@ -1043,7 +1071,6 @@ describe("sandbox provisioning: base runtime tools", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
@@ -1064,7 +1091,6 @@ describe("sandbox provisioning: base runtime tools", () => {
       .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
-
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
@@ -1091,7 +1117,6 @@ describe("sandbox provisioning: base runtime tools", () => {
     fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
     fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
     fs.writeFileSync(fakePy3, "#!/bin/sh\necho 3.13\n", { mode: 0o755 });
-
     const command = dockerRunCommandBetween(
       dockerfile,
       "RUN apt-get update",
@@ -1101,7 +1126,6 @@ describe("sandbox provisioning: base runtime tools", () => {
       .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
-
     try {
       const { result } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
