@@ -31,6 +31,30 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(order).toEqual(["warmup", "approve", "verify"]);
   });
 
+  it("repeats the handshake when first verification creates a remaining scope upgrade (#7431)", () => {
+    const order: string[] = [];
+    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
+    const autoPairScopeApproval = vi.fn(() => order.push("approve"));
+    const verifyGatewayPairing = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        order.push("verify");
+        return false;
+      })
+      .mockImplementationOnce(() => {
+        order.push("verify");
+        return true;
+      });
+
+    establishRestoredSandboxGatewayPairing("beta", {
+      warmupScopeUpgrade,
+      autoPairScopeApproval,
+      verifyGatewayPairing,
+    });
+
+    expect(order).toEqual(["warmup", "approve", "verify", "warmup", "approve", "verify"]);
+  });
+
   it("fails when the pairing warm-up does not complete (#7431)", () => {
     const warmupScopeUpgrade = vi.fn(() => {
       throw new Error("gateway not up");
@@ -50,12 +74,19 @@ describe("establishRestoredSandboxGatewayPairing", () => {
   });
 
   it("fails when the authenticated verification run cannot use the restored gateway (#7431)", () => {
+    const warmupScopeUpgrade = vi.fn();
+    const autoPairScopeApproval = vi.fn();
+    const verifyGatewayPairing = vi.fn(() => false);
+
     expect(() =>
       establishRestoredSandboxGatewayPairing("beta", {
-        warmupScopeUpgrade: vi.fn(),
-        autoPairScopeApproval: vi.fn(),
-        verifyGatewayPairing: vi.fn(() => false),
+        warmupScopeUpgrade,
+        autoPairScopeApproval,
+        verifyGatewayPairing,
       }),
     ).toThrow("authenticated gateway verification run did not succeed");
+    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
+    expect(autoPairScopeApproval).toHaveBeenCalledTimes(2);
+    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
   });
 });

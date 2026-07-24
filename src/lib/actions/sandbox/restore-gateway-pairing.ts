@@ -10,6 +10,12 @@ export type RestoreGatewayPairingDeps = {
   verifyGatewayPairing: (sandboxName: string) => boolean;
 };
 
+// A restored clone starts without runtime device credentials. Its first pass
+// can approve initial pairing, while strict verification provokes the remaining
+// operator.write upgrade. Permit one bounded recovery pass to approve that
+// upgrade; never turn pairing establishment into an open-ended retry loop.
+const RESTORE_GATEWAY_PAIRING_ATTEMPTS = 2;
+
 function defaultRestoreGatewayPairingDeps(): RestoreGatewayPairingDeps {
   const warmup: typeof import("./auto-pair-warmup") = require("./auto-pair-warmup");
   const connect: typeof import("./connect") = require("./connect");
@@ -26,11 +32,14 @@ export function establishRestoredSandboxGatewayPairing(
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): void {
   try {
-    deps.warmupScopeUpgrade(targetSandbox);
-    deps.autoPairScopeApproval(targetSandbox);
-    if (!deps.verifyGatewayPairing(targetSandbox)) {
-      throw new Error("the authenticated gateway verification run did not succeed");
+    for (let attempt = 0; attempt < RESTORE_GATEWAY_PAIRING_ATTEMPTS; attempt += 1) {
+      deps.warmupScopeUpgrade(targetSandbox);
+      deps.autoPairScopeApproval(targetSandbox);
+      if (deps.verifyGatewayPairing(targetSandbox)) {
+        return;
+      }
     }
+    throw new Error("the authenticated gateway verification run did not succeed");
   } catch (err) {
     throw new Error(
       `could not establish gateway pairing for '${targetSandbox}': ${
