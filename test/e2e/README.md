@@ -147,10 +147,15 @@ graph as the live targets:
   retired. Any future issue escalation should use a separately reviewed
   exceptional threshold, such as the same lane failing twice consecutively or
   remaining broken for 24 hours, rather than posting on every failed schedule.
-- `scorecard` writes the scheduled/manual result summary, adds this run's
-  semantic phase runtime table, compares the trusted cloud-onboard timing
-  summary with the latest prior-release `e2e.yaml` run, and posts to the daily
-  or full-run Slack route.
+- `scorecard` writes the scheduled/manual result summary and posts it to the
+  daily or full-run Slack route. The summary:
+  - separates queue time from execution time for the ten jobs with the longest
+    combined duration;
+  - reports the runner class as `standard`, `larger`, or `unknown` without
+    exposing runner labels;
+  - adds this run's semantic phase runtime table; and
+  - compares the trusted cloud-onboard timing summary with the latest
+    prior-release `e2e.yaml` run.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.

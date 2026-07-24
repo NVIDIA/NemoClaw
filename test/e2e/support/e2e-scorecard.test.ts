@@ -474,6 +474,7 @@ describe("E2E scorecard", () => {
       ran: 4,
       skipped: 0,
       success: 3,
+      timingRows: [],
       total: 4,
     });
   });
@@ -501,6 +502,7 @@ describe("E2E scorecard", () => {
       ran: 2,
       skipped: 1,
       success: 1,
+      timingRows: [],
       total: 3,
     });
   });

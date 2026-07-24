@@ -163,6 +163,71 @@ describe("scorecard coordinator assembly", () => {
     expect(scorecardData).toMatchObject({ total: 2, success: 1, failure: 1, perfect: false });
     expect(scorecardData.failedJobs).toEqual([{ name: "hermes-slack", url: null }]);
   });
+
+  it("separates runner queue time from execution time without exposing runner labels", () => {
+    const { summaryMarkdown } = coordinator.buildScorecard(
+      coordinatorInput({
+        apiJobs: [
+          {
+            completed_at: "2026-07-24T00:01:30Z",
+            conclusion: "failure",
+            created_at: "2026-07-24T00:00:00Z",
+            labels: ["private-larger-runner-label"],
+            name: "mcp-bridge",
+            started_at: "2026-07-24T00:00:30Z",
+            status: "completed",
+          },
+          {
+            completed_at: "2026-07-24T00:00:25Z",
+            conclusion: "success",
+            created_at: "2026-07-24T00:00:00Z",
+            labels: ["ubuntu-latest"],
+            name: "cloud-onboard",
+            started_at: "2026-07-24T00:00:05Z",
+            status: "completed",
+          },
+          {
+            completed_at: "2026-07-24T00:00:20Z",
+            conclusion: "success",
+            created_at: "invalid",
+            labels: ["self-hosted", "Linux"],
+            name: "jetson-nvmap-gpu",
+            started_at: "2026-07-24T00:00:10Z",
+            status: "completed",
+          },
+        ],
+        rawExplicitOnly: "jetson-nvmap-gpu",
+        rawJobs: "jetson-nvmap-gpu",
+      }),
+    );
+
+    expect(summaryMarkdown).toContain("### Runner wait vs execution");
+    expect(summaryMarkdown).toContain("| mcp-bridge | larger | failure | 30.0s | 60.0s |");
+    expect(summaryMarkdown).toContain("| cloud-onboard | standard | success | 5.0s | 20.0s |");
+    expect(summaryMarkdown).toContain("| jetson-nvmap-gpu | unknown | success | n/a | 10.0s |");
+    expect(summaryMarkdown).not.toContain("private-larger-runner-label");
+  });
+
+  it("bounds the job timing table to the ten slowest rows", () => {
+    const { summaryMarkdown } = coordinator.buildScorecard(
+      coordinatorInput({
+        apiJobs: Array.from({ length: 12 }, (_, index) => ({
+          completed_at: new Date(Date.UTC(2026, 6, 24, 0, 0, index + 1)).toISOString(),
+          conclusion: "success",
+          created_at: "2026-07-24T00:00:00.000Z",
+          labels: ["ubuntu-latest"],
+          name: `job-${String(index + 1).padStart(2, "0")}`,
+          started_at: "2026-07-24T00:00:00.000Z",
+          status: "completed",
+        })),
+      }),
+    );
+
+    expect(summaryMarkdown).toContain("| job-12 | standard | success | 0.0s | 12.0s |");
+    expect(summaryMarkdown).toContain("| job-03 | standard | success | 0.0s | 3.0s |");
+    expect(summaryMarkdown).not.toContain("| job-02 |");
+    expect(summaryMarkdown).not.toContain("| job-01 |");
+  });
 });
 
 describe("scorecard coordinator Slack payload guard", () => {

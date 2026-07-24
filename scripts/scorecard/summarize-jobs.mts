@@ -4,15 +4,28 @@
 type ApiJob = {
   completed_at?: string | null;
   conclusion?: string | null;
+  created_at?: string | null;
   html_url?: string | null;
+  labels?: string[] | null;
   name: string;
   run_attempt?: number | null;
+  started_at?: string | null;
   status?: string | null;
 };
 
 type NeedResult = { result?: string };
 
 type FailedJob = { name: string; url: string | null };
+
+type CountedResult = "cancelled" | "failure" | "skipped" | "success";
+
+export type JobTimingRow = {
+  executionMs: number | null;
+  name: string;
+  outcome: CountedResult;
+  queueMs: number | null;
+  runnerClass: "larger" | "standard" | "unknown";
+};
 
 export type JobSummary = {
   cancelled: number;
@@ -21,6 +34,7 @@ export type JobSummary = {
   ran: number;
   skipped: number;
   success: number;
+  timingRows: JobTimingRow[];
   total: number;
 };
 
@@ -44,8 +58,6 @@ export type WorkflowRunJobsDeps = {
   };
 };
 
-type CountedResult = "cancelled" | "failure" | "skipped" | "success";
-
 function isSelectiveDispatch(eventName: string, rawJobs = "", rawTargets = ""): boolean {
   return eventName === "workflow_dispatch" && (rawJobs.trim() !== "" || rawTargets.trim() !== "");
 }
@@ -66,13 +78,57 @@ function classifyNeed(value: NeedResult): CountedResult {
   return "failure";
 }
 
-function countResults(results: CountedResult[]): Omit<JobSummary, "failedJobs" | "ran" | "total"> {
+function countResults(
+  results: CountedResult[],
+): Omit<JobSummary, "failedJobs" | "ran" | "timingRows" | "total"> {
   return {
     cancelled: results.filter((result) => result === "cancelled").length,
     failure: results.filter((result) => result === "failure").length,
     skipped: results.filter((result) => result === "skipped").length,
     success: results.filter((result) => result === "success").length,
   };
+}
+
+function elapsedMs(
+  start: string | null | undefined,
+  finish: string | null | undefined,
+): number | null {
+  if (!start || !finish) return null;
+  const startMs = Date.parse(start);
+  const finishMs = Date.parse(finish);
+  if (!Number.isFinite(startMs) || !Number.isFinite(finishMs) || finishMs < startMs) return null;
+  return finishMs - startMs;
+}
+
+function normalizeRunnerClass(
+  labels: string[] | null | undefined,
+): JobTimingRow["runnerClass"] {
+  if (!labels || labels.length === 0) return "unknown";
+  const normalized = new Set(labels.map((label) => label.toLowerCase()));
+  if (normalized.has("ubuntu-latest")) return "standard";
+  if (normalized.has("self-hosted")) return "unknown";
+  return "larger";
+}
+
+function summarizeJobTimings(jobs: ApiJob[]): JobTimingRow[] {
+  return jobs
+    .map(
+      (job): JobTimingRow => ({
+        executionMs: elapsedMs(job.started_at, job.completed_at),
+        name: job.name,
+        outcome: classifyApiJob(job),
+        queueMs: elapsedMs(job.created_at, job.started_at),
+        runnerClass: normalizeRunnerClass(job.labels),
+      }),
+    )
+    .filter((row) => row.executionMs !== null || row.queueMs !== null)
+    .sort(
+      (left, right) =>
+        (right.executionMs ?? 0) +
+          (right.queueMs ?? 0) -
+          ((left.executionMs ?? 0) + (left.queueMs ?? 0)) || left.name.localeCompare(right.name),
+    )
+    .slice(0, 10);
 }
 
 function preferCandidate(candidate: ApiJob, existing: ApiJob | undefined): boolean {
@@ -142,6 +198,7 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
         .filter(({ result }) => result === "failure")
         .map(({ job }) => ({ name: job.name, url: job.html_url ?? null })),
       ran: jobs.length - counts.skipped,
+      timingRows: summarizeJobTimings(jobs),
       total: jobs.length,
     };
   }
@@ -158,6 +215,7 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
       .filter(({ result }) => result === "failure")
       .map(({ name }) => ({ name, url: null })),
     ran: entries.length - counts.skipped,
+    timingRows: [],
     total: entries.length,
   };
 }
