@@ -497,9 +497,22 @@ def _parse_interpreter_ptc(raw):
     return False
 
 
+# Managed Ultra compatibility workaround: the NVIDIA Ultra serving template can
+# return empty assistant content when a completion combines reasoning and tool
+# calls, so managed Ultra requests must carry this reviewed template argument.
+# The resolver below never consumes the mutable config.toml params table, so it
+# derives the argument from this language-local ID set instead; see "Managed
+# Ultra compatibility workarounds" in dependency-review.md.
+_NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS = frozenset(
+    {
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "nvidia/nvidia/nemotron-3-ultra",
+    }
+)
+
+
 def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dict[str, Any]:
     """Return only the NemoClaw-managed inference constructor contract."""
-    del model_name
     from deepagents_code.model_config import ModelConfig, ModelConfigError
     from deepagents_code._nemoclaw_managed import managed_inference_base_url
 
@@ -517,6 +530,13 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     }
     if provider == "openai":
         kwargs["use_responses_api"] = False
+        if model_name in _NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS:
+            # A model name can enable exactly this reviewed template argument
+            # and nothing else; the credential, endpoint, and remaining request
+            # shape stay fixed above.
+            kwargs["extra_body"] = {
+                "chat_template_kwargs": {"force_nonempty_content": True}
+            }
     return kwargs
 '''
 
