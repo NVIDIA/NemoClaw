@@ -142,6 +142,26 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
 
     expect(() => validateFullE2eEvidence(evidence)).toThrow(message);
   });
+
+  it.each([
+    [
+      "a missing cleanup receipt",
+      (evidence: ReturnType<typeof validEvidence>) => ({ ...evidence, cleanup: undefined }),
+      "cleanup must be an object",
+    ],
+    [
+      "a non-object dispatch receipt",
+      (evidence: ReturnType<typeof validEvidence>) => ({ ...evidence, dispatch: "invalid" }),
+      "dispatch must be an object",
+    ],
+    [
+      "a non-object jobs response",
+      (evidence: ReturnType<typeof validEvidence>) => ({ ...evidence, jobs: [] }),
+      "jobs response must be an object",
+    ],
+  ])("rejects %s (#7487)", (_name, malformedEvidence, message) => {
+    expect(() => validateFullE2eEvidence(malformedEvidence(validEvidence()))).toThrow(message);
+  });
 });
 
 describe("nemoclaw-maintainer-e2e workflow routing", () => {
