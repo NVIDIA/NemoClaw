@@ -138,12 +138,21 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("binds the scorecard upload to its scheduled runtime summary contract", () => {
+  it("rejects a scorecard upload outside its scheduled runtime summary contract", () => {
     const workflow = mutableWorkflow();
     uploadStep(workflow.jobs.scorecard).with!.path = "e2e-artifacts/live/";
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
       "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+    );
+  });
+
+  it("rejects steps after the scorecard runtime summary upload", () => {
+    const workflow = mutableWorkflow();
+    workflow.jobs.scorecard.steps!.push({ name: "Run after upload", run: "echo too-late" });
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "scorecard upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
     );
   });
 

@@ -259,6 +259,23 @@ function sortedKeys(value: WorkflowRecord): string[] {
   return Object.keys(value).sort();
 }
 
+function validateUploadPlacement(
+  errors: string[],
+  jobName: string,
+  jobSteps: readonly WorkflowStep[],
+  upload: WorkflowStep,
+): void {
+  const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
+  if (
+    stepsAfterUpload.length > 1 ||
+    stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
+  ) {
+    errors.push(
+      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
+    );
+  }
+}
+
 export function validateUploadE2eArtifactsAction(actionPath = DEFAULT_ACTION_PATH): string[] {
   const source = readFileSync(actionPath, "utf8");
   const action = record(YAML.parse(source));
@@ -385,14 +402,19 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
 
     const uploadSteps = jobSteps.filter((step) => step.uses === UPLOAD_E2E_ARTIFACTS_ACTION);
     if (jobName === "scorecard") {
-      if (
-        uploadSteps.length !== 1 ||
-        !isDeepStrictEqual(uploadSteps[0], SCORECARD_RUNTIME_UPLOAD_CONTRACT)
-      ) {
+      if (uploadSteps.length !== 1) {
+        errors.push(
+          "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+        );
+        continue;
+      }
+      const upload = uploadSteps[0];
+      if (!isDeepStrictEqual(upload, SCORECARD_RUNTIME_UPLOAD_CONTRACT)) {
         errors.push(
           "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
         );
       }
+      validateUploadPlacement(errors, jobName, jobSteps, upload);
       continue;
     }
     if (!expected) {
@@ -423,15 +445,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           : `${jobName} upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks`,
       );
     }
-    const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
-    if (
-      stepsAfterUpload.length > 1 ||
-      stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
-    ) {
-      errors.push(
-        `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
-      );
-    }
+    validateUploadPlacement(errors, jobName, jobSteps, upload);
 
     if (explicitContract) {
       if (!isDeepStrictEqual(record(upload.with), explicitContract)) {
