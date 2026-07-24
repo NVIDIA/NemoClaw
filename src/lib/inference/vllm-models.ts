@@ -74,8 +74,8 @@ export interface VllmModelDef {
    * platform-specific flags (the NVFP4 MoE checkpoint targets `sm_121a` only,
    * the very large V4 Flash recipe wants Station-class VRAM) appear only on
    * profiles they can actually run on. Direct `NEMOCLAW_VLLM_MODEL`
-   * overrides normally bypass the picker filter, but a model-specific runtime
-   * is rejected outside this list so an incompatible image is never pulled.
+   * overrides bypass the picker filter, so `runVllmInstall` rejects any
+   * override outside this list before the image pull and model download.
    */
   platforms: readonly VllmPlatform[];
   /**
