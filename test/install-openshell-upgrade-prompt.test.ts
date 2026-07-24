@@ -80,6 +80,7 @@ main --non-interactive --yes-i-accept-third-party-software`,
     gatewayState: fs.readFileSync(gatewayState, "utf-8"),
     registry: fs.readFileSync(registry, "utf-8"),
     installLog: fs.existsSync(installLog) ? fs.readFileSync(installLog, "utf-8") : "",
+    openshellBody: fs.readFileSync(path.join(bin, "openshell"), "utf-8"),
   };
 }
 
@@ -302,6 +303,8 @@ require_reportable_openshell_version`,
   const brokenOpenshell = "#!/usr/bin/env bash\nexit 1\n";
   const healthyOpenshell =
     '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n';
+  const versionPrintingBrokenOpenshell =
+    '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 1\n';
 
   it("rejects a broken OpenShell before gateway or sandbox mutation (#7300)", () => {
     const { result, gatewayState, registry, installLog } = runInstallerOpenshellVersionFlow(
@@ -315,6 +318,29 @@ require_reportable_openshell_version`,
     expect(gatewayState).toBe("gateway-original\n");
     expect(registry).toBe('{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
     expect(installLog).toBe("");
+  });
+
+  it("rejects a failed OpenShell version command before gateway or sandbox mutation (#7300)", () => {
+    const { result, gatewayState, registry, installLog } = runInstallerOpenshellVersionFlow(
+      (bin) => {
+        writeExecutable(path.join(bin, "openshell"), versionPrintingBrokenOpenshell);
+      },
+    );
+
+    expect(result.status, result.stdout + result.stderr).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("could not report its version");
+    expect(gatewayState).toBe("gateway-original\n");
+    expect(registry).toBe('{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
+    expect(installLog).toBe("");
+  });
+
+  it("preserves a reportable OpenShell through the installer flow (#7300)", () => {
+    const { result, openshellBody } = runInstallerOpenshellVersionFlow((bin) => {
+      writeExecutable(path.join(bin, "openshell"), healthyOpenshell);
+    });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(openshellBody).toBe(healthyOpenshell);
   });
 
   it("installs OpenShell when no binary is present (#7300)", () => {

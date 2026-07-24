@@ -2000,7 +2000,9 @@ run_preupgrade_backup() {
 
 installed_openshell_version() {
   command_exists openshell || return 1
-  openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+  local version_output
+  version_output="$(openshell --version 2>/dev/null)" || return 1
+  printf "%s\n" "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
 # Fail closed when OpenShell is present but cannot report its version. An absent
