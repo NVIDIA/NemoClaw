@@ -54,7 +54,7 @@ NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileg
 Those URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox.
 For OpenClaw, onboarding probes `https://inference.local/v1/models` after the sandbox becomes ready and before policy selection.
-Onboarding stops if that required sandbox route probe cannot reach the endpoint through the managed bridge.
+Onboarding stops if that required sandbox route probe cannot reach the endpoint through the managed inference route.
 The probe accepts HTTP `200` through `499`, so it proves route access but does not prove that the credentials or selected model work.
 After onboarding, use `$$nemoclaw <name> status` to check ongoing route availability.
 Make sure the server listens on an address reachable from containers, such as `0.0.0.0`; a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.

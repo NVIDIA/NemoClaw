@@ -49,7 +49,8 @@ The strict local-provider post-ready check applies only to local Ollama and vLLM
 For an OpenClaw compatible endpoint, onboarding instead runs the shared route-reachability probe after sandbox readiness and before policy selection.
 That probe accepts HTTP `200` through `499`, so it proves route access but not a successful model response.
 When messaging is enabled, onboarding runs a separate model-response smoke check.
-NVIDIA NIM and other routes continue to the final route check, then use the status command and a short agent request after onboarding.
+For NVIDIA NIM and other routes, onboarding proceeds to the final route check.
+Use the status command and a short agent request after onboarding.
 
 ## Understand Final Route Checks
 

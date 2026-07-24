@@ -379,7 +379,7 @@ describe("inference setup navigation", () => {
     );
   });
 
-  it("scopes post-ready sandbox route verification to local inference providers", () => {
+  it("documents distinct post-ready checks for local and compatible endpoints (#7433)", () => {
     const markdown = fs.readFileSync(verifyInferenceRoutePath, "utf8");
     const start = markdown.indexOf("## Understand Local Provider Post-Ready Checks");
     const end = markdown.indexOf("## Understand Final Route Checks", start);
@@ -398,7 +398,12 @@ describe("inference setup navigation", () => {
     expect(section).toContain(
       "For local Ollama and vLLM on Docker GPU sandboxes using the compatibility route",
     );
-    expect(section).toContain("NVIDIA NIM and other compatible endpoints");
+    expect(section).toContain(
+      "For an OpenClaw compatible endpoint, onboarding instead runs the shared route-reachability probe",
+    );
+    expect(section).toContain(
+      "For NVIDIA NIM and other routes, onboarding proceeds to the final route check.",
+    );
   });
 
   it("documents universal final route verification separately from local warmup", () => {
@@ -442,13 +447,19 @@ describe("inference setup navigation", () => {
     );
     expect(markdown).not.toContain("the default HTTP port or an unprivileged port");
     expect(markdown).toContain(
-      "if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.",
+      "For OpenClaw, onboarding probes `https://inference.local/v1/models` after the sandbox becomes ready and before policy selection.",
+    );
+    expect(markdown).toContain(
+      "Onboarding stops if that required sandbox route probe cannot reach the endpoint through the managed inference route.",
     );
     expect(markdown).toContain(
       "If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.",
     );
     expect(markdown).toContain(
       "Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths",
+    );
+    expect(markdown).toContain(
+      "OpenClaw still runs the required sandbox route probe for a manually entered alias",
     );
   });
 
