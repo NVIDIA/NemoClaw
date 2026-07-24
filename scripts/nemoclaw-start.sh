@@ -2173,7 +2173,7 @@ validate_nemoclaw_tmp_permissions() {
     [ -n "$_target" ] && _dynamic_targets+=("$_target")
   done < <(messaging_runtime_preload_targets)
 
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
 }
 
 verify_messaging_runtime_secret_scans() {
@@ -3306,31 +3306,6 @@ _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js
 _CIAO_GUARD_SCRIPT="/tmp/nemoclaw-ciao-network-guard.js"
 _CIAO_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js"
 
-# WebSocket CONNECT tunnel fix (NemoClaw#1570).
-# The `ws` library calls https.request() for wss:// WebSocket upgrades.
-# EnvHttpProxyAgent (NODE_USE_ENV_PROXY=1) sends a forward proxy request
-# instead of CONNECT — rejected by the L7 proxy with 400. Without
-# NODE_USE_ENV_PROXY, ws goes direct — blocked by sandbox netns.
-# The preload patches https.request() to inject a CONNECT tunnel agent for
-# WebSocket upgrade requests. Activates whenever HTTPS_PROXY is set (the
-# script itself guards on the env var).
-_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/ws-proxy-fix.js"
-_WS_FIX_SCRIPT="/tmp/nemoclaw-ws-proxy-fix.js"
-
-# ── Seccomp syscall guard ─────────────────────────────────────
-# OpenShell ≥0.0.36 seccomp policy blocks syscalls like getifaddrs
-# (used by Node's os.networkInterfaces()). Third-party libraries (e.g.,
-# @homebridge/ciao mDNS) call these without error handling, producing
-# unhandled promise rejections that crash the gateway under Node v22's
-# default --unhandled-rejections=throw.
-#
-# This preload catches those specific sandbox-infrastructure errors
-# and logs them as warnings instead of letting them kill the process.
-# Unlike the Slack channel guard, this is always installed because the
-# seccomp-blocked syscalls affect all sandboxes, not just Slack ones.
-_SECCOMP_GUARD_SCRIPT="/tmp/nemoclaw-seccomp-guard.js"
-_SECCOMP_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/seccomp-guard.js"
-
 # Stage the immutable, image-packaged preload set into /tmp. Startup and
 # authenticated PID 1 recovery share this exact path so a pod-recreate-style
 # /tmp wipe cannot drift from the initial security boundary. The shared emit
@@ -3349,16 +3324,6 @@ install_core_runtime_preloads() {
 
   emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE" || return 1
   append_node_require_once "$_CIAO_GUARD_SCRIPT"
-
-  if [ -f "$_WS_FIX_SOURCE" ]; then
-    # Copy to /tmp so the sandbox user can read it under Landlock-constrained
-    # runtimes. The missing optional source keeps the historical no-op.
-    emit_sandbox_sourced_file "$_WS_FIX_SCRIPT" <"$_WS_FIX_SOURCE" || return 1
-    append_node_require_once "$_WS_FIX_SCRIPT"
-  fi
-
-  emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <"$_SECCOMP_GUARD_SOURCE" || return 1
-  append_node_require_once "$_SECCOMP_GUARD_SCRIPT"
 }
 
 install_core_runtime_preloads || exit 1
@@ -3961,10 +3926,6 @@ GUARDENVEOF
     if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
       echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
     fi
-    # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
-    if [ -f "$_WS_FIX_SCRIPT" ]; then
-      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
-    fi
     # Git TLS CA bundle for connect sessions (NemoClaw#2270)
     if [ -n "${GIT_SSL_CAINFO:-}" ]; then
       printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
@@ -3985,8 +3946,6 @@ GUARDENVEOF
     fi
     # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
-    # Seccomp guard for connect sessions.
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT\""
     # ciao network guard for connect sessions.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
     # Manifest-declared messaging preloads for connect sessions.
@@ -5159,12 +5118,10 @@ openclaw_runtime_guard_chain_complete() {
     "$_SANDBOX_SAFETY_NET"
     "$_NEMOTRON_FIX_SCRIPT"
     "$_CIAO_GUARD_SCRIPT"
-    "$_SECCOMP_GUARD_SCRIPT"
     "$_RUNTIME_SHELL_ENV_FILE"
   )
   local target
   [ "${NODE_USE_ENV_PROXY:-}" = "1" ] && targets+=("$_PROXY_FIX_SCRIPT")
-  [ -f "$_WS_FIX_SOURCE" ] && targets+=("$_WS_FIX_SCRIPT")
   for target in "${targets[@]}"; do
     [ -f "$target" ] && [ ! -L "$target" ] || return 1
   done

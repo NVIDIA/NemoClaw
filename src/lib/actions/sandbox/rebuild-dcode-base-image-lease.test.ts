@@ -15,7 +15,7 @@ import {
 
 const overrideEnvName = "NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF";
 const trustedLocalOverride = {
-  ref: "nemoclaw-langchain-deepagents-code-base:test",
+  ref: `nemoclaw-langchain-deepagents-code-sandbox-base-local:image-${"a".repeat(64)}`,
   provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
 };
 

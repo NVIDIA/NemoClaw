@@ -119,11 +119,20 @@ describe("base image resolution flow", () => {
     expect(context.preResolvedMetadata).toBe(resolvedMetadata);
   });
 
-  it("retains a rebuild handoff when a bound local override has no new metadata (#7144)", () => {
+  it("retains canonical outer metadata when a bound local lease emits no metadata", () => {
+    const imageId = `sha256:${"a".repeat(64)}`;
+    const stableMetadata: SandboxBaseImageResolutionMetadata = {
+      ...recordedMetadata,
+      key: "stable-outer-key",
+      ref: `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`,
+      digest: null,
+      source: "local",
+      imageId,
+    };
     const context = createBaseImageResolutionContext({
       fresh: false,
-      initialHint: recordedMetadata,
-      initialPreResolvedMetadata: recordedMetadata,
+      initialHint: stableMetadata,
+      initialPreResolvedMetadata: stableMetadata,
       env: {},
     });
     const agent = { name: "hermes" } as AgentDefinition;
@@ -139,9 +148,75 @@ describe("base image resolution flow", () => {
       vi.fn(() => staged),
     );
 
-    expect(context.preResolvedMetadata).toBe(recordedMetadata);
+    expect(context.preResolvedMetadata).toBe(stableMetadata);
     expect(getBaseImageResolutionPatchOptions(context).preResolvedBaseImageMetadata).toBe(
-      recordedMetadata,
+      stableMetadata,
     );
+    expect(context.preResolvedMetadata?.key).toBe("stable-outer-key");
+  });
+
+  it("retains stable outer metadata when inner staging uses a disposable local handoff", () => {
+    const imageId = `sha256:${"a".repeat(64)}`;
+    const stableMetadata: SandboxBaseImageResolutionMetadata = {
+      ...recordedMetadata,
+      ref: "nemoclaw-hermes-sandbox-base-local:3ef2ca87",
+      digest: null,
+      source: "local",
+      imageId,
+    };
+    const disposableMetadata: SandboxBaseImageResolutionMetadata = {
+      ...stableMetadata,
+      ref: `nemoclaw-hermes-sandbox-base-local:rebuild-123-${"b".repeat(16)}-image-${"a".repeat(64)}`,
+    };
+    const context = createBaseImageResolutionContext({
+      fresh: false,
+      initialPreResolvedMetadata: stableMetadata,
+      env: {},
+    });
+
+    createAgentSandboxWithResolution(
+      context,
+      { name: "hermes" } as AgentDefinition,
+      vi.fn(() => ({
+        buildCtx: "/tmp/hermes-build",
+        stagedDockerfile: "/tmp/hermes-build/Dockerfile",
+        baseImageResolutionMetadata: disposableMetadata,
+      })),
+    );
+
+    expect(context.preResolvedMetadata).toBe(stableMetadata);
+    expect(context.preResolvedMetadata?.ref).toBe(stableMetadata.ref);
+  });
+
+  it("rejects disposable metadata from a different outer resolution contract", () => {
+    const stableMetadata: SandboxBaseImageResolutionMetadata = {
+      ...recordedMetadata,
+      ref: "nemoclaw-hermes-sandbox-base-local:3ef2ca87",
+      digest: null,
+      source: "local",
+      imageId: `sha256:${"a".repeat(64)}`,
+    };
+    const context = createBaseImageResolutionContext({
+      fresh: false,
+      initialPreResolvedMetadata: stableMetadata,
+      env: {},
+    });
+
+    expect(() =>
+      createAgentSandboxWithResolution(
+        context,
+        { name: "hermes" } as AgentDefinition,
+        vi.fn(() => ({
+          buildCtx: "/tmp/hermes-build",
+          stagedDockerfile: "/tmp/hermes-build/Dockerfile",
+          baseImageResolutionMetadata: {
+            ...stableMetadata,
+            key: "different-resolution-key",
+            ref: `nemoclaw-hermes-sandbox-base-local:rebuild-123-${"b".repeat(16)}-image-${"a".repeat(64)}`,
+          },
+        })),
+      ),
+    ).toThrow("did not match the stable outer resolution");
+    expect(context.preResolvedMetadata).toBe(stableMetadata);
   });
 });

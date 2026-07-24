@@ -18,7 +18,6 @@ function receipt(overrides: Partial<Record<string, string>> = {}): string {
     result: "`docs-updated`",
     evidence: "Updated docs/get-started/quickstart.mdx.",
     agent: "Codex",
-    prNumber: "#42",
     headSha: HEAD_SHA.slice(0, 12),
     agentsSha: AGENTS_BLOB_SHA.slice(0, 12),
     ...overrides,
@@ -29,7 +28,6 @@ function receipt(overrides: Partial<Record<string, string>> = {}): string {
 - Result: ${values.result}
 - Evidence: ${values.evidence}
 - Agent: ${values.agent}
-- PR: ${values.prNumber}
 <!-- docs-review-head-sha: ${values.headSha} -->
 <!-- docs-review-agents-blob-sha: ${values.agentsSha} -->
 `;
@@ -99,8 +97,6 @@ describe("documentation writer review receipt", () => {
       status: "valid",
       result: "docs-updated",
       agent: "Codex",
-      prNumber: 42,
-      prNumberMatches: true,
       headShaMatches: true,
       agentsShaMatches: true,
       issues: [],
@@ -171,9 +167,11 @@ describe("documentation writer review receipt", () => {
     expect(result.stderr).toContain("change code or documentation must include");
   });
 
-  it("accepts the completed-implementation wording in historical receipts", () => {
+  it("accepts historical receipts with completed-implementation wording and a PR field", () => {
     const result = runCheck(
-      receipt().replace("reviewed the completed changes", "reviewed the completed implementation"),
+      receipt()
+        .replace("reviewed the completed changes", "reviewed the completed implementation")
+        .replace("- Agent: Codex", "- Agent: Codex\n- PR: #999"),
       ["src/lib/example.ts", "docs/index.mdx"],
     );
 
@@ -209,12 +207,11 @@ describe("documentation writer review receipt", () => {
     );
   });
 
-  it("reports a copied PR number and stale head and AGENTS.md revisions", () => {
+  it("reports stale head and AGENTS.md revisions", () => {
     const result = runCheck(
       receipt({
         result: "`no-docs-needed`",
         evidence: "The change affects an internal test helper only.",
-        prNumber: "#41",
         headSha: "c".repeat(12),
         agentsSha: "d".repeat(12),
       }),
@@ -224,7 +221,6 @@ describe("documentation writer review receipt", () => {
     expect(result.output.status).toBe("invalid");
     expect(result.output.issues).toEqual(
       expect.arrayContaining([
-        "The receipt PR number does not match this pull request.",
         "The documentation writer review is stale after a new commit.",
         "The reviewed AGENTS.md blob SHA does not match the pull request version.",
       ]),
@@ -247,7 +243,6 @@ describe("documentation writer review receipt", () => {
         result: "`docs-updated` | `no-docs-needed` | `blocked`",
         evidence: "",
         agent: "<Codex | Claude Code | Cursor | other>",
-        prNumber: "#<number>",
         headSha: "",
         agentsSha: "",
       }),
@@ -255,7 +250,7 @@ describe("documentation writer review receipt", () => {
     );
 
     expect(result.output.status).toBe("invalid");
-    expect(result.output.issues).toHaveLength(7);
+    expect(result.output.issues).toHaveLength(6);
   });
 });
 
@@ -279,7 +274,7 @@ describe("documentation writer review report", () => {
 
 - [x] Code change with doc updates
 
-${receipt({ evidence: "=1+1", prNumber: "#1" })}`,
+${receipt({ evidence: "=1+1" })}`,
         files: [{ path: "src/lib/example.ts" }, { path: "docs/index.mdx" }],
       },
       {
@@ -380,6 +375,8 @@ printf '%s' '${JSON.stringify(pullRequests)}'
       );
       expect(csvResult.status).toBe(0);
       expect(csvResult.stdout).toContain("receipt_status");
+      expect(csvResult.stdout).not.toContain("receipt_pr_number");
+      expect(csvResult.stdout).not.toContain("pr_number_matches");
       expect(csvResult.stdout).toContain("1,https://github.com/NVIDIA/NemoClaw/pull/1");
       expect(csvResult.stdout).toContain("2,https://github.com/NVIDIA/NemoClaw/pull/2");
       expect(csvResult.stdout).toContain("'=1+1");

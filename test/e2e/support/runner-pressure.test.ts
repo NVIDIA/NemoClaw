@@ -15,6 +15,11 @@ import {
   renderLiveTestOutcome,
 } from "../../../tools/e2e/live-test-outcome.mts";
 import {
+  collectResourceSnapshot,
+  type ResourceSnapshotSources,
+  resourceSnapshotCommandPlan,
+} from "../../../tools/e2e/runner-pressure.mts";
+import {
   assertCanonicalTimestamp,
   assertPhaseLabel,
   BASELINE_LINE_PREFIX,
@@ -30,9 +35,12 @@ import {
   parseCgroupMemoryEvents,
   parseCgroupScalar,
   parseClassificationLine,
+  parseCpuTicks,
   parseDockerSize,
   parseDockerStats,
+  parseDockerStatsEvidence,
   parseDockerSystemDf,
+  parseLargestClassifiedProcess,
   parseLoadAverages,
   parseMeminfo,
   parsePressure,
@@ -118,6 +126,7 @@ function baseSnapshot(): ResourceSnapshot {
   return {
     phase: "rebuild-hermes.image-build",
     at: "2026-07-18T00:00:00.000Z",
+    cpu: { logicalCpuCount: 4, idleTicks: 200, totalTicks: 500 },
     meminfo: parseMeminfo(MEMINFO_FIXTURE),
     load: { load1: 3.5, load5: 2.1, load15: 1.0 },
     cgroup: {
@@ -129,6 +138,7 @@ function baseSnapshot(): ResourceSnapshot {
     memoryPressure: { someAvg10: 12.5, someAvg60: 4.2, fullAvg10: 1.1, fullAvg60: 0.3 },
     ioPressure: { someAvg10: 0.0, someAvg60: 0.0, fullAvg10: 0.0, fullAvg60: 0.0 },
     topProcesses: [{ rssKb: 900000 }, { rssKb: 400000 }],
+    largestProcess: { class: "docker-buildkit", rssKb: 900000 },
     containers: [
       {
         cpuPercent: 95.2,
@@ -197,23 +207,54 @@ describe("host measurement parsers (#7146)", () => {
       "some avg10=12.50 avg60=4.20 avg300=1.00 total=123456\nfull avg10=1.10 avg60=0.30 avg300=0.10 total=6543\n",
     );
     expect(psi).toEqual({ someAvg10: 12.5, someAvg60: 4.2, fullAvg10: 1.1, fullAvg60: 0.3 });
+    expect(parsePressure("full avg10=101.00 avg60=0.30 avg300=0.10 total=1\n")).toEqual({
+      someAvg10: null,
+      someAvg60: null,
+      fullAvg10: null,
+      fullAvg60: null,
+    });
+  });
+
+  it("parses safe CPU ticks and rejects impossible counters", () => {
+    expect(
+      parseCpuTicks(
+        "cpu  100 20 30 400 50 6 7 8 9 10\ncpu0 1 2 3 4 5 6 7 8\ncpu1 1 2 3 4 5 6 7 8\n",
+      ),
+    ).toEqual({ logicalCpuCount: 2, idleTicks: 450, totalTicks: 621 });
+    expect(parseCpuTicks("cpu  1 1 1 1 1 1 1 9007199254740992\ncpu0 1\n")).toBeNull();
+    expect(parseCpuTicks("cpu malformed\n")).toBeNull();
   });
 
   it("keeps only RSS ranks for top processes, sorted and bounded", () => {
     const ps = [
-      "node             900000",
-      "dockerd          400000",
-      "sshd               8000",
-      "vitest           700000",
-      "tar              100000",
-      "bash               4000",
-      "gpg                2000",
+      "900000 node",
+      "400000 dockerd",
+      "8000 sshd",
+      "700000 vitest",
+      "100000 tar",
+      "4000 bash",
+      "2000 gpg",
     ].join("\n");
     const top = parseTopProcesses(ps);
     expect(top).toHaveLength(5);
     expect(top[0]).toEqual({ rssKb: 900000 });
     expect(JSON.stringify(top)).not.toContain("node");
     expect(top.map((p) => p.rssKb)).toEqual([...top.map((p) => p.rssKb)].sort((a, b) => b - a));
+  });
+
+  it("reduces the largest process name to a fixed class", () => {
+    const largest = parseLargestClassifiedProcess(
+      "12000 openshelld\n130000 buildkitd\n900000 user controlled secret\n",
+    );
+    expect(largest).toEqual({ class: "other", rssKb: 900000 });
+    expect(parseLargestClassifiedProcess("12000 openshelld\n130000 buildkitd\n")).toEqual({
+      class: "docker-buildkit",
+      rssKb: 130000,
+    });
+    expect(JSON.stringify(largest)).not.toContain("user controlled secret");
+    expect(parseTopProcesses("130000 buildkitd\n900000 user controlled secret\n")[0]).toEqual({
+      rssKb: 900000,
+    });
   });
 
   it("converts Docker size strings across decimal and binary units", () => {
@@ -238,6 +279,22 @@ describe("host measurement parsers (#7146)", () => {
     expect(JSON.stringify(rows)).not.toContain("token-");
   });
 
+  it("aggregates maximum Docker CPU across rows outside the retained memory ranks", () => {
+    const stats = Array.from({ length: 6 }, (_, index) =>
+      JSON.stringify({
+        Name: `secret-${index}`,
+        CPUPerc: index === 5 ? "999%" : `${index + 1}%`,
+        MemUsage: `${6 - index}GiB / 16GiB`,
+      }),
+    ).join("\n");
+
+    const evidence = parseDockerStatsEvidence(stats);
+    expect(evidence.containers).toHaveLength(5);
+    expect(evidence.containers.map((row) => row.memBytes)).not.toContain(1024 ** 3);
+    expect(evidence.maximumCpuPercent).toBe(999);
+    expect(JSON.stringify(evidence)).not.toContain("secret-");
+  });
+
   it("attributes docker disk use to images, containers, and build cache", () => {
     const df = [
       JSON.stringify({ Type: "Images", Size: "20GiB", Reclaimable: "4GiB" }),
@@ -252,6 +309,118 @@ describe("host measurement parsers (#7146)", () => {
   });
 });
 
+describe("runner pressure collection profiles (#7146)", () => {
+  function snapshotSources(
+    calls: Array<{ command: string; args: string[]; timeout: number }>,
+  ): ResourceSnapshotSources {
+    return {
+      now: () => new Date("2026-07-23T12:00:00.000Z"),
+      readText: (file) =>
+        new Map([
+          ["/proc/stat", "cpu  10 0 5 20 0 0 0 0\ncpu0 1 0 1 2 0 0 0 0\n"],
+          ["/proc/meminfo", MEMINFO_FIXTURE],
+          ["/sys/fs/cgroup/memory.current", "1000\n"],
+          ["/sys/fs/cgroup/memory.peak", "2000\n"],
+          ["/sys/fs/cgroup/memory.max", "max\n"],
+          ["/sys/fs/cgroup/memory.events", "oom 0\noom_kill 0\n"],
+          ["/sys/fs/cgroup/memory.pressure", "full avg10=1.00 avg60=2.00 avg300=1.00 total=1\n"],
+          ["/sys/fs/cgroup/io.pressure", "full avg10=3.00 avg60=4.00 avg300=1.00 total=1\n"],
+        ]).get(file) ?? null,
+      run: (command, args, timeout) => {
+        calls.push({ command, args, timeout });
+        const dockerDisk = [
+          JSON.stringify({ Type: "Images", Size: "3GiB" }),
+          JSON.stringify({ Type: "Containers", Size: "1GiB" }),
+          JSON.stringify({ Type: "Build Cache", Size: "2GiB" }),
+        ].join("\n");
+        const response = new Map([
+          ["ps", "13000 buildkitd\n"],
+          ["stats", `${JSON.stringify({ CPUPerc: "25%", MemUsage: "256MiB / 16GiB" })}\n`],
+        ]).get(command === "ps" ? command : (args[0] ?? ""));
+        return response ?? dockerDisk;
+      },
+      statfs: () => ({
+        bavail: 25,
+        blocks: 100,
+        bsize: 4096,
+        ffree: 50,
+        files: 200,
+      }),
+    };
+  }
+
+  it("preserves endpoint collection without subprocesses", () => {
+    const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const snapshot = collectResourceSnapshot(
+      "runner-comparison",
+      "comparison-endpoint",
+      snapshotSources(calls),
+    );
+
+    expect(resourceSnapshotCommandPlan("comparison-endpoint")).toEqual({
+      processTimeoutMs: null,
+      containerTimeoutMs: null,
+      dockerDiskTimeoutMs: null,
+    });
+    expect(calls).toEqual([]);
+    expect(snapshot.cpu).toEqual({ logicalCpuCount: 1, idleTicks: 20, totalTicks: 35 });
+    expect(snapshot.largestProcess).toBeNull();
+    expect(snapshot.containers).toEqual([]);
+    expect(snapshot.dockerDisk).toBeNull();
+  });
+
+  it("keeps periodic collection free of Docker probes", () => {
+    const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const snapshot = collectResourceSnapshot(
+      "rebuild-hermes.build",
+      "comparison-periodic",
+      snapshotSources(calls),
+    );
+
+    expect(resourceSnapshotCommandPlan("comparison-periodic")).toEqual({
+      processTimeoutMs: 1_000,
+      containerTimeoutMs: null,
+      dockerDiskTimeoutMs: null,
+    });
+    expect(calls).toEqual([{ command: "ps", args: ["-eo", "rss=,comm="], timeout: 1_000 }]);
+    expect(snapshot.largestProcess).toEqual({ class: "docker-buildkit", rssKb: 13000 });
+    expect(snapshot.containers).toEqual([]);
+    expect(snapshot.dockerDisk).toBeNull();
+  });
+
+  it("retains bounded Docker evidence at phase boundaries", () => {
+    const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const snapshot = collectResourceSnapshot(
+      "rebuild-hermes.export",
+      "comparison-phase",
+      snapshotSources(calls),
+    );
+
+    expect(calls).toEqual([
+      { command: "ps", args: ["-eo", "rss=,comm="], timeout: 1_000 },
+      {
+        command: "docker",
+        args: ["stats", "--no-stream", "--format", "{{json .}}"],
+        timeout: 2_000,
+      },
+      {
+        command: "docker",
+        args: ["system", "df", "--format", "{{json .}}"],
+        timeout: 2_000,
+      },
+    ]);
+    expect(snapshot.containers).toEqual([
+      { cpuPercent: 25, memBytes: 256 * 1024 ** 2, memLimitBytes: 16 * 1024 ** 3 },
+    ]);
+    expect(snapshot.maximumContainerCpuPercent).toBe(25);
+    expect(snapshot.dockerDisk).toEqual({
+      imagesBytes: 3 * 1024 ** 3,
+      containersBytes: 1024 ** 3,
+      buildCacheBytes: 2 * 1024 ** 3,
+    });
+  });
+});
+
 describe("bounded secret-safe snapshot line (#7146)", () => {
   it("emits one prefixed line whose fields all come from the allowlisted shape", () => {
     const line = renderSnapshotLine(baseSnapshot());
@@ -261,9 +430,11 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
       "at",
       "cgroup",
       "containers",
+      "cpu",
       "disk",
       "dockerDisk",
       "ioPressure",
+      "largestProcess",
       "load",
       "meminfo",
       "memoryPressure",
@@ -272,8 +443,10 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
       "v",
     ]);
     expect(payload.meminfo.memAvailableKb).toBe(12288000);
+    expect(payload.cpu).toEqual({ logicalCpuCount: 4, idleTicks: 200, totalTicks: 500 });
     expect(payload.cgroup.limitBytes).toBeNull();
     expect(payload.topProcesses[0]).toEqual({ rank: 1, rssKb: 900000 });
+    expect(payload.largestProcess).toEqual({ class: "docker-buildkit", rssKb: 900000 });
     expect(payload.containers[0]).toEqual({
       rank: 1,
       cpuPercent: 95.2,

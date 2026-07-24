@@ -287,11 +287,63 @@ jobs:
             /tmp/nemoclaw-e2e-model-router-response.log
           if-no-files-found: ignore
 
-  # ── OpenClaw custom-plugin lifecycle and runtime-deps EXDEV E2E ─
-  # Coverage guard for #6108 / #3513 / #3127. On Ubuntu/OpenShell sandbox layouts
-  # where /tmp and /sandbox can live on different filesystems, OpenClaw's
-  # first CLI bootstrap must not fail plugin runtime dependency installation
-  # with EXDEV cross-device rename errors.
+  # ── OpenClaw release-baseline custom-plugin E2E ────────────────
+  # The exact v0.0.71 baseline runs in parallel with the current lifecycle
+  # contract so release provenance does not extend the EXDEV critical path.
+  openclaw-plugin-runtime-exdev-release-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.openclaw_plugin_runtime_exdev == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run OpenClaw custom-plugin release baseline Vitest test
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev-release
+          E2E_TARGET_ID: openclaw-plugin-runtime-exdev-release
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+          NEMOCLAW_SANDBOX_NAME: e2e-openclaw-plugin-exdev-release
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-live \
+            test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
+            -t release-baseline \
+            --silent=false --reporter=default
+
+      - name: Upload OpenClaw plugin release baseline artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-plugin-runtime-exdev-release-artifacts
+          path: e2e-artifacts/live/openclaw-plugin-runtime-exdev-release/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ── OpenClaw current lifecycle and runtime-deps EXDEV E2E ─────
+  # Coverage guard for #6108 / #3513 / #3127. On Ubuntu/OpenShell sandbox
+  # layouts where /tmp and /sandbox can live on different filesystems, the
+  # runtime dependency replacement must complete without EXDEV failures.
   openclaw-plugin-runtime-exdev-e2e:
     needs: select_regression_jobs
     if: >-
@@ -300,9 +352,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Three bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
-    # Vitest buffer need 110 minutes; allow 20 more for setup and teardown.
-    timeout-minutes: 130
+    # Two bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
+    # Vitest buffer need 85 minutes; allow 20 more for setup and teardown.
+    timeout-minutes: 105
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -324,11 +376,13 @@ jobs:
       - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV Vitest test
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
+          E2E_TARGET_ID: openclaw-plugin-runtime-exdev
           NEMOCLAW_RUN_LIVE_E2E: "1"
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
+            -t current-lifecycle \
             --silent=false --reporter=default
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts

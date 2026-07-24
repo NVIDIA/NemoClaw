@@ -108,6 +108,7 @@ export const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
 >((args) => defaultOpenshellResponses(args));
 export const dockerInspectMock = vi.fn(() => ({ status: 0, stdout: "true\n" }));
+export const establishRestoredSandboxGatewayPairingMock = vi.fn();
 export const findBackupMock = vi.fn();
 export const getAppliedPresetsMock = vi.fn(() => [] as string[]);
 export const getCustomPoliciesMock = vi.fn(
@@ -247,6 +248,10 @@ vi.mock("./destroy", () => ({
   removeSandboxRegistryEntry: vi.fn(),
 }));
 
+vi.mock("./restore-gateway-pairing", () => ({
+  establishRestoredSandboxGatewayPairing: establishRestoredSandboxGatewayPairingMock,
+}));
+
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
   shieldsMock.setIsShieldsDownExport(shieldsMock.isShieldsDownMock);
@@ -256,6 +261,7 @@ export function resetSnapshotRestoreMocks(): void {
   lifecycleMock.readTimerMarkerMock.mockReturnValue(null);
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
   dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
+  establishRestoredSandboxGatewayPairingMock.mockReset();
   findBackupMock.mockReturnValue({ match: null });
   getAppliedPresetsMock.mockReturnValue([]);
   getCustomPoliciesMock.mockReturnValue([]);

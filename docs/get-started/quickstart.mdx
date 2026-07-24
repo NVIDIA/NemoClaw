@@ -97,7 +97,8 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
     ```
 
-    For a non-interactive first run, also set the provider, credential, and sandbox name.
+    For a non-interactive first run, set the sandbox name.
+    Set the provider and matching credential unless you want DGX Spark to select local vLLM automatically.
 
     ```bash
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
@@ -113,6 +114,7 @@ Use these details when your first-run path needs more control.
     The example uses NVIDIA Endpoints.
     Set `NEMOCLAW_AGENT` to `hermes` or `langchain-deepagents-code` to install another agent.
     Set `NEMOCLAW_PROVIDER` and the matching credential variable for another provider, then use a sandbox name that does not depend on a previous onboarding session.
+    On DGX Spark, omit `NEMOCLAW_PROVIDER` only when you want the automatic local selection described in [Set Up vLLM](../inference/local-inference/set-up-vllm#run-non-interactive-onboarding).
     To select a specific NemoClaw release, replace `vX.Y.Z` with its versioned release tag.
     `NEMOCLAW_INSTALL_REF` is a higher-priority development override, so clear it when pinning a release tag.
 
@@ -156,7 +158,14 @@ Use these details when your first-run path needs more control.
     It can still prompt for `sudo` when host setup needs it.
     Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
 
-    Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles, Station choices, and headless setup.
+    Before the Station express confirmation, the installer reports whether the Hugging Face download is authenticated without displaying the token value.
+    Authentication is optional for the public Station recipes, but a read token reduces exposure to anonymous HTTP `429` rate limiting during large downloads.
+    Create a read token at [Hugging Face Access Tokens](https://huggingface.co/settings/tokens), then run `export HF_TOKEN="<your-read-token>"` before you launch the installer.
+    Do not paste the token into NemoClaw prompts or chat.
+    The installer passes `HF_TOKEN` only to the temporary model downloader.
+    If the download receives HTTP `429`, keep the existing cache and run `nemoclaw onboard --resume`.
+
+    Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles, Station choices, Hugging Face token setup, and headless setup.
     Refer to [Platform Support](../reference/platform-support) for current validation status.
   </Accordion>
 

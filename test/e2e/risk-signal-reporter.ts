@@ -39,7 +39,9 @@ function checkedOutSha(workspace: string): string {
   return execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
     cwd: workspace,
     encoding: "utf8",
+    killSignal: "SIGKILL",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: 5_000,
   }).trim();
 }
 
@@ -200,8 +202,8 @@ export function writeRiskSignal(
 export default class E2eRiskSignalReporter implements Reporter {
   private readonly environment: RiskSignalEnvironment | null;
   private readonly outcomeFile: string | null;
-  private processTimedOut = false;
   private testNamePattern: RegExp | undefined;
+  private processTimedOut = false;
 
   constructor() {
     this.environment = configuredEnvironment(process.env);

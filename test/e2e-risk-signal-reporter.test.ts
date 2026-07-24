@@ -25,17 +25,13 @@ import {
   writeRiskSignal,
 } from "./e2e/risk-signal-reporter.ts";
 
-const EXPECTED_SHA = "a".repeat(40);
-const PLAN_HASH = "b".repeat(64);
-const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
-
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => "a".repeat(40)),
 }));
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
+const EXPECTED_SHA = "a".repeat(40);
+const PLAN_HASH = "b".repeat(64);
+const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 
 function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pending">): TestModule {
   return {
@@ -58,8 +54,8 @@ function moduleWithNamedStates(
   return {
     children: {
       *allTests() {
-        for (const test of tests) {
-          yield { fullName: test.fullName, result: () => ({ state: test.state }) };
+        for (const { fullName, state } of tests) {
+          yield { fullName, result: () => ({ state }) };
         }
       },
     },
@@ -89,6 +85,10 @@ function environment(artifactDir: string): RiskSignalEnvironment {
 }
 
 describe("E2E risk signal reporter", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("stays disabled when no expected commit is configured", () => {
     expect(configuredEnvironment({})).toBeNull();
   });

@@ -200,6 +200,7 @@ describe("PR E2E protected internal approval", () => {
                 name: `E2E PR #42 (${correlationId})`,
                 path: ".github/workflows/e2e.yaml",
                 workflow_id: 7,
+                run_attempt: 1,
                 event: "workflow_dispatch",
                 head_sha: WORKFLOW_SHA,
                 status: "queued",
