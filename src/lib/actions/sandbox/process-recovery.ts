@@ -590,6 +590,8 @@ const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailab
 const OPENSHELL_RELAY_OPEN_TIMED_OUT = 'message: "relay open timed out"';
 const OPENSHELL_SUPERVISOR_RELAY_DEADLINE = "supervisor relay failed: status: DeadlineExceeded";
 const OPENSHELL_RELAY_CHANNEL_TIMED_OUT = "relay channel timed out";
+const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (os error 2)"';
+const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
 function normalizeOpenshellStructuredError(value: string): string {
   return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
@@ -613,9 +615,10 @@ function isRetryableOpenshellReRegistrationState(
 
   // OpenShell 0.0.85 can keep the recreated sandbox's cached phase at Ready
   // while its replacement supervisor session is still registering. The exec
-  // RPC can fail before a session connects, after a session disconnects, or
-  // after the session connects but does not claim its reverse relay within
-  // OpenShell's 10-second relay deadline. These exact results are control-plane
+  // RPC can fail before a session connects, after a session disconnects, while
+  // the replacement supervisor's local SSH relay target is starting, or after
+  // the session connects but does not claim its reverse relay within OpenShell's
+  // 10-second relay deadline. These exact results are control-plane
   // re-registration states; all other OpenShell failures remain terminal.
   // NemoClaw cannot repair this OpenShell-owned phase/session state without
   // bypassing the control plane. Remove these matches when supported OpenShell
@@ -630,8 +633,15 @@ function isRetryableOpenshellReRegistrationState(
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     error.includes(OPENSHELL_SUPERVISOR_RELAY_DEADLINE) &&
     error.includes(OPENSHELL_RELAY_CHANNEL_TIMED_OUT);
+  const relayTargetUnavailable =
+    error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
+    (error.includes(OPENSHELL_RELAY_TARGET_NOT_FOUND) ||
+      error.includes(OPENSHELL_RELAY_TARGET_REFUSED));
   return (
-    sessionUnavailable || relayChannelTimedOut || error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT)
+    sessionUnavailable ||
+    relayChannelTimedOut ||
+    relayTargetUnavailable ||
+    error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT)
   );
 }
 

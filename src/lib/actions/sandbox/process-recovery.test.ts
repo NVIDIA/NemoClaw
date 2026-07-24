@@ -28,6 +28,12 @@ const OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR = `Error:   × code: '
   │ relay failed: status: DeadlineExceeded, message: \\"relay channel timed
   │ out\\", details: [], metadata: MetadataMap { headers: {} }"
 `;
+const OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR = `Error:   × code: 'The service is currently unavailable', message: "No such file
+  │ or directory (os error 2)"
+`;
+const OPENSHELL_RELAY_TARGET_REFUSED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "Connection
+  │ refused (os error 111)"
+`;
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
@@ -134,11 +140,42 @@ describe("recreated sandbox OpenShell readiness", () => {
   });
 
   it.each([
+    OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR,
+    OPENSHELL_RELAY_TARGET_REFUSED_STDERR,
+  ])("retries while the replacement supervisor's local relay target starts (#7273)", (stderr) => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: stderr.trim(),
+        stdout: "",
+        stderr,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it.each([
     `Error:   × status: DeadlineExceeded, message: "policy update timed out"`,
     `Error:   × code: 'The service is currently unavailable', message: "supervisor
   │ relay failed: status: DeadlineExceeded, message: \\"relay requester timed
   │ out\\", details: [], metadata: MetadataMap { headers: {} }"`,
-  ])("does not retry an unrelated OpenShell deadline error", (stderr) => {
+    `Error:   × code: 'The service is currently unavailable', message: "permission denied"`,
+  ])("does not retry an unrelated OpenShell error", (stderr) => {
     const captureOpenshellImpl = vi.fn(() => ({
       status: 1,
       output: stderr,
