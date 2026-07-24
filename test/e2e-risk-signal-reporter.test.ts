@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestModule, Vitest } from "vitest/node";
 import {
   classifyLiveTestOutcome,
@@ -25,6 +24,10 @@ import {
   type RiskSignalEnvironment,
   writeRiskSignal,
 } from "./e2e/risk-signal-reporter.ts";
+
+vi.mock("node:child_process", () => ({
+  execFileSync: vi.fn(() => "a".repeat(40)),
+}));
 
 const EXPECTED_SHA = "a".repeat(40);
 const PLAN_HASH = "b".repeat(64);
@@ -82,6 +85,10 @@ function environment(artifactDir: string): RiskSignalEnvironment {
 }
 
 describe("E2E risk signal reporter", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("stays disabled when no expected commit is configured", () => {
     expect(configuredEnvironment({})).toBeNull();
   });
@@ -151,12 +158,9 @@ describe("E2E risk signal reporter", () => {
   it("applies the configured name pattern through the reporter lifecycle", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
     try {
-      const testedSha = execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
-        encoding: "utf8",
-      }).trim();
       vi.stubEnv("E2E_ARTIFACT_DIR", dir);
       vi.stubEnv("E2E_TARGET_ID", "network-policy");
-      vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", testedSha);
+      vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", EXPECTED_SHA);
       vi.stubEnv("NEMOCLAW_E2E_PLAN_HASH", PLAN_HASH);
       vi.stubEnv("NEMOCLAW_E2E_CORRELATION_ID", CORRELATION_ID);
       vi.stubEnv("NEMOCLAW_E2E_SHARD", "live-probes");
