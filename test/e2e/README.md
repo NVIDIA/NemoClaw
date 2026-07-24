@@ -424,6 +424,9 @@ policy, dependency and test configuration, and preparation and upload actions.
 Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
 the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
 through cold onboarding and a real first turn.
+The repository-root `Dockerfile.base` remains in only the `platform-install`
+family. It selects `cloud-onboard` and does not trigger the cold `full-e2e`
+path.
 The Deep Agents Code headless-inference check additionally selects the exact
 `ubuntu-repo-cloud-langchain-deepagents-code` typed target. That target is
 hashed into the risk plan beside the control-plane floor jobs, so the
