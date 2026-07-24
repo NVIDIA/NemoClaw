@@ -807,8 +807,8 @@ memory-heavy image build. The rebuild fixture verifies that floor and
 provisions the same swap file on GitHub Actions when a trusted control-plane
 run uses the workflow definition from `main`. Those paths build large Hermes
 image layers and can otherwise exhaust the runner's default memory and swap
-during Docker layer export. Other E2E jobs do not add workflow-managed swap
-except for the trusted Hermes main-workflow fallback described in
+during Docker layer export. Apart from those rebuild and export paths, E2E jobs
+add swap only through the trusted Hermes main-workflow fallback described in
 [Larger-runner routing](#larger-runner-routing).
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a

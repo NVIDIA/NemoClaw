@@ -195,6 +195,17 @@ describe("runner comparison E2E workflow boundary (#7145)", () => {
     );
   });
 
+  it.each(REBUILD_JOBS)("rejects %s telemetry when rebuild swap is delayed", (jobId) => {
+    const workflow = loadWorkflow();
+    const jobSteps = workflow.jobs[jobId]!.steps;
+    const swapIndex = jobSteps.indexOf(step(workflow, jobId, HERMES_REBUILD_SWAP_STEP));
+    jobSteps.splice(swapIndex, 0, { name: "Unexpected step before rebuild swap" });
+
+    expect(validateRunnerComparisonWorkflow(workflow)).toContain(
+      `${jobId} must establish rebuild swap before initializing runner comparison telemetry`,
+    );
+  });
+
   it("rejects weakened trusted-main and always-run guards", () => {
     const workflow = loadWorkflow();
     step(workflow, "common-egress-agent", RUNNER_COMPARISON_INITIALIZE_STEP).if =
