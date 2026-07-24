@@ -137,6 +137,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         rmSync: vi.fn(),
         run: (command, args) => {
           calls.push({ args, command });
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
+            return ok(JSON.stringify([{ name: "nemoclaw" }]));
+          }
           return responses.get([command, ...args].join(" ")) ?? ok();
         },
         runDocker: () => ok(),
@@ -195,6 +198,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         rmSync: vi.fn(),
         run: (command, args) => {
           calls.push({ args, command });
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
+            return ok(JSON.stringify([{ name: "nemoclaw" }]));
+          }
           return responses.get([command, ...args].join(" ")) ?? ok();
         },
         runDocker: () => ok(""),
@@ -225,6 +231,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         rmSync: vi.fn(),
         run: (command, args) => {
           calls.push({ args, command });
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
+            return ok(JSON.stringify([{ name: "nemoclaw" }]));
+          }
           return responses.get([command, ...args].join(" ")) ?? ok();
         },
         runDocker: () => ok(""),
@@ -351,8 +360,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         isTty: true,
         log: vi.fn(),
         rmSync: fs.rmSync,
-        run: (_command: string, args: string[]) => {
+        run: (command: string, args: string[]) => {
           runCalls.push(args);
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
+            return ok(JSON.stringify([{ name: `nemoclaw-${String(port)}` }]));
+          }
           return ok();
         },
         runDocker: () => ok(""),
@@ -856,7 +868,6 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           defaultSandbox: "my-assistant",
           sandboxes: {
             "my-assistant": { name: "my-assistant", gatewayName: "nemoclaw", gatewayPort: 8080 },
-            "sibling-box": { name: "sibling-box", gatewayName: "nemoclaw-9124", gatewayPort: 9124 },
           },
         }),
       );

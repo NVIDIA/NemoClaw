@@ -74,7 +74,13 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) =>
-          command === "openshell" ? notFound() : args[0] === "-c" ? ok("/fake/bin/tool\n") : ok(),
+          command === "openshell" && args[0] === "gateway" && args[1] === "list"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : command === "openshell"
+              ? notFound()
+              : args[0] === "-c"
+                ? ok("/fake/bin/tool\n")
+                : ok(),
         runDocker: () => ok(""),
       },
     );
