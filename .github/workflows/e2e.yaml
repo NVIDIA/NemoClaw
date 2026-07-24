@@ -653,7 +653,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && matrix.agent == 'hermes' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -685,14 +685,28 @@ jobs:
             exit 1
           }
 
-          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${EVENT_NAME}" != "workflow_dispatch" || "${REF}" != "refs/heads/main" ]]; then
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
             fail "workflow must run from NVIDIA/NemoClaw main"
           fi
-          if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            fail "checkout SHA must be lowercase 40-hex"
+          if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            fail "workflow event must be schedule or workflow_dispatch"
           fi
-          if [[ ! "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${EXPECTED_WORKFLOW_SHA}" || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
-            fail "workflow source must match the trusted dispatch revision"
+          # Exact-head mode: controller-dispatched PR revision.
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
+            if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+              fail "checkout SHA must be lowercase 40-hex"
+            fi
+            if [[ ! "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${EXPECTED_WORKFLOW_SHA}" || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "workflow source must match the trusted dispatch revision"
+            fi
+          else
+            # Direct-main mode: schedule or manual trigger on main.
+            if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then
+              fail "direct main runs must not request an alternate checkout or workflow revision"
+            fi
+            if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "direct main workflow source must match the run revision"
+            fi
           fi
           if [[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted" || "${RUNNER_OS_KIND}" != "Linux" || "${RUNNER_ARCH_KIND}" != "X64" ]]; then
             fail "swap fallback requires an ephemeral GitHub-hosted Linux x64 runner"
@@ -1332,7 +1346,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -1474,7 +1488,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -1981,7 +1995,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,')) }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,')))) }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -2321,7 +2335,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -2394,6 +2408,26 @@ jobs:
       NEMOCLAW_POLICY_TIER: open
       OPENSHELL_GATEWAY: nemoclaw
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -2550,6 +2584,26 @@ jobs:
       NEMOCLAW_RECREATE_SANDBOX: "1"
       OPENSHELL_GATEWAY: nemoclaw
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.scenario == 'hermes-open-reference' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -2687,7 +2741,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -2836,6 +2890,16 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
+
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
         continue-on-error: true
@@ -2848,16 +2912,6 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
-
-      - name: Add swap for Hermes image rebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
 
       - name: Run Hermes rebuild live test
         # Preserves the checked-out CLI, Docker/OpenShell, Hermes base-image
@@ -2950,6 +3004,16 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
+
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
         continue-on-error: true
@@ -2962,16 +3026,6 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
-
-      - name: Add swap for Hermes image rebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
 
       - name: Run Hermes stale-base rebuild live test
         # Uses NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1, preserving issue #3025's
@@ -3655,7 +3709,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && matrix.agent == 'hermes' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -4938,7 +4992,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && matrix.agent == 'hermes' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -5239,6 +5293,26 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-channels-stop-start-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
