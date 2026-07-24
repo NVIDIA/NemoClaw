@@ -321,10 +321,22 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
 
 function noAuthProxy(endpointUrl: string) {
   const endpoint = new URL(endpointUrl);
-  if (!startOllamaAuthProxy(endpoint.origin))
+  if (!startOllamaAuthProxy(endpoint.origin)) {
+    restorePersistedOllamaAuthProxy();
     throw new Error("Could not start the protected loopback route.");
-  // biome-ignore format: keep the proxy route and its token together.
-  return { baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`, credentialValue: getOllamaProxyToken()!, persist: () => persistProxyToken(getOllamaProxyToken()!, endpoint.origin) };
+  }
+  return {
+    baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`,
+    credentialValue: getOllamaProxyToken()!,
+    persist: () => persistProxyToken(getOllamaProxyToken()!, endpoint.origin),
+    restore: restorePersistedOllamaAuthProxy,
+  };
+}
+
+function restorePersistedOllamaAuthProxy(): void {
+  killStaleProxy();
+  ollamaProxyToken = null;
+  ensureOllamaAuthProxy();
 }
 
 /**

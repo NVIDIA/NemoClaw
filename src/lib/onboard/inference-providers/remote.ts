@@ -239,9 +239,19 @@ export async function setupRemoteProviderInference(
     (deleteProviderWithRecovery as unknown as NonNullable<
       RemoteProviderDeps["deleteGatewayProvider"]
     >);
+  const previousProxyCredential = credentialEnv ? process.env[credentialEnv] : undefined;
   const proxy =
     credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV ? noAuth(endpointUrl!) : null;
   if (proxy) process.env[credentialEnv!] = proxy.credentialValue;
+  const restoreUncommittedProxy = () => {
+    if (!proxy) return;
+    proxy.restore();
+    if (previousProxyCredential === undefined) {
+      delete process.env[credentialEnv!];
+    } else {
+      process.env[credentialEnv!] = previousProxyCredential;
+    }
+  };
   while (true) {
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
@@ -335,6 +345,7 @@ export async function setupRemoteProviderInference(
       capabilityCache?.invalidate();
       error(`  ${providerResult.message}`);
       if (isNonInteractive()) {
+        restoreUncommittedProxy();
         return exitProcess(providerResult.status || 1);
       }
       const retry = await promptValidationRecovery(
@@ -347,8 +358,10 @@ export async function setupRemoteProviderInference(
         continue;
       }
       if (retry === "selection" || retry === "model") {
+        restoreUncommittedProxy();
         return { done: true, result: { retry: "selection" } };
       }
+      restoreUncommittedProxy();
       return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
@@ -371,6 +384,7 @@ export async function setupRemoteProviderInference(
     capabilityCache?.invalidate();
     error(`  ${message}`);
     if (isNonInteractive()) {
+      restoreUncommittedProxy();
       return exitProcess(applyResult.status || 1);
     }
     const retry = await promptValidationRecovery(
@@ -383,8 +397,10 @@ export async function setupRemoteProviderInference(
       continue;
     }
     if (retry === "selection" || retry === "model") {
+      restoreUncommittedProxy();
       return { done: true, result: { retry: "selection" } };
     }
+    restoreUncommittedProxy();
     return exitProcess(applyResult.status || 1);
   }
   return { done: false };

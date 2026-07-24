@@ -231,10 +231,12 @@ describe("OpenAI-compatible no-auth provider registration", () => {
   it("registers the protected proxy URL and generated credential (#7424)", async () => {
     const harness = createHarness();
     const persist = vi.fn();
+    const restore = vi.fn();
     vi.mocked(noAuthProxy).mockReturnValue({
       baseUrl: "http://host.openshell.internal:11435/v1",
       credentialValue: "proxy-token",
       persist,
+      restore,
     });
     harness.deps.hydrateCredentialEnv.mockImplementation(
       () => process.env[NO_AUTH_ENV] || "missing",
@@ -253,6 +255,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       { [NO_AUTH_ENV]: "proxy-token" },
     );
     expect(persist).toHaveBeenCalledOnce();
+    expect(restore).not.toHaveBeenCalled();
   });
 
   it("stops before registration when proxy startup fails (#7424)", async () => {
@@ -267,18 +270,48 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     expect(harness.upsertProvider).not.toHaveBeenCalled();
   });
 
-  it("does not persist proxy state when provider registration fails (#7424)", async () => {
+  it("restores committed proxy state when provider registration fails (#7424)", async () => {
     const harness = createHarness();
     const persist = vi.fn();
+    const restore = vi.fn();
+    process.env[NO_AUTH_ENV] = "committed-token";
     vi.mocked(noAuthProxy).mockReturnValue({
       baseUrl: "http://host.openshell.internal:11435/v1",
       credentialValue: "proxy-token",
       persist,
+      restore,
     });
     harness.deps.hydrateCredentialEnv.mockReturnValue("proxy-token");
     harness.upsertProvider.mockReturnValue({ ok: false });
 
     await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow("EXIT_CALLED:1");
     expect(persist).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledOnce();
+    expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
+  });
+
+  it("restores committed proxy state when registration returns to selection (#7424)", async () => {
+    const harness = createHarness();
+    const persist = vi.fn();
+    const restore = vi.fn();
+    process.env[NO_AUTH_ENV] = "committed-token";
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      credentialValue: "proxy-token",
+      persist,
+      restore,
+    });
+    harness.deps.hydrateCredentialEnv.mockReturnValue("proxy-token");
+    harness.upsertProvider.mockReturnValue({ ok: false });
+    harness.deps.isNonInteractive.mockReturnValue(false);
+    harness.deps.promptValidationRecovery.mockResolvedValue("selection");
+
+    await expect(setupRemoteProviderInference(args, harness.deps)).resolves.toEqual({
+      done: true,
+      result: { retry: "selection" },
+    });
+    expect(persist).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledOnce();
+    expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
   });
 });
