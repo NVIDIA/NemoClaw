@@ -86,7 +86,7 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
     writeFakeCommand(fakeBin, "swapon", [
       `printf 'swapon:%s\\n' "$*" >> "$FAKE_CALL_LOG"`,
       'case "$*" in',
-      '  *"--output SIZE"*)',
+      '  *"--show=SIZE"*)',
       '    state="$(head -n 1 "$FAKE_SWAP_STATE")"',
       '    if [ "$state" = "active" ]; then',
       "      count=0",
@@ -100,7 +100,7 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
       '      printf "%s\\n" "$FAKE_ACTIVE_SWAP_BYTES"',
       "    fi",
       "    ;;",
-      '  *"--output NAME"*)',
+      '  *"--show=NAME"*)',
       "    count=0",
       '    [ ! -f "$FAKE_QUERY_COUNT" ] || count="$(head -n 1 "$FAKE_QUERY_COUNT")"',
       "    count=$((count + 1))",
@@ -112,6 +112,9 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
       "    fi",
       "    ;;",
       '  "--show")',
+      "    ;;",
+      '  *"--show"*)',
+      "    exit 42",
       "    ;;",
       "  *)",
       '    printf "active\\n" > "$FAKE_SWAP_STATE"',
@@ -266,6 +269,13 @@ describe("trusted Hermes swap workflow boundary", () => {
     expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain(
       '/usr/bin/sudo -n /usr/sbin/swapoff "${swap_file}"',
     );
+    expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain(
+      "/usr/bin/sudo -n /usr/sbin/swapon --show=SIZE --bytes --noheadings",
+    );
+    expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain(
+      "/usr/bin/sudo -n /usr/sbin/swapon --show=NAME --noheadings --raw",
+    );
+    expect(TRUSTED_HERMES_SWAP_SCRIPT).not.toContain("/usr/sbin/swapon --output");
     expect(TRUSTED_HERMES_SWAP_SCRIPT).not.toContain("/bin/bash -c");
     expect(TRUSTED_HERMES_SWAP_SCRIPT).not.toContain("${{");
   });
@@ -276,7 +286,7 @@ describe("trusted Hermes swap workflow boundary", () => {
     expect(result.status).toBe(0);
     expect(result.calls).toEqual([
       "stat:-c %F:%u:%g -- /mnt",
-      "swapon:--show --bytes --noheadings --output SIZE",
+      "swapon:--show=SIZE --bytes --noheadings",
     ]);
   });
 
@@ -290,8 +300,8 @@ describe("trusted Hermes swap workflow boundary", () => {
         "mkswap:--quiet /mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap",
         "swapon:/mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap",
         "swapon-activate:/mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap",
-        "swapon:--show --noheadings --raw --output NAME",
-        "swapon:--show --bytes --noheadings --output SIZE",
+        "swapon:--show=NAME --noheadings --raw",
+        "swapon:--show=SIZE --bytes --noheadings",
         "swapon:--show",
       ]),
     );

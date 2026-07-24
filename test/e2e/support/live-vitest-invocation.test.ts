@@ -58,7 +58,7 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
   writeFakeCommand(fakeBin, "swapon", [
     `printf 'swapon:%s\\n' "$*" >> "$FAKE_CALL_LOG"`,
     'case "$*" in',
-    '  *"--output SIZE"*)',
+    '  *"--show=SIZE"*)',
     '    swap_state="inactive"',
     '    if [ -f "$FAKE_SWAP_STATE_FILE" ]; then',
     '      IFS= read -r swap_state < "$FAKE_SWAP_STATE_FILE" || swap_state="inactive"',
@@ -77,7 +77,7 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
     "      printf '1\\n'",
     "    fi",
     "    ;;",
-    '  *"--output NAME"*)',
+    '  *"--show=NAME"*)',
     "    query_count=0",
     '    if [ -f "$FAKE_NAME_QUERY_COUNT_FILE" ]; then',
     '      IFS= read -r query_count < "$FAKE_NAME_QUERY_COUNT_FILE" || query_count=0',
@@ -104,6 +104,11 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
     `        printf '%s\\n' "$FAKE_FIXED_SWAP"`,
     "      fi",
     "    fi",
+    "    ;;",
+    '  "--show")',
+    "    ;;",
+    '  *"--show"*)',
+    "    exit 43",
     "    ;;",
     "  *)",
     `    printf 'active\\n' > "$FAKE_SWAP_STATE_FILE"`,
@@ -440,16 +445,16 @@ describe("runLiveVitestCommand Hermes resource setup (#7145)", () => {
       }).status,
     ).toBe(0);
     expect(script).toContain("if (( active_swap_bytes >= required_swap_bytes )); then");
-    expect(script).toContain(
-      'active_swap_names="$(swapon --show --noheadings --raw --output NAME)"',
-    );
+    expect(script).toContain('active_swap_names="$(swapon --show=NAME --noheadings --raw)"');
     expect(script).toContain('if [[ "$active_swap_name" == "$swap_file" ]]; then');
     expect(script).toContain(
       "if (( cleanup_swap_active == 1 || swap_activation_succeeded == 1 )); then",
     );
     expect(script).toContain(
-      'if cleanup_swap_names="$(swapon --show --noheadings --raw --output NAME 2>/dev/null)"; then',
+      'if cleanup_swap_names="$(swapon --show=NAME --noheadings --raw 2>/dev/null)"; then',
     );
+    expect(script).toContain("swapon --show=SIZE --bytes --noheadings");
+    expect(script).not.toContain("swapon --output");
     expect(script).toContain('if swapoff "$swap_file" 2>/dev/null; then');
     expect(script).toContain("Preserving active Hermes E2E swap after setup failure");
     expect(script).toContain("Preserving Hermes E2E swap because active swap could not be queried");

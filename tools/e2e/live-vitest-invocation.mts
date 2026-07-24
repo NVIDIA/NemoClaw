@@ -60,7 +60,7 @@ case "$swap_file_bytes" in
     ;;
 esac
 
-active_swap_bytes="$(swapon --show --bytes --noheadings --output SIZE | awk '{ total += $1 } END { printf "%.0f", total }')"
+active_swap_bytes="$(swapon --show=SIZE --bytes --noheadings | awk '{ total += $1 } END { printf "%.0f", total }')"
 active_swap_bytes="\${active_swap_bytes:-0}"
 case "$active_swap_bytes" in
   ""|*[!0-9]*)
@@ -74,7 +74,7 @@ if (( active_swap_bytes >= required_swap_bytes )); then
   exit 0
 fi
 
-active_swap_names="$(swapon --show --noheadings --raw --output NAME)"
+active_swap_names="$(swapon --show=NAME --noheadings --raw)"
 fixed_swap_active=0
 while IFS= read -r active_swap_name; do
   if [[ "$active_swap_name" == "$swap_file" ]]; then
@@ -90,7 +90,7 @@ rm -f -- "$swap_file"
 cleanup_partial_swap() {
   status="$?"
   if (( status != 0 )); then
-    if cleanup_swap_names="$(swapon --show --noheadings --raw --output NAME 2>/dev/null)"; then
+    if cleanup_swap_names="$(swapon --show=NAME --noheadings --raw 2>/dev/null)"; then
       cleanup_swap_active=0
       while IFS= read -r cleanup_swap_name; do
         if [[ "$cleanup_swap_name" == "$swap_file" ]]; then
@@ -126,7 +126,7 @@ observe_provisioned_swap() {
   activation_observation_attempt=1
   while (( activation_observation_attempt <= activation_observation_attempts )); do
     provisioned_swap_active=0
-    if active_swap_names="$(swapon --show --noheadings --raw --output NAME 2>/dev/null)"; then
+    if active_swap_names="$(swapon --show=NAME --noheadings --raw 2>/dev/null)"; then
       while IFS= read -r active_swap_name; do
         if [[ "$active_swap_name" == "$swap_file" ]]; then
           provisioned_swap_active=1
@@ -134,7 +134,7 @@ observe_provisioned_swap() {
         fi
       done <<< "$active_swap_names"
     fi
-    if observed_swap_bytes="$(swapon --show --bytes --noheadings --output SIZE 2>/dev/null | awk '{ total += $1 } END { printf "%.0f", total }')"; then
+    if observed_swap_bytes="$(swapon --show=SIZE --bytes --noheadings 2>/dev/null | awk '{ total += $1 } END { printf "%.0f", total }')"; then
       observed_swap_bytes="\${observed_swap_bytes:-0}"
       if [[ "$observed_swap_bytes" != *[!0-9]* ]] &&
         (( provisioned_swap_active == 1 && observed_swap_bytes >= required_swap_bytes )); then
