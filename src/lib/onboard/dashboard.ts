@@ -331,9 +331,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       { port: actualPort, sandboxName },
       () => {
         deps.sleep(1);
-        // The setup stopper intentionally de-duplicates ports. A retry needs
-        // a fresh sandbox-scoped stopper so it can clean the failed attempt
-        // without falling through that one-shot guard.
+        // The setup stopper intentionally de-duplicates ports. A port-conflict
+        // retry needs a fresh sandbox-scoped stopper so it can preserve the
+        // established conflict-recovery behavior despite that one-shot guard.
         makeStopForwardForSandbox()(actualPort);
       },
       { onProgress: buildForwardStartProgressLogger(actualPort) },

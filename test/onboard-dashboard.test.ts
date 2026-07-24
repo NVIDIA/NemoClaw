@@ -33,19 +33,25 @@ function createListenerFailureRecoveryHarness(targetPort: number) {
   const sandboxName = "my-sandbox";
   const foreignPort = targetPort === 18789 ? 19000 : 18789;
   let targetStopCount = 0;
+  let forwardListCallsAfterStop = 0;
   const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-    targetStopCount += Number(args.join(" ") === `forward stop ${targetPort} ${sandboxName}`);
+    if (args.join(" ") === `forward stop ${targetPort} ${sandboxName}`) {
+      targetStopCount += 1;
+      forwardListCallsAfterStop = 0;
+    }
     return { status: 0 };
   });
-  const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) =>
-    args.join(" ") === "forward list"
-      ? [
-          "SANDBOX BIND PORT PID STATUS",
-          `other-sandbox 127.0.0.1 ${foreignPort} 42000 running`,
-          ...(targetStopCount >= 2 ? [`${sandboxName} 127.0.0.1 ${targetPort} 42001 running`] : []),
-        ].join("\n")
-      : "",
-  );
+  const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+    if (args.join(" ") !== "forward list") return "";
+    if (targetStopCount > 0) forwardListCallsAfterStop += 1;
+    return [
+      "SANDBOX BIND PORT PID STATUS",
+      `other-sandbox 127.0.0.1 ${foreignPort} 42000 running`,
+      ...(forwardListCallsAfterStop >= 2
+        ? [`${sandboxName} 127.0.0.1 ${targetPort} 42001 running`]
+        : []),
+    ].join("\n");
+  });
   const sleep = vi.fn();
   const diagnostic = `local forward listener did not open on 127.0.0.1:${targetPort} within 10000ms\n`;
   const helpers = createOnboardDashboardHelpers({
@@ -157,7 +163,7 @@ describe("onboard dashboard helpers", () => {
     });
   });
 
-  it("retries a terminated dashboard listener with sandbox-scoped cleanup (#7266)", () => {
+  it("retries a terminated dashboard listener without repeat cleanup (#7266)", () => {
     const { helpers, runOpenshell, sleep, sandboxName, foreignPort } =
       createListenerFailureRecoveryHarness(18789);
 
@@ -166,12 +172,12 @@ describe("onboard dashboard helpers", () => {
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
     expect(
       stopArgs.filter((args) => args.join(" ") === `forward stop 18789 ${sandboxName}`),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
-    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("retries a terminated fixed-agent listener with sandbox-scoped cleanup (#7266)", () => {
+  it("retries a terminated fixed-agent listener without repeat cleanup (#7266)", () => {
     const { helpers, runOpenshell, sleep, sandboxName, foreignPort } =
       createListenerFailureRecoveryHarness(8642);
 
@@ -180,9 +186,9 @@ describe("onboard dashboard helpers", () => {
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
     expect(
       stopArgs.filter((args) => args.join(" ") === `forward stop 8642 ${sandboxName}`),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
-    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {

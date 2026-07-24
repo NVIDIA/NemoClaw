@@ -492,8 +492,70 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe("listener-start-failure");
+    expect(result.reason).toBe("listener-ownership-conflict");
     expect(isPortListening).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a live port after an ownership lookup failure (#7266)", () => {
+    const fetchList = vi.fn().mockImplementation(() => {
+      throw new Error("gateway transport: access denied");
+    });
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(stderr, "ssh exited before local forward listener opened on 127.0.0.1:18789\n");
+      return { pid: 786 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 180_000, sleepMs: vi.fn(), isPortListening },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("listener-start-failure");
+      expect(result.diagnostic).toMatch(/openshell forward list failed:.*access denied/i);
+      expect(isPortListening).not.toHaveBeenCalled();
+      expect(killSpy).toHaveBeenCalledWith(786, "SIGTERM");
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
+  });
+
+  it("rejects a live port without the established untracked-forward diagnostic (#7266)", () => {
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "local forward listener did not open on 127.0.0.1:18789 within 10000ms\n",
+      );
+      return { pid: 787 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 180_000, sleepMs: vi.fn(), isPortListening },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("listener-ownership-conflict");
+      expect(isPortListening).toHaveBeenCalledWith(18789);
+      expect(killSpy).toHaveBeenCalledWith(787, "SIGTERM");
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
   });
 
   it("keeps waiting (then times out) when openshell reports untracked but the port is not live", () => {
@@ -630,7 +692,7 @@ describe("runDetachedForwardStartWithRetries", () => {
     expect(spawn).toHaveBeenCalledTimes(3); // initial + 2 retries
   });
 
-  it("cleans and retries a failed listener start, then succeeds (#7266)", () => {
+  it("preserves a concurrent same-target replacement while retrying (#7266)", () => {
     const fetchList = vi
       .fn()
       .mockReturnValueOnce(forwardListWith([]))
@@ -661,7 +723,9 @@ describe("runDetachedForwardStartWithRetries", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(beforeRetry).toHaveBeenCalledOnce();
+    // The second forward-list row can belong to a concurrent replacement.
+    // Listener-failure retry must observe it without stopping by sandbox/port.
+    expect(beforeRetry).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalledTimes(2);
   });
 
@@ -718,7 +782,7 @@ describe("runDetachedForwardStartWithRetries", () => {
 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("listener-start-failure");
-    expect(beforeRetry).toHaveBeenCalledTimes(2);
+    expect(beforeRetry).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalledTimes(3);
   });
 
@@ -756,8 +820,8 @@ describe("runDetachedForwardStartWithRetries", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe("spawn-conflict");
-    expect(beforeRetry).toHaveBeenCalledTimes(2);
+    expect(result.reason).toBe("listener-ownership-conflict");
+    expect(beforeRetry).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
     expect(fetchList).not.toHaveBeenCalled();
   });

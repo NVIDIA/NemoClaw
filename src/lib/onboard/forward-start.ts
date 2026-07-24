@@ -40,6 +40,7 @@ export interface DetachedForwardStartOutcome {
     | "spawn-error"
     | "timeout"
     | "spawn-conflict"
+    | "listener-ownership-conflict"
     | "listener-start-failure";
 }
 
@@ -222,6 +223,45 @@ function terminateDetachedForwardChild(pid: number | undefined): void {
   }
 }
 
+function classifyListenerStartDiagnostic(input: {
+  diagnostic: string;
+  pid: number | undefined;
+  port: number;
+  ownerLookupSucceeded: boolean;
+  listedForAnotherSandbox: boolean;
+  isPortListening: (port: number) => boolean;
+}): DetachedForwardStartOutcome | null {
+  if (!looksLikeForwardListenerStartFailure(input.diagnostic)) return null;
+
+  if (input.listedForAnotherSandbox) {
+    terminateDetachedForwardChild(input.pid);
+    return {
+      ok: false,
+      diagnostic: input.diagnostic,
+      pid: input.pid,
+      reason: "listener-ownership-conflict",
+    };
+  }
+
+  const portListening = input.ownerLookupSucceeded && input.isPortListening(input.port);
+  if (portListening && looksLikeUntrackedForward(input.diagnostic)) {
+    return {
+      ok: true,
+      diagnostic: input.diagnostic,
+      pid: input.pid,
+      reason: "ok-port-live",
+    };
+  }
+
+  terminateDetachedForwardChild(input.pid);
+  return {
+    ok: false,
+    diagnostic: input.diagnostic,
+    pid: input.pid,
+    reason: portListening ? "listener-ownership-conflict" : "listener-start-failure",
+  };
+}
+
 /**
  * Default progress logger for the detached forward-start helper. Emits a
  * single line to stdout every `progressIntervalMs` while the helper is
@@ -341,16 +381,19 @@ export function runDetachedForwardStartWithDiagnostics(
         return { ok: false, diagnostic: diagSoFar, pid, reason: "spawn-conflict" };
       }
       // A completed listener-start failure cannot recover through more list
-      // polling. Probe once for the ControlMaster exception from #6099; if the
-      // port is still closed, return immediately so the caller can clean the
-      // exact sandbox/port attempt and retry within its existing bound.
-      if (looksLikeForwardListenerStartFailure(diagSoFar)) {
-        if (!listedForAnotherSandbox && isPortListening(expect.port)) {
-          return { ok: true, diagnostic: readDiag(), pid, reason: "ok-port-live" };
-        }
-        terminateDetachedForwardChild(pid);
-        return { ok: false, diagnostic: diagSoFar, pid, reason: "listener-start-failure" };
-      }
+      // polling. Preserve the established ControlMaster exception from #6099
+      // only when forward-list ownership enumeration succeeded and openshell
+      // also emitted that narrower untracked-forward diagnostic. A live TCP
+      // port alone is not evidence that this attempt owns the listener.
+      const listenerOutcome = classifyListenerStartDiagnostic({
+        diagnostic: diagSoFar,
+        pid,
+        port: expect.port,
+        ownerLookupSucceeded: lastFetchError === null,
+        listedForAnotherSandbox,
+        isPortListening,
+      });
+      if (listenerOutcome) return listenerOutcome;
       // Fallback for the "untracked forward" failure (GitHub #6099): openshell
       // established the SSH tunnel but could not register/track it, so it never
       // appears in `openshell forward list` even though the local port is
@@ -360,6 +403,7 @@ export function runDetachedForwardStartWithDiagnostics(
       // healthy sandbox. The EADDRINUSE conflict check above runs first, so a
       // port held by a *different* process is never mistaken for our forward.
       if (
+        lastFetchError === null &&
         !listedForAnotherSandbox &&
         looksLikeUntrackedForward(diagSoFar) &&
         Date.now() >= nextPortProbeAt
@@ -398,14 +442,16 @@ export function runDetachedForwardStartWithDiagnostics(
 
 /**
  * Retry the detached forward-start after an EADDRINUSE-style port conflict or
- * a definitive listener-start failure. `beforeRetry` runs between attempts so
- * the caller can drop the exact sandbox/port attempt before trying again.
+ * a definitive listener-start failure. `beforePortConflictRetry` preserves the
+ * established conflict-recovery behavior. Listener-start failures retry
+ * without sandbox/port cleanup because OpenShell does not expose immutable
+ * attempt identity.
  */
 export function runDetachedForwardStartWithRetries(
   runDetachedSpawn: DetachedForwardSpawnRunner,
   fetchForwardList: ForwardListFetcher,
   expect: { port: number; sandboxName: string },
-  beforeRetry: () => void,
+  beforePortConflictRetry: () => void,
   options: DetachedForwardStartOptions = {},
 ): DetachedForwardStartOutcome {
   const maxRetries = options.maxRetries ?? 3;
@@ -415,19 +461,22 @@ export function runDetachedForwardStartWithRetries(
       ? {
           ok: false,
           diagnostic: `port ${expect.port} is already in use before forward start`,
-          reason: "spawn-conflict",
+          reason: "listener-ownership-conflict",
         }
       : runDetachedForwardStartWithDiagnostics(runDetachedSpawn, fetchForwardList, expect, options);
   let attempt = runAttempt();
   for (
     let retries = 0;
     !attempt.ok &&
-    (looksLikeForwardPortConflict(attempt.diagnostic) ||
+    ((attempt.reason !== "listener-ownership-conflict" &&
+      looksLikeForwardPortConflict(attempt.diagnostic)) ||
       attempt.reason === "listener-start-failure") &&
     retries < maxRetries;
     retries++
   ) {
-    beforeRetry();
+    if (looksLikeForwardPortConflict(attempt.diagnostic)) {
+      beforePortConflictRetry();
+    }
     attempt = runAttempt();
   }
   return attempt;
