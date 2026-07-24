@@ -56,6 +56,7 @@ childProcess.spawnSync = (...args) => {
   }
   return originalSpawnSync(...args);
 };
+require("node:module").syncBuiltinESMExports();
 
 const stateDir = path.join(process.env.HOME, ".nemoclaw");
 fs.mkdirSync(stateDir, { recursive: true });
@@ -84,10 +85,14 @@ console.log(JSON.stringify({
 `;
     fs.writeFileSync(scriptPath, script);
 
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir };
+    delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
+    delete childEnv.NEMOCLAW_OLLAMA_PORT;
+
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf8",
-      env: { ...process.env, HOME: tmpDir },
+      env: childEnv,
     });
 
     assert.equal(result.status, 0, result.stderr);
