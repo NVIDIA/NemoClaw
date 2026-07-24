@@ -265,6 +265,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "extract-semver.sh"),
+    path.join(stagedScriptsDir, "extract-semver.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-shared-state-permissions.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-shared-state-permissions.mts"),
   );
