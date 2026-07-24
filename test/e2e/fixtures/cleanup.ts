@@ -18,6 +18,13 @@ type CleanupFn = () => Promise<void> | void;
 type RedactFn = (text: string) => string;
 type CleanupProgress = Pick<TestProgress, "activity" | "event">;
 const MAX_PROGRESS_CLEANUP_NAME_LENGTH = 120;
+export const DEFAULT_CLEANUP_TIMEOUT_MS = 10 * 60_000;
+
+export interface CleanupRegistryOptions {
+  testSignal?: AbortSignal;
+  /** Shared deadline for signal-aware cleanup commands; callbacks are still awaited in order. */
+  timeoutMs?: number;
+}
 
 export interface CleanupHost {
   cleanupSandbox(name: string, options?: ShellProbeRunOptions): Promise<void>;
@@ -34,10 +41,26 @@ export class CleanupRegistry {
   private readonly entries: CleanupEntry[] = [];
   private readonly redact: RedactFn;
   private readonly progress?: CleanupProgress;
+  private readonly testSignal: AbortSignal;
+  private readonly timeoutMs: number;
+  private cleanupController?: AbortController;
 
-  constructor(redact: RedactFn = (text) => text, progress?: CleanupProgress) {
+  constructor(
+    redact: RedactFn = (text) => text,
+    progress?: CleanupProgress,
+    options: CleanupRegistryOptions = {},
+  ) {
     this.redact = redact;
     this.progress = progress;
+    this.testSignal = options.testSignal ?? new AbortController().signal;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0) {
+      throw new Error("cleanup timeoutMs must be a positive safe integer");
+    }
+  }
+
+  currentSignal(): AbortSignal {
+    return this.cleanupController?.signal ?? this.testSignal;
   }
 
   private safeRedact(text: string): string {
@@ -120,25 +143,39 @@ export class CleanupRegistry {
   }
 
   async runAll(): Promise<CleanupResult> {
-    const result: CleanupResult = { passed: [], failures: [] };
-    for (const entry of [...this.entries].reverse()) {
-      const finishProgress = this.startProgress(entry.name);
-      try {
-        await entry.run();
-        result.passed.push(this.safeRedact(entry.name));
-        this.reportProgress("passed", entry.name);
-      } catch (error) {
-        result.failures.push({
-          name: this.safeRedact(entry.name),
-          message: this.safeRedact(error instanceof Error ? error.message : String(error)),
-        });
-        this.reportProgress("failed", entry.name);
-      } finally {
-        finishProgress();
-      }
+    if (this.cleanupController) {
+      throw new Error("cleanup is already running");
     }
-    this.entries.length = 0;
-    return result;
+
+    const cleanupController = new AbortController();
+    this.cleanupController = cleanupController;
+    const deadline = setTimeout(() => cleanupController.abort(), this.timeoutMs);
+    deadline.unref();
+    const result: CleanupResult = { passed: [], failures: [] };
+    try {
+      for (const entry of [...this.entries].reverse()) {
+        const finishProgress = this.startProgress(entry.name);
+        try {
+          await entry.run();
+          result.passed.push(this.safeRedact(entry.name));
+          this.reportProgress("passed", entry.name);
+        } catch (error) {
+          result.failures.push({
+            name: this.safeRedact(entry.name),
+            message: this.safeRedact(error instanceof Error ? error.message : String(error)),
+          });
+          this.reportProgress("failed", entry.name);
+        } finally {
+          finishProgress();
+        }
+      }
+      return result;
+    } finally {
+      clearTimeout(deadline);
+      cleanupController.abort();
+      this.cleanupController = undefined;
+      this.entries.length = 0;
+    }
   }
 }
 
