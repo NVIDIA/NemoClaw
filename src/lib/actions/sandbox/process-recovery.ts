@@ -587,6 +587,7 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
 
 const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
 const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
+const OPENSHELL_STATUS_UNAVAILABLE = "status: Unavailable";
 const OPENSHELL_RELAY_OPEN_TIMED_OUT = 'message: "relay open timed out"';
 const OPENSHELL_SUPERVISOR_RELAY_DEADLINE = "supervisor relay failed: status: DeadlineExceeded";
 const OPENSHELL_RELAY_CHANNEL_TIMED_OUT = "relay channel timed out";
@@ -635,7 +636,8 @@ function isRetryableOpenshellReRegistrationState(
     error.includes(OPENSHELL_SUPERVISOR_RELAY_DEADLINE) &&
     error.includes(OPENSHELL_RELAY_CHANNEL_TIMED_OUT);
   const relayChannelDropped =
-    error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
+    (error.includes(OPENSHELL_SERVICE_UNAVAILABLE) ||
+      error.includes(OPENSHELL_STATUS_UNAVAILABLE)) &&
     error.includes(OPENSHELL_RELAY_CHANNEL_DROPPED);
   const relayTargetUnavailable =
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&

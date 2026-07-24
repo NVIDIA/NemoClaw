@@ -28,8 +28,8 @@ const OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR = `Error:   × code: '
   │ relay failed: status: DeadlineExceeded, message: \\"relay channel timed
   │ out\\", details: [], metadata: MetadataMap { headers: {} }"
 `;
-const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "relay
-  │ channel dropped"
+const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × status: Unavailable, message: "relay
+  │ channel dropped", details: [], metadata: MetadataMap { headers: {} }
 `;
 const OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR = `Error:   × code: 'The service is currently unavailable', message: "No such file
   │ or directory (os error 2)"
