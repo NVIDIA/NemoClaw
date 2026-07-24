@@ -180,7 +180,7 @@ describe("handleFinalizationState", () => {
     );
   });
 
-  it("refreshes dashboard forwarding after finalization work and before verification", async () => {
+  it("rechecks gateway and forwarding after finalization work and before verification", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "openclaw" };
 
@@ -190,12 +190,16 @@ describe("handleFinalizationState", () => {
       webSearchEnabled: true,
     });
 
+    const recoveryOrders = calls.recoverProcesses.mock.invocationCallOrder;
     const refreshOrder = calls.ensureAgentDashboard.mock.invocationCallOrder[0];
-    expect(refreshOrder).toBeGreaterThan(calls.recoverProcesses.mock.invocationCallOrder[0]);
-    expect(refreshOrder).toBeGreaterThan(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]);
-    expect(refreshOrder).toBeGreaterThan(calls.autoPairScopeApproval.mock.invocationCallOrder[0]);
-    expect(refreshOrder).toBeGreaterThan(calls.verifyWebSearch.mock.invocationCallOrder[0]);
-    expect(refreshOrder).toBeLessThan(calls.verify.mock.invocationCallOrder[0]);
+    expect(recoveryOrders).toHaveLength(2);
+    expect(refreshOrder).toBeLessThan(recoveryOrders[0]);
+    expect(recoveryOrders[1]).toBeGreaterThan(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]);
+    expect(recoveryOrders[1]).toBeGreaterThan(
+      calls.autoPairScopeApproval.mock.invocationCallOrder[0],
+    );
+    expect(recoveryOrders[1]).toBeGreaterThan(calls.verifyWebSearch.mock.invocationCallOrder[0]);
+    expect(recoveryOrders[1]).toBeLessThan(calls.verify.mock.invocationCallOrder[0]);
   });
 
   it("skips dashboard and gateway verification for terminal agents without forwards", async () => {
