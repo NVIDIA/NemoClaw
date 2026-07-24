@@ -19,6 +19,7 @@
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to exact Debian trixie versions
 #   gosu 1.19           — pinned release + per-arch sha256 checksum
+#   npm 11.18.0         — reviewed archive + sha512 integrity
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
 #     users               stable contract with OpenShell
 #   .openclaw dirs      — directory structure is dictated by the OpenClaw
@@ -41,8 +42,9 @@
 #   3. gosu upgrade                 — update URL, checksum, and version
 #   4. node:22-trixie-slim digest rotated — update-docker-pin.sh updates all
 #                                      Dockerfile and Dockerfile.base
-#   5. New .openclaw subdirectory   — add mkdir below
-#   6. PyYAML or other pip dep bump — change the version below
+#   5. npm upgrade                  — update upgrade-bundled-npm.mts
+#   6. New .openclaw subdirectory   — add mkdir below
+#   7. PyYAML or other pip dep bump — change the version below
 # For ad-hoc rebuilds (e.g., security patch), use workflow_dispatch on
 # the base-image workflow.
 #
@@ -232,11 +234,18 @@ COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
 # npm 10.9.8 in the pinned Node 22 image bundles an affected node-tar copy.
 # Replace only that private package from a registry- and SRI-verified archive
-# before npm processes any OpenClaw or mcporter installation input.
+# before npm processes the reviewed npm archive.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# Upgrade the complete private npm tree so its sigstore, brace-expansion, and
+# picomatch packages meet the reviewed security floors.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
