@@ -347,23 +347,60 @@ describe("sandbox base-image warm resolution", () => {
           }),
     );
 
-    const resolved = resolveSandboxBaseImage({
-      ...options,
-      envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
-      env: {
-        ...options.env,
-        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: handoffRef,
-      },
-      trustedLocalOverride: { ref: handoffRef, provenance },
-    });
+    try {
+      const resolved = resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: handoffRef,
+        },
+        trustedLocalOverride: { ref: handoffRef, provenance },
+      });
 
-    expect(resolved).toMatchObject({
-      ref: handoffRef,
-      digest: null,
-      source: "local",
-      metadata: { imageId, source: "local" },
-    });
-    expect(dockerMocks.pull).not.toHaveBeenCalled();
+      expect(resolved).toMatchObject({
+        ref: handoffRef,
+        digest: null,
+        source: "local",
+        metadata: { imageId, source: "local" },
+      });
+      expect(dockerMocks.pull).not.toHaveBeenCalled();
+    } finally {
+      dockerMocks.imageInspectFormat.mockReset();
+    }
+  });
+
+  it.each([
+    ["zero process ID", `rebuild-0-${"a".repeat(16)}-image-${"c".repeat(64)}`],
+    ["leading-zero process ID", `rebuild-0343338-${"a".repeat(16)}-image-${"c".repeat(64)}`],
+    ["short nonce", `rebuild-343338-${"a".repeat(15)}-image-${"c".repeat(64)}`],
+    ["non-hex nonce", `rebuild-343338-${"z".repeat(16)}-image-${"c".repeat(64)}`],
+    ["extra suffix", `rebuild-343338-${"a".repeat(16)}-image-${"c".repeat(64)}-moved`],
+  ])("rejects a temporary handoff with a malformed %s", (_case, tag) => {
+    const options = resolutionOptions();
+    const handoffRef = `nemoclaw-sandbox-base-local:${tag}`;
+    const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"d".repeat(64)}`;
+    dockerMocks.imageInspectFormat.mockReturnValue(
+      JSON.stringify({
+        Id: `sha256:${"c".repeat(64)}`,
+        RepoDigests: [],
+        Os: "linux",
+        Architecture: "amd64",
+        Config: { Labels: { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance } },
+      }),
+    );
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+        env: {
+          ...options.env,
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: handoffRef,
+        },
+        trustedLocalOverride: { ref: handoffRef, provenance },
+      }),
+    ).toThrow("outside the trusted repository");
   });
 
   it("rejects a copied provenance label without the current build proof (#5896)", () => {

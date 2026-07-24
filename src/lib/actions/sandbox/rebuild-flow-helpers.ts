@@ -8,6 +8,7 @@ import {
 } from "../../adapters/openshell/gateway-drift";
 import { loadAgent } from "../../agent/defs";
 import {
+  bindLocalAgentBaseImageHandoffToResolution,
   bindLocalAgentBaseImageToPinnedProvenance,
   ensureAgentBaseImage,
   getAgentSandboxBaseImageEnvVar,
@@ -33,8 +34,7 @@ import {
 } from "../../openshell-sandbox-list";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import {
-  inspectLocalImageMetadata,
-  SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
+  parseContentAddressedSandboxBaseImageId,
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
 } from "../../sandbox-base-image";
@@ -304,6 +304,21 @@ export function ensureRebuildAgentBaseImage(
     } finally {
       restoreExplicitOverrideTrust();
     }
+    const reusedLocalResolution =
+      result.resolutionMetadata?.source === "local" &&
+      result.reusedResolutionHint === result.resolutionMetadata;
+    if (
+      !hasExplicitOverride &&
+      result.imageTag &&
+      result.resolutionMetadata?.source === "local" &&
+      !result.trustedLocalOverride &&
+      !reusedLocalResolution
+    ) {
+      // A stale persisted hint may fall through to a fresh local fallback. Its
+      // public provenance label is not authority. Rebuild once so the build
+      // call returns a fresh in-memory lease bound to the canonical image ID.
+      result = ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
+    }
     const needsTemporaryHandoff =
       result.imageTag !== null &&
       !isCanonicalLocalBaseImageRef(agentDef.name, result.imageTag) &&
@@ -319,22 +334,37 @@ export function ensureRebuildAgentBaseImage(
       needsTemporaryHandoff && imageRef && imageRef !== result.imageTag
         ? createTemporaryBaseImageHandoffDisposer(imageRef)
         : undefined;
-    let handoffTrustedOverride: TrustedLocalBaseImageOverride | undefined;
+    const inheritedTrustedOverride =
+      result.trustedLocalOverride?.ref === imageRef ? result.trustedLocalOverride : null;
+    let handoffTrustedOverride: TrustedLocalBaseImageOverride | null = null;
     if (
-      needsTemporaryHandoff &&
       imageRef &&
-      imageRef !== result.imageTag &&
-      !result.trustedLocalOverride
+      result.imageTag &&
+      !inheritedTrustedOverride &&
+      result.resolutionMetadata &&
+      result.reusedResolutionHint === result.resolutionMetadata
     ) {
-      const inspected = inspectLocalImageMetadata(imageRef);
-      const labels =
-        inspected?.Config?.Labels && typeof inspected.Config.Labels === "object"
-          ? (inspected.Config.Labels as Record<string, unknown>)
-          : {};
-      const provenance = labels[SANDBOX_BASE_BUILD_PROVENANCE_LABEL];
-      if (typeof provenance === "string") {
-        handoffTrustedOverride = { ref: imageRef, provenance };
-      }
+      handoffTrustedOverride = bindLocalAgentBaseImageHandoffToResolution(
+        agentDef,
+        result.imageTag,
+        imageRef,
+        result.resolutionMetadata,
+        result.reusedResolutionHint,
+      );
+    }
+    const localImageName = `nemoclaw-${agentDef.name}-sandbox-base-local`;
+    const localHandoff =
+      imageRef && parseContentAddressedSandboxBaseImageId(localImageName, imageRef) !== null;
+    if (
+      imageRef &&
+      (needsTemporaryHandoff || localHandoff || result.resolutionMetadata?.source === "local") &&
+      !inheritedTrustedOverride &&
+      !handoffTrustedOverride
+    ) {
+      disposeImageRef?.();
+      throw new Error(
+        `Resolved ${agentDef.displayName} local base image could not be bound to its rebuild handoff`,
+      );
     }
     const resolutionMetadata =
       result.resolutionMetadata ??
@@ -348,8 +378,8 @@ export function ensureRebuildAgentBaseImage(
       overrideEnvVar,
       ...(resolutionMetadata ? { resolutionMetadata } : {}),
       ...(disposeImageRef ? { disposeImageRef } : {}),
-      ...(result.trustedLocalOverride
-        ? { trustedLocalOverride: result.trustedLocalOverride }
+      ...(inheritedTrustedOverride
+        ? { trustedLocalOverride: inheritedTrustedOverride }
         : handoffTrustedOverride
           ? { trustedLocalOverride: handoffTrustedOverride }
           : {}),
