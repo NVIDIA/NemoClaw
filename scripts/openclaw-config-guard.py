@@ -3267,6 +3267,16 @@ def _preflight_restart(opened: OpenConfig, identity: Identity) -> None:
 _hash_synthesized = False
 
 
+def _write_hash_record(opened: OpenConfig, config_data: bytes, identity: Identity) -> None:
+    digest = hashlib.sha256(config_data).hexdigest()
+    _force_replace_bytes(
+        opened,
+        ".config-hash",
+        f"{digest}  openclaw.json\n".encode("ascii"),
+        identity,
+    )
+
+
 def _repair_absent_hash_for_lock(opened: OpenConfig, identity: Identity) -> None:
     """Synthesize a truly absent .config-hash before lock-from-mutable capture.
 
@@ -3292,13 +3302,7 @@ def _repair_absent_hash_for_lock(opened: OpenConfig, identity: Identity) -> None
         0o700,
     )
     config = _snapshot_file(opened, "openclaw.json")
-    digest = hashlib.sha256(config.data).hexdigest()
-    _force_replace_bytes(
-        opened,
-        ".config-hash",
-        f"{digest}  openclaw.json\n".encode("ascii"),
-        identity,
-    )
+    _write_hash_record(opened, config.data, identity)
     _hash_synthesized = True
 
 
@@ -3332,14 +3336,8 @@ def _force_fail_closed_lock(opened: OpenConfig, identity: Identity) -> list[str]
             published = False
             try:
                 config = _snapshot_file(opened, "openclaw.json")
-                digest = hashlib.sha256(config.data).hexdigest()
                 _force_replace_bytes(opened, "openclaw.json", config.data, identity)
-                _force_replace_bytes(
-                    opened,
-                    ".config-hash",
-                    f"{digest}  openclaw.json\n".encode("ascii"),
-                    identity,
-                )
+                _write_hash_record(opened, config.data, identity)
                 _snapshot_pair(opened)
                 published = True
             except Exception as publish_exc:
