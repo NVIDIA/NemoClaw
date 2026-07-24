@@ -291,9 +291,10 @@ async function waitForForwardOwner(
   port: string,
   owner: string | undefined,
   artifactPrefix: string,
-): Promise<{ owner: string | undefined; output: string }> {
+): Promise<{ owner: string | undefined; output: string; querySucceeded: boolean }> {
   let observedOwner: string | undefined;
   let lastOutput = "";
+  let querySucceeded = false;
   for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt += 1) {
     const result = await sandbox.openshell(["forward", "list"], {
       artifactName: `${artifactPrefix}-attempt-${attempt}`,
@@ -301,11 +302,12 @@ async function waitForForwardOwner(
       timeoutMs: 30_000,
     });
     lastOutput = resultText(result);
-    observedOwner = forwardOwnerForPort(lastOutput, port);
-    if (observedOwner === owner) break;
+    querySucceeded = result.exitCode === 0 && !result.timedOut;
+    observedOwner = querySucceeded ? forwardOwnerForPort(lastOutput, port) : undefined;
+    if (querySucceeded && observedOwner === owner) break;
     if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
   }
-  return { owner: observedOwner, output: lastOutput };
+  return { owner: observedOwner, output: lastOutput, querySucceeded };
 }
 
 function hasOwn(object: object, key: string): boolean {
@@ -695,6 +697,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     undefined,
     "phase-4-openshell-forward-list-b-after-stop",
   );
+  expect(releasedForwardB.querySucceeded, releasedForwardB.output).toBe(true);
   expect(releasedForwardB.owner, releasedForwardB.output).toBeUndefined();
 
   const stoppedStatusB = await command(host, [SANDBOX_B, "status"], {
@@ -847,6 +850,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
       distinctDashboardPorts: Boolean(portA && portB && portA !== portB),
       selectedStopReleasedOnlySelectedForward:
         stopB.exitCode === 0 &&
+        releasedForwardB.querySucceeded &&
         releasedForwardB.owner === undefined &&
         retainedForwardAAfterStop.owner === SANDBOX_A &&
         stoppedStatusTextB.includes("sandbox_container_stopped") &&
