@@ -59,14 +59,12 @@ import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-
 // to the exact checked-out launcher and bootstrap only what that controller
 // revision omits; the PR workflow remains the canonical execution path.
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
-
 // The rebuild regression invokes the checked-out CLI directly. Full install.sh
 // coverage remains in hermes-e2e; this lane owns Docker base-image builds,
 // OpenShell provider/sandbox commands, direct Hermes sandbox exec, curated
 // local NemoClaw registry/session state, and `nemoclaw <name> rebuild --yes`.
 // Literal interactive issue #3025 reproduction paths (`hermes rebuild`, modal
 // prompt, and `Y` confirmation) remain outside this Vitest migration.
-
 const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
 const OLD_HERMES_VERSION = `v${REBUILD_HERMES_OLD_BASE_FIXTURE.hermesCalver}`;
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
@@ -82,7 +80,6 @@ SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
   fail(
     `rebuild-hermes live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
   );
-
 const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
 const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
 const KANBAN_FILE = "/sandbox/.hermes/kanban.db";
