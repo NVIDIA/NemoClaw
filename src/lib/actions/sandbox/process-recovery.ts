@@ -757,7 +757,8 @@ function waitForRecreatedSandboxOpenShellReadyResult(
       timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
     });
     if (result.status === 0 && !result.error) return { ready: true };
-    lastOpenshellError = normalizeOpenshellStructuredError(String(result.stderr ?? ""));
+    const openshellError = normalizeOpenshellStructuredError(String(result.stderr ?? ""));
+    if (openshellError) lastOpenshellError = openshellError;
     // This probe executes only `true`, so an OpenShell process timeout has no
     // mutation outcome to reconcile. Treat that exact timeout as inconclusive
     // and retry behind the pinned managed-health guard on the next iteration.
