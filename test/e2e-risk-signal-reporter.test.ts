@@ -32,7 +32,26 @@ function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pendi
   return {
     children: {
       *allTests() {
-        for (const state of states) yield { result: () => ({ state }) };
+        for (const [index, state] of states.entries()) {
+          yield { fullName: `test ${index}`, result: () => ({ state }) };
+        }
+      },
+    },
+  } as unknown as TestModule;
+}
+
+function moduleWithNamedStates(
+  tests: Array<{
+    fullName: string;
+    state: "passed" | "failed" | "skipped" | "pending";
+  }>,
+): TestModule {
+  return {
+    children: {
+      *allTests() {
+        for (const { fullName, state } of tests) {
+          yield { fullName, result: () => ({ state }) };
+        }
       },
     },
   } as unknown as TestModule;
@@ -42,7 +61,7 @@ function moduleWithFailedError(error: unknown): TestModule {
   return {
     children: {
       *allTests() {
-        yield { result: () => ({ state: "failed", errors: [error] }) };
+        yield { fullName: "failed test", result: () => ({ state: "failed", errors: [error] }) };
       },
     },
   } as unknown as TestModule;
@@ -122,6 +141,81 @@ describe("E2E risk signal reporter", () => {
       );
 
       expect(signal).toMatchObject({ passed: 2, skipped: 1, failed: 0, pending: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not count tests excluded by the configured name pattern", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      const signal = writeRiskSignal(
+        environment(dir),
+        [
+          moduleWithNamedStates([
+            {
+              fullName: "network-policy: restricted sandbox enforces live allow/deny policy probes",
+              state: "passed",
+            },
+            {
+              fullName:
+                "network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets",
+              state: "skipped",
+            },
+          ]),
+        ],
+        [],
+        "passed",
+        /^network-policy:.+probes$/u,
+      );
+
+      expect(signal).toMatchObject({ passed: 1, failed: 0, skipped: 0, pending: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts a selected test that skips", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      const signal = writeRiskSignal(
+        environment(dir),
+        [
+          moduleWithNamedStates([
+            {
+              fullName: "network-policy: restricted sandbox enforces live allow/deny policy probes",
+              state: "skipped",
+            },
+            {
+              fullName:
+                "network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets",
+              state: "skipped",
+            },
+          ]),
+        ],
+        [],
+        "passed",
+        /^network-policy:.+probes$/u,
+      );
+
+      expect(signal).toMatchObject({ passed: 0, failed: 0, skipped: 1, pending: 0 });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits no passing evidence when the name pattern matches no tests", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      const signal = writeRiskSignal(
+        environment(dir),
+        [moduleWithNamedStates([{ fullName: "selected elsewhere", state: "skipped" }])],
+        [],
+        "passed",
+        /^missing test$/u,
+      );
+
+      expect(signal).toMatchObject({ passed: 0, failed: 0, skipped: 0, pending: 0 });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
