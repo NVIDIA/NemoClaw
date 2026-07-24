@@ -89,6 +89,8 @@ export interface RebuildManifest {
   stateDirs: string[];
   /** Directories verified as safe to restore. Absent on older manifests. */
   backedUpDirs?: string[];
+  /** Declared directories that could not be backed up. Absent on older manifests. */
+  failedBackupDirs?: string[];
   stateFiles?: StateFileSpec[];
   /** Single config/state directory */
   dir: string;
@@ -270,6 +272,8 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
     (value.backedUpDirs === undefined || isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
+    (value.failedBackupDirs === undefined ||
+      isBackedUpDirArray(value.failedBackupDirs, value.stateDirs)) &&
     typeof dir === "string" &&
     (value.openclawImagePluginInstalls === undefined ||
       parseOpenClawImagePluginInstalls(value.openclawImagePluginInstalls, dir).ok) &&
@@ -983,6 +987,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       ? { reconcileOpenClawImagePluginProvenance: true }
       : {}),
     stateDirs,
+    failedBackupDirs: [],
     stateFiles,
     dir,
     backupPath,
@@ -1322,6 +1327,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     );
   }
   manifest.backedUpDirs = backedUpDirs;
+  manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
+    manifest.stateDirs.includes(failedDir),
+  );
 
   writeManifest(backupPath, manifest);
   manifest.backupPath = backupPath;
@@ -1475,6 +1483,21 @@ function restoreSandboxStateInternal(
       localDirs.splice(localDirs.indexOf(d), 1);
     }
   }
+  // Only manifests that distinguish failed backups from absent directories can
+  // authorize cleanup without deleting data that a failed backup did not capture.
+  // Older manifests leave this field absent, so preserve their historical restore behavior.
+  const failedBackupDirs = new Set(manifest.failedBackupDirs ?? []);
+  const localDirSet = new Set(localDirs);
+  const staleContentDirs =
+    manifest.failedBackupDirs === undefined
+      ? []
+      : manifest.stateDirs.filter(
+          (stateDir) =>
+            !targetRuntimeAuthDirs.has(stateDir) &&
+            !localDirSet.has(stateDir) &&
+            !failedBackupDirs.has(stateDir),
+        );
+  const cleanupStateDirs = [...new Set([...localDirs, ...staleContentDirs])];
   const targetStateFiles = new Map<string, AgentStateFile>();
   for (const targetFile of targetAgent.stateFiles) {
     const normalized = normalizeStateFilePath(targetFile.path);
@@ -1534,7 +1557,7 @@ function restoreSandboxStateInternal(
     freshOpenClawImagePluginInstalls = discovery.pluginInstalls;
   }
 
-  if (localDirs.length === 0 && localFiles.length === 0) {
+  if (cleanupStateDirs.length === 0 && localFiles.length === 0) {
     _log("No dirs or files to restore");
     return { success: true, restoredDirs, failedDirs, restoredFiles, failedFiles };
   }
@@ -1546,7 +1569,7 @@ function restoreSandboxStateInternal(
     return {
       success: false,
       restoredDirs,
-      failedDirs: [...localDirs],
+      failedDirs: [...cleanupStateDirs],
       restoredFiles,
       failedFiles: localFiles.map((f) => f.path),
     };
@@ -1571,7 +1594,7 @@ function restoreSandboxStateInternal(
     const pluginRestorePlan = planOpenClawPluginRestore({
       agentType: manifest.agentType,
       dir,
-      localDirs,
+      localDirs: cleanupStateDirs,
       freshImagePluginInstalls: freshOpenClawImagePluginInstalls,
       previousImagePluginInstalls: previousOpenClawImagePluginInstalls,
     });
@@ -1579,7 +1602,7 @@ function restoreSandboxStateInternal(
       return {
         success: false,
         restoredDirs,
-        failedDirs: [...localDirs],
+        failedDirs: [...cleanupStateDirs],
         restoredFiles,
         failedFiles: localFiles.map((f) => f.path),
         error:
@@ -1600,6 +1623,7 @@ function restoreSandboxStateInternal(
       );
     }
 
+    let restoreTar: Buffer | undefined;
     if (localDirs.length > 0) {
       // Upload via tar pipe
       // NC-2227-04: Removed -h flag from restore as well — no symlink following.
@@ -1617,22 +1641,26 @@ function restoreSandboxStateInternal(
         return {
           success: false,
           restoredDirs,
-          failedDirs: [...localDirs],
+          failedDirs: [...cleanupStateDirs],
           restoredFiles,
           failedFiles: localFiles.map((f) => f.path),
         };
       }
+      restoreTar = tarResult.stdout;
+    }
 
-      // Remove existing state dirs before extracting so stale files from later
-      // snapshots don't persist after restoring an earlier one. OpenClaw's
-      // image-managed extensions are preserved from the freshly built image and
-      // excluded from the restore tar; only user/non-managed extension entries
-      // are cleared and restored from the backup.
+    // Remove existing state dirs before extracting so stale files from later
+    // snapshots don't persist after restoring an earlier one. OpenClaw's
+    // image-managed extensions are preserved from the freshly built image and
+    // excluded from the restore tar; only user/non-managed extension entries
+    // are cleared and restored from the backup.
+    if (cleanupStateDirs.length > 0) {
       const rmCmd = buildRestoreCleanupCommand(
         dir,
         localDirs,
         pluginRestorePlan.preservedExtensionDirs,
         new Set(pluginRestorePlan.requiredFreshExtensionDirs),
+        staleContentDirs,
       );
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
       const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
@@ -1649,15 +1677,17 @@ function restoreSandboxStateInternal(
         return {
           success: false,
           restoredDirs,
-          failedDirs: [...localDirs],
+          failedDirs: [...cleanupStateDirs],
           restoredFiles,
           failedFiles: localFiles.map((f) => f.path),
         };
       }
+    }
 
+    if (restoreTar !== undefined) {
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
       const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
-        input: tarResult.stdout,
+        input: restoreTar,
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 120000,
       });

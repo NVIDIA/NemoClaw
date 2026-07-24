@@ -60,6 +60,8 @@ When you restore a snapshot, NemoClaw replays those recorded custom presets with
 
 The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
 NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
+Restore limits directory cleanup to state directories declared by the snapshot manifest.
+It preserves directories that exist only in the target manifest or whose backup failed.
 
 For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement.
 For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
