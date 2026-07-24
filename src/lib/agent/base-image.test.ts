@@ -105,6 +105,24 @@ describe("agent base image provisioning", () => {
     );
   });
 
+  it("marks only an exact warm resolution-hint reuse as handoff authority", () => {
+    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
+      const resolutionHint = makeResolutionMetadata();
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: resolutionHint.ref,
+        digest: null,
+        source: "local",
+        glibcVersion: resolutionHint.glibcVersion,
+        metadata: resolutionHint,
+      });
+
+      expect(ensureAgentBaseImage(makeAgent(), { resolutionHint })).toMatchObject({
+        resolutionMetadata: resolutionHint,
+        reusedResolutionHint: resolutionHint,
+      });
+    });
+  });
+
   it("binds an identical local Hermes alias to its tracked pinned provenance (#7144)", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     withMockedDocker(
@@ -451,6 +469,51 @@ describe("agent base image provisioning", () => {
           expect.stringMatching(/^nemoclaw-hermes-sandbox-base-local:build-\d+-[0-9a-f]{16}$/),
           { ignoreError: true, suppressOutput: true },
         );
+      },
+    );
+  });
+
+  it.each([
+    ["temporary", `rebuild-343338-${"b".repeat(16)}-image-${"a".repeat(64)}`],
+    ["canonical", `image-${"a".repeat(64)}`],
+  ])("does not return resolution metadata from a trusted %s rebuild lease", (_kind, tag) => {
+    withMockedDocker(
+      ({
+        ensureAgentBaseImage,
+        pinTrustedAgentBaseImageOverrideForOperation,
+        resolveSandboxBaseImageMock,
+      }) => {
+        const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
+        const imageId = `sha256:${"a".repeat(64)}`;
+        const imageRef = `nemoclaw-hermes-sandbox-base-local:${tag}`;
+        const provenance = `${"c".repeat(64)}.${"d".repeat(64)}`;
+        const leasedMetadata = makeResolutionMetadata({ ref: imageRef, imageId });
+        vi.stubEnv(overrideEnvVar, imageRef);
+        resolveSandboxBaseImageMock.mockReturnValue({
+          ref: imageRef,
+          digest: null,
+          source: "local",
+          glibcVersion: leasedMetadata.glibcVersion,
+          metadata: leasedMetadata,
+        });
+        const restore = pinTrustedAgentBaseImageOverrideForOperation(overrideEnvVar, {
+          ref: imageRef,
+          provenance,
+        });
+
+        try {
+          expect(ensureAgentBaseImage(makeAgent())).toEqual({
+            imageTag: imageRef,
+            built: false,
+          });
+          expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+              trustedLocalOverride: { ref: imageRef, provenance },
+            }),
+          );
+        } finally {
+          restore();
+        }
       },
     );
   });
