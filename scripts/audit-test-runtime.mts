@@ -15,9 +15,6 @@ export interface RuntimeAuditRow {
   p95Ms: number;
   maxMs: number;
   variabilityMs: number;
-  passedRuns: number;
-  failedRuns: number;
-  skippedRuns: number;
   slowestPhase: string;
   slowestPhaseMs: number;
   slowestPhaseOutcome: "passed" | "failed" | "skipped";
@@ -81,12 +78,6 @@ function median(sorted: readonly number[]): number {
   return sorted[middle] ?? 0;
 }
 
-function summaryOutcome(summary: ProgressSummary): "passed" | "failed" | "skipped" {
-  if (summary.phases.some((phase) => phase.outcome === "failed")) return "failed";
-  if (summary.phases.some((phase) => phase.outcome === "skipped")) return "skipped";
-  return "passed";
-}
-
 export function auditTestRuntime(roots: readonly string[]): RuntimeAuditRow[] {
   const summaries = roots.flatMap(progressFiles).map((file) => {
     const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -117,7 +108,6 @@ export function auditTestRuntime(roots: readonly string[]): RuntimeAuditRow[] {
       );
       const medianMs = median(durations);
       const p95Ms = percentile(durations, 0.95);
-      const outcomes = runs.map(summaryOutcome);
       return {
         target: [first.targetId ?? "unlabeled", first.shardId].filter(Boolean).join("/"),
         scenario: first.scenario,
@@ -126,9 +116,6 @@ export function auditTestRuntime(roots: readonly string[]): RuntimeAuditRow[] {
         p95Ms,
         maxMs: durations.at(-1) ?? 0,
         variabilityMs: Math.max(0, p95Ms - medianMs),
-        passedRuns: outcomes.filter((outcome) => outcome === "passed").length,
-        failedRuns: outcomes.filter((outcome) => outcome === "failed").length,
-        skippedRuns: outcomes.filter((outcome) => outcome === "skipped").length,
         slowestPhase: slowestPhase.label,
         slowestPhaseMs: slowestPhase.durationMs,
         slowestPhaseOutcome: slowestPhase.outcome,

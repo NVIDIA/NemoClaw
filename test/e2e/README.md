@@ -153,15 +153,9 @@ graph as the live targets:
     combined duration;
   - reports the runner class as `standard`, `larger`, or `unknown` without
     exposing runner labels;
-  - adds this run's semantic phase runtime table;
-  - compares runtime and pass rate with up to ten prior scheduled summaries;
-  - orders that history by current failures, lowest prior pass rate, and largest
-    runtime regression; and
+  - adds this run's semantic phase runtime table; and
   - compares the trusted cloud-onboard timing summary with the latest
     prior-release `e2e.yaml` run.
-- The rolling comparison uses only the bounded `e2e-runtime-summary.json`
-  artifact retained for 14 days. It does not download historical raw test
-  artifacts or include manual runs in the baseline.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
@@ -330,16 +324,12 @@ npm run test:runtime-audit -- path/to/run-1 path/to/run-2
 The audit groups each test by target and optional shard, ranks the groups by
 p95 runtime, and reports variability plus the slowest observed phase's duration
 and outcome. Scheduled and ordinary manual runs include the same table for that
-run in the GitHub Actions scorecard summary. The scorecard also shows a bounded
-nightly trend table with prior median, prior p95, delta, and pass rate; the
-first run explicitly starts the history instead of inventing a baseline. Its
-ordering puts current failures first, followed by the lowest historical pass
-rates and largest runtime regressions. Keep phase labels specific to test
-behavior, call `progress.phase("literal phase label")` at the declared
-boundaries in order, and transition through the final test-declared phase on
-every passing path.
-Both fixtures reject a passing test that never reaches that phase; only the
-stateful live fixture enters its resource-release phase automatically.
+run in the GitHub Actions scorecard summary. Keep phase
+labels specific to test behavior, call `progress.phase("literal phase label")`
+at the declared boundaries in order, and transition through the final
+test-declared phase on every passing path. Both fixtures reject a passing test
+that never reaches that phase; only the stateful live fixture enters its
+resource-release phase automatically.
 Validate phase coverage without executing test bodies with:
 
 ```bash

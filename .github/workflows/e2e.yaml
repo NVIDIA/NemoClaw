@@ -5795,7 +5795,6 @@ jobs:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           JOBS: ${{ inputs.jobs }}
           RUNTIME_ARTIFACTS: ${{ runner.temp }}/e2e-runtime-audit
-          RUNTIME_SUMMARY_FILE: ${{ runner.temp }}/e2e-runtime-summary.json
           TARGETS: ${{ inputs.targets }}
         with:
           script: |
@@ -5812,9 +5811,6 @@ jobs:
             const runtimeAudit = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/audit-test-runtime.mts'),
             );
-            const runtimeHistory = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-runtime-history.mts'),
-            );
             const needs = ${{ toJSON(needs) }};
 
             // GitHub's jobs API is the canonical source because `needs.live`
@@ -5822,9 +5818,8 @@ jobs:
             // The typed helper owns and tests the degraded `needs` fallback.
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
             let runtimeSummaryMarkdown;
-            let runtimeRows = [];
             try {
-              runtimeRows = runtimeAudit.auditTestRuntime([process.env.RUNTIME_ARTIFACTS]);
+              const runtimeRows = runtimeAudit.auditTestRuntime([process.env.RUNTIME_ARTIFACTS]);
               runtimeSummaryMarkdown = runtimeAudit.formatRuntimeAuditSummary(runtimeRows);
             } catch {
               core.warning('E2E test phase runtime summary unavailable: invalid progress artifact');
@@ -5835,11 +5830,6 @@ jobs:
                 '',
               ].join('\n');
             }
-            const runtimeHistoryMarkdown = await runtimeHistory.buildRuntimeHistory(
-              { github, context, core },
-              runtimeRows,
-              process.env.RUNTIME_SUMMARY_FILE,
-            );
             const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
             if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
 
@@ -5858,9 +5848,7 @@ jobs:
               today: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
             });
 
-            await core.summary
-              .addRaw(`${summaryMarkdown}\n\n${runtimeSummaryMarkdown}\n${runtimeHistoryMarkdown}`)
-              .write();
+            await core.summary.addRaw(`${summaryMarkdown}\n\n${runtimeSummaryMarkdown}`).write();
             core.setOutput('scorecardData', JSON.stringify(scorecardData));
             core.setOutput('slackData', JSON.stringify(slackData));
 
@@ -5921,12 +5909,3 @@ jobs:
             if (!response.ok) {
               core.setFailed(`Slack webhook returned ${response.status}`);
             }
-
-      - name: Upload E2E runtime summary
-        if: ${{ always() && steps.scorecard.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-runtime-summary
-          path: ${{ runner.temp }}/e2e-runtime-summary.json
-          if-no-files-found: error
-          retention-days: 14
