@@ -99,13 +99,15 @@ describe("reviewed bundled npm upgrade", () => {
     const commands: string[] = [];
     const archivePath = path.join(temporaryDirectory(), "npm.tgz");
     fs.writeFileSync(archivePath, "reviewed fixture\n");
+    const verifyReviewedCommand: Readonly<Record<string, (() => void) | undefined>> = {
+      npm: () => expect(verifyReviewedNpm(npmRoot).npmVersion).toBe(REVIEWED_NPM_VERSION),
+      npx: () => expect(verifyReviewedNpm(npmRoot).npmVersion).toBe(REVIEWED_NPM_VERSION),
+    };
 
     const result = upgradeBundledNpm(npmRoot, {
       commandRunner(command) {
         commands.push(command);
-        if (command === "npm" || command === "npx") {
-          expect(verifyReviewedNpm(npmRoot).npmVersion).toBe(REVIEWED_NPM_VERSION);
-        }
+        verifyReviewedCommand[command]?.();
       },
       installArchive(_archive, commandRunner) {
         commandRunner("install-reviewed-npm", []);
