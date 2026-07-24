@@ -39,7 +39,7 @@ function progressHarness() {
     },
     logLine: (line) => state.lines.push(line),
     sampleResources: () => ({
-      freeMemoryBytes: 8 * 1024 ** 3,
+      availableMemoryBytes: 8 * 1024 ** 3,
       processRssBytes: 0.5 * 1024 ** 3,
       totalMemoryBytes: 16 * 1024 ** 3,
       workspaceFreeBytes: 6 * 1024 ** 3,
@@ -98,7 +98,7 @@ describe("live test progress", () => {
     expect(state.scheduledDelays).toEqual([300_000, 600_000, 300_000]);
     expect(state.lines).toEqual([
       '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] started: install OpenClaw sandbox (total 0s; phase 0s)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] still running: install OpenClaw sandbox (total 5m; phase 5m; child output 4m ago; activity command: install-openclaw; rss 0.5 GiB; memory free 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
+      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] still running: install OpenClaw sandbox (total 5m; phase 5m; child output 4m ago; activity command: install-openclaw; rss 0.5 GiB; memory available 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
       '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] completed: install OpenClaw sandbox — passed in 6m (total 6m)',
       '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 2/2] started: install Hermes sandbox (total 6m; phase 0s)',
       '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 2/2] completed: install Hermes sandbox — passed in 0s (total 6m)',
