@@ -72,6 +72,7 @@ export function withMockedDocker<T>(
   run: (deps: {
     ensureAgentBaseImage: AgentOnboardModule["ensureAgentBaseImage"];
     bindLocalAgentBaseImageToPinnedProvenance: AgentOnboardModule["bindLocalAgentBaseImageToPinnedProvenance"];
+    pinTrustedAgentBaseImageOverrideForOperation: AgentOnboardModule["pinTrustedAgentBaseImageOverrideForOperation"];
     pinAgentSandboxBaseImageRef: AgentOnboardModule["pinAgentSandboxBaseImageRef"];
     dockerBuildMock: ReturnType<typeof vi.fn>;
     dockerCaptureMock: ReturnType<typeof vi.fn>;
@@ -148,6 +149,8 @@ export function withMockedDocker<T>(
       ensureAgentBaseImage: agentOnboardModule.ensureAgentBaseImage,
       bindLocalAgentBaseImageToPinnedProvenance:
         agentOnboardModule.bindLocalAgentBaseImageToPinnedProvenance,
+      pinTrustedAgentBaseImageOverrideForOperation:
+        agentOnboardModule.pinTrustedAgentBaseImageOverrideForOperation,
       pinAgentSandboxBaseImageRef: agentOnboardModule.pinAgentSandboxBaseImageRef,
       dockerBuildMock,
       dockerCaptureMock,
