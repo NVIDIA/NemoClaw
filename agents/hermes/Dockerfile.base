@@ -304,6 +304,10 @@ RUN /usr/local/bin/hermes --version \
     && /opt/hermes/.venv/bin/python -c \
         'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
 
+RUN chmod -R a+rX /opt/hermes/.venv \
+    && test -r /opt/hermes/.venv/pyvenv.cfg \
+    && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
+
 # Gate the exact completed base filesystem before it can be published.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
 RUN install -d -m 0755 /usr/local/share/nemoclaw \

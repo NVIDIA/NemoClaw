@@ -96,5 +96,15 @@ export function baseDeps(): ReleaseGatewayPortDeps {
     probePortFree: () => true,
     log: () => {},
     warn: () => {},
+    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
   };
 }
