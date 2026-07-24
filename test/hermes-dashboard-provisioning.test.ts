@@ -80,7 +80,7 @@ describe("Hermes dashboard provisioning", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(`npm ci --prefix ${hermesRoot}`);
       expect(calls).toContain(`npm run build --prefix ${hermesRoot} --workspace web`);
-      expect(calls).toContain(`npm ci --omit=dev --prefix ${hermesRoot}`);
+      expect(calls).toContain(`npm ci --omit=dev --workspaces=false --prefix ${hermesRoot}`);
       expect(fs.existsSync(hermesWebDist)).toBe(true);
       for (const cache of ["npm", "electron", "node-gyp"]) {
         expect(() => fs.lstatSync(path.join(rootCache, cache))).toThrow();

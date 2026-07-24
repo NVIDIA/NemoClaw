@@ -40,6 +40,17 @@ function extractHermesIntegrityCommand(dockerfile: string): string {
   return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
 }
 
+function extractHermesRuntimeGuard(dockerfile: string): string {
+  const guardStart = dockerfile.indexOf("RUN /usr/local/bin/hermes --version");
+  const nextRun = dockerfile.indexOf("\nRUN chmod -R", guardStart);
+  expect(guardStart).toBeGreaterThanOrEqual(0);
+  expect(nextRun).toBeGreaterThan(guardStart);
+  return dockerfile
+    .slice(guardStart, nextRun)
+    .replace(/^RUN\s+/, "")
+    .replace(/\\\n/g, " ");
+}
+
 function runLoggedShell(command: string, tmp: string) {
   const logPath = path.join(tmp, "calls.log");
   const scriptPath = path.join(tmp, "run-hermes-apt-layer.sh");
@@ -60,6 +71,7 @@ function runHermesInstallLayer(
   command: string,
   tmp: string,
   opts: {
+    uiTuiLockfile?: "directory" | "workspace" | "missing";
     webLockfile?: "directory" | "workspace" | "missing";
     whatsappBridge?: "lockfile" | "package-json";
   } = {},
@@ -70,14 +82,31 @@ function runHermesInstallLayer(
   const electronCache = path.join(tmp, "root-cache", "electron");
   const nodeGypCache = path.join(tmp, "root-cache", "node-gyp");
   const scriptPath = path.join(tmp, "run-hermes-install-layer.sh");
+  const uiTuiLockfile = opts.uiTuiLockfile ?? "missing";
   const webLockfile = opts.webLockfile ?? "directory";
+  const rootLockPackages: Record<string, object> = {};
+  if (uiTuiLockfile === "workspace") {
+    rootLockPackages["ui-tui"] = {};
+  }
+  if (webLockfile === "workspace") {
+    rootLockPackages.web = {};
+  }
   fs.mkdirSync(path.join(fixture, "web"), { recursive: true });
   fs.writeFileSync(path.join(fixture, "pyproject.toml"), 'version = "0.16.0"\n');
   fs.writeFileSync(
     path.join(fixture, "package-lock.json"),
-    webLockfile === "workspace" ? '{"packages":{"web":{}}}\n' : "{}\n",
+    `${JSON.stringify({
+      packages: rootLockPackages,
+    })}\n`,
   );
   fs.writeFileSync(path.join(fixture, "web", "package.json"), "{}\n");
+  if (uiTuiLockfile !== "missing") {
+    fs.mkdirSync(path.join(fixture, "ui-tui"), { recursive: true });
+    fs.writeFileSync(path.join(fixture, "ui-tui", "package.json"), "{}\n");
+  }
+  if (uiTuiLockfile === "directory") {
+    fs.writeFileSync(path.join(fixture, "ui-tui", "package-lock.json"), "{}\n");
+  }
   const writeWebLockfile = {
     directory: () => fs.writeFileSync(path.join(fixture, "web", "package-lock.json"), "{}\n"),
     missing: () => undefined,
@@ -178,18 +207,22 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls).not.toContain("--prefix ui-tui");
       expect(calls).toContain("npm ci --prefix web --prefer-offline --no-audit --no-fund");
       expect(calls).toContain("npm run build --prefix web");
+      expect(calls).toContain(
+        "npm ci --omit=dev --workspaces=false --prefer-offline --no-audit --no-fund",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("builds the Hermes web workspace from the root package-lock.json", () => {
+  it("keeps only root runtime dependencies after building workspace UIs (#7144)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-ui-workspace-"));
 
     try {
       const command = extractHermesInstallCommand(dockerfile);
       const { result, calls } = runHermesInstallLayer(command, tmp, {
+        uiTuiLockfile: "workspace",
         webLockfile: "workspace",
       });
 
@@ -197,7 +230,36 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls).toContain("npm ci --prefer-offline --no-audit --no-fund");
       expect(calls).not.toContain("npm ci --prefix web");
       expect(calls).toContain("npm run build --workspace web");
-      expect(calls).toContain("npm ci --omit=dev --prefer-offline --no-audit --no-fund");
+      const cleanInstall = "rm -rf node_modules ui-tui/node_modules web/node_modules";
+      const runtimeInstall =
+        "npm ci --omit=dev --workspaces=false --prefer-offline --no-audit --no-fund";
+      expect(calls).toContain(cleanInstall);
+      expect(calls).toContain(runtimeInstall);
+      expect(calls.indexOf(cleanInstall)).toBeLessThan(calls.indexOf(runtimeInstall));
+      expect(calls).not.toContain("npm ci --omit=dev --prefer-offline --no-audit --no-fund");
+      expect(calls).not.toContain("--workspace=ui-tui --include-workspace-root");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a legacy TUI build tree after bundling from its own lockfile", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-ui-legacy-"));
+    const uiTuiNodeModules = path.join(tmp, "hermes", "ui-tui", "node_modules");
+
+    try {
+      const command = extractHermesInstallCommand(dockerfile);
+      const { result, calls } = runHermesInstallLayer(command, tmp, {
+        uiTuiLockfile: "directory",
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toContain("npm ci --prefix ui-tui --prefer-offline --no-audit --no-fund");
+      expect(calls).toContain(
+        "npm ci --omit=dev --workspaces=false --prefer-offline --no-audit --no-fund",
+      );
+      expect(fs.existsSync(uiTuiNodeModules)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -215,6 +277,64 @@ describe("Hermes share mount package parity (#2947)", () => {
       for (const cachePath of cachePaths) {
         expect(() => fs.lstatSync(cachePath)).toThrow();
       }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("smokes the prebuilt Hermes TUI without runtime node_modules (#7144)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tui-runtime-"));
+    const hermesRoot = path.join(tmp, "hermes");
+    const fakeHermes = path.join(tmp, "hermes-cli");
+    const agentBrowser = path.join(hermesRoot, "node_modules", ".bin", "agent-browser");
+    const python = path.join(hermesRoot, ".venv", "bin", "python");
+    const tuiEntry = path.join(hermesRoot, "ui-tui", "dist", "entry.js");
+    const webIndex = path.join(hermesRoot, "hermes_cli", "web_dist", "index.html");
+    const scriptPath = path.join(tmp, "run-hermes-runtime-guard.sh");
+
+    try {
+      for (const file of [agentBrowser, python, tuiEntry, webIndex]) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+      }
+      fs.writeFileSync(fakeHermes, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(agentBrowser, "#!/bin/sh\nprintf 'agent-browser test\\n'\n", {
+        mode: 0o700,
+      });
+      fs.writeFileSync(python, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(
+        tuiEntry,
+        [
+          'const fs = require("node:fs");',
+          'const path = require("node:path");',
+          'const runtimeModules = path.resolve(__dirname, "../../node_modules");',
+          "if (fs.readdirSync(runtimeModules).length !== 0) process.exit(41);",
+          'console.error("hermes-tui: no TTY");',
+        ].join("\n"),
+      );
+      fs.writeFileSync(webIndex, "<!doctype html>\n");
+
+      const command = extractHermesRuntimeGuard(dockerfile)
+        .replaceAll("/usr/local/bin/hermes", fakeHermes)
+        .replaceAll("/opt/hermes", hermesRoot);
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `export HERMES_TUI_DIR=${JSON.stringify(path.join(hermesRoot, "ui-tui"))}`,
+          `export HERMES_WEB_DIST=${JSON.stringify(path.join(hermesRoot, "hermes_cli", "web_dist"))}`,
+          command,
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("hermes-tui: no TTY");
+      expect(fs.existsSync(agentBrowser)).toBe(true);
+      expect(fs.existsSync(path.join(hermesRoot, ".node_modules.runtime"))).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

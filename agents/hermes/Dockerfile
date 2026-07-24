@@ -115,7 +115,8 @@ RUN set -eu; \
         elif grep -q '"web"' /opt/hermes/package-lock.json; then \
             npm ci --prefix /opt/hermes --prefer-offline --no-audit --no-fund; \
             npm run build --prefix /opt/hermes --workspace web; \
-            npm ci --omit=dev --prefix /opt/hermes --prefer-offline --no-audit --no-fund; \
+            npm ci --omit=dev --workspaces=false --prefix /opt/hermes \
+                --prefer-offline --no-audit --no-fund; \
         else \
             echo "ERROR: Hermes dashboard at $hermes_web_dir is not covered by a pinned lockfile" >&2; \
             exit 1; \
