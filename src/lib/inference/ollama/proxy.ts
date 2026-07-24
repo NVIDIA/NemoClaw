@@ -372,8 +372,12 @@ function proxyOwnsPortWithToken(token: string): boolean {
  */
 function ensureOllamaAuthProxy(): void {
   const pid = loadPersistedProxyPid();
-  // Provider selection can replace the proxy before it commits the new route state.
-  // Keep that proxy so recovery does not restore the previous provider backend.
+  // startOllamaAuthProxy replaces the live proxy before setupInference confirms
+  // the selected provider and calls persistProxyToken. It cannot persist sooner:
+  // the user may still back out, leaving the previous route as the committed one.
+  // Preserve this in-memory proxy across recovery during that transition. This
+  // exception can go away when provider selection commits the replacement token
+  // and backend before any recovery path can call ensureOllamaAuthProxy.
   if (
     ollamaProxyToken &&
     isOllamaProxyProcess(pid) &&

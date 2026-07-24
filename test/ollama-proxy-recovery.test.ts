@@ -410,12 +410,13 @@ childProcess.spawn = (cmd, args, opts = {}) => {
     token: opts.env && opts.env.OLLAMA_PROXY_TOKEN,
     backendUrl: opts.env && opts.env.OLLAMA_BACKEND_URL,
   });
-  return { pid: 5000, unref() {} };
+  return { pid: proxySpawns.length === 1 ? 5000 : 6000, unref() {} };
 };
 runner.runCapture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : command;
   if (text.includes("ps -p 4242")) return "node /tmp/ollama-auth-proxy.js";
   if (text.includes("ps -p 5000")) return "node /tmp/ollama-auth-proxy.js";
+  if (text.includes("ps -p 6000")) return "node /tmp/ollama-auth-proxy.js";
   if (text.includes("lsof") && text.includes("11435")) return "";
   return "";
 };
@@ -447,6 +448,12 @@ proxy.ensureOllamaAuthProxy();
 const runningToken = proxy.getOllamaProxyToken();
 proxy.persistProxyToken(runningToken);
 
+// Simulate a host restart after provider setup commits the selected route.
+fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "99999\n", { mode: 0o600 });
+delete require.cache[require.resolve(${proxyPath})];
+const recoveredProxy = require(${proxyPath});
+recoveredProxy.ensureOllamaAuthProxy();
+
 console.log(JSON.stringify({
   started,
   proxySpawns,
@@ -472,9 +479,11 @@ console.log(JSON.stringify({
       persistedBackend: string;
     }>(result.stdout);
     assert.equal(payload.started, true);
-    assert.equal(payload.proxySpawns.length, 1);
+    assert.equal(payload.proxySpawns.length, 2);
     assert.equal(payload.proxySpawns[0].backendUrl, "http://127.0.0.1:11434");
     assert.equal(payload.proxySpawns[0].token, payload.runningToken);
+    assert.equal(payload.proxySpawns[1].backendUrl, "http://127.0.0.1:11434");
+    assert.equal(payload.proxySpawns[1].token, payload.runningToken);
     assert.notEqual(payload.runningToken, "compatible-token");
     assert.deepEqual(payload.runCommands, [["kill", "4242"]]);
     assert.equal(payload.persistedBackend, "http://127.0.0.1:11434");
