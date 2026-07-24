@@ -30,6 +30,17 @@ const CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION = "./.github/actions/upload-e2e
 const UPLOAD_E2E_ARTIFACTS_ACTION_PREFIX = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
+const SCORECARD_RUNTIME_UPLOAD = {
+  name: "Upload E2E runtime summary",
+  if: "${{ always() && steps.scorecard.outcome == 'success' }}",
+  uses: UPLOAD_ARTIFACT_ACTION,
+  with: {
+    name: "e2e-runtime-summary",
+    path: "${{ runner.temp }}/e2e-runtime-summary.json",
+    "if-no-files-found": "error",
+    "retention-days": 14,
+  },
+};
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const MCP_SCANNED_UPLOAD_CONDITION =
@@ -309,6 +320,15 @@ export function validateUploadE2eArtifactsAction(actionPath = DEFAULT_ACTION_PAT
 export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord): string[] {
   const errors: string[] = [];
   const jobs = record(workflow.jobs);
+  const scorecardRuntimeUploads = steps(record(jobs.scorecard).steps).filter(
+    (step) => step.name === SCORECARD_RUNTIME_UPLOAD.name,
+  );
+  if (
+    scorecardRuntimeUploads.length !== 1 ||
+    !isDeepStrictEqual(scorecardRuntimeUploads[0], SCORECARD_RUNTIME_UPLOAD)
+  ) {
+    errors.push("scorecard must preserve its bounded runtime summary upload contract");
+  }
   const expectedJobs = new Set(
     Object.entries(jobs)
       .filter(([jobName, value]) => {
@@ -362,7 +382,10 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
       if (uses.startsWith(CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION)) {
         errors.push(`${jobName} must not load upload-e2e-artifacts from the target checkout`);
       }
-      if (uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX)) {
+      if (
+        uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
+        !(jobName === "scorecard" && step.name === SCORECARD_RUNTIME_UPLOAD.name)
+      ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }
       if (

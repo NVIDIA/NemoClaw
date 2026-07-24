@@ -82,6 +82,18 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     expect(validateUploadE2eArtifactsInvocations(readWorkflow())).toEqual([]);
   });
 
+  it("rejects scorecard runtime-summary upload drift", () => {
+    const workflow = mutableWorkflow();
+    const scorecardUpload = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Upload E2E runtime summary",
+    )!;
+    scorecardUpload.with!["retention-days"] = 30;
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "scorecard must preserve its bounded runtime summary upload contract",
+    );
+  });
+
   it("rejects semantic-neutral action byte drift from the immutable provenance", () => {
     expect(validateActionSourceMutation((source) => `${source}# unreviewed drift\n`)).toEqual([
       "upload-e2e-artifacts content must match the action reviewed at its immutable commit pin",
