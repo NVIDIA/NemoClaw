@@ -163,6 +163,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     apiKey: INFERENCE_API_KEY,
     host: "0.0.0.0",
     model: INFERENCE_MODEL,
+    progress,
     publicHost: "host.openshell.internal",
     requireAuth: true,
     requireAuthModels: true,

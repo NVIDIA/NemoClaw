@@ -138,13 +138,16 @@ export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] 
   ];
 }
 
-export function runLiveVitestCli(cliArgs: string[], spawn: LiveVitestSpawner = spawnSync): number {
-  const argv = buildLiveVitestArgs(parseLiveVitestArgs(cliArgs));
-  const result = spawn("npx", argv, { stdio: "inherit" });
-  if (result.error) {
-    throw result.error;
-  }
+function spawnResultExitCode(result: LiveVitestSpawnResult): number {
+  if (result.error) throw result.error;
   return spawnExitCode(result);
+}
+
+export function runLiveVitestCli(cliArgs: string[], spawn: LiveVitestSpawner = spawnSync): number {
+  const invocation = parseLiveVitestArgs(cliArgs);
+  const testPath = validateLiveTestPath(invocation.testPath);
+  const argv = buildLiveVitestArgs({ ...invocation, testPath });
+  return spawnResultExitCode(spawn("npx", argv, { stdio: "inherit" }));
 }
 
 export function runLiveVitestCommand(argv: string[], spawn: LiveVitestSpawner = spawnSync): number {

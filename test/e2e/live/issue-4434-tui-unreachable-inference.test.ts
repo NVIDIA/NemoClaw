@@ -321,6 +321,7 @@ runIssue4434LiveTest(
     const fake = await startFakeOpenAiCompatibleServer({
       host: "0.0.0.0",
       model: hosted.model,
+      progress,
       publicHost: "host.openshell.internal",
     });
     let fakeClosePromise: Promise<void> | undefined;

@@ -18,8 +18,20 @@ import {
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./e2e/live/mcp-bridge-servers";
+import { startTestProgress } from "./e2e/fixtures/progress.ts";
 
 const servers: StartedHttpServer[] = [];
+function progressProbe() {
+  const lines: string[] = [];
+  const progress = startTestProgress(
+    "MCP tunnel support",
+    ["start MCP tunnel", "verify MCP tunnel"],
+    {
+      logLine: (line) => lines.push(line),
+    },
+  );
+  return { lines, progress };
+}
 type CompatibleToolCallResponse = {
   choices: Array<{
     message: {
@@ -121,6 +133,8 @@ describe("authenticated MCP live fixtures", () => {
       .mockResolvedValue({ body: null, status: 405 } as Response);
     let cleanupName = "";
     let cleanupProcess: (() => Promise<void>) | undefined;
+    const observation = progressProbe();
+    const { progress } = observation;
 
     try {
       const tunnel = await startPublicMcpHttpsTunnel({
@@ -134,6 +148,7 @@ describe("authenticated MCP live fixtures", () => {
           },
         },
         label: "unit MCP fixture",
+        progress,
         server: { port: 43123, close: async () => {} },
       });
 
@@ -146,6 +161,16 @@ describe("authenticated MCP live fixtures", () => {
       expect(fetchMock).toHaveBeenCalledTimes(6);
       expect(cleanupName).toBe("stop unit MCP fixture cloudflared quick tunnel");
       expect(cleanupProcess).toBeTypeOf("function");
+      expect(observation.lines).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("event: cloudflared quick tunnel attempt 1 started"),
+        ]),
+      );
+      progress.stop();
+      expect(progress.summary().phases[0]?.outputEvents).toBeGreaterThan(0);
+      expect(JSON.stringify(progress.summary())).not.toContain(
+        "fixture-cleanup-123.trycloudflare.com",
+      );
     } finally {
       await cleanupProcess?.();
       fetchMock.mockRestore();
@@ -193,6 +218,7 @@ describe("authenticated MCP live fixtures", () => {
           cloudflaredBin: cloudflared,
           cleanup: { add: vi.fn() },
           label: "redaction fixture",
+          progress: progressProbe().progress,
           server: { port: 43123, close: async () => {} },
         });
       } catch (error) {
@@ -243,6 +269,7 @@ describe("authenticated MCP live fixtures", () => {
           cloudflaredBin: cloudflared,
           cleanup: { add: vi.fn() },
           label: "chunked redaction fixture",
+          progress: progressProbe().progress,
           server: { port: 43123, close: async () => {} },
         });
       } catch (error) {

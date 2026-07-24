@@ -34,6 +34,27 @@ describe("doctor reports", () => {
     expect(JSON.parse(String(logSpy.mock.calls[0]?.[0]))).toEqual(report);
   });
 
+  it("redacts token-shaped values from the machine-readable report", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const report = buildDoctorReport("alpha", [
+      {
+        group: "Gateway",
+        label: "Gateway status",
+        status: "fail",
+        detail: "connect failed: Authorization: Bearer sk-abc123DEF456ghi789 (HTTP 401)",
+        hint: "restart the gateway",
+      },
+    ]);
+
+    expect(renderDoctorReport(report, true)).toBe(1);
+    const printed = JSON.parse(String(logSpy.mock.calls[0]?.[0]));
+    expect(printed.checks[0].detail).toBe(
+      "connect failed: Authorization: Bearer <REDACTED> (HTTP 401)",
+    );
+    expect(printed.checks[0].hint).toBe("restart the gateway");
+    expect(JSON.stringify(printed)).not.toContain("sk-abc123DEF456ghi789");
+  });
+
   it("renders preferred groups first, preserves extra-group order, and includes hints", () => {
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line = "") => lines.push(String(line)));
