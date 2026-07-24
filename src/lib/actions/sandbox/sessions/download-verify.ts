@@ -114,6 +114,12 @@ export function resolveDownloadArtifactPath(
  * {@link assertDownloadedFile}, this does not require a regular file, so it is
  * safe for directory downloads.
  *
+ * Only meaningful for a `hostPath` that did not exist before the download:
+ * run against a pre-existing path the check is vacuous — it would accept a
+ * stale artifact and mask the exit-0/no-write race. Callers that download to
+ * a caller-chosen destination must check pre-existence themselves and warn
+ * instead of asserting (see `downloadFromSandbox`).
+ *
  * @throws if nothing exists at `hostPath` — i.e. openshell exited 0 without
  * writing, the #7367 race.
  */

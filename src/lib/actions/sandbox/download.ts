@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
@@ -81,12 +83,24 @@ export async function downloadFromSandbox(
     sourceKind === undefined
       ? null
       : resolveDownloadArtifactPath(sandboxPath, hostDest, sourceKind);
+  // Existence-after is only evidence of a write when the path was absent
+  // before. The command downloads to the caller-chosen destination per
+  // openshell's cp semantics, so there is no fresh staging path to verify
+  // against (unlike the session-export flow), and content comparison cannot
+  // distinguish a no-write from a legitimate re-download of an identical
+  // artifact. When the destination pre-exists, say so instead of silently
+  // passing a vacuous check.
+  const artifactPreExisted = expectedArtifact !== null && fs.existsSync(expectedArtifact);
 
   runOpenshell(["sandbox", "download", opts.sandboxName, sandboxPath, hostDest], {
     stdio: "inherit",
   });
 
-  if (expectedArtifact) {
+  if (expectedArtifact && artifactPreExisted) {
+    console.error(
+      `Warning: cannot confirm the download wrote '${expectedArtifact}': the path existed before the download ran. If openshell rejected the transfer without reporting failure (#7367), the artifact there may be stale.`,
+    );
+  } else if (expectedArtifact) {
     assertDownloadArtifactExists(expectedArtifact, {
       remoteLabel: sandboxPath,
       sandboxName: opts.sandboxName,

@@ -129,6 +129,33 @@ describe("downloadFromSandbox", () => {
     expect(runMock).toHaveBeenCalled();
   });
 
+  it("warns instead of silently passing when the destination pre-existed (#7367)", async () => {
+    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // beforeEach existsSync=true: the resolved artifact exists before the
+    // download runs, so existence-after proves nothing about this transfer.
+    await expect(
+      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
+    ).resolves.toMatchObject({ sandboxPath: "/sandbox/x" });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/cannot confirm the download wrote '.*': the path existed before/),
+    );
+  });
+
+  it("verifies a fresh destination without warning when the artifact appears (#7367)", async () => {
+    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Call order: dest directory-ness in resolveDownloadArtifactPath, the
+    // pre-existence snapshot (absent), then the post-download check (present).
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+
+    await expect(
+      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
+    ).resolves.toMatchObject({ sandboxPath: "/sandbox/x" });
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringMatching(/cannot confirm/));
+  });
+
   it("passes the source path as a positional arg to the probe (no shell interpolation)", async () => {
     await downloadFromSandbox({
       sandboxName: "alpha",
