@@ -156,6 +156,137 @@ describe("PR E2E controller commands", () => {
     });
   });
 
+  it("binds retry finalization and download to separate state and evidence paths", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "finish",
+          "--work-dir",
+          workDir,
+          "--slot",
+          "runner-loss-retry",
+          "--check-id",
+          "18",
+          "--run-id",
+          "24",
+          "--state-hash",
+          "b".repeat(64),
+          "--evidence-outcome",
+          "success",
+        ]),
+      ).toMatchObject({
+        mode: "finish",
+        statePath: path.join(workDir, "controller-state-runner-loss-retry.json"),
+        evidencePath: path.join(workDir, "evidence-runner-loss-retry"),
+      });
+
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "download",
+          "--run-id",
+          "24",
+          "--work-dir",
+          workDir,
+          "--slot",
+          "runner-loss-retry",
+        ]),
+      ).toMatchObject({
+        mode: "download",
+        statePath: path.join(workDir, "controller-state-runner-loss-retry.json"),
+        evidencePath: path.join(workDir, "evidence-runner-loss-retry"),
+      });
+    });
+  });
+
+  it("parses a runner-loss retry with its original and isolated state paths", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "retry-runner-loss",
+          "--work-dir",
+          workDir,
+          "--check-id",
+          "17",
+          "--run-id",
+          "23",
+          "--state-hash",
+          "a".repeat(64),
+          "--workflow-run-attempt",
+          "1",
+        ]),
+      ).toEqual({
+        mode: "retry-runner-loss",
+        checkRunId: 17,
+        childRunId: 23,
+        workflowRunAttempt: 1,
+        stateHash: "a".repeat(64),
+        statePath: path.join(workDir, "controller-state.json"),
+        retryStatePath: path.join(workDir, "controller-state-runner-loss-retry.json"),
+      });
+    });
+  });
+
+  it("rejects runner-loss retries from controller reruns", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(() =>
+        parseControllerCommand([
+          "--mode",
+          "retry-runner-loss",
+          "--work-dir",
+          workDir,
+          "--check-id",
+          "17",
+          "--run-id",
+          "23",
+          "--state-hash",
+          "a".repeat(64),
+          "--workflow-run-attempt",
+          "2",
+        ]),
+      ).toThrow("--workflow-run-attempt must be exactly 1");
+    });
+  });
+
+  it("parses the narrowly scoped interrupted-retry cleanup", () => {
+    expect(
+      parseControllerCommand([
+        "--mode",
+        "abandon-runner-loss-retry",
+        "--check-id",
+        "17",
+        "--run-id",
+        "23",
+        "--workflow-run-attempt",
+        "1",
+      ]),
+    ).toEqual({
+      mode: "abandon-runner-loss-retry",
+      checkRunId: 17,
+      childRunId: 23,
+      workflowRunAttempt: 1,
+    });
+  });
+
+  it("rejects unknown controller path slots", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(() =>
+        parseControllerCommand([
+          "--mode",
+          "download",
+          "--run-id",
+          "24",
+          "--work-dir",
+          workDir,
+          "--slot",
+          "unexpected",
+        ]),
+      ).toThrow("--slot must be initial or runner-loss-retry");
+    });
+  });
+
   it("parses a fork credentialed E2E skip resolution", () => {
     expect(
       parseControllerCommand([

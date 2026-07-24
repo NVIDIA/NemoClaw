@@ -4,7 +4,7 @@
 import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-
+import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
 import {
   type OpenShellInstallResult,
   type OpenshellInstallVersionResolution,
@@ -227,7 +227,7 @@ export function runOpenshellInstall(deps: RunOpenshellInstallDeps): OpenShellIns
   const result = spawnSync("bash", [path.join(deps.scriptsDir, "install-openshell.sh")], {
     cwd: deps.cwd,
     env: installEnv,
-    stdio: ["ignore", "inherit", "inherit"],
+    stdio: redirectInheritedChildStdoutToStderr(["ignore", "inherit", "inherit"]),
     timeout: 300_000,
   });
   if (result.status !== 0) {

@@ -97,6 +97,33 @@ The first run duration depends on image and model size, storage performance, and
 Later runs reuse the cached image and model weights.
 The managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
 
+### Authenticate Hugging Face Downloads
+
+Authentication is optional for public models, but a read token reduces exposure to anonymous HTTP `429` rate limiting during large downloads.
+Create a read token at [Hugging Face Access Tokens](https://huggingface.co/settings/tokens), then export it in your shell before you start or restart onboarding.
+Do not paste the token into NemoClaw prompts or chat.
+
+```bash
+export HF_TOKEN="<your-read-token>"
+$$nemoclaw onboard
+```
+
+NemoClaw reports whether the download is authenticated without displaying the token value.
+It passes the token only to the temporary model downloader (`hf download`) and does not retain it in onboarding state or the long-running vLLM container.
+NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN` as a compatibility alias, but new setup should use `HF_TOKEN`.
+When neither variable is present, public-model downloads continue anonymously.
+
+If `hf download` reports HTTP `429`, export `HF_TOKEN` and resume onboarding.
+The downloader reuses files already stored in `~/.cache/huggingface` instead of starting the model download from an empty cache.
+
+```bash
+export HF_TOKEN="<your-read-token>"
+$$nemoclaw onboard --resume
+```
+
+Authentication reduces anonymous rate-limit exposure but does not guarantee that a download cannot receive HTTP `429`.
+Gated models still require license acceptance and a token before NemoClaw starts image or model downloads.
+
 ### Check Storage Before Downloads
 
 For a cold managed-vLLM install, NemoClaw estimates local storage before the watched image pull starts.
@@ -184,6 +211,12 @@ For the current support status and direct GPU policy boundaries, see [Platform S
 
 ## Run Non-Interactive Onboarding
 
+On DGX Spark, non-interactive onboarding can select local vLLM when `NEMOCLAW_PROVIDER` is unset and no provider is recorded for the sandbox.
+It reuses a running local vLLM server first.
+If no server is running, it selects the managed install or start entry.
+If neither local entry is available, it selects NVIDIA Endpoints.
+On DGX Station and other hosts, an unset provider keeps NVIDIA Endpoints as the automatic default.
+
 Use an already-running server.
 
 ```bash
@@ -249,9 +282,8 @@ NemoClaw applies the registered `vllm serve` arguments, including the reasoning 
 Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID.
 An unrecognized value fails before image or model downloads and prints the valid slugs.
 
-Gated models require a Hugging Face token.
-Export `HF_TOKEN` before onboarding so NemoClaw can forward it temporarily to the one-shot model downloader.
-The token is not retained in the long-lived managed vLLM container after the explicit download completes.
+Gated models require a Hugging Face token and license acceptance.
+Follow [Authenticate Hugging Face Downloads](#authenticate-hugging-face-downloads) before onboarding so NemoClaw can forward the token temporarily to the one-shot model downloader.
 
 ```bash
 export HF_TOKEN="<your-hf-token>"
@@ -260,7 +292,7 @@ NEMOCLAW_PROVIDER=install-vllm \
   $$nemoclaw onboard --non-interactive
 ```
 
-NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN`.
+NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN` as a compatibility alias.
 The host checks the token before `docker pull`, so a missing or empty token stops onboarding before bandwidth is spent on a request that would return `401`.
 
 ## Add Managed Serve Arguments

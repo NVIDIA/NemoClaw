@@ -42,6 +42,9 @@ const FORK_SKIP_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-skip-for-fork-p
 const INTERNAL_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-internal-pr";
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
+const RESERVED_CHECK_TITLE = "Waiting for PR CI";
+const RESERVED_CHECK_SUMMARY =
+  "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
 const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
 const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
 const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
@@ -58,6 +61,8 @@ const NEVER_RETRY_FAILURE_TITLES = new Set([
 ]);
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
+const CHECK_EXTERNAL_ID_PATTERN =
+  /^nemoclaw-pr-e2e:v2:([1-9][0-9]*):([0-9a-f]{40}):([0-9a-f]{40})$/u;
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
@@ -76,6 +81,27 @@ const MAX_PR_FILES = 3000;
 const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
 const MAX_WORKFLOW_JOB_PAGES = 10;
+const MAX_JOB_ANNOTATION_PAGES = 1;
+const MAX_RUNNER_LOSS_JOB_ANNOTATIONS = 20;
+const MAX_JOB_ANNOTATION_IDENTITY_BYTES = 8 * 1024;
+const MAX_JOB_ANNOTATION_TEXT_BYTES = 16 * 1024;
+const MAX_RUNNER_LOSS_JOB_ANNOTATION_BYTES = 64 * 1024;
+const HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE =
+  "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.";
+const HOSTED_RUNNER_SHUTDOWN_MESSAGE =
+  "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
+const HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE = "The operation was canceled.";
+const HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE = "Cleaning up orphan processes";
+const MAX_RUNNER_LOSS_JOB_INSPECTIONS = 20;
+const MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES = 64 * 1024;
+const MAX_RUNNER_LOSS_ORPHAN_PROCESSES = 64;
+const RUNNER_LOSS_JOB_LOG_TIMEOUT_MS = 30_000;
+const JOB_LOG_DOWNLOAD_HOST_PATTERN = /^productionresultssa[0-9]+\.blob\.core\.windows\.net$/u;
+const JOB_LOG_TIMESTAMPED_LINE_PATTERN =
+  /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{7}Z) (.*)$/u;
+const JOB_LOG_ORPHAN_PROCESS_PATTERN =
+  /^Terminate orphan process: pid \(([1-9][0-9]*)\) \(([A-Za-z0-9._+ -]{1,128})\)$/u;
+const GITHUB_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/u;
 const MAX_REPORTED_WORKFLOW_JOBS = 10;
 const MAX_WAIVER_REASON_CHARS = 500;
 const MAX_APPROVAL_REVIEWS = 20;
@@ -103,7 +129,7 @@ const TERMINAL_WORKFLOW_RUN_CONCLUSIONS = [
 ] as const;
 const TERMINAL_WORKFLOW_RUN_CONCLUSION_SET = new Set<string>(TERMINAL_WORKFLOW_RUN_CONCLUSIONS);
 const WAIT_POLL_INTERVAL_MS = 10_000;
-const WAIT_TIMEOUT_MS = 105 * 60_000;
+const WAIT_TIMEOUT_MS = 140 * 60_000;
 const EVIDENCE_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const EVIDENCE_DOWNLOAD_KILL_GRACE_MS = 30_000;
 const EVIDENCE_LIMITS = {
@@ -116,6 +142,8 @@ type ControllerPaths = {
   statePath: string;
   evidencePath: string;
 };
+
+type ControllerPathSlot = "initial" | "runner-loss-retry";
 
 type EvidenceStepOutcome = "success" | "failure" | "cancelled" | "skipped";
 
@@ -198,6 +226,12 @@ export type ControllerCommand =
     } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
   | {
+      mode: "abandon-runner-loss-retry";
+      checkRunId: number;
+      childRunId: number;
+      workflowRunAttempt: number;
+    }
+  | {
       mode: "cancel";
       prNumber: number;
       headSha?: string;
@@ -205,6 +239,15 @@ export type ControllerCommand =
     }
   | { mode: "wait"; childRunId: number }
   | ({ mode: "download"; childRunId: number } & ControllerPaths)
+  | {
+      mode: "retry-runner-loss";
+      checkRunId: number;
+      childRunId: number;
+      workflowRunAttempt: number;
+      stateHash: string;
+      statePath: string;
+      retryStatePath: string;
+    }
   | ControlPlaneDispatchCommand
   | ApprovedControlPlaneDispatchCommand
   | ManualForkSkipCommand
@@ -231,6 +274,7 @@ type WorkflowRun = {
   workflow_id: number;
   event: string;
   head_sha: string;
+  run_attempt: number;
   status: string;
   conclusion: string | null;
   display_title: string;
@@ -238,15 +282,57 @@ type WorkflowRun = {
 };
 
 type WorkflowRunsResponse = { workflow_runs: WorkflowRun[] };
+type WorkflowJobAnnotation = {
+  path: string;
+  blobHref: string;
+  startLine: number;
+  startColumn: number | null;
+  endLine: number;
+  endColumn: number | null;
+  annotationLevel: string;
+  title: string;
+  message: string;
+  rawDetails: string;
+};
+type WorkflowJobLogEvidence = {
+  etag: string;
+  totalBytes: number;
+  tail: string;
+};
+type HostedRunnerShutdownLogMarker = {
+  shutdownTimestamp: string;
+  operationTimestamp: string;
+  cleanupTimestamp: string;
+  lastTimestamp: string;
+};
 type WorkflowJob = {
   id: number;
   name: string;
+  runId?: number;
+  runAttempt?: number;
+  headSha?: string;
+  runUrl?: string;
+  apiUrl?: string;
+  htmlUrl?: string;
+  checkRunUrl?: string;
   status?: string;
   conclusion: string | null;
   runnerId?: number | null;
   runnerName?: string | null;
+  runnerGroupId?: number | null;
+  runnerGroupName?: string | null;
   labels?: string[];
-  steps: Array<{ name: string; status?: string; conclusion: string | null }>;
+  annotations?: WorkflowJobAnnotation[];
+  logEvidence?: WorkflowJobLogEvidence;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  steps: Array<{
+    name: string;
+    status?: string;
+    conclusion: string | null;
+    startedAt?: string | null;
+    completedAt?: string | null;
+  }>;
 };
 type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
 type CheckRun = {
@@ -427,7 +513,16 @@ function tokenAndRepository(): { token: string; repository: string } {
   return { token, repository };
 }
 
-export function privateControllerPaths(workDir: string): ControllerPaths {
+function parseControllerPathSlot(value: string | undefined): ControllerPathSlot {
+  if (value === undefined || value === "initial") return "initial";
+  if (value === "runner-loss-retry") return value;
+  throw new Error("--slot must be initial or runner-loss-retry");
+}
+
+export function privateControllerPaths(
+  workDir: string,
+  slot: ControllerPathSlot = "initial",
+): ControllerPaths {
   const resolved = path.resolve(workDir);
   const stat = fs.lstatSync(resolved);
   const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
@@ -440,10 +535,14 @@ export function privateControllerPaths(workDir: string): ControllerPaths {
   ) {
     throw new Error("--work-dir must be an owned private absolute directory");
   }
+  const retry = slot === "runner-loss-retry";
   return {
     planPath: path.join(resolved, "risk-plan.json"),
-    statePath: path.join(resolved, "controller-state.json"),
-    evidencePath: path.join(resolved, "evidence"),
+    statePath: path.join(
+      resolved,
+      retry ? "controller-state-runner-loss-retry.json" : "controller-state.json",
+    ),
+    evidencePath: path.join(resolved, retry ? "evidence-runner-loss-retry" : "evidence"),
   };
 }
 
@@ -479,7 +578,10 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
   if (args.mode === "finish") {
     return {
       mode: "finish",
-      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+      ...privateControllerPaths(
+        requiredArgument(args.workDir, "work-dir"),
+        parseControllerPathSlot(args.slot),
+      ),
       checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
       childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
       stateHash: parseHash(args.stateHash, "state-hash"),
@@ -491,6 +593,21 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       mode: "abandon",
       checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
       childRunId: args.runId ? parsePositiveId(args.runId, "--run-id") : undefined,
+    };
+  }
+  if (args.mode === "abandon-runner-loss-retry") {
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
+    if (workflowRunAttempt !== 1) {
+      throw new Error("--workflow-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "abandon-runner-loss-retry",
+      checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+      workflowRunAttempt,
     };
   }
   if (args.mode === "cancel") {
@@ -520,7 +637,29 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     return {
       mode: "download",
       childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
-      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+      ...privateControllerPaths(
+        requiredArgument(args.workDir, "work-dir"),
+        parseControllerPathSlot(args.slot),
+      ),
+    };
+  }
+  if (args.mode === "retry-runner-loss") {
+    const workDir = requiredArgument(args.workDir, "work-dir");
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
+    if (workflowRunAttempt !== 1) {
+      throw new Error("--workflow-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "retry-runner-loss",
+      checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+      workflowRunAttempt,
+      stateHash: parseHash(args.stateHash, "state-hash"),
+      statePath: privateControllerPaths(workDir).statePath,
+      retryStatePath: privateControllerPaths(workDir, "runner-loss-retry").statePath,
     };
   }
   if (args.mode === "start-control-plane") {
@@ -616,7 +755,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish, abandon, cancel, wait, download, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
+    "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, retry-runner-loss, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
   );
 }
 
@@ -689,6 +828,15 @@ export function validatePrGateState(value: unknown): PrGateState {
     }
   }
   return value as PrGateState;
+}
+
+function readBoundPrGateState(statePath: string, stateHash: string): PrGateState {
+  if (!HASH_PATTERN.test(stateHash)) throw new Error("controller state hash is invalid");
+  const serializedState = readPrivateRegularFile(statePath, { maxBytes: MAX_PLAN_BYTES })!;
+  if (sha256(serializedState) !== stateHash) {
+    throw new Error("controller state changed after E2E dispatch");
+  }
+  return validatePrGateState(JSON.parse(serializedState));
 }
 
 export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string>): RiskPlan {
@@ -882,6 +1030,7 @@ function appendOutput(name: string, value: string): void {
     fork_skip_mode: (candidate) => candidate === "record-fork-e2e-skip",
     fork_skip_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     finalized: (candidate) => /^(?:true|false)$/u.test(candidate),
+    runner_loss_retry_authorized: (candidate) => candidate === "true",
     run_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     state_hash: (candidate) => HASH_PATTERN.test(candidate),
   };
@@ -1030,18 +1179,27 @@ function priorRunnerLossRunUrls(
   });
 }
 
+function runnerLossLineageSummary(
+  priorRunUrls: readonly string[],
+  currentRunUrl: string,
+): string | undefined {
+  if (priorRunUrls.length === 0) return undefined;
+  const links = [...priorRunUrls, currentRunUrl].map(
+    (url, index) => `[attempt ${index + 1}](${url})`,
+  );
+  return `Runner-loss retry lineage: ${links.join(" → ")}.`;
+}
+
 function withRunnerLossLineage(
   verdict: PrGateVerdict,
   priorRunUrls: readonly string[],
   currentRunUrl: string,
 ): PrGateVerdict {
-  if (priorRunUrls.length === 0) return verdict;
-  const links = [...priorRunUrls, currentRunUrl].map(
-    (url, index) => `[attempt ${index + 1}](${url})`,
-  );
+  const lineage = runnerLossLineageSummary(priorRunUrls, currentRunUrl);
+  if (!lineage) return verdict;
   return {
     ...verdict,
-    summary: `${verdict.summary}\nRunner-loss retry lineage: ${links.join(" → ")}.`,
+    summary: `${verdict.summary}\n${lineage}`,
   };
 }
 
@@ -1148,9 +1306,8 @@ async function createPrGateCheck(options: {
   prNumber: number;
 }): Promise<CheckRun> {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
-  const title = "Waiting for PR CI";
-  const summary =
-    "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
+  const title = RESERVED_CHECK_TITLE;
+  const summary = RESERVED_CHECK_SUMMARY;
   const check = await githubApi<unknown>(`repos/${options.repository}/check-runs`, options.token, {
     method: "POST",
     body: {
@@ -1194,15 +1351,8 @@ async function ensurePrGateCheck(options: {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
   const existing = lineage.filter((check) => check.external_id === externalId);
   const current = currentExactDiffCheck(existing);
-  for (const stale of lineage.filter((check) => check.external_id !== externalId)) {
-    if (stale.status === "completed") continue;
-    await completeCheck({ repository: options.repository, checkRunId: stale.id }, options.token, {
-      conclusion: "failure",
-      title: "PR base changed",
-      summary:
-        "This check was computed for an earlier PR base and cannot authorize the current diff.",
-    });
-  }
+  // A base retarget can create another exact identity after this caller's live
+  // PR validation. Never mutate checks owned by a different base from here.
   if (
     current &&
     !(options.replaceRetryableCompleted && retryableFailureReason(current) !== undefined)
@@ -1264,7 +1414,14 @@ async function markCheckInProgress(
 
 function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string): void {
   if (!check) return;
-  if (check.status === "in_progress" && check.conclusion === null) return;
+  if (
+    check.status === "in_progress" &&
+    check.conclusion === null &&
+    check.output?.title === RESERVED_CHECK_TITLE &&
+    check.output.summary === RESERVED_CHECK_SUMMARY
+  ) {
+    return;
+  }
   const reason = retryableFailureReason(check);
   if (ciConclusion === "success" && reason) return;
   const title = normalizedCiMetadata(check.output?.title ?? "untitled", "untitled");
@@ -1547,6 +1704,14 @@ export async function resolvePullRequest(options: {
   return detail;
 }
 
+function isOptionalGitHubTimestamp(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === "string" && GITHUB_TIMESTAMP_PATTERN.test(value))
+  );
+}
+
 function validateWorkflowJob(value: unknown): WorkflowJob {
   if (
     !isObjectRecord(value) ||
@@ -1554,14 +1719,32 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
     (value.id as number) < 1 ||
     typeof value.name !== "string" ||
     value.name.length === 0 ||
+    (value.run_id !== undefined &&
+      (!Number.isSafeInteger(value.run_id) || (value.run_id as number) < 1)) ||
+    (value.run_attempt !== undefined &&
+      (!Number.isSafeInteger(value.run_attempt) || (value.run_attempt as number) < 1)) ||
+    (value.head_sha !== undefined &&
+      (typeof value.head_sha !== "string" || !SHA_PATTERN.test(value.head_sha))) ||
+    (value.run_url !== undefined && typeof value.run_url !== "string") ||
+    (value.url !== undefined && typeof value.url !== "string") ||
+    (value.html_url !== undefined && typeof value.html_url !== "string") ||
+    (value.check_run_url !== undefined && typeof value.check_run_url !== "string") ||
     (value.status !== undefined && typeof value.status !== "string") ||
     (value.conclusion !== null && typeof value.conclusion !== "string") ||
+    !isOptionalGitHubTimestamp(value.started_at) ||
+    !isOptionalGitHubTimestamp(value.completed_at) ||
     (value.runner_id !== undefined &&
       value.runner_id !== null &&
       (!Number.isSafeInteger(value.runner_id) || (value.runner_id as number) < 1)) ||
     (value.runner_name !== undefined &&
       value.runner_name !== null &&
       typeof value.runner_name !== "string") ||
+    (value.runner_group_id !== undefined &&
+      value.runner_group_id !== null &&
+      (!Number.isSafeInteger(value.runner_group_id) || (value.runner_group_id as number) < 0)) ||
+    (value.runner_group_name !== undefined &&
+      value.runner_group_name !== null &&
+      typeof value.runner_group_name !== "string") ||
     (value.labels !== undefined &&
       (!Array.isArray(value.labels) || value.labels.some((label) => typeof label !== "string"))) ||
     (value.steps !== undefined && !Array.isArray(value.steps))
@@ -1574,7 +1757,9 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
       typeof step.name !== "string" ||
       step.name.length === 0 ||
       (step.status !== undefined && typeof step.status !== "string") ||
-      (step.conclusion !== null && typeof step.conclusion !== "string")
+      (step.conclusion !== null && typeof step.conclusion !== "string") ||
+      !isOptionalGitHubTimestamp(step.started_at) ||
+      !isOptionalGitHubTimestamp(step.completed_at)
     ) {
       throw new Error("GitHub returned an invalid workflow job step");
     }
@@ -1582,18 +1767,356 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
       name: step.name,
       ...(step.status === undefined ? {} : { status: step.status }),
       conclusion: step.conclusion,
+      ...(step.started_at === undefined ? {} : { startedAt: step.started_at as string | null }),
+      ...(step.completed_at === undefined
+        ? {}
+        : { completedAt: step.completed_at as string | null }),
     };
   });
   return {
     id: value.id as number,
     name: value.name,
+    ...(value.run_id === undefined ? {} : { runId: value.run_id as number }),
+    ...(value.run_attempt === undefined ? {} : { runAttempt: value.run_attempt as number }),
+    ...(value.head_sha === undefined ? {} : { headSha: value.head_sha }),
+    ...(value.run_url === undefined ? {} : { runUrl: value.run_url }),
+    ...(value.url === undefined ? {} : { apiUrl: value.url }),
+    ...(value.html_url === undefined ? {} : { htmlUrl: value.html_url }),
+    ...(value.check_run_url === undefined ? {} : { checkRunUrl: value.check_run_url }),
     ...(value.status === undefined ? {} : { status: value.status }),
     conclusion: value.conclusion,
     ...(value.runner_id === undefined ? {} : { runnerId: value.runner_id as number | null }),
     ...(value.runner_name === undefined ? {} : { runnerName: value.runner_name }),
+    ...(value.runner_group_id === undefined
+      ? {}
+      : { runnerGroupId: value.runner_group_id as number | null }),
+    ...(value.runner_group_name === undefined ? {} : { runnerGroupName: value.runner_group_name }),
     ...(value.labels === undefined ? {} : { labels: value.labels as string[] }),
+    ...(value.started_at === undefined ? {} : { startedAt: value.started_at as string | null }),
+    ...(value.completed_at === undefined
+      ? {}
+      : { completedAt: value.completed_at as string | null }),
     steps,
   };
+}
+
+function validateWorkflowJobAnnotation(value: unknown): WorkflowJobAnnotation {
+  if (
+    !isObjectRecord(value) ||
+    typeof value.path !== "string" ||
+    value.path.length === 0 ||
+    Buffer.byteLength(value.path, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
+    typeof value.blob_href !== "string" ||
+    Buffer.byteLength(value.blob_href, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
+    !Number.isSafeInteger(value.start_line) ||
+    (value.start_line as number) < 1 ||
+    (value.start_column !== null &&
+      (!Number.isSafeInteger(value.start_column) || (value.start_column as number) < 1)) ||
+    !Number.isSafeInteger(value.end_line) ||
+    (value.end_line as number) < (value.start_line as number) ||
+    (value.end_column !== null &&
+      (!Number.isSafeInteger(value.end_column) || (value.end_column as number) < 1)) ||
+    typeof value.annotation_level !== "string" ||
+    Buffer.byteLength(value.annotation_level, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
+    typeof value.title !== "string" ||
+    Buffer.byteLength(value.title, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
+    typeof value.message !== "string" ||
+    Buffer.byteLength(value.message, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
+    typeof value.raw_details !== "string" ||
+    Buffer.byteLength(value.raw_details, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES
+  ) {
+    throw new Error("GitHub returned an invalid workflow job annotation");
+  }
+  return {
+    path: value.path,
+    blobHref: value.blob_href,
+    startLine: value.start_line as number,
+    startColumn: value.start_column as number | null,
+    endLine: value.end_line as number,
+    endColumn: value.end_column as number | null,
+    annotationLevel: value.annotation_level,
+    title: value.title,
+    message: value.message,
+    rawDetails: value.raw_details,
+  };
+}
+
+async function listWorkflowJobAnnotations(
+  repository: string,
+  token: string,
+  job: WorkflowJob,
+  runId: number,
+  runAttempt: number,
+): Promise<WorkflowJobAnnotation[]> {
+  const apiRepository = `https://api.github.com/repos/${repository}`;
+  const webRepository = `https://github.com/${repository}`;
+  const expectedRunUrl = `${apiRepository}/actions/runs/${runId}`;
+  const expectedJobUrl = `${apiRepository}/actions/jobs/${job.id}`;
+  const expectedCheckRunUrl = `${apiRepository}/check-runs/${job.id}`;
+  const expectedHtmlUrl = `${webRepository}/actions/runs/${runId}/job/${job.id}`;
+  if (
+    !job.headSha ||
+    job.runId !== runId ||
+    job.runAttempt !== runAttempt ||
+    job.runUrl !== expectedRunUrl ||
+    job.apiUrl !== expectedJobUrl ||
+    job.htmlUrl !== expectedHtmlUrl ||
+    job.checkRunUrl !== expectedCheckRunUrl
+  ) {
+    throw new Error("workflow job identity does not match its exact run attempt");
+  }
+  const check = await githubApi<unknown>(`repos/${repository}/check-runs/${job.id}`, token, {
+    userAgent: USER_AGENT,
+  });
+  const expectedAnnotationsUrl = `${expectedCheckRunUrl}/annotations`;
+  if (
+    !isObjectRecord(check) ||
+    check.id !== job.id ||
+    check.name !== job.name ||
+    check.head_sha !== job.headSha ||
+    check.url !== expectedCheckRunUrl ||
+    check.html_url !== expectedHtmlUrl ||
+    check.details_url !== expectedHtmlUrl ||
+    check.status !== "completed" ||
+    check.conclusion !== "failure" ||
+    !isObjectRecord(check.app) ||
+    check.app.id !== GITHUB_ACTIONS_APP_ID ||
+    !isObjectRecord(check.output) ||
+    !Number.isSafeInteger(check.output.annotations_count) ||
+    (check.output.annotations_count as number) < 0 ||
+    check.output.annotations_url !== expectedAnnotationsUrl
+  ) {
+    throw new Error("workflow job check run does not match the exact failed job");
+  }
+  const expectedCount = check.output.annotations_count as number;
+  if (expectedCount > MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
+    throw new Error("workflow job annotation count exceeds the hosted-runner-loss limit");
+  }
+  const annotations: WorkflowJobAnnotation[] = [];
+  const fingerprints = new Set<string>();
+  let annotationBytes = 0;
+  for (let page = 1; page <= MAX_JOB_ANNOTATION_PAGES; page += 1) {
+    const value = await githubApi<unknown>(
+      `repos/${repository}/check-runs/${job.id}/annotations?per_page=${MAX_RUNNER_LOSS_JOB_ANNOTATIONS}&page=${page}`,
+      token,
+      { userAgent: USER_AGENT },
+    );
+    if (!Array.isArray(value) || value.length > MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
+      throw new Error("GitHub returned an invalid workflow job annotation listing");
+    }
+    const pageAnnotations = value.map(validateWorkflowJobAnnotation);
+    for (const annotation of pageAnnotations) {
+      const fingerprint = JSON.stringify(annotation);
+      if (fingerprints.has(fingerprint)) {
+        throw new Error("GitHub returned duplicate workflow job annotations");
+      }
+      fingerprints.add(fingerprint);
+      annotationBytes += Buffer.byteLength(fingerprint, "utf8");
+      if (annotationBytes > MAX_RUNNER_LOSS_JOB_ANNOTATION_BYTES) {
+        throw new Error("workflow job annotation evidence exceeds its byte limit");
+      }
+      annotations.push(annotation);
+    }
+    if (annotations.length > expectedCount) {
+      throw new Error("workflow job annotation listing exceeds the trusted annotation count");
+    }
+    if (annotations.length === expectedCount) return annotations;
+    if (value.length < MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
+      throw new Error("workflow job annotation listing is incomplete");
+    }
+  }
+  throw new Error("workflow job annotation listing exceeded its page limit");
+}
+
+function parseJobLogContentLength(value: string | null, label: string): number {
+  if (!value || !/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error(`${label} did not provide a valid content length`);
+  }
+  const length = Number(value);
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new Error(`${label} content length is outside the safe integer range`);
+  }
+  return length;
+}
+
+function validateJobLogEtag(value: string | null): string {
+  if (!value || value.length > 130 || !/^"[^"\r\n]{1,128}"$/u.test(value)) {
+    throw new Error("job log download did not provide a strong bounded ETag");
+  }
+  return value;
+}
+
+function validateJobLogDownloadUrl(value: string | null): URL {
+  let url: URL;
+  try {
+    url = new URL(value ?? "");
+  } catch {
+    throw new Error("job log API returned an invalid signed download URL");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.port !== "" ||
+    !JOB_LOG_DOWNLOAD_HOST_PATTERN.test(url.hostname) ||
+    !url.pathname.startsWith("/actions-results/") ||
+    url.search.length < 2 ||
+    url.hash !== ""
+  ) {
+    throw new Error("job log API returned an untrusted signed download URL");
+  }
+  return url;
+}
+
+function assertPlainUnencodedJobLog(response: Response, label: string): void {
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
+  if (contentType !== "text/plain" || response.headers.get("content-encoding") !== null) {
+    throw new Error(`${label} did not return unencoded plain text`);
+  }
+}
+
+async function cancelJobLogResponseBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
+async function readExactJobLogRange(
+  response: Response,
+  expectedBytes: number,
+  discardPartialFirstLine: boolean,
+): Promise<string> {
+  if (!response.body) throw new Error("job log range response did not include a body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      receivedBytes += chunk.value.byteLength;
+      if (receivedBytes > expectedBytes || receivedBytes > MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES) {
+        throw new Error("job log range response exceeded its authenticated byte bound");
+      }
+      chunks.push(chunk.value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  if (receivedBytes !== expectedBytes) {
+    throw new Error("job log range response was incomplete");
+  }
+  const bytes = new Uint8Array(receivedBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const firstLineFeed = discardPartialFirstLine ? bytes.indexOf(0x0a) : -1;
+  if (discardPartialFirstLine && firstLineFeed < 0) {
+    throw new Error("job log range did not contain a complete record");
+  }
+  const completeRecords = firstLineFeed < 0 ? bytes : bytes.subarray(firstLineFeed + 1);
+  return new TextDecoder("utf-8", { fatal: true }).decode(completeRecords);
+}
+
+async function downloadWorkflowJobLogTail(
+  repository: string,
+  token: string,
+  jobId: number,
+): Promise<WorkflowJobLogEvidence> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RUNNER_LOSS_JOB_LOG_TIMEOUT_MS);
+  const apiUrl = `https://api.github.com/repos/${repository}/actions/jobs/${jobId}/logs`;
+  try {
+    const redirect = await fetch(apiUrl, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": USER_AGENT,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (redirect.status !== 302) {
+      await cancelJobLogResponseBody(redirect);
+      throw new Error(`job log API returned unexpected status ${redirect.status}`);
+    }
+    const location = redirect.headers.get("location");
+    await cancelJobLogResponseBody(redirect);
+    const downloadUrl = validateJobLogDownloadUrl(location);
+
+    const downloadHeaders = {
+      Accept: "text/plain",
+      "Accept-Encoding": "identity",
+      "User-Agent": USER_AGENT,
+    };
+    const metadata = await fetch(downloadUrl, {
+      method: "HEAD",
+      headers: downloadHeaders,
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (metadata.status !== 200) {
+      await cancelJobLogResponseBody(metadata);
+      throw new Error(`job log metadata returned unexpected status ${metadata.status}`);
+    }
+    let totalBytes: number;
+    let etag: string;
+    try {
+      assertPlainUnencodedJobLog(metadata, "job log metadata");
+      totalBytes = parseJobLogContentLength(
+        metadata.headers.get("content-length"),
+        "job log metadata",
+      );
+      if (totalBytes < 1) throw new Error("job log is empty");
+      etag = validateJobLogEtag(metadata.headers.get("etag"));
+    } catch (error) {
+      await cancelJobLogResponseBody(metadata);
+      throw error;
+    }
+    await cancelJobLogResponseBody(metadata);
+
+    const rangeStart = Math.max(0, totalBytes - MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES);
+    const rangeEnd = totalBytes - 1;
+    const expectedBytes = rangeEnd - rangeStart + 1;
+    const range = await fetch(downloadUrl, {
+      headers: {
+        ...downloadHeaders,
+        "If-Match": etag,
+        Range: `bytes=${rangeStart}-${rangeEnd}`,
+      },
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (range.status !== 206) {
+      await cancelJobLogResponseBody(range);
+      throw new Error(`job log range returned unexpected status ${range.status}`);
+    }
+    try {
+      assertPlainUnencodedJobLog(range, "job log range");
+      if (
+        range.headers.get("etag") !== etag ||
+        range.headers.get("content-range") !== `bytes ${rangeStart}-${rangeEnd}/${totalBytes}` ||
+        parseJobLogContentLength(range.headers.get("content-length"), "job log range") !==
+          expectedBytes
+      ) {
+        throw new Error("job log range did not match its authenticated metadata");
+      }
+    } catch (error) {
+      await cancelJobLogResponseBody(range);
+      throw error;
+    }
+    return {
+      etag,
+      totalBytes,
+      tail: await readExactJobLogRange(range, expectedBytes, rangeStart > 0),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function validateWorkflowJobsPage(value: unknown): WorkflowJobsPage {
@@ -1615,15 +2138,24 @@ async function listNonPassingWorkflowJobs(
   repository: string,
   token: string,
   runId: number,
-  runAttempt?: number,
+  runAttempt: number,
+  options: { includeAnnotations?: boolean } = {},
 ): Promise<{ jobs: WorkflowJob[]; complete: boolean }> {
+  if (
+    !Number.isSafeInteger(runId) ||
+    runId < 1 ||
+    !Number.isSafeInteger(runAttempt) ||
+    runAttempt < 1
+  ) {
+    throw new Error("workflow run and attempt IDs must be positive safe integers");
+  }
   const jobs: WorkflowJob[] = [];
+  const jobIds = new Set<number>();
   let totalCount: number | undefined;
   for (let page = 1; page <= MAX_WORKFLOW_JOB_PAGES; page += 1) {
-    const runPath = runAttempt ? `runs/${runId}/attempts/${runAttempt}` : `runs/${runId}`;
     const response = validateWorkflowJobsPage(
       await githubApi<unknown>(
-        `repos/${repository}/actions/${runPath}/jobs?per_page=100&page=${page}`,
+        `repos/${repository}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100&page=${page}`,
         token,
         { userAgent: USER_AGENT },
       ),
@@ -1632,12 +2164,47 @@ async function listNonPassingWorkflowJobs(
     if (response.totalCount !== totalCount || jobs.length + response.jobs.length > totalCount) {
       throw new Error("GitHub returned an invalid workflow job count");
     }
+    for (const job of response.jobs) {
+      if (jobIds.has(job.id)) {
+        throw new Error("GitHub returned duplicate workflow job IDs across the job listing");
+      }
+      jobIds.add(job.id);
+    }
     jobs.push(...response.jobs);
     if (jobs.length === totalCount) {
+      const nonPassingJobs = jobs.filter(
+        (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
+      );
+      if (options.includeAnnotations) {
+        const runnerLossCandidates = nonPassingJobs.filter(hasTrustedHostedRunnerLossStepShape);
+        if (runnerLossCandidates.length > MAX_RUNNER_LOSS_JOB_INSPECTIONS) {
+          throw new Error("workflow run exceeded the hosted-runner-loss inspection limit");
+        }
+        for (const job of runnerLossCandidates) {
+          job.annotations = await listWorkflowJobAnnotations(
+            repository,
+            token,
+            job,
+            runId,
+            runAttempt,
+          );
+          const workflowSha = job.headSha ?? "";
+          if (
+            !hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha) &&
+            hasCompatibleHostedRunnerShutdownAnnotations(job, repository, workflowSha)
+          ) {
+            try {
+              job.logEvidence = await downloadWorkflowJobLogTail(repository, token, job.id);
+            } catch {
+              console.warn(
+                `Could not authenticate hosted-runner shutdown log for job ${job.id}; automatic retry remains disabled`,
+              );
+            }
+          }
+        }
+      }
       return {
-        jobs: jobs.filter(
-          (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
-        ),
+        jobs: nonPassingJobs,
         complete: true,
       };
     }
@@ -1773,14 +2340,187 @@ function ciFailureReport(options: {
 
 const GITHUB_HOSTED_RUNNER_NAME_PATTERN = /^GitHub Actions [1-9][0-9]*$/u;
 
+function trustedWorkflowJobAnnotations(
+  job: WorkflowJob,
+  repository: string,
+  workflowSha: string,
+): WorkflowJobAnnotation[] | null {
+  if (job.headSha !== workflowSha || !Array.isArray(job.annotations)) return null;
+  const blobPrefix = `https://github.com/${repository}/blob/${workflowSha}/`;
+  if (
+    job.annotations.some((annotation) => annotation.blobHref !== `${blobPrefix}${annotation.path}`)
+  ) {
+    return null;
+  }
+  return job.annotations;
+}
+
 /**
- * GitHub records a lost hosted runner as a completed failed job whose active
- * step never received a terminal conclusion. This is stronger than a
- * cancellation: user and concurrency cancellations finish the active step and
- * run cleanup, while the release-run failures tracked by #7146 retained one
- * `in_progress` step after the job itself became terminal.
+ * GitHub records a lost hosted runner as a completed failed job with no
+ * ordinary failed step. Older Jobs API responses left the interrupted step
+ * `in_progress`; current responses can terminalize it as `cancelled`, skip the
+ * remaining cleanup, and append the synthetic successful `Complete job` step.
+ * A user or concurrency cancellation concludes the job itself as `cancelled`,
+ * while an ordinary assertion records a failed step. The step shape must be
+ * paired with either a canonical GitHub runner-loss annotation or an
+ * authenticated exact terminal shutdown log.
  */
-function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
+function hasTrustedHostedRunnerLossAnnotation(
+  job: WorkflowJob,
+  repository: string,
+  workflowSha: string,
+): boolean {
+  const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
+  if (!annotations) return false;
+  const failures = annotations.filter((annotation) => annotation.annotationLevel === "failure");
+  return (
+    failures.length === 1 &&
+    failures[0]?.path === ".github" &&
+    failures[0].startLine === 1 &&
+    failures[0].startColumn === null &&
+    failures[0].endLine === 1 &&
+    failures[0].endColumn === null &&
+    failures[0].title === "" &&
+    failures[0].rawDetails === "" &&
+    failures[0].message === HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE
+  );
+}
+
+function hasCompatibleHostedRunnerShutdownAnnotations(
+  job: WorkflowJob,
+  repository: string,
+  workflowSha: string,
+): boolean {
+  const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
+  if (!annotations) return false;
+  const failures = annotations.filter((annotation) => annotation.annotationLevel === "failure");
+  const failure = failures[0];
+  return (
+    failures.length === 1 &&
+    failure?.path === ".github" &&
+    failure.startLine === failure.endLine &&
+    failure.startColumn === null &&
+    failure.endColumn === null &&
+    failure.title === "" &&
+    failure.rawDetails === "" &&
+    failure.message === HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE
+  );
+}
+
+function jobLogTimestampSecond(timestamp: string): string | null {
+  const second = `${timestamp.slice(0, 19)}Z`;
+  const milliseconds = Date.parse(second);
+  return Number.isFinite(milliseconds) &&
+    new Date(milliseconds).toISOString().slice(0, 19) === timestamp.slice(0, 19)
+    ? second
+    : null;
+}
+
+function parseHostedRunnerShutdownLogTail(logTail: string): HostedRunnerShutdownLogMarker | null {
+  if (!logTail.endsWith("\n") || logTail.endsWith("\n\n")) return null;
+  const lines = logTail.slice(0, -1).split("\n");
+  const shutdownMessage = `##[error]${HOSTED_RUNNER_SHUTDOWN_MESSAGE}`;
+  const shutdownIndex = lines
+    .map((line) => JOB_LOG_TIMESTAMPED_LINE_PATTERN.exec(line)?.[2] ?? "")
+    .lastIndexOf(shutdownMessage);
+  if (shutdownIndex < 0) return null;
+  const terminalLines = lines.slice(shutdownIndex);
+  if (terminalLines.length < 3 || terminalLines.length > 3 + MAX_RUNNER_LOSS_ORPHAN_PROCESSES) {
+    return null;
+  }
+  if (terminalLines.some((line) => line.includes("\r"))) return null;
+  const parsed = terminalLines.map((line) => JOB_LOG_TIMESTAMPED_LINE_PATTERN.exec(line));
+  if (parsed.some((line) => line === null)) return null;
+  const timestamps = parsed.map((line) => line?.[1] ?? "");
+  const timestampSeconds = timestamps.map(jobLogTimestampSecond);
+  const messages = parsed.map((line) => line?.[2] ?? "");
+  if (
+    timestampSeconds.some((timestamp) => timestamp === null) ||
+    messages[0] !== shutdownMessage ||
+    messages[1] !== `##[error]${HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE}` ||
+    messages[2] !== HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE ||
+    timestamps[0]! >= timestamps[1]! ||
+    timestamps.slice(1).some((timestamp, index) => timestamp < timestamps[index]!)
+  ) {
+    return null;
+  }
+  const orphanProcesses = messages
+    .slice(3)
+    .map((message) => JOB_LOG_ORPHAN_PROCESS_PATTERN.exec(message));
+  const orphanProcessIds = orphanProcesses.map((process) => process?.[1] ?? "");
+  if (
+    orphanProcesses.some((process) => process === null) ||
+    new Set(orphanProcessIds).size !== orphanProcessIds.length
+  ) {
+    return null;
+  }
+  return {
+    shutdownTimestamp: timestamps[0]!,
+    operationTimestamp: timestamps[1]!,
+    cleanupTimestamp: timestamps[2]!,
+    lastTimestamp: timestamps.at(-1)!,
+  };
+}
+
+function isBoundedWorkflowJobLogEvidence(evidence: WorkflowJobLogEvidence): boolean {
+  const tailBytes = Buffer.byteLength(evidence.tail, "utf8");
+  return (
+    /^"[^"\r\n]{1,128}"$/u.test(evidence.etag) &&
+    Number.isSafeInteger(evidence.totalBytes) &&
+    evidence.totalBytes > 0 &&
+    tailBytes > 0 &&
+    tailBytes <= evidence.totalBytes &&
+    tailBytes <= MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES
+  );
+}
+
+function hasTrustedHostedRunnerShutdownLog(
+  job: WorkflowJob,
+  repository: string,
+  workflowSha: string,
+): boolean {
+  const evidence = job.logEvidence;
+  if (
+    !evidence ||
+    !isBoundedWorkflowJobLogEvidence(evidence) ||
+    !hasCompatibleHostedRunnerShutdownAnnotations(job, repository, workflowSha)
+  ) {
+    return false;
+  }
+  const marker = parseHostedRunnerShutdownLogTail(evidence.tail);
+  const cancelledSteps = job.steps.filter(
+    (step) => step.status === "completed" && step.conclusion === "cancelled",
+  );
+  const cancelledStep = cancelledSteps[0];
+  if (
+    !marker ||
+    cancelledSteps.length !== 1 ||
+    !job.startedAt ||
+    !job.completedAt ||
+    !cancelledStep?.startedAt ||
+    !cancelledStep.completedAt
+  ) {
+    return false;
+  }
+  const shutdownSecond = jobLogTimestampSecond(marker.shutdownTimestamp);
+  const operationSecond = jobLogTimestampSecond(marker.operationTimestamp);
+  const cleanupSecond = jobLogTimestampSecond(marker.cleanupTimestamp);
+  const lastSecond = jobLogTimestampSecond(marker.lastTimestamp);
+  return (
+    shutdownSecond !== null &&
+    operationSecond !== null &&
+    cleanupSecond !== null &&
+    lastSecond !== null &&
+    job.startedAt <= cancelledStep.startedAt &&
+    cancelledStep.startedAt <= shutdownSecond &&
+    operationSecond === cancelledStep.completedAt &&
+    cancelledStep.completedAt <= cleanupSecond &&
+    cleanupSecond <= lastSecond &&
+    lastSecond <= job.completedAt
+  );
+}
+
+function hasTrustedHostedRunnerLossStepShape(job: WorkflowJob): boolean {
   if (
     job.status !== "completed" ||
     job.conclusion !== "failure" ||
@@ -1788,7 +2528,10 @@ function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
     (job.runnerId ?? 0) < 1 ||
     typeof job.runnerName !== "string" ||
     !GITHUB_HOSTED_RUNNER_NAME_PATTERN.test(job.runnerName) ||
+    job.runnerGroupId !== 0 ||
+    job.runnerGroupName !== "GitHub Actions" ||
     !Array.isArray(job.labels) ||
+    !job.labels.includes("ubuntu-latest") ||
     job.labels.includes("self-hosted")
   ) {
     return false;
@@ -1796,17 +2539,65 @@ function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
   const strandedSteps = job.steps.filter(
     (step) => step.status === "in_progress" && step.conclusion === null,
   );
-  return (
+  const strandedIndex = job.steps.findIndex(
+    (step) => step.status === "in_progress" && step.conclusion === null,
+  );
+  const legacyStrandedStep =
     strandedSteps.length === 1 &&
-    job.steps.every(
+    job.steps
+      .slice(0, strandedIndex)
+      .every(
+        (step) =>
+          step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
+      ) &&
+    job.steps
+      .slice(strandedIndex + 1)
+      .every((step) => step.status === "pending" && step.conclusion === null);
+  if (legacyStrandedStep) return true;
+
+  const cancelledStepIndexes = job.steps.flatMap((step, index) =>
+    step.status === "completed" && step.conclusion === "cancelled" ? [index] : [],
+  );
+  if (cancelledStepIndexes.length !== 1) return false;
+  const cancelledIndex = cancelledStepIndexes[0]!;
+  if (job.steps[cancelledIndex]?.name === "Complete job") return false;
+  const beforeCancellation = job.steps.slice(0, cancelledIndex);
+  const afterCancellation = job.steps.slice(cancelledIndex + 1);
+  const syntheticCompletion = afterCancellation.at(-1);
+  const skippedCleanup = afterCancellation.slice(0, -1);
+  return (
+    beforeCancellation.every(
       (step) =>
-        step.conclusion === "success" ||
-        (step.conclusion === null && ["in_progress", "pending"].includes(step.status ?? "")),
-    )
+        step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
+    ) &&
+    skippedCleanup.length > 0 &&
+    skippedCleanup.every(
+      (step) =>
+        step.name !== "Complete job" &&
+        step.status === "completed" &&
+        step.conclusion === "skipped",
+    ) &&
+    syntheticCompletion?.name === "Complete job" &&
+    syntheticCompletion.status === "completed" &&
+    syntheticCompletion.conclusion === "success"
   );
 }
 
-function verifiedRunnerLossEvidence(options: {
+function hasTrustedHostedRunnerLossMarker(
+  job: WorkflowJob,
+  repository: string,
+  workflowSha: string,
+): boolean {
+  return (
+    hasTrustedHostedRunnerLossStepShape(job) &&
+    (hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha) ||
+      hasTrustedHostedRunnerShutdownLog(job, repository, workflowSha))
+  );
+}
+
+export function verifiedRunnerLossEvidence(options: {
+  repository: string;
+  workflowSha: string;
   workflowConclusion: string | null;
   jobs: readonly WorkflowJob[];
   jobDetailsAvailable: boolean;
@@ -1816,17 +2607,17 @@ function verifiedRunnerLossEvidence(options: {
     !options.jobDetailsAvailable ||
     !options.jobDetailsComplete ||
     options.jobs.length === 0 ||
-    !["failure", "cancelled"].includes(options.workflowConclusion ?? "")
+    options.workflowConclusion !== "failure"
   ) {
     return null;
   }
-  const runnerLostMarkerCount = options.jobs.filter(hasTrustedHostedRunnerLossMarker).length;
-  const ordinaryFailureEvidencePresent = options.jobs.some(
-    (job) => job.conclusion === "failure" && !hasTrustedHostedRunnerLossMarker(job),
-  );
+  const hasTrustedMarker = (job: WorkflowJob): boolean =>
+    hasTrustedHostedRunnerLossMarker(job, options.repository, options.workflowSha);
+  const runnerLostMarkerCount = options.jobs.filter(hasTrustedMarker).length;
+  const otherNonPassingEvidencePresent = options.jobs.some((job) => !hasTrustedMarker(job));
   return {
-    terminalClassificationPresent: ordinaryFailureEvidencePresent,
-    jobConclusion: options.workflowConclusion as "failure" | "cancelled",
+    terminalClassificationPresent: otherNonPassingEvidencePresent,
+    jobConclusion: "failure",
     runnerLostMarkerCount,
   };
 }
@@ -2150,6 +2941,7 @@ export function assertCorrelatedWorkflowRun(
   requireEqual("id", identity.childRunId, child.id);
   requireEqual("path", E2E_WORKFLOW_PATH, child.path);
   requireEqual("event", "workflow_dispatch", child.event);
+  requireEqual("run_attempt", 1, child.run_attempt);
   requireEqual("html_url", childRunUrl, child.html_url);
   requireEqual(
     "display_title",
@@ -2167,6 +2959,55 @@ export function assertCorrelatedWorkflowRun(
       `E2E run identity mismatch: ${mismatches.join("; ")}; observed run_name=${diagnosticValue(child.name)} workflow_id=${diagnosticValue(child.workflow_id)}`,
     );
   }
+}
+
+async function requireUnchangedCompletedWorkflowRun(
+  repository: string,
+  token: string,
+  child: WorkflowRun,
+  identity: WorkflowRunIdentity,
+): Promise<void> {
+  const confirmed = await githubApi<WorkflowRun>(
+    `repos/${repository}/actions/runs/${identity.childRunId}`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  assertCorrelatedWorkflowRun(confirmed, identity);
+  if (
+    confirmed.status !== "completed" ||
+    confirmed.status !== child.status ||
+    confirmed.conclusion !== child.conclusion ||
+    confirmed.workflow_id !== child.workflow_id
+  ) {
+    throw new Error("E2E run changed while its hosted-runner-loss evidence was authenticated");
+  }
+}
+
+function workflowJobEvidenceFingerprint(details: {
+  jobs: readonly WorkflowJob[];
+  complete: boolean;
+}): string {
+  const jobs = [...details.jobs]
+    .sort((left, right) => left.id - right.id)
+    .map((job) => {
+      const { annotations, logEvidence, ...metadata } = job;
+      return {
+        ...metadata,
+        ...(annotations === undefined
+          ? {}
+          : { annotations: annotations.map((annotation) => JSON.stringify(annotation)).sort() }),
+        ...(logEvidence === undefined
+          ? {}
+          : {
+              logEvidence: {
+                etag: logEvidence.etag,
+                totalBytes: logEvidence.totalBytes,
+                tailHash: sha256(logEvidence.tail),
+              },
+            }),
+      };
+    });
+  return sha256(JSON.stringify({ complete: details.complete, jobs }));
 }
 
 export async function dispatchPrGate(options: {
@@ -2467,6 +3308,293 @@ async function dispatchSelectedPrGate(options: {
   }
 }
 
+async function dispatchRunnerLossRetry(options: {
+  repository: string;
+  token: string;
+  state: PrGateState;
+  checkRunId: number;
+  retryStatePath: string;
+}): Promise<void> {
+  const correlationId = randomUUID();
+  if (!CORRELATION_PATTERN.test(correlationId)) {
+    throw new Error("generated correlation ID is invalid");
+  }
+  const dispatch = await dispatchPrGate({
+    repository: options.repository,
+    token: options.token,
+    jobs: options.state.expectedJobs,
+    targets: options.state.expectedTargets,
+    prNumber: options.state.prNumber,
+    commitSha: options.state.commitSha,
+    baseSha: options.state.baseSha,
+    workflowSha: options.state.workflowSha,
+    planHash: options.state.planHash,
+    correlationId,
+  });
+  const childRunId = dispatch.runId;
+  try {
+    appendOutput("run_id", String(childRunId));
+    const retryState: PrGateState = {
+      ...options.state,
+      workflowSha: dispatch.workflowSha,
+      correlationId,
+    };
+    const serializedState = `${JSON.stringify(retryState, null, 2)}\n`;
+    writePrivateRegularFile(options.retryStatePath, serializedState);
+    await updateRunningCheck(
+      {
+        repository: options.repository,
+        checkRunId: options.checkRunId,
+        prNumber: retryState.prNumber,
+        headSha: retryState.commitSha,
+        baseSha: retryState.baseSha,
+      },
+      options.token,
+      {
+        childRunId,
+        jobs: retryState.expectedJobs,
+        targets: retryState.expectedTargets,
+        planHash: retryState.planHash,
+      },
+    );
+    appendOutput("state_hash", sha256(serializedState));
+    appendOutput("dispatched", "true");
+    console.log(
+      `Runner-loss retry dispatched: pr=${retryState.prNumber} run=${childRunId} plan=${retryState.planHash} jobs=${retryState.expectedJobs.join(",")} targets=${retryState.expectedTargets.join(",")} url=https://github.com/${options.repository}/actions/runs/${childRunId}`,
+    );
+  } catch (error) {
+    try {
+      await cancelChildRun(options.repository, options.token, childRunId);
+    } catch (cancelError) {
+      throw new DispatchedChildRunError(
+        `${controllerErrorMessage(error)}; retry child cancellation failed: ${controllerErrorMessage(cancelError)}`,
+        childRunId,
+      );
+    }
+    throw new DispatchedChildRunError(
+      `${controllerErrorMessage(error)}; retry child cancellation requested`,
+      childRunId,
+    );
+  }
+}
+
+export async function retryRunnerLossPrGate(
+  command: Extract<ControllerCommand, { mode: "retry-runner-loss" }>,
+): Promise<void> {
+  if (command.workflowRunAttempt !== 1) {
+    throw new Error("runner-loss retry must use the first controller workflow run attempt");
+  }
+  const { token, repository } = tokenAndRepository();
+  const originalRunUrl = `https://github.com/${repository}/actions/runs/${command.childRunId}`;
+  let retryCheckRunId: number | undefined;
+  try {
+    const state = readBoundPrGateState(command.statePath, command.stateHash);
+    const history = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    const current = history.at(-1);
+    if (current?.id !== command.checkRunId) {
+      throw new Error("runner-loss retry source is not the current PR gate check");
+    }
+    if (
+      retryableFailureReason(current) !== "child-cancelled" ||
+      current.details_url !== originalRunUrl
+    ) {
+      throw new Error("PR gate check does not authorize this runner-loss retry");
+    }
+    if (priorRunnerLossRunUrls(repository, history, command.checkRunId).length !== 0) {
+      throw new Error("runner-loss retry was already consumed for this PR/base SHA pair");
+    }
+
+    const historySize = history.length;
+    const retryCheck = await createPrGateCheck({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    retryCheckRunId = retryCheck.id;
+    appendOutput("check_id", String(retryCheckRunId));
+    const retryHistory = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    if (retryHistory.length !== historySize + 1 || retryHistory.at(-1)?.id !== retryCheckRunId) {
+      throw new Error("runner-loss retry did not acquire the current PR gate check");
+    }
+    await markCheckInProgress(
+      {
+        repository,
+        checkRunId: retryCheckRunId,
+        prNumber: state.prNumber,
+        headSha: state.commitSha,
+        baseSha: state.baseSha,
+      },
+      token,
+      "Preparing one-time hosted-runner-loss retry",
+      `Revalidating the exact PR/base SHA and risk plan after [attempt 1](${originalRunUrl}) lost its GitHub-hosted runner.`,
+    );
+
+    const child = await githubApi<WorkflowRun>(
+      `repos/${repository}/actions/runs/${command.childRunId}`,
+      token,
+      { userAgent: USER_AGENT },
+    );
+    assertCorrelatedWorkflowRun(child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    if (
+      child.status !== "completed" ||
+      !["failure", "cancelled"].includes(child.conclusion ?? "")
+    ) {
+      throw new Error("runner-loss retry requires a terminal failed or cancelled child run");
+    }
+
+    const jobDetails = await listNonPassingWorkflowJobs(repository, token, command.childRunId, 1, {
+      includeAnnotations: true,
+    });
+    await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    const jobEvidenceFingerprint = workflowJobEvidenceFingerprint(jobDetails);
+    const runnerLossEvidence = verifiedRunnerLossEvidence({
+      repository,
+      workflowSha: state.workflowSha,
+      workflowConclusion: child.conclusion,
+      jobs: jobDetails.jobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: jobDetails.complete,
+    });
+    const retryDecision = runnerLossEvidence
+      ? decideRetry({
+          runnerLoss: detectRunnerLoss(runnerLossEvidence),
+          classification: null,
+          attempt: 1,
+        })
+      : { retry: false, reason: "runner-loss evidence is incomplete" };
+    if (!retryDecision.retry) {
+      throw new Error(`runner-loss retry is not authorized: ${retryDecision.reason}`);
+    }
+
+    const pull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: state.prNumber,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+    });
+    if (pull.head.repo?.full_name !== repository) {
+      throw new Error("runner-loss retry requires an internal pull request");
+    }
+
+    const confirmedJobDetails = await listNonPassingWorkflowJobs(
+      repository,
+      token,
+      command.childRunId,
+      1,
+      { includeAnnotations: true },
+    );
+    await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    if (workflowJobEvidenceFingerprint(confirmedJobDetails) !== jobEvidenceFingerprint) {
+      throw new Error("hosted-runner-loss evidence changed before retry dispatch");
+    }
+    const confirmedRunnerLossEvidence = verifiedRunnerLossEvidence({
+      repository,
+      workflowSha: state.workflowSha,
+      workflowConclusion: child.conclusion,
+      jobs: confirmedJobDetails.jobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: confirmedJobDetails.complete,
+    });
+    const confirmedRetryDecision = confirmedRunnerLossEvidence
+      ? decideRetry({
+          runnerLoss: detectRunnerLoss(confirmedRunnerLossEvidence),
+          classification: null,
+          attempt: 1,
+        })
+      : { retry: false, reason: "runner-loss evidence is incomplete" };
+    if (!confirmedRetryDecision.retry) {
+      throw new Error(
+        `runner-loss retry lost authorization before dispatch: ${confirmedRetryDecision.reason}`,
+      );
+    }
+    const currentPull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: state.prNumber,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+    });
+    assertPullUnchanged(pull, currentPull);
+    const dispatchHistory = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    const dispatchSource = dispatchHistory.find((check) => check.id === command.checkRunId);
+    if (
+      dispatchHistory.length !== historySize + 1 ||
+      dispatchHistory.at(-1)?.id !== retryCheckRunId ||
+      !dispatchSource ||
+      retryableFailureReason(dispatchSource) !== "child-cancelled" ||
+      dispatchSource.details_url !== originalRunUrl ||
+      priorRunnerLossRunUrls(repository, dispatchHistory, retryCheckRunId).length !== 1
+    ) {
+      throw new Error("runner-loss retry lost the current PR gate check before dispatch");
+    }
+    await dispatchRunnerLossRetry({
+      repository,
+      token,
+      state,
+      checkRunId: retryCheckRunId,
+      retryStatePath: command.retryStatePath,
+    });
+  } catch (error) {
+    if (retryCheckRunId !== undefined) {
+      const retryRunId = error instanceof DispatchedChildRunError ? error.childRunId : undefined;
+      const closed = await completeFailureAfterControllerError(
+        { repository, checkRunId: retryCheckRunId },
+        token,
+        "Runner-loss retry could not start",
+        {
+          error,
+          detailsUrl: retryRunId
+            ? `https://github.com/${repository}/actions/runs/${retryRunId}`
+            : originalRunUrl,
+          recovery:
+            "The original runner-loss evidence remains linked. This exact PR/base SHA pair will not receive another automatic retry.",
+        },
+      );
+      if (closed) appendOutput("finalized", "true");
+    }
+    throw error;
+  }
+}
+
 export async function startPrGate(
   command: Extract<ControllerCommand, { mode: "start" }>,
 ): Promise<void> {
@@ -2497,7 +3625,6 @@ export async function startPrGate(
   }
   const existingCheckRunId =
     existingChecks[0]?.status === "in_progress" ? existingChecks[0].id : undefined;
-  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   let pull: PullRequest;
   try {
     pull = await requireLiveExactDiff({
@@ -2509,7 +3636,12 @@ export async function startPrGate(
     });
   } catch (error) {
     if (!(error instanceof ObsoleteExactDiffError)) throw error;
-    if (existingCheckRunId) {
+    if (
+      existingCheckRunId &&
+      existingChecks[0]?.output?.title === RESERVED_CHECK_TITLE &&
+      existingChecks[0].output.summary === RESERVED_CHECK_SUMMARY
+    ) {
+      appendOutput("check_id", String(existingCheckRunId));
       await completeCheck({ repository, checkRunId: existingCheckRunId }, token, error.verdict);
     }
     appendOutput("dispatched", "false");
@@ -2526,6 +3658,7 @@ export async function startPrGate(
     throw new Error("PR repository or branch does not match the triggering CI run");
   }
   assertCheckCanStart(existingChecks[0], command.ciConclusion);
+  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   const checkRunId = await ensurePrGateCheck({
     repository,
     token,
@@ -2996,14 +4129,7 @@ export async function finishPrGate(options: {
   let finalized = false;
   let controllerFailureRetryReason: RetryableFailureReason | undefined;
   try {
-    if (!HASH_PATTERN.test(options.stateHash)) throw new Error("controller state hash is invalid");
-    const serializedState = readPrivateRegularFile(options.statePath, {
-      maxBytes: MAX_PLAN_BYTES,
-    })!;
-    if (sha256(serializedState) !== options.stateHash) {
-      throw new Error("controller state changed after E2E dispatch");
-    }
-    const state = validatePrGateState(JSON.parse(serializedState));
+    const state = readBoundPrGateState(options.statePath, options.stateHash);
     const child = await githubApi<WorkflowRun>(
       `repos/${repository}/actions/runs/${options.childRunId}`,
       token,
@@ -3069,7 +4195,8 @@ export async function finishPrGate(options: {
     let verdict: PrGateVerdict;
     if (workflowConclusion === "success") {
       if (options.evidenceOutcome !== "success") {
-        controllerFailureRetryReason = "evidence-download";
+        controllerFailureRetryReason =
+          priorRunnerLossUrls.length === 0 ? "evidence-download" : undefined;
         const error = new Error(
           `Evidence download did not complete (outcome: ${options.evidenceOutcome}) after selected E2E run ${options.childRunId} succeeded. The controller could not verify its artifacts; inspect the Download evidence step and rerun the gate.`,
         );
@@ -3080,6 +4207,7 @@ export async function finishPrGate(options: {
           {
             error,
             detailsUrl: childRunUrl,
+            recovery: runnerLossLineageSummary(priorRunnerLossUrls, childRunUrl),
             retryableFailureReason: controllerFailureRetryReason,
           },
         );
@@ -3111,7 +4239,16 @@ export async function finishPrGate(options: {
       let jobDetailsAvailable = true;
       let jobDetailsComplete = false;
       try {
-        const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId);
+        const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId, 1, {
+          includeAnnotations: true,
+        });
+        await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+          childRunId: options.childRunId,
+          correlationId: state.correlationId,
+          prNumber: state.prNumber,
+          repository,
+          workflowSha: state.workflowSha,
+        });
         jobs = details.jobs;
         jobDetailsComplete = details.complete;
       } catch (error) {
@@ -3127,6 +4264,8 @@ export async function finishPrGate(options: {
         jobDetailsComplete,
         runnerLossAttempt,
         runnerLossEvidence: verifiedRunnerLossEvidence({
+          repository,
+          workflowSha: state.workflowSha,
           workflowConclusion,
           jobs,
           jobDetailsAvailable,
@@ -3136,9 +4275,12 @@ export async function finishPrGate(options: {
     }
     verdict = withRunnerLossLineage(verdict, priorRunnerLossUrls, childRunUrl);
     if (await finalizeObsoleteExactDiff()) return;
+    if (priorRunnerLossUrls.length === 0 && verdict.retryableFailureReason === "child-cancelled") {
+      appendOutput("runner_loss_retry_authorized", "true");
+    }
     await completeCheck(context, token, verdict, childRunUrl);
-    appendOutput("finalized", "true");
     finalized = true;
+    appendOutput("finalized", "true");
     console.log(
       `Run completed: run=${options.childRunId} conclusion=${verdict.conclusion} title=${verdict.title} url=${childRunUrl}`,
     );
@@ -3162,6 +4304,25 @@ export async function finishPrGate(options: {
 
 export async function abandonPrGate(checkRunId: number, childRunId?: number): Promise<void> {
   const { token, repository } = tokenAndRepository();
+  const existingCheck = await githubApi<unknown>(
+    `repos/${repository}/check-runs/${checkRunId}`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  if (
+    !isObjectRecord(existingCheck) ||
+    existingCheck.id !== checkRunId ||
+    existingCheck.name !== CHECK_NAME ||
+    !isObjectRecord(existingCheck.app) ||
+    existingCheck.app.id !== GITHUB_ACTIONS_APP_ID ||
+    typeof existingCheck.status !== "string"
+  ) {
+    throw new Error("GitHub returned a mismatched PR gate check during abandonment");
+  }
+  if (existingCheck.status === "completed") {
+    appendOutput("finalized", "true");
+    return;
+  }
   let cancellationError: unknown;
   if (childRunId) {
     try {
@@ -3180,6 +4341,100 @@ export async function abandonPrGate(checkRunId: number, childRunId?: number): Pr
   });
   appendOutput("finalized", "true");
   if (cancellationError) throw cancellationError;
+}
+
+export async function abandonRunnerLossRetrySource(
+  checkRunId: number,
+  childRunId: number,
+  workflowRunAttempt: number,
+): Promise<void> {
+  if (workflowRunAttempt !== 1) {
+    throw new Error("runner-loss retry cleanup must use the first controller workflow run attempt");
+  }
+  if (!Number.isSafeInteger(checkRunId) || checkRunId < 1) {
+    throw new Error("runner-loss retry source check ID is invalid");
+  }
+  if (!Number.isSafeInteger(childRunId) || childRunId < 1) {
+    throw new Error("runner-loss retry source run ID is invalid");
+  }
+  const { token, repository } = tokenAndRepository();
+  const childRunUrl = `https://github.com/${repository}/actions/runs/${childRunId}`;
+  const value = await githubApi<unknown>(`repos/${repository}/check-runs/${checkRunId}`, token, {
+    userAgent: USER_AGENT,
+  });
+  if (!isObjectRecord(value)) {
+    throw new Error("GitHub returned an invalid runner-loss retry source check");
+  }
+  const source = value as CheckRun;
+  const externalIdMatch =
+    typeof source.external_id === "string"
+      ? CHECK_EXTERNAL_ID_PATTERN.exec(source.external_id)
+      : null;
+  if (
+    source.id !== checkRunId ||
+    source.name !== CHECK_NAME ||
+    source.app?.id !== GITHUB_ACTIONS_APP_ID ||
+    source.status !== "completed" ||
+    source.conclusion !== "failure" ||
+    source.details_url !== childRunUrl ||
+    retryableFailureReason(source) !== "child-cancelled" ||
+    !externalIdMatch
+  ) {
+    throw new Error("completed check does not match the exact runner-loss retry source");
+  }
+
+  const [, prNumberText, headSha, baseSha] = externalIdMatch;
+  const history = await matchingPrGateHistory({
+    repository,
+    token,
+    prNumber: parsePositiveId(prNumberText!, "runner-loss retry source PR number"),
+    headSha: headSha!,
+    baseSha: baseSha!,
+  });
+  const sourceIndex = history.findIndex((check) => check.id === checkRunId);
+  const current = history.at(-1);
+  if (sourceIndex < 0) {
+    throw new Error("runner-loss retry source is absent from its exact check history");
+  }
+  if (current?.id !== checkRunId) {
+    const sourceImmediatelyPrecedesCurrent = sourceIndex === history.length - 2;
+    const canonicalReservedReplacement =
+      current?.status === "in_progress" &&
+      current.conclusion === null &&
+      (current.details_url === null || current.details_url === undefined) &&
+      current.output?.title === RESERVED_CHECK_TITLE &&
+      current.output.summary === RESERVED_CHECK_SUMMARY;
+    if (!sourceImmediatelyPrecedesCurrent || !canonicalReservedReplacement) {
+      throw new Error("runner-loss retry source has an ambiguous replacement check history");
+    }
+    await completeCheck(
+      { repository, checkRunId: current.id },
+      token,
+      {
+        conclusion: "failure",
+        title: "Runner-loss retry could not start",
+        summary: `The one-time automatic retry controller stopped after reserving this replacement check. The original runner-loss evidence remains linked at [attempt 1](${childRunUrl}); inspect the controller job before retrying the gate.`,
+      },
+      childRunUrl,
+    );
+    appendOutput("finalized", "true");
+    return;
+  }
+
+  const markerBoundary = `\n\n${retryableFailureMarker("child-cancelled")}`;
+  const sourceSummary = source.output!.summary!;
+  const evidenceSummary = sourceSummary.slice(0, -markerBoundary.length);
+  await completeCheck(
+    { repository, checkRunId },
+    token,
+    {
+      conclusion: "failure",
+      title: "Runner-loss retry could not start",
+      summary: `${evidenceSummary}\n\nThe one-time automatic retry controller stopped before it reserved a replacement check. The original runner-loss run remains linked; inspect the controller job before retrying the gate.`,
+    },
+    childRunUrl,
+  );
+  appendOutput("finalized", "true");
 }
 
 function validateApprovalWorkflowRun(
@@ -3622,6 +4877,10 @@ async function main(): Promise<void> {
     await startApprovedControlPlanePrGate(command);
     return;
   }
+  if (command.mode === "retry-runner-loss") {
+    await retryRunnerLossPrGate(command);
+    return;
+  }
   if (command.mode === "finish") {
     await finishPrGate({
       statePath: command.statePath,
@@ -3635,6 +4894,14 @@ async function main(): Promise<void> {
   }
   if (command.mode === "abandon") {
     await abandonPrGate(command.checkRunId, command.childRunId);
+    return;
+  }
+  if (command.mode === "abandon-runner-loss-retry") {
+    await abandonRunnerLossRetrySource(
+      command.checkRunId,
+      command.childRunId,
+      command.workflowRunAttempt,
+    );
     return;
   }
   if (command.mode === "wait") {

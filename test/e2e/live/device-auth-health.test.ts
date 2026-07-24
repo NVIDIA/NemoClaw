@@ -53,6 +53,7 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
     apiKey: INFERENCE_API_KEY,
     host: "0.0.0.0",
     model: INFERENCE_MODEL,
+    progress,
     publicHost: "host.openshell.internal",
     requireAuth: true,
   });

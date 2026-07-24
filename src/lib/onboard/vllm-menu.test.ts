@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
-import { buildVllmMenuEntries } from "./vllm-menu";
+import { buildVllmMenuEntries, isManagedVllmDefaultPlatform } from "./vllm-menu";
 
 describe("buildVllmMenuEntries", () => {
   it("returns no entries when nothing is running, no profile, and no opt-in", () => {
@@ -180,5 +180,19 @@ describe("buildVllmMenuEntries", () => {
       log: (m) => logs.push(m),
     });
     assert.deepEqual(logs, []);
+  });
+});
+
+describe("isManagedVllmDefaultPlatform (#7293)", () => {
+  it("is true for the DGX managed-vLLM default platforms", () => {
+    assert.equal(isManagedVllmDefaultPlatform("spark"), true);
+    assert.equal(isManagedVllmDefaultPlatform("station"), true);
+  });
+
+  it("is false for other or missing platforms", () => {
+    assert.equal(isManagedVllmDefaultPlatform("linux"), false);
+    assert.equal(isManagedVllmDefaultPlatform("jetson"), false);
+    assert.equal(isManagedVllmDefaultPlatform(null), false);
+    assert.equal(isManagedVllmDefaultPlatform(undefined), false);
   });
 });

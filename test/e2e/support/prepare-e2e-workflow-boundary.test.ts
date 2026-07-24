@@ -32,6 +32,20 @@ describe("prepare-e2e workflow boundary", () => {
     expect(validatePrepareE2eInvocations(readWorkflow())).toEqual([]);
   });
 
+  it("keeps the installer-backed security posture matrix on the no-build bootstrap", () => {
+    const workflow = readWorkflow() as Workflow;
+    const securityPostureJob = workflow.jobs["security-posture"];
+    const prepare = securityPostureJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
+    delete prepare.with;
+
+    expect(validatePrepareE2eInvocations(workflow)).toEqual(
+      expect.arrayContaining([
+        "security-posture prepare-e2e must set build-cli to false",
+        "security-posture prepare-e2e invocation must not override its canonical contract",
+      ]),
+    );
+  });
+
   it("rejects action implementation drift", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "prepare-e2e-action-"));
     const actionPath = path.join(directory, "action.yaml");
