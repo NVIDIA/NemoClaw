@@ -1160,7 +1160,7 @@ async function runSnapshotRestoreUnlocked(
   });
   if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
     try {
-      establishRestoredSandboxGatewayPairing(targetSandbox);
+      await establishRestoredSandboxGatewayPairing(targetSandbox);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new SnapshotCommandError([
