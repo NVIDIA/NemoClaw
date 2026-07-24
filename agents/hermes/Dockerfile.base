@@ -15,7 +15,8 @@
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. gosu upgrade             — update URL, checksum, and version
 #   4. node:24-trixie-slim digest rot — update-docker-pin.sh updates all
-#   5. New .hermes subdirectory — add mkdir/chmod below
+#   5. npm upgrade              — update upgrade-bundled-npm.mts
+#   6. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
 
 FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c
@@ -63,11 +64,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
 # npm 11.13.0 in the pinned Node 24 image bundles an affected node-tar copy.
 # Patch that private package after curl is installed and before npm processes
-# the checksum-pinned Hermes release lockfiles.
+# the reviewed npm archive.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# Upgrade the complete private npm tree before npm processes the
+# checksum-pinned Hermes release lockfiles.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # gosu for privilege separation (gateway vs sandbox user).

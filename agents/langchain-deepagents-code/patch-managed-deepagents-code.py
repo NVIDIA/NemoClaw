@@ -748,9 +748,102 @@ def _run_single_hook(command, event, payload_bytes) -> None:
     del command, event, payload_bytes
 '''
 
+NON_INTERACTIVE_ERROR_MARKER = '''    except Exception as e:
+        logger.exception("Unexpected error during non-interactive execution")
+        console.print(
+            f"\\n[red]Unexpected error ({type(e).__name__}): "
+            f"{escape_markup(str(e))}[/red]"
+        )
+        return 1
+'''
+
+NON_INTERACTIVE_ERROR_PATCH = '''    except Exception:
+        _nemoclaw_report_non_interactive_error(thread_id, console)
+        return 1
+'''
+
 NON_INTERACTIVE_PATCH = r'''
+import logging as _nemoclaw_logging
+import os as _nemoclaw_os
+import re as _nemoclaw_re
+import sqlite3 as _nemoclaw_sqlite3
 
 # NemoClaw-managed Deep Agents Code hardening v2.
+_NEMOCLAW_PROVIDER_CAPACITY_ERROR = _nemoclaw_re.compile(
+    r"""\bAPIError\(["']ResourceExhausted:\s*
+        Worker\s+local\s+total\s+request\s+limit\s+reached\s*
+        \(\d+/\d+\)""",
+    _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+)
+
+_NEMOCLAW_MANAGED_STATE_DB = "/sandbox/.deepagents/.state/sessions.db"
+
+
+def _nemoclaw_classify_persisted_error(thread_id):
+    """Classify the observed provider-capacity error for one managed thread."""
+    if (
+        not isinstance(thread_id, str)
+        or not thread_id
+        or not _nemoclaw_os.path.isfile(_NEMOCLAW_MANAGED_STATE_DB)
+    ):
+        return None
+    try:
+        conn = _nemoclaw_sqlite3.connect(_NEMOCLAW_MANAGED_STATE_DB, timeout=2)
+        conn.execute("PRAGMA query_only = ON")
+        try:
+            cursor = conn.execute(
+                "SELECT substr(value, 1, 4096) FROM writes "
+                "WHERE thread_id = ? AND channel = '__error__' "
+                "ORDER BY rowid DESC LIMIT 5",
+                (thread_id,),
+            )
+            for (value,) in cursor:
+                if not isinstance(value, (str, bytes)):
+                    continue
+                text = (
+                    value
+                    if isinstance(value, str)
+                    else value.decode("utf-8", errors="replace")
+                )
+                if _NEMOCLAW_PROVIDER_CAPACITY_ERROR.search(text):
+                    return ("ResourceExhausted", "upstream_provider_capacity", "true")
+        finally:
+            conn.close()
+    except Exception:
+        # Diagnostics must not replace the original non-interactive exit result.
+        pass
+    return None
+
+
+def _nemoclaw_report_non_interactive_error(thread_id, console):
+    """Emit bounded diagnostics without logging the exception or checkpoint row."""
+    classified = _nemoclaw_classify_persisted_error(thread_id)
+    logger = _nemoclaw_logging.getLogger("nemoclaw.managed.non_interactive")
+    if classified:
+        error_class, category, retryable = classified
+        logger.warning(
+            "managed non-interactive error: error_class=%s category=%s "
+            "retryable=%s correlation_id=%s",
+            error_class,
+            category,
+            retryable,
+            thread_id,
+        )
+        console.print(
+            f"\n[red]Model request failed: {error_class} "
+            f"(correlation_id={thread_id})[/red]"
+        )
+        return
+    logger.warning(
+        "managed non-interactive error: error_class=unknown category=unknown "
+        "retryable=false correlation_id=%s",
+        thread_id,
+    )
+    console.print(
+        f"\n[red]Unexpected error (correlation_id={thread_id})[/red]"
+    )
+
+
 _nemoclaw_original_run_non_interactive = run_non_interactive
 
 
@@ -1375,6 +1468,7 @@ def main() -> None:
             ("status", STATUS_PATCH),
             ("welcome", WELCOME_PATCH),
             ("server", SERVER_PATCH),
+            ("non_interactive", NON_INTERACTIVE_PATCH),
         ):
             if texts[name].count(patch.lstrip()) != 1:
                 raise RuntimeError(
@@ -1384,6 +1478,11 @@ def main() -> None:
             raise RuntimeError(
                 "Managed package server override patch is incomplete in "
                 f"{paths['server']}"
+            )
+        if texts["non_interactive"].count(NON_INTERACTIVE_ERROR_PATCH) != 1:
+            raise RuntimeError(
+                "Managed package non-interactive error patch is incomplete in "
+                f"{paths['non_interactive']}"
             )
         return
     if marker_states != {False} or helper_path.exists():
@@ -1556,6 +1655,11 @@ def main() -> None:
             "Expected one Deep Agents Code explicit MCP config marker in "
             f"{paths['mcp_tools']}"
         )
+    if texts["non_interactive"].count(NON_INTERACTIVE_ERROR_MARKER) != 1:
+        raise RuntimeError(
+            "Expected one Deep Agents Code non-interactive error marker in "
+            f"{paths['non_interactive']}"
+        )
     transformed = dict(texts)
     transformed["entrypoint"] = texts["entrypoint"].replace(
         ENTRYPOINT_MARKER, ENTRYPOINT_PATCH, 1
@@ -1644,9 +1748,14 @@ def main() -> None:
     transformed["hooks"] = _append_patch(
         paths["hooks"], texts["hooks"], HOOKS_PATCH
     )
+    transformed_non_interactive = texts["non_interactive"].replace(
+        NON_INTERACTIVE_ERROR_MARKER,
+        NON_INTERACTIVE_ERROR_PATCH,
+        1,
+    )
     transformed["non_interactive"] = _append_patch(
         paths["non_interactive"],
-        texts["non_interactive"],
+        transformed_non_interactive,
         NON_INTERACTIVE_PATCH,
     )
 
