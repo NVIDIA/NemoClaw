@@ -60,6 +60,8 @@ When you restore a snapshot, NemoClaw replays those recorded custom presets with
 
 The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
 NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
+Restore limits directory cleanup to state directories declared by the snapshot manifest.
+It preserves directories that exist only in the target manifest or whose backup failed.
 
 For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement.
 For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
@@ -129,8 +131,11 @@ During rebuild or restore, NemoClaw merges those settings with the freshly gener
 If the restored config cannot be parsed or applied safely, NemoClaw stops the restore instead of replacing the generated config with an unsafe fallback.
 
 OpenClaw's device identity keys and paired-device tokens are intentionally excluded from snapshots because backup sanitization scrubs them beyond use.
-Restore never touches the sandbox's current gateway pairing state, even when an older snapshot still contains those files.
-OpenClaw regenerates its device identity on demand, and NemoClaw auto-pair re-pairs CLI clients on connect.
+Snapshot state replacement does not overwrite the destination sandbox's gateway pairing files, even when an older snapshot still contains them.
+After a cross-sandbox restore creates the destination, NemoClaw establishes gateway pairing and verifies it with an authenticated agent run.
+If verification fails, the restored state remains in the destination and the command exits nonzero.
+Run `$$nemoclaw <destination> connect` to retry pairing before you run an agent.
+OpenClaw regenerates its device identity on demand.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Credential-bearing Hermes files such as `auth.json` are intentionally excluded from snapshots.

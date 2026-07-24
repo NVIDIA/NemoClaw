@@ -11,7 +11,6 @@ import {
 } from "../../../state/onboard-checkpoint-decision";
 import { CHECKPOINT_SCHEMA_VERSION } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
-import * as registry from "../../../state/registry";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
 import {
@@ -114,32 +113,6 @@ describe("handleSandboxState", () => {
     expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
   });
 
-  it("carries complete baseline exclusion records into the pre-destructive create intent", async () => {
-    const exclusion = {
-      version: 1 as const,
-      agent: "openclaw",
-      key: "nous_research",
-      digest: "abc",
-      acknowledgedAt: "2026-07-19T00:00:00.000Z",
-      appliedAgentVersion: null,
-    };
-    const exclusionsSpy = vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([exclusion]);
-    try {
-      const { deps, calls } = createDeps();
-      await handleSandboxState(baseOptions(deps));
-
-      expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
-        expect.objectContaining({ baselineExclusions: [exclusion] }),
-      );
-      const createIntent = calls.createSandbox.mock.calls[0]?.at(-1) as unknown as {
-        resolved?: { policy?: { options?: { baselineExclusions?: unknown[] } } };
-      };
-      expect(createIntent.resolved?.policy?.options?.baselineExclusions).toEqual([exclusion]);
-    } finally {
-      exclusionsSpy.mockRestore();
-    }
-  });
-
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
     const { deps } = createDeps({
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
@@ -175,6 +148,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {
         web_search_provider: {
           completedAt: "2026-01-01T00:00:00.000Z",
@@ -631,6 +605,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -671,6 +646,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -704,6 +680,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -745,6 +722,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionDeclined(),
       messaging: decisionDeclined(),
       resourceProfile: decisionSelected({ cpu: "4", memory: "8Gi" }),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };

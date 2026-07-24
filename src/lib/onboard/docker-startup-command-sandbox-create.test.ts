@@ -33,6 +33,7 @@ function makeDeps() {
     runCaptureOpenshell: vi.fn(() => ""),
     sleep: vi.fn(),
     dockerCapture: vi.fn(() => ""),
+    detectSandboxFallbackDns: vi.fn(() => null),
   };
 }
 

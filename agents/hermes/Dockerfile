@@ -8,11 +8,63 @@
 
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:fa05221f5c7bcafea7e263c84e5d06f87e37d1ccb78dc28c113f1a4066aa544c
 
-# hadolint ignore=DL3006
-FROM ${BASE_IMAGE}
+# Group repository-owned files outside the final image so BuildKit can collapse
+# related files without invalidating earlier final-image work.
+FROM scratch AS hermes-npm-patch-payload
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+FROM scratch AS hermes-agent-payload
+
+COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
+COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
+COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
+COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
+COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/messaging/ /src/lib/messaging/
+COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+
+FROM scratch AS hermes-runtime-payload
+
+COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
+COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
+COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
+COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
+COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py
+COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
+COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
+COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py
+COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py
+COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
+COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json
+COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
+COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
+
+FROM scratch AS hermes-wrapper-payload
+
+COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
+
+FROM scratch AS hermes-scan-payload
+
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+RUN --mount=type=bind,from=hermes-npm-patch-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$(stat -c "%u:%g:%a:%n" /)"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$(stat -c "%u:%g:%a:%n" /)"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: npm patch payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix here.
@@ -37,6 +89,10 @@ RUN set -eu; \
 # the live MCP E2E proves authenticated HTTPS execution through OpenShell.
 RUN /opt/hermes/.venv/bin/python -c \
     'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
+
+RUN chmod -R a+rX /opt/hermes/.venv \
+    && test -r /opt/hermes/.venv/pyvenv.cfg \
+    && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
 
 # Published base images can lag Dockerfile.base while local feature branches
 # still layer this final image on top. Invalid state: the selected base has
@@ -104,17 +160,21 @@ RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(cer
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 ENV HERMES_TUI_DIR="/opt/hermes/ui-tui"
 
-# Copy NemoClaw plugin for Hermes (Python-based)
-COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
+RUN --mount=type=bind,from=hermes-agent-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /opt /scripts /scripts/lib)"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /opt /scripts /scripts/lib)"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: agent payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
+# Ensure the NemoClaw plugin for Hermes is readable.
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
-# Copy config generator
-COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
-COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
-COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
-COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
-COPY src/lib/messaging/ /src/lib/messaging/
-COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+# Keep the config generator and its source dependencies root-owned and
+# read-only.
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
     && chmod 444 /src/lib/tool-disclosure.ts \
@@ -122,30 +182,27 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-# Copy blueprint (shared infrastructure)
-COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+RUN --mount=type=bind,from=hermes-runtime-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$( \
+            stat -c "%u:%g:%a:%n" / /opt /scripts /usr /usr/local /usr/local/bin /usr/local/lib \
+        )"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$( \
+            stat -c "%u:%g:%a:%n" / /opt /scripts /usr /usr/local /usr/local/bin /usr/local/lib \
+        )"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: runtime payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
 # Ensure sandbox user can read blueprint files copied as root
 RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
-# Copy startup script and the secret-boundary validator. The validator is the
-# single source of truth used by start.sh at cold start and by its root-owned
-# PID 1 lifecycle handler, so `recover` enforces the same boundary as startup.
-COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
-COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
-COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
-COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
-COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
-COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
-COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
-COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py
-COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
-COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
-COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py
-COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py
-COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
-COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json
-COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
-COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
+# Apply runtime modes to the startup script and secret-boundary validator. The
+# validator is the single source of truth used by start.sh at cold start and by
+# its root-owned PID 1 lifecycle handler, so `recover` enforces the same boundary
+# as startup.
 # Dockerfile.base is the source of truth for rlimit hooks. This Hermes replay
 # only repairs stale bases predating the v0.0.69 base layer, which may lack the
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
@@ -240,7 +297,20 @@ RUN printf '%s  %s\n' \
 # The wrapper's shebang pins `/usr/bin/python3 -I` (isolated mode); fail the
 # build if that absolute path is missing or non-executable so a base-image
 # upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
-COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
+RUN --mount=type=bind,from=hermes-wrapper-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
+        )"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
+        )"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: wrapper payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
 # hadolint ignore=DL4006
@@ -607,8 +677,31 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 
 # Gate the completed local filesystem too; CI repeats this scan in an isolated
 # container and retains evidence keyed to the final image ID.
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
+RUN --mount=type=bind,from=hermes-scan-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /scripts)"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /scripts)"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: scan payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
+RUN check_metadata() { \
+        path="$1"; \
+        expected="$2"; \
+        actual="$(stat -c '%U:%G %a' "$path")"; \
+        [ "$actual" = "$expected" ] \
+            || { echo "ERROR: $path metadata is $actual, expected $expected" >&2; return 1; }; \
+    }; \
+    check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
+    && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
+    && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
+    && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \
+    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
+    && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
+    && check_metadata /scripts/checks/node-tar-image-scan.mts 'root:root 755' \
+    && install -d -m 0755 /usr/local/share/nemoclaw \
     && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
         --root / --image build:hermes \
         > /usr/local/share/nemoclaw/node-tar-inventory.json \
