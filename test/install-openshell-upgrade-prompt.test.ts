@@ -304,6 +304,8 @@ require_reportable_openshell_version`,
   const brokenOpenshell = "#!/usr/bin/env bash\nexit 1\n";
   const healthyOpenshell =
     '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n';
+  const invalidVersionOpenshell =
+    '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell unknown"\nexit 0\n';
   const versionPrintingBrokenOpenshell =
     '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 1\n';
 
@@ -325,6 +327,20 @@ require_reportable_openshell_version`,
     const { result, gatewayState, registry, installLog } = runInstallerOpenshellVersionFlow(
       (bin) => {
         writeExecutable(path.join(bin, "openshell"), versionPrintingBrokenOpenshell);
+      },
+    );
+
+    expect(result.status, result.stdout + result.stderr).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("could not report its version");
+    expect(gatewayState).toBe("gateway-original\n");
+    expect(registry).toBe('{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
+    expect(installLog).toBe("");
+  });
+
+  it("rejects invalid OpenShell version output before gateway or sandbox mutation (#7300)", () => {
+    const { result, gatewayState, registry, installLog } = runInstallerOpenshellVersionFlow(
+      (bin) => {
+        writeExecutable(path.join(bin, "openshell"), invalidVersionOpenshell);
       },
     );
 
