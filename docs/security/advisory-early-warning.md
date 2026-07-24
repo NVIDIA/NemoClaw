@@ -147,10 +147,11 @@ The #7338 acceptance criteria classify each finding as a reviewed-mapping delay,
 The ideal trigger is the earliest public upstream disclosure, evaluated against the exact dependency inventory on a schedule that does not depend on how far any one build progressed.
 Mapping each demonstrated gap to a mechanism:
 
-- Reviewed-mapping delay (`fast-uri` and plausibly the Jaeger propagator): The correlation path fetches unreviewed NVD-sourced records alongside reviewed and malware records.
+- Reviewed-mapping delay (`fast-uri` and plausibly the Jaeger propagator): The correlation path reads unreviewed NVD-sourced records alongside reviewed and malware records from the supplied advisory file.
+  It also reads previously fetched NVD responses supplied through `--nvd-records`; the CLI does not fetch them.
+  The planned scheduled workflow will fetch those NVD records, pass them to the CLI, and run every six hours after the #7338 sign-off.
   A disclosure that names an inventory package raises a signal before the reviewed mapping exists.
   NVD reconciliation provides supplementary corroboration.
-  Running it every six hours is the scheduled workflow, gated on the #7338 sign-off.
   Polling upstream repository advisories directly is not implemented.
   This earliest public signal requires a package-to-repository map and remains the planned extension.
 - Audit or rescan coverage gap (`@opentelemetry/core` and the limit on the Jaeger conclusion): The scheduled scan correlates every advisory type against the full reviewed inventory every six hours, independent of build execution order.
