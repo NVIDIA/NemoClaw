@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Exact-target gateway authority resolution for destructive teardown paths.
+ * Exact-target gateway authority resolution for teardown and provider credential mutations.
  *
- * Onboarding binds authority before gateway effects. Stop, final-sandbox
- * cleanup, and uninstall run in separate processes, so they must reload that
- * authority before they scan listeners, signal processes, or remove runtime
- * resources (#6576).
+ * Onboarding binds authority before gateway effects. Credentials add and reset,
+ * stop, final-sandbox cleanup, and uninstall can run after onboarding exits.
+ * They must reload that authority before they mutate providers, scan listeners,
+ * signal processes, or remove runtime resources (#6576).
  */
 
 import fs from "node:fs";
@@ -17,9 +17,10 @@ import { normalizeSession, type Session } from "../state/onboard-session";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 import { gatewayOwnerFromCheckpoint } from "./gateway-authority-checkpoint";
+import { resolveGatewayName } from "./gateway-binding";
 import {
-  loadGatewayManagementDeclaration,
   type GatewayManagementLoadResult,
+  loadGatewayManagementDeclaration,
 } from "./gateway-management";
 import {
   describeGatewayOwnerForError,
@@ -27,7 +28,6 @@ import {
   resolveGatewayOwner,
   sameGatewayOwner,
 } from "./gateway-ownership";
-import { resolveGatewayName } from "./gateway-binding";
 
 export interface GatewayTeardownTarget {
   gatewayName: string;
@@ -46,6 +46,8 @@ export type GatewayTeardownAuthorityResolver = (
   deps?: GatewayTeardownAuthorityDeps,
 ) => GatewayOwner;
 
+type GatewayAuthorityEffect = "credential mutation" | "teardown";
+
 function loadTargetSession(target: GatewayTeardownTarget, env: NodeJS.ProcessEnv): Session | null {
   const sessionFile = path.join(
     nemoclawStateRoot(resolveHome(env), target.gatewayPort),
@@ -62,17 +64,20 @@ function loadTargetSession(target: GatewayTeardownTarget, env: NodeJS.ProcessEnv
 }
 
 /**
- * Resolve the current owner and revalidate a selected checkpoint for the exact
- * gateway before a teardown effect. A declaration or recorded-owner change is
- * an explicit migration, never permission to switch owners during cleanup.
+ * Resolve the current owner and revalidate checkpointed authority for the exact
+ * gateway before teardown or provider credential mutation. A declaration or
+ * recorded-owner change is an explicit migration. It does not permit the
+ * operation to use another owner.
  */
-export function resolveGatewayTeardownAuthority(
+function resolveGatewayEffectAuthority(
   target: GatewayTeardownTarget,
-  deps: GatewayTeardownAuthorityDeps = {},
+  effect: GatewayAuthorityEffect,
+  deps: GatewayTeardownAuthorityDeps,
 ): GatewayOwner {
+  const operation = effect === "teardown" ? "gateway teardown" : "provider credential mutation";
   if (resolveGatewayName(target.gatewayPort) !== target.gatewayName) {
     throw new Error(
-      `Refusing gateway teardown for noncanonical target '${target.gatewayName}@${String(target.gatewayPort)}'.`,
+      `Refusing ${operation} for noncanonical target '${target.gatewayName}@${String(target.gatewayPort)}'.`,
     );
   }
 
@@ -94,14 +99,14 @@ export function resolveGatewayTeardownAuthority(
   if (!recordedDecision || recordedDecision.kind === "unset") return resolved;
   if (recordedDecision.kind === "declined") {
     throw new Error(
-      `Refusing gateway teardown for '${target.gatewayName}': the onboarding checkpoint contains an invalid declined gateway authority.`,
+      `Refusing ${operation} for '${target.gatewayName}': the onboarding checkpoint contains an invalid declined gateway authority.`,
     );
   }
 
   const recorded = gatewayOwnerFromCheckpoint(recordedDecision.value);
   if (recorded.gatewayName !== target.gatewayName || recorded.gatewayPort !== target.gatewayPort) {
     throw new Error(
-      `Refusing gateway teardown for '${target.gatewayName}@${String(target.gatewayPort)}': ` +
+      `Refusing ${operation} for '${target.gatewayName}@${String(target.gatewayPort)}': ` +
         `the recorded authority targets '${recorded.gatewayName}@${String(recorded.gatewayPort)}'.`,
     );
   }
@@ -109,8 +114,23 @@ export function resolveGatewayTeardownAuthority(
     throw new Error(
       "Gateway lifecycle authority changed since onboarding " +
         `(${describeGatewayOwnerForError(recorded)} -> ${describeGatewayOwnerForError(resolved)}). ` +
-        "Changing authority requires a fresh onboarding run; teardown will not perform gateway effects.",
+        `Changing authority requires a fresh onboarding run; ${operation} will not perform gateway effects.`,
     );
   }
   return recorded;
+}
+
+export function resolveGatewayTeardownAuthority(
+  target: GatewayTeardownTarget,
+  deps: GatewayTeardownAuthorityDeps = {},
+): GatewayOwner {
+  return resolveGatewayEffectAuthority(target, "teardown", deps);
+}
+
+/** Revalidate the exact checkpointed authority before a provider credential mutation. */
+export function resolveGatewayCredentialMutationAuthority(
+  target: GatewayTeardownTarget,
+  deps: GatewayTeardownAuthorityDeps = {},
+): GatewayOwner {
+  return resolveGatewayEffectAuthority(target, "credential mutation", deps);
 }

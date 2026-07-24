@@ -7,7 +7,10 @@ import { createSession } from "../state/onboard-session";
 import { bindGatewayAuthorityToCheckpoint } from "./gateway-authority-checkpoint";
 import type { GatewayManagementDeclaration } from "./gateway-management";
 import { type GatewayOwner, resolveGatewayOwner } from "./gateway-ownership";
-import { resolveGatewayTeardownAuthority } from "./gateway-teardown-authority";
+import {
+  resolveGatewayCredentialMutationAuthority,
+  resolveGatewayTeardownAuthority,
+} from "./gateway-teardown-authority";
 
 const target = { gatewayName: "nemoclaw", gatewayPort: 8080 };
 
@@ -89,6 +92,20 @@ describe("resolveGatewayTeardownAuthority", () => {
         loadSession: () => checkpointSession(recordedOwner),
       }),
     ).toThrow(/authority changed since onboarding.*teardown will not perform gateway effects/);
+  });
+
+  it("fails closed before credential mutation when authority changed since onboarding (#6576)", () => {
+    const recordedOwner = owner(declaration());
+
+    expect(() =>
+      resolveGatewayCredentialMutationAuthority(target, {
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({ ok: true, declaration: null, source: null }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toThrow(
+      /authority changed since onboarding.*provider credential mutation will not perform gateway effects/,
+    );
   });
 
   it("fails closed when the recorded authority targets another gateway (#6576)", () => {
