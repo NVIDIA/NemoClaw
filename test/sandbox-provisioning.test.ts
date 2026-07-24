@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -1047,10 +1048,38 @@ describe("sandbox provisioning: base runtime tools", () => {
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });
 
+  it("rejects a sandbox security package when its expected checksum changes", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-checksum-"));
+    const untouchedTail = path.join(tmp, "untouched-python-link");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "RUN apt-get update",
+      "# gosu for privilege separation",
+    )
+      .replace("df928e3a8e4da79408d4b18e8cd80a03dffa90130d0698e50041aab5e14f9397", "0".repeat(64))
+      .replaceAll("/var/lib/apt/lists", tmp)
+      .replaceAll("/tmp/nemoclaw-debian-security", path.join(tmp, "security-debs"))
+      .replaceAll("/usr/local/bin/python", untouchedTail)
+      .replaceAll("/usr/bin/python3", path.join(tmp, "python3"));
+
+    try {
+      const { result } = runLoggedDockerShell(command, tmp, [
+        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        ...BASE_APT_SECURITY_FUNCTIONS,
+      ]);
+      expect(result.status).not.toBe(0);
+      expect(fs.existsSync(untouchedTail)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
+    const securityDebs = path.join(tmp, "security-debs");
     const fakePy3 = path.join(tmp, "usr-bin", "python3");
     const fakePyLink = path.join(tmp, "usr-local-bin", "python");
     fs.mkdirSync(lists);
@@ -1063,12 +1092,14 @@ describe("sandbox provisioning: base runtime tools", () => {
       "# gosu for privilege separation",
     )
       .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
 
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        ...BASE_APT_SECURITY_FUNCTIONS,
       ]);
       expect(result.status).toBe(0);
       expect(calls).toContain("apt-get update");
@@ -1084,6 +1115,7 @@ describe("sandbox provisioning: base runtime tools", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-pysymlink-"));
     const lists = path.join(tmp, "apt-lists");
+    const securityDebs = path.join(tmp, "security-debs");
     const fakePy3 = path.join(tmp, "usr-bin", "python3");
     const fakePyLink = path.join(tmp, "usr-local-bin", "python");
     fs.mkdirSync(lists, { recursive: true });
@@ -1097,12 +1129,14 @@ describe("sandbox provisioning: base runtime tools", () => {
       "# gosu for privilege separation",
     )
       .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
 
     try {
       const { result } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        ...BASE_APT_SECURITY_FUNCTIONS,
       ]);
       expect(result.status).toBe(0);
       expect(fs.lstatSync(fakePyLink).isSymbolicLink()).toBe(true);
