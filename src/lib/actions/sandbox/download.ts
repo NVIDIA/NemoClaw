@@ -112,6 +112,13 @@ export async function downloadFromSandbox(
       );
     }
 
+    const sourceKindAfterDownload = probeSandboxSourceKind(opts.sandboxName, sandboxPath);
+    if (sourceKindAfterDownload !== sourceKind) {
+      throw new Error(
+        `Cannot publish '${sandboxPath}' from sandbox '${opts.sandboxName}': source type changed or could not be revalidated after download.`,
+      );
+    }
+
     assertDownloadArtifactExists(stagedArtifact, {
       remoteLabel: sandboxPath,
       sandboxName: opts.sandboxName,

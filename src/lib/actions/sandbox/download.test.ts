@@ -182,6 +182,20 @@ describe("downloadFromSandbox", () => {
     expect(publishMock).toHaveBeenCalledWith(stagedArtifact, "/tmp/p", "file");
   });
 
+  it("rejects publication when a regular source becomes a symbolic link during download", async () => {
+    captureMock
+      .mockReturnValueOnce({ status: 0, output: "file" })
+      .mockReturnValueOnce({ status: 0, output: "unsupported" });
+
+    await expect(
+      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
+    ).rejects.toThrow(/source type changed or could not be revalidated after download/);
+    expect(runMock).toHaveBeenCalled();
+    expect(captureMock).toHaveBeenCalledTimes(2);
+    expect(publishMock).not.toHaveBeenCalled();
+    expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
+  });
+
   it("passes the source path as a positional arg to the probe (no shell interpolation)", async () => {
     await downloadFromSandbox({
       sandboxName: "alpha",

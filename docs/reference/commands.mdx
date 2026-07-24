@@ -2469,9 +2469,9 @@ The in-sandbox staging artefact is additionally created with `umask 077` and rem
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
 Host-side wrapper around `openshell sandbox download` that checks the live sandbox.
-The command confirms that the source is a file or directory before it downloads.
-Symbolic links and other special source types are refused.
-If the command cannot confirm the source type, it exits without downloading.
+The command confirms before and after transfer that the source remains a file or directory.
+Symbolic links, source-type changes, and other special source types are refused.
+If the command cannot confirm the source type, it exits without publishing.
 The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
 An existing destination directory is resolved to its canonical path before publication.
 The command refuses an existing file destination that is a symbolic link and a new destination below a symbolic-link parent.
