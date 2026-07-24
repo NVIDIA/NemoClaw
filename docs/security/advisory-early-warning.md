@@ -40,10 +40,13 @@ shape unchanged.
 - `scripts/lib/advisory-early-warning.mts` correlates GitHub Security Advisory
   JSON (repository-level and global records share the shape) with the reviewed
   npm inventory and emits structured signals:
-  `{advisoryId, package, vulnerableRange, matchedVersions, source, confidence, action}`.
+  `{advisoryId, cveId?, package, vulnerableRange, matchedVersions, source, confidence, action}`
+  (`cveId` is present only when the advisory record carries a well-formed
+  `cve_id`, and exists solely for the supplementary NVD reconciliation below).
 - The inventory is derived from `ci/reviewed-npm-audit.json`: every committed
   archive package spec plus the installed packages of each locked graph's
   `package-lock.json`.
+  Pass `--inventory <file>` to the scan CLI to substitute an explicit `{name, version}` inventory for hermetic offline runs; a malformed entry fails the run instead of silently shrinking the inventory.
 - Confidence is encoded, never guessed: only an exact npm ecosystem +
   package-name + parseable semver-range match yields `confidence: "exact"` and
   `action: "investigate"`. Name collisions from non-npm (CPE-derived) records
@@ -77,6 +80,17 @@ owners to define the supported historical-image scope, rescan ownership, alert
 destination, and response expectations first. A follow-up adds the scheduled
 workflow once that sign-off is recorded on the issue.
 
+## NVD supplementary reconciliation
+
+Signals that carry a CVE id can additionally be reconciled against the National Vulnerability Database (`services.nvd.nist.gov/rest/json/cves/2.0`).
+NVD is a supplementary source only — #7338 explicitly forbids treating ambiguous NVD/CPE matches as authoritative npm mappings — so a reconciliation is a purely informational annotation that never changes a signal's `action` or `confidence`:
+
+- `scripts/lib/nvd-reconciliation.mts` parses NVD 2.0 API responses (CVE id, `vulnStatus`, published/last-modified dates, and the CPE criteria flagged vulnerable) and annotates each signal with one of three agreement states: `corroborated` (NVD lists the same CVE id and has not rejected it), `nvd-missing` (no NVD record — typical while a CVE is reserved or awaiting NVD processing; the earlier upstream signal stands on its own), or `nvd-divergent` (NVD rejected the CVE id, or the record answers a different one).
+  CPE criteria surface only as a count in the note, never as package matches.
+- Pass `--nvd-records <file>` to `scripts/advisory-early-warning-scan.mts` to attach reconciliations from a file of previously fetched NVD responses; the CLI itself never performs network requests.
+
+Querying NVD on a schedule and annotating the alert destination belong to the scheduled workflow, which follows the same #7338 sign-off gate as the rest of the scheduled operation.
+
 ## Provenance recorded per audit
 
 Each reviewed npm audit report now has a `*.provenance.json` sidecar
@@ -99,3 +113,36 @@ the WeChat locked runtime graph audit) recording:
 Comparing the `advisoryIds` of consecutive retained runs identifies the last
 comparable non-detection and the first detection of a newly surfaced advisory,
 even when an unrelated finding failed the earlier run.
+
+## #7276 post-mortem: detection triggers
+
+Issue #7338 asks two questions of the #7276 evidence.
+The answers below rest strictly on that retained evidence and inherit its limits: the evidence does not support one universal feed-delay root cause, and a finding the evidence cannot prove is classified unproven rather than attributed.
+
+### Q1 — what trigger caused `npm audit` to begin detecting when it did
+
+Per #7338's acceptance criteria, each finding is classified as reviewed-mapping delay, audit/rescan coverage, or unproven due to missing evidence.
+
+- `fast-uri` (CVE-2026-13676, GHSA-4c8g-83qw-93j6) — **reviewed-mapping delay, directly demonstrated.**
+  The upstream repository advisory existed from June 29, yet the 18:46 UTC `npm audit` on July 21 did not report `fast-uri@3.1.2`.
+  The global reviewed ecosystem record propagated at 19:03 UTC, and the 20:09 UTC audit of the same vulnerable version returned GHSA-4c8g-83qw-93j6 as High: strong before/after evidence that reviewed package-mapping propagation triggered detection.
+- `@opentelemetry/core` (CVE-2026-54285, GHSA-8988-4f7v-96qf) — **audit/rescan coverage gap.**
+  Its reviewed record had existed since June 15, more than a month before detection, so delayed reviewed-feed publication cannot explain it.
+  It first surfaced when the July 21 build reached the plugin audit — an audit-coverage/execution-order gap.
+- Jaeger propagator (CVE-2026-59892, GHSA-45rx-2jwx-cxfr) — **consistent with reviewed-mapping delay, but unproven.**
+  The reviewed record appeared at 19:07 UTC on July 21 and the first plugin audit that reached this graph reported the finding at 20:26 UTC — consistent with reviewed mapping propagation, but earlier builds stopped before this plugin audit, so there is no controlled pre-review comparison.
+- `tar` (CVE-2026-59873, GHSA-23hp-3jrh-7fpw) — **unproven due to missing evidence.**
+  The June 27 upstream disclosure-to-detection gap is real (a July 21 Trivy scan reported vulnerable `tar@7.5.11` and `7.5.15`; the reviewed record dates to July 20), but no comparable pre-review scan was retained, so the exact trigger is unproven.
+
+### Q2 — the ideal trigger, and what covers each gap now
+
+The ideal trigger is the earliest public upstream disclosure, evaluated against the exact dependency inventory on a schedule that does not depend on how far any one build progressed.
+Mapping each demonstrated gap to a mechanism:
+
+- Reviewed-mapping delay (`fast-uri`; plausibly the Jaeger propagator): covered by the correlation path above — it fetches unreviewed (NVD-sourced, pre-curation) advisory records alongside reviewed and malware ones, so a disclosure naming an inventory package raises a signal before the reviewed mapping exists, with NVD reconciliation as supplementary corroboration.
+  Running it every six hours is the scheduled workflow, gated on the #7338 sign-off.
+  Not yet shipped — polling upstream *repository* advisories directly (the earliest public signal) needs a package-to-repository map and remains the planned extension.
+- Audit/rescan coverage gap (`@opentelemetry/core`; what limited the Jaeger conclusion): covered by the scheduled scan correlating every advisory type against the full reviewed inventory every six hours, independent of build execution order — same #7338 sign-off gate.
+  Not yet shipped — rescanning maintained immutable image digests (an image-scan pipeline) waits on the supported-image scope that product/security owners must define (#7338's policy criterion).
+- Unproven trigger (`tar`): no trigger design recovers missing evidence.
+  Shipped — every reviewed npm audit now writes a provenance sidecar (endpoints, timestamps, advisory ids), so consecutive retained runs establish the last comparable non-detection and first detection for any future finding.

@@ -758,7 +758,14 @@ async def run_non_interactive(*args, **kwargs):
     """Enforce the managed headless boundary at the final Python call site."""
     settings.shell_allow_list = None
     kwargs["startup_cmd"] = None
-    kwargs["model_params"] = None
+    from deepagents_code.config import CLI_MAX_RETRIES_KEY
+
+    model_params = kwargs.get("model_params")
+    kwargs["model_params"] = (
+        {CLI_MAX_RETRIES_KEY: model_params[CLI_MAX_RETRIES_KEY]}
+        if isinstance(model_params, dict) and CLI_MAX_RETRIES_KEY in model_params
+        else None
+    )
     kwargs["profile_override"] = None
     kwargs["sandbox_type"] = "none"
     from deepagents_code._nemoclaw_managed import managed_mcp_config_path
