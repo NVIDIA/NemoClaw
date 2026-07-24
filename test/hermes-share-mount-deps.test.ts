@@ -84,13 +84,10 @@ function runHermesInstallLayer(
   const scriptPath = path.join(tmp, "run-hermes-install-layer.sh");
   const uiTuiLockfile = opts.uiTuiLockfile ?? "missing";
   const webLockfile = opts.webLockfile ?? "directory";
-  const rootLockPackages: Record<string, object> = {};
-  if (uiTuiLockfile === "workspace") {
-    rootLockPackages["ui-tui"] = {};
-  }
-  if (webLockfile === "workspace") {
-    rootLockPackages.web = {};
-  }
+  const rootLockPackages = {
+    ...(uiTuiLockfile === "workspace" ? { "ui-tui": {} } : {}),
+    ...(webLockfile === "workspace" ? { web: {} } : {}),
+  };
   fs.mkdirSync(path.join(fixture, "web"), { recursive: true });
   fs.writeFileSync(path.join(fixture, "pyproject.toml"), 'version = "0.16.0"\n');
   fs.writeFileSync(
@@ -100,13 +97,19 @@ function runHermesInstallLayer(
     })}\n`,
   );
   fs.writeFileSync(path.join(fixture, "web", "package.json"), "{}\n");
-  if (uiTuiLockfile !== "missing") {
-    fs.mkdirSync(path.join(fixture, "ui-tui"), { recursive: true });
-    fs.writeFileSync(path.join(fixture, "ui-tui", "package.json"), "{}\n");
-  }
-  if (uiTuiLockfile === "directory") {
-    fs.writeFileSync(path.join(fixture, "ui-tui", "package-lock.json"), "{}\n");
-  }
+  const writeUiTuiLockfile = {
+    directory: () => {
+      fs.mkdirSync(path.join(fixture, "ui-tui"), { recursive: true });
+      fs.writeFileSync(path.join(fixture, "ui-tui", "package.json"), "{}\n");
+      fs.writeFileSync(path.join(fixture, "ui-tui", "package-lock.json"), "{}\n");
+    },
+    missing: () => undefined,
+    workspace: () => {
+      fs.mkdirSync(path.join(fixture, "ui-tui"), { recursive: true });
+      fs.writeFileSync(path.join(fixture, "ui-tui", "package.json"), "{}\n");
+    },
+  } satisfies Record<typeof uiTuiLockfile, () => void>;
+  writeUiTuiLockfile[uiTuiLockfile]();
   const writeWebLockfile = {
     directory: () => fs.writeFileSync(path.join(fixture, "web", "package-lock.json"), "{}\n"),
     missing: () => undefined,
