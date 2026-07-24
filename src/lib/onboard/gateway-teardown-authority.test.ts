@@ -71,7 +71,9 @@ describe("resolveGatewayTeardownAuthority", () => {
 
     expect(
       resolveGatewayTeardownAuthority(target, {
-        hasPackagedService: () => false,
+        hasPackagedService: () => {
+          throw new Error("packaged service must not be inspected");
+        },
         loadDeclaration: () => ({
           ok: true,
           declaration: currentDeclaration,
@@ -80,6 +82,25 @@ describe("resolveGatewayTeardownAuthority", () => {
         loadSession: () => null,
       }).mode,
     ).toBe("externally-supervised");
+  });
+
+  it("does not inspect the default packaged service for a custom gateway port (#6903)", () => {
+    const customTarget = { gatewayName: "nemoclaw-9123", gatewayPort: 9123 };
+
+    expect(
+      resolveGatewayTeardownAuthority(customTarget, {
+        hasPackagedService: () => {
+          throw new Error("default service must not be inspected");
+        },
+        loadDeclaration: () => ({ ok: true, declaration: null, source: null }),
+        loadSession: () => null,
+      }),
+    ).toMatchObject({
+      gatewayName: "nemoclaw-9123",
+      gatewayPort: 9123,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+    });
   });
 
   it("fails closed when a recorded external authority is removed (#6576)", () => {
