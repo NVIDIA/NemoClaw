@@ -79,6 +79,10 @@ The additional 4,096 bytes keep the usable swap capacity at or above 32 GiB
 after formatting.
 Setup failure stops before candidate checkout and removes partial state only
 after proving the file inactive or successfully disabling it.
+After `swapon` succeeds, both rollout paths make up to five activation
+observations, one second apart.
+If visibility remains stale, cleanup treats the file as active.
+Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
 
 This rollout adds the trusted pre-checkout setup.

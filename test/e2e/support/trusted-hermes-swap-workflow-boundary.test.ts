@@ -55,6 +55,7 @@ type SwapHarnessOptions = {
   failCleanupQuery?: boolean;
   failMkswap?: boolean;
   failSwapoff?: boolean;
+  hiddenActivationReads?: number;
   provisionedSwapBytes?: number;
 };
 
@@ -88,7 +89,13 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
       '  *"--output SIZE"*)',
       '    state="$(head -n 1 "$FAKE_SWAP_STATE")"',
       '    if [ "$state" = "active" ]; then',
-      '      printf "%s\\n" "$FAKE_PROVISIONED_SWAP_BYTES"',
+      "      count=0",
+      '      [ ! -f "$FAKE_QUERY_COUNT" ] || count="$(head -n 1 "$FAKE_QUERY_COUNT")"',
+      '      if [ "$count" -le "$FAKE_HIDDEN_ACTIVATION_READS" ]; then',
+      '        printf "0\\n"',
+      "      else",
+      '        printf "%s\\n" "$FAKE_PROVISIONED_SWAP_BYTES"',
+      "      fi",
       "    else",
       '      printf "%s\\n" "$FAKE_ACTIVE_SWAP_BYTES"',
       "    fi",
@@ -100,7 +107,9 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
       '    printf "%s\\n" "$count" > "$FAKE_QUERY_COUNT"',
       '    if [ "${FAKE_FAIL_QUERY_AT:-0}" -eq "$count" ]; then exit 41; fi',
       '    state="$(head -n 1 "$FAKE_SWAP_STATE")"',
-      '    [ "$state" != "active" ] || printf "%s\\n" "$FAKE_SWAP_FILE"',
+      '    if [ "$state" = "active" ] && [ "$count" -gt "$FAKE_HIDDEN_ACTIVATION_READS" ]; then',
+      '      printf "%s\\n" "$FAKE_SWAP_FILE"',
+      "    fi",
       "    ;;",
       '  "--show")',
       "    ;;",
@@ -164,6 +173,10 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
       'printf "%s\\n" "$FAKE_SWAP_FILE"',
     ]),
   );
+  commands.set(
+    "/usr/bin/sleep",
+    writeFakeCommand(fakeBin, "sleep", [`printf 'sleep:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]),
+  );
   for (const command of ["mkdir", "fallocate", "rm", "rmdir"]) {
     commands.set(
       `/usr/bin/${command}`,
@@ -193,8 +206,9 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
         FAKE_CALL_LOG: callLog,
         FAKE_DISK_BYTES: String(options.diskBytes ?? 100_000_000_000),
         FAKE_FAIL_MKSWAP: options.failMkswap ? "1" : "0",
-        FAKE_FAIL_QUERY_AT: options.failCleanupQuery ? "2" : "0",
+        FAKE_FAIL_QUERY_AT: options.failCleanupQuery ? "6" : "0",
         FAKE_FAIL_SWAPOFF: options.failSwapoff ? "1" : "0",
+        FAKE_HIDDEN_ACTIVATION_READS: String(options.hiddenActivationReads ?? 0),
         FAKE_PROVISIONED_SWAP_BYTES: String(options.provisionedSwapBytes ?? 1),
         FAKE_QUERY_COUNT: queryCount,
         FAKE_SWAP_FILE: swapFile,
@@ -244,6 +258,8 @@ describe("trusted Hermes swap workflow boundary", () => {
     expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain("readonly required_swap_bytes=34359738368");
     expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain("readonly swap_file_bytes=34359742464");
     expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain("readonly reserve_bytes=17179869184");
+    expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain("readonly activation_observation_attempts=5");
+    expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain("readonly activation_observation_delay_seconds=1");
     expect(TRUSTED_HERMES_SWAP_SCRIPT).toContain(
       '/usr/bin/sudo -n /usr/bin/mktemp --tmpdir="${swap_dir}"',
     );
@@ -288,6 +304,18 @@ describe("trusted Hermes swap workflow boundary", () => {
     ).toEqual([]);
   });
 
+  it("waits for delayed activation visibility without repeating activation (#7145)", () => {
+    const result = runTrustedSwapHarness({
+      hiddenActivationReads: 2,
+      provisionedSwapBytes: 34_359_738_368,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.calls.filter((call) => call === "sleep:1")).toHaveLength(2);
+    expect(result.calls.filter((call) => call.startsWith("swapon-activate:"))).toHaveLength(1);
+    expect(result.calls.filter((call) => call.startsWith("swapoff:"))).toEqual([]);
+  });
+
   it("removes an inactive partial allocation after setup fails (#7145)", () => {
     const result = runTrustedSwapHarness({ failMkswap: true });
 
@@ -322,8 +350,8 @@ describe("trusted Hermes swap workflow boundary", () => {
     },
     {
       expected: "Preserving active Hermes E2E swap after setup failure",
-      name: "swapoff fails",
-      options: { failSwapoff: true },
+      name: "activation visibility stays stale and swapoff fails",
+      options: { failSwapoff: true, hiddenActivationReads: 5 },
     },
   ])("preserves the partial allocation when $name (#7145)", ({ expected, options }) => {
     const result = runTrustedSwapHarness(options);

@@ -43,6 +43,9 @@ export const HERMES_E2E_SWAP_SCRIPT = `set -euo pipefail
 swap_file="$1"
 required_swap_bytes="$2"
 swap_file_bytes="$3"
+activation_observation_attempts=5
+activation_observation_delay_seconds=1
+swap_activation_succeeded=0
 
 case "$required_swap_bytes" in
   ""|*[!0-9]*)
@@ -95,7 +98,7 @@ cleanup_partial_swap() {
           break
         fi
       done <<< "$cleanup_swap_names"
-      if (( cleanup_swap_active == 1 )); then
+      if (( cleanup_swap_active == 1 || swap_activation_succeeded == 1 )); then
         if swapoff "$swap_file" 2>/dev/null; then
           rm -f -- "$swap_file" || true
         else
@@ -117,17 +120,38 @@ fallocate -l "$swap_file_bytes" "$swap_file"
 chmod 0600 "$swap_file"
 mkswap "$swap_file"
 swapon "$swap_file"
+swap_activation_succeeded=1
 
-active_swap_bytes="$(swapon --show --bytes --noheadings --output SIZE | awk '{ total += $1 } END { printf "%.0f", total }')"
-active_swap_bytes="\${active_swap_bytes:-0}"
-case "$active_swap_bytes" in
-  ""|*[!0-9]*)
-    echo "Unable to verify active swap capacity" >&2
-    exit 2
-    ;;
-esac
-if (( active_swap_bytes < required_swap_bytes )); then
-  printf 'Hermes E2E swap provisioning failed: %s of %s bytes active\\n' "$active_swap_bytes" "$required_swap_bytes" >&2
+observe_provisioned_swap() {
+  activation_observation_attempt=1
+  while (( activation_observation_attempt <= activation_observation_attempts )); do
+    provisioned_swap_active=0
+    if active_swap_names="$(swapon --show --noheadings --raw --output NAME 2>/dev/null)"; then
+      while IFS= read -r active_swap_name; do
+        if [[ "$active_swap_name" == "$swap_file" ]]; then
+          provisioned_swap_active=1
+          break
+        fi
+      done <<< "$active_swap_names"
+    fi
+    if observed_swap_bytes="$(swapon --show --bytes --noheadings --output SIZE 2>/dev/null | awk '{ total += $1 } END { printf "%.0f", total }')"; then
+      observed_swap_bytes="\${observed_swap_bytes:-0}"
+      if [[ "$observed_swap_bytes" != *[!0-9]* ]] &&
+        (( provisioned_swap_active == 1 && observed_swap_bytes >= required_swap_bytes )); then
+        active_swap_bytes="$observed_swap_bytes"
+        return 0
+      fi
+    fi
+    if (( activation_observation_attempt < activation_observation_attempts )); then
+      sleep "$activation_observation_delay_seconds"
+    fi
+    activation_observation_attempt=$((activation_observation_attempt + 1))
+  done
+  return 1
+}
+
+if ! observe_provisioned_swap; then
+  printf 'Hermes E2E swap provisioning failed: required swap was not visible after %s attempts\\n' "$activation_observation_attempts" >&2
   exit 1
 fi
 

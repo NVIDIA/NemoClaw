@@ -31,6 +31,8 @@ const EXACT_HEAD_SHA = "a".repeat(40);
 interface FakeSwapScriptOptions {
   failCleanupQuery?: boolean;
   failSwapoff?: boolean;
+  hiddenActivationReads?: number;
+  provisionedSwapBytes?: number;
 }
 
 interface FakeSwapScriptResult {
@@ -50,13 +52,30 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
   const callLog = path.join(fakeBin, "calls.log");
   const swapState = path.join(fakeBin, "swap-state");
   const nameQueryCount = path.join(fakeBin, "name-query-count");
+  const activationQueryCount = path.join(fakeBin, "activation-query-count");
   writeFileSync(swapState, "inactive\n");
 
   writeFakeCommand(fakeBin, "swapon", [
     `printf 'swapon:%s\\n' "$*" >> "$FAKE_CALL_LOG"`,
     'case "$*" in',
     '  *"--output SIZE"*)',
-    `    printf '1\\n'`,
+    '    swap_state="inactive"',
+    '    if [ -f "$FAKE_SWAP_STATE_FILE" ]; then',
+    '      IFS= read -r swap_state < "$FAKE_SWAP_STATE_FILE" || swap_state="inactive"',
+    "    fi",
+    '    if [ "$swap_state" = "active" ]; then',
+    "      activation_count=0",
+    '      if [ -f "$FAKE_ACTIVATION_QUERY_COUNT_FILE" ]; then',
+    '        IFS= read -r activation_count < "$FAKE_ACTIVATION_QUERY_COUNT_FILE" || activation_count=0',
+    "      fi",
+    '      if [ "$activation_count" -le "$FAKE_HIDDEN_ACTIVATION_READS" ]; then',
+    "        printf '0\\n'",
+    "      else",
+    '        printf "%s\\n" "$FAKE_PROVISIONED_SWAP_BYTES"',
+    "      fi",
+    "    else",
+    "      printf '1\\n'",
+    "    fi",
     "    ;;",
     '  *"--output NAME"*)',
     "    query_count=0",
@@ -75,7 +94,15 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
     "    fi",
     `    printf 'swapon-name-query:%s:%s\\n' "$query_count" "$swap_state" >> "$FAKE_CALL_LOG"`,
     '    if [ "$swap_state" = "active" ]; then',
-    `      printf '%s\\n' "$FAKE_FIXED_SWAP"`,
+    "      activation_count=0",
+    '      if [ -f "$FAKE_ACTIVATION_QUERY_COUNT_FILE" ]; then',
+    '        IFS= read -r activation_count < "$FAKE_ACTIVATION_QUERY_COUNT_FILE" || activation_count=0',
+    "      fi",
+    "      activation_count=$((activation_count + 1))",
+    '      printf "%s\\n" "$activation_count" > "$FAKE_ACTIVATION_QUERY_COUNT_FILE"',
+    '      if [ "$activation_count" -gt "$FAKE_HIDDEN_ACTIVATION_READS" ]; then',
+    `        printf '%s\\n' "$FAKE_FIXED_SWAP"`,
+    "      fi",
     "    fi",
     "    ;;",
     "  *)",
@@ -84,7 +111,11 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
     "    ;;",
     "esac",
   ]);
-  writeFakeCommand(fakeBin, "awk", ["while IFS= read -r _line; do :; done", `printf '1\\n'`]);
+  writeFakeCommand(fakeBin, "awk", [
+    "total=0",
+    "while IFS= read -r value; do total=$((total + value)); done",
+    `printf '%s\\n' "$total"`,
+  ]);
   writeFakeCommand(fakeBin, "swapoff", [
     `printf 'swapoff:%s\\n' "$1" >> "$FAKE_CALL_LOG"`,
     'if [ "${FAKE_FAIL_SWAPOFF:-0}" = "1" ]; then',
@@ -96,6 +127,7 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
   writeFakeCommand(fakeBin, "fallocate", [`printf 'fallocate:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]);
   writeFakeCommand(fakeBin, "chmod", [`printf 'chmod:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]);
   writeFakeCommand(fakeBin, "mkswap", [`printf 'mkswap:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]);
+  writeFakeCommand(fakeBin, "sleep", [`printf 'sleep:%s\\n' "$*" >> "$FAKE_CALL_LOG"`]);
 
   try {
     const result = spawnSync(
@@ -114,10 +146,13 @@ function runHermesSwapScriptFailure(options: FakeSwapScriptOptions = {}): FakeSw
         encoding: "utf8",
         env: {
           FAKE_CALL_LOG: callLog,
-          FAKE_FAIL_NAME_QUERY_AT: options.failCleanupQuery ? "2" : "0",
+          FAKE_ACTIVATION_QUERY_COUNT_FILE: activationQueryCount,
+          FAKE_FAIL_NAME_QUERY_AT: options.failCleanupQuery ? "7" : "0",
           FAKE_FAIL_SWAPOFF: options.failSwapoff ? "1" : "0",
           FAKE_FIXED_SWAP: HERMES_E2E_SWAP_FILE,
+          FAKE_HIDDEN_ACTIVATION_READS: String(options.hiddenActivationReads ?? 0),
           FAKE_NAME_QUERY_COUNT_FILE: nameQueryCount,
+          FAKE_PROVISIONED_SWAP_BYTES: String(options.provisionedSwapBytes ?? 1),
           FAKE_SWAP_STATE_FILE: swapState,
           LC_ALL: "C",
           PATH: fakeBin,
@@ -410,7 +445,7 @@ describe("runLiveVitestCommand Hermes resource setup (#7145)", () => {
     );
     expect(script).toContain('if [[ "$active_swap_name" == "$swap_file" ]]; then');
     expect(script).toContain(
-      'if (( fixed_swap_active == 1 )); then\n  swapoff "$swap_file"\nfi\nrm -f -- "$swap_file"',
+      "if (( cleanup_swap_active == 1 || swap_activation_succeeded == 1 )); then",
     );
     expect(script).toContain(
       'if cleanup_swap_names="$(swapon --show --noheadings --raw --output NAME 2>/dev/null)"; then',
@@ -421,7 +456,9 @@ describe("runLiveVitestCommand Hermes resource setup (#7145)", () => {
     expect(script).not.toContain('swapoff "$swap_file" 2>/dev/null || true');
     expect(script).not.toContain("swap_enabled");
     expect(script).toContain('fallocate -l "$swap_file_bytes" "$swap_file"');
-    expect(script).toContain("if (( active_swap_bytes < required_swap_bytes )); then");
+    expect(script).toContain("activation_observation_attempts=5");
+    expect(script).toContain("activation_observation_delay_seconds=1");
+    expect(script).toContain("if ! observe_provisioned_swap; then");
     expect(calls[1]?.[0]).toBe("npx");
   });
 
@@ -471,43 +508,42 @@ describe("runLiveVitestCommand Hermes resource setup (#7145)", () => {
 });
 
 describe("HERMES_E2E_SWAP_SCRIPT failure cleanup (#7145)", () => {
-  const provisioningFailureCalls = [
-    "swapon:--show --bytes --noheadings --output SIZE",
-    "swapon:--show --noheadings --raw --output NAME",
-    "swapon-name-query:1:inactive",
-    `rm:-f -- ${HERMES_E2E_SWAP_FILE}`,
-    `fallocate:-l ${HERMES_E2E_SWAP_FILE_BYTES} ${HERMES_E2E_SWAP_FILE}`,
-    `chmod:0600 ${HERMES_E2E_SWAP_FILE}`,
-    `mkswap:${HERMES_E2E_SWAP_FILE}`,
-    `swapon:${HERMES_E2E_SWAP_FILE}`,
-    `swapon-activate:${HERMES_E2E_SWAP_FILE}`,
-    "swapon:--show --bytes --noheadings --output SIZE",
-    "swapon:--show --noheadings --raw --output NAME",
-  ];
+  it("waits for delayed activation visibility before accepting the swap", () => {
+    const result = runHermesSwapScriptFailure({
+      hiddenActivationReads: 2,
+      provisionedSwapBytes: HERMES_E2E_SWAP_BYTES,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.calls.filter((call) => call === "sleep:1")).toHaveLength(2);
+    expect(
+      result.calls.filter((call) => call === `swapon-activate:${HERMES_E2E_SWAP_FILE}`),
+    ).toHaveLength(1);
+    expect(result.calls.filter((call) => call.startsWith("swapoff:"))).toEqual([]);
+  });
 
   it("removes the active fixed swap only after cleanup swapoff succeeds", () => {
     const result = runHermesSwapScriptFailure();
+    const swapoffIndex = result.calls.indexOf(`swapoff:${HERMES_E2E_SWAP_FILE}`);
+    const removeIndex = result.calls.lastIndexOf(`rm:-f -- ${HERMES_E2E_SWAP_FILE}`);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Hermes E2E swap provisioning failed");
-    expect(result.calls).toEqual([
-      ...provisioningFailureCalls,
-      "swapon-name-query:2:active",
-      `swapoff:${HERMES_E2E_SWAP_FILE}`,
-      `rm:-f -- ${HERMES_E2E_SWAP_FILE}`,
-    ]);
+    expect(result.calls.filter((call) => call === "sleep:1")).toHaveLength(4);
+    expect(swapoffIndex).toBeGreaterThan(-1);
+    expect(removeIndex).toBeGreaterThan(swapoffIndex);
   }, 15_000);
 
-  it("preserves the active fixed swap when cleanup swapoff fails", () => {
-    const result = runHermesSwapScriptFailure({ failSwapoff: true });
+  it("preserves the activated swap when visibility stays stale and cleanup swapoff fails", () => {
+    const result = runHermesSwapScriptFailure({
+      failSwapoff: true,
+      hiddenActivationReads: 5,
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Preserving active Hermes E2E swap after setup failure");
-    expect(result.calls).toEqual([
-      ...provisioningFailureCalls,
-      "swapon-name-query:2:active",
-      `swapoff:${HERMES_E2E_SWAP_FILE}`,
-    ]);
+    expect(result.calls.filter((call) => call === "sleep:1")).toHaveLength(4);
+    expect(result.calls).toContain(`swapoff:${HERMES_E2E_SWAP_FILE}`);
     expect(
       result.calls
         .slice(result.calls.indexOf(`swapon-activate:${HERMES_E2E_SWAP_FILE}`) + 1)
@@ -522,7 +558,7 @@ describe("HERMES_E2E_SWAP_SCRIPT failure cleanup (#7145)", () => {
     expect(result.stderr).toContain(
       "Preserving Hermes E2E swap because active swap could not be queried",
     );
-    expect(result.calls).toEqual([...provisioningFailureCalls, "swapon-name-query:2:fail"]);
+    expect(result.calls).toContain("swapon-name-query:7:fail");
     expect(
       result.calls
         .slice(result.calls.indexOf(`swapon-activate:${HERMES_E2E_SWAP_FILE}`) + 1)
