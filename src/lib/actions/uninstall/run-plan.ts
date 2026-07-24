@@ -1185,10 +1185,7 @@ function inspectOtherGatewayEnvironments(
       sharedRegistryMustBePreserved: false,
     };
   }
-  if (
-    liveNames !== null &&
-    [...liveNames].some((name) => name !== resolveGatewayName(GATEWAY_PORT))
-  ) {
+  if ([...liveNames].some((name) => name !== resolveGatewayName(GATEWAY_PORT))) {
     return {
       otherGatewayEnvironmentsRemain: true,
       sharedRegistryMustBePreserved: false,
