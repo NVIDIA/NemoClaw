@@ -171,7 +171,7 @@ console.log(JSON.stringify(records));
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
   });
 
-  it("preload strips top-level `thinking` only for the Nemotron-3 family (#6913)", () => {
+  it("preload strips top-level `thinking` for Nemotron-3 only on managed NVIDIA Build routes (#6913)", () => {
     const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
     const harness = `
 const http = require('http');
@@ -214,7 +214,7 @@ send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completio
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'openai/gpt-oss-120b', messages: [], thinking: { type: 'enabled' } }));
 process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'compatible-endpoint';
 send(http, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
-process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'ollama-local';
+process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nim-local';
 send(https, { method: 'POST', hostname: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 delete process.env.NEMOCLAW_UPSTREAM_PROVIDER;
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: false }));
@@ -294,8 +294,8 @@ console.log(JSON.stringify(records));
     const compatibleEndpoint = JSON.parse(records[8].writes[0]);
     expect(compatibleEndpoint.thinking).toEqual({ type: "enabled" });
 
-    const ollamaLocal = JSON.parse(records[9].writes[0]);
-    expect(ollamaLocal.thinking).toBe(true);
+    const localNim = JSON.parse(records[9].writes[0]);
+    expect(localNim.thinking).toBe(true);
 
     const missingProvider = JSON.parse(records[10].writes[0]);
     expect(missingProvider.thinking).toBe(false);
