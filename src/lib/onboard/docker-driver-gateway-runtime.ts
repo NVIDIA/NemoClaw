@@ -13,6 +13,7 @@ import {
   type DockerDriverGatewayPortListenerScan,
   type DockerDriverGatewayServicePortOwnership,
   type DockerDriverGatewayServicePortOwnershipOptions,
+  type GatewayPortListenerRawScan,
 } from "./docker-driver-gateway-port-listener";
 import {
   getDockerDriverGatewayTargetIdentityDrift,
@@ -84,6 +85,11 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     portCheck: PortProbeResult,
     opts?: DockerDriverGatewayPortListenerOptions,
   ): DockerDriverGatewayPortListenerScan;
+  /** Unfiltered listener enumeration; see getGatewayPortListenerRawScan (#6576). */
+  getGatewayPortListenerRawScan(
+    portCheck: PortProbeResult,
+    opts?: DockerDriverGatewayPortListenerOptions,
+  ): GatewayPortListenerRawScan;
   /** Compatibility view for callers that only need the verified PID list. */
   getDockerDriverGatewayPortListenerPids(
     portCheck: PortProbeResult,
@@ -479,6 +485,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     createGatewayServicePortOwnership,
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayPortListenerScan,
+    getGatewayPortListenerRawScan,
     isDockerDriverGatewayPortListener,
   } = createDockerDriverGatewayPortListenerHelpers({
     gatewayPort: currentGatewayPort,
@@ -509,6 +516,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     getDockerDriverGatewayPid,
     getDockerDriverGatewayPidFile,
     getDockerDriverGatewayPortListenerScan,
+    getGatewayPortListenerRawScan,
     getDockerDriverGatewayPortListenerPids,
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayReuseDrift,

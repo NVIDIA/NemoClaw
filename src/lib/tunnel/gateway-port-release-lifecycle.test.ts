@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import type { GatewaySupervisorKind } from "../onboard/gateway-management";
 import type { HostGatewayProcessDeps } from "../onboard/host-gateway-process";
 import { releaseManagedGatewayPort } from "./gateway-port-release";
 import {
@@ -16,6 +17,54 @@ import {
 } from "./gateway-port-release-test-helpers";
 
 describe("releaseManagedGatewayPort lifecycle (#5968)", () => {
+  it.each([
+    "systemd-system",
+    "systemd-user",
+  ] satisfies GatewaySupervisorKind[])("does not scan or signal a %s-supervised gateway during stop (#6576)", (kind) => {
+    const run = vi.fn(() => ok("123\n"));
+    const stop = stopSpy(emptyStopResult({ stopped: [123] }));
+    const log = vi.fn();
+
+    const result = releaseManagedGatewayPort(
+      { sandboxName: "alpha" },
+      {
+        ...baseDeps(),
+        log,
+        run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => ({ gatewayPort: DEFAULT_GATEWAY_PORT }),
+        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+          gatewayName,
+          gatewayPort,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+          stateDir: "/var/lib/openshell/gateway",
+          supervisor: {
+            kind,
+            serviceName: "openshell-gateway.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+          requiredCapabilities: [],
+        }),
+      },
+    );
+
+    expect(result).toEqual({
+      port: DEFAULT_GATEWAY_PORT,
+      released: false,
+      stopped: [],
+      remaining: [],
+      scanned: false,
+      skipped: true,
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(stop.fn).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Keeping externally supervised OpenShell gateway"),
+    );
+  });
+
   it("stops lsof-discovered gateways, then reports the port released", () => {
     const lsof = lsofResponder(ok("111\n222\n"), ok(""));
     const stop = stopSpy(emptyStopResult({ stopped: [111, 222] }));

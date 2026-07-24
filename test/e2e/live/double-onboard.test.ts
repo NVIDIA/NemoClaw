@@ -289,11 +289,12 @@ function forwardOwnerForPort(output: string, port: string): string | undefined {
 async function waitForForwardOwner(
   sandbox: SandboxClient,
   port: string,
-  owner: string,
+  owner: string | undefined,
   artifactPrefix: string,
-): Promise<{ owner: string | undefined; output: string }> {
+): Promise<{ owner: string | undefined; output: string; querySucceeded: boolean }> {
   let observedOwner: string | undefined;
   let lastOutput = "";
+  let querySucceeded = false;
   for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt += 1) {
     const result = await sandbox.openshell(["forward", "list"], {
       artifactName: `${artifactPrefix}-attempt-${attempt}`,
@@ -301,11 +302,12 @@ async function waitForForwardOwner(
       timeoutMs: 30_000,
     });
     lastOutput = resultText(result);
-    observedOwner = forwardOwnerForPort(lastOutput, port);
-    if (observedOwner === owner) break;
+    querySucceeded = result.exitCode === 0 && !result.timedOut;
+    observedOwner = querySucceeded ? forwardOwnerForPort(lastOutput, port) : undefined;
+    if (querySucceeded && observedOwner === owner) break;
     if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
   }
-  return { owner: observedOwner, output: lastOutput };
+  return { owner: observedOwner, output: lastOutput, querySucceeded };
 }
 
 function hasOwn(object: object, key: string): boolean {
@@ -448,6 +450,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
       "onboard first sandbox",
       "re-onboard same sandbox on existing gateway",
       "onboard sibling sandbox with isolated dashboard",
+      "stop sibling sandbox without disturbing the first forward",
       "recover sandbox from stale registry",
       "validate gateway-stop lifecycle guidance",
       "remove double-onboard resources",
@@ -523,6 +526,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
       "first onboard creates a sandbox and NemoClaw gateway",
       "same-name recreate reuses the healthy gateway without port conflicts",
       "different-name onboard preserves the first sandbox and allocates distinct dashboard forwards",
+      "stopping one sandbox releases only its dashboard forward and reports the container stopped",
       "stale OpenShell deletion preserves registry metadata through status/connect and rebuild recovers it",
       "status after gateway stop gives explicit lifecycle guidance without deleting registry state",
     ],
@@ -679,6 +683,55 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   );
   expect(retainedForwardA.owner, retainedForwardA.output).toBe(SANDBOX_A);
 
+  progress.phase("stop sibling sandbox without disturbing the first forward");
+  const stopB = await command(host, [SANDBOX_B, "stop"], {
+    artifactName: "phase-4-nemoclaw-stop-sandbox-b",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(stopB.exitCode, resultText(stopB)).toBe(0);
+
+  const releasedForwardB = await waitForForwardOwner(
+    sandbox,
+    portB ?? "",
+    undefined,
+    "phase-4-openshell-forward-list-b-after-stop",
+  );
+  expect(releasedForwardB.querySucceeded, releasedForwardB.output).toBe(true);
+  expect(releasedForwardB.owner, releasedForwardB.output).toBeUndefined();
+
+  const stoppedStatusB = await command(host, [SANDBOX_B, "status"], {
+    artifactName: "phase-4-nemoclaw-status-sandbox-b-after-stop",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  const stoppedStatusTextB = resultText(stoppedStatusB);
+  expect(stoppedStatusB.exitCode, stoppedStatusTextB).toBe(1);
+  expect(stoppedStatusTextB).toContain("sandbox_container_stopped");
+  expect(stoppedStatusTextB).not.toContain("sandbox_dashboard_port_conflict");
+
+  const retainedForwardAAfterStop = await waitForForwardOwner(
+    sandbox,
+    portA ?? "",
+    SANDBOX_A,
+    "phase-4-openshell-forward-list-a-after-b-stop",
+  );
+  expect(retainedForwardAAfterStop.owner, retainedForwardAAfterStop.output).toBe(SANDBOX_A);
+
+  const startB = await command(host, [SANDBOX_B, "start"], {
+    artifactName: "phase-4-nemoclaw-start-sandbox-b",
+    env: commandEnv(),
+    timeoutMs: PHASE_TIMEOUT_MS,
+  });
+  expect(startB.exitCode, resultText(startB)).toBe(0);
+  const restoredForwardBAfterStart = await waitForForwardOwner(
+    sandbox,
+    portB ?? "",
+    SANDBOX_B,
+    "phase-4-openshell-forward-list-b-after-start",
+  );
+  expect(restoredForwardBAfterStart.owner, restoredForwardBAfterStart.output).toBe(SANDBOX_B);
+
   progress.phase("recover sandbox from stale registry");
   // Phase 5: direct OpenShell deletion leaves a stale registry entry that
   // status/connect preserve and rebuild can recover.
@@ -795,6 +848,15 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
       thirdOnboardPreservedSibling:
         sandboxAAfterThird.exitCode === 0 && sandboxBAfterThird.exitCode === 0,
       distinctDashboardPorts: Boolean(portA && portB && portA !== portB),
+      selectedStopReleasedOnlySelectedForward:
+        stopB.exitCode === 0 &&
+        releasedForwardB.querySucceeded &&
+        releasedForwardB.owner === undefined &&
+        retainedForwardAAfterStop.owner === SANDBOX_A &&
+        stoppedStatusTextB.includes("sandbox_container_stopped") &&
+        !stoppedStatusTextB.includes("sandbox_dashboard_port_conflict") &&
+        startB.exitCode === 0 &&
+        restoredForwardBAfterStart.owner === SANDBOX_B,
       staleRegistryRecovered: rebuild.exitCode === 0,
       gatewayStopGuidance:
         /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart/.test(

@@ -288,6 +288,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.openclaw.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Gateway Lifecycle Authority"
+                path: deployment/gateway-lifecycle-authority.mdx
+                slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default

@@ -9,6 +9,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readYaml, type Workflow, type WorkflowStep } from "./helpers/e2e-workflow-contract";
 
+const fernConfig = JSON.parse(
+  readFileSync(join(import.meta.dirname, "..", "fern", "fern.config.json"), "utf8"),
+) as { version: string };
+
 const deletionCases = [
   [
     "nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw",
@@ -64,7 +68,7 @@ describe("staging docs preview cleanup", () => {
       const command = JSON.parse(readFileSync(commandLog, "utf8")) as string[];
       expect(command).toEqual([
         "--yes",
-        "fern-api@5.72.1",
+        `fern-api@${fernConfig.version}`,
         "docs",
         "preview",
         "delete",

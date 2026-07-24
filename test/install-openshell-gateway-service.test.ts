@@ -42,6 +42,10 @@ function userGatewayBin(home: string): string {
 }
 
 function runInstallHelper(home: string, body: string, env: NodeJS.ProcessEnv = {}) {
+  const platformBin = path.join(home, "test-platform-bin");
+  fs.mkdirSync(platformBin, { recursive: true });
+  writeExecutable(path.join(platformBin, "uname"), "#!/usr/bin/env bash\nprintf 'Linux\\n'\n");
+  const { PATH: injectedPath, ...injectedEnv } = env;
   return spawnSync(
     "bash",
     ["-c", ["set -euo pipefail", `source ${JSON.stringify(INSTALLER)}`, body].join("\n")],
@@ -51,10 +55,10 @@ function runInstallHelper(home: string, body: string, env: NodeJS.ProcessEnv = {
       env: {
         ...process.env,
         HOME: home,
-        PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        PATH: `${platformBin}:${injectedPath ?? `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`}`,
         XDG_CONFIG_HOME: "",
         NEMOCLAW_REPO_ROOT: path.dirname(INSTALLER),
-        ...env,
+        ...injectedEnv,
       },
     },
   );

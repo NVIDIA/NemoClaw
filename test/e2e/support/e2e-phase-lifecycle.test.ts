@@ -344,6 +344,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     );
     expect(containerStop?.command).toBe("sh");
     expect(containerStop?.args.slice(0, 1)).toEqual(["-lc"]);
+    const containerStopScript = containerStop?.args[1] ?? "";
 
     const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-docker-"));
     const stopLog = path.join(fakeBin, "stopped.txt");
@@ -365,7 +366,7 @@ fi
     );
 
     try {
-      execFileSync("sh", containerStop?.args ?? [], {
+      execFileSync("sh", ["-c", containerStopScript], {
         env: {
           ...process.env,
           DOCKER_STOP_LOG: stopLog,

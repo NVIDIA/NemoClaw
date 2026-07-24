@@ -63,6 +63,9 @@ const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const CHECK_EXTERNAL_ID_PATTERN =
   /^nemoclaw-pr-e2e:v2:([1-9][0-9]*):([0-9a-f]{40}):([0-9a-f]{40})$/u;
+const SELECTED_E2E_RUN_SUMMARY_PATTERN =
+  /^\[Selected E2E run ([1-9][0-9]*)\]\((https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/([1-9][0-9]*))\) concluded /u;
+const SELECTED_E2E_RUN_SUMMARY_PREFIX = "[Selected E2E run ";
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
@@ -91,6 +94,7 @@ const HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE =
 const HOSTED_RUNNER_SHUTDOWN_MESSAGE =
   "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
 const HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE = "The operation was canceled.";
+const HOSTED_RUNNER_EXIT_143_MESSAGE = "Process completed with exit code 143.";
 const HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE = "Cleaning up orphan processes";
 const MAX_RUNNER_LOSS_JOB_INSPECTIONS = 20;
 const MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES = 64 * 1024;
@@ -301,9 +305,11 @@ type WorkflowJobLogEvidence = {
 };
 type HostedRunnerShutdownLogMarker = {
   shutdownTimestamp: string;
-  operationTimestamp: string;
+  terminalTimestamp: string;
   cleanupTimestamp: string;
   lastTimestamp: string;
+  annotationMessage: string;
+  interruptedStepConclusion: "cancelled" | "failure";
 };
 type WorkflowJob = {
   id: number;
@@ -1154,12 +1160,36 @@ function retryableFailureReason(check: CheckRun): RetryableFailureReason | undef
   return reason as RetryableFailureReason;
 }
 
+function runnerLossChildRunUrl(repository: string, check: CheckRun): string | null {
+  if (retryableFailureReason(check) !== "child-cancelled") return null;
+  const summary = check.output?.summary ?? "";
+  const selectedRun = SELECTED_E2E_RUN_SUMMARY_PATTERN.exec(summary);
+  if (selectedRun) {
+    const [, labelRunId, linkedUrl, linkedRunId] = selectedRun;
+    if (labelRunId !== linkedRunId) return null;
+    const expectedUrl = `https://github.com/${repository}/actions/runs/${labelRunId}`;
+    if (linkedUrl !== expectedUrl) return null;
+    const canonicalCheckUrl = `https://github.com/${repository}/runs/${check.id}`;
+    return check.details_url === expectedUrl || check.details_url === canonicalCheckUrl
+      ? expectedUrl
+      : null;
+  }
+  if (summary.includes(SELECTED_E2E_RUN_SUMMARY_PREFIX)) return null;
+
+  const prefix = `https://github.com/${repository}/actions/runs/`;
+  const detailsUrl = check.details_url;
+  return typeof detailsUrl === "string" &&
+    detailsUrl.startsWith(prefix) &&
+    /^[1-9][0-9]*$/u.test(detailsUrl.slice(prefix.length))
+    ? detailsUrl
+    : null;
+}
+
 function priorRunnerLossRunUrls(
   repository: string,
   history: readonly CheckRun[],
   currentCheckId: number,
 ): string[] {
-  const prefix = `https://github.com/${repository}/actions/runs/`;
   const priorRunnerLossChecks = history.filter(
     (check) => check.id !== currentCheckId && retryableFailureReason(check) === "child-cancelled",
   );
@@ -1167,12 +1197,8 @@ function priorRunnerLossRunUrls(
     throw new Error("Runner-loss retry history exceeds the single permitted retry");
   }
   return priorRunnerLossChecks.map((check) => {
-    const url = check.details_url;
-    if (
-      typeof url !== "string" ||
-      !url.startsWith(prefix) ||
-      !/^[1-9][0-9]*$/u.test(url.slice(prefix.length))
-    ) {
+    const url = runnerLossChildRunUrl(repository, check);
+    if (!url) {
       throw new Error("Runner-loss retry history has an invalid child-run URL");
     }
     return url;
@@ -2176,7 +2202,9 @@ async function listNonPassingWorkflowJobs(
         (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
       );
       if (options.includeAnnotations) {
-        const runnerLossCandidates = nonPassingJobs.filter(hasTrustedHostedRunnerLossStepShape);
+        const runnerLossCandidates = nonPassingJobs.filter(
+          hasTrustedHostedRunnerLossInspectionStepShape,
+        );
         if (runnerLossCandidates.length > MAX_RUNNER_LOSS_JOB_INSPECTIONS) {
           throw new Error("workflow run exceeded the hosted-runner-loss inspection limit");
         }
@@ -2191,7 +2219,18 @@ async function listNonPassingWorkflowJobs(
           const workflowSha = job.headSha ?? "";
           if (
             !hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha) &&
-            hasCompatibleHostedRunnerShutdownAnnotations(job, repository, workflowSha)
+            (hasCompatibleHostedRunnerShutdownAnnotations(
+              job,
+              repository,
+              workflowSha,
+              HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE,
+            ) ||
+              hasCompatibleHostedRunnerShutdownAnnotations(
+                job,
+                repository,
+                workflowSha,
+                HOSTED_RUNNER_EXIT_143_MESSAGE,
+              ))
           ) {
             try {
               job.logEvidence = await downloadWorkflowJobLogTail(repository, token, job.id);
@@ -2390,6 +2429,7 @@ function hasCompatibleHostedRunnerShutdownAnnotations(
   job: WorkflowJob,
   repository: string,
   workflowSha: string,
+  expectedMessage: string,
 ): boolean {
   const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
   if (!annotations) return false;
@@ -2403,7 +2443,7 @@ function hasCompatibleHostedRunnerShutdownAnnotations(
     failure.endColumn === null &&
     failure.title === "" &&
     failure.rawDetails === "" &&
-    failure.message === HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE
+    failure.message === expectedMessage
   );
 }
 
@@ -2434,10 +2474,17 @@ function parseHostedRunnerShutdownLogTail(logTail: string): HostedRunnerShutdown
   const timestamps = parsed.map((line) => line?.[1] ?? "");
   const timestampSeconds = timestamps.map(jobLogTimestampSecond);
   const messages = parsed.map((line) => line?.[2] ?? "");
+  const terminalMessage = messages[1];
+  const interruptedStepConclusion =
+    terminalMessage === `##[error]${HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE}`
+      ? "cancelled"
+      : terminalMessage === `##[error]${HOSTED_RUNNER_EXIT_143_MESSAGE}`
+        ? "failure"
+        : null;
   if (
     timestampSeconds.some((timestamp) => timestamp === null) ||
     messages[0] !== shutdownMessage ||
-    messages[1] !== `##[error]${HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE}` ||
+    interruptedStepConclusion === null ||
     messages[2] !== HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE ||
     timestamps[0]! >= timestamps[1]! ||
     timestamps.slice(1).some((timestamp, index) => timestamp < timestamps[index]!)
@@ -2456,9 +2503,11 @@ function parseHostedRunnerShutdownLogTail(logTail: string): HostedRunnerShutdown
   }
   return {
     shutdownTimestamp: timestamps[0]!,
-    operationTimestamp: timestamps[1]!,
+    terminalTimestamp: timestamps[1]!,
     cleanupTimestamp: timestamps[2]!,
     lastTimestamp: timestamps.at(-1)!,
+    annotationMessage: terminalMessage!.slice("##[error]".length),
+    interruptedStepConclusion,
   };
 }
 
@@ -2480,47 +2529,58 @@ function hasTrustedHostedRunnerShutdownLog(
   workflowSha: string,
 ): boolean {
   const evidence = job.logEvidence;
+  if (!evidence || !isBoundedWorkflowJobLogEvidence(evidence)) return false;
+  const marker = parseHostedRunnerShutdownLogTail(evidence.tail);
   if (
-    !evidence ||
-    !isBoundedWorkflowJobLogEvidence(evidence) ||
-    !hasCompatibleHostedRunnerShutdownAnnotations(job, repository, workflowSha)
+    !marker ||
+    !hasCompatibleHostedRunnerShutdownAnnotations(
+      job,
+      repository,
+      workflowSha,
+      marker.annotationMessage,
+    ) ||
+    !hasTrustedHostedRunnerLossStepShapeForConclusion(job, marker.interruptedStepConclusion, {
+      allowLegacyStrandedStep: false,
+    })
   ) {
     return false;
   }
-  const marker = parseHostedRunnerShutdownLogTail(evidence.tail);
-  const cancelledSteps = job.steps.filter(
-    (step) => step.status === "completed" && step.conclusion === "cancelled",
+  const interruptedSteps = job.steps.filter(
+    (step) => step.status === "completed" && step.conclusion === marker.interruptedStepConclusion,
   );
-  const cancelledStep = cancelledSteps[0];
+  const interruptedStep = interruptedSteps[0];
   if (
-    !marker ||
-    cancelledSteps.length !== 1 ||
+    interruptedSteps.length !== 1 ||
     !job.startedAt ||
     !job.completedAt ||
-    !cancelledStep?.startedAt ||
-    !cancelledStep.completedAt
+    !interruptedStep?.startedAt ||
+    !interruptedStep.completedAt
   ) {
     return false;
   }
   const shutdownSecond = jobLogTimestampSecond(marker.shutdownTimestamp);
-  const operationSecond = jobLogTimestampSecond(marker.operationTimestamp);
+  const terminalSecond = jobLogTimestampSecond(marker.terminalTimestamp);
   const cleanupSecond = jobLogTimestampSecond(marker.cleanupTimestamp);
   const lastSecond = jobLogTimestampSecond(marker.lastTimestamp);
   return (
     shutdownSecond !== null &&
-    operationSecond !== null &&
+    terminalSecond !== null &&
     cleanupSecond !== null &&
     lastSecond !== null &&
-    job.startedAt <= cancelledStep.startedAt &&
-    cancelledStep.startedAt <= shutdownSecond &&
-    operationSecond === cancelledStep.completedAt &&
-    cancelledStep.completedAt <= cleanupSecond &&
+    job.startedAt <= interruptedStep.startedAt &&
+    interruptedStep.startedAt <= shutdownSecond &&
+    terminalSecond === interruptedStep.completedAt &&
+    interruptedStep.completedAt <= cleanupSecond &&
     cleanupSecond <= lastSecond &&
     lastSecond <= job.completedAt
   );
 }
 
-function hasTrustedHostedRunnerLossStepShape(job: WorkflowJob): boolean {
+function hasTrustedHostedRunnerLossStepShapeForConclusion(
+  job: WorkflowJob,
+  interruptedStepConclusion: "cancelled" | "failure",
+  options: { allowLegacyStrandedStep: boolean },
+): boolean {
   if (
     job.status !== "completed" ||
     job.conclusion !== "failure" ||
@@ -2553,20 +2613,26 @@ function hasTrustedHostedRunnerLossStepShape(job: WorkflowJob): boolean {
     job.steps
       .slice(strandedIndex + 1)
       .every((step) => step.status === "pending" && step.conclusion === null);
-  if (legacyStrandedStep) return true;
+  if (
+    options.allowLegacyStrandedStep &&
+    interruptedStepConclusion === "cancelled" &&
+    legacyStrandedStep
+  ) {
+    return true;
+  }
 
-  const cancelledStepIndexes = job.steps.flatMap((step, index) =>
-    step.status === "completed" && step.conclusion === "cancelled" ? [index] : [],
+  const interruptedStepIndexes = job.steps.flatMap((step, index) =>
+    step.status === "completed" && step.conclusion === interruptedStepConclusion ? [index] : [],
   );
-  if (cancelledStepIndexes.length !== 1) return false;
-  const cancelledIndex = cancelledStepIndexes[0]!;
-  if (job.steps[cancelledIndex]?.name === "Complete job") return false;
-  const beforeCancellation = job.steps.slice(0, cancelledIndex);
-  const afterCancellation = job.steps.slice(cancelledIndex + 1);
-  const syntheticCompletion = afterCancellation.at(-1);
-  const skippedCleanup = afterCancellation.slice(0, -1);
+  if (interruptedStepIndexes.length !== 1) return false;
+  const interruptedIndex = interruptedStepIndexes[0]!;
+  if (job.steps[interruptedIndex]?.name === "Complete job") return false;
+  const beforeInterruption = job.steps.slice(0, interruptedIndex);
+  const afterInterruption = job.steps.slice(interruptedIndex + 1);
+  const syntheticCompletion = afterInterruption.at(-1);
+  const skippedCleanup = afterInterruption.slice(0, -1);
   return (
-    beforeCancellation.every(
+    beforeInterruption.every(
       (step) =>
         step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
     ) &&
@@ -2583,15 +2649,30 @@ function hasTrustedHostedRunnerLossStepShape(job: WorkflowJob): boolean {
   );
 }
 
+function hasTrustedHostedRunnerLossStepShape(job: WorkflowJob): boolean {
+  return hasTrustedHostedRunnerLossStepShapeForConclusion(job, "cancelled", {
+    allowLegacyStrandedStep: true,
+  });
+}
+
+function hasTrustedHostedRunnerLossInspectionStepShape(job: WorkflowJob): boolean {
+  return (
+    hasTrustedHostedRunnerLossStepShape(job) ||
+    hasTrustedHostedRunnerLossStepShapeForConclusion(job, "failure", {
+      allowLegacyStrandedStep: false,
+    })
+  );
+}
+
 function hasTrustedHostedRunnerLossMarker(
   job: WorkflowJob,
   repository: string,
   workflowSha: string,
 ): boolean {
   return (
-    hasTrustedHostedRunnerLossStepShape(job) &&
-    (hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha) ||
-      hasTrustedHostedRunnerShutdownLog(job, repository, workflowSha))
+    (hasTrustedHostedRunnerLossStepShape(job) &&
+      hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha)) ||
+    hasTrustedHostedRunnerShutdownLog(job, repository, workflowSha)
   );
 }
 
@@ -3400,10 +3481,7 @@ export async function retryRunnerLossPrGate(
     if (current?.id !== command.checkRunId) {
       throw new Error("runner-loss retry source is not the current PR gate check");
     }
-    if (
-      retryableFailureReason(current) !== "child-cancelled" ||
-      current.details_url !== originalRunUrl
-    ) {
+    if (!current || runnerLossChildRunUrl(repository, current) !== originalRunUrl) {
       throw new Error("PR gate check does not authorize this runner-loss retry");
     }
     if (priorRunnerLossRunUrls(repository, history, command.checkRunId).length !== 0) {
@@ -3560,8 +3638,7 @@ export async function retryRunnerLossPrGate(
       dispatchHistory.length !== historySize + 1 ||
       dispatchHistory.at(-1)?.id !== retryCheckRunId ||
       !dispatchSource ||
-      retryableFailureReason(dispatchSource) !== "child-cancelled" ||
-      dispatchSource.details_url !== originalRunUrl ||
+      runnerLossChildRunUrl(repository, dispatchSource) !== originalRunUrl ||
       priorRunnerLossRunUrls(repository, dispatchHistory, retryCheckRunId).length !== 1
     ) {
       throw new Error("runner-loss retry lost the current PR gate check before dispatch");
@@ -4376,8 +4453,7 @@ export async function abandonRunnerLossRetrySource(
     source.app?.id !== GITHUB_ACTIONS_APP_ID ||
     source.status !== "completed" ||
     source.conclusion !== "failure" ||
-    source.details_url !== childRunUrl ||
-    retryableFailureReason(source) !== "child-cancelled" ||
+    runnerLossChildRunUrl(repository, source) !== childRunUrl ||
     !externalIdMatch
   ) {
     throw new Error("completed check does not match the exact runner-loss retry source");
