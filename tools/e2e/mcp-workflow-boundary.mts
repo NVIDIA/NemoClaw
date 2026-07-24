@@ -19,6 +19,14 @@ const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
 const CREDENTIAL_WINDOW_ID = "openshell-credential-generation-window";
 const CREDENTIAL_WINDOW_FILE = `test/e2e/live/${CREDENTIAL_WINDOW_ID}.test.ts`;
 const CREDENTIAL_WINDOW_SHARD = "deepagents";
+const MCP_TEST_SELECTOR_CASE = [
+  'case "$NEMOCLAW_MCP_BRIDGE_AGENT" in',
+  "  openclaw) mcp_test_selector='^mcp-bridge$' ;;",
+  "  hermes) mcp_test_selector='^mcp-bridge-hermes$' ;;",
+  "  deepagents) mcp_test_selector='^mcp-bridge-deepagents$' ;;",
+  '  *) echo "::error::Unsupported MCP bridge agent: $NEMOCLAW_MCP_BRIDGE_AGENT" >&2; exit 1 ;;',
+  "esac",
+].join("\n");
 const STABLE_RELEASE_SOURCE_SHA = "3dee5570a46076a57a3b056f35f35ebc0861ac85";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
   "f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9";
@@ -436,6 +444,18 @@ function validateJobExecution(
     run.run,
     "tools/e2e/live-vitest-invocation.mts run --test-path",
     `${jobName} must publish canonical risk-signal evidence`,
+  );
+  requireContains(
+    errors,
+    run.run,
+    MCP_TEST_SELECTOR_CASE,
+    `${jobName} must map each MCP agent shard to its exact live test selector`,
+  );
+  requireContains(
+    errors,
+    run.run,
+    '--selector "$mcp_test_selector"',
+    `${jobName} must pass its exact MCP agent selector to the live test`,
   );
   if (jobName === "mcp-bridge") {
     const riskReporter = "--reporter=test/e2e/risk-signal-reporter.ts";

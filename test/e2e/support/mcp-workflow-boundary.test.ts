@@ -41,6 +41,57 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
+  it.each([
+    "mcp-bridge",
+    "mcp-bridge-dev",
+  ])("rejects an unscoped live test invocation in %s", (jobName) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const run = workflow.jobs[jobName].steps.find(
+        (step) => step.name === "Run MCP OpenShell provider live test",
+      );
+      requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
+      const selector = ' --selector "$mcp_test_selector"';
+      requireFixture(run.run.includes(selector), `${jobName} exact selector fixture is missing`);
+      run.run = run.run.replace(selector, "");
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        `${jobName} must pass its exact MCP agent selector to the live test`,
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects MCP agent-to-selector mapping drift", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const run = workflow.jobs["mcp-bridge"].steps.find(
+        (step) => step.name === "Run MCP OpenShell provider live test",
+      );
+      requireFixture(run?.run, "MCP stable live-test fixture is missing");
+      const expected = "hermes) mcp_test_selector='^mcp-bridge-hermes$' ;;";
+      requireFixture(run.run.includes(expected), "MCP Hermes selector fixture is missing");
+      run.run = run.run.replace(expected, "hermes) mcp_test_selector='^mcp-bridge$' ;;");
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge must map each MCP agent shard to its exact live test selector",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects missing, fail-fast, or in-process MCP agent shards", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

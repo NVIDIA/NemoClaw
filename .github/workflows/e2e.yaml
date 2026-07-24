@@ -918,7 +918,13 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts
+          case "$NEMOCLAW_MCP_BRIDGE_AGENT" in
+            openclaw) mcp_test_selector='^mcp-bridge$' ;;
+            hermes) mcp_test_selector='^mcp-bridge-hermes$' ;;
+            deepagents) mcp_test_selector='^mcp-bridge-deepagents$' ;;
+            *) echo "::error::Unsupported MCP bridge agent: $NEMOCLAW_MCP_BRIDGE_AGENT" >&2; exit 1 ;;
+          esac
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts --selector "$mcp_test_selector"
           if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
             npx vitest run --project e2e-live \
               test/e2e/live/openshell-credential-generation-window.test.ts \
@@ -1045,7 +1051,13 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts
+          case "$NEMOCLAW_MCP_BRIDGE_AGENT" in
+            openclaw) mcp_test_selector='^mcp-bridge$' ;;
+            hermes) mcp_test_selector='^mcp-bridge-hermes$' ;;
+            deepagents) mcp_test_selector='^mcp-bridge-deepagents$' ;;
+            *) echo "::error::Unsupported MCP bridge agent: $NEMOCLAW_MCP_BRIDGE_AGENT" >&2; exit 1 ;;
+          esac
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts --selector "$mcp_test_selector"
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
