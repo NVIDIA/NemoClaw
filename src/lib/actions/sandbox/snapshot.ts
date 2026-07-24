@@ -61,6 +61,7 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -874,6 +875,7 @@ async function runSnapshotRestoreUnlocked(
     "  Failed to query live sandbox state from OpenShell.",
   );
   const isCrossSandboxRestore = targetSandbox !== sandboxName;
+  let crossSandboxRestoreAgent: string | null = null;
   const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
   const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
 
@@ -992,6 +994,7 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
+      crossSandboxRestoreAgent = lockedSourceEntry.agent || "openclaw";
       if (getSandboxEntryInference(lockedSourceEntry).kind !== "configured") {
         console.error(
           `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' has no complete durable inference route.`,
@@ -1099,6 +1102,18 @@ async function runSnapshotRestoreUnlocked(
     // managed observability binding from current target state.
     reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
   });
+  if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
+    try {
+      establishRestoredSandboxGatewayPairing(targetSandbox);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new SnapshotCommandError([
+        `State restored into '${targetSandbox}', but gateway pairing could not be verified.`,
+        `Run \`${CLI_NAME} ${targetSandbox} connect\` to retry pairing before running an agent.`,
+        `Details: ${detail}`,
+      ]);
+    }
+  }
 }
 
 export async function runSandboxSnapshot(
