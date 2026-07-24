@@ -203,6 +203,7 @@ function send(mod, options, body) {
 }
 // A system message is present so the #4851 tool-less nudge does not fire and
 // the assertions stay focused on the top-level thinking strip.
+process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nvidia-prod';
 send(http, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
 send(https, { method: 'POST', hostname: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }] }));
@@ -211,8 +212,12 @@ send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completio
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'deepseek-ai/deepseek-v4-pro', messages: [], thinking: { type: 'enabled' } }));
 send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'openai/gpt-oss-120b', messages: [], thinking: { type: 'enabled' } }));
-send(http, { method: 'POST', host: 'local-nim.example.com', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
-send(https, { method: 'POST', hostname: 'custom-openai.example.com', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'compatible-endpoint';
+send(http, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'ollama-local';
+send(https, { method: 'POST', hostname: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+delete process.env.NEMOCLAW_UPSTREAM_PROVIDER;
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: false }));
 console.log(JSON.stringify(records));
 `;
 
@@ -286,11 +291,14 @@ console.log(JSON.stringify(records));
       thinking: { type: "enabled" },
     });
 
-    const localNim = JSON.parse(records[8].writes[0]);
-    expect(localNim.thinking).toEqual({ type: "enabled" });
+    const compatibleEndpoint = JSON.parse(records[8].writes[0]);
+    expect(compatibleEndpoint.thinking).toEqual({ type: "enabled" });
 
-    const customOpenAi = JSON.parse(records[9].writes[0]);
-    expect(customOpenAi.thinking).toBe(true);
+    const ollamaLocal = JSON.parse(records[9].writes[0]);
+    expect(ollamaLocal.thinking).toBe(true);
+
+    const missingProvider = JSON.parse(records[10].writes[0]);
+    expect(missingProvider.thinking).toBe(false);
   });
 
   it("preload also injects model-specific kwargs for stubbed fetch requests", () => {
@@ -308,6 +316,7 @@ globalThis.fetch = async function (input, init) {
 };
 ${preload}
 async function main() {
+  process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nvidia-prod';
   await fetch('https://inference.local/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'content-length': '999' },
@@ -324,7 +333,8 @@ async function main() {
       thinking: true,
     }),
   });
-  await fetch('https://custom-openai.example.com/v1/chat/completions', {
+  process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'compatible-endpoint';
+  await fetch('https://inference.local/v1/chat/completions', {
     method: 'POST',
     body: JSON.stringify({
       model: 'nvidia/nemotron-3-super-120b-a12b',
@@ -332,6 +342,7 @@ async function main() {
       thinking: true,
     }),
   });
+  process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nvidia-prod';
   await fetch('https://inference.local/v1/chat/completions', {
     method: 'POST',
     headers: new Headers({ 'content-type': 'application/json', 'content-length': '999' }),

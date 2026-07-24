@@ -98,9 +98,10 @@
 //   field (the endpoint returns `reasoning_content` either way), so the field
 //   carries no behavior to preserve.
 //
-//   Scope: the `nvidia/nemotron-3-` model family. Ultra, Super, and Nano all
-//   reject the top-level field on NVIDIA Build, while unrelated models such as
-//   `openai/gpt-oss-120b` accept it and must remain untouched.
+//   Scope: the `nvidia/nemotron-3-` model family when the managed
+//   `inference.local` route has NEMOCLAW_UPSTREAM_PROVIDER=nvidia-prod. Ultra,
+//   Super, and Nano all reject the top-level field on NVIDIA Build, while
+//   unrelated models and other upstream providers must remain untouched.
 //
 //   Source boundary: NemoClaw owns the sandbox preload that wraps outgoing
 //   chat-completions traffic. The `thinking` field originates in OpenClaw's
@@ -345,11 +346,19 @@
     return isChatCompletionsPost(fetchMethod(input, init), fetchUrl(input));
   }
 
+  function isNvidiaBuildUpstream() {
+    return process.env.NEMOCLAW_UPSTREAM_PROVIDER === 'nvidia-prod';
+  }
+
   function isManagedBuildHost(host) {
-    return /^inference\.local(?::\d+)?$/i.test(String(host || ''));
+    return (
+      isNvidiaBuildUpstream() &&
+      /^inference\.local(?::\d+)?$/i.test(String(host || ''))
+    );
   }
 
   function isManagedBuildFetch(input) {
+    if (!isNvidiaBuildUpstream()) return false;
     try {
       return new URL(fetchUrl(input)).hostname.toLowerCase() === 'inference.local';
     } catch (_e) {
