@@ -67,7 +67,10 @@ connection.execute(
         "__error__",
         sqlite3.Binary(
             b"APIError('ResourceExhausted: Worker local total request limit reached "
-            b"(32/32) token=checkpoint-secret request=private model=private-model')"
+            b"(32/32) token=checkpoint-secret request_body=private-request "
+            b"model_message=private-model-message "
+            b"tool_argument=private-tool-argument "
+            b"tool_result=private-tool-result')"
         ),
     ),
 )
@@ -87,7 +90,7 @@ os.unlink(db_path)
       "Model request failed: ResourceExhausted (correlation_id=thread-current)",
     );
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
-      /runtime-secret|checkpoint-secret|request=private|private-model/,
+      /runtime-secret|checkpoint-secret|private-request|private-model-message|private-tool-argument|private-tool-result/,
     );
   });
 
