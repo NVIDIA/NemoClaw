@@ -120,6 +120,10 @@ export function spawnOutputToString(value: unknown): string {
   return String(value);
 }
 
+function routeDriverLabel(driver: string | null | undefined): string {
+  return driver === "docker" || driver === "kubernetes" || driver === "vm" ? driver : "sandbox";
+}
+
 function verifyCompatibleEndpointSandboxRoute(
   options: CompatibleEndpointSandboxRouteOptions,
 ): void {
@@ -161,8 +165,9 @@ function verifyCompatibleEndpointSandboxRoute(
       "  Do not add inference.local to /etc/hosts or NO_PROXY; either bypasses the managed inference and credential boundary.",
     );
   } else if (route.broken) {
+    const httpStatus = String(route.httpStatus).padStart(3, "0");
     console.error(
-      `  inference.local is unavailable through the OpenShell ${options.openshellDriver || "sandbox"} gateway path (${route.detail}).`,
+      `  inference.local is unavailable through the OpenShell ${routeDriverLabel(options.openshellDriver)} gateway path (BROKEN ${httpStatus}).`,
     );
   } else {
     const detail = compactText(options.redact(route.detail)).slice(0, 800);

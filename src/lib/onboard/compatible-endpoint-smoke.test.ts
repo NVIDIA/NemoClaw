@@ -183,6 +183,40 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(diagnostics).not.toContain("COMPATIBLE_API_KEY");
   });
 
+  it("does not print untrusted route suffixes or driver labels", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "BROKEN 503 raw-secret\u001b[31m",
+      stderr: "",
+    }));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${String(code)}`);
+    });
+
+    expect(() =>
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "smoke-sandbox",
+        provider: "compatible-endpoint",
+        model: "gpt-5",
+        runOpenshell,
+        redact: (value) => value.replaceAll("raw-secret", "<redacted>"),
+        messagingChannels: [],
+        agent: { name: "openclaw" },
+        openshellDriver: "\u001b[32mhost-controlled",
+      }),
+    ).toThrow("exit 1");
+
+    const diagnostics = error.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(diagnostics).toContain(
+      "inference.local is unavailable through the OpenShell sandbox gateway path (BROKEN 503).",
+    );
+    expect(diagnostics).not.toContain("raw-secret");
+    expect(diagnostics).not.toContain("host-controlled");
+    expect(diagnostics).not.toContain("\u001b");
+  });
+
   it("builds a sandbox script that checks managed provider routing", () => {
     const script = buildCompatibleEndpointSandboxSmokeScript("provider/model'");
 
