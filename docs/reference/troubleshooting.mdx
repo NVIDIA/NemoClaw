@@ -1485,6 +1485,9 @@ openshell sandbox list
 $$nemoclaw <name> status
 ```
 
+If onboarding instead reports that the sandbox "did not re-register with OpenShell after policy application," the same timeout controls that post-policy command-readiness probe.
+Raise the budget before retrying, then inspect the same gateway and sandbox status if re-registration still fails.
+
 ### Sandbox onboard fails with "entered Error phase before it became ready"
 
 Onboarding ends with:

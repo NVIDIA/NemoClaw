@@ -3674,6 +3674,8 @@ Defaults are sized for typical hardware; override only if you see false-positive
 ### Onboard and Sandbox Readiness Timeouts
 
 The following environment variables tune onboard-time wall-clock limits.
+`NEMOCLAW_SANDBOX_READY_TIMEOUT` also covers OpenShell command re-registration after onboarding applies policy presets.
+
 <AgentOnly variant="openclaw,hermes">
 `NEMOCLAW_SANDBOX_READY_TIMEOUT` also applies when managed recovery transactionally recreates an existing sandbox.
 </AgentOnly>
@@ -3683,7 +3685,7 @@ Set them before running `$$nemoclaw onboard` if a slow connection or large model
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for the post-create readiness wait, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness and OpenShell command re-registration after policy application, in seconds. Raise when the sandbox image build, gateway upload, in-sandbox boot, or post-policy re-registration exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the post-create deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls (2s apart, so ~60s by default) the post-create readiness wait tolerates before treating `Error` as terminal. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 
 <AgentOnly variant="openclaw,hermes">
@@ -3699,9 +3701,10 @@ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
 
-If a timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
+If the Ollama pull or post-create readiness timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
 The Ollama pull preserves its partial download for the next attempt.
-The readiness wait deletes the orphaned sandbox first so the next `$$nemoclaw onboard` starts clean.
+The post-create readiness wait deletes the orphaned sandbox first so the next `$$nemoclaw onboard` starts clean.
+A post-policy re-registration failure leaves the sandbox in place and reports that OpenShell did not re-register it.
 
 ### Lifecycle Behavior Flags
 
