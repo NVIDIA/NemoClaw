@@ -67,7 +67,8 @@ Hermes image-building lanes that remain on those standard runners. The trusted
 workflow provisions the fallback as the first job step, before checking out or
 executing the candidate revision. It requires a controller-supplied lowercase
 40-hex checkout SHA, matching trusted workflow and dispatch revisions, and an
-ephemeral GitHub-hosted Linux x64 runner.
+ephemeral GitHub-hosted Linux x64 runner. Candidate code cannot supply the
+program or arguments passed to `sudo`.
 
 The trusted step requires at least 32 GiB (34,359,738,368 bytes) of usable swap.
 It reuses active swap that meets this requirement.
@@ -79,22 +80,11 @@ The additional 4,096 bytes keep the usable swap capacity at or above 32 GiB
 after formatting.
 Setup failure stops before candidate checkout and removes partial state only
 after proving the file inactive or successfully disabling it.
-After `swapon` succeeds, both rollout paths make up to five activation
+After `swapon` succeeds, the trusted step makes up to five activation
 observations, one second apart.
 If visibility remains stale, cleanup treats the file as active.
 Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
-
-This rollout adds the trusted pre-checkout setup.
-During rollout, the PR temporarily retains the reviewed live Vitest helper.
-The helper exists only because the PR must validate against the older workflow
-definition on `main` before this change lands.
-The compatibility path runs only when GitHub Actions supplies a validated
-lowercase 40-hex checkout SHA.
-When the trusted step already provides 32 GiB of usable swap, the helper exits
-before it creates its fixed swap file.
-A follow-up must remove the candidate-side helper and its compatibility tests
-after this change lands.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
 the Hermes Bedrock and stable MCP shards, and the `hermes-e2e`,

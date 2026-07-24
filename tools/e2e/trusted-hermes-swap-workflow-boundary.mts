@@ -289,3 +289,21 @@ export function validateTrustedHermesSwapWorkflow(workflowValue: unknown): strin
 
   return errors;
 }
+
+export function validateTrustedHermesSwapHelperSource(source: string): string[] {
+  const errors: string[] = [];
+  const forbidden = [
+    "/usr/bin/sudo",
+    "HERMES_E2E_SWAP_SCRIPT",
+    "provisionHermesE2ESwap",
+    "needsHermesE2ESwap",
+  ];
+  for (const fragment of forbidden) {
+    if (source.includes(fragment)) {
+      errors.push(
+        `candidate live Vitest helper must not contain privileged swap fragment ${fragment}`,
+      );
+    }
+  }
+  return errors;
+}
