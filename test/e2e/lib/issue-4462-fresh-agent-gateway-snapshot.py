@@ -37,25 +37,39 @@ identity = load_map(root / "identity" / "device.json")
 device_id = norm(identity.get("deviceId"))
 if not device_id:
     raise SystemExit("CLI identity has no deviceId")
-pending = [
-    value
-    for value in load_map(root / "devices" / "pending.json").values()
-    if isinstance(value, dict)
-]
-paired = [
-    value
-    for value in load_map(root / "devices" / "paired.json").values()
-    if isinstance(value, dict)
-]
-paired_cli = [
-    value
-    for value in paired
-    if value.get("clientId") == "cli" and value.get("clientMode") == "cli"
-]
-matching = [value for value in paired_cli if norm(value.get("deviceId")) == device_id]
+pairing_deadline = time.monotonic() + 10
+while True:
+    pending = [
+        value
+        for value in load_map(root / "devices" / "pending.json").values()
+        if isinstance(value, dict)
+    ]
+    paired = [
+        value
+        for value in load_map(root / "devices" / "paired.json").values()
+        if isinstance(value, dict)
+    ]
+    paired_cli = [
+        value
+        for value in paired
+        if value.get("clientId") == "cli" and value.get("clientMode") == "cli"
+    ]
+    matching = [value for value in paired_cli if norm(value.get("deviceId")) == device_id]
+    if len(matching) == 1 or time.monotonic() >= pairing_deadline:
+        break
+    time.sleep(0.1)
 if len(matching) != 1:
+    observed = [
+        {
+            "clientId": norm(value.get("clientId")),
+            "clientMode": norm(value.get("clientMode")),
+            "deviceIdMatches": norm(value.get("deviceId")) == device_id,
+        }
+        for value in paired
+    ]
     raise SystemExit(
-        f"CLI identity must match exactly one paired device, found {len(matching)}"
+        "CLI identity must match exactly one paired device, "
+        f"found {len(matching)}; observed={json.dumps(observed, sort_keys=True)}"
     )
 device = matching[0]
 tokens = device.get("tokens")

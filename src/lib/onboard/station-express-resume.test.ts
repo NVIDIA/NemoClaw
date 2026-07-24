@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession } from "../state/onboard-session";
+import { createSession, normalizeSession } from "../state/onboard-session";
 import {
   assertStationExpressInstallerResumeMatches,
   cleanupStationExpressReceiptRetirementClaims,
@@ -14,6 +14,7 @@ import {
   getStationExpressResumeIntent,
   INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV,
   parseStationExpressResumeIntent,
+  requireStationExpressResumeIntent,
   retireStationExpressInstallerResume,
   STATION_EXPRESS_ENV,
   STATION_EXPRESS_RECEIPT_GENERATION_ENV,
@@ -916,5 +917,224 @@ describe("DGX Station Express resume (#7048)", () => {
 
     expect(run).not.toHaveBeenCalled();
     expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_MODEL"));
+  });
+});
+
+const sparkModelEnv = "qwen3.6-35b-a3b-nvfp4";
+const sparkServedModel = "nvidia/Qwen3.6-35B-A3B-NVFP4";
+const sparkIntent = {
+  version: 1 as const,
+  kind: "spark" as const,
+  sandboxName: "my-assistant",
+};
+const sparkCaptureDeps = { detectNvidiaPlatform: () => "spark" as const };
+
+function sparkExpressEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return { NEMOCLAW_PROVIDER: "install-vllm", NEMOCLAW_NON_INTERACTIVE: "1", ...overrides };
+}
+
+describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
+  it("captures a marker-free spark intent from a non-interactive install-vllm run", () => {
+    expect(
+      getStationExpressResumeIntent(sparkExpressEnv(), "my-assistant", sparkCaptureDeps),
+    ).toEqual({
+      ok: true,
+      intent: sparkIntent,
+    });
+  });
+
+  it("pins the model only when the user set a spark NEMOCLAW_VLLM_MODEL", () => {
+    expect(
+      getStationExpressResumeIntent(
+        sparkExpressEnv({ NEMOCLAW_VLLM_MODEL: sparkModelEnv }),
+        "my-assistant",
+        sparkCaptureDeps,
+      ),
+    ).toEqual({ ok: true, intent: { ...sparkIntent, model: sparkModelEnv } });
+  });
+
+  it("never smuggles a Station-only model into a spark intent", () => {
+    expect(
+      getStationExpressResumeIntent(
+        sparkExpressEnv({ NEMOCLAW_VLLM_MODEL: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4" }),
+        "my-assistant",
+        sparkCaptureDeps,
+      ),
+    ).toEqual({ ok: true, intent: sparkIntent });
+  });
+
+  it("ignores non-express, interactive, or nameless runs", () => {
+    expect(
+      getStationExpressResumeIntent(
+        sparkExpressEnv({ NEMOCLAW_PROVIDER: "build" }),
+        "my-assistant",
+        sparkCaptureDeps,
+      ),
+    ).toEqual({ ok: true, intent: null });
+    expect(
+      getStationExpressResumeIntent(
+        { NEMOCLAW_PROVIDER: "install-vllm" },
+        "my-assistant",
+        sparkCaptureDeps,
+      ),
+    ).toEqual({ ok: true, intent: null });
+    expect(getStationExpressResumeIntent(sparkExpressEnv(), null, sparkCaptureDeps)).toEqual({
+      ok: true,
+      intent: null,
+    });
+  });
+
+  it("does not capture a generic Linux install-vllm run as Spark (#7231)", () => {
+    expect(
+      getStationExpressResumeIntent(
+        sparkExpressEnv({ NEMOCLAW_VLLM_MODEL: "nemotron-3-nano-4b" }),
+        "my-assistant",
+        { detectNvidiaPlatform: () => "linux" },
+      ),
+    ).toEqual({ ok: true, intent: null });
+  });
+
+  it("round-trips and strictly validates a persisted spark intent", () => {
+    expect(parseStationExpressResumeIntent(sparkIntent)).toEqual(sparkIntent);
+    expect(parseStationExpressResumeIntent({ ...sparkIntent, model: sparkModelEnv })).toEqual({
+      ...sparkIntent,
+      model: sparkModelEnv,
+    });
+    expect(
+      parseStationExpressResumeIntent({ ...sparkIntent, token: "must-not-persist" }),
+    ).toBeNull();
+    expect(
+      parseStationExpressResumeIntent({ ...sparkIntent, model: "nemotron-3-ultra-550b-a55b" }),
+    ).toBeNull();
+    expect(parseStationExpressResumeIntent({ ...sparkIntent, kind: "station" })).toBeNull();
+  });
+
+  it("restores install-vllm without Station state or inherited model overrides", async () => {
+    const originalEnv: NodeJS.ProcessEnv = {
+      NEMOCLAW_STATION_EXPRESS: "1",
+      NEMOCLAW_POLICY_MODE: "suggested",
+      NEMOCLAW_PROVIDER: "",
+      NEMOCLAW_VLLM_MODEL: sparkModelEnv,
+      NEMOCLAW_MODEL: sparkServedModel,
+    };
+    const env = { ...originalEnv };
+    const failedSession = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: sparkIntent,
+    });
+    failedSession.status = "failed";
+    const deps = resumeDeps(failedSession);
+    const run = vi.fn(async () => {
+      expect(env).toMatchObject({
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_YES: "1",
+        NEMOCLAW_SANDBOX_NAME: "my-assistant",
+      });
+      expect(env.NEMOCLAW_STATION_EXPRESS).toBeUndefined();
+      expect(env.NEMOCLAW_POLICY_MODE).toBeUndefined();
+      expect(env.NEMOCLAW_VLLM_MODEL).toBeUndefined();
+      expect(env.NEMOCLAW_MODEL).toBeUndefined();
+    });
+
+    await withStationExpressResumeEnvironment(run, deps, env)({ resume: true });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(env).toEqual(originalEnv);
+  });
+
+  it("restores a pinned spark model on resume", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const failedSession = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: { ...sparkIntent, model: sparkModelEnv },
+    });
+    failedSession.status = "failed";
+    const deps = resumeDeps(failedSession);
+    const run = vi.fn(async () => {
+      expect(env).toMatchObject({
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_VLLM_MODEL: sparkModelEnv,
+        NEMOCLAW_MODEL: sparkServedModel,
+      });
+      expect(env.NEMOCLAW_STATION_EXPRESS).toBeUndefined();
+    });
+
+    await withStationExpressResumeEnvironment(run, deps, env)({ resume: true });
+
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes an incomplete spark session and rejects tampered states", () => {
+    const base = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: sparkIntent,
+    }) as unknown as Record<string, unknown>;
+    base.resumable = true;
+    base.status = "failed";
+
+    const reloaded = normalizeSession(base as never);
+    expect(reloaded).not.toBeNull();
+    expect(reloaded?.stationExpressIntent).toEqual(sparkIntent);
+    // A spark Express run is inherently non-interactive.
+    expect(normalizeSession({ ...base, mode: "interactive" } as never)).toBeNull();
+    // provider/model must stay null until provider_selection completes.
+    expect(normalizeSession({ ...base, provider: "vllm-local" } as never)).toBeNull();
+  });
+
+  it("carries the intent through capture, reload normalization, and resume restore", async () => {
+    // Capture exactly as the onboard entry path does, from the installer env.
+    const captured = requireStationExpressResumeIntent(
+      { NEMOCLAW_PROVIDER: "install-vllm", NEMOCLAW_NON_INTERACTIVE: "1" },
+      "my-assistant",
+      false,
+      {
+        detectNvidiaPlatform: () => "spark",
+        error: vi.fn(),
+        exitProcess: vi.fn((code: number): never => {
+          throw new Error(`exit ${String(code)}`);
+        }),
+      },
+    );
+    expect(captured).toEqual(sparkIntent);
+
+    // createSession -> JSON round-trip -> normalizeSession is exactly the
+    // saveSession/loadSession sequence across a process boundary.
+    const created = createSession({ mode: "non-interactive", stationExpressIntent: captured });
+    created.status = "failed";
+    const reloaded = normalizeSession(JSON.parse(JSON.stringify(created)));
+    expect(reloaded?.stationExpressIntent).toEqual(sparkIntent);
+
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_PROVIDER: "" };
+    const reconcileReceiptRetirement = vi.fn(() => {
+      throw new Error("spark resume must not touch Station receipt retirement");
+    });
+    const run = vi.fn(async () => {
+      expect(env.NEMOCLAW_PROVIDER).toBe("install-vllm");
+      expect(env.NEMOCLAW_NON_INTERACTIVE).toBe("1");
+      expect(env.NEMOCLAW_SANDBOX_NAME).toBe("my-assistant");
+      expect(env.NEMOCLAW_STATION_EXPRESS).toBeUndefined();
+      expect(env.NEMOCLAW_POLICY_MODE).toBeUndefined();
+    });
+
+    await withStationExpressResumeEnvironment(
+      run,
+      {
+        loadSession: () => reloaded,
+        clearInstallerResume: vi.fn(),
+        cleanupReceiptRetirementClaims: vi.fn(),
+        reconcileReceiptRetirement,
+        error: vi.fn(),
+        exitProcess: vi.fn((code: number): never => {
+          throw new Error(`exit ${String(code)}`);
+        }),
+      },
+      env,
+    )({ resume: true });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(reconcileReceiptRetirement).not.toHaveBeenCalled();
+    // The wrapper restores the prior environment afterwards.
+    expect(env).toEqual({ NEMOCLAW_PROVIDER: "" });
   });
 });

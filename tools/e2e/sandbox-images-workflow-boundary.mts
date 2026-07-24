@@ -22,6 +22,7 @@ const CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const HERMES_SECRET_BOUNDARY_STEP_ID = "hermes-secret-boundary";
 const HERMES_ROOT_AFTER_SECRET_CONDITION =
   "${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}";
+const HERMES_EXPORT_SWAP_STEP_NAME = "Add swap for Hermes image export";
 const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
@@ -610,6 +611,39 @@ function validateMessagingPlanImageBoundary(
   }
 }
 
+function validateHermesExportSwap(errors: string[], workflow: SandboxImagesWorkflow): void {
+  for (const [jobName, buildStepName] of [
+    ["build-hermes-sandbox-image", "Build Hermes production image"],
+    [MESSAGING_PLAN_IMAGE_BOUNDARY_JOB, "Build and verify Hermes messaging plan boundary"],
+  ] as const) {
+    const job = workflow.jobs[jobName] ?? {};
+    const swapSteps = steps(job).filter((step) => step.name === HERMES_EXPORT_SWAP_STEP_NAME);
+    if (swapSteps.length !== 1) {
+      errors.push(`${jobName} must provision Hermes export swap exactly once`);
+      continue;
+    }
+    const run = swapSteps[0]?.run ?? "";
+    for (const fragment of [
+      "swap_file=/mnt/nemoclaw-hermes-image-export.swap",
+      'sudo fallocate -l 32G "$swap_file"',
+      'sudo chmod 0600 "$swap_file"',
+      'sudo mkswap "$swap_file"',
+      'sudo swapon "$swap_file"',
+      "swapon --show",
+      "free -h",
+      "df -h / /mnt",
+      "docker system df",
+    ]) {
+      if (!run.includes(fragment)) {
+        errors.push(`${jobName} Hermes export swap must include ${fragment}`);
+      }
+    }
+    if (stepIndex(job, HERMES_EXPORT_SWAP_STEP_NAME) >= stepIndex(job, buildStepName)) {
+      errors.push(`${jobName} must provision swap before the Hermes image build`);
+    }
+  }
+}
+
 function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWorkflow): void {
   const producerName = "build-sandbox-images";
   const producer = workflow.jobs[producerName] ?? {};
@@ -969,6 +1003,7 @@ export function validateSandboxImagesWorkflow(
   validateSecretScopeAndRegistryWrites(errors, workflow);
   validateGuardedProductionBuildContracts(errors, workflow);
   validateNodeTarImageScans(errors, workflow);
+  validateHermesExportSwap(errors, workflow);
   validateMessagingPlanImageBoundary(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);
   validateHermesImageReuse(errors, workflow);

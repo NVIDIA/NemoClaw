@@ -9,6 +9,7 @@ import {
 } from "../scripts/check-docs-published-routes.mts";
 
 const NETWORK_POLICIES_SOURCE = "reference/network-policies.mdx";
+const CUSTOMIZE_POLICY_SOURCE = "network-policy/customize-network-policy.mdx";
 const APPROVAL_LINK_TEXT = "Approve or Deny Agent Network Requests";
 
 describe("shared Network Policies published routes", () => {
@@ -34,5 +35,11 @@ describe("shared Network Policies published routes", () => {
         target: "../network-policy/approve-network-requests",
       },
     ]);
+  });
+
+  it("resolves every customization guide link inside its published variants", () => {
+    const index = buildPublishedRouteIndex();
+
+    expect(findBrokenPublishedRoutes(CUSTOMIZE_POLICY_SOURCE, index)).toEqual([]);
   });
 });

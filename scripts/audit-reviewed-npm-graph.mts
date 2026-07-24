@@ -7,23 +7,30 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { remediateReviewedOpenClawArchive } from "./lib/openclaw-npm-remediation.mts";
+import { remediateReviewedOpenClawPluginArchive } from "./lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive, verifyReviewedNpmMetadata } from "./lib/reviewed-npm-archive.mts";
+import {
+  assertExceptionGraphs,
+  readAuditExceptionRegistry,
+  runReviewedNpmAudit,
+  type Severity,
+} from "./lib/reviewed-npm-audit.mts";
 
-type Severity = "info" | "low" | "moderate" | "high" | "critical";
 type ReviewedPackage = Readonly<{
   integrity: string;
   label: string;
   packageSpec: string;
   tarballUrl: string;
 }>;
-type LockedGraph = ReviewedPackage & Readonly<{ directory: string }>;
+type LockedGraph = ReviewedPackage & Readonly<{ directory: string; id: string }>;
 type AuditConfig = Readonly<{
   archivePackages: readonly ReviewedPackage[];
+  archiveGraphId: string;
   artifactDirectory: string;
+  exceptionFile: string;
   lockedGraphs: readonly LockedGraph[];
   nodeVersion: string;
-  schemaVersion: 1;
+  schemaVersion: 2;
   severityThreshold: Severity;
 }>;
 
@@ -31,7 +38,19 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const CONFIG_PATH = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
 
-function run(command: string, args: readonly string[], cwd: string, allowAuditFindings = false) {
+function repositoryPath(relativePath: string, label: string): string {
+  const resolved = path.resolve(REPO_ROOT, relativePath);
+  if (
+    !relativePath ||
+    path.isAbsolute(relativePath) ||
+    !resolved.startsWith(`${REPO_ROOT}${path.sep}`)
+  ) {
+    throw new Error(`${label} must stay inside the repository`);
+  }
+  return resolved;
+}
+
+function run(command: string, args: readonly string[], cwd: string) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf-8",
@@ -40,7 +59,7 @@ function run(command: string, args: readonly string[], cwd: string, allowAuditFi
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error) throw result.error;
-  if (result.status !== 0 && !allowAuditFindings) {
+  if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
   }
   return result;
@@ -49,239 +68,21 @@ function run(command: string, args: readonly string[], cwd: string, allowAuditFi
 function readConfig(): AuditConfig {
   const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as AuditConfig;
   if (
-    parsed.schemaVersion !== 1 ||
+    parsed.schemaVersion !== 2 ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
+    typeof parsed.archiveGraphId !== "string" ||
+    !parsed.archiveGraphId ||
+    typeof parsed.exceptionFile !== "string" ||
+    !parsed.exceptionFile ||
     !Array.isArray(parsed.archivePackages) ||
-    !Array.isArray(parsed.lockedGraphs)
+    !Array.isArray(parsed.lockedGraphs) ||
+    parsed.lockedGraphs.some(
+      (graph) => typeof graph.id !== "string" || !graph.id || typeof graph.directory !== "string",
+    )
   ) {
     throw new Error("ci/reviewed-npm-audit.json is invalid");
   }
   return parsed;
-}
-
-type GraphAuditContext = Readonly<{
-  label: string;
-  nodeVersion: string;
-  npmVersion: string;
-  packageSpecs: readonly string[];
-}>;
-
-// Exported for the provenance-ordering regression test; production callers
-// stay inside this script's main().
-export function auditGraph(
-  directory: string,
-  reportPath: string,
-  context: GraphAuditContext,
-): Record<string, unknown> {
-  const startedAt = new Date().toISOString();
-  const result = run("npm", ["audit", "--omit=dev", "--json"], directory, true);
-  const finishedAt = new Date().toISOString();
-  fs.writeFileSync(reportPath, result.stdout);
-  // Registry introspection is best-effort provenance and must never mask the
-  // audit outcome established below.
-  let registry = "";
-  try {
-    registry = run("npm", ["config", "get", "registry"], directory).stdout.trim();
-  } catch {
-    registry = "";
-  }
-  // The sidecar is written even when the audit failed: a failed attempt is
-  // exactly the run whose provenance matters when reconstructing detection
-  // timelines, matching the records-the-attempt semantics of
-  // .github/actions/ci-wechat-runtime-audit/audit.sh.
-  let report: Record<string, unknown> = {};
-  let auditFailure: Error | undefined;
-  try {
-    report = parseAuditReport(result);
-  } catch (error) {
-    auditFailure = error instanceof Error ? error : new Error(String(error));
-  }
-  const provenance = buildAuditProvenance({
-    failure: auditFailure?.message,
-    finishedAt,
-    label: context.label,
-    nodeVersion: context.nodeVersion,
-    npmVersion: context.npmVersion,
-    packageSpecs: context.packageSpecs,
-    // Convention shared with the WeChat audit sidecar: rawReportPath is
-    // relative to the directory containing the sidecar.
-    rawReportPath: path.basename(reportPath),
-    registry,
-    report,
-    startedAt,
-  });
-  fs.writeFileSync(provenanceSidecarPath(reportPath), `${JSON.stringify(provenance, null, 2)}\n`);
-  if (auditFailure) throw auditFailure;
-  return report;
-}
-
-export function parseAuditReport(result: {
-  status: number | null;
-  stderr: string;
-  stdout: string;
-}): Record<string, unknown> {
-  if (!result.stdout.trim()) {
-    throw new Error(`npm audit did not produce JSON: ${result.stderr}`);
-  }
-  let report: Record<string, unknown>;
-  try {
-    report = JSON.parse(result.stdout) as Record<string, unknown>;
-  } catch (error) {
-    throw new Error(`npm audit returned invalid JSON: ${String(error)}`);
-  }
-  let counts: Record<Severity, number>;
-  try {
-    counts = vulnerabilityCounts(report);
-  } catch (error) {
-    const detail = report.error === undefined ? result.stderr : JSON.stringify(report.error);
-    throw new Error(
-      `npm audit failed without a complete vulnerability report: ${error instanceof Error ? error.message : String(error)}${detail ? `; ${detail}` : ""}`,
-    );
-  }
-  const findingCount = SEVERITIES.reduce((total, severity) => total + counts[severity], 0);
-  if (
-    report.error !== undefined ||
-    result.status === null ||
-    result.status > 1 ||
-    (result.status !== 0 && findingCount === 0)
-  ) {
-    const detail = report.error === undefined ? result.stderr : JSON.stringify(report.error);
-    throw new Error(
-      `npm audit failed without vulnerability findings${detail ? `: ${detail}` : ""}`,
-    );
-  }
-  return report;
-}
-
-export function vulnerabilityCounts(report: Record<string, unknown>): Record<Severity, number> {
-  const metadata = report.metadata as Record<string, unknown> | undefined;
-  const vulnerabilities = metadata?.vulnerabilities as Record<string, unknown> | undefined;
-  if (!vulnerabilities || Array.isArray(vulnerabilities)) {
-    throw new Error("npm audit report is missing metadata.vulnerabilities");
-  }
-  const entries = SEVERITIES.map((severity) => {
-    const value = vulnerabilities[severity];
-    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-      throw new Error(`npm audit report has invalid ${severity} vulnerability count`);
-    }
-    return [severity, value] as const;
-  });
-  return Object.fromEntries(entries) as Record<Severity, number>;
-}
-
-export function exceedsAuditThreshold(
-  counts: Readonly<Record<Severity, number>>,
-  threshold: Severity,
-): number {
-  return SEVERITIES.slice(SEVERITIES.indexOf(threshold)).reduce(
-    (total, severity) => total + counts[severity],
-    0,
-  );
-}
-
-export type AuditEndpoints = Readonly<{
-  configuredRegistry: string | null;
-  bulkAdvisoryEndpoint: string | null;
-  note: string;
-}>;
-
-// npm (>= 7) derives its audit endpoint from the configured registry the same
-// way (see npm/cli arborist audit-report): it posts the dependency graph to
-// the bulk advisory endpoint only — there is no quick-audit fallback; on
-// request failure npm reports no advisory data. Recording the endpoint plus
-// the configured registry pins down which advisory database actually served a
-// given report (#7338).
-//
-// Keep in sync with the inline provenance writer in
-// .github/actions/ci-wechat-runtime-audit/audit.sh, which duplicates this
-// derivation for the shell-only WeChat audit.
-export function deriveAuditEndpoints(configuredRegistry: string): AuditEndpoints {
-  if (configuredRegistry.trim() === "") {
-    // An endpoint derived from an unknown registry would be a nonsense claim;
-    // record the unknown explicitly instead.
-    return {
-      configuredRegistry: null,
-      bulkAdvisoryEndpoint: null,
-      note: "the configured registry could not be determined for this run, so the audit endpoint is unknown.",
-    };
-  }
-  const base = configuredRegistry.replace(/\/+$/, "");
-  return {
-    configuredRegistry,
-    bulkAdvisoryEndpoint: `${base}/-/npm/v1/security/advisories/bulk`,
-    note: "npm audit posts the dependency graph to the bulk advisory endpoint of the configured registry; on request failure npm reports no advisory data.",
-  };
-}
-
-const GHSA_ID_IN_URL = /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/gi;
-
-// Keep in sync with the inline provenance writer in
-// .github/actions/ci-wechat-runtime-audit/audit.sh, which duplicates this
-// extraction for the shell-only WeChat audit.
-export function extractAdvisoryIds(report: Record<string, unknown>): readonly string[] {
-  const ids = new Set<string>();
-  const vulnerabilities = report.vulnerabilities;
-  const findings =
-    typeof vulnerabilities === "object" &&
-    vulnerabilities !== null &&
-    !Array.isArray(vulnerabilities)
-      ? Object.values(vulnerabilities)
-      : [];
-  for (const finding of findings) {
-    const via = (finding as Record<string, unknown> | null)?.via;
-    if (!Array.isArray(via)) continue;
-    for (const cause of via) {
-      if (typeof cause !== "object" || cause === null) continue;
-      const url = (cause as Record<string, unknown>).url;
-      if (typeof url !== "string") continue;
-      for (const match of url.match(GHSA_ID_IN_URL) ?? []) {
-        ids.add(`GHSA${match.slice(4).toLowerCase()}`);
-      }
-    }
-  }
-  return [...ids].sort();
-}
-
-export type AuditProvenance = Readonly<{
-  schemaVersion: 1;
-  scanner: Readonly<{ name: "npm audit"; npmVersion: string; nodeVersion: string }>;
-  registry: AuditEndpoints;
-  run: Readonly<{ startedAt: string; finishedAt: string }>;
-  graph: Readonly<{ label: string; packageSpecs: readonly string[] }>;
-  rawReportPath: string;
-  advisoryIds: readonly string[];
-  // Present when the audit attempt failed; the sidecar still records the run.
-  failure?: string;
-}>;
-
-export function buildAuditProvenance(
-  input: Readonly<{
-    failure?: string;
-    finishedAt: string;
-    label: string;
-    nodeVersion: string;
-    npmVersion: string;
-    packageSpecs: readonly string[];
-    rawReportPath: string;
-    registry: string;
-    report: Record<string, unknown>;
-    startedAt: string;
-  }>,
-): AuditProvenance {
-  return {
-    schemaVersion: 1,
-    scanner: { name: "npm audit", npmVersion: input.npmVersion, nodeVersion: input.nodeVersion },
-    registry: deriveAuditEndpoints(input.registry),
-    run: { startedAt: input.startedAt, finishedAt: input.finishedAt },
-    graph: { label: input.label, packageSpecs: input.packageSpecs },
-    rawReportPath: input.rawReportPath,
-    advisoryIds: extractAdvisoryIds(input.report),
-    ...(input.failure === undefined ? {} : { failure: input.failure }),
-  };
-}
-
-export function provenanceSidecarPath(reportPath: string): string {
-  return `${reportPath.replace(/\.json$/, "")}.provenance.json`;
 }
 
 function materializeArchiveGraph(packages: readonly ReviewedPackage[], tempRoot: string): string {
@@ -299,7 +100,7 @@ function materializeArchiveGraph(packages: readonly ReviewedPackage[], tempRoot:
       tarballUrl: reviewed.tarballUrl,
       tempDirectory: tempRoot,
     });
-    return remediateReviewedOpenClawArchive({
+    return remediateReviewedOpenClawPluginArchive({
       archivePath: archive.archivePath,
       packageSpec: reviewed.packageSpec,
       workingDirectory: archive.rootDirectory,
@@ -327,7 +128,7 @@ function materializeLockedGraph(graph: LockedGraph, tempRoot: string): string {
     packageSpec: graph.packageSpec,
     tarballUrl: graph.tarballUrl,
   });
-  const source = path.join(REPO_ROOT, graph.directory);
+  const source = repositoryPath(graph.directory, `${graph.label} directory`);
   const destination = path.join(tempRoot, `locked-${path.basename(graph.directory)}`);
   fs.mkdirSync(destination);
   for (const filename of ["package.json", "package-lock.json"]) {
@@ -343,7 +144,13 @@ function main(): void {
   if (process.version !== expectedNode) {
     throw new Error(`reviewed npm audit requires Node ${expectedNode}; running ${process.version}`);
   }
-  const artifactDirectory = path.join(REPO_ROOT, config.artifactDirectory);
+  const artifactDirectory = repositoryPath(config.artifactDirectory, "audit artifact directory");
+  const exceptionFile = repositoryPath(config.exceptionFile, "npm audit exception file");
+  const exceptionRegistry = readAuditExceptionRegistry(exceptionFile);
+  assertExceptionGraphs(
+    exceptionRegistry.policy,
+    new Set([config.archiveGraphId, ...config.lockedGraphs.map((graph) => graph.id)]),
+  );
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
   const npmVersion = run("npm", ["--version"], REPO_ROOT).stdout.trim();
@@ -352,39 +159,48 @@ function main(): void {
     const reports = [
       {
         label: "reviewed archive graph",
-        report: auditGraph(
-          materializeArchiveGraph(config.archivePackages, tempRoot),
-          path.join(artifactDirectory, "reviewed-archive-graph.json"),
-          {
+        result: runReviewedNpmAudit({
+          directory: materializeArchiveGraph(config.archivePackages, tempRoot),
+          exceptionFile,
+          graph: config.archiveGraphId,
+          provenance: {
             label: "reviewed archive graph",
             nodeVersion: process.version,
             npmVersion,
             packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
           },
-        ),
+          reportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
+          resultFile: path.join(artifactDirectory, "reviewed-archive-graph-policy.json"),
+          threshold: config.severityThreshold,
+          throwOnBlock: false,
+        }),
       },
       ...config.lockedGraphs.map((graph, index) => ({
         label: graph.label,
-        report: auditGraph(
-          materializeLockedGraph(graph, tempRoot),
-          path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
-          {
+        result: runReviewedNpmAudit({
+          directory: materializeLockedGraph(graph, tempRoot),
+          exceptionFile,
+          graph: graph.id,
+          provenance: {
             label: graph.label,
             nodeVersion: process.version,
             npmVersion,
             packageSpecs: [graph.packageSpec],
           },
-        ),
+          reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
+          resultFile: path.join(artifactDirectory, `locked-graph-${index + 1}-policy.json`),
+          threshold: config.severityThreshold,
+          throwOnBlock: false,
+        }),
       })),
     ];
     const failures: string[] = [];
-    for (const { label, report } of reports) {
-      const counts = vulnerabilityCounts(report);
-      const summary = SEVERITIES.map((severity) => `${severity}=${counts[severity]}`).join(" ");
-      console.log(`${label}: ${summary}`);
-      const blocked = exceedsAuditThreshold(counts, config.severityThreshold);
-      if (blocked > 0)
-        failures.push(`${label}: ${blocked} at or above ${config.severityThreshold}`);
+    for (const { label, result } of reports) {
+      if (result.unacceptedBlockingAdvisories.length > 0) {
+        failures.push(
+          `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${config.severityThreshold}`,
+        );
+      }
     }
     if (failures.length > 0)
       throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);

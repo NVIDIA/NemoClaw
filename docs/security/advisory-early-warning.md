@@ -3,17 +3,20 @@
 
 # Advisory Early Warning and Audit Provenance
 
-Status: implemented mechanism, proposed policy (issue #7338; evidence from #7276)
+Status: correlation module, scan CLI, and audit provenance implemented.
+Scheduled operation and the response policy are a separate follow-up, gated on
+product/security-owner sign-off recorded on issue #7338 (evidence from #7276).
 
 Public upstream GitHub Security Advisories are often published weeks before the
 global reviewed ecosystem record that `npm audit` enforces. For
 `fast-uri` (GHSA-4c8g-83qw-93j6) the upstream repository advisory appeared on
 June 29 while the reviewed record propagated on July 21, so the same vulnerable
 version audited clean at 18:46 UTC and reported High at 20:09 UTC. This page
-documents the early-warning path that narrows that gap and the provenance every
-audit now records so such timelines are provable from retained artifacts.
+documents the early-warning correlation that narrows that gap and the
+provenance every audit now records so such timelines are provable from retained
+artifacts.
 
-The scheduled scan draws on all three types of the global advisory database, which
+The correlation draws on all three types of the global advisory database, which
 contribute differently:
 
 - reviewed records are the corpus `npm audit` enforces — a match here means
@@ -32,7 +35,7 @@ e.g. `fastify/fast-uri`'s own advisory) needs a package-to-repository map and
 is the planned extension; the correlation module already accepts that record
 shape unchanged.
 
-## How the early-warning path works
+## How the early-warning correlation works
 
 - `scripts/lib/advisory-early-warning.mts` correlates GitHub Security Advisory
   JSON (repository-level and global records share the shape) with the reviewed
@@ -43,36 +46,47 @@ shape unchanged.
 - The inventory is derived from `ci/reviewed-npm-audit.json`: every committed
   archive package spec plus the installed packages of each locked graph's
   `package-lock.json`. The scan CLI's `--inventory <file>` flag substitutes an
-  explicit `{name, version}` inventory for hermetic offline runs; the
-  workflow always uses the repo-derived default.
+  explicit `{name, version}` inventory for hermetic offline runs.
 - Confidence is encoded, never guessed: only an exact npm ecosystem +
   package-name + parseable semver-range match yields `confidence: "exact"` and
   `action: "investigate"`. Name collisions from non-npm (CPE-derived) records
   and unparseable ranges yield `confidence: "ambiguous"` and
   `action: "informational"`. Ambiguous matches never block or mutate a release.
-- `.github/workflows/advisory-early-warning.yaml` runs every six hours (and on
-  manual dispatch): it fetches reviewed, unreviewed, and malware advisories
-  naming inventory packages (paginated, batched by package), runs
-  `scripts/advisory-early-warning-scan.mts`, and routes signals into one
-  rolling GitHub issue labeled `security`, deduplicated by advisory id plus
-  package. Only an OPEN issue authored by the Actions bot that carries the
-  workflow's embedded marker is reused; otherwise a fresh issue is created.
-  Closing the rolling issue while its signals still apply therefore makes the
-  next run open a fresh issue re-listing them (the dedupe state lives in the
-  open issue body), so close it only once the listed advisories are resolved
-  for the inventory. The workflow is non-blocking by design and never fails a
-  build.
 - The reviewed npm audit gate (`scripts/audit-reviewed-npm-graph.mts`, enforced
   in CI) remains enabled and authoritative for exact npm package/version-range
   decisions. The early-warning path only triggers investigation and rescanning.
 
+`scripts/advisory-early-warning-scan.mts` is the CLI over the module.
+It reads only local files and exits 0 whether or not signals are found.
+It does not modify input files or external state.
+With `--output`, it writes the requested local signals file:
+
+```sh
+# List inventory package names (one per line), the input for advisory queries.
+node --experimental-strip-types scripts/advisory-early-warning-scan.mts \
+  --list-packages
+
+# Correlate fetched advisory records with the inventory.
+node --experimental-strip-types scripts/advisory-early-warning-scan.mts \
+  --advisories advisories.json --output signals.json
+```
+
+Advisory records come from the GitHub `/advisories` API — all three types,
+paginated, filtered by `affects=` batches of the inventory package names.
+
+Running this correlation on a schedule and routing signals to an alert
+destination is deliberately not wired up yet: #7338 requires product/security
+owners to define the supported historical-image scope, rescan ownership, alert
+destination, and response expectations first. A follow-up adds the scheduled
+workflow once that sign-off is recorded on the issue.
+
 ## NVD supplementary reconciliation
 
-Signals that carry a CVE id are additionally reconciled against the National
-Vulnerability Database (`services.nvd.nist.gov/rest/json/cves/2.0`). NVD is a
-supplementary source only — #7338 explicitly forbids treating ambiguous
-NVD/CPE matches as authoritative npm mappings — so a reconciliation is a
-purely informational annotation that never changes a signal's `action` or
+Signals that carry a CVE id can additionally be reconciled against the
+National Vulnerability Database (`services.nvd.nist.gov/rest/json/cves/2.0`).
+NVD is a supplementary source only — #7338 explicitly forbids treating
+ambiguous NVD/CPE matches as authoritative npm mappings — so a reconciliation
+is a purely informational annotation that never changes a signal's `action` or
 `confidence`:
 
 - `scripts/lib/nvd-reconciliation.mts` parses NVD 2.0 API responses (CVE id,
@@ -84,19 +98,13 @@ purely informational annotation that never changes a signal's `action` or
   `nvd-divergent` (NVD rejected the CVE id, or the record answers a different
   one). CPE criteria surface only as a count in the note, never as package
   matches.
-- The workflow queries at most 20 CVE ids per run, spaced 7 seconds apart,
-  to respect the unauthenticated NVD rate limit of roughly five requests per
-  30 seconds; when the cap truncates the list it says so in the run log
-  rather than skipping silently. An NVD outage or rate-limit degrades
-  gracefully to an `NVD: unavailable` annotation — deliberately unlike the
-  GitHub advisory fetch, which fails loudly because signals cannot be
-  computed without it.
 - `scripts/advisory-early-warning-scan.mts --nvd-records <file>` attaches
   reconciliations from a file of previously fetched NVD responses; the CLI
   itself never performs network requests.
-- NVD annotations extend the rolling issue's line text only. The dedupe key
-  (advisory id plus package) is unchanged, so a line appended before its NVD
-  annotation was available is not re-appended later.
+
+Querying NVD on a schedule and annotating the alert destination belong to the
+scheduled workflow, which follows the same #7338 sign-off gate as the rest of
+the scheduled operation.
 
 ## Provenance recorded per audit
 
@@ -105,9 +113,10 @@ Each reviewed npm audit report now has a `*.provenance.json` sidecar
 the WeChat locked runtime graph audit) recording:
 
 - scanner identity: `npm audit`, npm version, Node.js version;
-- the configured registry plus the derived bulk advisory endpoint npm posts
-  the dependency graph to (npm >= 7 has no quick-audit fallback: on request
-  failure npm reports no advisory data, and the note records this);
+- the configured registry, with URL credentials removed, plus the derived bulk
+  advisory endpoint npm posts the dependency graph to (npm >= 7 has no
+  quick-audit fallback: on request failure npm reports no advisory data, and
+  the note records this);
 - run start and finish timestamps (ISO 8601);
 - the audited graph label and committed package specs;
 - the raw machine-readable report path (`rawReportPath`, by convention
@@ -165,40 +174,23 @@ how far any one build progressed. Mapping each demonstrated gap to a
 mechanism:
 
 - Reviewed-mapping delay (`fast-uri`; plausibly the Jaeger propagator):
-  shipped — the six-hourly scan fetches unreviewed (NVD-sourced,
+  covered by the correlation path above — it fetches unreviewed (NVD-sourced,
   pre-curation) advisory records alongside reviewed and malware ones, so a
   disclosure naming an inventory package raises a signal before the reviewed
   mapping exists, with NVD reconciliation as supplementary corroboration.
-  Not yet shipped — polling upstream *repository* advisories directly (the
-  earliest public signal) needs a package-to-repository map and remains the
-  planned extension.
+  Running it every six hours is the scheduled workflow, gated on the #7338
+  sign-off. Not yet shipped — polling upstream *repository* advisories
+  directly (the earliest public signal) needs a package-to-repository map and
+  remains the planned extension.
 - Audit/rescan coverage gap (`@opentelemetry/core`; what limited the Jaeger
-  conclusion): shipped — the scheduled scan correlates every advisory type
+  conclusion): covered by the scheduled scan correlating every advisory type
   against the full reviewed inventory every six hours, independent of build
-  execution order. Not yet shipped — rescanning maintained immutable image
-  digests (an image-scan pipeline) waits on the supported-image scope that
-  product/security owners must define (see the policy defaults below).
+  execution order — same #7338 sign-off gate. Not yet shipped — rescanning
+  maintained immutable image digests (an image-scan pipeline) waits on the
+  supported-image scope that product/security owners must define (#7338's
+  policy criterion).
 - Unproven trigger (`tar`): no trigger design recovers missing evidence.
   Shipped — every reviewed npm audit now writes a provenance sidecar
   (endpoints, timestamps, advisory ids), so consecutive retained runs
   establish the last comparable non-detection and first detection for any
   future finding.
-
-## Proposed policy defaults (pending maintainer confirmation)
-
-The following defaults answer #7338's open policy questions. They are
-proposals only and take effect when product/security owners confirm them.
-
-- Scope: the reviewed graphs committed in `ci/reviewed-npm-audit.json`
-  (archive packages and locked graphs). Historical immutable image digests are
-  out of scope until owners define a supported-image list.
-- Rescan ownership: repository maintainers, driven by the rolling
-  `security`-labeled early-warning issue; the six-hour schedule is the default
-  rescan trigger for advisory-database changes.
-- Alert destination: the rolling GitHub issue created by the early-warning
-  workflow (one issue, deduplicated by advisory id plus package).
-- Response expectation for `action: "investigate"` signals: acknowledge
-  Critical within 1 business day and resolve or escalate within 3; acknowledge
-  High within 2 business days and resolve or escalate within 5. While a
-  reviewed mapping is unavailable, unresolved High/Critical signals escalate to
-  a maintainer decision rather than automatically blocking a release.

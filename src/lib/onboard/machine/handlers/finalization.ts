@@ -184,6 +184,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.verifyWebSearchInsideSandbox(sandboxName, agent);
   }
 
+  if (manageDashboard) {
+    // Scope warm-up can outlive a forward that was healthy after policy recovery.
+    // Recheck the gateway and forward before verification, restarting only when needed.
+    deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+  }
+
   await deps.recordPostVerifyStarted();
 
   let verificationDiagnostics: string[] = [];

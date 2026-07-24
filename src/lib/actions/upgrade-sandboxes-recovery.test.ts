@@ -71,6 +71,7 @@ function createRecoveryHarness(
   latestBackupSpy: ReturnType<typeof vi.spyOn>;
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
   liveListSpy: ReturnType<typeof vi.spyOn>;
+  readOnlyListSpy: ReturnType<typeof vi.spyOn>;
 } {
   vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
   vi.stubEnv(
@@ -90,6 +91,15 @@ function createRecoveryHarness(
   const liveListSpy = vi
     .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
     .mockResolvedValue({
+      status: 0,
+      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
+    });
+  // #7279: check mode observes gateways through the read-only helper instead of
+  // the recovering preflight; keep both stubbed so a check-mode run never hits
+  // the real openshell adapter.
+  const readOnlyListSpy = vi
+    .spyOn(sandboxList, "captureNamedGatewaySandboxListReadOnly")
+    .mockReturnValue({
       status: 0,
       output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
     });
@@ -142,6 +152,7 @@ function createRecoveryHarness(
     latestBackupSpy,
     managedEvidenceSpy,
     liveListSpy,
+    readOnlyListSpy,
   };
 }
 
@@ -536,6 +547,36 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining("were not found on their recorded gateway: my-assistant"),
     );
+  });
+
+  it("keeps both absent-sandbox listings read-only in --check mode (#7279)", async () => {
+    const harness = createRecoveryHarness(["my-assistant"], {
+      liveOutput: "other-box Ready",
+      latestBackup: null,
+      staleNames: ["my-assistant"],
+    });
+
+    await expect(harness.upgradeSandboxes({ check: true })).resolves.toBeUndefined();
+
+    expect(harness.readOnlyListSpy).toHaveBeenCalledTimes(2);
+    expect(harness.readOnlyListSpy).toHaveBeenNthCalledWith(
+      1,
+      {
+        action: "checking sandbox upgrade state",
+        command: "nemoclaw upgrade-sandboxes",
+      },
+      "nemoclaw",
+    );
+    expect(harness.readOnlyListSpy).toHaveBeenNthCalledWith(
+      2,
+      {
+        action: "confirming sandboxes absent from the selected gateway",
+        command: "nemoclaw upgrade-sandboxes",
+      },
+      "nemoclaw",
+    );
+    expect(harness.liveListSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
   });
 
   it("also flags a stale own-gateway orphan alongside the generic skip line (#6520)", async () => {
