@@ -13,9 +13,34 @@ import {
 const OPENSHELL_SANDBOX_NOT_READY_STDERR = `Error:   × code: 'The system is not in a state required for the operation's
   │ execution', message: "sandbox is not ready"
 `;
+const OPENSHELL_SUPERVISOR_NOT_CONNECTED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "supervisor
+  │ relay failed: status: Unavailable, message: \\"supervisor session not
+  │ connected\\", details: [], metadata: MetadataMap { headers: {} }"
+`;
+const OPENSHELL_SUPERVISOR_DISCONNECTED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "supervisor
+  │ relay failed: status: Unavailable, message: \\"supervisor session
+  │ disconnected\\", details: [], metadata: MetadataMap { headers: {} }"
+`;
+const OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR = `Error:   × status: DeadlineExceeded, message: "relay
+  │ open timed out", details: [], metadata: MetadataMap { headers: {} }
+`;
+const OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR = `Error:   × code: 'The service is currently unavailable', message: "supervisor
+  │ relay failed: status: DeadlineExceeded, message: \\"relay channel timed
+  │ out\\", details: [], metadata: MetadataMap { headers: {} }"
+`;
+const OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR = `Error:   × code: 'The service is currently unavailable', message: "No such file
+  │ or directory (os error 2)"
+`;
+const OPENSHELL_RELAY_TARGET_REFUSED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "Connection
+  │ refused (os error 111)"
+`;
 
 describe("recreated sandbox OpenShell readiness", () => {
-  it("retries only the structured not-ready state until OpenShell accepts the sandbox", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("retries the structured not-ready state until OpenShell accepts the sandbox", () => {
     const notReady = {
       status: 1,
       output: OPENSHELL_SANDBOX_NOT_READY_STDERR.trim(),
@@ -52,6 +77,125 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3, 3]);
   });
 
+  it("retries the exact supervisor reconnect states exposed during direct recreation", () => {
+    const reconnecting = [
+      OPENSHELL_SUPERVISOR_NOT_CONNECTED_STDERR,
+      OPENSHELL_SUPERVISOR_DISCONNECTED_STDERR,
+    ].map((stderr) => ({
+      status: 1,
+      output: stderr.trim(),
+      stdout: "",
+      stderr,
+    }));
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce(reconnecting[0])
+      .mockReturnValueOnce(reconnecting[1])
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(true);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
+    expect(beforeProbe).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([3, 3]);
+  });
+
+  it.each([
+    OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR,
+    OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR,
+  ])("retries when the connected supervisor misses OpenShell's relay deadline (#7227)", (stderr) => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: stderr.trim(),
+        stdout: "",
+        stderr,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it.each([
+    OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR,
+    OPENSHELL_RELAY_TARGET_REFUSED_STDERR,
+  ])("retries while the replacement supervisor's local relay target starts (#7273)", (stderr) => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: stderr.trim(),
+        stdout: "",
+        stderr,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it.each([
+    `Error:   × status: DeadlineExceeded, message: "policy update timed out"`,
+    `Error:   × code: 'The service is currently unavailable', message: "supervisor
+  │ relay failed: status: DeadlineExceeded, message: \\"relay requester timed
+  │ out\\", details: [], metadata: MetadataMap { headers: {} }"`,
+    `Error:   × code: 'The service is currently unavailable', message: "permission denied"`,
+  ])("does not retry an unrelated OpenShell error", (stderr) => {
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 1,
+      output: stderr,
+      stdout: "",
+      stderr,
+    }));
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(false);
+    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
+  });
+
   it("fails immediately on an unknown OpenShell error", () => {
     const captureOpenshellImpl = vi.fn(() => ({
       status: 1,
@@ -73,27 +217,33 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([]);
   });
 
-  it("does not retry an outcome-uncertain OpenShell timeout", () => {
+  it("retries the no-op OpenShell readiness probe after a command timeout (#7273)", () => {
     const timeoutError = Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: null,
-      output: "",
-      stdout: "",
-      stderr: "",
-      error: timeoutError,
-    }));
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: null,
+        output: "",
+        stdout: "",
+        stderr: "",
+        error: timeoutError,
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
 
     expect(
       waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
         captureOpenshellImpl,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
-    ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
-    expect(sleeps).toEqual([]);
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
   });
 
   it("rechecks the pinned managed guard before every readiness retry", () => {
@@ -118,6 +268,101 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(beforeProbe).toHaveBeenCalledTimes(2);
     expect(captureOpenshellImpl).toHaveBeenCalledOnce();
     expect(sleeps).toEqual([3]);
+  });
+
+  it("retries an inconclusive managed guard within the readiness deadline", () => {
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    }));
+    const beforeProbe = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([3]);
+  });
+
+  it("fails closed on a definitive managed guard failure without probing OpenShell", () => {
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    }));
+    const beforeProbe = vi.fn(() => false);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(false);
+    expect(beforeProbe).toHaveBeenCalledOnce();
+    expect(captureOpenshellImpl).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([]);
+  });
+
+  it("fails when the managed guard stays inconclusive until the deadline", () => {
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    }));
+    const beforeProbe = vi.fn(() => null);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(false);
+    expect(beforeProbe).toHaveBeenCalledTimes(3);
+    expect(captureOpenshellImpl).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([3, 3]);
+  });
+
+  it("does not let the legacy gateway timeout shorten the sandbox readiness budget (#7273)", () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
+    vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "6");
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 1,
+      output: OPENSHELL_SANDBOX_NOT_READY_STDERR.trim(),
+      stdout: "",
+      stderr: OPENSHELL_SANDBOX_NOT_READY_STDERR,
+    }));
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: Number(process.env.NEMOCLAW_SANDBOX_READY_TIMEOUT),
+      }),
+    ).toBe(false);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([3, 3]);
   });
 });
 

@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import type { GatewayContainerState } from "./gateway-container-running";
 import type { GatewayReuseState } from "../state/gateway";
+import type { GatewayContainerState } from "./gateway-container-running";
 import {
-  reconcilePreflightGatewayReuseState,
   type PreflightGatewayReuseDeps,
+  reconcilePreflightGatewayReuseState,
 } from "./preflight-gateway-reuse";
 
 function makeDeps(overrides: Partial<PreflightGatewayReuseDeps> = {}): PreflightGatewayReuseDeps {
@@ -53,6 +52,26 @@ describe("reconcilePreflightGatewayReuseState", () => {
 
     expect(result).toBe("healthy");
     expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("performs no recover or recreate for an externally supervised gateway (#6576)", async () => {
+    const verify = vi.fn(() => "stopped" as GatewayContainerState);
+    const recover = vi.fn(async () => true);
+    const destroyForReuse = vi.fn(() => "missing" as GatewayReuseState);
+    const deps = makeDeps({
+      gatewayReuseState: "healthy",
+      externallySupervised: true,
+      verifyGatewayContainerRunning: verify,
+      recoverGatewayRuntime: recover,
+      destroyGatewayForReuse: destroyForReuse,
+    });
+
+    const result = await reconcilePreflightGatewayReuseState(deps);
+
+    expect(result).toBe("healthy");
+    expect(verify).not.toHaveBeenCalled();
+    expect(recover).not.toHaveBeenCalled();
+    expect(destroyForReuse).not.toHaveBeenCalled();
   });
 
   it("recovers a stopped container without removing volumes (#4187)", async () => {
