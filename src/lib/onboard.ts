@@ -4803,6 +4803,7 @@ module.exports = {
   patchStagedDockerfile,
   ensureOllamaAuthProxy,
   fetchGatewayAuthTokenFromSandbox,
+  printDashboard,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
   verifyCompatibleEndpointSandboxSmoke,

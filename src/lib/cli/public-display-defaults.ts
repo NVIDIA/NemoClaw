@@ -237,6 +237,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--probe-only]",
     },
   ],
+  "sandbox:connection:info": [
+    {
+      group: "Sandbox Management",
+      order: 3.1,
+      description: "Reprint the onboarding connection block",
+    },
+  ],
   "sandbox:dashboard-url": [
     {
       group: "Sandbox Management",

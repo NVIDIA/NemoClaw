@@ -1494,6 +1494,27 @@ NemoClaw's `--tail <lines>` flag is a line-count flag; the lower-level `openshel
 $$nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
 ```
 
+### `$$nemoclaw <name> connection info`
+
+Reprint the connection block shown at the end of onboarding for a running sandbox.
+The output repeats what onboarding printed for this sandbox.
+For OpenClaw and other dashboard agents it includes the browser dashboard URL, the terminal connect command, and the management commands.
+For terminal-runtime agents it shows the connect and run commands.
+Use this when the onboarding output has scrolled away and you need the connection details again without onboarding a second time.
+This command only reads state; it does not change the sandbox, gateway, credentials, or policies.
+
+```bash
+$$nemoclaw my-assistant connection info
+```
+
+If the sandbox is not running, the command reports that it could not read the connection details and points you to `$$nemoclaw <name> status`.
+
+<Warning>
+For OpenClaw sandboxes the block includes an authenticated dashboard URL.
+Treat it like a password.
+Do not log it, share it, or commit it to version control.
+</Warning>
+
 ### `$$nemoclaw <name> dashboard-url`
 
 <AgentOnly variant="openclaw">
