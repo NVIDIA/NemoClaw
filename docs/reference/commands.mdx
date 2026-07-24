@@ -328,7 +328,8 @@ $$nemoclaw my-dcode rebuild --no-observability --yes
 
 Removing the `observability-otlp-local` policy stops delivery immediately but does not clear the recorded opt-in.
 A later rebuild restores the preset on Balanced and Open tiers, while Restricted continues to suppress it.
-For the complete collector setup, privacy boundary, policy recovery, verification, and a host-side LangSmith exporter example, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#export-traces-through-a-local-collector).
+For policy recovery and the host-side LangSmith exporter example, refer to [Set Up Deep Agents Trace Export](/user-guide/deepagents/monitoring/set-up-deepagents-trace-export).
+Review [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/understand-deepagents-trace-export) for the privacy boundary, [Verify Deep Agents Trace Export](/user-guide/deepagents/monitoring/verify-deepagents-trace-export) for delivery checks, and [Manage Deep Agents Trace Export](/user-guide/deepagents/monitoring/manage-deepagents-trace-export) for lifecycle operations.
 
 </AgentOnly>
 
@@ -3648,7 +3649,8 @@ Collector and exporter failures are non-fatal to agent work.
 Native LangSmith tracing and ambient OTLP configuration remain disabled in the sandbox.
 The explicit opt-in can export bounded prompts, responses, tool arguments, tool results, and operational metadata, so operators must treat trace payloads as sensitive application data.
 The collector must enforce the operator's filtering and redaction requirements before remote forwarding because the local policy applies to the managed Python interpreter and does not provide authenticated tenant identity.
-For the complete receiver contract and a runnable LangSmith collector setup, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#export-traces-through-a-local-collector).
+For a runnable LangSmith collector setup, refer to [Set Up Deep Agents Trace Export](/user-guide/deepagents/monitoring/set-up-deepagents-trace-export).
+For the receiver trust contract, refer to [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/understand-deepagents-trace-export).
 
 </AgentOnly>
 
