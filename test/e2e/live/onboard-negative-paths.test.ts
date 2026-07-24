@@ -18,6 +18,7 @@ import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 const SESSION_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "onboard-session.json");
 const INVALID_NVIDIA_INFERENCE_API_KEY = "not-a-nvidia-key";
 const STACK_TRACE_PATTERNS = [/(^|\s)(TypeError|ReferenceError|SyntaxError):/m, /^\s+at /m];
+const LIVE_TIMEOUT_MS = 10 * 60_000;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -69,6 +70,7 @@ async function cleanupInvalidKeyState(host: HostCliClient, sandboxName: string):
 }
 
 test("onboard invalid NVIDIA key exits cleanly without a stack trace", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm Docker and built CLI prerequisites",
