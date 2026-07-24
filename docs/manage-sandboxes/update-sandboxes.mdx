@@ -85,6 +85,9 @@ $$nemoclaw update --yes
 $$nemoclaw upgrade-sandboxes --check
 ```
 
+Use `$$nemoclaw upgrade-sandboxes --check` to read sandbox state without starting, recovering, or selecting a gateway.
+When all your registered sandboxes resolve to one recorded gateway, the command queries that gateway instead of the gateway for your current `NEMOCLAW_GATEWAY_PORT`.
+
 Each rebuild destroys the old container and creates a new one while preserving the manifest-defined workspace or agent state that NemoClaw knows how to snapshot.
 `upgrade-sandboxes --check` can report a sandbox as stale because the running agent version is behind, because the managed NemoClaw image fingerprint differs from the current CLI, or both.
 
