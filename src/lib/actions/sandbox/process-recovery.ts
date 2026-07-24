@@ -590,6 +590,7 @@ const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailab
 const OPENSHELL_RELAY_OPEN_TIMED_OUT = 'message: "relay open timed out"';
 const OPENSHELL_SUPERVISOR_RELAY_DEADLINE = "supervisor relay failed: status: DeadlineExceeded";
 const OPENSHELL_RELAY_CHANNEL_TIMED_OUT = "relay channel timed out";
+const OPENSHELL_RELAY_CHANNEL_DROPPED = 'message: "relay channel dropped"';
 const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (os error 2)"';
 const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
@@ -633,6 +634,9 @@ function isRetryableOpenshellReRegistrationState(
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     error.includes(OPENSHELL_SUPERVISOR_RELAY_DEADLINE) &&
     error.includes(OPENSHELL_RELAY_CHANNEL_TIMED_OUT);
+  const relayChannelDropped =
+    error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
+    error.includes(OPENSHELL_RELAY_CHANNEL_DROPPED);
   const relayTargetUnavailable =
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     (error.includes(OPENSHELL_RELAY_TARGET_NOT_FOUND) ||
@@ -640,6 +644,7 @@ function isRetryableOpenshellReRegistrationState(
   return (
     sessionUnavailable ||
     relayChannelTimedOut ||
+    relayChannelDropped ||
     relayTargetUnavailable ||
     error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT)
   );
