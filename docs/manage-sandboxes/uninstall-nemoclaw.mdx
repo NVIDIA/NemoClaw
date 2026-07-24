@@ -34,7 +34,8 @@ For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-ba
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
 When uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
-If OpenShell's gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped cleanup and preserves the shared resources.
+If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
+When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 Either way, the preserved entries above stay unless you pass `--destroy-user-data`.
 
 Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.

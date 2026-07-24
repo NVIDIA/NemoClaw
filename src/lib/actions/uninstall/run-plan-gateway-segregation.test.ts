@@ -896,6 +896,41 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
+  it("refuses host-wide cleanup when OpenShell is unavailable and no sibling files exist (#7315)", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-no-openshell-"));
+    try {
+      const calls: Array<{ args: string[]; command: string }> = [];
+      const logs: string[] = [];
+      const warnings: string[] = [];
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+        {
+          commandExists: (command) => command === "npm",
+          env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
+          error: (line) => warnings.push(line),
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          log: (line) => logs.push(line),
+          rmSync: fs.rmSync,
+          run: (command, args) => {
+            calls.push({ args, command });
+            return ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(logs.join("\n")).toContain("resources owned by gateway 'nemoclaw'");
+      expect(warnings.join("\n")).toContain(
+        "openshell not found; skipping gateway/provider/sandbox cleanup",
+      );
+      expect(calls.some(({ command }) => command === "npm")).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     {
       case: "the gateway list is partially malformed",

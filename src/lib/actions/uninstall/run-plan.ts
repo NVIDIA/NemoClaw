@@ -1128,9 +1128,8 @@ interface OtherGatewayInspection {
 /**
  * Names of the gateways OpenShell currently knows about, or `null` when that
  * cannot be determined (OpenShell missing, the query failed, or its output was
- * unparseable). When OpenShell is available, `null` means "stay conservative":
- * callers must not treat an absence they cannot prove as evidence that a
- * gateway is gone. (#7315)
+ * unparseable). `null` always means "stay conservative": callers must not treat
+ * an absence they cannot prove as evidence that a gateway is gone. (#7315)
  */
 function collectLiveOpenShellGatewayNames(runtime: UninstallRuntime): Set<string> | null {
   if (!runtime.commandExists("openshell")) return null;
@@ -1180,7 +1179,7 @@ function inspectOtherGatewayEnvironments(
     };
   }
   const liveNames = liveGatewayNames();
-  if (liveNames === null && runtime.commandExists("openshell")) {
+  if (liveNames === null) {
     return {
       otherGatewayEnvironmentsRemain: true,
       sharedRegistryMustBePreserved: false,
