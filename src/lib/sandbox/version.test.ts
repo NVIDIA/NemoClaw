@@ -272,8 +272,10 @@ describe("checkAgentVersion", () => {
 
     expect(captureSandboxSshConfigCommand).not.toHaveBeenCalled();
     expect(spawnSync).not.toHaveBeenCalled();
-    expect(result.detectionMethod).toBe("unknown");
-    expect(result.unavailableReason).toBe("probe-failed");
+    // No probe was attempted, so the contract's `unavailable` applies —
+    // `unknown`/`probe-failed` would claim a probe ran and failed.
+    expect(result.detectionMethod).toBe("unavailable");
+    expect(result.unavailableReason).toBe("invalid-gateway-binding");
     expect(result.verificationFailed).toBe(true);
     expect(result.sandboxVersion).toBeNull();
   });

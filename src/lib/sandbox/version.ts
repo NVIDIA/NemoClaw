@@ -59,7 +59,11 @@ export interface VersionCheckResult {
    */
   schemeMismatch?: boolean;
   /** Categorises why the result could not be computed, so callers can surface a distinct state. */
-  unavailableReason?: "no-expected-version" | "skip-probe" | "probe-failed";
+  unavailableReason?:
+    | "no-expected-version"
+    | "skip-probe"
+    | "probe-failed"
+    | "invalid-gateway-binding";
 }
 
 /**
@@ -98,7 +102,7 @@ function resolveProbeGatewayName(sandboxName: string): string | null {
  * Probe the live agent version inside a sandbox via SSH.
  * Returns the parsed version string or null on failure.
  */
-export function probeAgentVersion(sandboxName: string): string | null {
+export function probeAgentVersion(sandboxName: string, gatewayName?: string): string | null {
   const agent = resolveAgentForSandbox(sandboxName);
 
   // Scope the lookup to the sandbox's own gateway. Without it OpenShell
@@ -110,8 +114,9 @@ export function probeAgentVersion(sandboxName: string): string | null {
   // the ambient gateway (the case `resolveSandboxGatewayName` fails closed on,
   // because a same-named sandbox on another gateway would be probed and its
   // version cached onto this row), and there is no reason to shell out to
-  // `command -v openshell` only to discard the result.
-  const probeGatewayName = resolveProbeGatewayName(sandboxName);
+  // `command -v openshell` only to discard the result. A caller that already
+  // resolved the binding passes it in rather than re-reading the registry.
+  const probeGatewayName = gatewayName ?? resolveProbeGatewayName(sandboxName);
   if (probeGatewayName === null) return null;
 
   const openshellBinary = resolveOpenshell();
@@ -215,8 +220,24 @@ export function checkAgentVersion(
     };
   }
 
+  // A rejected gateway binding means no probe is attempted at all, which the
+  // result contract distinguishes from a probe that ran and failed: report
+  // `unavailable` rather than `unknown`/`probe-failed` so an operator can tell
+  // a corrupted registry row from an unreachable sandbox.
+  const probeGatewayName = resolveProbeGatewayName(sandboxName);
+  if (probeGatewayName === null) {
+    return {
+      sandboxVersion: null,
+      expectedVersion,
+      isStale: false,
+      verificationFailed: true,
+      detectionMethod: "unavailable",
+      unavailableReason: "invalid-gateway-binding",
+    };
+  }
+
   // Slow path: SSH exec into sandbox
-  const probed = probeAgentVersion(sandboxName);
+  const probed = probeAgentVersion(sandboxName, probeGatewayName);
   if (probed && sb) {
     // Cache for future fast-path lookups
     registry.updateSandbox(sandboxName, { agentVersion: probed });
