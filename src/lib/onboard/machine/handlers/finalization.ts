@@ -162,9 +162,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-    // Reconcile the forward after recovery because a policy-triggered restart
-    // can invalidate the forward created earlier in onboarding.
-    deps.ensureAgentDashboardForward(sandboxName, agent);
     // #4504-v2: provoke the operator.write scope upgrade now (throwaway agent
     // run) so the request is PENDING when the approval pass below clears it, and
     // the user's first real run connects without an embedded fallback.
@@ -187,6 +184,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     // Scope warm-up can outlive a forward that was healthy after policy recovery.
     // Recheck the gateway and forward before verification, restarting only when needed.
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    // Reconcile after the final recovery because any restart above can
+    // invalidate the forward created earlier in onboarding.
+    deps.ensureAgentDashboardForward(sandboxName, agent);
   }
 
   await deps.recordPostVerifyStarted();
