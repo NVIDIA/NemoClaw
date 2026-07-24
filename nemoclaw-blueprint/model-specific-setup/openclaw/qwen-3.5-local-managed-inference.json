@@ -1,0 +1,21 @@
+{
+  "$schema": "../schema.json",
+  "id": "qwen-3.5-local-managed-inference",
+  "agent": "openclaw",
+  "description": "Keeps reasoning-capable direct OpenClaw tools reliable for validated Qwen 3.5 Local Ollama models through managed inference.local chat completions.",
+  "match": {
+    "modelIds": ["qwen3.5:9b", "qwen35-9b-q6:latest"],
+    "providerKey": "inference",
+    "inferenceApi": "openai-completions",
+    "baseUrl": "https://inference.local/v1"
+  },
+  "effects": {
+    "openclawCompat": {
+      "thinkingFormat": "openrouter"
+    },
+    "openclawReasoning": true,
+    "openclawTools": {
+      "toolSearch": false
+    }
+  }
+}

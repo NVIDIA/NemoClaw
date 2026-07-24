@@ -95,6 +95,9 @@
             }
           }
         },
+        "openclawReasoning": {
+          "const": true
+        },
         "openclawPlugins": {
           "type": "array",
           "items": {
@@ -168,6 +171,9 @@
                 },
                 {
                   "required": ["openclawTools"]
+                },
+                {
+                  "required": ["openclawReasoning"]
                 }
               ]
             }

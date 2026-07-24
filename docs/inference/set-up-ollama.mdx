@@ -81,6 +81,8 @@ When Ollama reports a loaded-model context length, NemoClaw uses it for the `con
 Onboarding stops when the selected model does not declare tool support or returns tool-call JSON as plain message text instead of structured tool calls.
 If the validation probe times out, NemoClaw retries with a larger timeout before failing.
 Each Ollama-backed OpenClaw passthrough checks whether the selected model is still loaded and sends a bounded warm-up request when necessary.
+For managed `inference.local` chat-completions routes using the exact model ID `qwen3.5:9b` or `qwen35-9b-q6:latest`, NemoClaw marks the model as reasoning-capable and disables Tool Search so OpenClaw receives direct tools.
+It keeps thinking off to preserve visible replies after mutating tool calls and sends Ollama's supported OpenAI-compatible `reasoning.effort: "none"` request field.
 </AgentOnly>
 
 <AgentOnly variant="hermes">

@@ -13,6 +13,12 @@ content:
 NemoClaw configures safeguard compaction for OpenClaw sandboxes that use its managed `inference.local` route, except for Local Ollama routes.
 The safeguard bounds each compaction attempt while leaving summarization behavior under OpenClaw's control.
 
+## Local Ollama Prompt Reserve
+
+Local Ollama uses a separate reserve adjustment for smaller context windows instead of safeguard compaction.
+With direct tool disclosure and a context window of up to `44000` tokens, NemoClaw sets `reserveTokens` and `reserveTokensFloor` to the smaller of the configured maximum output budget and the amount that leaves at least `8000` prompt tokens.
+With the default `NEMOCLAW_MAX_TOKENS=4096`, both reserve values are `4096`, leaving more of a `32768`-token context available for the complete direct-tool catalog.
+
 ## Compaction Attempt Limit
 
 Each automatic or explicitly requested compaction attempt is limited to 120 seconds.

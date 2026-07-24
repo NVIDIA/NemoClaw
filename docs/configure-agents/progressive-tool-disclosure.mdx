@@ -32,6 +32,8 @@ A model-specific `toolSearch: false` override disables Tool Search entirely.
 
 NemoClaw's generated default exposes `tool_search`, `tool_describe`, and `tool_call` through structured Tool Search.
 Managed Nemotron Super and Ultra routes retain model-specific `toolSearch: false` safeguards and use direct structured tool calling until a live structured-search trajectory clears the replacement.
+Managed Qwen 3.5 Local Ollama routes for `qwen3.5:9b` and `qwen35-9b-q6:latest` also disable Tool Search and expose direct tools.
+Their compatibility profile keeps thinking off to preserve visible replies after mutating tool calls.
 
 In the model-specific manifest contract, `false` disables Tool Search while `true` selects OpenClaw's default code mode.
 Neither boolean selects structured mode.

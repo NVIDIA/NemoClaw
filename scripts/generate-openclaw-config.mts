@@ -44,7 +44,7 @@ type JsonObject = Record<string, any>;
 
 const KNOWN_MODEL_SETUP_AGENTS = new Set(["openclaw", "hermes"]);
 const MODEL_SETUP_EFFECT_KEYS: Record<string, Set<string>> = {
-  openclaw: new Set(["openclawCompat", "openclawPlugins", "openclawTools"]),
+  openclaw: new Set(["openclawCompat", "openclawPlugins", "openclawReasoning", "openclawTools"]),
   hermes: new Set(["hermesCompat"]),
 };
 const DEFAULT_DASHBOARD_PORT = 18789;
@@ -88,8 +88,15 @@ function readBooleanBuildFlag(env: Env, name: string): boolean {
 // the 20k default pull the reserve back up.
 const OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR = 20_000;
 const OPENCLAW_MIN_PROMPT_BUDGET_TOKENS = 8_000;
+// Direct disclosure embeds the complete tool catalogue. The Qwen 3.5 Local
+// Ollama acceptance trajectory measured a ~21.7k-token first-turn prompt, so
+// retain a bounded margin for the user turn and tool arguments before leaving
+// OpenClaw's 20k default reserve untouched.
+const OPENCLAW_MIN_DIRECT_TOOL_PROMPT_BUDGET_TOKENS = 24_000;
 const SMALL_OLLAMA_CONTEXT_THRESHOLD =
   OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_PROMPT_BUDGET_TOKENS;
+const DIRECT_TOOL_SMALL_OLLAMA_CONTEXT_THRESHOLD =
+  OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_DIRECT_TOOL_PROMPT_BUDGET_TOKENS;
 const LOCAL_OLLAMA_UPSTREAM_PROVIDER = "ollama-local";
 const MANAGED_INFERENCE_PROVIDER_KEY = "inference";
 const MANAGED_INFERENCE_HOSTNAME = "inference.local";
@@ -481,6 +488,13 @@ function validateSelectedAgentEffects(
           `${manifestPath}: effects.openclawTools.toolSearch must be a boolean override`,
         );
       }
+    }
+
+    const reasoningOverride = effects.openclawReasoning;
+    if (reasoningOverride !== undefined && reasoningOverride !== true) {
+      throw new Error(
+        `${manifestPath}: effects.openclawReasoning must be the supported override true`,
+      );
     }
 
     const plugins = effects.openclawPlugins || [];
@@ -1045,6 +1059,7 @@ function applyOpenClawSetupEffects(
   inferenceCompat: JsonObject,
   openclawPlugins: JsonObject[],
   pluginIds: Set<string>,
+  openclawModelOverrides: JsonObject,
   openclawTools: JsonObject,
 ): void {
   const effects = setup.effects;
@@ -1064,6 +1079,10 @@ function applyOpenClawSetupEffects(
       );
     }
     openclawTools[key] = value;
+  }
+
+  if (effects.openclawReasoning === true) {
+    openclawModelOverrides.reasoning = true;
   }
 
   for (const plugin of effects.openclawPlugins || []) {
@@ -1089,11 +1108,16 @@ export function buildLocalOllamaSmallContextCompaction(
   upstreamProvider: string | undefined,
   contextWindow: number,
   maxTokens: number,
+  toolDisclosure: "progressive" | "direct" = "progressive",
 ): JsonObject | undefined {
   if ((upstreamProvider || "").trim() !== LOCAL_OLLAMA_UPSTREAM_PROVIDER) {
     return undefined;
   }
-  if (!Number.isFinite(contextWindow) || contextWindow > SMALL_OLLAMA_CONTEXT_THRESHOLD) {
+  const contextThreshold =
+    toolDisclosure === "direct"
+      ? DIRECT_TOOL_SMALL_OLLAMA_CONTEXT_THRESHOLD
+      : SMALL_OLLAMA_CONTEXT_THRESHOLD;
+  if (!Number.isFinite(contextWindow) || contextWindow > contextThreshold) {
     return undefined;
   }
   // Reserve the model's reply budget, but never so much that the remaining
@@ -1158,7 +1182,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const inferenceApi = env.NEMOCLAW_INFERENCE_API as string;
   const contextWindow = coercePositiveInt(env, "NEMOCLAW_CONTEXT_WINDOW", 131072);
   const maxTokens = coercePositiveInt(env, "NEMOCLAW_MAX_TOKENS", 4096);
-  const toolDisclosure = readToolDisclosureEnv(env);
+  const requestedToolDisclosure = readToolDisclosureEnv(env);
 
   const reasoning = (env.NEMOCLAW_REASONING || "false") === "true";
   const inferenceInputs = (env.NEMOCLAW_INFERENCE_INPUTS || "text")
@@ -1206,6 +1230,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const extraAgents = extraAgentsPayload.agents;
   const openclawPlugins: JsonObject[] = [];
   const openclawPluginIds = new Set<string>();
+  const openclawModelOverrides: JsonObject = {};
   const openclawToolOverrides: JsonObject = {};
   for (const setup of modelSpecificSetups) {
     applyOpenClawSetupEffects(
@@ -1213,9 +1238,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
       inferenceCompat,
       openclawPlugins,
       openclawPluginIds,
+      openclawModelOverrides,
       openclawToolOverrides,
     );
   }
+  const modelReasoning = reasoning || openclawModelOverrides.reasoning === true;
   // OpenClaw v2026.5.27 accepts either a boolean shorthand or this object form.
   // Model-specific manifests intentionally remain boolean-only and replace this
   // value wholesale: false disables Tool Search; true restores upstream code
@@ -1225,17 +1252,19 @@ export function buildConfig(env: Env = process.env): JsonObject {
     searchDefaultLimit: 8,
     maxSearchLimit: 20,
   };
+  // An explicit direct request is authoritative. Compatibility manifests may
+  // downgrade progressive mode to false, but may never re-enable search over
+  // a user's direct selection.
+  const resolvedToolSearch =
+    requestedToolDisclosure === "direct"
+      ? false
+      : "toolSearch" in openclawToolOverrides
+        ? openclawToolOverrides.toolSearch
+        : structuredToolSearch;
+  const effectiveToolDisclosure = resolvedToolSearch === false ? "direct" : "progressive";
   const openclawTools: JsonObject = {
     ...openclawToolOverrides,
-    // An explicit direct request is authoritative. Compatibility manifests may
-    // downgrade progressive mode to false, but may never re-enable search over
-    // a user's direct selection.
-    toolSearch:
-      toolDisclosure === "direct"
-        ? false
-        : "toolSearch" in openclawToolOverrides
-          ? openclawToolOverrides.toolSearch
-          : structuredToolSearch,
+    toolSearch: resolvedToolSearch,
   };
 
   if (providerKey === "ollama" || providerKey === "ollama-local") {
@@ -1301,7 +1330,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       ...(Object.keys(inferenceCompat).length > 0 ? { compat: inferenceCompat } : {}),
       id: model,
       name: primaryModelRef,
-      reasoning,
+      reasoning: modelReasoning,
       input: inferenceInputs,
       cost: {
         input: 0,
@@ -1336,7 +1365,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     providerModels.push({
       id: secondaryModelId,
       name: ref,
-      reasoning,
+      reasoning: modelReasoning,
       input: inferenceInputs,
       cost: {
         input: 0,
@@ -1392,6 +1421,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     env.NEMOCLAW_UPSTREAM_PROVIDER,
     contextWindow,
     maxTokens,
+    effectiveToolDisclosure,
   );
   if (smallOllamaCompaction) {
     agentDefaults.compaction = smallOllamaCompaction;

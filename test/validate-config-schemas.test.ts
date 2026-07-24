@@ -1319,6 +1319,22 @@ describe("model-specific-setup/schema.json", () => {
     expectValid(validate, modelFamilyFixture, "OpenClaw model-family prefix");
   });
 
+  it("accepts the supported OpenClaw reasoning override", () => {
+    const valid = {
+      ...cloneObject(exactModelFixture),
+      effects: { openclawReasoning: true },
+    };
+    expectValid(validate, valid, "OpenClaw reasoning override");
+  });
+
+  it("rejects unsupported OpenClaw reasoning overrides", () => {
+    const bad = {
+      ...cloneObject(exactModelFixture),
+      effects: { openclawReasoning: false },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
   it("rejects ambiguous exact and prefix model selectors", () => {
     const bad = {
       ...cloneObject(modelFamilyFixture),

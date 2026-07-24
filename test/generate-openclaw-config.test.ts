@@ -62,17 +62,6 @@ const CHANNELS_ENV = "NEMOCLAW_MESSAGING_CHANNELS_B64";
 const messagingEnv = (channels: string, env: Record<string, string> = {}) =>
   withLegacyMessagingPlanEnvDirect(buildTestEnv({ ...env, [CHANNELS_ENV]: channels }), "openclaw");
 
-function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
-  const env = buildTestEnv(envOverrides);
-  const result = spawnSync("node", SCRIPT_ARGS, {
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    env,
-    timeout: 10_000,
-  });
-  return result;
-}
-
 function withEnv<T>(env: Record<string, string>, fn: () => T): T {
   const originalEnv = { ...process.env };
   try {
@@ -277,13 +266,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
   });
 
   it("rejects OTEL endpoints with embedded credentials", () => {
-    const result = runConfigScriptRaw({
-      NEMOCLAW_OPENCLAW_OTEL: "1",
-      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://token@example.com:4318",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
+    expectBuildConfigError(
+      {
+        NEMOCLAW_OPENCLAW_OTEL: "1",
+        NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://token@example.com:4318",
+      },
+      "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials",
+    );
   });
 
   it("sets dangerouslyDisableDeviceAuth to false for loopback URL", () => {
@@ -1203,6 +1192,12 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.model.primary).toBe("inference/qwen3.6:35b");
   });
 
+  // Qwen managed-profile generation and scoping tests live in
+  // test/ollama-local-openclaw-config-propagation.test.ts.
+  // They still execute main() and inspect the generated OpenClaw config,
+  // keeping script-level coverage while grouping Ollama-local behavior
+  // with its propagation and compaction contracts.
+
   it("adds Kimi K2.6 compat for managed inference.local chat completions", () => {
     const config = runConfigScript({
       NEMOCLAW_MODEL: "moonshotai/kimi-k2.6",
@@ -1499,6 +1494,11 @@ describe("generate-openclaw-config.mts: config generation", () => {
         name: "unknown openclawTools key",
         manifest: { ...validManifest, effects: { openclawTools: { webSearch: true } } },
         message: "unknown effects.openclawTools keys: webSearch",
+      },
+      {
+        name: "unsupported OpenClaw reasoning override",
+        manifest: { ...validManifest, effects: { openclawReasoning: false } },
+        message: "effects.openclawReasoning must be the supported override true",
       },
       {
         name: "non-array openclawPlugins",
