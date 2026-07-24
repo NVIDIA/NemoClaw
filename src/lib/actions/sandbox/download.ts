@@ -23,7 +23,7 @@ import {
 function probeSandboxSourceKind(
   sandboxName: string,
   sandboxPath: string,
-): SandboxSourceKind | "missing" | undefined {
+): SandboxSourceKind | "missing" | "unsupported" | undefined {
   const probe = captureOpenshell(
     [
       "sandbox",
@@ -33,14 +33,16 @@ function probeSandboxSourceKind(
       "--",
       "sh",
       "-c",
-      'p=$1; if [ -d "$p" ]; then printf dir; elif [ -e "$p" ]; then printf file; else printf missing; fi',
+      'p=$1; if [ -L "$p" ]; then printf unsupported; elif [ -d "$p" ]; then printf dir; elif [ -f "$p" ]; then printf file; elif [ -e "$p" ]; then printf unsupported; else printf missing; fi',
       "sh",
       sandboxPath,
     ],
     { ignoreError: true },
   );
   const kind = probe?.output?.trim();
-  return kind === "file" || kind === "dir" || kind === "missing" ? kind : undefined;
+  return kind === "file" || kind === "dir" || kind === "missing" || kind === "unsupported"
+    ? kind
+    : undefined;
 }
 
 export interface SandboxDownloadOptions {
@@ -79,6 +81,11 @@ export async function downloadFromSandbox(
   if (sourceKind === "missing") {
     throw new Error(
       `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': no such path in the sandbox.`,
+    );
+  }
+  if (sourceKind === "unsupported") {
+    throw new Error(
+      `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': source is not a regular file or directory.`,
     );
   }
   if (sourceKind === undefined) {

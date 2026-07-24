@@ -161,7 +161,7 @@ function openDirectoryNoFollow(directory: string, destination: string): Director
   try {
     // This pins an existing directory read-only; it does not create a
     // temporary file, even when the destination is below the OS temp root.
-    // lgtm[js/insecure-temporary-file]
+    // codeql[js/insecure-temporary-file]
     fd = fs.openSync(directory, fs.constants.O_RDONLY | directoryFlag | noFollow);
   } catch (error) {
     if (errnoCode(error) === "ELOOP") {
@@ -322,7 +322,6 @@ function replaceWithPrivateEntry(
   source: string,
   destination: string,
   parent: DirectoryHandle,
-  sourceStat: fs.Stats,
 ): void {
   const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
   const temporaryPath = path.join(
@@ -333,35 +332,24 @@ function replaceWithPrivateEntry(
   let temporaryExists = false;
   try {
     assertDirectoryIdentity(parent, destination);
-    if (sourceStat.isSymbolicLink()) {
-      fs.symlinkSync(fs.readlinkSync(source), temporaryPath);
-      temporaryExists = true;
-      const temporaryStat = fs.lstatSync(temporaryPath);
-      if (!temporaryStat.isSymbolicLink()) {
-        throw new Error(`Refusing to publish changed staged symbolic link '${source}'.`);
-      }
-      assertDirectoryIdentity(parent, destination);
-      assertPrivateEntry(temporaryPath, temporaryStat, destination);
-    } else {
-      temporaryFd = fs.openSync(
-        temporaryPath,
-        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
-        0o600,
-      );
-      temporaryExists = true;
-      const temporaryStat = fs.fstatSync(temporaryFd);
-      if (!temporaryStat.isFile() || temporaryStat.nlink !== 1) {
-        throw new Error(`Refusing to publish through a non-private temporary file.`);
-      }
-      assertDirectoryIdentity(parent, destination);
-      assertPrivateEntry(temporaryPath, temporaryStat, destination);
-      const copiedStat = copyRegularFileToDescriptor(source, temporaryFd);
-      fs.fchmodSync(temporaryFd, copiedStat.mode & 0o777);
-      fs.fsyncSync(temporaryFd);
-      fs.closeSync(temporaryFd);
-      temporaryFd = null;
-      assertPrivateEntry(temporaryPath, temporaryStat, destination);
+    temporaryFd = fs.openSync(
+      temporaryPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+      0o600,
+    );
+    temporaryExists = true;
+    const temporaryStat = fs.fstatSync(temporaryFd);
+    if (!temporaryStat.isFile() || temporaryStat.nlink !== 1) {
+      throw new Error(`Refusing to publish through a non-private temporary file.`);
     }
+    assertDirectoryIdentity(parent, destination);
+    assertPrivateEntry(temporaryPath, temporaryStat, destination);
+    const copiedStat = copyRegularFileToDescriptor(source, temporaryFd);
+    fs.fchmodSync(temporaryFd, copiedStat.mode & 0o777);
+    fs.fsyncSync(temporaryFd);
+    fs.closeSync(temporaryFd);
+    temporaryFd = null;
+    assertPrivateEntry(temporaryPath, temporaryStat, destination);
 
     assertDirectoryIdentity(parent, destination);
     assertSafeDestinationEntry(destination);
@@ -394,18 +382,16 @@ function publishEntry(source: string, destination: string): void {
     }
     return;
   }
-  if (!sourceStat.isFile() && !sourceStat.isSymbolicLink()) {
+  if (sourceStat.isSymbolicLink()) {
+    throw new Error(`Refusing to publish symbolic link from staged artifact '${source}'.`);
+  }
+  if (!sourceStat.isFile()) {
     throw new Error(`Refusing to publish unsupported staged artifact '${source}'.`);
   }
 
   const parent = ensureDirectoryNoFollow(path.dirname(destination), destination);
   try {
-    replaceWithPrivateEntry(
-      source,
-      path.join(parent.path, path.basename(destination)),
-      parent,
-      sourceStat,
-    );
+    replaceWithPrivateEntry(source, path.join(parent.path, path.basename(destination)), parent);
   } finally {
     fs.closeSync(parent.fd);
   }

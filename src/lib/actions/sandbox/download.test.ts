@@ -138,6 +138,15 @@ describe("downloadFromSandbox", () => {
     expect(runMock).not.toHaveBeenCalled();
   });
 
+  it("rejects an unsupported sandbox source before attempting the download (#7367)", async () => {
+    captureMock.mockReturnValue({ status: 0, output: "unsupported" });
+
+    await expect(
+      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/fifo", hostDest: "./o" }),
+    ).rejects.toThrow(/source is not a regular file or directory/);
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
   it("passes a directory source through without requiring a regular file", async () => {
     captureMock.mockReturnValue({ status: 0, output: "dir" });
     (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);

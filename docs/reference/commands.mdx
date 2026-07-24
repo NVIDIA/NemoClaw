@@ -2470,6 +2470,7 @@ The in-sandbox staging artefact is additionally created with `umask 077` and rem
 
 Host-side wrapper around `openshell sandbox download` that checks the live sandbox.
 The command confirms that the source is a file or directory before it downloads.
+Symbolic links and other special source types are refused.
 If the command cannot confirm the source type, it exits without downloading.
 The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
 An existing destination directory is resolved to its canonical path before publication.

@@ -244,6 +244,21 @@ describe("publishDownloadArtifact", () => {
     expect(fs.readFileSync(outside, "utf8")).toBe("outside");
   });
 
+  it("rejects a symbolic link in the staged artifact without publishing it", () => {
+    const staged = path.join(dir, "staged");
+    const outside = path.join(dir, "outside.txt");
+    const destination = path.join(dir, "destination");
+    fs.mkdirSync(staged);
+    fs.writeFileSync(outside, "outside");
+    fs.symlinkSync(outside, path.join(staged, "linked.txt"));
+
+    expect(() => publishDownloadArtifact(staged, destination, "dir")).toThrow(
+      /Refusing to publish symbolic link from staged artifact/,
+    );
+    expect(fs.existsSync(path.join(destination, "linked.txt"))).toBe(false);
+    expect(fs.readFileSync(outside, "utf8")).toBe("outside");
+  });
+
   it("atomically replaces an existing regular file", () => {
     const staged = path.join(dir, "staged.txt");
     const destination = path.join(dir, "destination.txt");
