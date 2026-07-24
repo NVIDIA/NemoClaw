@@ -15,6 +15,10 @@ const OPENSHELL_SANDBOX_NOT_READY_STDERR = `Error:   × code: 'The system is not
 `;
 
 describe("recreated sandbox OpenShell readiness", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("retries only the structured not-ready state until OpenShell accepts the sandbox", () => {
     const notReady = {
       status: 1,
@@ -189,6 +193,29 @@ describe("recreated sandbox OpenShell readiness", () => {
     ).toBe(false);
     expect(beforeProbe).toHaveBeenCalledTimes(3);
     expect(captureOpenshellImpl).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([3, 3]);
+  });
+
+  it("does not let the legacy gateway timeout shorten the sandbox readiness budget (#7273)", () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
+    vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "6");
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 1,
+      output: OPENSHELL_SANDBOX_NOT_READY_STDERR.trim(),
+      stdout: "",
+      stderr: OPENSHELL_SANDBOX_NOT_READY_STDERR,
+    }));
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: Number(process.env.NEMOCLAW_SANDBOX_READY_TIMEOUT),
+      }),
+    ).toBe(false);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([3, 3]);
   });
 });

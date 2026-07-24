@@ -646,10 +646,12 @@ function waitForRecreatedSandboxOpenShellReadyResult(
   const capture = options.captureOpenshellImpl ?? captureOpenshell;
   const now = options.nowImpl ?? Date.now;
   const sleep = options.sleepImpl ?? sleepSeconds;
-  const timeoutSeconds = readNonNegativeNumberEnv(
-    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
-    options.timeoutSeconds ?? 30,
-  );
+  const timeoutSeconds =
+    typeof options.timeoutSeconds === "number" &&
+    Number.isFinite(options.timeoutSeconds) &&
+    options.timeoutSeconds >= 0
+      ? options.timeoutSeconds
+      : readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", 30);
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     options.intervalSeconds ?? 3,
