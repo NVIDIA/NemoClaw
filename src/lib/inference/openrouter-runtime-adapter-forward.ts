@@ -154,12 +154,16 @@ export async function forwardOpenRouterRequest(options: {
   }
   return new Promise((resolve) => {
     let settled = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let upstreamResponse: http.IncomingMessage | undefined;
     const resolveOnce = (status: number) => {
       if (settled) return;
       settled = true;
+      if (deadline) clearTimeout(deadline);
       resolve(status);
     };
     const failRequest = (err: unknown) => {
+      if (settled) return;
       resolveOnce(sendForwardError(options.res, err));
     };
     const headers = buildForwardRequestHeaders(options.req);
@@ -171,8 +175,33 @@ export async function forwardOpenRouterRequest(options: {
         headers,
       },
       (upstreamRes) => {
+        if (settled) {
+          upstreamRes.destroy();
+          return;
+        }
+        upstreamResponse = upstreamRes;
         const status = upstreamRes.statusCode || 502;
-        options.res.writeHead(status, buildForwardResponseHeaders(upstreamRes.headers));
+        const responseHeaders = buildForwardResponseHeaders(upstreamRes.headers);
+        let downstreamStarted = false;
+        const startDownstream = () => {
+          if (downstreamStarted) return;
+          downstreamStarted = true;
+          options.res.writeHead(status, responseHeaders);
+        };
+        // Upstream headers alone do not make the request successful. Delay the
+        // downstream commitment until body data arrives so a headers-then-stall
+        // deadline can still return the required redacted 504. Stream each body
+        // chunk immediately once the response starts. (#7248)
+        upstreamRes.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          startDownstream();
+          if (!options.res.write(chunk)) {
+            upstreamRes.pause();
+            options.res.once("drain", () => {
+              if (!settled) upstreamRes.resume();
+            });
+          }
+        });
         upstreamRes.once("aborted", () => {
           failRequest(
             new ForwardHttpError(
@@ -183,18 +212,22 @@ export async function forwardOpenRouterRequest(options: {
           );
         });
         upstreamRes.once("error", failRequest);
-        upstreamRes.pipe(options.res);
-        upstreamRes.once("end", () => resolveOnce(status));
+        upstreamRes.once("end", () => {
+          if (settled) return;
+          startDownstream();
+          options.res.end();
+          resolveOnce(status);
+        });
       },
     );
-    upstreamReq.setTimeout(
-      options.upstreamTimeoutMs ?? OPENROUTER_RUNTIME_ADAPTER_UPSTREAM_TIMEOUT_MS,
-      () => {
-        upstreamReq.destroy(
-          new ForwardHttpError(504, "OpenRouter upstream request timed out.", "upstream_timeout"),
-        );
-      },
-    );
+    deadline = setTimeout(() => {
+      if (settled) return;
+      failRequest(
+        new ForwardHttpError(504, "OpenRouter upstream request timed out.", "upstream_timeout"),
+      );
+      upstreamReq.destroy();
+      upstreamResponse?.destroy();
+    }, options.upstreamTimeoutMs ?? OPENROUTER_RUNTIME_ADAPTER_UPSTREAM_TIMEOUT_MS);
     upstreamReq.on("error", (err) => {
       failRequest(err);
     });

@@ -26,6 +26,12 @@ function swapStep(workflow: Workflow, jobId: (typeof JOBS)[number]): WorkflowSte
   )!;
 }
 
+function comparisonInitializeStep(workflow: Workflow, jobId: (typeof JOBS)[number]): WorkflowStep {
+  return workflow.jobs[jobId]!.steps.find(
+    (step) => step.name === "Initialize runner comparison telemetry",
+  )!;
+}
+
 describe("runner-pressure E2E workflow boundary (#7146)", () => {
   it("accepts the canonical Hermes heartbeat and terminal-consumer wiring", () => {
     expect(validateRunnerPressureWorkflow(loadWorkflow())).toEqual([]);
@@ -37,9 +43,11 @@ describe("runner-pressure E2E workflow boundary (#7146)", () => {
     const workflow = loadWorkflow();
     const jobSteps = workflow.jobs[jobId]!.steps;
     const provision = swapStep(workflow, jobId);
+    const comparisonInitialize = comparisonInitializeStep(workflow, jobId);
     const run = runStep(workflow, jobId);
 
     expect(provision).toBeDefined();
+    expect(jobSteps.indexOf(provision)).toBeLessThan(jobSteps.indexOf(comparisonInitialize));
     expect(jobSteps.indexOf(provision)).toBeLessThan(jobSteps.indexOf(run));
     expect(provision.run).toContain("fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap");
     expect(provision.run).toContain("chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap");
