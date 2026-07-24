@@ -67,11 +67,15 @@ Required PR workflows must identify the PR number, PR SHA, and base SHA.
 
 - The installer-hash workflow runs trusted verification after each `pull_request` `edited` event.
   Its run name records `gate true` and the base SHA. A metadata edit must not create skipped evidence.
-- Each `pull_request_target` E2E controller run that performs work must use an immutable `gate true` run name.
+- Each `pull_request_target` E2E controller run for an open PR must use an immutable `gate true` run name.
   The run name must identify the PR number, PR SHA, and base SHA.
+- Metadata-only edits must keep the `E2E / PR Gate` observer active.
+  They must not create a new coordination check.
+- A closed event must use `E2E / PR Gate (not applicable)` for its skipped observer.
+  It must not publish the required check name.
 - GitHub usually associates the run with the PR.
   If that association is empty, require the controller path, branch, repository, and run time to match the coordination check.
-- Discard a later all-skipped `gate false` metadata run only when a stronger run exists for the same PR SHA and base SHA.
+- Treat an all-skipped `gate false` run from an older workflow version as non-evidence.
 - Fail closed when identity, state, or timing evidence is missing, malformed, stale, contradictory, or changed.
 
 ### Controller status and PR status
