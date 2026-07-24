@@ -371,11 +371,21 @@ function proxyOwnsPortWithToken(token: string): boolean {
  * after a failed re-onboard (see issue #2553).
  */
 function ensureOllamaAuthProxy(): void {
+  const pid = loadPersistedProxyPid();
+  // Provider selection can replace the proxy before it commits the new route state.
+  // Keep that proxy so recovery does not restore the previous provider backend.
+  if (
+    ollamaProxyToken &&
+    isOllamaProxyProcess(pid) &&
+    probeProxyToken(ollamaProxyToken) === "accepted"
+  ) {
+    return;
+  }
+
   // Try to load persisted token first — if none, this isn't an Ollama setup.
   const token = loadPersistedProxyToken();
   if (!token) return;
 
-  const pid = loadPersistedProxyPid();
   if (isOllamaProxyProcess(pid)) {
     const tokenStatus = probeProxyToken(token);
     if (tokenStatus === "accepted") {
