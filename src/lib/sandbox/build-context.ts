@@ -277,6 +277,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-bundled-npm-tar.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "upgrade-bundled-npm.mts"),
+    path.join(stagedScriptsDir, "upgrade-bundled-npm.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "verify-wechat-runtime-lock.mts"),
     path.join(stagedScriptsDir, "verify-wechat-runtime-lock.mts"),
   );
