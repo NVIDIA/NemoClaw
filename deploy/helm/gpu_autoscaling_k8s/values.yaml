@@ -23,7 +23,13 @@ replicaCount: 1
 ollama:
   image:
     repository: ollama/ollama
+    # Pinned by digest so `helm install/upgrade` always pulls the exact image reviewed with
+    # this chart, not whatever `latest` currently resolves to. `tag` stays human-readable;
+    # the digest (not the tag) is what containerd actually resolves. To intentionally pick
+    # up a newer Ollama release, re-pin both: `docker manifest inspect ollama/ollama:latest`
+    # (or the registry API) for the new linux/amd64 digest, then bump `tag` to match.
     tag: latest
+    digest: "sha256:f040603c11a11f125660eaf848170780e43b68973fc270e26f168536031ac258"
     pullPolicy: IfNotPresent
   port: 11434
   # Concurrent GPU batches per model (raise with care — VRAM limited).
@@ -41,7 +47,9 @@ ollama:
 agent:
   image:
     repository: node
+    # Same digest-pinning rationale as ollama.image above.
     tag: "22-bookworm-slim"
+    digest: "sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27"
     pullPolicy: IfNotPresent
 
 nameOverride: ""
@@ -70,6 +78,22 @@ ingress:
   path: /
   pathType: Prefix
   tls: []
+  # The chart refuses to render a routable Ingress unless ingress.tls is configured (a real
+  # cert) or this is explicitly true — see README "Ingress security". install-hpa.sh sets
+  # this for you because its scripts target private/dev clusters that don't have a TLS
+  # cert for ingress.host; a bare `helm install` of this chart does not set it.
+  allowInsecureHttp: false
+  # Basic auth in front of the completion proxy, which has no authentication of its own.
+  # On by default. Leaving password empty auto-generates a random one on first install and
+  # reuses it across `helm upgrade` re-runs (install-hpa.sh/hpa-load-test.sh/hpa-reset.sh
+  # never pass --reuse-values) so the credential doesn't rotate underneath you. Retrieve it
+  # with `kubectl get secret <fullname>-agent-ingress-auth -o jsonpath='{.data.password}' |
+  # base64 -d` (see README "Ingress security").
+  auth:
+    enabled: true
+    username: admin
+    password: ""
+    existingSecret: ""
 
 # Local GPU inference via Ollama sidecar (same pattern as NemoClaw GPU E2E / Ollama onboard)
 inference:
@@ -91,6 +115,32 @@ resources:
     nvidia.com/gpu: "1"
 
 podAnnotations: {}
+
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+
+# The ollama container needs GPU device access via the NVIDIA device plugin; forcing
+# non-root/read-only-rootfs here is untested against every driver/container-toolkit
+# combination and risks silently breaking GPU access, so this stays minimal (no privilege
+# escalation, no extra Linux capabilities) rather than fully locked down. Override via
+# --set ollamaSecurityContext.<field>=... once you've validated non-root on your cluster.
+ollamaSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+# The agent sidecar is a plain Node.js HTTP proxy with no device or host access, so it can
+# be fully locked down: non-root, no capabilities, read-only rootfs (it writes nothing; see
+# the "tmp" emptyDir mount below for any incidental scratch space Node itself may want).
+agentSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
 
 # Readiness checks local Ollama (/readyz). First model pull can take several minutes.
 probes:

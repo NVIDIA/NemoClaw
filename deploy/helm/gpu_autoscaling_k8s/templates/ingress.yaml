@@ -1,5 +1,8 @@
 {{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if and (not .Values.ingress.tls) (not .Values.ingress.allowInsecureHttp) }}
+{{- fail "ingress.tls is empty and ingress.allowInsecureHttp is false: refusing to render an Ingress that would expose /v1/chat/completions over plain HTTP. Configure ingress.tls with a real certificate, or set --set ingress.allowInsecureHttp=true to explicitly accept cleartext HTTP (e.g. for a private/dev cluster — install-hpa.sh does this for you). See README \"Ingress security\"." }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -7,10 +10,15 @@ metadata:
   namespace: {{ include "nemoclaw-gpu.namespace" . }}
   labels:
     {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
   annotations:
+    {{- if .Values.ingress.auth.enabled }}
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: {{ .Values.ingress.auth.existingSecret | default (include "nemoclaw-gpu.ingressAuthSecretName" .) }}
+    nginx.ingress.kubernetes.io/auth-realm: "NemoClaw GPU agent - authentication required"
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}

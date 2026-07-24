@@ -123,6 +123,7 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --set autoscaling.minReplicas=1 \
   --set autoscaling.maxReplicas="${TARGET_PODS}" \
   --set "autoscaling.targetGPUUtilizationPercentage=${HPA_TARGET_GPU}" \
+  --set ingress.allowInsecureHttp=true \
   >/dev/null
 
 hpa_common_verify_hpa_bounds "${NAMESPACE}" "${DEPLOYMENT}" "${DEPLOYMENT}" 1 "${TARGET_PODS}" || true
@@ -175,14 +176,20 @@ if [[ "${SMOKE_OK}" -ne 1 ]]; then
 fi
 hpa_common_log "Smoke test OK — starting load generators"
 
+LOAD_SA="${JOB_NAME}-sa"
 cleanup() {
+  # Remove every resource this script creates (Job, RBAC, ConfigMap) so repeated runs
+  # don't accumulate unused ServiceAccounts/Roles/RoleBindings/ConfigMaps in the namespace.
   kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete rolebinding "${JOB_NAME}-endpoints-reader" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete role "${JOB_NAME}-endpoints-reader" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete serviceaccount "${LOAD_SA}" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete configmap "${JOB_NAME}-scripts" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
 
-LOAD_SA="${JOB_NAME}-sa"
 kubectl apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: ServiceAccount
@@ -244,7 +251,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: load-generator
-          image: node:22-bookworm-slim
+          image: node:22-bookworm-slim@sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27
           command: ["node", "/scripts/load-generator.mjs"]
           env:
             - name: TARGET_URL

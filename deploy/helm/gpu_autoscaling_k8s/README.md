@@ -63,6 +63,13 @@ For MicroK8s, the installer enables the GPU and Metrics Server add-ons when need
 
 ## Install
 
+Before installing (or after editing the chart), check that the HPA/Deployment/Service/
+ServiceMonitor name-and-label contract still holds — no cluster required:
+
+```bash
+./scripts/test-render-contract.sh
+```
+
 From the NemoClaw repository:
 
 ```bash
@@ -101,6 +108,11 @@ Set a custom Ingress hostname:
 ```bash
 INGRESS_HOST=nemoclaw.example.com ./scripts/install-hpa.sh
 ```
+
+`hpa-reset.sh` does not persist the release's current Ingress host — it re-applies whatever
+`INGRESS_HOST` is set in its own environment (default: unset, which falls back to
+`values.yaml`'s `nemoclaw.local`). If you set a custom host, pass the same `INGRESS_HOST`
+to `hpa-reset.sh` too, e.g. `INGRESS_HOST=nemoclaw.example.com ./scripts/hpa-reset.sh`.
 
 ## Verify the deployment
 
@@ -247,6 +259,7 @@ All commands below are run from `deploy/helm/gpu_autoscaling_k8s`.
 | `scripts/get-hpa.sh` | Show readable HPA GPU utilization |
 | `scripts/hpa-watch.sh` | Watch HPA changes |
 | `scripts/hpa-common.sh` | Shared script helpers |
+| `scripts/test-render-contract.sh` | Static `helm template` check: HPA/Deployment/Service/ServiceMonitor names and labels agree |
 
 Typical workflow:
 
@@ -363,10 +376,12 @@ kubectl port-forward \
   8080:80
 ```
 
-In another terminal:
+In another terminal (retrieve the auto-generated basic-auth password first — see "Ingress security" below):
 
 ```bash
-curl -s -H 'Host: nemoclaw.local' \
+PASSWORD=$(kubectl get secret nemoclaw-gpu-agent-ingress-auth -n nemoclaw-gpu \
+  -o jsonpath='{.data.password}' | base64 -d)
+curl -s -u "admin:${PASSWORD}" -H 'Host: nemoclaw.local' \
   http://127.0.0.1:8080/healthz
 ```
 
@@ -379,7 +394,35 @@ ingress:
     nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
 ```
 
-The Ingress does not add authentication or TLS automatically. Do not expose the endpoint publicly until you configure both.
+### Ingress security
+
+The completion proxy (`agent-server.mjs`) has no authentication of its own, so the chart
+enforces two things at the Ingress level:
+
+- **Basic auth is on by default** (`ingress.auth.enabled: true`). The chart auto-generates a
+  random password on first install and reads it back from the existing Secret (via Helm's
+  `lookup`) on every later `helm upgrade`, so it doesn't rotate every time
+  `install-hpa.sh`/`hpa-load-test.sh`/`hpa-reset.sh` re-runs. Retrieve it with:
+
+  ```bash
+  kubectl get secret nemoclaw-gpu-agent-ingress-auth -n nemoclaw-gpu \
+    -o jsonpath='{.data.password}' | base64 -d
+  ```
+
+  Set `ingress.auth.password` yourself, or `ingress.auth.existingSecret` to point at your
+  own `kubernetes.io/basic-auth`-style secret (must contain an `auth` key in htpasswd
+  format), to use a specific credential instead.
+
+- **TLS is not automatic.** The chart refuses to render an Ingress at all unless either
+  `ingress.tls` is configured with a real certificate, or `ingress.allowInsecureHttp: true`
+  is explicitly set. `install-hpa.sh` (and the other scripts) set `allowInsecureHttp=true`
+  for you, because they target private/dev clusters with no cert for `ingress.host` — that
+  is the documented, explicit tradeoff for this workflow, not a silent default. Set
+  `ingress.tls` with a cert-manager-issued (or your own) certificate before exposing this
+  endpoint anywhere it isn't already network-isolated.
+
+Do not expose the endpoint on a public network until you've confirmed both of the above are
+configured the way you intend.
 
 NGINX selects a ready backend for each request. It cannot move an inference request that is already running when the HPA adds a new pod, so long-lived requests may still produce temporary utilization differences between GPUs.
 

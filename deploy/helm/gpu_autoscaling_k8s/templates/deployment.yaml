@@ -24,6 +24,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if .Values.runtimeClassName }}
       runtimeClassName: {{ .Values.runtimeClassName | quote }}
       {{- end }}
@@ -41,8 +45,12 @@ spec:
       {{- end }}
       containers:
         - name: ollama
-          image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
+          image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}{{ with .Values.ollama.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
+          {{- with .Values.ollamaSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           command: ["/bin/sh", "/scripts/ollama-start.sh"]
           ports:
             - name: ollama
@@ -83,8 +91,12 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 12
         - name: agent
-          image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
+          image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}{{ with .Values.agent.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          {{- with .Values.agentSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           command: ["node", "/app/agent-server.mjs"]
           ports:
             - name: http
@@ -109,6 +121,8 @@ spec:
             - name: app
               mountPath: /app
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- include "nemoclaw-gpu.agentResources" . | nindent 12 }}
           startupProbe:
@@ -150,6 +164,8 @@ spec:
               - key: ollama-start.sh
                 path: ollama-start.sh
                 mode: 0755
+        - name: tmp
+          emptyDir: {}
         - name: ollama-data
           {{- if and .Values.ollama.persistence.enabled .Values.ollama.persistence.hostPath }}
           hostPath:

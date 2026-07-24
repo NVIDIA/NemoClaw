@@ -27,6 +27,12 @@ INGRESS_RELEASE="${INGRESS_RELEASE:-ingress-nginx}"
 INGRESS_CLASS="${INGRESS_CLASS:-nginx}"
 INGRESS_HELM_TIMEOUT="${INGRESS_HELM_TIMEOUT:-5m}"
 INGRESS_HOST="${INGRESS_HOST:-}"
+# Pinned to reviewed chart versions — installing by name alone (no --version) would let a
+# later run silently pull whatever the maintainers most recently published upstream.
+# Bump deliberately: `helm search repo <repo>/<chart> --versions` to pick a new version.
+PROM_CHART_VERSION="${PROM_CHART_VERSION:-87.19.0}"
+ADAPTER_CHART_VERSION="${ADAPTER_CHART_VERSION:-5.3.0}"
+INGRESS_CHART_VERSION="${INGRESS_CHART_VERSION:-4.15.1}"
 DEPLOYMENT="${DEPLOYMENT:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_agent_deployment)}"
 HPA_NAME="${HPA_NAME:-${DEPLOYMENT}}"
 HPA_VALUES="${HPA_VALUES:-${CHART_DIR}/values-step2-hpa.yaml}"
@@ -69,6 +75,7 @@ ensure_prometheus_stack() {
     helm upgrade --install "${PROM_RELEASE}" prometheus-community/kube-prometheus-stack \
       --namespace "${MONITORING_NS}" \
       --create-namespace \
+      --version "${PROM_CHART_VERSION}" \
       -f "${PROM_VALUES}" \
       --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
       --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
@@ -92,6 +99,7 @@ ensure_prometheus_stack() {
 
   helm upgrade --install "${ADAPTER_RELEASE}" prometheus-community/prometheus-adapter \
     --namespace "${MONITORING_NS}" \
+    --version "${ADAPTER_CHART_VERSION}" \
     -f "${ADAPTER_VALUES}" \
     --set "prometheus.url=${PROM_URL}" \
     --set prometheus.port=9090 \
@@ -126,6 +134,7 @@ ensure_ingress_nginx() {
   helm upgrade --install "${INGRESS_RELEASE}" ingress-nginx/ingress-nginx \
     --namespace "${INGRESS_NS}" \
     --create-namespace \
+    --version "${INGRESS_CHART_VERSION}" \
     --set controller.ingressClassResource.name="${INGRESS_CLASS}" \
     --set controller.metrics.enabled=true \
     --set controller.metrics.serviceMonitor.enabled=true \

@@ -375,6 +375,10 @@ hpa_common_gpu_helm_upgrade() {
     --set autoscaling.minReplicas="${min}"
     --set autoscaling.maxReplicas="${max}"
     --set "autoscaling.targetGPUUtilizationPercentage=${gpu_target}"
+    # These scripts target private/dev clusters with no TLS cert for ingress.host — this is
+    # the explicit, documented acknowledgment the chart requires (see templates/ingress.yaml)
+    # to render an Ingress without ingress.tls. Set ingress.tls yourself for a real cert.
+    --set ingress.allowInsecureHttp=true
   )
   if [[ -n "${ingress_host}" ]]; then
     helm_args+=(--set "ingress.host=${ingress_host}")
@@ -383,15 +387,32 @@ hpa_common_gpu_helm_upgrade() {
   helm "${helm_args[@]}" >/dev/null
 }
 
+# Recovery boundary: only touches pods that are either chart-owned (selector label
+# app.kubernetes.io/name=nemoclaw-gpu) or belong to a Kubernetes Job (job-name label —
+# this chart's load-test Jobs are the only Jobs expected in a namespace dedicated to it).
+# Never force-deletes every pod in the namespace, so an unrelated workload sharing the
+# namespace (a misconfiguration, not the documented usage) is left alone.
 hpa_common_clear_stuck_pods() {
   local ns="${1:?namespace}"
   local pod
-  for pod in $(kubectl get pods -n "${ns}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+  for pod in $(kubectl get pods -n "${ns}" \
+    -l 'app.kubernetes.io/name=nemoclaw-gpu' \
+    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     [[ -z "${pod}" ]] && continue
     kubectl patch pod "${pod}" -n "${ns}" -p '{"metadata":{"finalizers":null}}' --type=merge \
       >/dev/null 2>&1 || true
   done
-  kubectl delete pods -n "${ns}" --all --force --grace-period=0 >/dev/null 2>&1 || true
+  for pod in $(kubectl get pods -n "${ns}" \
+    -l 'job-name' \
+    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    [[ -z "${pod}" ]] && continue
+    kubectl patch pod "${pod}" -n "${ns}" -p '{"metadata":{"finalizers":null}}' --type=merge \
+      >/dev/null 2>&1 || true
+  done
+  kubectl delete pods -n "${ns}" -l 'app.kubernetes.io/name=nemoclaw-gpu' \
+    --force --grace-period=0 >/dev/null 2>&1 || true
+  kubectl delete pods -n "${ns}" -l 'job-name' \
+    --force --grace-period=0 >/dev/null 2>&1 || true
 }
 
 hpa_common_ensure_agent_ready() {
@@ -408,6 +429,8 @@ hpa_common_ensure_agent_ready() {
     --set "namespace.create=false"
     --set "autoscaling.enabled=false"
     --set "gpuScaling.count=1"
+    # See the matching comment in hpa_common_gpu_helm_upgrade above.
+    --set "ingress.allowInsecureHttp=true"
   )
   if [[ -n "${values_file}" && -f "${values_file}" ]]; then
     helm_args+=(-f "${values_file}")

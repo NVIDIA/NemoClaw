@@ -2,3 +2,7 @@ HPA: kubectl get hpa -n {{ include "nemoclaw-gpu.namespace" . }} -w
 Pods: ./scripts/get-agent-pods.sh -n {{ include "nemoclaw-gpu.namespace" . }} -w  (per-pod GPU %)
 Ingress: kubectl get ingress {{ include "nemoclaw-gpu.fullname" . }}-agent -n {{ include "nemoclaw-gpu.namespace" . }}
 Endpoint: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}{{ .Values.ingress.path }}
+{{- if and .Values.ingress.auth.enabled (not .Values.ingress.auth.existingSecret) }}
+Ingress basic-auth username: {{ .Values.ingress.auth.username }}
+Ingress basic-auth password: kubectl get secret {{ include "nemoclaw-gpu.ingressAuthSecretName" . }} -n {{ include "nemoclaw-gpu.namespace" . }} -o jsonpath='{.data.password}' | base64 -d
+{{- end }}

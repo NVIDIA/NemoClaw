@@ -41,6 +41,10 @@ nemoclaw.ai/workload-type: gpu
 {{- .Values.namespace.name }}
 {{- end }}
 
+{{- define "nemoclaw-gpu.ingressAuthSecretName" -}}
+{{- printf "%s-agent-ingress-auth" (include "nemoclaw-gpu.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{- define "nemoclaw-gpu.replicas" -}}
 {{- if .Values.gpuScaling.oneReplicaPerGpu -}}
 {{- .Values.gpuScaling.count | int }}

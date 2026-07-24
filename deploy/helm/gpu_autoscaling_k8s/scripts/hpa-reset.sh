@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Tear down load-test Jobs and GPU agent pods, then helm upgrade idle baseline.
+# Recovery boundary: assumes NAMESPACE is dedicated to this chart (see cluster-recover.sh);
+# pod/finalizer cleanup is scoped to the chart's selector label or job-name, never --all.
 #
 # Usage:
 #   cd deploy/helm/gpu_autoscaling_k8s
@@ -31,6 +33,10 @@ MIN_REPLICAS="${MIN_REPLICAS:-1}"
 MAX_REPLICAS="${MAX_REPLICAS:-4}"
 GPU_TARGET="${GPU_TARGET:-40}"
 INFERENCE_MODEL="${INFERENCE_MODEL:-llama3.2:3b}"
+# Preserve a previously configured Ingress host across reset — without this, the helm
+# upgrade below leaves ingress.host unset and Helm falls back to values.yaml's default,
+# silently changing the route clients use to reach the agent.
+INGRESS_HOST="${INGRESS_HOST:-}"
 SERVICE="${SERVICE:-$(RELEASE="${RELEASE}" CHART_NAME=nemoclaw-gpu hpa_common_agent_service)}"
 
 require_cmd kubectl
@@ -43,9 +49,20 @@ namespace_exists() {
   kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1
 }
 
+# Scoped to chart-owned pods (selector label) or Job-owned pods (job-name) — never every
+# pod in NAMESPACE — so a namespace accidentally shared with unrelated workloads is safe.
 clear_pod_finalizers() {
   local pod
-  for pod in $(kubectl get pods -n "${NAMESPACE}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+  for pod in $(kubectl get pods -n "${NAMESPACE}" \
+    -l 'app.kubernetes.io/name=nemoclaw-gpu' \
+    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    [[ -z "${pod}" ]] && continue
+    kubectl patch pod "${pod}" -n "${NAMESPACE}" -p '{"metadata":{"finalizers":null}}' --type=merge \
+      >/dev/null 2>&1 || true
+  done
+  for pod in $(kubectl get pods -n "${NAMESPACE}" \
+    -l 'job-name' \
+    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     [[ -z "${pod}" ]] && continue
     kubectl patch pod "${pod}" -n "${NAMESPACE}" -p '{"metadata":{"finalizers":null}}' --type=merge \
       >/dev/null 2>&1 || true
@@ -58,6 +75,11 @@ fi
 
 kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
 kubectl delete configmap "${JOB_NAME}-scripts" -n "${NAMESPACE}" --ignore-not-found 2>/dev/null || true
+# Matches the RBAC hpa-load-test.sh creates for pod/HPA discovery — clean it up here too in
+# case a load test's own EXIT trap didn't run (e.g. the shell was killed).
+kubectl delete rolebinding "${JOB_NAME}-endpoints-reader" -n "${NAMESPACE}" --ignore-not-found 2>/dev/null || true
+kubectl delete role "${JOB_NAME}-endpoints-reader" -n "${NAMESPACE}" --ignore-not-found 2>/dev/null || true
+kubectl delete serviceaccount "${JOB_NAME}-sa" -n "${NAMESPACE}" --ignore-not-found 2>/dev/null || true
 
 if [[ "${DELETE_HPA}" == "1" ]]; then
   kubectl delete hpa "${HPA_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
@@ -68,10 +90,12 @@ if [[ "${DELETE_DEPLOYMENT}" == "1" ]]; then
   kubectl delete deployment "${DEPLOYMENT}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
 fi
 
-kubectl delete pods -n "${NAMESPACE}" --all --force --grace-period=0 2>/dev/null || true
+kubectl delete pods -n "${NAMESPACE}" -l 'app.kubernetes.io/name=nemoclaw-gpu' --force --grace-period=0 2>/dev/null || true
+kubectl delete pods -n "${NAMESPACE}" -l 'job-name' --force --grace-period=0 2>/dev/null || true
 sleep 2
 clear_pod_finalizers
-kubectl delete pods -n "${NAMESPACE}" --all --force --grace-period=0 2>/dev/null || true
+kubectl delete pods -n "${NAMESPACE}" -l 'app.kubernetes.io/name=nemoclaw-gpu' --force --grace-period=0 2>/dev/null || true
+kubectl delete pods -n "${NAMESPACE}" -l 'job-name' --force --grace-period=0 2>/dev/null || true
 
 kubectl delete rs -n "${NAMESPACE}" -l app.kubernetes.io/name=nemoclaw-gpu --ignore-not-found --wait=false 2>/dev/null || true
 hpa_common_clear_stuck_pods "${NAMESPACE}"
@@ -92,10 +116,10 @@ fi
 hpa_common_gpu_recreate_stale_workload "${NAMESPACE}" "${DEPLOYMENT}" "${SERVICE}"
 
 hpa_common_gpu_helm_upgrade "${RELEASE}" "${CHART_DIR}" "${NAMESPACE}" "${HPA_VALUES}" \
-  "${MIN_REPLICAS}" "${MAX_REPLICAS}" "${GPU_TARGET}" "${INFERENCE_MODEL}"
+  "${MIN_REPLICAS}" "${MAX_REPLICAS}" "${GPU_TARGET}" "${INFERENCE_MODEL}" "${INGRESS_HOST}"
 
 hpa_common_kick_deployment "${NAMESPACE}" "${DEPLOYMENT}" || hpa_common_gpu_helm_upgrade "${RELEASE}" "${CHART_DIR}" "${NAMESPACE}" "${HPA_VALUES}" \
-  "${MIN_REPLICAS}" "${MAX_REPLICAS}" "${GPU_TARGET}" "${INFERENCE_MODEL}"
+  "${MIN_REPLICAS}" "${MAX_REPLICAS}" "${GPU_TARGET}" "${INFERENCE_MODEL}" "${INGRESS_HOST}"
 
 hpa_common_verify_hpa_bounds "${NAMESPACE}" "${DEPLOYMENT}" "${HPA_NAME}" "${MIN_REPLICAS}" "${MAX_REPLICAS}" || true
 
