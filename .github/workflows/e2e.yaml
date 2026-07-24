@@ -5869,6 +5869,7 @@ jobs:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           JOBS: ${{ inputs.jobs }}
           RUNTIME_ARTIFACTS: ${{ runner.temp }}/e2e-runtime-audit
+          RUNTIME_SUMMARY_FILE: ${{ runner.temp }}/e2e-runtime-summary.json
           TARGETS: ${{ inputs.targets }}
         with:
           script: |
@@ -5885,6 +5886,9 @@ jobs:
             const runtimeAudit = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/audit-test-runtime.mts'),
             );
+            const runtimeHistory = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-runtime-history.mts'),
+            );
             const needs = ${{ toJSON(needs) }};
 
             // GitHub's jobs API is the canonical source because `needs.live`
@@ -5892,9 +5896,13 @@ jobs:
             // The typed helper owns and tests the degraded `needs` fallback.
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
             let runtimeSummaryMarkdown;
+            let runtimeHistoryRows = null;
             try {
               const runtimeRows = runtimeAudit.auditTestRuntime([process.env.RUNTIME_ARTIFACTS]);
               runtimeSummaryMarkdown = runtimeAudit.formatRuntimeAuditSummary(runtimeRows);
+              runtimeHistoryRows = runtimeAudit.collectRuntimeHistorySamples([
+                process.env.RUNTIME_ARTIFACTS,
+              ]);
             } catch {
               core.warning('E2E test phase runtime summary unavailable: invalid progress artifact');
               runtimeSummaryMarkdown = [
@@ -5904,6 +5912,18 @@ jobs:
                 '',
               ].join('\n');
             }
+            const runtimeHistoryMarkdown = runtimeHistoryRows === null
+              ? [
+                  '## E2E Nightly Runtime Trend',
+                  '',
+                  'The trend is unavailable because a `test-progress.json` artifact was invalid.',
+                  '',
+                ].join('\n')
+              : await runtimeHistory.buildRuntimeHistory(
+                  { github, context, core },
+                  runtimeHistoryRows,
+                  process.env.RUNTIME_SUMMARY_FILE,
+                );
             const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
             if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
 
@@ -5922,7 +5942,9 @@ jobs:
               today: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
             });
 
-            await core.summary.addRaw(`${summaryMarkdown}\n\n${runtimeSummaryMarkdown}`).write();
+            await core.summary
+              .addRaw(`${summaryMarkdown}\n\n${runtimeSummaryMarkdown}\n${runtimeHistoryMarkdown}`)
+              .write();
             core.setOutput('scorecardData', JSON.stringify(scorecardData));
             core.setOutput('slackData', JSON.stringify(slackData));
 
@@ -5983,3 +6005,10 @@ jobs:
             if (!response.ok) {
               core.setFailed(`Slack webhook returned ${response.status}`);
             }
+
+      - name: Upload E2E runtime summary
+        if: ${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-runtime-summary
+          path: ${{ runner.temp }}/e2e-runtime-summary.json
