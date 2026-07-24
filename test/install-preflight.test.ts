@@ -3848,6 +3848,18 @@ sys.exit(exit_code)
     expect(state).toBe("");
   });
 
+  it("hints 'Did you mean yes?' when a bare 'y' is typed at the license prompt (#7469)", () => {
+    const { result, phases, state } = runInstallerWithInteractiveStdin("y\n");
+    const output = `${result.stdout}${result.stderr}`;
+    // Acceptance is unchanged: only the exact word "yes" continues the install.
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Did you mean 'yes'\?/);
+    expect(output).toMatch(/Installation cancelled/);
+    expect(output).not.toMatch(/\[1\/3\] Node\.js/);
+    expect(phases).toBe("");
+    expect(state).toBe("");
+  });
+
   it("stops before phase 1 for --non-interactive alone with a controlling TTY", () => {
     const { result, phases, state } = runInstallerWithTty("yes\n", "pipe", {
       NEMOCLAW_NON_INTERACTIVE: "1",
