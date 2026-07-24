@@ -161,8 +161,7 @@ function openDirectoryNoFollow(directory: string, destination: string): Director
   try {
     // This pins an existing directory read-only; it does not create a
     // temporary file, even when the destination is below the OS temp root.
-    // codeql[js/insecure-temporary-file]
-    fd = fs.openSync(directory, fs.constants.O_RDONLY | directoryFlag | noFollow);
+    fd = fs.openSync(directory, fs.constants.O_RDONLY | directoryFlag | noFollow); // codeql[js/insecure-temporary-file]
   } catch (error) {
     if (errnoCode(error) === "ELOOP") {
       throw symlinkDestinationError(destination, directory);
