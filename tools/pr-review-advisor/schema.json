@@ -35,7 +35,9 @@
       "required": ["recommendation", "confidence", "oneLine"],
       "properties": {
         "recommendation": {
+          "description": "Advisor finding-ledger posture only. Use merge_as_is for a completed, non-low-confidence review with no open findings, merge_after_fixes when open findings remain, superseded when competing work replaces this PR, and info_only only for skipped, unavailable, incomplete, or low-confidence review evidence. This field never grants merge authority or replaces human review.",
           "enum": [
+            "merge_as_is",
             "merge_after_fixes",
             "needs_rework",
             "blocked",

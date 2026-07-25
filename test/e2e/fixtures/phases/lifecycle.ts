@@ -35,6 +35,35 @@ const STATUS_TIMEOUT_MS = 5 * 60_000;
 const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
 const SANDBOX_READY_DELAY_MS = 5_000;
+const USER_SERVICE_UNAVAILABLE_EXIT = 75;
+const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE =
+  "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
+
+export function buildOpenShellGatewayUserServiceRestartScript(): string {
+  return [
+    "set -eu",
+    'if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1 && brew list --formula openshell >/dev/null 2>&1; then',
+    '  brew info --json=v2 openshell | grep -Eq \'"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"\' || exit 1',
+    "  brew services restart openshell",
+    "  exit 0",
+    "fi",
+    `if ! command -v systemctl >/dev/null 2>&1; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    "service=openshell-gateway",
+    'if ! systemctl --user cat "$service" >/dev/null 2>&1; then',
+    '  case "${XDG_CONFIG_HOME:-}" in',
+    '    /*) config_home="$XDG_CONFIG_HOME" ;;',
+    '    *) config_home="$HOME/.config" ;;',
+    "  esac",
+    '  unit="$config_home/systemd/user/nemoclaw-openshell-gateway.service"',
+    `  if [ ! -f "$unit" ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    `  grep -Fxq '${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}' "$unit" || exit ${USER_SERVICE_UNAVAILABLE_EXIT}`,
+    "  service=nemoclaw-openshell-gateway",
+    "fi",
+    'systemctl --user is-enabled "$service" >/dev/null',
+    "systemctl --user daemon-reload",
+    'systemctl --user restart "$service"',
+  ].join("\n");
+}
 
 export type LifecycleProfile = "post-reboot-recovery" | "dcode-rebuild-invalid-credential";
 
@@ -179,25 +208,25 @@ export class LifecyclePhaseFixture {
   }
 
   /**
-   * Reproduce the host-side conditions of a DGX Spark / Linux Docker-driver
-   * reboot AND drive the user-visible action that exposes the bug:
+   * Reproduce the host-side conditions of a Linux Docker-driver reboot and
+   * drive the user-visible action that exposes reboot recovery bugs:
    *
    *   1. Locate the OpenShell-labeled Docker container for the
    *      target's sandbox name and either stop it (default) or
    *      stop+rename it to a `*-nemoclaw-gpu-backup-*` sibling.
-   *      The gateway runtime is left HEALTHY — attempting to stop
-   *      and restart it from the OpenShell CLI is unreliable on
-   *      `ubuntu-latest` (no `gateway start` subcommand) and the
-   *      remaining bug class for #4423 specifically requires a
-   *      `healthy_named` gateway when status runs (otherwise
-   *      #4578's mitigation takes over and masks the signal).
+   *      The gateway runtime is stopped and restarted through the
+   *      selected OpenShell user service, which mirrors a reboot or
+   *      user-manager restart. This target requires either the upstream
+   *      `openshell-gateway` service or the marked
+   *      `nemoclaw-openshell-gateway` service.
    *
    *   2. Invoke `nemoclaw <name> status` — the user-visible action
    *      that documented the regression in #4423. On unfixed `main`
    *      the destructive `missing` branch in `status.ts` wipes the
-   *      registry entry. On the PR-A fix branch the new Docker-driver
-   *      recovery helper restarts the labeled container before
-   *      stale-removal can fire.
+   *      registry entry. The Docker-driver recovery helper restarts the
+   *      labeled container before stale-removal can fire. The preceding gateway restart must
+   *      make `openshell status` report the named gateway connected
+   *      without running `nemoclaw onboard --resume`.
    *
    *   We deliberately do NOT assert on the status exit code here
    *   because the bug is precisely that status "succeeds" at
@@ -264,6 +293,18 @@ export class LifecyclePhaseFixture {
         });
       });
     }
+
+    const previousRuntime = await this.restartGatewayRuntime({
+      delayMs: 0,
+      requireUserService: true,
+      sandboxName: instance.sandboxName,
+    });
+    steps.push({
+      id: `gateway-restart:${previousRuntime?.kind ?? "user-service"}`,
+      results: [],
+    });
+    await this.waitForGatewayConnected();
+    steps.push({ id: "gateway-connected:nemoclaw", results: [] });
 
     // Final step: drive the user-visible action that exposed #4423.
     // We invoke status through the host CLI client so artifacts are
@@ -350,14 +391,22 @@ export class LifecyclePhaseFixture {
 
   async startGatewayRuntime(
     previousRuntime: HostGatewayRuntime | null,
-    options: { sandboxName?: string } = {},
+    options: { requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<ShellProbeResult> {
+    const userServiceStart = await this.startOpenShellGatewayUserService({
+      requireAvailable: options.requireUserService,
+    });
+    if (userServiceStart) return userServiceStart;
+    if (options.sandboxName) {
+      return await this.host.nemoclaw([options.sandboxName, "status"], {
+        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      });
+    }
     if (previousRuntime?.kind === "pid") {
-      const args = options.sandboxName ? [options.sandboxName, "status"] : ["status"];
-      return await this.host.nemoclaw(args, {
-        artifactName: options.sandboxName
-          ? `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`
-          : "lifecycle-gateway-recover-through-nemoclaw-status",
+      return await this.host.nemoclaw(["status"], {
+        artifactName: "lifecycle-gateway-recover-through-nemoclaw-status",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       });
@@ -369,8 +418,35 @@ export class LifecyclePhaseFixture {
     });
   }
 
+  private async startOpenShellGatewayUserService(options: {
+    requireAvailable?: boolean;
+  }): Promise<ShellProbeResult | null> {
+    const result = await this.host.command(
+      "sh",
+      ["-lc", buildOpenShellGatewayUserServiceRestartScript()],
+      {
+        artifactName: "lifecycle-gateway-user-service-restart",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
+    if (result.exitCode === 0) return result;
+    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT && !options.requireAvailable) {
+      return null;
+    }
+    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) {
+      throw new Error(
+        `OpenShell gateway user service is not available for reboot lifecycle recovery.`,
+      );
+    }
+    throw new Error(
+      `OpenShell gateway user service restart failed during reboot lifecycle: ` +
+        `${result.stderr || result.stdout || `exit ${String(result.exitCode)}`}`,
+    );
+  }
+
   async restartGatewayRuntime(
-    options: { delayMs?: number; sandboxName?: string } = {},
+    options: { delayMs?: number; requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<HostGatewayRuntime | null> {
     const previousRuntime = await this.stopGatewayRuntime();
     if (this.gateway) {
@@ -383,6 +459,7 @@ export class LifecyclePhaseFixture {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
     await this.startGatewayRuntime(previousRuntime, {
+      requireUserService: options.requireUserService,
       sandboxName: options.sandboxName,
     });
     return previousRuntime;

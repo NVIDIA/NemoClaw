@@ -181,9 +181,11 @@ graph as the live targets:
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for the #7145 contract: 12 routed workflow lane identities / 15
+telemetry for 14 routed workflow lane identities / 17
 concrete job executions.
 
+- `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
+- `bedrock-runtime-compatible-anthropic` with the `hermes` shard
 - `common-egress-agent` with the `openclaw-balanced-weather`,
   `openclaw-open-reference`, and `hermes-open-reference` shards
 - `rebuild-hermes`
@@ -201,7 +203,12 @@ concrete job executions.
 The three extra executions come from `common-egress-agent`, which runs three
 scenario shards, and `hermes-inference-switch`, which runs both listed modes.
 The OpenClaw matrix entries for `mcp-bridge`,
-`channels-stop-start`, and `security-posture` are not instrumented.
+`channels-stop-start`, `security-posture`, and
+`bedrock-runtime-compatible-anthropic` are not instrumented.
+The #7145 standard-versus-larger-runner cohort compares the same lane and
+equivalent workload while varying the runner class. The newly instrumented
+`agent-turn-latency` and Bedrock Hermes lanes extend diagnostic coverage; this
+change does not route them to a larger runner.
 
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
@@ -525,9 +532,13 @@ and dispatches the selected jobs and targets in one workflow run. The child
 workflow receives the controller-owned coordination check ID. Before checking
 out the PR revision, it requires a GitHub Actions dispatch and verifies that
 the exact check is owned by the GitHub Actions app, matches the PR head and base
-identity, names the selected plan, and links to the current child run. A direct
-manual dispatch that supplies otherwise-valid PR inputs cannot forge that
-one-run authorization and fails before checkout.
+identity, names the selected plan, and binds the exact current child Actions run
+in the controller-owned output summary. The child requests uncached check-run
+state up to 45 times with two-second delays, which spans GitHub's 60-second
+check cache, before failing closed. It does not use the check details URL for
+this binding because GitHub may canonicalize that field to the check's own
+`/runs/<check-id>` URL. A direct manual dispatch that supplies otherwise-valid
+PR inputs cannot forge that one-run authorization and fails before checkout.
 
 The manual maintainer path remains available as a fallback. A repository
 maintainer or administrator chooses **Run workflow** on `main`, selects

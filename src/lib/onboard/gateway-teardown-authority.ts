@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { normalizeSession, type Session } from "../state/onboard-session";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
@@ -88,10 +89,14 @@ function resolveGatewayEffectAuthority(
   if (!loaded.ok) {
     throw new Error(`Invalid gateway management declaration: ${loaded.reason}`);
   }
+  const hasPackagedService =
+    loaded.declaration === null &&
+    target.gatewayPort === DEFAULT_GATEWAY_PORT &&
+    (deps.hasPackagedService?.() ?? hasOpenShellGatewayUserService({ env }));
   const resolved = resolveGatewayOwner({
     ...target,
     declaration: loaded.declaration,
-    hasPackagedService: deps.hasPackagedService?.() ?? hasOpenShellGatewayUserService(),
+    hasPackagedService,
   });
 
   const session = (deps.loadSession ?? loadTargetSession)(target, env);

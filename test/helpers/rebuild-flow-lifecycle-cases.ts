@@ -137,6 +137,150 @@ export function registerRebuildFlowLifecycleTests(): void {
       );
     });
 
+    it("keeps baseline exclusions durable through successful replacement onboarding (#7194)", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          baselineExclusions: [
+            {
+              version: 1,
+              agent: "openclaw",
+              key: "openclaw_docs",
+              digest: "baseline-digest",
+              acknowledgedAt: "2026-07-19T00:00:00.000Z",
+              appliedAgentVersion: "2026.6.10",
+            },
+          ],
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+      expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+        "Preserving baseline-exclusion registry entry across sandbox recreation",
+      );
+      expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
+      expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects a schema-invalid recorded-agent baseline before registry or live sandbox mutation (#7194)", async () => {
+      const harness = createRebuildFlowHarness({
+        agentPolicyAdditionsContent: `
+version: 1
+network_policies:
+  unsafe_entry:
+    name: unsafe_entry
+    endpoints:
+      - host: api.example.test
+        port: 443
+        access: full
+`,
+        preflightWithProductionBaselineResolver: true,
+        sandboxEntry: {
+          agent: "hermes",
+          baselineExclusions: [
+            {
+              version: 1,
+              agent: "hermes",
+              key: "nous_research",
+              digest: "baseline-digest",
+              acknowledgedAt: "2026-07-19T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).rejects.toThrow("Replacement onboarding preflight failed");
+
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+        "does not satisfy the shipped sandbox policy schema",
+      );
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
+        ),
+      ).toBe(false);
+    });
+
+    it("keeps baseline-exclusion retry metadata when inner replacement creation fails (#7194)", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          baselineExclusions: [
+            {
+              version: 1,
+              agent: "openclaw",
+              key: "openclaw_docs",
+              digest: "baseline-digest",
+              acknowledgedAt: "2026-07-19T00:00:00.000Z",
+              appliedAgentVersion: "2026.6.10",
+            },
+          ],
+        },
+        onboard: () => {
+          throw new Error("injected replacement create failure");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
+
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+      expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
+      expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
+      expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+        "Preserving baseline-exclusion registry entry across sandbox recreation",
+      );
+    });
+
+    it("waits for post-delete sandbox absence before inner onboarding (#7194)", async () => {
+      const events: string[] = [];
+      let sandboxGetAttempts = 0;
+      const probeSequence = [
+        {
+          event: "stale-live",
+          result: { status: 0, output: "Sandbox: alpha\nPhase: Ready" },
+        },
+        {
+          event: "absent",
+          result: { status: 1, output: "", stderr: "Not Found: sandbox not found" },
+        },
+      ];
+      const harness = createRebuildFlowHarness({
+        captureOpenshell: () => {
+          const probe = probeSequence[Math.min(sandboxGetAttempts, probeSequence.length - 1)];
+          sandboxGetAttempts += 1;
+          events.push(probe.event);
+          return probe.result;
+        },
+        onboard: () => {
+          events.push("onboard");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(events).toEqual(["stale-live", "absent", "onboard"]);
+      expect(
+        harness.captureOpenshellSpy.mock.calls.filter(
+          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get alpha",
+        ),
+      ).toHaveLength(2);
+    });
+
     it("accepts the agent version cached by the confirmation probe before lock acquisition", async () => {
       const harness = createRebuildFlowHarness({
         sandboxEntry: { agentVersion: null },

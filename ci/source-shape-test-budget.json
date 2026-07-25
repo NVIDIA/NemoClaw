@@ -158,7 +158,7 @@
     },
     {
       "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "compiles host-preservation probes for every post-reboot recovery target",
+      "test": "compiles gateway-health and host-preservation probes for every post-reboot recovery target",
       "category": "security"
     },
     {
@@ -389,6 +389,51 @@
     {
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "audits the same lock and rebuilds the base when its graph changes",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "fails closed on missing required packages and symlinked package roots",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "invokes the locked installer before exposing OpenClaw in %s",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "rejects $name even with a test-only matching lock digest",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "rejects a same-registry tarball with a substituted package manifest",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "rejects any lock byte tamper before registry metadata is consulted",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-locked-install.test.ts",
+      "test": "rejects symlinked package manifests",
+      "category": "security"
+    },
+    {
+      "file": "test/reviewed-npm-audit-workflow.test.ts",
+      "test": "executes the trusted driver and helper against explicit target inputs",
+      "category": "security"
+    },
+    {
+      "file": "test/reviewed-npm-audit-workflow.test.ts",
+      "test": "runs PR audits from trusted code and keeps the main audit on the checked-in action",
       "category": "security"
     },
     {

@@ -18,7 +18,7 @@ describe("OpenClaw final image layout", () => {
     const payloads = [
       {
         stage: "openclaw-dependency-payload",
-        copies: 9,
+        copies: 11,
         metadata: "/ /usr /usr/local /usr/local/lib",
       },
       {
