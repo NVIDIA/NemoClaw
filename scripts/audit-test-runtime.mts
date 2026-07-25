@@ -7,6 +7,9 @@ import { pathToFileURL } from "node:url";
 
 import type { ProgressPhase, ProgressSummary } from "../test/e2e/fixtures/progress.ts";
 
+export type RuntimeOutcome = "passed" | "failed" | "skipped";
+type ValidatedProgressSummary = Omit<ProgressSummary, "durationMs"> & { durationMs: number };
+
 export interface RuntimeAuditRow {
   target: string;
   scenario: string;
@@ -17,10 +20,24 @@ export interface RuntimeAuditRow {
   variabilityMs: number;
   slowestPhase: string;
   slowestPhaseMs: number;
-  slowestPhaseOutcome: "passed" | "failed" | "skipped";
+  slowestPhaseOutcome: RuntimeOutcome;
 }
 
-function isProgressSummary(value: unknown): value is ProgressSummary {
+export interface RuntimeHistoryPhase {
+  label: string;
+  durationMs: number;
+  outcome: RuntimeOutcome;
+}
+
+export interface RuntimeHistorySample {
+  target: string;
+  scenario: string;
+  durationMs: number;
+  outcome: RuntimeOutcome;
+  phases: RuntimeHistoryPhase[];
+}
+
+function isProgressSummary(value: unknown): value is ValidatedProgressSummary {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const summary = value as Partial<ProgressSummary>;
   return (
@@ -65,6 +82,14 @@ function progressFiles(root: string): string[] {
   return result.sort();
 }
 
+function readProgressSummaries(roots: readonly string[]): ValidatedProgressSummary[] {
+  return roots.flatMap(progressFiles).map((file) => {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!isProgressSummary(parsed)) throw new Error(`${file}: invalid test progress summary`);
+    return parsed;
+  });
+}
+
 function percentile(sorted: readonly number[], fraction: number): number {
   const index = Math.max(0, Math.ceil(sorted.length * fraction) - 1);
   return sorted[index] ?? 0;
@@ -78,13 +103,57 @@ function median(sorted: readonly number[]): number {
   return sorted[middle] ?? 0;
 }
 
+function runtimeOutcome(phases: readonly Pick<ProgressPhase, "outcome">[]): RuntimeOutcome {
+  if (phases.some((phase) => phase.outcome === "failed")) return "failed";
+  if (phases.some((phase) => phase.outcome === "skipped")) return "skipped";
+  return "passed";
+}
+
+function targetIdentity(summary: ValidatedProgressSummary): string {
+  return [summary.targetId ?? "unlabeled", summary.shardId].filter(Boolean).join("/");
+}
+
+export function collectRuntimeHistorySamples(
+  roots: readonly string[],
+): RuntimeHistorySample[] {
+  const grouped = new Map<string, ValidatedProgressSummary[]>();
+  for (const summary of readProgressSummaries(roots)) {
+    const key = JSON.stringify([targetIdentity(summary), summary.scenario]);
+    const group = grouped.get(key) ?? [];
+    group.push(summary);
+    grouped.set(key, group);
+  }
+
+  return [...grouped.values()]
+    .map((runs): RuntimeHistorySample => {
+      const first = runs[0];
+      if (!first) throw new Error("runtime history group is unexpectedly empty");
+      const phasesByLabel = new Map<string, ProgressPhase[]>();
+      for (const phase of runs.flatMap((run) => run.phases)) {
+        const phases = phasesByLabel.get(phase.label) ?? [];
+        phases.push(phase);
+        phasesByLabel.set(phase.label, phases);
+      }
+      return {
+        target: targetIdentity(first),
+        scenario: first.scenario,
+        durationMs: median(runs.map((run) => run.durationMs).sort((a, b) => a - b)),
+        outcome: runtimeOutcome(runs.flatMap((run) => run.phases)),
+        phases: [...phasesByLabel.entries()]
+          .map(([label, phases]) => ({
+            label,
+            durationMs: median(phases.map((phase) => phase.durationMs).sort((a, b) => a - b)),
+            outcome: runtimeOutcome(phases),
+          }))
+          .sort((left, right) => left.label.localeCompare(right.label)),
+      };
+    })
+    .sort((left, right) => right.durationMs - left.durationMs);
+}
+
 export function auditTestRuntime(roots: readonly string[]): RuntimeAuditRow[] {
-  const summaries = roots.flatMap(progressFiles).map((file) => {
-    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!isProgressSummary(parsed)) throw new Error(`${file}: invalid test progress summary`);
-    return parsed;
-  });
-  const grouped = new Map<string, ProgressSummary[]>();
+  const summaries = readProgressSummaries(roots);
+  const grouped = new Map<string, ValidatedProgressSummary[]>();
   for (const summary of summaries) {
     const key = JSON.stringify([
       summary.targetId ?? "unlabeled",
@@ -109,7 +178,7 @@ export function auditTestRuntime(roots: readonly string[]): RuntimeAuditRow[] {
       const medianMs = median(durations);
       const p95Ms = percentile(durations, 0.95);
       return {
-        target: [first.targetId ?? "unlabeled", first.shardId].filter(Boolean).join("/"),
+        target: targetIdentity(first),
         scenario: first.scenario,
         runs: runs.length,
         medianMs,

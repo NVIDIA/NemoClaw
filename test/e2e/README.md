@@ -62,26 +62,48 @@ no alternate checkout SHA is requested. PR-gate dispatches therefore remain on
 standard runners even though they use the trusted workflow definition from
 `main`.
 
-Exact-head PR-gate dispatches use a bounded swap fallback for the hosted
-Hermes image-building lanes that remain on those standard runners. The live
-Vitest helper activates the fallback only when GitHub Actions supplies a
-validated lowercase 40-hex checkout SHA. It reuses at least 32 GiB of active
-swap when available; otherwise, it creates one fixed 32 GiB swap file under
-`/mnt` before agent-turn latency, Hermes inference switch and shields, the
-Hermes Bedrock and stable MCP shards, or the `hermes-e2e`, `hermes-dashboard`,
-and Hermes security-posture tests. Setup failure stops before Vitest. Scheduled
-and ordinary manual `main` runs, larger-runner executions, rebuild lanes with
-workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
-shards do not use this fallback.
+Exact-head PR-gate dispatches and direct scheduled or manual `main` runs use a
+bounded swap fallback for eligible hosted Hermes image-building lanes. The
+fallback does not change runner routing. The trusted workflow provisions the
+fallback as the first job step, before checking out or executing the selected
+revision. Exact-head mode requires a controller-supplied lowercase 40-hex
+checkout SHA plus matching trusted workflow and dispatch revisions. Direct-main
+mode rejects alternate checkout and workflow revisions and requires the
+workflow source to match the run revision. Both modes require an ephemeral
+GitHub-hosted Linux x64 runner. Candidate code cannot supply the program or
+arguments passed to `sudo`.
+
+The trusted step requires at least 32 GiB (34,359,738,368 bytes) of usable swap.
+It reuses active swap that meets this requirement.
+Otherwise, it preserves at least 16 GiB of available disk capacity under
+`/mnt`, creates a root-owned mode-`0700` directory, and creates an exclusive
+randomized mode-`0600` file.
+The file allocation is 32 GiB plus 4,096 bytes (34,359,742,464 bytes).
+The additional 4,096 bytes keep the usable swap capacity at or above 32 GiB
+after formatting.
+Setup failure stops before candidate checkout and removes partial state only
+after proving the file inactive or successfully disabling it.
+After `swapon` succeeds, the trusted step makes up to five activation
+observations, one second apart.
+If visibility remains stale, cleanup treats the file as active.
+Cleanup removes it only after `swapoff` succeeds.
+Successful state is discarded with the ephemeral runner.
+
+The fallback covers agent-turn latency, Hermes inference switch and shields,
+the Hermes Bedrock and stable MCP shards, the Hermes common-egress and channel
+stop/start shards, and the `hermes-e2e`, `hermes-dashboard`, `hermes-discord`,
+and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
+dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes shards do not use it.
+Candidate-authored workflow definitions and fork-owned runs cannot reach it.
 
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
 label; changing the PR checkout cannot safely grant itself that capacity.
-Remove the fallback only after the trusted controller routes exact-head PR
-gates to an ephemeral GitHub-hosted runner with at least 32 GB RAM without
-weakening the exact-SHA guard, and five consecutive runs of every protected
-lane complete without runner loss while runner-pressure telemetry reports less
-than 1 GiB of swap used.
+Remove the fallback only after trusted main and exact-head PR runs use
+ephemeral GitHub-hosted runners with at least 32 GB RAM without weakening the
+source guards, and five consecutive runs of every protected lane complete
+without runner loss while runner-pressure telemetry reports less than 1 GiB of
+swap used.
 
 The eligible set is limited to the measured or repeatedly interrupted heavy
 lanes:
@@ -128,10 +150,30 @@ graph as the live targets:
   retired. Any future issue escalation should use a separately reviewed
   exceptional threshold, such as the same lane failing twice consecutively or
   remaining broken for 24 hours, rather than posting on every failed schedule.
-- `scorecard` writes the scheduled/manual result summary, adds this run's
-  semantic phase runtime table, compares the trusted cloud-onboard timing
-  summary with the latest prior-release `e2e.yaml` run, and posts to the daily
-  or full-run Slack route.
+- `scorecard` writes the scheduled/manual result summary and posts it to the
+  daily or full-run Slack route. The summary:
+  - separates queue time from execution time for the ten jobs with the longest
+    combined duration;
+  - reports the runner class as `standard`, `larger`, or `unknown` without
+    exposing runner labels;
+  - adds this run's semantic phase runtime table;
+  - compares each of the ten slowest current tests with up to ten prior
+    completed scheduled runs; and
+  - compares the trusted cloud-onboard timing summary with the latest
+    prior-release `e2e.yaml` run.
+- The nightly comparison reads only validated `e2e-runtime-summary.json`
+  artifacts retained for 14 days. Manual runs can display the comparison but
+  never enter its baseline. The table reports the current outcome, prior median
+  and p95, prior pass/fail/skip counts and rates, the failure streak including
+  the current run, and the most common failed phase across the compared runs.
+  It marks a total or phase regression only when the current duration exceeds
+  the prior median by both at least 20% and at least 30 seconds.
+- A separate flake watch shows at most five current tests that both passed and
+  failed across the current run and up to ten prior completed scheduled runs.
+  It ranks them by pass/fail flips and then failure count. It reports
+  pass/fail/skip counts, failure rate, pass/fail flips, current failure streak,
+  and the most common failed phase. The failure-rate denominator and
+  pass/fail-flip count exclude skips.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
@@ -139,10 +181,11 @@ graph as the live targets:
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for the #7145 contract: 12 routed workflow lane identities / 13
+telemetry for the #7145 contract: 12 routed workflow lane identities / 15
 concrete job executions.
 
-- `common-egress-agent`
+- `common-egress-agent` with the `openclaw-balanced-weather`,
+  `openclaw-open-reference`, and `hermes-open-reference` shards
 - `rebuild-hermes`
 - `rebuild-hermes-stale-base`
 - `mcp-bridge` with the `hermes` shard
@@ -155,29 +198,96 @@ concrete job executions.
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
-The extra execution comes from `hermes-inference-switch`, which runs both
-listed modes. The OpenClaw matrix entries for `mcp-bridge`,
+The three extra executions come from `common-egress-agent`, which runs three
+scenario shards, and `hermes-inference-switch`, which runs both listed modes.
+The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 
-Each execution writes two best-effort numeric samples to
-`runner-comparison.jsonl`, one after workspace preparation and one from an
-`always()` finalizer before artifact checking and upload. The finalizer writes
-`runner-comparison-summary.json` only when both samples are valid, monotonic,
-and have the same target and shard identity. The summary contains the sampled
-post-prepare time window, average CPU utilization and logical CPU capacity,
-memory availability and endpoint usage, the available root-cgroup memory peak,
-and workspace free-space and growth values. Unsupported measurements are `null`.
-Endpoint memory and workspace samples do not establish the true maximum or
-minimum between those two observations. The root-cgroup peak is a lifetime
-counter that includes Docker siblings but can also include host activity before
-the measured window. Compare it only across runs with the same runner setup.
+Each execution writes one bounded, ordered v2 time series to the canonical
+`runner-comparison.jsonl` ledger. It contains:
+
+- an `initialize` endpoint after workspace preparation and any fixed-capacity
+  rebuild swap;
+- a distinct `scenario-start` for every test handled by the execution;
+- a `periodic` sample on an approximately 15-second fixed cadence for
+  `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
+  60-second fixed cadence for every other execution;
+- a `phase` sample before each semantic phase transition and when the final
+  phase stops; and
+- a `finalize` endpoint from an `always()` step immediately before artifact
+  checking and upload.
+
+The progress pulse owns both stall reporting and periodic comparison sampling,
+so it never creates a second timer. Phase samples that cross a periodic deadline
+consume that slot, and delayed probes skip missed slots instead of producing a
+catch-up burst. Each successful append also prints one bounded
+`E2E_RUNNER_COMPARISON_SAMPLE` line in the job log.
+
+The v2 ledger accepts at most 256 samples. Ordinary sampling stops once 255
+records exist to reserve the last slot for `finalize`. A missing, historical-v1,
+already-finalized, full, or invalid ledger permanently disables comparison
+sampling for that test progress instance. The two Hermes rebuild lanes use their
+shorter cadence to improve Docker/BuildKit peak-RSS evidence without changing
+the ledger bound, schema, privacy contract, or reserved final slot. In
+`rebuild-hermes` and `rebuild-hermes-stale-base`, where legacy phase resource
+evidence is configured, the workflow establishes its 32 GiB swap before
+`initialize` so the ledger sees one stable swap capacity. If canonical sampling
+becomes unavailable, the existing five-minute full snapshot becomes the
+best-effort fallback.
+That full profile may run `ps`, `docker stats`, and `docker system df`
+sequentially with a 15-second timeout each, or 45 seconds in the worst case;
+canonical sampling suppresses this heavier collection while it remains active.
+Other lanes stop canonical sampling without creating a second evidence stream.
+Historical v1 ledgers and summaries remain readable, but a v1 ledger cannot be
+extended or mixed with v2 samples.
+
+Probe cost depends on the sample kind. `initialize` and `finalize` read only
+kernel and filesystem sources and launch no child process. `periodic` adds one
+one-second `ps` probe and does not call Docker. `scenario-start` and `phase`
+samples add the same bounded process probe plus two-second `docker stats` and
+`docker system df` probes. The emitted schema contains only numeric fields,
+fixed process classes (`docker-buildkit`, `openshell`, or `other`), and fixed
+sample metadata, including the explicit target and shard labels. It never
+records process or container names, command lines, child output, or arbitrary
+environment and secret values. Docker memory evidence is reduced to the largest
+retained container value; maximum Docker CPU considers every row in the bounded
+command output.
+
+The finalizer validates the complete ledger before writing
+`runner-comparison-summary.json`. The v2 summary reports the sampled
+post-prepare window; CPU average and busiest interval; one-minute load;
+available, cached, reclaimable, swap, root-cgroup current/peak/limit, and
+endpoint OOM-counter evidence; memory and I/O pressure; workspace bytes and
+inodes; Docker image, container, and build-cache usage; largest container
+memory and CPU; and the largest fixed process class by RSS. Extrema include the
+semantic phase where they were observed when attribution is sound. CPU
+intervals ending at a `scenario-start` remain unattributed because they can
+span two tests, and extrema whose selected observation is `initialize` have a
+`null` phase. OOM deltas are also `null` unless both endpoint counters are
+available. Unsupported or unreadable measurements are `null`.
+
+The root-cgroup peak is a lifetime counter that includes Docker siblings but
+can also include host activity before the measured window. Compare it only
+across runs with the same runner setup. Canonical v2 `memory.availableKb` comes
+only from `/proc/meminfo` `MemAvailable` and is `null` when that field is
+unavailable. Separately, the adjacent progress/stall resource line falls back
+to the portable free-memory value and labels that value as `memory free`.
+
+The comparison time series is diagnostic-only and is not an input to terminal
+classification or retry policy. Low available or free memory never implies an
+OOM. OOM classification or attribution still requires the existing positive
+OOM evidence, and the single retry remains limited to positive runner-loss
+evidence.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
 hard runner loss can prevent finalization or artifact upload. When you compare
 standard and larger runners, use runs with the same commit SHA, workflow
 inputs, target, and shard. Pair the artifact with the GitHub Actions runner
-label, queue time, result, and usage or cost metadata. This telemetry does not
-maintain rolling history or write to the GitHub Actions step summary.
+label, queue time, result, and usage or cost metadata. The ledger is a time
+series for one execution only; this telemetry does not maintain cross-run
+rolling history or write to the GitHub Actions step summary. Both output files
+are private regular files on the runner (`0600`) with strict per-line and total
+size limits.
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
@@ -240,12 +350,13 @@ npm run test:runtime-audit -- path/to/run-1 path/to/run-2
 The audit groups each test by target and optional shard, ranks the groups by
 p95 runtime, and reports variability plus the slowest observed phase's duration
 and outcome. Scheduled and ordinary manual runs include the same table for that
-run in the GitHub Actions scorecard summary. Keep phase
-labels specific to test behavior, call `progress.phase("literal phase label")`
-at the declared boundaries in order, and transition through the final
-test-declared phase on every passing path. Both fixtures reject a passing test
-that never reaches that phase; only the stateful live fixture enters its
-resource-release phase automatically.
+run in the GitHub Actions scorecard summary. Their nightly trend uses only the
+bounded timing and outcome summary rather than downloading historical raw test
+artifacts. Keep phase labels specific to test behavior, call
+`progress.phase("literal phase label")` at the declared boundaries in order,
+and transition through the final test-declared phase on every passing path.
+Both fixtures reject a passing test that never reaches that phase; only the
+stateful live fixture enters its resource-release phase automatically.
 Validate phase coverage without executing test bodies with:
 
 ```bash
@@ -287,13 +398,14 @@ revision, or closed PR can leave the controller green while coordination is
 failed or cancelled and the native job is non-passing. Only a successful native
 `E2E / PR Gate` for the current head and base satisfies the required check. An
 eligible prerequisite-CI failure records the versioned retry reason
-`prerequisite-ci`. A selected child records `child-cancelled` only when a
-trusted GitHub-hosted runner-loss annotation is bound to the exact failed job
-and workflow commit and no other terminal classification was produced.
-Cancellation alone is not retryable. Assertion failures and other selected-E2E
-outcomes do not receive a retry reason. An unexpected controller error still
-fails the controller workflow and fails coordination closed, which prevents
-the native job from passing.
+`prerequisite-ci`. A selected child records `child-cancelled` only when the
+controller authenticates either a trusted GitHub-hosted runner-loss annotation
+or the exact terminal-shutdown fallback against the failed job and workflow
+commit, and no other terminal classification was produced. Cancellation alone
+is not retryable. Assertion failures and other selected-E2E outcomes do not
+receive a retry reason. An unexpected controller error still fails the
+controller workflow and fails coordination closed, which prevents the native
+job from passing.
 
 On open, synchronization, reopen, transition out of draft, or base retarget,
 `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate Coordination` for
@@ -319,8 +431,8 @@ the deterministic risk plan.
 Runtime families and changes to workflow-wired live tests select
 canonical selectors from the trusted `e2e.yaml` inventory independently of
 advisor output. Ordinary internal changes execute those focused selections.
-Gate initialization, CI coordination, protected approval, and manual fork-skip
-recording share one non-cancelling FIFO concurrency group for the exact
+Gate initialization, CI coordination, and protected approval share one
+non-cancelling FIFO concurrency group for the exact
 repository, PR number, PR SHA, and base SHA. `queue: max` keeps pending jobs for
 that exact identity instead of replacing them, up to GitHub's 100-job bound.
 Before the controller creates or updates coordination for the current revision,
@@ -341,6 +453,12 @@ Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 family is a conservative path boundary that includes non-documentation files
 under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
 policy, dependency and test configuration, and preparation and upload actions.
+Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
+the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
+through cold onboarding and a real first turn.
+The repository-root `Dockerfile.base` remains in only the `platform-install`
+family. It selects `cloud-onboard` and does not trigger the cold `full-e2e`
+path.
 The Deep Agents Code headless-inference check additionally selects the exact
 `ubuntu-repo-cloud-langchain-deepagents-code` typed target. That target is
 hashed into the risk plan beside the control-plane floor jobs, so the
@@ -365,11 +483,12 @@ control-plane change, or second advance fails closed. The accepted `main`
 commit is recorded as the workflow SHA and passed as `workflow_sha`. Before
 matrix or secret-bearing jobs can run, `e2e.yaml` requires
 `github.workflow_sha` to match that accepted commit. Each selected job checks
-out `checkout_sha`. The same validation verifies that the PR remains open,
-belongs to `NVIDIA/NemoClaw`, and still has both the dispatched head and base
-commits. The dispatch includes selected jobs, allowlisted typed targets, and
-valid plan and correlation metadata. Controller-bound targets are restricted
-to the trusted allowlist. Before checking out PR code, the trusted workflow
+out `checkout_sha` from the live PR head repository. The same validation
+verifies that the PR remains open in `NVIDIA/NemoClaw`, the checkout repository
+is still the PR head repository, and both the dispatched head and base commits
+still match. The dispatch includes selected jobs, allowlisted typed targets,
+and valid plan and correlation metadata. Controller-bound targets are
+restricted to the trusted allowlist. Before checking out PR code, the trusted workflow
 projects each controller-selected target into a fixed target ID and hosted
 runner mapping. The generated live matrix must exactly match those trusted IDs
 and runners, and only the trusted projection can configure credential-bearing
@@ -385,7 +504,7 @@ trusted controller and observer boundaries leaves coordination in progress
 with `E2E reviewer authorization required to run E2E`. The native required job
 keeps waiting for the authorization flow. No selected job or target runs and no
 repository secret is exposed. The same controller run starts `Approve
-credentialed E2E for internal PR`, which waits on the protected
+credentialed E2E for reviewed PR`, which waits on the protected
 `approve-credentialed-e2e-for-internal-pr` environment. With `deployment:
 false`, the job does not create a deployment record. After reviewing the exact
 head SHA, base SHA, and risk plan as described below, an environment reviewer
@@ -402,7 +521,13 @@ the first attempt of the trusted `workflow_run` controller. It then revalidates
 the internal repository origin, open PR, PR SHA and base SHA, risk plan,
 matching pending coordination state, compatible trusted controller commit, and
 final live revision. It updates coordination to `Running <count> E2E check(s)`
-and dispatches the selected jobs and targets in one workflow run.
+and dispatches the selected jobs and targets in one workflow run. The child
+workflow receives the controller-owned coordination check ID. Before checking
+out the PR revision, it requires a GitHub Actions dispatch and verifies that
+the exact check is owned by the GitHub Actions app, matches the PR head and base
+identity, names the selected plan, and links to the current child run. A direct
+manual dispatch that supplies otherwise-valid PR inputs cannot forge that
+one-run authorization and fails before checkout.
 
 The manual maintainer path remains available as a fallback. A repository
 maintainer or administrator chooses **Run workflow** on `main`, selects
@@ -445,37 +570,33 @@ candidates fails closed. Selected-job product or
 assertion failures, evidence policy or integrity failures, schema or identity
 mismatches, traversal or provenance failures, reconciliation, controller
 errors, unknown states, and failures recorded before retry reasons existed
-remain terminal for that PR/base SHA pair. Fork approval failures are not retried by
-PR CI; follow the protected or manual skip path, or update the PR to create a
-new head. Update the PR and run fresh CI for the other terminal outcomes. The
+remain terminal for that PR/base SHA pair. Update the PR and run fresh CI for
+terminal outcomes. The
 normal wait, evidence download, and finish path is the only path that can record
 success; the authorization itself cannot make the gate green. A changed head or
 base requires a new authorization.
 
-A fork revision that selects jobs or typed targets completes coordination as
-failed while the native required job waits for the skip-approval flow. The
-controller does not dispatch the selected credential-bearing jobs or targets
-or expose repository secrets.
-Non-secret PR CI remains required. The failed coordination summary
-embeds an explicit link to the same `E2E / PR Gate Controller` run; maintainers
-follow that link rather than relying on the coordination check's **Details**
-destination. The coordination check publishes only allowlisted skip-approval
-metadata for its PR number, mode, head SHA, and base SHA. The native required
-job recognizes the approval-required title as an intermediate waiting state.
-That controller run starts
-`Approve credentialed E2E skip for fork PR`, which waits on the protected
-`approve-credentialed-e2e-skip-for-fork-pr` environment. With
-`deployment: false`, the job does not create a deployment record. A maintainer
-or delegated E2E reviewer reviews the exact head SHA, base SHA, and risk plan as
-described below, opens the linked run, chooses **Review deployments**, selects
-that environment, and approves it. The approval records that the selected
-credential-bearing jobs and targets will not run; it does not authorize fork
-code to run with repository secrets. The comment is optional, and the workflow
-reads both the reviewer and comment from GitHub's run approval history rather
-than accepting an actor supplied by the job.
+A fork revision that selects jobs or typed targets leaves coordination in
+progress with `E2E reviewer authorization required to run fork E2E`. Non-secret
+PR CI remains required. Before approval, the controller does not dispatch the
+credential-bearing work or expose repository secrets. The coordination summary
+links to the same `E2E / PR Gate Controller` run and publishes the exact PR
+number, head repository, head SHA, base SHA, plan, jobs, and targets under
+review.
+
+That controller run starts `Approve credentialed E2E for reviewed PR`, which
+waits on the protected `approve-credentialed-e2e-for-fork-pr` environment.
+With `deployment: false`, the job does not create a deployment record. A
+maintainer or delegated E2E reviewer reviews the exact repository, head SHA,
+base SHA, and risk plan, opens the linked run, chooses **Review deployments**,
+selects that environment, and approves it. This approval authorizes the exact
+fork revision to run the selected work with E2E credentials. It is not a skip
+and cannot make the gate pass by itself. The workflow reads the reviewer and
+optional comment from GitHub's run approval history rather than accepting an
+actor supplied by the job.
 
 Before rollout, create both `approve-credentialed-e2e-for-internal-pr` and
-`approve-credentialed-e2e-skip-for-fork-pr` in the repository. Configure each
+`approve-credentialed-e2e-for-fork-pr` in the repository. Configure each
 environment with one or more required reviewers. Protected-environment
 reviewers are the authorization allowlist and may have repository read access
 without merge rights. Do not add environment secrets, variables, or custom
@@ -485,47 +606,33 @@ approval history. Restrict deployment branches to protected `main`. Before
 either decision, verify the exact head SHA, base SHA, and selected jobs and
 targets in the coordination check summary and the
 `pr-e2e-risk-plan-<head-sha>` artifact from the linked controller run. The
-internal approval job receives only its job-scoped token after approval and
-executes the trusted controller from `main`; the fork approval job records a
-skip and runs no PR-controlled code. If **Review deployments** is absent, the
-environment may be missing or unprotected, or the run may no longer be waiting.
-Configure the environment, update the PR to create a new head, and trigger fresh
-upstream PR CI to create a new gate run, or use the corresponding manual
-maintainer fallback. GitHub approval
+approval job receives only its job-scoped token after approval and executes the
+trusted controller from `main`. The trusted E2E workflow definition stays on
+`main`, while every PR-code checkout is pinned to the approved head repository
+and SHA. If **Review deployments** is absent, the environment may be missing or
+unprotected, or the run may no longer be waiting. Configure the environment,
+update the PR to create a new head, and trigger fresh upstream PR CI to create a
+new gate run. GitHub approval
 history is not bound to a run attempt, so the controller rejects reruns of an
 approval run. Approval concurrency is bound to the exact PR SHA and base SHA.
 A newer revision creates a separate approval request, while an obsolete request
 cannot authorize it.
 
-For the fork button path, the controller requires a first-attempt, in-progress run
+For the fork approval path, the controller requires a first-attempt, in-progress run
 of this exact workflow on `main`, at the trusted workflow SHA and with the
 `workflow_run` event. It requires exactly one approved review that names only
 the exact environment. The environment's required-reviewer configuration is
 the authority for this protected path. The shared resolver revalidates
-the open PR, repository origin, PR SHA and base SHA, deterministic plan,
-matching failed coordination check, and that the controller commit is either
+the open PR, head repository, PR SHA and base SHA, deterministic plan,
+matching pending coordination check, and that the controller commit is either
 still `main` or
 has only a compatible safe descendant as described above. Immediately before
-recording success, it reads the live PR again and requires the same PR SHA and
-base SHA. The result records the reviewer, bounded optional comment, validated
-approval-run URL, plan hash, and jobs and targets that did not run. The
-successful skip coordination check is titled
-`Credentialed E2E skipped for fork PR — approved by @<reviewer>` and begins
-with `Outcome: APPROVED SKIP — credentialed E2E did not run.` It never claims
-that the selected checks passed. The native required job mirrors this
-approved-skip success.
-
-The manual fork skip approval on `main` remains available as a fallback. Choose
-`approve-fork-e2e-skip` and provide the PR number, current `expected_head_sha`,
-current `expected_base_sha`, a 10–500-character `review_reason`, and optionally
-an Actions run URL in the exact form
-`https://github.com/NVIDIA/NemoClaw/actions/runs/<run-id>`. Leave
-`evidence_url` blank when no supporting run exists. PR, issue, comment, job, and
-external URLs are rejected. The controller validates the optional URL's shape
-but does not inspect that run's contents. It applies the same PR, role, plan,
-failed-check, compatible-`main`, and final stale-revision checks. Any new commit
-receives a different gate and requires a new decision; a base change also
-invalidates the decision.
+dispatch, it reads the live PR again and requires the same head repository, PR
+SHA, and base SHA. The trusted workflow runs the selected jobs and targets,
+downloads their evidence, and verifies its identity and outcome. Only passing
+evidence for every selected item completes coordination successfully. Failed,
+missing, skipped, pending, or mismatched evidence keeps the required gate from
+passing. Any new commit or base change requires a new approval.
 
 The Vitest reporter writes one `risk-signal.json` for each selected job shard
 and typed target. Typed targets bind the signal identity to the exact matrix ID
@@ -557,24 +664,28 @@ attempt, workflow commit, job check, standard hosted runner group, and runner
 name. The controller accepts one canonical runner-loss failure annotation bound
 to `.github` at that workflow commit.
 
-When GitHub emits a generic cancellation instead, the controller requires
-exactly one failure annotation whose message is `The operation was canceled.`
-The annotation must use `.github`, equal start and end lines, null columns, and
-empty title and detail fields. Every annotation must use a blob URL bound to the
-same workflow commit. The controller accepts at most 20 annotations, bounds
-each text field, and limits the normalized annotation evidence to 64 KiB. This
-permits trusted bounded non-failure notices beside the sole failure annotation
-without allowing annotation output to exhaust the coordinator.
+When GitHub emits a generic terminal result instead, the controller requires
+exactly one failure annotation. Its message must be
+`The operation was canceled.` for one completed `cancelled` workload step or
+`Process completed with exit code 143.` for one completed `failure` workload
+step. The annotation must use `.github`, equal start and end lines, null
+columns, and empty title and detail fields. Every annotation must use a blob URL
+bound to the same workflow commit. The controller accepts at most 20
+annotations, bounds each text field, and limits the normalized annotation
+evidence to 64 KiB. This permits trusted bounded non-failure notices beside the
+sole failure annotation without allowing annotation output to exhaust the
+coordinator.
 
-GitHub Actions creates this `.github` failure annotation after the hosted runner
-shuts down; NemoClaw workflow code cannot replace its generic message with the
-canonical lost-communication annotation. The classifier test `accepts the
-exact authenticated terminal shutdown block from run 29988226653` preserves
-the observed fallback contract. Remove the fallback and that test together
-only after GitHub's documented Jobs or Checks API contract provides an
-authenticated structured runner-loss reason for this exact shutdown path.
+GitHub Actions creates these `.github` failure annotations after the hosted
+runner shuts down; NemoClaw workflow code cannot replace their generic messages
+with the canonical lost-communication annotation. The classifier tests
+`accepts the exact authenticated terminal shutdown block from run 29988226653`
+and `accepts the exit-143 hosted shutdown from run 30026115852` preserve the
+two observed fallback contracts. Remove a fallback and its test together only
+after GitHub's documented Jobs or Checks API contract provides an authenticated
+structured runner-loss reason for that shutdown path.
 
-The generic-cancellation fallback also authenticates the job log. The
+The terminal-shutdown fallback also authenticates the job log. The
 controller requests the GitHub job-log endpoint and accepts only its signed
 HTTPS redirect to GitHub Actions result storage. It does not forward the
 repository token to that signed URL. A metadata request must return plain,
@@ -583,19 +694,21 @@ controller then reads at most the final 64 KiB with `If-Match` and requires an
 exact partial-content range, length, and matching ETag.
 
 The authenticated tail must end with exactly one line feed after the
-timestamped shutdown error, operation-cancelled error, and orphan-cleanup
-record, in that order. Up to 64 unique orphan-process termination records may
-follow the cleanup record. Each record must contain a positive process ID and a
-bounded process name. The record timestamps must not move backward. The
-job must start no later than the cancelled step. The shutdown must occur at or
-after that step starts, and the cancellation second must equal the step's
-completion time. Cleanup must not precede cancellation. Cleanup and
-orphan-process records must finish no later than the job completion time.
+timestamped shutdown error, matching operation-cancelled or exit-143 error, and
+orphan-cleanup record, in that order. Up to 64 unique orphan-process termination
+records may follow the cleanup record. Each record must contain a positive
+process ID and a bounded process name. The record timestamps must not move
+backward. The job must start no later than the interrupted step. The shutdown
+must occur at or after that step starts, and the terminal-error second must
+equal the step's completion time. Cleanup must not precede the terminal error.
+Cleanup and orphan-process records must finish no later than the job completion
+time.
 
-A generic cancellation without this log contract, timeout, unknown runner
-identity, self-hosted or custom runner group, ordinary failed step, another
-non-passing job, incomplete pagination, or mismatched annotation identity
-fails closed without a retry.
+A generic terminal result without this log contract, an ordinary exit 143
+without the exact preceding shutdown block, timeout, unknown runner identity,
+self-hosted or custom runner group, ordinary failed step, another non-passing
+job, incomplete pagination, or mismatched annotation identity fails closed
+without a retry.
 
 Before the one-time retry dispatch, the controller revalidates the unchanged
 internal PR head and base, original child, current coordination-check lineage,
@@ -605,6 +718,15 @@ completed child after each read and requires identical evidence fingerprints,
 including pagination state, log ETag, log length, and log-tail hash. After the
 second classification, it validates the live PR head and base and the current
 coordination-check lineage again.
+
+The source coordination check binds that original child through the
+controller-generated `Selected E2E run <run-id>` summary. The summary label,
+linked run ID, repository, and exact Actions run URL must agree. GitHub may set
+the check details URL to either that exact child run or the canonical
+`/runs/<check-id>` URL for the source check. A malformed selected-run prefix or
+any mismatch fails closed. Compatibility checks that predate the selected-run
+summary remain eligible only when their details URL is the exact child Actions
+run URL.
 
 The controller reserves a distinct replacement coordination check before
 dispatch so the native observer can follow the retry without mutating completed
@@ -706,8 +828,9 @@ memory-heavy image build. The rebuild fixture verifies that floor and
 provisions the same swap file on GitHub Actions when a trusted control-plane
 run uses the workflow definition from `main`. Those paths build large Hermes
 image layers and can otherwise exhaust the runner's default memory and swap
-during Docker layer export. Other E2E jobs keep the standard runner memory
-configuration.
+during Docker layer export. Apart from those rebuild and export paths, E2E jobs
+add swap only through the trusted Hermes main-workflow fallback described in
+[Larger-runner routing](#larger-runner-routing).
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first

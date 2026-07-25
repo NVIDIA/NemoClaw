@@ -1,0 +1,202 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Declare the OpenShell Gateway Lifecycle Authority"
+sidebar-title: "Gateway Lifecycle Authority"
+description: "Declare whether NemoClaw or an external platform supervisor owns the OpenShell gateway lifecycle, so one component controls each gateway port."
+description-agent: "Explains the versioned gateway-management declaration, external supervisor validation, gateway registration, and resume safeguards. Use when a platform supervises the OpenShell gateway or onboarding reports an ownership, listener, or checkpoint conflict."
+keywords: ["nemoclaw gateway lifecycle", "externally supervised gateway", "openshell gateway service", "gateway port conflict", "gateway ownership"]
+content:
+  type: "reference"
+---
+At every point, exactly one component owns the OpenShell gateway lifecycle.
+
+Platform images sometimes supervise the gateway with their own service.
+Without an explicit authority, both the platform and NemoClaw can try to own the same process and port.
+The gateway-management contract prevents that conflict by making NemoClaw manage the gateway or attach to a gateway that an external supervisor owns.
+
+## Management modes
+
+Choose the mode that matches the component responsible for process lifecycle operations.
+
+| Mode | Lifecycle owner | NemoClaw behavior |
+|---|---|---|
+| `nemoclaw-managed` | NemoClaw | Starts, stops, replaces, and recovers the gateway. |
+| `externally-supervised` | A declared platform supervisor | Validates and attaches to the running gateway without managing its process. |
+
+When nothing is declared, NemoClaw keeps its existing managed behavior.
+It uses the packaged gateway user service when that service is installed and otherwise manages a standalone gateway.
+
+## Declare the mode
+
+Set `NEMOCLAW_GATEWAY_MANAGEMENT` to the path of a JSON declaration.
+
+```bash
+export NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json
+```
+
+An externally supervised declaration identifies the exact local endpoint, state directory, systemd unit, and executable.
+
+```json
+{
+  "version": 1,
+  "mode": "externally-supervised",
+  "endpoint": "https://127.0.0.1:8080",
+  "stateDir": "/var/lib/openshell/gateway",
+  "supervisor": {
+    "kind": "systemd-system",
+    "serviceName": "openshell-gateway.service",
+    "execPath": "/usr/local/bin/openshell-gateway"
+  },
+  "requiredCapabilities": ["gateway.health", "sandbox.create"]
+}
+```
+
+A managed declaration omits `endpoint`, `stateDir`, and `supervisor`.
+
+```json
+{
+  "version": 1,
+  "mode": "nemoclaw-managed",
+  "requiredCapabilities": []
+}
+```
+
+The declaration uses the following fields.
+
+| Field | Meaning |
+|---|---|
+| `version` | Contract version. Only `1` is supported. |
+| `mode` | `nemoclaw-managed` or `externally-supervised`. |
+| `endpoint` | Exact bare origin for an externally supervised gateway. Use `http` or `https`, host `127.0.0.1` or `[::1]`, and the gateway port that this NemoClaw process uses. Credentials, DNS names such as `localhost`, paths, query strings, and fragments are rejected. |
+| `stateDir` | Absolute external gateway state directory. Keep it outside NemoClaw-owned state paths such as `~/.local/state/nemoclaw`; uninstall removes those owned paths and does not otherwise target the declared external directory. For HTTPS, it contains the client trust bundle. |
+| `supervisor` | Required for `externally-supervised` and rejected for `nemoclaw-managed`. `kind` is `systemd-system` or `systemd-user`. `serviceName` names one `.service` unit, and `execPath` is the absolute gateway executable path. |
+| `requiredCapabilities` | Capabilities onboarding needs. Supported values are `gateway.health`, `sandbox.create`, `sandbox.exec`, and `gpu.passthrough`. |
+
+`requiredCapabilities` is checked against the capabilities implemented by this NemoClaw build.
+OpenShell does not expose capability discovery, so this field does not probe or attest capabilities on the running gateway.
+The listener, supervisor, identity, and health checks below validate the live gateway separately.
+
+The endpoint port must match `NEMOCLAW_GATEWAY_PORT`.
+When the endpoint omits a port, `http` resolves to port `80` and `https` resolves to port `443` for this comparison.
+Onboarding rejects a mismatch before making a health request or inspecting the host listener because validating one endpoint and operating a different gateway would break the authority boundary.
+
+<Note>
+The declaration is versioned and secret-free.
+NemoClaw rejects unknown fields and unsupported capabilities instead of ignoring them.
+The authority may be persisted in checkpoints, diagnostics, and machine events, so do not place credentials or other secrets in it.
+</Note>
+
+<Note>
+Only systemd supervisors are supported in version 1.
+NemoClaw verifies the listener executable, the declared system or user manager scope, and membership in the declared unit's cgroup.
+A matching executable alone is not sufficient because the same binary can run outside the declared unit.
+</Note>
+
+## Configure HTTPS health checks
+
+An HTTPS endpoint requires the external gateway's mTLS client files under the declared `stateDir`.
+
+| File | Purpose |
+|---|---|
+| `stateDir/tls/ca.crt` | Certificate authority used to verify the gateway. |
+| `stateDir/tls/client/tls.crt` | Client certificate presented to the gateway. |
+| `stateDir/tls/client/tls.key` | Client private key used for mTLS. |
+
+All three paths must be readable regular files.
+NemoClaw uses this bundle for the mTLS gRPC health request at the exact declared endpoint path `/openshell.v1.OpenShell/Health`.
+For an HTTP endpoint, NemoClaw sends the readiness request to the exact declared origin.
+
+## Validate and attach the gateway
+
+NemoClaw validates external authority before provider, policy, sandbox, or sandbox-registry mutations.
+NemoClaw requires systemd to confirm that the declared unit is active.
+It checks that exactly one live process holds the configured port.
+The process identity must remain stable while NemoClaw reads `/proc` evidence and confirms the listener a second time.
+The process must belong to the unit's cgroup under the declared systemd manager scope, and its executable must match `execPath`.
+The exact endpoint must answer its health check.
+
+After validation, NemoClaw registers the exact endpoint under the canonical gateway name and selects it as the active OpenShell gateway.
+Immediately before registration, NemoClaw reloads the authority and rejects any change from the authority bound to the run.
+Port `8080` uses the name `nemoclaw`, and another port uses `nemoclaw-<port>`.
+NemoClaw verifies the named and active registrations before advancing to provider selection.
+It then repeats the health, supervisor, listener, executable, cgroup, and process identity checks and compares them with the initial evidence.
+If registration, selection, or repeated validation fails, NemoClaw removes the attempted registration and stops before provider selection.
+
+Onboarding fails when any of the following conditions applies:
+
+- The endpoint port differs from the gateway port for this process.
+- A required capability is unsupported.
+- The declared supervisor is inactive, or systemd cannot confirm its active state.
+- Nothing is listening on the declared endpoint.
+- The listener set cannot be enumerated completely.
+- NemoClaw cannot identify a listener process for the occupied port.
+- More than one process holds the port.
+- The listener process or listener set changes during identity verification.
+- The listener does not belong to the declared systemd unit.
+- The listener executable does not match `execPath`.
+- The endpoint does not answer the required health check.
+- The authority differs from the authority already bound to this run or checkpoint.
+
+## Preserve authority across resume
+
+NemoClaw records the resolved, secret-free authority in onboarding checkpoint schema version `2` before gateway preflight.
+The record includes the canonical gateway name and port, mode, source, endpoint, state directory, supervisor identity, and required capabilities.
+
+Resume resolves the current authority again and compares the complete record with the checkpoint.
+If any value changes, including the per-port gateway binding, resume fails before gateway effects and directs you to start a fresh onboarding run.
+A completed gateway step does not bypass listener, supervisor, identity, health, registration, or checkpoint validation.
+
+## Inspect the selected authority
+
+Run `nemoclaw status` to see the management mode and redacted owner identity selected by the last onboarding run.
+The JSON form includes the same secret-free fields under `gatewayAuthority`.
+
+```bash
+nemoclaw status
+nemoclaw status --json
+```
+
+`nemoclaw debug` also records `gatewayAuthority` in `onboard-session-summary.txt`.
+The status and debug views omit the external state directory and never include credential values.
+
+## Keep external lifecycle paths inert
+
+External supervision prevents every NemoClaw gateway lifecycle path from affecting the supervised process.
+Preflight skips stale gateway cleanup, orphaned container cleanup, volume removal, and registry cleanup associated with a NemoClaw-owned runtime.
+The shared gateway start guard blocks normal starts.
+The external attachment path has no standalone fallback.
+Recovery and rebuild guard every start branch, including non-default port recovery.
+The gateway state handler validates and attaches instead of starting, stopping, restarting, destroying, or replacing the gateway.
+
+Stop, final-sandbox cleanup, and uninstall reload the declaration before gateway teardown.
+When a valid checkpoint exists, they compare the current authority with that checkpoint.
+The comparison uses the exact gateway name and port.
+If the authority changed, teardown stops before it scans listeners or changes gateway runtime resources.
+
+`nemoclaw stop` does not scan or signal the externally supervised gateway.
+Final-sandbox cleanup can stop local dashboard forwards and remove the modern local gateway registration.
+It does not signal the gateway, use the legacy `gateway destroy` fallback, or remove its Docker volumes.
+Uninstall can delete the selected sandboxes, providers, and local registration.
+It keeps the externally supervised gateway process, Docker resources, and OpenShell binaries.
+
+Registering and selecting the validated endpoint changes only the local OpenShell gateway registration used by downstream commands.
+It does not transfer process ownership to NemoClaw.
+
+## Fix a failure
+
+Resolve an external gateway failure through the declared supervisor.
+For `systemd-system`, inspect the declared service with:
+
+```bash
+systemctl status openshell-gateway.service
+```
+
+For `systemd-user`, use the user manager:
+
+```bash
+systemctl --user status openshell-gateway.service
+```
+
+Bring the supervised gateway up, leave exactly one verified process holding the configured port, and rerun `nemoclaw onboard`.
+To hand the lifecycle back to NemoClaw, remove the platform gateway service and declare `nemoclaw-managed`, or remove the declaration.

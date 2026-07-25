@@ -86,6 +86,36 @@ describe("initial sandbox policy real preset merge", () => {
     expect(discordRules).not.toContainEqual({ method: "PATCH", path: "/**" });
   });
 
+  it("lets the OpenClaw Discord bot manage its own application commands (#7298)", () => {
+    const prepared = prepareInitialSandboxCreatePolicy(
+      repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      [],
+      { agentName: "openclaw", additionalPresets: ["discord"] },
+    );
+    const policy = readPreparedPolicy(prepared);
+
+    const discordRules =
+      policy.network_policies?.discord?.endpoints
+        ?.find((endpoint) => endpoint.host === "discord.com")
+        ?.rules?.map((rule) => rule.allow) ?? [];
+    expect(discordRules).toContainEqual({
+      method: "DELETE",
+      path: "/api/v*/applications/*/commands/*",
+    });
+    expect(discordRules).toContainEqual({
+      method: "DELETE",
+      path: "/api/v*/channels/*/messages/*",
+    });
+    expect(discordRules).not.toContainEqual({
+      method: "DELETE",
+      path: "/**",
+    });
+    expect(discordRules).not.toContainEqual({
+      method: "DELETE",
+      path: "/api/v*/guilds/*",
+    });
+  });
+
   it("prepares every shipping sandbox policy with writable PTY devices but not their symlink", () => {
     const policyCases = [
       { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   dockerRemoveVolumesByPrefix: vi.fn(),
+  resolveGatewayTeardownAuthority: vi.fn(),
   stopHostGatewayProcesses: vi.fn(),
   stopStaleDashboardListeners: vi.fn(),
 }));
@@ -18,6 +19,9 @@ vi.mock("../../adapters/docker/volume", () => ({
 vi.mock("../../onboard/host-gateway-process", () => ({
   stopHostGatewayProcesses: mocks.stopHostGatewayProcesses,
 }));
+vi.mock("../../onboard/gateway-teardown-authority", () => ({
+  resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
+}));
 vi.mock("../../onboard/stale-gateway-cleanup", () => ({
   stopStaleDashboardListeners: mocks.stopStaleDashboardListeners,
 }));
@@ -26,6 +30,18 @@ import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 
 describe("cleanupGatewayAfterLastSandbox", () => {
   beforeEach(() => {
+    mocks.resolveGatewayTeardownAuthority.mockImplementation(
+      ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+    );
     mocks.stopHostGatewayProcesses.mockReturnValue({
       failed: [],
       skippedDeadPids: [],
@@ -33,6 +49,70 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       stopped: [],
       sudoRemediationPids: [],
     });
+  });
+
+  it.each([
+    "systemd-system",
+    "systemd-user",
+  ] as const)("does not stop or destroy a %s-supervised gateway during final-sandbox cleanup (#6576)", (kind) => {
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(
+      ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+        gatewayName,
+        gatewayPort,
+        mode: "externally-supervised",
+        source: "declared",
+        endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+        stateDir: "/var/lib/openshell/gateway",
+        supervisor: {
+          kind,
+          serviceName: "openshell-gateway.service",
+          execPath: "/usr/local/bin/openshell-gateway",
+        },
+        requiredCapabilities: [],
+      }),
+    );
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "remove"
+        ? { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell);
+
+    expect(mocks.resolveGatewayTeardownAuthority).toHaveBeenCalledWith(
+      { gatewayName: "nemoclaw", gatewayPort: 8080 },
+      { env: process.env },
+    );
+    expect(mocks.stopStaleDashboardListeners).toHaveBeenCalledOnce();
+    expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("will not use the legacy gateway destroy command"),
+    );
+  });
+
+  it("fails before local cleanup when the gateway authority cannot be revalidated (#6576)", () => {
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(() => {
+      throw new Error("authority drift");
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell)).toThrow(
+      "authority drift",
+    );
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.stopStaleDashboardListeners).not.toHaveBeenCalled();
+    expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

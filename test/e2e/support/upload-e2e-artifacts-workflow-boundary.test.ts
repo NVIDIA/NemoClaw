@@ -138,6 +138,40 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
+  it("rejects a scorecard upload outside its scheduled runtime summary contract", () => {
+    const workflow = mutableWorkflow();
+    uploadStep(workflow.jobs.scorecard).with!.path = "e2e-artifacts/live/";
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+    );
+  });
+
+  it("rejects steps after the scorecard runtime summary upload", () => {
+    const workflow = mutableWorkflow();
+    workflow.jobs.scorecard.steps!.push({ name: "Run after upload", run: "echo too-late" });
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "scorecard upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+    );
+  });
+
+  it("rejects the scorecard runtime summary upload before its producer", () => {
+    const workflow = mutableWorkflow();
+    const scorecard = workflow.jobs.scorecard;
+    const upload = uploadStep(scorecard);
+    scorecard.steps!.splice(scorecard.steps!.indexOf(upload), 1);
+    const producerIndex = scorecard.steps!.findIndex(
+      (step) => step.name === "Generate E2E scorecard",
+    );
+    expect(producerIndex).toBeGreaterThanOrEqual(0);
+    scorecard.steps!.splice(producerIndex, 0, upload);
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "scorecard upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+    );
+  });
+
   it("rejects default, explicit-exception, caller-key, and caller-if drift", () => {
     const workflow = mutableWorkflow();
     const defaultJob = workflow.jobs["credential-migration"];
@@ -145,6 +179,8 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     defaultJob.env!.E2E_TARGET_ID = "not a selector id";
 
     uploadStep(workflow.jobs["hermes-slack"]).with!.path = "e2e-artifacts/live/hermes-slack/";
+    uploadStep(workflow.jobs["network-policy"]).with!.name = "e2e-network-policy";
+    uploadStep(workflow.jobs["common-egress-agent"]).with!.name = "e2e-common-egress-agent";
     uploadStep(workflow.jobs["gpu-e2e"]).if = "success()";
     uploadStep(workflow.jobs["mcp-bridge"]).if = "always()";
     uploadStep(workflow.jobs["openshell-gateway-auth-contract"]).if = "always()";
@@ -163,6 +199,8 @@ describe("upload-e2e-artifacts workflow boundary", () => {
         "credential-migration upload-e2e-artifacts must use the action defaults",
         "credential-migration default upload caller must declare a valid E2E_TARGET_ID",
         "hermes-slack upload-e2e-artifacts must preserve its explicit name/path contract",
+        "network-policy upload-e2e-artifacts must preserve its explicit name/path contract",
+        "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
         "gpu-e2e upload-e2e-artifacts invocation must run with always()",
         "mcp-bridge upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "openshell-gateway-auth-contract upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",

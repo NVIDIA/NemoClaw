@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { test as base, expect } from "vitest";
-
+import { appendRunnerComparisonSample } from "../../../tools/e2e/runner-comparison.mts";
 import {
   appendResourcePhaseBaseline,
   collectResourceSnapshot,
@@ -30,7 +30,13 @@ import {
   RuntimePhaseFixture,
   StateValidationPhaseFixture,
 } from "./phases/index.ts";
-import { type ProgressPhaseOutcome, startTestProgress, type TestProgress } from "./progress.ts";
+import {
+  type ProgressPhaseOutcome,
+  type ProgressResourceSampleKind,
+  startTestProgress,
+  type TestProgress,
+  type TestProgressOptions,
+} from "./progress.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
 
@@ -65,6 +71,43 @@ const SUPPORT_PHASES = [
   "record E2E fixture support outcome",
 ] as const;
 export const E2E_TEARDOWN_PHASE = "release registered E2E resources";
+
+export function runnerComparisonSampleIntervalMs(targetId: string | null): number {
+  switch (targetId) {
+    case "rebuild-hermes":
+    case "rebuild-hermes-stale-base":
+      return 15_000;
+    default:
+      return 60_000;
+  }
+}
+
+type RunnerComparisonProgressOptions = Pick<
+  TestProgressOptions,
+  "recordResourceSample" | "resourceSampleIntervalMs"
+>;
+
+export function runnerComparisonProgressOptions(
+  environment: NodeJS.ProcessEnv = process.env,
+  appendSample: (
+    phase: string,
+    kind: ProgressResourceSampleKind,
+  ) => boolean = appendRunnerComparisonSample,
+): RunnerComparisonProgressOptions {
+  const targetId =
+    environment.NEMOCLAW_RUN_LIVE_E2E === "1" &&
+    environment.E2E_ARTIFACT_DIR &&
+    environment.E2E_TARGET_ID
+      ? environment.E2E_TARGET_ID
+      : null;
+  return targetId
+    ? {
+        resourceSampleIntervalMs: runnerComparisonSampleIntervalMs(targetId),
+        recordResourceSample: (phase, kind) =>
+          appendSample(resourcePhaseLabel(targetId, phase), kind),
+      }
+    : {};
+}
 
 export function resourcePhaseLabel(targetId: string, phase: string): string {
   const slug = (value: string, fallback: string) =>
@@ -144,6 +187,7 @@ export const test = base.extend<E2ETargetFixtures>({
                 appendResourcePhaseBaseline(baselinePath, resourcePhaseLabel(targetId, phase)),
             }
           : {}),
+        ...runnerComparisonProgressOptions(),
       });
       const completeSupportPlan = phasePlan
         ? () => undefined
@@ -174,18 +218,20 @@ export const test = base.extend<E2ETargetFixtures>({
     },
     { auto: true },
   ],
-  docker: async ({ artifacts, progress, secrets, signal, skip }, use) => {
+  docker: async ({ artifacts, cleanup, progress, secrets, skip }, use) => {
     const probe = new DockerProbe(
       artifacts,
       (text, extra) => secrets.redact(text, extra),
       undefined,
       progress,
-      signal,
+      () => cleanup.currentSignal(),
     );
     await use(new DockerPrerequisite(probe, skip));
   },
-  cleanup: async ({ artifacts, progress, secrets }, use) => {
-    const cleanup = new CleanupRegistry((text) => secrets.redact(text), progress);
+  cleanup: async ({ artifacts, progress, secrets, signal }, use) => {
+    const cleanup = new CleanupRegistry((text) => secrets.redact(text), progress, {
+      testSignal: signal,
+    });
     try {
       await use(cleanup);
     } finally {
@@ -195,13 +241,13 @@ export const test = base.extend<E2ETargetFixtures>({
       assertCleanupPassed(result);
     }
   },
-  shellProbe: async ({ artifacts, progress, secrets, signal }, use) => {
+  shellProbe: async ({ artifacts, cleanup, progress, secrets }, use) => {
     await use(
       new ShellProbe({
         artifacts,
         progress,
         redact: (text, extraValues) => secrets.redact(text, extraValues),
-        signal,
+        signal: () => cleanup.currentSignal(),
       }),
     );
   },

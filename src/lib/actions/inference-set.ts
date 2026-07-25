@@ -349,6 +349,26 @@ function cloneConfigObject(value: ConfigValue | undefined): ConfigObject {
   return { ...value };
 }
 
+const OPENCLAW_UPSTREAM_PROVIDER_HEADER = "X-NemoClaw-Upstream-Provider";
+
+// The image environment records the onboarding provider, but inference-set can
+// switch the live route without rebuilding. Carry the current non-secret
+// provider identity with OpenClaw's runtime config; the sandbox preload removes
+// this private marker before forwarding the request.
+function withOpenClawUpstreamProviderHeader(
+  existing: ConfigObject,
+  upstreamProvider: string,
+): ConfigObject {
+  const headers = cloneConfigObject(existing.headers);
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === OPENCLAW_UPSTREAM_PROVIDER_HEADER.toLowerCase()) {
+      delete headers[key];
+    }
+  }
+  headers[OPENCLAW_UPSTREAM_PROVIDER_HEADER] = upstreamProvider;
+  return { ...existing, headers };
+}
+
 function asConfigObject(value: Record<string, unknown>): ConfigObject {
   const result: ConfigObject = {};
   for (const [key, entry] of Object.entries(value)) {
@@ -392,6 +412,7 @@ function buildProviderConfig(
   route: SandboxInferenceConfig,
   contextWindow?: number,
   inheritedMaxTokens?: number,
+  upstreamProviderMarker?: string,
 ): ConfigObject {
   const firstExistingModel = Array.isArray(existing.models)
     ? cloneConfigObject(existing.models[0])
@@ -411,13 +432,16 @@ function buildProviderConfig(
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
   }
 
-  return {
+  const providerConfig: ConfigObject = {
     ...existing,
     baseUrl: route.inferenceBaseUrl,
     apiKey: typeof existing.apiKey === "string" && existing.apiKey ? existing.apiKey : "unused",
     api: route.inferenceApi,
     models: [firstExistingModel],
   };
+  return upstreamProviderMarker
+    ? withOpenClawUpstreamProviderHeader(providerConfig, upstreamProviderMarker)
+    : providerConfig;
 }
 
 export function patchOpenClawInferenceConfig(
@@ -426,6 +450,7 @@ export function patchOpenClawInferenceConfig(
   model: string,
   preferredInferenceApi: string | null = null,
   contextWindow?: number,
+  upstreamProviderMarker?: string,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -443,6 +468,7 @@ export function patchOpenClawInferenceConfig(
     route,
     contextWindow,
     inheritedMaxTokens,
+    upstreamProviderMarker,
   );
 
   return { changed: before !== JSON.stringify(config), route };
@@ -881,6 +907,7 @@ async function runInferenceSetWithoutHostLock(
       model,
       preferredInferenceApi || getPreferredInferenceApi(config),
       contextWindow ?? undefined,
+      provider,
     );
   }
 

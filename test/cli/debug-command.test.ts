@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { writeExternalGatewayAuthoritySession } from "../helpers/gateway-authority-session";
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
 
 import {
@@ -38,6 +38,24 @@ describe("CLI debug command", () => {
       expect(r.out.includes("System")).toBeTruthy();
       expect(r.out.includes("Onboard Session")).toBeTruthy();
       expect(r.out.includes("Done")).toBeTruthy();
+    },
+  );
+
+  it(
+    "debug --quick reports the selected gateway authority without its private state path (#6576)",
+    testTimeoutOptions(30_000),
+    ({ resources }) => {
+      const env = createDebugCommandTestEnv(resources, "nemoclaw-cli-debug-authority-");
+      expect(env.HOME).toBeTypeOf("string");
+      writeExternalGatewayAuthoritySession(env.HOME!);
+
+      const result = runWithEnv("debug --quick", env, 30000);
+
+      expect(result.code).toBe(0);
+      expect(result.out).toContain('"gatewayAuthority"');
+      expect(result.out).toContain('"mode": "externally-supervised"');
+      expect(result.out).toContain('"serviceName": "openshell-gateway.service"');
+      expect(result.out).not.toContain("private-gateway-state");
     },
   );
 

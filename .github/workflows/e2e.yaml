@@ -48,6 +48,16 @@ on:
         required: false
         default: ""
         type: string
+      checkout_repository:
+        description: PR head repository selected by the controller.
+        required: false
+        default: ""
+        type: string
+      controller_check_id:
+        description: Controller-owned check run that authorizes this exact E2E run.
+        required: false
+        default: ""
+        type: string
       base_sha:
         description: PR base commit selected by the controller.
         required: false
@@ -70,6 +80,7 @@ on:
         type: string
 
 permissions:
+  checks: read
   contents: read
   pull-requests: read
 
@@ -125,7 +136,7 @@ jobs:
 
       - name: Set up Node for publication verification
         if: ${{ steps.publication_mode.outputs.required == '1' }}
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
@@ -189,8 +200,69 @@ jobs:
           runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-dashboard":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}')"
           printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
+      - name: Authenticate controller dispatch
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          ACTOR: ${{ github.actor }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CONTROLLER_CHECK_ID: ${{ inputs.controller_check_id }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          JOBS: ${{ inputs.jobs }}
+          PLAN_HASH: ${{ inputs.plan_hash }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          TARGETS: ${{ inputs.targets }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ACTOR" == "github-actions[bot]" ]] || { echo "::error::PR E2E must be dispatched by the trusted controller"; exit 1; }
+          [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::controller-authorized PR E2E cannot be rerun"; exit 1; }
+          [[ "$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$ ]] || { echo "::error::controller_check_id must be a positive integer"; exit 1; }
+          expected_external_id="nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}"
+          expected_run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+          jobs_summary="${JOBS//,/, }"
+          targets_summary="${TARGETS//,/, }"
+          expected_summary="Risk plan ${PLAN_HASH} selected jobs: ${jobs_summary:-none}; targets: ${targets_summary:-none}."
+          check_json=""
+          for _attempt in {1..15}; do
+            if check_json="$(curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}")" &&
+              [[ "$(jq -r '.details_url // ""' <<< "$check_json")" == "$expected_run_url" ]]; then
+              break
+            fi
+            check_json=""
+            sleep 2
+          done
+          [[ -n "$check_json" ]] || { echo "::error::trusted controller authorization was not published for this run"; exit 1; }
+          jq -e \
+            --argjson check_id "$CONTROLLER_CHECK_ID" \
+            --arg external_id "$expected_external_id" \
+            --arg head_sha "$CHECKOUT_SHA" \
+            --arg run_url "$expected_run_url" \
+            --arg summary "$expected_summary" \
+            '
+              .id == $check_id and
+              .name == "E2E / PR Gate Coordination" and
+              .app.id == 15368 and
+              .app.slug == "github-actions" and
+              .head_sha == $head_sha and
+              .external_id == $external_id and
+              .status == "in_progress" and
+              .conclusion == null and
+              .details_url == $run_url and
+              .output.summary == $summary
+            ' <<< "$check_json" >/dev/null ||
+            { echo "::error::controller check does not authorize this exact E2E run"; exit 1; }
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
@@ -199,6 +271,7 @@ jobs:
         if: ${{ inputs.checkout_sha != '' }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
+          CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -213,6 +286,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::PR E2E runs must be dispatched from main"; exit 1; }
+          [[ "$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::checkout_repository must be an owner/repository name"; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
           [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA"; exit 1; }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted workflow commit"; exit 1; }
@@ -229,12 +303,12 @@ jobs:
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
-          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$GITHUB_REPOSITORY" ]] || { echo "::error::pull request must originate from this repository"; exit 1; }
+          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR head repository"; exit 1; }
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR SHA"; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base commit"; exit 1; }
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -343,6 +417,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
@@ -385,7 +460,7 @@ jobs:
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       # invalidState: a profile plugin installed with --no-deps can import even
       # when an incomplete base image omitted its required upstream packages.
@@ -536,11 +611,12 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run tagged credential-free test
         env:
@@ -577,13 +653,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -651,15 +728,206 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: &trusted-hermes-e2e-swap |
+          set -euo pipefail
+          readonly swap_dir="/mnt/nemoclaw-hermes-e2e-swap"
+          readonly required_swap_bytes=34359738368
+          readonly swap_file_bytes=34359742464
+          readonly reserve_bytes=17179869184
+          readonly activation_observation_attempts=5
+          readonly activation_observation_delay_seconds=1
+          swap_file=""
+          swap_activation_succeeded=0
+
+          fail() {
+            printf 'Trusted Hermes E2E swap setup failed: %s\n' "$1" >&2
+            exit 1
+          }
+
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw main"
+          fi
+          if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            fail "workflow event must be schedule or workflow_dispatch"
+          fi
+          # Exact-head mode: controller-dispatched PR revision.
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
+            if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+              fail "checkout SHA must be lowercase 40-hex"
+            fi
+            if [[ ! "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${EXPECTED_WORKFLOW_SHA}" || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "workflow source must match the trusted dispatch revision"
+            fi
+          else
+            # Direct-main mode: schedule or manual trigger on main.
+            if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then
+              fail "direct main runs must not request an alternate checkout or workflow revision"
+            fi
+            if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "direct main workflow source must match the run revision"
+            fi
+          fi
+          if [[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted" || "${RUNNER_OS_KIND}" != "Linux" || "${RUNNER_ARCH_KIND}" != "X64" ]]; then
+            fail "swap fallback requires an ephemeral GitHub-hosted Linux x64 runner"
+          fi
+          mnt_metadata="$(/usr/bin/stat -c "%F:%u:%g" -- /mnt)"
+          if [[ "${mnt_metadata}" != "directory:0:0" ]]; then
+            fail "/mnt must be a root-owned directory"
+          fi
+
+          read_active_swap_bytes() {
+            /usr/bin/sudo -n /usr/sbin/swapon --show=SIZE --bytes --noheadings |
+              /usr/bin/awk '{ total += $1 } END { printf "%.0f", total }'
+          }
+
+          active_swap_bytes="$(read_active_swap_bytes)"
+          active_swap_bytes="${active_swap_bytes:-0}"
+          if [[ ! "${active_swap_bytes}" =~ ^[0-9]+$ ]]; then
+            fail "unable to determine active swap capacity"
+          fi
+          if (( active_swap_bytes >= required_swap_bytes )); then
+            printf 'Hermes E2E swap is already sufficient: %s bytes active\n' "${active_swap_bytes}"
+            exit 0
+          fi
+
+          available_bytes="$(/usr/bin/df --block-size=1 --output=avail /mnt | /usr/bin/tail -n 1 | /usr/bin/tr -d "[:space:]")"
+          if [[ ! "${available_bytes}" =~ ^[0-9]+$ ]]; then
+            fail "unable to determine available disk capacity under /mnt"
+          fi
+          required_disk_bytes=$((swap_file_bytes + reserve_bytes))
+          if (( available_bytes < required_disk_bytes )); then
+            fail "insufficient disk capacity: ${available_bytes} bytes available, ${required_disk_bytes} required"
+          fi
+
+          if /usr/bin/sudo -n /usr/bin/test -e "${swap_dir}" || /usr/bin/sudo -n /usr/bin/test -L "${swap_dir}"; then
+            fail "refusing unexpected pre-existing swap path"
+          fi
+
+          directory_created=0
+          cleanup_partial_swap() {
+            status="$?"
+            if (( status != 0 && directory_created == 1 )); then
+              if active_swap_names="$(/usr/bin/sudo -n /usr/sbin/swapon --show=NAME --noheadings --raw 2>/dev/null)"; then
+                fixed_swap_active=0
+                while IFS= read -r active_swap_name; do
+                  if [[ -n "${swap_file}" && "${active_swap_name}" == "${swap_file}" ]]; then
+                    fixed_swap_active=1
+                    break
+                  fi
+                done <<< "${active_swap_names}"
+                if (( fixed_swap_active == 1 || swap_activation_succeeded == 1 )); then
+                  if /usr/bin/sudo -n /usr/sbin/swapoff "${swap_file}" 2>/dev/null; then
+                    /usr/bin/sudo -n /usr/bin/rm -f -- "${swap_file}" || true
+                    /usr/bin/sudo -n /usr/bin/rmdir -- "${swap_dir}" || true
+                  else
+                    printf 'Preserving active Hermes E2E swap after setup failure: %s\n' "${swap_file}" >&2
+                  fi
+                else
+                  if [[ -n "${swap_file}" ]]; then
+                    /usr/bin/sudo -n /usr/bin/rm -f -- "${swap_file}" || true
+                  fi
+                  /usr/bin/sudo -n /usr/bin/rmdir -- "${swap_dir}" || true
+                fi
+              else
+                printf 'Preserving Hermes E2E swap because active swap could not be queried: %s\n' "${swap_file}" >&2
+              fi
+            fi
+            trap - EXIT
+            exit "${status}"
+          }
+          trap cleanup_partial_swap EXIT
+
+          /usr/bin/sudo -n /usr/bin/mkdir -m 0700 -- "${swap_dir}"
+          directory_created=1
+          directory_metadata="$(/usr/bin/sudo -n /usr/bin/stat -c "%F:%u:%g:%a" -- "${swap_dir}")"
+          if [[ "${directory_metadata}" != "directory:0:0:700" ]]; then
+            fail "swap directory must be a root-owned mode-0700 directory"
+          fi
+          swap_file="$(/usr/bin/sudo -n /usr/bin/mktemp --tmpdir="${swap_dir}" nemoclaw-hermes.XXXXXXXX.swap)"
+          if ! /usr/bin/sudo -n /usr/bin/test -f "${swap_file}" || /usr/bin/sudo -n /usr/bin/test -L "${swap_file}"; then
+            fail "swap file must be a regular non-symlink"
+          fi
+          file_metadata="$(/usr/bin/sudo -n /usr/bin/stat -c "%u:%g:%a" -- "${swap_file}")"
+          if [[ "${file_metadata}" != "0:0:600" ]]; then
+            fail "swap file must be root-owned mode 0600"
+          fi
+          /usr/bin/sudo -n /usr/bin/fallocate -l "${swap_file_bytes}" "${swap_file}"
+          file_size_bytes="$(/usr/bin/sudo -n /usr/bin/stat -c "%s" -- "${swap_file}")"
+          if [[ ! "${file_size_bytes}" =~ ^[0-9]+$ || "${file_size_bytes}" -ne "${swap_file_bytes}" ]]; then
+            fail "swap file size does not match the fixed backing allocation"
+          fi
+          remaining_bytes="$(/usr/bin/df --block-size=1 --output=avail /mnt | /usr/bin/tail -n 1 | /usr/bin/tr -d "[:space:]")"
+          if [[ ! "${remaining_bytes}" =~ ^[0-9]+$ || "${remaining_bytes}" -lt "${reserve_bytes}" ]]; then
+            fail "swap allocation did not preserve the required disk reserve"
+          fi
+          /usr/bin/sudo -n /usr/sbin/mkswap --quiet "${swap_file}"
+          /usr/bin/sudo -n /usr/sbin/swapon "${swap_file}"
+          swap_activation_succeeded=1
+
+          observe_provisioned_swap() {
+            activation_observation_attempt=1
+            while (( activation_observation_attempt <= activation_observation_attempts )); do
+              provisioned_swap_active=0
+              if active_swap_names="$(/usr/bin/sudo -n /usr/sbin/swapon --show=NAME --noheadings --raw 2>/dev/null)"; then
+                while IFS= read -r active_swap_name; do
+                  if [[ "${active_swap_name}" == "${swap_file}" ]]; then
+                    provisioned_swap_active=1
+                    break
+                  fi
+                done <<< "${active_swap_names}"
+              fi
+              if observed_swap_bytes="$(read_active_swap_bytes 2>/dev/null)"; then
+                observed_swap_bytes="${observed_swap_bytes:-0}"
+                if [[ "${observed_swap_bytes}" =~ ^[0-9]+$ ]] &&
+                  (( provisioned_swap_active == 1 && observed_swap_bytes >= required_swap_bytes )); then
+                  active_swap_bytes="${observed_swap_bytes}"
+                  return 0
+                fi
+              fi
+              if (( activation_observation_attempt < activation_observation_attempts )); then
+                /usr/bin/sleep "${activation_observation_delay_seconds}"
+              fi
+              activation_observation_attempt=$((activation_observation_attempt + 1))
+            done
+            return 1
+          }
+
+          if ! observe_provisioned_swap; then
+            fail "unable to verify the required active swap capacity after bounded observation"
+          fi
+
+          trap - EXIT
+          printf 'Hermes E2E swap ready: %s bytes active\n' "${active_swap_bytes}"
+          /usr/bin/sudo -n /usr/sbin/swapon --show
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (matrix.agent == 'hermes' || matrix.agent == 'deepagents') }}
@@ -788,13 +1056,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
@@ -892,13 +1161,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         # The migrated skill-agent lane invokes helper scripts that call
@@ -967,13 +1237,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw skill CLI live test
         env:
@@ -1004,13 +1275,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run inference routing live test
         # Direct E2E coverage. The always-on PR-safe slices prove invalid-key,
@@ -1048,13 +1320,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run cloud inference live test
         # The Vitest test
@@ -1099,12 +1372,13 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run GPU Ollama live Vitest test
@@ -1154,14 +1428,35 @@ jobs:
       NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run agent turn latency live Vitest test
@@ -1212,12 +1507,13 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run Kimi compatibility live Vitest test
@@ -1276,14 +1572,35 @@ jobs:
       NEMOCLAW_SWITCH_MOCK_ANTHROPIC: ${{ matrix.switch_mock_anthropic }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
         continue-on-error: true
@@ -1336,13 +1653,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1391,13 +1709,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -1434,13 +1753,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1492,6 +1812,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
@@ -1509,7 +1830,7 @@ jobs:
           packages: expect iptables
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1560,13 +1881,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run credential sanitization live test
         # Preserves the
@@ -1604,13 +1926,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run credential migration live test
         # This live test
@@ -1655,13 +1978,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: |
@@ -1712,13 +2036,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run Hermes Slack live test
         # Preserves the
@@ -1763,15 +2088,36 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-hermes
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,')))) }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -1832,6 +2178,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
@@ -1908,10 +2255,10 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Reassert trusted Node runtime
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         env:
           BASH_ENV: /dev/null
           E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
@@ -2083,15 +2430,36 @@ jobs:
       NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2138,15 +2506,36 @@ jobs:
       NEMOCLAW_POLICY_TIER: open
       OPENSHELL_GATEWAY: nemoclaw
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2184,17 +2573,30 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   network-policy:
+    name: Network policy (${{ matrix.scenario }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',network-policy,') || contains(format(',{0},', inputs.targets), ',network-policy,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: live-probes
+            selector: "^network-policy:.+probes$"
+            sandbox: e2e-net-policy-live-probes
+          - scenario: zero-presets
+            selector: "^network-policy:.+presets$"
+            sandbox: e2e-net-policy-zero-presets
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "network-policy"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/network-policy
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/network-policy/${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox }}
       # Raw OpenShell sandbox commands in the migrated live test must target
       # the gateway registered by NemoClaw onboarding even when OpenShell has
       # no active gateway selected on the runner.
@@ -2202,6 +2604,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
@@ -2218,7 +2621,7 @@ jobs:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         # Runs without workflow tokens, Docker credentials, or NVIDIA_INFERENCE_API_KEY.
@@ -2236,11 +2639,15 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/network-policy.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/network-policy.test.ts \
+            --selector "${{ matrix.selector }}"
 
       - name: Upload network-policy artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-network-policy-${{ matrix.scenario }}
+          path: e2e-artifacts/live/network-policy/${{ matrix.scenario }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -2248,15 +2655,28 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   common-egress-agent:
+    name: Common egress agent (${{ matrix.scenario }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',common-egress-agent,') || contains(format(',{0},', inputs.targets), ',common-egress-agent,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}
-    timeout-minutes: 120
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - scenario: openclaw-balanced-weather
+            selector: "^common-egress.+C1.+$"
+          - scenario: openclaw-open-reference
+            selector: "^common-egress.+C2.+$"
+          - scenario: hermes-open-reference
+            selector: "^common-egress.+C3.+$"
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "common-egress-agent"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/common-egress-agent
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -2264,15 +2684,36 @@ jobs:
       NEMOCLAW_RECREATE_SANDBOX: "1"
       OPENSHELL_GATEWAY: nemoclaw
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.scenario == 'hermes-open-reference' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2311,7 +2752,8 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts \
+            --selector "${{ matrix.selector }}"
 
       - name: Finalize runner comparison telemetry
         if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2322,6 +2764,9 @@ jobs:
       - name: Upload common-egress agent artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-common-egress-agent-${{ matrix.scenario }}
+          path: e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -2346,13 +2791,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -2395,15 +2841,36 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-hermes-shields
       OPENSHELL_GATEWAY: nemoclaw
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2448,13 +2915,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         # Direct Vitest execution uses bin/nemoclaw.js instead of install.sh,
@@ -2518,13 +2986,24 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2538,16 +3017,6 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
-
-      - name: Add swap for Hermes image rebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
 
       - name: Run Hermes rebuild live test
         # Preserves the checked-out CLI, Docker/OpenShell, Hermes base-image
@@ -2632,13 +3101,24 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2652,16 +3132,6 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
-
-      - name: Add swap for Hermes image rebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
 
       - name: Run Hermes stale-base rebuild live test
         # Uses NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1, preserving issue #3025's
@@ -2738,13 +3208,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -2801,13 +3272,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -2864,13 +3336,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run overlayfs autofix live test
         env:
@@ -2907,13 +3380,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -2969,13 +3443,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: |
@@ -3027,13 +3502,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3092,6 +3568,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
@@ -3110,7 +3587,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Verify Jetson GPU availability
         run: |
@@ -3158,13 +3635,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3213,13 +3691,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3267,13 +3746,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3343,15 +3823,38 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       OPENSHELL_GATEWAY: nemoclaw
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
@@ -3407,6 +3910,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
@@ -3436,7 +3940,7 @@ jobs:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3520,13 +4024,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3573,13 +4078,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3627,13 +4133,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3679,13 +4186,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run token rotation live test
         # Preserve the original runner class: ubuntu-latest with Docker/OpenShell
@@ -3730,13 +4238,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run messaging compatible endpoint live test
         # Preserves the fake OpenAI-compatible endpoint, Telegram messaging
@@ -3838,13 +4347,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenShell gateway upgrade live Vitest test
         # Keep the original v0.0.36 fixture on x86_64 and validate the exact
@@ -3888,13 +4398,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run messaging providers live Vitest test
         # The test keeps
@@ -3947,13 +4458,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -3991,13 +4503,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run Model Router provider-routed inference live test
         # Preserves the real provider-routed onboard, host model-router health, and
@@ -4035,13 +4548,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -4085,13 +4599,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Verify CLI launcher
         run: |
@@ -4143,13 +4658,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run sandbox survival live test
         # This intentionally
@@ -4190,13 +4706,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run diagnostics live test
         # This preserves the
@@ -4218,18 +4735,84 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Scheduled coverage for #6108 / #3513 / #3127. This exercises the complete
-  # managed v0.0.71 runtime with a custom plugin, then proves restart/rebuild
-  # persistence and target-side runtime-dependency replacement across devices.
+  # Scheduled release-baseline coverage for #6108. This runs independently of
+  # the current lifecycle lane so the exact v0.0.71 build does not extend that
+  # lane's critical path.
+  openclaw-plugin-runtime-exdev-release:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-plugin-runtime-exdev-release,') || contains(format(',{0},', inputs.targets), ',openclaw-plugin-runtime-exdev-release,') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 55
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "openclaw-plugin-runtime-exdev-release"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev-release
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-plugin-exdev-release"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Pre-pull release-matched Docker Hub builder image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
+
+      - name: Remove Docker auth before release-pinned fixture
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/docker-auth-cleanup.sh
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Run OpenClaw custom-plugin release baseline live test
+        run: |
+          set -euo pipefail
+          test -n "${DOCKER_CONFIG:-}"
+          test ! -e "${DOCKER_CONFIG}"
+          test -z "${DOCKERHUB_USERNAME:-}"
+          test -z "${DOCKERHUB_TOKEN:-}"
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
+            npx tsx tools/e2e/live-vitest-invocation.mts run \
+              --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
+              --selector release-baseline
+
+      - name: Upload OpenClaw plugin release baseline artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  # Scheduled current-lifecycle coverage for #6108 / #3513 / #3127. This
+  # proves restart/rebuild persistence and target-side runtime-dependency
+  # replacement across devices without waiting for the release baseline.
   openclaw-plugin-runtime-exdev:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-plugin-runtime-exdev,') || contains(format(',{0},', inputs.targets), ',openclaw-plugin-runtime-exdev,') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Three bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
-    # Vitest buffer need 110 minutes; allow 20 more for setup and teardown.
-    timeout-minutes: 130
+    # Two bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
+    # Vitest buffer need 85 minutes; allow 20 more for setup and teardown.
+    timeout-minutes: 105
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
@@ -4243,6 +4826,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
@@ -4262,7 +4846,7 @@ jobs:
           bash .github/scripts/docker-auth-cleanup.sh
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test
         run: |
@@ -4272,7 +4856,9 @@ jobs:
           test -z "${DOCKERHUB_USERNAME:-}"
           test -z "${DOCKERHUB_TOKEN:-}"
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts
+            npx tsx tools/e2e/live-vitest-invocation.mts run \
+              --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
+              --selector current-lifecycle
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
         if: always()
@@ -4309,6 +4895,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
@@ -4331,7 +4918,7 @@ jobs:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw TUI chat correlation live test
         env:
@@ -4386,13 +4973,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         # This target invokes `bin/nemoclaw.js onboard` directly, so install
@@ -4481,13 +5069,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw inference switch live test
         # Preserves
@@ -4537,15 +5126,36 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run Bedrock Runtime compatible Anthropic live test
         # Direct Vitest coverage for
@@ -4585,11 +5195,12 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4626,13 +5237,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4681,13 +5293,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -4750,13 +5363,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -4820,15 +5434,36 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-channels-stop-start-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
@@ -4907,13 +5542,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: |
@@ -4971,13 +5607,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5028,13 +5665,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: |
@@ -5092,13 +5730,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install and verify cloudflared prerequisite
         env:
@@ -5169,13 +5808,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -5270,6 +5910,7 @@ jobs:
         sandbox-survival,
         diagnostics,
         snapshot-commands,
+        openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
         openclaw-tui-chat-correlation,
         gateway-guard-recovery,
@@ -5353,6 +5994,7 @@ jobs:
       - name: Checkout scorecard builders
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
           sparse-checkout: |
@@ -5375,6 +6017,7 @@ jobs:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           JOBS: ${{ inputs.jobs }}
           RUNTIME_ARTIFACTS: ${{ runner.temp }}/e2e-runtime-audit
+          RUNTIME_SUMMARY_FILE: ${{ runner.temp }}/e2e-runtime-summary.json
           TARGETS: ${{ inputs.targets }}
         with:
           script: |
@@ -5391,6 +6034,9 @@ jobs:
             const runtimeAudit = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/audit-test-runtime.mts'),
             );
+            const runtimeHistory = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-runtime-history.mts'),
+            );
             const needs = ${{ toJSON(needs) }};
 
             // GitHub's jobs API is the canonical source because `needs.live`
@@ -5398,9 +6044,13 @@ jobs:
             // The typed helper owns and tests the degraded `needs` fallback.
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
             let runtimeSummaryMarkdown;
+            let runtimeHistoryRows = null;
             try {
               const runtimeRows = runtimeAudit.auditTestRuntime([process.env.RUNTIME_ARTIFACTS]);
               runtimeSummaryMarkdown = runtimeAudit.formatRuntimeAuditSummary(runtimeRows);
+              runtimeHistoryRows = runtimeAudit.collectRuntimeHistorySamples([
+                process.env.RUNTIME_ARTIFACTS,
+              ]);
             } catch {
               core.warning('E2E test phase runtime summary unavailable: invalid progress artifact');
               runtimeSummaryMarkdown = [
@@ -5410,6 +6060,18 @@ jobs:
                 '',
               ].join('\n');
             }
+            const runtimeHistoryMarkdown = runtimeHistoryRows === null
+              ? [
+                  '## E2E Nightly Runtime Trend',
+                  '',
+                  'The trend is unavailable because a `test-progress.json` artifact was invalid.',
+                  '',
+                ].join('\n')
+              : await runtimeHistory.buildRuntimeHistory(
+                  { github, context, core },
+                  runtimeHistoryRows,
+                  process.env.RUNTIME_SUMMARY_FILE,
+                );
             const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
             if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
 
@@ -5428,7 +6090,9 @@ jobs:
               today: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
             });
 
-            await core.summary.addRaw(`${summaryMarkdown}\n\n${runtimeSummaryMarkdown}`).write();
+            await core.summary
+              .addRaw(`${summaryMarkdown}\n\n${runtimeSummaryMarkdown}\n${runtimeHistoryMarkdown}`)
+              .write();
             core.setOutput('scorecardData', JSON.stringify(scorecardData));
             core.setOutput('slackData', JSON.stringify(slackData));
 
@@ -5489,3 +6153,10 @@ jobs:
             if (!response.ok) {
               core.setFailed(`Slack webhook returned ${response.status}`);
             }
+
+      - name: Upload E2E runtime summary
+        if: ${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-runtime-summary
+          path: ${{ runner.temp }}/e2e-runtime-summary.json

@@ -448,6 +448,7 @@ const INSTALLER_HASH_RUN_TITLE =
   /^Installer Hash PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
 const E2E_GATE_RUN_TITLE =
   /^E2E Gate PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
+const REPOSITORY_NAME_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const REQUIRED_CHECK_WORKFLOW_PATHS = new Map([
   ["checks", ".github/workflows/pr.yaml"],
   ["changes", ".github/workflows/pr.yaml"],
@@ -945,27 +946,53 @@ function currentCheckRollup(
     check.detailsUrl?.match(/\/runs\/(\d+)(?:[/?#]|$)/u)?.[1] ===
       String(e2eCoordinationEvidence.trustedLegacyCheckId);
 
+  const associationLessHeadBinding = (
+    metadata: ActionRunMetadata,
+  ): "current" | "other" | "unknown" => {
+    if (
+      metadata.hasPullRequests !== false ||
+      (metadata.event !== "pull_request" && metadata.event !== "pull_request_target")
+    ) {
+      return "unknown";
+    }
+    if (
+      metadata.headShaMatches === false ||
+      metadata.headRefNameMatches === false ||
+      metadata.headRepositoryMatches === false
+    ) {
+      return "other";
+    }
+    return metadata.headShaMatches === true &&
+      metadata.headRefNameMatches === true &&
+      metadata.headRepositoryMatches === true
+      ? "current"
+      : "unknown";
+  };
+
   function runIdentityEvidence(
     runId: string,
     requiresExactDiff: boolean,
   ): "current" | "other" | "unknown" {
     const metadata = actionRunMetadata(runId);
     if (!metadata?.event || !metadata.path) return "unknown";
+    const headBinding = associationLessHeadBinding(metadata);
     if (
       metadata.event === "pull_request" &&
-      metadata.path === ".github/workflows/installer-hash-check.yaml"
+      (metadata.path === ".github/workflows/installer-hash-check.yaml" ||
+        metadata.path === ".github/workflows/pr.yaml")
     ) {
       if (
         metadata.immutablePrDiff === false ||
         metadata.exactDiff === false ||
-        metadata.headShaMatches === false
+        metadata.headShaMatches === false ||
+        headBinding === "other"
       ) {
         return "other";
       }
       if (
         metadata.immutablePrDiff === true &&
         metadata.headShaMatches === true &&
-        (metadata.exactDiff === true || metadata.hasPullRequests === false)
+        (metadata.exactDiff === true || headBinding === "current")
       ) {
         return "current";
       }
@@ -973,11 +1000,6 @@ function currentCheckRollup(
     }
     if (metadata.exactDiff === true) {
       if (metadata.headShaMatches === true) {
-        if (metadata.event === "pull_request" && metadata.path === ".github/workflows/pr.yaml") {
-          if (metadata.immutablePrDiff === true) return "current";
-          if (metadata.immutablePrDiff === false) return "other";
-          return "unknown";
-        }
         return "current";
       }
       if (metadata.headShaMatches === false) return "other";
@@ -988,6 +1010,13 @@ function currentCheckRollup(
     if (e2eHeadBinding === "other") return "other";
     if (e2eHeadBinding === "current") {
       return e2eCoordinationIsEnclosed(metadata) ? "current" : "unknown";
+    }
+    if (
+      exactDiff.headRepository !== repo &&
+      metadata.path !== ".github/workflows/pr-e2e-gate.yaml" &&
+      headBinding !== "unknown"
+    ) {
+      return headBinding;
     }
     if (
       !requiresExactDiff &&
@@ -1654,6 +1683,37 @@ interface PrRevisionSnapshot {
   headRepository: string;
 }
 
+function parseHeadRepository(headRepository: unknown, headRepositoryOwner: unknown): string | null {
+  if (
+    typeof headRepository !== "object" ||
+    headRepository === null ||
+    Array.isArray(headRepository)
+  ) {
+    return null;
+  }
+  const repository = headRepository as Record<string, unknown>;
+  const direct =
+    typeof repository.nameWithOwner === "string" &&
+    REPOSITORY_NAME_PATTERN.test(repository.nameWithOwner)
+      ? repository.nameWithOwner
+      : null;
+  let derived: string | null = null;
+  if (
+    typeof repository.name === "string" &&
+    /^[A-Za-z0-9_.-]+$/u.test(repository.name) &&
+    typeof headRepositoryOwner === "object" &&
+    headRepositoryOwner !== null &&
+    !Array.isArray(headRepositoryOwner)
+  ) {
+    const login = (headRepositoryOwner as Record<string, unknown>).login;
+    if (typeof login === "string" && /^[A-Za-z0-9_.-]+$/u.test(login)) {
+      derived = `${login}/${repository.name}`;
+    }
+  }
+  if (direct && derived && direct !== derived) return null;
+  return direct ?? derived;
+}
+
 function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapshot | null {
   const value = ghJson([
     "pr",
@@ -1662,11 +1722,11 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     "--repo",
     repo,
     "--json",
-    "title,body,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository",
+    "title,body,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,headRepositoryOwner",
   ]);
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  const headRepository = record.headRepository;
+  const headRepository = parseHeadRepository(record.headRepository, record.headRepositoryOwner);
   if (
     typeof record.title !== "string" ||
     typeof record.body !== "string" ||
@@ -1678,10 +1738,7 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     typeof record.baseRefOid !== "string" ||
     typeof record.headRefName !== "string" ||
     typeof record.baseRefName !== "string" ||
-    typeof headRepository !== "object" ||
-    headRepository === null ||
-    Array.isArray(headRepository) ||
-    typeof (headRepository as Record<string, unknown>).nameWithOwner !== "string"
+    !headRepository
   ) {
     return null;
   }
@@ -1696,7 +1753,7 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     baseRefOid: record.baseRefOid,
     headRefName: record.headRefName,
     baseRefName: record.baseRefName,
-    headRepository: (headRepository as Record<string, unknown>).nameWithOwner as string,
+    headRepository,
   };
 }
 
@@ -1773,7 +1830,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,body,files,statusCheckRollup,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,author",
+    "number,title,url,body,files,statusCheckRollup,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,headRepositoryOwner,author",
   ]) as {
     number: number;
     title: string;
@@ -1789,12 +1846,18 @@ function main(): void {
     baseRefOid: string;
     headRefName: string;
     baseRefName: string;
-    headRepository: { nameWithOwner: string };
+    headRepository: { name: string; nameWithOwner: string };
+    headRepositoryOwner: { login: string } | null;
     author: PrIdentity | null;
   } | null;
 
   if (!prData) {
     console.error(`Failed to fetch PR #${prNumber} from ${repo}`);
+    process.exit(1);
+  }
+  const headRepository = parseHeadRepository(prData.headRepository, prData.headRepositoryOwner);
+  if (!headRepository) {
+    console.error(`Failed to resolve PR #${prNumber} head repository from ${repo}`);
     process.exit(1);
   }
 
@@ -1803,7 +1866,7 @@ function main(): void {
     headSha: prData.headRefOid,
     baseSha: prData.baseRefOid,
     headRefName: prData.headRefName,
-    headRepository: prData.headRepository.nameWithOwner,
+    headRepository,
   });
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
@@ -1832,7 +1895,7 @@ function main(): void {
       baseRefOid: prData.baseRefOid,
       headRefName: prData.headRefName,
       baseRefName: prData.baseRefName,
-      headRepository: prData.headRepository.nameWithOwner,
+      headRepository,
     },
     currentRevision,
     currentBaseSha,

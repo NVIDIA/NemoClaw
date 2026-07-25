@@ -137,6 +137,7 @@ describe("Regression E2E workflow contract", () => {
 
   // source-shape-contract: security -- Keeps the custom-plugin EXDEV regression immutable and free of repository secrets
   it("runs the OpenClaw custom-plugin lifecycle and EXDEV guard in a secret-free lane", () => {
+    const releaseJob = workflow.jobs?.["openclaw-plugin-runtime-exdev-release-e2e"];
     const job = workflow.jobs?.["openclaw-plugin-runtime-exdev-e2e"];
     const steps = job?.steps ?? [];
     const runText = steps.map((step) => step.run ?? "").join("\n");
@@ -151,7 +152,7 @@ describe("Regression E2E workflow contract", () => {
     const serializedJob = JSON.stringify(job);
 
     expect(job?.permissions).toEqual({ contents: "read" });
-    expect(job?.["timeout-minutes"]).toBe(130);
+    expect(job?.["timeout-minutes"]).toBe(105);
     expect(checkoutStep?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
     expect(setupNodeStep?.uses).toMatch(FULL_SHA_ACTION);
@@ -166,8 +167,16 @@ describe("Regression E2E workflow contract", () => {
     }
 
     expect(runText).toContain("test/e2e/live/openclaw-plugin-runtime-exdev.test.ts");
+    expect(runText).toContain("-t current-lifecycle");
     expect(runText).toContain("npx vitest run --project e2e-live");
     expect(runText).toContain("npm ci --ignore-scripts");
     expect(runText).toContain("npm run build:cli");
+
+    const releaseRunText = (releaseJob?.steps ?? []).map((step) => step.run ?? "").join("\n");
+    expect(releaseJob?.permissions).toEqual({ contents: "read" });
+    expect(releaseJob?.["timeout-minutes"]).toBe(55);
+    expect(JSON.stringify(releaseJob)).not.toContain("${{ secrets.");
+    expect(releaseRunText).toContain("test/e2e/live/openclaw-plugin-runtime-exdev.test.ts");
+    expect(releaseRunText).toContain("-t release-baseline");
   });
 });

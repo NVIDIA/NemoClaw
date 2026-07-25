@@ -77,7 +77,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     expect(validateOpenClawPluginRuntimeExdevWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "openclaw-plugin-runtime-exdev must run on ubuntu-latest",
-        "openclaw-plugin-runtime-exdev must retain its 130 minute runtime proof budget",
+        "openclaw-plugin-runtime-exdev must retain its 105 minute runtime proof budget",
         "openclaw-plugin-runtime-exdev must hold only contents: read",
         "openclaw-plugin-runtime-exdev must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev",
         "openclaw-plugin-runtime-exdev must remain enabled for scheduled and empty manual runs",

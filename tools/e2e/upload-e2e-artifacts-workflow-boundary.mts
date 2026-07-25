@@ -38,6 +38,16 @@ const GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+const SCORECARD_RUNTIME_UPLOAD_CONTRACT: WorkflowStep = {
+  name: "Upload E2E runtime summary",
+  if: "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}",
+  uses: UPLOAD_E2E_ARTIFACTS_ACTION,
+  with: {
+    name: "e2e-runtime-summary",
+    path: "${{ runner.temp }}/e2e-runtime-summary.json",
+  },
+};
+
 const SHARED_E2E_JOBS: ReadonlyMap<string, { targetId: string }> = new Map([
   [SHARED_E2E_JOB_ID, { targetId: "${{ matrix.id }}" }],
 ]);
@@ -113,6 +123,20 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-hermes-inference-switch-${{ matrix.mode }}",
       path: "e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/",
+    },
+  ],
+  [
+    "network-policy",
+    {
+      name: "e2e-network-policy-${{ matrix.scenario }}",
+      path: "e2e-artifacts/live/network-policy/${{ matrix.scenario }}/",
+    },
+  ],
+  [
+    "common-egress-agent",
+    {
+      name: "e2e-common-egress-agent-${{ matrix.scenario }}",
+      path: "e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}/",
     },
   ],
   [
@@ -233,6 +257,23 @@ function steps(value: unknown): WorkflowStep[] {
 
 function sortedKeys(value: WorkflowRecord): string[] {
   return Object.keys(value).sort();
+}
+
+function validateUploadPlacement(
+  errors: string[],
+  jobName: string,
+  jobSteps: readonly WorkflowStep[],
+  upload: WorkflowStep,
+): void {
+  const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
+  if (
+    stepsAfterUpload.length > 1 ||
+    stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
+  ) {
+    errors.push(
+      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
+    );
+  }
 }
 
 export function validateUploadE2eArtifactsAction(actionPath = DEFAULT_ACTION_PATH): string[] {
@@ -360,6 +401,22 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     }
 
     const uploadSteps = jobSteps.filter((step) => step.uses === UPLOAD_E2E_ARTIFACTS_ACTION);
+    if (jobName === "scorecard") {
+      if (uploadSteps.length !== 1) {
+        errors.push(
+          "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+        );
+        continue;
+      }
+      const upload = uploadSteps[0];
+      if (!isDeepStrictEqual(upload, SCORECARD_RUNTIME_UPLOAD_CONTRACT)) {
+        errors.push(
+          "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+        );
+      }
+      validateUploadPlacement(errors, jobName, jobSteps, upload);
+      continue;
+    }
     if (!expected) {
       if (uploadSteps.length > 0) {
         errors.push(`${jobName} must not use upload-e2e-artifacts`);
@@ -388,15 +445,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           : `${jobName} upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks`,
       );
     }
-    const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
-    if (
-      stepsAfterUpload.length > 1 ||
-      stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
-    ) {
-      errors.push(
-        `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
-      );
-    }
+    validateUploadPlacement(errors, jobName, jobSteps, upload);
 
     if (explicitContract) {
       if (!isDeepStrictEqual(record(upload.with), explicitContract)) {
