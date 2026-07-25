@@ -23,6 +23,7 @@ const rootDir = process.cwd();
 
 describe("shields command deferred-exit translation", () => {
   beforeEach(() => {
+    process.exitCode = 0;
     shieldsUp.mockClear();
     shieldsDown.mockClear();
     shieldsUp.mockReturnValue(undefined);
