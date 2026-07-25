@@ -30,7 +30,13 @@ Otherwise, do not use any of these reviewer-request writes:
 
 Under the same authorization rules, do not manually request or re-request a third-party reviewer.
 This restriction includes Copilot and CodeRabbit.
-Do not compensate for a missing, stale, quota-limited, or failed review.
+The following review conditions do not authorize a reviewer-request write:
+
+- The repository produced no review.
+- The review covers an earlier PR SHA.
+- A reviewer quota prevents the review.
+- The review failed.
+
 Observe only review signals that the repository produces.
 Triage each signal according to this workflow.
 
