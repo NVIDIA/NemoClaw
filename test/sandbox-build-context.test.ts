@@ -129,6 +129,19 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(path.join(sourceRoot, "scripts", "lib"), 0o700);
   }
 
+  function makeBuildContextFixtureGroupWritable(sourceRoot: string) {
+    for (const relativePath of [
+      "scripts",
+      path.join("scripts", "lib"),
+      "src",
+      path.join("src", "lib"),
+    ]) {
+      fs.chmodSync(path.join(sourceRoot, relativePath), 0o775);
+    }
+    fs.chmodSync(path.join(sourceRoot, "scripts", "patch-bundled-npm-tar.mts"), 0o775);
+    fs.chmodSync(path.join(sourceRoot, "src", "lib", "tool-disclosure.ts"), 0o664);
+  }
+
   function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
     const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
     const copiedScripts = [...dockerfile.matchAll(/^COPY\s+scripts\/(\S+)/gm)].map(
@@ -210,25 +223,48 @@ describe("sandbox build context staging", () => {
     expect((fs.statSync(stagedHelper).mode & 0o777).toString(8)).toBe("755");
   }
 
-  it("normalizes copied blueprint modes with chmod a+rX semantics", () => {
+  function expectStagedGroupWritablePayloadModes(buildCtx: string) {
+    expect((fs.statSync(path.join(buildCtx, "scripts")).mode & 0o777).toString(8)).toBe("755");
+    expect(
+      (
+        fs.statSync(path.join(buildCtx, "scripts", "patch-bundled-npm-tar.mts")).mode & 0o777
+      ).toString(8),
+    ).toBe("755");
+    expect(
+      (fs.statSync(path.join(buildCtx, "src", "lib", "tool-disclosure.ts")).mode & 0o777).toString(
+        8,
+      ),
+    ).toBe("644");
+  }
+
+  it("normalizes restrictive and group-writable modes for Docker COPY", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-unit-"));
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
     const manifestDir = path.join(blueprintDir, "model-specific-setup", "openclaw");
     const manifestPath = path.join(manifestDir, "kimi-k2.6-managed-inference.json");
     const executablePath = path.join(blueprintDir, "scripts", "helper.sh");
+    const groupWritableDir = path.join(blueprintDir, "group-writable");
+    const groupWritableFile = path.join(groupWritableDir, "manifest.json");
+    const groupWritableExecutable = path.join(groupWritableDir, "helper.sh");
     const symlinkPath = path.join(blueprintDir, "manifest-link.json");
 
     try {
       fs.mkdirSync(manifestDir, { recursive: true });
       fs.mkdirSync(path.dirname(executablePath), { recursive: true });
+      fs.mkdirSync(groupWritableDir, { mode: 0o775 });
       fs.writeFileSync(manifestPath, "{}\n", { mode: 0o600 });
       fs.writeFileSync(executablePath, "#!/bin/sh\n", { mode: 0o700 });
+      fs.writeFileSync(groupWritableFile, "{}\n", { mode: 0o664 });
+      fs.writeFileSync(groupWritableExecutable, "#!/bin/sh\n", { mode: 0o775 });
       fs.symlinkSync(manifestPath, symlinkPath);
       fs.chmodSync(blueprintDir, 0o700);
       fs.chmodSync(path.join(blueprintDir, "model-specific-setup"), 0o700);
       fs.chmodSync(manifestDir, 0o700);
       fs.chmodSync(manifestPath, 0o600);
       fs.chmodSync(executablePath, 0o700);
+      fs.chmodSync(groupWritableDir, 0o775);
+      fs.chmodSync(groupWritableFile, 0o664);
+      fs.chmodSync(groupWritableExecutable, 0o775);
 
       normalizeReadModesForDockerCopy(blueprintDir);
 
@@ -236,6 +272,9 @@ describe("sandbox build context staging", () => {
       expect((fs.statSync(manifestDir).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(manifestPath).mode & 0o777).toString(8)).toBe("644");
       expect((fs.statSync(executablePath).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(groupWritableDir).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(groupWritableFile).mode & 0o777).toString(8)).toBe("644");
+      expect((fs.statSync(groupWritableExecutable).mode & 0o777).toString(8)).toBe("755");
       expect(fs.lstatSync(symlinkPath).isSymbolicLink()).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -338,6 +377,38 @@ describe("sandbox build context staging", () => {
       } finally {
         process.umask(previousUmask);
       }
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("optimized staging strips group and other write bits from copied payloads", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-group-write-"));
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      makeBuildContextFixtureGroupWritable(sourceRoot);
+      const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedGroupWritablePayloadModes(buildCtx);
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy staging strips group and other write bits from copied payloads", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-build-context-legacy-group-write-"),
+    );
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      makeBuildContextFixtureGroupWritable(sourceRoot);
+      const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedGroupWritablePayloadModes(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
