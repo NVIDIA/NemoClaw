@@ -231,6 +231,13 @@ Follow these rules when filling in the template:
 
 Run `gh pr create` with `--assignee @me` and the completed body file.
 Run this command only after Step 4 passes.
+Before you use a reviewer-request write, confirm that one of these conditions is true:
+
+- The current user names the exact reviewer.
+- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
+
+Otherwise, do not add `--reviewer` or make a separate reviewer-request write.
+Reviewer routing belongs to repository-owned sources and the shared PR follow-up workflow.
 
 ```bash
 gh pr create \
