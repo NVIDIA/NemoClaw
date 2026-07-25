@@ -7,7 +7,13 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { buildRunPlan, type RunResult, runUninstallPlan, type UninstallRunDeps } from "./run-plan";
+import {
+  buildRunPlan,
+  type RunResult,
+  type UninstallRunDeps,
+  type UninstallRunOptions,
+  runUninstallPlan as runUninstallPlanBase,
+} from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -15,6 +21,22 @@ function ok(stdout = ""): RunResult {
 
 function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
+}
+
+function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return runUninstallPlanBase(options, {
+    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: gatewayPort === 8080 ? "packaged-service" : "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+    ...deps,
+  });
 }
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
@@ -1398,12 +1420,12 @@ describe("uninstall run plan", () => {
     });
   });
 
-  it("kills host openshell-gateway process during uninstall (#3516)", () => {
+  it("kills host openshell-gateway process during full uninstall (#3516)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
     const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      { assumeYes: true, deleteModels: false, keepOpenShell: false },
       {
         commandExists: () => true,
         env: { HOME: "/tmp/nemoclaw-uninstall-test-3516" } as NodeJS.ProcessEnv,

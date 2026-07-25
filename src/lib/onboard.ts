@@ -74,6 +74,7 @@ const dockerGpuRoute: typeof import("./onboard/docker-gpu-route") = require("./o
 const sandboxGpuCreateFlow: typeof import("./onboard/sandbox-gpu-create-flow") = require("./onboard/sandbox-gpu-create-flow");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
+const gatewayService: typeof import("./onboard/docker-driver-gateway-service") = require("./onboard/docker-driver-gateway-service");
 const dockerDriverGatewayCutover: typeof import("./onboard/docker-driver-gateway-cutover") = require("./onboard/docker-driver-gateway-cutover");
 const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExceptOrFail } =
   require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
@@ -640,10 +641,11 @@ let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;
 let GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
 const {
   clearDockerDriverGatewayRuntimeFiles,
+  createGatewayServicePortOwnership,
   getDockerDriverGatewayEnv,
   getDockerDriverGatewayPid,
-  getDockerDriverGatewayPortListenerScan,
   getDockerDriverGatewayPortListenerPid,
+  getDockerDriverGatewayReuseDrift: getGatewayReuseDrift,
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   getDockerDriverGatewayStateDir,
@@ -1266,9 +1268,10 @@ async function refreshDockerDriverGatewayReuseState(
   const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
   const driftBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
   const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+  const managedServicePid = gatewayService.getTrustedActiveOpenShellGatewayUserServicePid();
   const pid = getDockerDriverGatewayPid();
   if (pid !== null && isDockerDriverGatewayProcessAlive()) {
-    const drift = getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, driftBin);
+    const drift = getGatewayReuseDrift(pid, desiredEnv, driftBin, managedServicePid);
     if (drift) {
       console.log(
         `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
@@ -1283,8 +1286,8 @@ async function refreshDockerDriverGatewayReuseState(
     gatewayBin: identityBin,
   });
   if (dockerGatewayPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(dockerGatewayPid, desiredEnv, driftBin);
-    rememberDockerDriverGatewayPid(dockerGatewayPid);
+    const drift = getGatewayReuseDrift(dockerGatewayPid, desiredEnv, driftBin, managedServicePid);
+    if (dockerGatewayPid !== managedServicePid) rememberDockerDriverGatewayPid(dockerGatewayPid);
     if (drift) {
       console.log(
         `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
@@ -1931,16 +1934,31 @@ async function startDockerDriverGateway({
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+  const initialPortCheck = await checkGatewayPortAvailable();
+  const servicePortOwnership = createGatewayServicePortOwnership(initialPortCheck, {
+    exitOnFailure,
+    gatewayBin: identityGatewayBin,
+    preparePort: (extraPids) =>
+      reapHostGatewayBeforeLaunchOrFail({
+        stateDir,
+        gatewayBin: identityGatewayBin,
+        extraPids,
+        exitOnFailure,
+      }),
+  });
   if (
     await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
       clearDockerDriverGatewayRuntimeFiles,
       exitOnFailure,
       gatewayEnv: driftGatewayEnv,
       gatewayName: GATEWAY_NAME,
-      isDockerDriverGatewayReady: () => isDockerDriverGatewayHttpReady(),
+      isDockerDriverGatewayReady: () =>
+        isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
       registerDockerDriverGatewayEndpoint,
+      preparePortForOpenShellGatewayUserServiceStart: servicePortOwnership.preparePort,
       runCaptureOpenshell,
       skipSandboxBridgeReachability,
+      validatePortOwnerForOpenShellGatewayUserServiceStart: servicePortOwnership.validatePortOwner,
       verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
         verifySandboxBridgeGatewayReachableOrExit(fail, {
           ...options,
@@ -1949,18 +1967,9 @@ async function startDockerDriverGateway({
     })
   )
     return;
-
-  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-    ignoreError: true,
-  });
-  const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  // Port availability and listener enumeration are not atomic. The cutover
-  // rechecks health before adoption, reaps every observed duplicate, and
-  // requires a fresh strict bind proof after reaping before launch.
-  const portListenerScan = getDockerDriverGatewayPortListenerScan(
-    await checkGatewayPortAvailable(),
-    { gatewayBin: identityGatewayBin },
+  const initialHealth = dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
+    runCaptureOpenshell,
+    GATEWAY_NAME,
   );
   const cutover = await dockerDriverGatewayCutover.runDockerDriverGatewayCutover(
     {
@@ -1971,13 +1980,9 @@ async function startDockerDriverGateway({
       exitOnFailure,
       skipSandboxBridgeReachability,
       stateDir,
-      portListenerScan,
+      portListenerScan: servicePortOwnership.portListenerScan,
       pidFileGatewayPid: getDockerDriverGatewayPid(),
-      initialHealth: {
-        status: gatewayStatus,
-        namedInfo: gwInfo,
-        activeInfo: activeGatewayInfo,
-      },
+      initialHealth,
     },
     {
       isDockerDriverGatewayProcessAlive,
@@ -1985,7 +1990,8 @@ async function startDockerDriverGateway({
       getDockerDriverGatewayRuntimeDrift,
       logDockerDriverGatewayRestart,
       registerDockerDriverGatewayEndpoint,
-      isDockerDriverGatewayHttpReady,
+      isDockerDriverGatewayHttpReady: () =>
+        isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
       verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
         verifySandboxBridgeGatewayReachableOrExit(fail, {
           ...options,
@@ -2005,14 +2011,7 @@ async function startDockerDriverGateway({
         const probe = await checkGatewayPortAvailable();
         return probe.ok && !probe.warning;
       },
-      reportUntrustedGatewayPort: (message) => {
-        const detail =
-          `Refusing to start a second OpenShell gateway: ${message}. ` +
-          `Inspect port ${GATEWAY_PORT} and stop only its owning process before retrying.`;
-        console.error(`  ${detail}`);
-        if (exitOnFailure) process.exit(1);
-        throw new Error(detail);
-      },
+      reportUntrustedGatewayPort: servicePortOwnership.reportUntrustedGatewayPort,
       reportMissingGatewayBinary: () => {
         console.error("  OpenShell Docker-driver gateway binary not found.");
         console.error(
