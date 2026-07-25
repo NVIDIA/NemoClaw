@@ -59,11 +59,35 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
       expect(result.activeGateway).toBe("nemoclaw");
     });
 
+    it("accepts a connected named gateway when the legacy gateway does not support info (#6903)", () => {
+      captureSpy
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Status: Connected\nGateway: nemoclaw\nVersion: 0.0.72\n",
+        })
+        .mockReturnValueOnce({
+          status: 1,
+          output: "gateway info is not supported by this gateway version",
+        });
+
+      const result = gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw");
+
+      expect(result.state).toBe("healthy_named");
+      expect(result.activeGateway).toBe("nemoclaw");
+    });
+
     it.each([
       {
         label: "failed gateway metadata under a connected foreign gateway",
         status: "Gateway: openshell\nStatus: Connected\n",
         gatewayInfo: "No gateway metadata found",
+        gatewayInfoStatus: 1,
+        expected: "connected_other",
+      },
+      {
+        label: "arbitrary gateway info failure under a connected named gateway",
+        status: "Gateway: nemoclaw\nStatus: Connected\n",
+        gatewayInfo: "gateway info requires admin privileges",
         gatewayInfoStatus: 1,
         expected: "connected_other",
       },
@@ -153,6 +177,11 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
         .filter((args: string[]) => args[0] === "gateway" && args[1] === "select");
       expect(selectCalls).toContainEqual(["gateway", "select", "nemoclaw-8090"]);
       expect(selectCalls.every((args: string[]) => args[2] === "nemoclaw-8090")).toBe(true);
+      expect(
+        runSpy.mock.calls
+          .filter(([args]) => args[0] === "gateway" && args[1] === "select")
+          .every(([, options]) => options.stdio === "ignore"),
+      ).toBe(true);
       expect(result.recovered).toBe(true);
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
     });

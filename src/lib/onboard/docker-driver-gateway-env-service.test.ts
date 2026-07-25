@@ -6,29 +6,31 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-
-import { startPackageManagedDockerDriverGatewayWithEnvOverride } from "./docker-driver-gateway-env";
 import { writeSafeGatewayAuthConfig } from "../../../test/support/docker-driver-gateway-env-test-support";
+import { startPackageManagedDockerDriverGatewayWithEnvOverride } from "./docker-driver-gateway-env";
+
+function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
+  return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
+}
 
 describe("package-managed Docker-driver gateway env service", () => {
-  it("writes the service env only when package-managed startup prepares the service", async () => {
+  it("stages the service and writes its env under one XDG config root (#6903)", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
-    const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
-    const existsSpy = vi
-      .spyOn(fs, "existsSync")
-      .mockImplementation(
-        (candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service",
-      );
-    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+    const configHome = path.join(tempHome, "xdg-config");
+    const dockerHost = `unix://${path.join(tempHome, ".colima", "default", "docker.sock")}`;
+    const env = { ...homeEnv(tempHome, configHome), DOCKER_HOST: dockerHost };
+    const envFile = path.join(configHome, "openshell", "gateway.env");
 
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          env,
           exitOnFailure: false,
           gatewayEnv: {
             OPENSHELL_BIND_ADDRESS: "127.0.0.1",
             OPENSHELL_GATEWAY_CONFIG: writeSafeGatewayAuthConfig(tempHome),
+            OPENSHELL_SERVER_PORT: "8080",
           },
           gatewayName: "nemoclaw",
           hasOpenShellGatewayUserService: () => true,
@@ -48,14 +50,125 @@ describe("package-managed Docker-driver gateway env service", () => {
       ).resolves.toBe(true);
 
       expect(fs.readFileSync(envFile, "utf-8")).toContain("OPENSHELL_BIND_ADDRESS=127.0.0.1\n");
+      expect(fs.readFileSync(envFile, "utf-8")).toContain("OPENSHELL_SERVER_PORT=8080\n");
+      expect(fs.readFileSync(envFile, "utf-8")).toContain(`DOCKER_HOST='${dockerHost}'\n`);
+      expect(fs.existsSync(path.join(tempHome, ".config", "openshell", "gateway.env"))).toBe(false);
     } finally {
-      existsSpy.mockRestore();
-      homedirSpy.mockRestore();
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
 
-  it("rejects package-managed wildcard binds before writing the service env", () => {
+  it.each([
+    "tcp://attacker.example:2375",
+    "ssh://docker.example",
+    "unix://relative/docker.sock",
+    "unix:///tmp/docker's.sock",
+  ])("rejects unsafe package-service Docker endpoint %s (#6903)", async (dockerHost) => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
+    const startService = vi.fn((opts?: { prepareServiceEnv?: () => void }) => {
+      opts?.prepareServiceEnv?.();
+      return { attempted: true, fallbackAllowed: false, started: true };
+    });
+
+    try {
+      await expect(
+        startPackageManagedDockerDriverGatewayWithEnvOverride({
+          clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          env: { ...homeEnv(tempHome), DOCKER_HOST: dockerHost },
+          exitOnFailure: false,
+          gatewayEnv: {
+            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+            OPENSHELL_GATEWAY_CONFIG: writeSafeGatewayAuthConfig(tempHome),
+          },
+          gatewayName: "nemoclaw",
+          hasOpenShellGatewayUserService: () => true,
+          registerDockerDriverGatewayEndpoint: () => true,
+          runCaptureOpenshell: () => "",
+          skipSandboxBridgeReachability: false,
+          startOpenShellGatewayUserService: startService,
+          verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
+        }),
+      ).rejects.toThrow(/only safely serializable absolute unix:\/\/ Docker sockets are supported/);
+
+      expect(startService).toHaveBeenCalledOnce();
+      expect(fs.existsSync(envFile)).toBe(false);
+    } finally {
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symlinked package-service environment file (#6903)", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    const envDir = path.join(tempHome, ".config", "openshell");
+    const envFile = path.join(envDir, "gateway.env");
+    const targetFile = path.join(tempHome, "foreign.env");
+    fs.mkdirSync(envDir, { recursive: true });
+    fs.writeFileSync(targetFile, "KEEP_ME=1\n");
+    fs.symlinkSync(targetFile, envFile);
+
+    try {
+      await expect(
+        startPackageManagedDockerDriverGatewayWithEnvOverride({
+          clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          env: homeEnv(tempHome),
+          exitOnFailure: false,
+          gatewayEnv: {
+            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+            OPENSHELL_GATEWAY_CONFIG: writeSafeGatewayAuthConfig(tempHome),
+            OPENSHELL_SERVER_PORT: "8080",
+          },
+          gatewayName: "nemoclaw",
+          hasOpenShellGatewayUserService: () => true,
+          registerDockerDriverGatewayEndpoint: () => true,
+          runCaptureOpenshell: () => "",
+          skipSandboxBridgeReachability: false,
+          startOpenShellGatewayUserService: (opts) => {
+            opts?.prepareServiceEnv?.();
+            return { attempted: true, fallbackAllowed: false, started: true };
+          },
+          verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
+        }),
+      ).rejects.toThrow("Refusing to write symlinked OpenShell gateway env file");
+
+      expect(fs.readFileSync(targetFile, "utf-8")).toBe("KEEP_ME=1\n");
+    } finally {
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves custom gateway ports on standalone lifecycle ownership (#6903)", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    const startService = vi.fn();
+
+    try {
+      await expect(
+        startPackageManagedDockerDriverGatewayWithEnvOverride({
+          clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          env: homeEnv(tempHome),
+          exitOnFailure: false,
+          gatewayEnv: {
+            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+            OPENSHELL_GATEWAY_CONFIG: writeSafeGatewayAuthConfig(tempHome),
+            OPENSHELL_SERVER_PORT: "18080",
+          },
+          gatewayName: "nemoclaw-18080",
+          hasOpenShellGatewayUserService: () => true,
+          registerDockerDriverGatewayEndpoint: () => true,
+          runCaptureOpenshell: () => "",
+          skipSandboxBridgeReachability: false,
+          startOpenShellGatewayUserService: startService,
+          verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
+        }),
+      ).resolves.toBe(false);
+
+      expect(startService).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects package-managed wildcard binds before writing the service env (#6903)", () => {
     expect(() =>
       startPackageManagedDockerDriverGatewayWithEnvOverride({
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
@@ -74,10 +187,11 @@ describe("package-managed Docker-driver gateway env service", () => {
     ).toThrow(/not supported for the OpenShell Docker-driver gateway/);
   });
 
-  it("rejects incomplete gateway JWT config before writing env or starting the service", () => {
+  it("rejects incomplete gateway JWT config before writing env or starting the service (#6903)", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
     const startService = vi.fn();
+    const env = homeEnv(tempHome);
     const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
     try {
       for (const key of [
@@ -96,6 +210,7 @@ describe("package-managed Docker-driver gateway env service", () => {
         expect(() =>
           startPackageManagedDockerDriverGatewayWithEnvOverride({
             clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+            env,
             exitOnFailure: false,
             gatewayEnv: {
               OPENSHELL_BIND_ADDRESS: "127.0.0.1",

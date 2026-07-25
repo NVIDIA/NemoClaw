@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   contractExceptionAllowlistErrors,
+  isSourceShapePathSkipped,
   scanTextForTest,
   scanTextForTestReport,
   sourceShapeSummary,
@@ -19,6 +20,18 @@ function detectedCaseNames(source: string): string[] {
 }
 
 describe("source-shape scanner", () => {
+  it("skips the local nested worktree checkout container", () => {
+    const repoRoot = path.resolve(".");
+
+    expect(isSourceShapePathSkipped(path.join(repoRoot, "worktrees"))).toBe(true);
+    expect(
+      isSourceShapePathSkipped(
+        path.join(repoRoot, "worktrees", "feature", "test", "example.test.ts"),
+      ),
+    ).toBe(true);
+    expect(isSourceShapePathSkipped(path.join(repoRoot, "test", "example.test.ts"))).toBe(false);
+  });
+
   it("detects source reads through variable-declared arrow helpers", () => {
     const cases = detectedCaseNames(`
       import { readFileSync } from "node:fs";
