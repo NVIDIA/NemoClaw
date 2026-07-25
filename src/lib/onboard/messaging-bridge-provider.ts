@@ -389,9 +389,9 @@ function buildRefreshMaterial(
     const privateKey = parsed.private_key;
     if (
       typeof clientEmail !== "string" ||
-      !clientEmail ||
+      !clientEmail.trim() ||
       typeof privateKey !== "string" ||
-      !privateKey
+      !privateKey.trim()
     ) {
       return { ok: false, reason: "service account JSON missing client_email/private_key" };
     }

@@ -153,6 +153,17 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("fails closed when client_email or private_key is blank", () => {
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell: vi.fn(),
+      redact,
+      getCredential: () => JSON.stringify({ client_email: " ", private_key: "\n" }),
+      log: noLog,
+      profiles: [GC_PROFILE],
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it("keeps private keys off argv while configuring refresh", () => {
     const secretEnvName = "MESSAGING_BRIDGE_SECRET_0";
     const parentSecret = process.env[secretEnvName];

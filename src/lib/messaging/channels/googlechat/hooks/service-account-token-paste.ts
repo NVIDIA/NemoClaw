@@ -20,12 +20,26 @@ export const GOOGLECHAT_TOKEN_PASTE_HOOK_HANDLER_ID = "googlechat.tokenPaste";
  * (The manifest regex already checks the required key names are present.)
  */
 export function serviceAccountJsonError(token: string): string | null {
+  let parsed: unknown;
   try {
-    JSON.parse(token);
-    return null;
+    parsed = JSON.parse(token);
   } catch {
     return "Service account JSON could not be parsed";
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return "Service account JSON must be an object";
+  }
+  const clientEmail = Reflect.get(parsed, "client_email");
+  const privateKey = Reflect.get(parsed, "private_key");
+  if (
+    typeof clientEmail !== "string" ||
+    !clientEmail.trim() ||
+    typeof privateKey !== "string" ||
+    !privateKey.trim()
+  ) {
+    return "Service account JSON must include non-empty client_email and private_key fields";
+  }
+  return null;
 }
 
 // Google Chat's only secret is the service-account JSON. Take the field the
