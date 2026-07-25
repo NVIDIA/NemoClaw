@@ -94,8 +94,6 @@ describe("isDockerDriverGatewayHttpReady TLS servername", () => {
   const tlsDirs: string[] = [];
 
   afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
     for (const dir of tlsDirs.splice(0)) {
       fs.rmSync(dir, { force: true, recursive: true });
     }
