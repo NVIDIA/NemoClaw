@@ -32,6 +32,41 @@ export function readIssue6194Capture(path: string): Issue6194Capture {
   }
 }
 
+export function buildIssue6194PairExpectProcedure(): string {
+  return `proc expect_pair_or_exit {firstPattern firstMark secondPattern secondMark firstTimeoutExit firstEofExit secondTimeoutExit secondEofExit} {
+  set firstSeen 0
+  set secondSeen 0
+  expect {
+    -nocase -re $firstPattern {
+      if {!$firstSeen} {
+        mark $firstMark
+        set firstSeen 1
+      }
+      if {$firstSeen && $secondSeen} { return }
+      exp_continue -continue_timer
+    }
+    -nocase -re $secondPattern {
+      if {!$secondSeen} {
+        mark $secondMark
+        set secondSeen 1
+      }
+      if {$firstSeen && $secondSeen} { return }
+      exp_continue -continue_timer
+    }
+    timeout {
+      send "\\003"
+      if {!$firstSeen} { exit $firstTimeoutExit }
+      exit $secondTimeoutExit
+    }
+    eof {
+      if {!$firstSeen} { exit $firstEofExit }
+      exit $secondEofExit
+    }
+  }
+}
+`;
+}
+
 export function buildIssue6194TuiExpectScript(): string {
   return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
@@ -52,35 +87,7 @@ proc expect_or_exit {pattern markName timeoutExit eofExit} {
     eof { exit $eofExit }
   }
 }
-proc expect_pair_or_exit {firstPattern firstMark secondPattern secondMark firstTimeoutExit firstEofExit secondTimeoutExit secondEofExit} {
-  set firstSeen 0
-  set secondSeen 0
-  while {!$firstSeen || !$secondSeen} {
-    expect {
-      -nocase -re $firstPattern {
-        if {!$firstSeen} {
-          mark $firstMark
-          set firstSeen 1
-        }
-      }
-      -nocase -re $secondPattern {
-        if {!$secondSeen} {
-          mark $secondMark
-          set secondSeen 1
-        }
-      }
-      timeout {
-        send "\\003"
-        if {!$firstSeen} { exit $firstTimeoutExit }
-        exit $secondTimeoutExit
-      }
-      eof {
-        if {!$firstSeen} { exit $firstEofExit }
-        exit $secondEofExit
-      }
-    }
-  }
-}
+${buildIssue6194PairExpectProcedure()}\
 spawn openshell sandbox exec --name $sandbox --tty -- sh -lc "export TERM=xterm-256color; cd /sandbox; openclaw tui --session $session"
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_initial 10 11
 send -- "Reply with the three fragments joined by underscores: NEMOCLAW6194, CHAT, OK. Put only that joined token on its own line. Do not use tools.\\r"
