@@ -14,7 +14,13 @@ runs:
 
         image="ghcr.io/nvidia/nemoclaw/sandbox-base"
         min_glibc="2.39"
-        base_inputs=(Dockerfile.base nemoclaw-blueprint/blueprint.yaml)
+        base_inputs=(
+          Dockerfile.base
+          agents/openclaw/openclaw-runtime/package.json
+          agents/openclaw/openclaw-runtime/package-lock.json
+          nemoclaw-blueprint/blueprint.yaml
+          scripts/lib/reviewed-npm-archive.mts
+        )
         source "${GITHUB_ACTION_PATH}/../base-image-resolver.sh"
 
         normalize_version_tag() {

@@ -1250,6 +1250,21 @@ describe("PR E2E controller", () => {
       expect(outputs).toContain("dispatched=true");
       expect(outputs).not.toContain("approval_mode=");
       expect(outputs).not.toContain("finalized=true");
+      const runningUpdate = requests.find(
+        (request) =>
+          request.url.endsWith("/check-runs/17") &&
+          request.method === "PATCH" &&
+          (request.body as { output?: { title?: string } }).output?.title ===
+            "Running 3 E2E checks",
+      );
+      expect(runningUpdate?.body).toMatchObject({
+        details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+        output: {
+          summary: expect.stringContaining(
+            "Child run: https://github.com/NVIDIA/NemoClaw/actions/runs/23.",
+          ),
+        },
+      });
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }

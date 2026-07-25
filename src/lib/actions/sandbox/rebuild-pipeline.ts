@@ -20,6 +20,7 @@ import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
@@ -123,6 +124,7 @@ async function rebuildSandboxUnlocked(
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
+    if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return;
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;

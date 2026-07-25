@@ -985,6 +985,7 @@ describe("pull request and main workflow contracts", () => {
       ["pull_request", prWorkflow],
       ["main", mainWorkflow],
     ] as const) {
+      expect(workflow.jobs["cli-test-shards"]["timeout-minutes"], workflowName).toBe(15);
       const checkoutStep = requiredWorkflowStep(workflow.jobs["cli-test-shards"], "Checkout");
       const shardStep = requiredWorkflowStep(
         workflow.jobs["cli-test-shards"],

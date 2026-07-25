@@ -192,7 +192,8 @@ function createPhases(
       normalizeHermesToolGatewaySelections: (value) => (Array.isArray(value) ? value : []),
       stringSetsEqual: (left, right) =>
         left.length === right.length && left.every((item) => right.includes(item)),
-      removeSandboxFromRegistry: vi.fn(),
+      removeSandboxFromRegistry: vi.fn(() => null),
+      restoreSandboxRegistryEntryIfMissing: vi.fn(() => false),
       repairRecordedSandbox: vi.fn(),
       ensureValidatedWebSearchCredential: vi.fn(async () => null),
       isBackToSelection: () => false,
@@ -231,6 +232,7 @@ function createPhases(
               directGpu: false,
               additionalPresets: [],
               policyTier: null,
+              baselineExclusions: [],
             },
           },
           gpuCreateArgs: [],

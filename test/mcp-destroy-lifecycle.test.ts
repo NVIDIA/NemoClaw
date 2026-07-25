@@ -25,6 +25,7 @@ const testState = vi.hoisted(() => {
     adapterRegistered: true,
     applyPresetContent: vi.fn(),
     calls: [] as string[],
+    captureOpenshell: vi.fn(),
     executeGatewaySupervisorAction: vi.fn(),
     executeSandboxCommand: vi.fn(),
     executeSandboxExecCommand: vi.fn(),
@@ -57,6 +58,7 @@ vi.mock("../src/lib/adapters/dns/resolve", () => ({
 
 vi.mock("../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/adapters/openshell/runtime")>()),
+  captureOpenshell: testState.captureOpenshell,
   runOpenshell: testState.runOpenshell,
 }));
 
@@ -858,6 +860,12 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
         ? { status: 0, stdout: "", stderr: "" }
         : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
     );
+    testState.captureOpenshell.mockReturnValue({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "Error: sandbox alpha not found",
+    });
     const onDeleted = vi.fn();
 
     const result = await runRebuildDestroyPhase({
@@ -884,7 +892,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.any(Object),
     );
-    expect(testState.runOpenshell).toHaveBeenCalledWith(
+    expect(testState.captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
       expect.any(Object),
     );

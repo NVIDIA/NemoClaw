@@ -188,19 +188,43 @@ function validateControllerAuthorization(
     "nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}",
     "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}",
-    `[[ "$(jq -r '.details_url // ""' <<< "$check_json")" == "$expected_run_url" ]]`,
+    '--header "Cache-Control: no-cache"',
+    "Child run: ${expected_run_url}.",
+    `[[ "$(jq -r '.output.summary // ""' <<< "$check_json")" == "$expected_summary" ]]`,
     '.name == "E2E / PR Gate Coordination"',
     ".app.id == 15368",
     '.app.slug == "github-actions"',
     ".external_id == $external_id",
     '.status == "in_progress"',
     ".conclusion == null",
-    ".details_url == $run_url",
     ".output.summary == $summary",
   ]) {
     if (!source.includes(fragment)) {
       errors.push(`Controller authentication must retain ${fragment}`);
     }
+  }
+  const maxAttempts = Number.parseInt(
+    source.match(/controller_auth_max_attempts=(\d+)/u)?.[1] ?? "",
+    10,
+  );
+  const pollSeconds = Number.parseInt(
+    source.match(/controller_auth_poll_seconds=(\d+)/u)?.[1] ?? "",
+    10,
+  );
+  if (maxAttempts !== 45) {
+    errors.push("Controller authentication must use exactly 45 polling attempts");
+  }
+  if (pollSeconds !== 2) {
+    errors.push("Controller authentication must use two-second polling intervals");
+  }
+  if (
+    !Number.isSafeInteger(maxAttempts) ||
+    !Number.isSafeInteger(pollSeconds) ||
+    (maxAttempts - 1) * pollSeconds <= 60
+  ) {
+    errors.push(
+      "Controller authentication polling window must exceed GitHub's 60-second check cache",
+    );
   }
 }
 
