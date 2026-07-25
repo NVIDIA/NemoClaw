@@ -7,8 +7,9 @@ import { PROCESS_CLASSES, type ProcessClass } from "./runner-pressure-core.mts";
 
 export const RUNNER_COMPARISON_LEDGER_FILE = "runner-comparison.jsonl";
 export const RUNNER_COMPARISON_SUMMARY_FILE = "runner-comparison-summary.json";
-// The 60-second cadence and semantic boundaries must outlast the longest
-// instrumented 120-minute job while reserving one finalization slot.
+// The shared bound accommodates the default 60-second cadence for the longest
+// instrumented job. Faster rebuild sampling stops early to reserve one
+// finalization slot.
 export const RUNNER_COMPARISON_MAX_SAMPLES = 256;
 export const RUNNER_COMPARISON_LEDGER_MAX_BYTES = RUNNER_COMPARISON_MAX_SAMPLES * (4096 + 1);
 export const RUNNER_COMPARISON_SUMMARY_MAX_BYTES = 8192;

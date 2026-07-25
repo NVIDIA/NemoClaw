@@ -161,9 +161,10 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
-    version: 3,
+    version: 4,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
+    checkoutRepository: "NVIDIA/NemoClaw",
     workflowSha: WORKFLOW_SHA,
     planHash: plan.planHash,
     correlationId: CORRELATION_ID,
@@ -250,28 +251,9 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
 }
 
 describe("PR E2E controller", () => {
-  it("explains the accepted evidence URL when a manual fork skip uses another GitHub URL", () => {
-    expect(() =>
-      parseControllerCommand([
-        "--mode",
-        "record-fork-e2e-skip",
-        "--pr",
-        "42",
-        "--head",
-        HEAD_SHA,
-        "--base",
-        BASE_SHA,
-        "--workflow-sha",
-        WORKFLOW_SHA,
-        "--maintainer",
-        "maintainer",
-        "--reason",
-        "Reviewed exact fork revision",
-        "--evidence-url",
-        "https://github.com/NVIDIA/NemoClaw/pull/42#issuecomment-1",
-      ]),
-    ).toThrow(
-      "Evidence URL must be an Actions run URL such as https://github.com/NVIDIA/NemoClaw/actions/runs/123. PR, issue, comment, job, and external URLs are not accepted. Leave the field blank if no run exists.",
+  it("rejects the removed manual fork skip mode", () => {
+    expect(() => parseControllerCommand(["--mode", "record-fork-e2e-skip"])).toThrow(
+      "--mode must be",
     );
   });
 
@@ -310,6 +292,9 @@ describe("PR E2E controller", () => {
     expect(riskPlanRequiredTargetIds(targetPlan)).toEqual([DCODE_TARGET]);
     expect(validatePrGateState(gate)).toEqual(gate);
     expect(() => validatePrGateState({ ...gate, prNumber: 0 })).toThrow(/PR number/u);
+    expect(() => validatePrGateState({ ...gate, checkoutRepository: "invalid" })).toThrow(
+      /checkout repository/u,
+    );
     expect(() => validatePrGateState({ ...gate, expectedShards: {} })).toThrow(/shard selections/u);
     expect(() => validatePrGateState({ ...gate, expectedTargets: ["unknown-target"] })).toThrow(
       /State targets/u,
@@ -420,7 +405,9 @@ describe("PR E2E controller", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs,
         targets: [DCODE_TARGET],
         prNumber: 42,
@@ -439,8 +426,10 @@ describe("PR E2E controller", () => {
       inputs: {
         jobs: jobs.join(","),
         targets: DCODE_TARGET,
+        controller_check_id: "101",
         pr_number: "42",
         checkout_sha: HEAD_SHA,
+        checkout_repository: "NVIDIA/NemoClaw",
         base_sha: BASE_SHA,
         workflow_sha: WORKFLOW_SHA,
         plan_hash: "c".repeat(64),
@@ -503,7 +492,9 @@ describe("PR E2E controller", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -570,7 +561,9 @@ describe("PR E2E controller", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -637,7 +630,9 @@ describe("PR E2E controller", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -691,7 +686,9 @@ describe("PR E2E controller", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -1251,7 +1248,7 @@ describe("PR E2E controller", () => {
       });
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).toContain("dispatched=true");
-      expect(outputs).not.toContain("fork_skip_mode=");
+      expect(outputs).not.toContain("approval_mode=");
       expect(outputs).not.toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });

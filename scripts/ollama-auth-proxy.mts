@@ -27,6 +27,7 @@ if (!TOKEN) {
 
 const LISTEN_PORT = parseInt(process.env.OLLAMA_PROXY_PORT || "11435", 10);
 const BACKEND_PORT = parseInt(process.env.OLLAMA_BACKEND_PORT || "11434", 10);
+const BACKEND_URL = new URL(process.env.OLLAMA_BACKEND_URL || `http://127.0.0.1:${BACKEND_PORT}`);
 
 const server = http.createServer(
   (clientReq: http.IncomingMessage, clientRes: http.ServerResponse) => {
@@ -71,8 +72,8 @@ const server = http.createServer(
 
     const proxyReq = http.request(
       {
-        hostname: "127.0.0.1",
-        port: BACKEND_PORT,
+        hostname: BACKEND_URL.hostname,
+        port: BACKEND_URL.port,
         path: clientReq.url,
         method: clientReq.method,
         headers,
@@ -112,5 +113,5 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 });
 
 server.listen(LISTEN_PORT, "0.0.0.0", () => {
-  console.log(`Ollama auth proxy listening on 0.0.0.0:${LISTEN_PORT} -> 127.0.0.1:${BACKEND_PORT}`);
+  console.log(`Ollama auth proxy listening on 0.0.0.0:${LISTEN_PORT} -> ${BACKEND_URL.origin}`);
 });
