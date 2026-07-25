@@ -443,6 +443,11 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(prompt).toContain(
       "Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status",
     );
+    expect(prompt).toContain("merge_as_is means a completed review has no open findings");
+    expect(prompt).toContain(
+      "info_only is reserved for skipped, unavailable, or incomplete review evidence",
+    );
+    expect(prompt).toContain("merge_as_is never approves the PR or replaces required human review");
     expect(prompt).toContain(
       "compare it with the current diff and decide whether prior code-review findings were addressed",
     );
@@ -1358,7 +1363,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     const summary = renderSummary(result);
     const comment = buildComment({ summary, result });
 
-    expect(result.summary.recommendation).toBe("info_only");
+    expect(result.summary.recommendation).toBe("merge_as_is");
     expect(comment).toContain("No advisor follow-up needed");
     expect(comment).not.toContain("PRA-T");
     expect(comment).not.toContain("probe");

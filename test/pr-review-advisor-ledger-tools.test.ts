@@ -209,6 +209,36 @@ describe("PR review ledger tools", () => {
     );
   });
 
+  it("maps a completed empty canonical ledger to merge_as_is without waiving human review", () => {
+    const result = normalizeReviewResult(
+      {
+        summary: {
+          recommendation: "info_only",
+          confidence: "high",
+          oneLine: "No actionable findings remain.",
+        },
+        findings: [],
+        reviewCompleteness: {
+          limitations: [],
+          requiresHumanReview: false,
+        },
+      },
+      reviewMetadata(),
+    );
+
+    const canonical = withCanonicalReviewLedgerFindings(
+      result,
+      createReviewFindingLedger().snapshot(),
+    );
+
+    expect(canonical.summary).toMatchObject({
+      confidence: "high",
+      recommendation: "merge_as_is",
+      oneLine: "No actionable findings remain in the canonical review ledger.",
+    });
+    expect(canonical.reviewCompleteness.requiresHumanReview).toBe(true);
+  });
+
   it("binds mutations to the runner stage and exposes the canonical snapshot (#6446)", async () => {
     const ledger = createReviewFindingLedger();
     const controller = createReviewLedgerToolController(ledger);
@@ -689,7 +719,7 @@ describe("PR review ledger tools", () => {
       withCanonicalReviewLedgerFindings(drifted, ledger.snapshot()).findings[0]?.severity,
     ).toBe("warning");
     expect(withCanonicalReviewLedgerFindings(drifted, ledger.snapshot()).summary).toMatchObject({
-      recommendation: "info_only",
+      recommendation: "merge_after_fixes",
       topItem: "Refusal status is masked",
     });
   });
