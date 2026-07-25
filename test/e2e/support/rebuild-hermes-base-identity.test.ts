@@ -9,6 +9,7 @@ import {
 } from "../../../src/lib/sandbox-base-image/types";
 import {
   createRebuildHermesOldBaseResolutionMetadata,
+  requireRebuildHermesPreparedCurrentBaseIdentity,
   verifyRebuildHermesCurrentBaseReuse,
   verifyRebuildHermesFinalBaseIdentity,
   verifyRebuildHermesOldBaseIsStale,
@@ -164,6 +165,42 @@ describe("rebuild-Hermes base identity", () => {
         imageInspect({ id: old.imageId, repoDigests: [`${old.imageName}@${old.digest}`] }),
       ),
     ).toThrow("was not classified stale by resolution key mismatch");
+  });
+
+  it.each([
+    ["published", currentMetadata()],
+    [
+      "repository-built",
+      currentMetadata({
+        ref: "nemoclaw-hermes-sandbox-base-local:current",
+        digest: null,
+        source: "local",
+        pinnedRemoteRef: undefined,
+      }),
+    ],
+  ])("binds direct %s base preparation to its immutable identity (#7144)", (_kind, metadata) => {
+    expect(
+      requireRebuildHermesPreparedCurrentBaseIdentity({
+        imageTag: metadata.ref,
+        resolutionMetadata: metadata,
+      }),
+    ).toEqual(metadata);
+  });
+
+  it("rejects incomplete or mismatched direct base preparation (#7144)", () => {
+    const metadata = currentMetadata();
+
+    expect(() =>
+      requireRebuildHermesPreparedCurrentBaseIdentity({
+        imageTag: metadata.ref,
+      }),
+    ).toThrow("did not record base-image identity");
+    expect(() =>
+      requireRebuildHermesPreparedCurrentBaseIdentity({
+        imageTag: `${imageName}@sha256:${"f".repeat(64)}`,
+        resolutionMetadata: metadata,
+      }),
+    ).toThrow("identity for a different image");
   });
 
   it.each([

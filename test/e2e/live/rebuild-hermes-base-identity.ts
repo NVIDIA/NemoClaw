@@ -222,7 +222,7 @@ export function requireRebuildHermesCurrentBaseIdentity(
   metadata: SandboxBaseImageResolutionMetadata | null,
 ): TrustedCurrentBaseMetadata {
   if (!metadata) {
-    throw new Error("phase 1 Hermes sandbox did not record current base-image identity");
+    throw new Error("current Hermes base preparation did not record base-image identity");
   }
   const commonIdentityIsValid =
     metadata.schema === SANDBOX_BASE_RESOLUTION_SCHEMA &&
@@ -244,9 +244,24 @@ export function requireRebuildHermesCurrentBaseIdentity(
     metadata.pinnedRemoteRef === undefined &&
     LOCAL_HERMES_BASE_REF.test(metadata.ref);
   if (!commonIdentityIsValid || (!pinnedIdentityIsValid && !localIdentityIsValid)) {
-    throw new Error("phase 1 Hermes sandbox did not use a trusted immutable current base");
+    throw new Error("current Hermes base preparation did not use a trusted immutable current base");
   }
   return metadata as TrustedCurrentBaseMetadata;
+}
+
+/**
+ * Bind the production resolver's selected image ref to its immutable identity
+ * before the live fixture can use that image as rebuild provenance.
+ */
+export function requireRebuildHermesPreparedCurrentBaseIdentity(prepared: {
+  imageTag: string | null;
+  resolutionMetadata?: SandboxBaseImageResolutionMetadata;
+}): TrustedCurrentBaseMetadata {
+  const metadata = requireRebuildHermesCurrentBaseIdentity(prepared.resolutionMetadata ?? null);
+  if (prepared.imageTag !== metadata.ref) {
+    throw new Error("current Hermes base preparation returned identity for a different image");
+  }
+  return metadata;
 }
 
 function resolutionMetadataMatches(
