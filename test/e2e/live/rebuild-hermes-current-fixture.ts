@@ -3,6 +3,7 @@
 
 import { loadAgent } from "../../../src/lib/agent/defs";
 import { ensureAgentBaseImage } from "../../../src/lib/agent/onboard";
+import { DASHBOARD_PORT } from "../../../src/lib/core/ports";
 import { resolveCreateSandboxDashboardPort } from "../../../src/lib/onboard/dashboard-port";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../../src/lib/onboard/env";
 import { assertExitZero } from "../fixtures/clients/command.ts";
@@ -15,6 +16,11 @@ const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
 
 export type RebuildHermesInferenceProviderAction = "create" | "update";
+
+interface RebuildHermesCurrentFixtureDeps {
+  ensureBaseImage: typeof ensureAgentBaseImage;
+  resolveDashboardPort: typeof resolveCreateSandboxDashboardPort;
+}
 
 export function buildRebuildHermesCompatibleProviderArgs(
   action: RebuildHermesInferenceProviderAction,
@@ -58,13 +64,14 @@ export function buildRebuildHermesInferenceRouteArgs(model: string): string[] {
 }
 
 export async function prepareRebuildHermesCurrentFixture(input: {
-  host: HostCliClient;
+  host: Pick<HostCliClient, "command">;
   sandboxName: string;
   endpointUrl: string;
   model: string;
   env: NodeJS.ProcessEnv;
   redactionValues: string[];
   onOutput?: ShellProbeRunOptions["onOutput"];
+  deps?: Partial<RebuildHermesCurrentFixtureDeps>;
 }): Promise<{
   basePreparation: Pick<ReturnType<typeof ensureAgentBaseImage>, "imageTag" | "built">;
   baseResolution: ReturnType<typeof requireRebuildHermesPreparedCurrentBaseIdentity>;
@@ -73,7 +80,11 @@ export async function prepareRebuildHermesCurrentFixture(input: {
   };
   inferenceProviderAction: RebuildHermesInferenceProviderAction;
 }> {
-  const basePreparation = ensureAgentBaseImage(loadAgent("hermes"));
+  const agent = loadAgent("hermes");
+  const ensureBaseImage = input.deps?.ensureBaseImage ?? ensureAgentBaseImage;
+  const resolveDashboardPort =
+    input.deps?.resolveDashboardPort ?? resolveCreateSandboxDashboardPort;
+  const basePreparation = ensureBaseImage(agent);
   const baseResolution = requireRebuildHermesPreparedCurrentBaseIdentity(basePreparation);
   const commandOptions = {
     env: input.env,
@@ -147,12 +158,13 @@ export async function prepareRebuildHermesCurrentFixture(input: {
   });
   assertExitZero(forwardList, "inspect OpenShell forwards before dashboard port selection");
 
-  const dashboardPortSelection = resolveCreateSandboxDashboardPort({
+  const dashboardPortSelection = resolveDashboardPort({
     sandboxName: input.sandboxName,
     controlUiPort: null,
     chatUiUrlEnv: input.env.CHAT_UI_URL,
     persistedPort: null,
-    agentForwardPort: null,
+    agentForwardPort: agent.forwardPort,
+    defaultPort: DASHBOARD_PORT,
     forwardListOutput: resultText(forwardList),
   });
   if (
