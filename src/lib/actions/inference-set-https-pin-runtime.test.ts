@@ -255,6 +255,69 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(providerUpdates).toHaveLength(0);
   });
 
+  it("restores the prior inference selection when the deferred provider update fails", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    capture.mockImplementation((args, opts) =>
+      args[0] === "provider" && args[1] === "update"
+        ? {
+            status: 1,
+            stdout: "",
+            stderr: "provider update failed",
+            output: "provider update failed",
+          }
+        : original(args, opts),
+    );
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      ensureHttpsPinRuntimeAdapter: mockAdapter(),
+      captureOpenshell: capture,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new-model",
+          endpointUrl: "https://compatible.example/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(
+      "The previous OpenShell inference selection was restored to 'nvidia-prod' / 'old-model'",
+    );
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    const selectionMutations = capture.mock.calls.filter(
+      ([args]) => args[0] === "inference" && args[1] === "set",
+    );
+    expect(selectionMutations).toHaveLength(2);
+    expect(selectionMutations[0]?.[0]).toEqual(
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "new-model",
+        "--no-verify",
+      ]),
+    );
+    expect(selectionMutations[1]?.[0]).toEqual(
+      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+    );
+  });
+
   it("reports committed provider and selection state when registry convergence fails", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({

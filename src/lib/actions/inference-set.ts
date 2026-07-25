@@ -840,9 +840,12 @@ async function runInferenceSetWithoutHostLock(
   // `rebuild`-recoverable), so gate on the read here to abort cleanly instead of
   // leaving a half-applied switch across the three config layers (#6997).
   const config = readInSandboxConfigOrFail(deps, sandboxName, target);
+  const previousProvider = typeof entry.provider === "string" ? entry.provider.trim() : "";
+  const previousModel = typeof entry.model === "string" ? entry.model.trim() : "";
 
   let appliedHttpsPinProvider = false;
   let appliedInferenceSelection = false;
+  let restoredSelectionAfterProviderFailure = false;
   let httpsPinProviderMutation: ReturnType<typeof prepareHttpsPinProviderBinding> | null = null;
   try {
     if (httpsPinProviderBinding) {
@@ -853,6 +856,13 @@ async function runInferenceSetWithoutHostLock(
         captureOpenshell: deps.captureOpenshell,
       });
       appliedHttpsPinProvider = httpsPinProviderMutation.action === "create";
+      if (httpsPinProviderMutation.action === "update" && (!previousProvider || !previousModel)) {
+        throw new InferenceSetError(
+          `Cannot update existing HTTPS-pinned provider '${provider}' because sandbox '${sandboxName}' ` +
+            `does not record the previous provider and model needed to restore its inference selection.`,
+          2,
+        );
+      }
     }
 
     deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
@@ -875,8 +885,44 @@ async function runInferenceSetWithoutHostLock(
     }
     appliedInferenceSelection = true;
     if (httpsPinProviderMutation) {
-      httpsPinProviderMutation.commit();
-      appliedHttpsPinProvider = true;
+      try {
+        httpsPinProviderMutation.commit();
+        appliedHttpsPinProvider = true;
+      } catch (providerError) {
+        const providerDetail =
+          providerError instanceof Error ? providerError.message : String(providerError);
+        const providerExitCode =
+          providerError instanceof InferenceSetError ? providerError.exitCode : 1;
+        const restoreResult = deps.captureOpenshell(
+          openshellInferenceSetArgs({
+            gatewayName: preparedRoute.gatewayName,
+            provider: previousProvider,
+            model: previousModel,
+            noVerify: true,
+          }),
+          {
+            ignoreError: true,
+            includeStreams: true,
+            maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+          },
+        );
+        if (restoreResult.status !== 0) {
+          throw new InferenceSetError(
+            `${providerDetail}\n  Failed to restore the previous OpenShell inference selection ` +
+              `'${previousProvider}' / '${previousModel}' (status ${restoreResult.status ?? "unknown"}). ` +
+              `The live selection and provider binding may be split; re-run onboarding before using this route.`,
+            providerExitCode,
+          );
+        }
+        appliedInferenceSelection = false;
+        restoredSelectionAfterProviderFailure = true;
+        throw new InferenceSetError(
+          `${providerDetail}\n  The previous OpenShell inference selection was restored to ` +
+            `'${previousProvider}' / '${previousModel}'. Provider state may still be partial; ` +
+            `retry this command or re-run onboarding to reconcile it.`,
+          providerExitCode,
+        );
+      }
     }
 
     // Write minimal registry state before any sandbox-facing config read so the
@@ -1067,6 +1113,7 @@ async function runInferenceSetWithoutHostLock(
     );
   } catch (error) {
     if (!httpsPinProviderMutation) throw error;
+    if (restoredSelectionAfterProviderFailure) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
     if (!appliedInferenceSelection) {
