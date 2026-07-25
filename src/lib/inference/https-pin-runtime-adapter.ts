@@ -383,7 +383,9 @@ function buildContainedForwardPath(
   // Translate only that structural gateway segment; inferring arbitrary path
   // overlap could collapse legitimate resource names such as `messages`.
   const translatedSuffix =
-    route.providerType === "openai" && (suffix === "/v1" || suffix.startsWith("/v1/"))
+    targetPath !== "/" &&
+    route.providerType === "openai" &&
+    (suffix === "/v1" || suffix.startsWith("/v1/"))
       ? suffix.slice(3)
       : suffix;
   const joined = targetPath === "/" ? translatedSuffix || "/" : `${targetPath}${translatedSuffix}`;

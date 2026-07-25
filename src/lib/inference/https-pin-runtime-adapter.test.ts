@@ -553,6 +553,7 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
   });
 
   it.each([
+    ["/", "/v1/chat/completions", "/v1/chat/completions"],
     ["/v1", "/chat/completions?trace=1", "/v1/chat/completions?trace=1"],
     ["/v1", "/v1/chat/completions", "/v1/chat/completions"],
     ["/gateway/v1", "/v1/chat/completions", "/gateway/v1/chat/completions"],
