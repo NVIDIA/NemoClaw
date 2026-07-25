@@ -18,20 +18,6 @@ interface CloudflaredPin {
   debSha256: string;
 }
 
-function executableOnPath(name: string): string | undefined {
-  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
-    if (!directory) continue;
-    const candidate = path.join(directory, name);
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      return candidate;
-    } catch {
-      // Keep looking through PATH.
-    }
-  }
-  return undefined;
-}
-
 function requirePin(value: unknown, label: string, pattern: RegExp): string {
   if (typeof value !== "string" || !pattern.test(value)) {
     throw new Error(`inference-routing ${label} is missing or invalid`);
@@ -85,10 +71,9 @@ async function commandOutput(
 export async function resolveVerifiedCloudflaredBinary(
   cleanup: Pick<CleanupRegistry, "add">,
   host: HostCliClient,
+  runtime: Pick<NodeJS.Process, "platform" | "arch"> = process,
 ): Promise<string> {
-  const existing = executableOnPath("cloudflared");
-  if (existing) return existing;
-  if (process.platform !== "linux" || process.arch !== "x64") {
+  if (runtime.platform !== "linux" || runtime.arch !== "x64") {
     throw new Error("cloudflared is required for the DNS-backed HTTPS routing proof");
   }
 

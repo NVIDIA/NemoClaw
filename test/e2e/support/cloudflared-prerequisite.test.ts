@@ -5,11 +5,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { readInferenceRoutingCloudflaredPin } from "../live/cloudflared-prerequisite.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import {
+  readInferenceRoutingCloudflaredPin,
+  resolveVerifiedCloudflaredBinary,
+} from "../live/cloudflared-prerequisite.ts";
 
 describe("inference-routing cloudflared prerequisite (#6141)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("reads the reviewed version and digest from the exact workflow", () => {
     expect(readInferenceRoutingCloudflaredPin()).toEqual({
       version: "2026.6.1",
@@ -38,6 +45,38 @@ describe("inference-routing cloudflared prerequisite (#6141)", () => {
         "inference-routing cloudflared SHA256 pin is missing or invalid",
       );
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores a PATH-injected binary and starts the verified package flow", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-path-"));
+    const injected = path.join(root, "cloudflared");
+    fs.writeFileSync(injected, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    vi.stubEnv("PATH", `${root}${path.delimiter}${process.env.PATH ?? ""}`);
+    const command = vi.fn(async (name: string, args: string[]) => ({
+      command: [name, ...args],
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "download blocked by test",
+      artifacts: { stdout: "", stderr: "", result: "" },
+    }));
+    const cleanup = new CleanupRegistry();
+
+    try {
+      await expect(
+        resolveVerifiedCloudflaredBinary(cleanup, { command } as unknown as HostCliClient, {
+          platform: "linux",
+          arch: "x64",
+        }),
+      ).rejects.toThrow("curl failed while preparing cloudflared");
+      expect(command).toHaveBeenCalledTimes(1);
+      expect(command.mock.calls[0]?.[0]).toBe("curl");
+      expect(command.mock.calls.flat().join(" ")).not.toContain(injected);
+    } finally {
+      await cleanup.runAll();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
