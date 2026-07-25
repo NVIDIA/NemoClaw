@@ -239,7 +239,7 @@ describe("PR review ledger tools", () => {
     expect(canonical.reviewCompleteness.requiresHumanReview).toBe(true);
   });
 
-  it("keeps a low-confidence empty canonical ledger fail-closed as info_only", () => {
+  it("keeps a low-confidence empty canonical ledger fail-closed as info_only (#7521)", () => {
     const result = normalizeReviewResult(
       {
         summary: {
