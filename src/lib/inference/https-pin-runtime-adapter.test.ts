@@ -122,6 +122,30 @@ describe("createHttpsPinRuntimeAdapterServer health and auth (#6141)", () => {
     ).resolves.toBe(false);
   });
 
+  it("binds adapter reuse proof to the inspected OpenShell source policy", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({
+      controlToken: TEST_CONTROL_TOKEN,
+      allowedSourceCidrs: ["172.17.0.0/16"],
+    });
+    const baseUrl = await listen(adapter);
+    const port = Number(new URL(baseUrl).port);
+
+    await expect(
+      __test.probeAdapterControlHealth({
+        controlToken: TEST_CONTROL_TOKEN,
+        expectedSourceCidrs: ["172.17.0.0/16"],
+        port,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      __test.probeAdapterControlHealth({
+        controlToken: TEST_CONTROL_TOKEN,
+        expectedSourceCidrs: ["192.168.50.0/24"],
+        port,
+      }),
+    ).resolves.toBe(false);
+  });
+
   it.each([
     ["protocol version", { ...__test.CURRENT_ADAPTER_IDENTITY, protocolVersion: "stale-protocol" }],
     ["build id", { ...__test.CURRENT_ADAPTER_IDENTITY, buildId: "0".repeat(64) }],
@@ -143,7 +167,7 @@ describe("createHttpsPinRuntimeAdapterServer health and auth (#6141)", () => {
       }),
     ).resolves.toBe(true);
     await expect(
-      __test.findReusableAdapterControlToken(TEST_CONTROL_TOKEN, (options) =>
+      __test.findReusableAdapterControlToken(TEST_CONTROL_TOKEN, ["127.0.0.1/32"], (options) =>
         __test.probeAdapterControlHealth({ ...options, port }),
       ),
     ).resolves.toBeNull();
@@ -903,7 +927,7 @@ describe("createHttpsPinRuntimeAdapterServer control-plane loopback restriction 
   });
 });
 
-describe("createHttpsPinRuntimeAdapterServer route forwarding private-network restriction (#6141)", () => {
+describe("createHttpsPinRuntimeAdapterServer OpenShell bridge source restriction (#6141)", () => {
   // These drive the gate itself, so an unregistered route ID is enough: a
   // request that passes the private-network gate falls through to the
   // "route_not_found" lookup (which never pipes a real upstream response),
@@ -928,7 +952,10 @@ describe("createHttpsPinRuntimeAdapterServer route forwarding private-network re
   });
 
   it("still passes a route-forward request from the Docker-bridge sandbox address through to route lookup", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: TEST_CONTROL_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({
+      controlToken: TEST_CONTROL_TOKEN,
+      allowedSourceCidrs: ["172.17.0.0/16"],
+    });
 
     const response = await dispatchFakeRequest(adapter, {
       method: "GET",
@@ -938,6 +965,22 @@ describe("createHttpsPinRuntimeAdapterServer route forwarding private-network re
     });
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ error: { code: "route_not_found" } });
+  });
+
+  it("rejects a private peer outside the inspected OpenShell bridge subnet", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({
+      controlToken: TEST_CONTROL_TOKEN,
+      allowedSourceCidrs: ["172.17.0.0/16"],
+    });
+
+    const response = await dispatchFakeRequest(adapter, {
+      method: "GET",
+      url: "/route/never-registered",
+      remoteAddress: "192.168.50.8",
+      authorization: `Bearer ${routeToken("never-registered")}`,
+    });
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({ error: { code: "not_found" } });
   });
 
   it("still passes a route-forward request over loopback through to route lookup", async () => {
@@ -951,6 +994,37 @@ describe("createHttpsPinRuntimeAdapterServer route forwarding private-network re
     });
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ error: { code: "route_not_found" } });
+  });
+});
+
+describe("discoverOpenShellBridgeSourceCidrs (#6141)", () => {
+  it("accepts only validated subnets from the inspected OpenShell Docker network", () => {
+    const capture = vi.fn(() =>
+      JSON.stringify([
+        { Subnet: "172.17.0.0/16", Gateway: "172.17.0.1" },
+        { Subnet: "fd00:1234::/64", Gateway: "fd00:1234::1" },
+        { Subnet: "not-a-cidr" },
+      ]),
+    ) as unknown as NonNullable<Parameters<typeof __test.discoverOpenShellBridgeSourceCidrs>[0]>;
+
+    expect(__test.discoverOpenShellBridgeSourceCidrs(capture)).toEqual([
+      "172.17.0.0/16",
+      "fd00:1234::/64",
+    ]);
+    expect(capture).toHaveBeenCalledWith(
+      ["docker", "network", "inspect", "openshell-docker", "--format", "{{json .IPAM.Config}}"],
+      { ignoreError: true },
+    );
+  });
+
+  it("fails closed when the OpenShell bridge has no valid source subnet", () => {
+    const capture = vi.fn(() => "[]") as unknown as NonNullable<
+      Parameters<typeof __test.discoverOpenShellBridgeSourceCidrs>[0]
+    >;
+
+    expect(() => __test.discoverOpenShellBridgeSourceCidrs(capture)).toThrow(
+      /refusing to expose the credential-bearing HTTPS Pin Runtime adapter/,
+    );
   });
 });
 
@@ -1012,11 +1086,16 @@ describe("adapter recovery lock (#6141)", () => {
     const probeHealth = vi.fn(async () => true);
 
     await expect(
-      lockModule.__test.findReusableAdapterControlToken("persisted-control-token", probeHealth),
+      lockModule.__test.findReusableAdapterControlToken(
+        "persisted-control-token",
+        ["127.0.0.1/32"],
+        probeHealth,
+      ),
     ).resolves.toBe("persisted-control-token");
     expect(probeHealth).toHaveBeenCalledWith({
       controlToken: "persisted-control-token",
       expectedIdentity: __test.CURRENT_ADAPTER_IDENTITY,
+      expectedSourceCidrs: ["127.0.0.1/32"],
     });
   });
 

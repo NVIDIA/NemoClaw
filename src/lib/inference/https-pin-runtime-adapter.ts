@@ -38,6 +38,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
+import { BlockList, isIP } from "node:net";
 import path from "node:path";
 
 import {
@@ -112,7 +113,8 @@ const LOCK_RETRY_MS = 100;
 const STALE_LOCK_MS = 30_000;
 const PROCESS_EXIT_WAIT_ATTEMPTS = 30;
 const PROCESS_EXIT_WAIT_MS = 100;
-const ADAPTER_PROTOCOL_VERSION = "2";
+const ADAPTER_PROTOCOL_VERSION = "3";
+const OPEN_SHELL_DOCKER_NETWORK = "openshell-docker";
 
 interface AdapterIdentity {
   protocolVersion: string;
@@ -226,44 +228,109 @@ function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
   return normalized === "127.0.0.1" || normalized === "::1";
 }
 
-/**
- * Loopback plus the RFC1918 / unique-local ranges that cover the Docker
- * bridge network a sandbox actually connects from when it reaches the
- * adapter through `host.openshell.internal` (see the module doc comment on
- * `HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST` for why the listener itself stays on
- * `0.0.0.0`). This does not attempt to discover the real bridge subnet --
- * that varies by Docker/Colima/Podman setup -- it just excludes the case a
- * `0.0.0.0` bind actually widens: a peer that reaches this host port over a
- * public or otherwise routable address that was never the intended
- * sandbox-to-host boundary.
- */
-function isPrivateNetworkRemoteAddress(remoteAddress: string | undefined): boolean {
-  if (!remoteAddress) return false;
-  const normalized = remoteAddress.replace(/^::ffff:/, "");
-  if (isLoopbackRemoteAddress(normalized)) return true;
-  const ipv4 = normalized.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
-  if (ipv4) {
-    const a = Number(ipv4[1]);
-    const b = Number(ipv4[2]);
-    if (a === 10) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    return false;
+/** Parse one exact Docker IPAM subnet before it becomes a route-source capability. */
+function normalizeAllowedSourceCidr(value: string): string | null {
+  const candidate = value.trim();
+  const slash = candidate.lastIndexOf("/");
+  if (slash <= 0) return null;
+  const address = candidate.slice(0, slash);
+  const family = isIP(address);
+  const prefix = Number(candidate.slice(slash + 1));
+  const maxPrefix = family === 4 ? 32 : family === 6 ? 128 : 0;
+  if (!maxPrefix || !Number.isInteger(prefix) || prefix < 1 || prefix > maxPrefix) return null;
+  return `${address}/${prefix}`;
+}
+
+function buildAllowedRouteSourceMatcher(allowedSourceCidrs: readonly string[]): {
+  cidrs: string[];
+  matches: (remoteAddress: string | undefined) => boolean;
+} {
+  const cidrs = [
+    ...new Set(
+      allowedSourceCidrs
+        .map(normalizeAllowedSourceCidr)
+        .filter((entry): entry is string => Boolean(entry)),
+    ),
+  ];
+  if (cidrs.length === 0) {
+    throw new Error("HTTPS Pin Runtime adapter requires an OpenShell bridge source CIDR.");
   }
-  const lower = normalized.toLowerCase();
-  // fc00::/7 (unique local) and fe80::/10 (link-local)
-  return /^f[cd][0-9a-f]{2}:/.test(lower) || /^fe[89ab][0-9a-f]:/.test(lower);
+  const blockList = new BlockList();
+  for (const cidr of cidrs) {
+    const [address, prefixText] = cidr.split("/");
+    const family = isIP(address) === 4 ? "ipv4" : "ipv6";
+    blockList.addSubnet(address, Number(prefixText), family);
+  }
+  return {
+    cidrs,
+    matches(remoteAddress) {
+      if (!remoteAddress) return false;
+      if (isLoopbackRemoteAddress(remoteAddress)) return true;
+      const normalized = remoteAddress.replace(/^::ffff:/, "");
+      const family = isIP(normalized);
+      return family === 4
+        ? blockList.check(normalized, "ipv4")
+        : family === 6
+          ? blockList.check(normalized, "ipv6")
+          : false;
+    },
+  };
+}
+
+function routeSourcePolicyDigest(cidrs: readonly string[]): string {
+  return crypto
+    .createHash("sha256")
+    .update(`nemoclaw:https-pin-route-sources:v1\0${[...cidrs].sort().join("\0")}`)
+    .digest("hex");
+}
+
+function discoverOpenShellBridgeSourceCidrs(capture: typeof runCapture = runCapture): string[] {
+  let raw = "";
+  try {
+    raw = capture(
+      [
+        "docker",
+        "network",
+        "inspect",
+        OPEN_SHELL_DOCKER_NETWORK,
+        "--format",
+        "{{json .IPAM.Config}}",
+      ],
+      { ignoreError: true },
+    );
+  } catch {
+    raw = "";
+  }
+  try {
+    const parsed = JSON.parse(raw.trim()) as unknown;
+    if (!Array.isArray(parsed)) throw new Error("expected Docker IPAM array");
+    const cidrs = parsed
+      .map((entry) =>
+        entry && typeof entry === "object" && typeof (entry as JsonObject).Subnet === "string"
+          ? String((entry as JsonObject).Subnet)
+          : "",
+      )
+      .map(normalizeAllowedSourceCidr)
+      .filter((entry): entry is string => Boolean(entry));
+    if (cidrs.length > 0) return [...new Set(cidrs)];
+  } catch {
+    // Fall through to the fail-closed error below.
+  }
+  throw new Error(
+    `Cannot determine the ${OPEN_SHELL_DOCKER_NETWORK} bridge source CIDR; refusing to expose the credential-bearing HTTPS Pin Runtime adapter.`,
+  );
 }
 
 function controlChallengeProof(
   controlToken: string,
   nonce: string,
   identity: Readonly<AdapterIdentity>,
+  sourcePolicyDigest: string,
 ): string {
   return crypto
     .createHmac("sha256", controlToken)
     .update(
-      `nemoclaw:https-pin-control-challenge:v2\0${identity.protocolVersion}\0${identity.buildId}\0${nonce}`,
+      `nemoclaw:https-pin-control-challenge:v3\0${identity.protocolVersion}\0${identity.buildId}\0${sourcePolicyDigest}\0${nonce}`,
     )
     .digest("hex");
 }
@@ -425,6 +492,12 @@ function parseRoutePutBody(raw: JsonObject): RouteRuntime {
  */
 export function createHttpsPinRuntimeAdapterServer(options: {
   controlToken: string;
+  /**
+   * Exact OpenShell Docker IPAM subnets. Direct unit callers may omit this
+   * and get loopback-only behavior; the spawned production adapter always
+   * receives inspected bridge CIDRs in its authenticated bootstrap.
+   */
+  allowedSourceCidrs?: readonly string[];
   initialRoutes?: Record<string, RouteRuntime>;
   orphanedRoutes?: Record<string, OrphanedRouteMeta>;
   logger?: AdapterLogger;
@@ -432,6 +505,10 @@ export function createHttpsPinRuntimeAdapterServer(options: {
 }): http.Server {
   const logger = options.logger || defaultAdapterLogger;
   const adapterIdentity = options.adapterIdentity || CURRENT_ADAPTER_IDENTITY;
+  const allowedRouteSources = buildAllowedRouteSourceMatcher(
+    options.allowedSourceCidrs ?? ["127.0.0.1/32"],
+  );
+  const sourcePolicyDigest = routeSourcePolicyDigest(allowedRouteSources.cidrs);
   const routes = new Map<string, RouteRuntime>(Object.entries(options.initialRoutes || {}));
   const orphanedRoutes = new Map<string, OrphanedRouteMeta>(
     Object.entries(options.orphanedRoutes || {}),
@@ -473,7 +550,13 @@ export function createHttpsPinRuntimeAdapterServer(options: {
           ok: true,
           protocolVersion: adapterIdentity.protocolVersion,
           buildId: adapterIdentity.buildId,
-          proof: controlChallengeProof(options.controlToken, nonce, adapterIdentity),
+          sourcePolicyDigest,
+          proof: controlChallengeProof(
+            options.controlToken,
+            nonce,
+            adapterIdentity,
+            sourcePolicyDigest,
+          ),
         });
         return;
       }
@@ -561,7 +644,7 @@ export function createHttpsPinRuntimeAdapterServer(options: {
       const routeMatch = url.pathname.match(/^\/route\/([^/]+)(\/.*)?$/);
       if (routeMatch) {
         routeId = routeMatch[1];
-        if (!isPrivateNetworkRemoteAddress(req.socket.remoteAddress)) {
+        if (!allowedRouteSources.matches(req.socket.remoteAddress)) {
           // Route tokens are scoped to one route, but a peer that reaches this
           // host port from outside the intended sandbox-to-host boundary must
           // not be able to exercise even its own route credential.
@@ -571,7 +654,7 @@ export function createHttpsPinRuntimeAdapterServer(options: {
           logAdapterEvent(logger, "request_rejected", {
             routeId,
             status: 404,
-            reason: "route_non_private_network",
+            reason: "route_non_openshell_network",
             durationMs: Date.now() - started,
           });
           return;
@@ -684,7 +767,7 @@ export function createHttpsPinRuntimeAdapterServer(options: {
 
 function parseBootstrapRoute(
   raw: string | undefined,
-): { routeId: string; route: RouteRuntime } | null {
+): { routeId: string; route: RouteRuntime; allowedSourceCidrs: string[] } | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as {
@@ -694,10 +777,17 @@ function parseBootstrapRoute(
       providerType?: unknown;
       credentialValue?: unknown;
       generation?: unknown;
+      allowedSourceCidrs?: unknown;
     };
     if (typeof parsed.routeId !== "string" || !parsed.routeId) return null;
     const route = parseRoutePutBody(parsed as JsonObject);
-    return { routeId: parsed.routeId, route };
+    const allowedSourceCidrs = Array.isArray(parsed.allowedSourceCidrs)
+      ? parsed.allowedSourceCidrs.filter(
+          (entry): entry is string => typeof entry === "string" && Boolean(entry.trim()),
+        )
+      : [];
+    buildAllowedRouteSourceMatcher(allowedSourceCidrs);
+    return { routeId: parsed.routeId, route, allowedSourceCidrs };
   } catch {
     return null;
   }
@@ -754,6 +844,7 @@ export function startHttpsPinRuntimeAdapterFromEnv(): http.Server {
 
   const server = createHttpsPinRuntimeAdapterServer({
     controlToken,
+    allowedSourceCidrs: bootstrap?.allowedSourceCidrs ?? [],
     initialRoutes,
     orphanedRoutes,
   });
@@ -763,6 +854,7 @@ export function startHttpsPinRuntimeAdapterFromEnv(): http.Server {
       port,
       routeCount: Object.keys(initialRoutes).length,
       orphanedRouteCount: Object.keys(orphanedRoutes).length,
+      allowedSourceCidrs: bootstrap?.allowedSourceCidrs.join(",") ?? "",
       logPath: LOG_PATH,
     });
     console.log(
@@ -826,10 +918,20 @@ function probeAdapterControlHealth(options: {
   nonce?: string;
   timeoutMs?: number;
   expectedIdentity?: Readonly<AdapterIdentity>;
+  expectedSourceCidrs?: readonly string[];
 }): Promise<boolean> {
   const nonce = options.nonce || crypto.randomBytes(32).toString("hex");
   const expectedIdentity = options.expectedIdentity || CURRENT_ADAPTER_IDENTITY;
-  const expectedProof = controlChallengeProof(options.controlToken, nonce, expectedIdentity);
+  const expectedSources = buildAllowedRouteSourceMatcher(
+    options.expectedSourceCidrs ?? ["127.0.0.1/32"],
+  );
+  const expectedSourcePolicyDigest = routeSourcePolicyDigest(expectedSources.cidrs);
+  const expectedProof = controlChallengeProof(
+    options.controlToken,
+    nonce,
+    expectedIdentity,
+    expectedSourcePolicyDigest,
+  );
   return new Promise((resolve) => {
     let settled = false;
     let absoluteDeadline: NodeJS.Timeout | null = null;
@@ -871,9 +973,12 @@ function probeAdapterControlHealth(options: {
             const protocolVersion =
               typeof body.protocolVersion === "string" ? body.protocolVersion : "";
             const buildId = typeof body.buildId === "string" ? body.buildId : "";
+            const sourcePolicyDigest =
+              typeof body.sourcePolicyDigest === "string" ? body.sourcePolicyDigest : "";
             if (
               protocolVersion !== expectedIdentity.protocolVersion ||
-              buildId !== expectedIdentity.buildId
+              buildId !== expectedIdentity.buildId ||
+              sourcePolicyDigest !== expectedSourcePolicyDigest
             ) {
               settle(false);
               return;
@@ -905,12 +1010,21 @@ function probeAdapterControlHealth(options: {
 
 async function waitForAdapterHealth(
   token: string,
+  expectedSourceCidrs: readonly string[],
   port = HTTPS_PIN_RUNTIME_ADAPTER_PORT,
 ): Promise<boolean> {
-  return waitForLocalAdapterHealth(() => probeAdapterControlHealth({ port, controlToken: token }), {
-    attempts: 20,
-    intervalMs: 100,
-  });
+  return waitForLocalAdapterHealth(
+    () =>
+      probeAdapterControlHealth({
+        port,
+        controlToken: token,
+        expectedSourceCidrs,
+      }),
+    {
+      attempts: 20,
+      intervalMs: 100,
+    },
+  );
 }
 
 function putRoute(options: {
@@ -1113,6 +1227,7 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
   lookup?: EndpointDnsLookupFn;
+  discoverAllowedSourceCidrs?: () => string[];
 }): Promise<{
   baseUrl: string;
   localBaseUrl: string;
@@ -1163,6 +1278,9 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
     options.provider,
     options.endpointUrl,
   );
+  const allowedSourceCidrs = buildAllowedRouteSourceMatcher(
+    options.discoverAllowedSourceCidrs?.() ?? discoverOpenShellBridgeSourceCidrs(),
+  ).cidrs;
   // Keep the lifecycle lock through the whole adapter-registration
   // transaction. In particular, persistRouteState is a read/modify/write of
   // the shared state file; releasing after spawn/reuse would let concurrent
@@ -1181,6 +1299,7 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
       providerType: options.providerType,
       credentialValue: options.credentialValue,
       generation,
+      allowedSourceCidrs,
     });
 
     await putRoute({
@@ -1337,15 +1456,18 @@ function validateAdapterPortConfiguration(): void {
 
 async function findReusableAdapterControlToken(
   priorToken: string | null,
+  allowedSourceCidrs: readonly string[] = ["127.0.0.1/32"],
   probeHealth: (options: {
     controlToken: string;
     expectedIdentity?: Readonly<AdapterIdentity>;
+    expectedSourceCidrs?: readonly string[];
   }) => Promise<boolean> = probeAdapterControlHealth,
 ): Promise<string | null> {
   if (!priorToken) return null;
   return (await probeHealth({
     controlToken: priorToken,
     expectedIdentity: CURRENT_ADAPTER_IDENTITY,
+    expectedSourceCidrs: allowedSourceCidrs,
   }))
     ? priorToken
     : null;
@@ -1359,6 +1481,7 @@ async function ensureAdapterProcessLocked(bootstrap: {
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
   generation: string;
+  allowedSourceCidrs: string[];
 }): Promise<string> {
   validateAdapterPortConfiguration();
   const priorToken = readLocalAdapterTextFile(TOKEN_PATH);
@@ -1366,7 +1489,10 @@ async function ensureAdapterProcessLocked(bootstrap: {
   // evidence than a PID file. Reuse the live adapter even if its PID metadata
   // is absent or stale, but replace it when the protocol or build differs so
   // an upgrade cannot keep older forwarding security behavior alive.
-  const reusableToken = await findReusableAdapterControlToken(priorToken);
+  const reusableToken = await findReusableAdapterControlToken(
+    priorToken,
+    bootstrap.allowedSourceCidrs,
+  );
   if (reusableToken) return reusableToken;
 
   await killStaleAdapter();
@@ -1397,6 +1523,7 @@ async function ensureAdapterProcessLocked(bootstrap: {
         providerType: bootstrap.providerType,
         credentialValue: bootstrap.credentialValue,
         generation: bootstrap.generation,
+        allowedSourceCidrs: bootstrap.allowedSourceCidrs,
       }),
       NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTES: JSON.stringify(orphanedRoutes),
     },
@@ -1409,7 +1536,7 @@ async function ensureAdapterProcessLocked(bootstrap: {
   });
   try {
     persistLocalAdapterPid(PID_PATH, child.pid);
-    if (!(await waitForAdapterHealth(token))) {
+    if (!(await waitForAdapterHealth(token, bootstrap.allowedSourceCidrs))) {
       throw new Error(
         `HTTPS Pin Runtime adapter did not become healthy on ${HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_ORIGIN}`,
       );
@@ -1443,6 +1570,8 @@ export const __test = {
   tryAcquireAdapterLock,
   withAdapterLock,
   computeRespawnState,
+  buildAllowedRouteSourceMatcher,
+  discoverOpenShellBridgeSourceCidrs,
   findReusableAdapterControlToken,
   revokeRouteLocked,
   LOCK_PATH,
