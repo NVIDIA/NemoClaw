@@ -135,12 +135,83 @@ function requireNode24GithubScript(errors: string[], step: WorkflowStep, owner: 
   }
 }
 
+function validateControllerAuthorization(
+  errors: string[],
+  workflow: OperationsWorkflow,
+  matrixJob: WorkflowJob,
+): void {
+  if (permissionMap(workflow.permissions).checks !== "read") {
+    errors.push("E2E workflow must grant read-only check access for controller authentication");
+  }
+  const steps = matrixJob.steps ?? [];
+  const authenticationIndex = steps.findIndex(
+    (step) => step.name === "Authenticate controller dispatch",
+  );
+  const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+  const validationIndex = steps.findIndex((step) => step.name === "Validate controller dispatch");
+  const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
+  if (authentication.if !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("Controller authentication must be activated only by checkout_sha");
+  }
+  if (
+    authenticationIndex < 0 ||
+    checkoutIndex < 0 ||
+    validationIndex < 0 ||
+    authenticationIndex >= checkoutIndex ||
+    checkoutIndex >= validationIndex
+  ) {
+    errors.push("Controller authentication must run before untrusted checkout and PR validation");
+  }
+  const expectedEnvironment = {
+    ACTOR: "${{ github.actor }}",
+    BASE_SHA: "${{ inputs.base_sha }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    CONTROLLER_CHECK_ID: "${{ inputs.controller_check_id }}",
+    CORRELATION_ID: "${{ inputs.correlation_id }}",
+    JOBS: "${{ inputs.jobs }}",
+    PLAN_HASH: "${{ inputs.plan_hash }}",
+    PR_NUMBER: "${{ inputs.pr_number }}",
+    RUN_ATTEMPT: "${{ github.run_attempt }}",
+    RUN_ID: "${{ github.run_id }}",
+    TARGETS: "${{ inputs.targets }}",
+  };
+  for (const [name, value] of Object.entries(expectedEnvironment)) {
+    if (authentication.env?.[name] !== value) {
+      errors.push(`Controller authentication must bind ${name}`);
+    }
+  }
+  const source = String(authentication.run ?? "");
+  for (const fragment of [
+    '"$ACTOR" == "github-actions[bot]"',
+    '"$RUN_ATTEMPT" == "1"',
+    '"$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$',
+    "nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}",
+    "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}",
+    "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}",
+    `[[ "$(jq -r '.details_url // ""' <<< "$check_json")" == "$expected_run_url" ]]`,
+    '.name == "E2E / PR Gate Coordination"',
+    ".app.id == 15368",
+    '.app.slug == "github-actions"',
+    ".external_id == $external_id",
+    '.status == "in_progress"',
+    ".conclusion == null",
+    ".details_url == $run_url",
+    ".output.summary == $summary",
+  ]) {
+    if (!source.includes(fragment)) {
+      errors.push(`Controller authentication must retain ${fragment}`);
+    }
+  }
+}
+
 function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow): void {
   const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
   for (const name of [
     "jobs",
     "pr_number",
     "checkout_sha",
+    "checkout_repository",
+    "controller_check_id",
     "base_sha",
     "workflow_sha",
     "plan_hash",
@@ -178,6 +249,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
+  validateControllerAuthorization(errors, workflow, matrixJob);
   const steps = matrixJob.steps ?? [];
   const validationIndex = steps.findIndex((step) => step.name === "Validate controller dispatch");
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
@@ -190,6 +262,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   }
   const expectedStepEnvironment = {
     BASE_SHA: "${{ inputs.base_sha }}",
+    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     JOBS: "${{ inputs.jobs }}",
@@ -208,6 +281,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
@@ -220,6 +294,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "'.state'",
     "'.head.repo.full_name // \"\"'",
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
   ]) {
@@ -248,15 +323,24 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
         step.name === "Check out trusted E2E workflow" &&
         step.if === PUBLICATION_REQUIRED_CONDITION &&
         step.with?.ref === "${{ github.sha }}";
+      const trustedCheckout =
+        trustedHermesFixtureCheckout ||
+        trustedReportHelperCheckout ||
+        trustedLaunchableLaneCheckout ||
+        trustedPublicationCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
-        !trustedHermesFixtureCheckout &&
-        !trustedReportHelperCheckout &&
-        !trustedLaunchableLaneCheckout &&
-        !trustedPublicationCheckout
+        !trustedCheckout
       ) {
         errors.push(`${jobName} checkout must use the selected PR commit`);
+      }
+      if (
+        step.uses?.startsWith("actions/checkout@") &&
+        !trustedCheckout &&
+        step.with?.repository !== "${{ inputs.checkout_repository || github.repository }}"
+      ) {
+        errors.push(`${jobName} checkout must use the selected PR head repository`);
       }
     }
   }
