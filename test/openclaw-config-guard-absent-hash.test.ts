@@ -174,21 +174,26 @@ describe("openclaw-config-guard lock with an absent .config-hash", () => {
 
   it("replaces openclaw.json so a retained writable descriptor cannot mutate the sealed config", () => {
     const { configDir, configPath, hashPath } = fixture();
-    const originalInode = fs.lstatSync(configPath).ino;
     const retainedDescriptor = fs.openSync(configPath, "r+");
+    const originalInode = fs.fstatSync(retainedDescriptor).ino;
     try {
       fs.rmSync(hashPath);
 
       const result = runGuard("lock", configDir);
 
       expect(result.status, JSON.stringify(result.lines)).toBe(0);
-      expect(fs.lstatSync(configPath).ino).not.toBe(originalInode);
       const attackerBytes = Buffer.from('{"gateway":{"port":19999}}\n');
       expect(fs.writeSync(retainedDescriptor, attackerBytes, 0, attackerBytes.length, 0)).toBe(
         attackerBytes.length,
       );
       fs.fsyncSync(retainedDescriptor);
-      expect(fs.readFileSync(configPath)).toEqual(CONFIG_BYTES);
+      const sealedDescriptor = fs.openSync(configPath, "r");
+      try {
+        expect(fs.fstatSync(sealedDescriptor).ino).not.toBe(originalInode);
+        expect(fs.readFileSync(sealedDescriptor)).toEqual(CONFIG_BYTES);
+      } finally {
+        fs.closeSync(sealedDescriptor);
+      }
       expect(fs.readFileSync(hashPath, "utf-8")).toBe(CONFIG_HASH_RECORD);
     } finally {
       fs.closeSync(retainedDescriptor);
