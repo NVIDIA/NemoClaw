@@ -328,7 +328,8 @@ $$nemoclaw my-dcode rebuild --no-observability --yes
 
 Removing the `observability-otlp-local` policy stops delivery immediately but does not clear the recorded opt-in.
 A later rebuild restores the preset on Balanced and Open tiers, while Restricted continues to suppress it.
-For the complete collector setup, privacy boundary, policy recovery, verification, and a host-side LangSmith exporter example, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#export-traces-through-a-local-collector).
+For policy recovery and the host-side LangSmith exporter example, refer to [Set Up Deep Agents Trace Export](/user-guide/deepagents/monitoring/set-up-deepagents-trace-export).
+Review [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/understand-deepagents-trace-export) for the privacy boundary, [Verify Deep Agents Trace Export](/user-guide/deepagents/monitoring/verify-deepagents-trace-export) for delivery checks, and [Manage Deep Agents Trace Export](/user-guide/deepagents/monitoring/manage-deepagents-trace-export) for lifecycle operations.
 
 </AgentOnly>
 
@@ -654,7 +655,10 @@ The poll count is clamped to a minimum of `1` so the probe always runs at least 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
-If that directory contains a `.dockerignore`, onboarding applies those rules while calculating the context size and staging files for Docker.
+When the supplied path is the selected agent's own managed Dockerfile (for example, `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw applies one exception and stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths.
+This lets you edit the managed Dockerfile in place (for example to add Python packages) and rebuild from it with `--from`.
+For this managed exception, onboarding applies the `.dockerignore` from the repository root.
+For every other `--from` path, onboarding applies a `.dockerignore` from the Dockerfile's parent directory while calculating the context size and staging files for Docker.
 NemoClaw also applies additional secret-safety exclusions that override `.dockerignore` negation rules: credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key` are still skipped even if `.dockerignore` tries to include them.
 Without a `.dockerignore`, onboarding still skips common large or local-only directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
 Other build outputs such as `dist/`, `target/`, or `build/` are included unless your `.dockerignore` excludes them.
@@ -1186,7 +1190,7 @@ Terminal agents do not have a gateway runtime and fail as unsupported.
 ### `$$nemoclaw <name> stop`
 
 Stop the sandbox's Docker container while preserving all of its state.
-Workspace files, credentials, network policies, the registry entry, and the OpenShell sandbox record stay in place; only the container stops running.
+Workspace files, credentials, network policies, the registry entry, and the OpenShell sandbox record stay in place.
 Use this to free CPU, memory, and GPU resources without destroying the sandbox; use [`$$nemoclaw <name> destroy`](#$$nemoclaw-name-destroy) when you want to delete it instead.
 
 ```bash
@@ -1195,8 +1199,17 @@ $$nemoclaw my-assistant stop
 
 For OpenClaw-managed gateways, the command first asks the in-sandbox gateway to shut down its channels gracefully; agent-managed gateways (for example Hermes) are supervised inside the sandbox and shut down with the container's stop signal.
 Then the container stops; a container stuck in a crash loop is stopped the same way, which also disarms its restart policy.
+<AgentOnly variant="openclaw,hermes">
+After the container stops, NemoClaw attempts to stop that sandbox's host dashboard forward.
+If the container does not stop, NemoClaw leaves the dashboard forward running.
+</AgentOnly>
 The shared host gateway, tunnel services, and any local NIM inference container serve other sandboxes and keep running.
+<AgentOnly variant="openclaw,hermes">
+Stopping an already-stopped sandbox succeeds and attempts to remove any leftover dashboard forward for that sandbox.
+</AgentOnly>
+<AgentOnly variant="deepagents">
 Stopping an already-stopped sandbox succeeds without changes.
+</AgentOnly>
 The command controls the local container directly, so it is available for local-container drivers (the default Docker driver and the vm driver) and unavailable for remote drivers such as kubernetes; if the Docker daemon itself is unreachable, the command reports the outage instead of guessing at container state.
 
 ### `$$nemoclaw <name> start`
@@ -1393,6 +1406,11 @@ The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw g
 <AgentOnly variant="openclaw,hermes">
 For gateway-based agents, it also reports messaging channel conflicts.
 </AgentOnly>
+
+`doctor` also checks whether the sandbox registry contains the metadata required for snapshot, rebuild, upgrade, recovery, and reboot.
+When lifecycle metadata is incomplete, the report names the missing or invalid fields and affected operations without printing stored values.
+Dashboard metadata is required only for agents that manage a dashboard.
+If the registered gateway binding is invalid, `doctor` reports a failed gateway check and does not select, probe, or recover a gateway from that binding.
 
 For inference health, `doctor` treats the probe to `https://inference.local/v1/models` from inside the sandbox as authoritative.
 HTTP responses from `200` through `499`, including `401` and `403`, pass this check.
@@ -2480,9 +2498,16 @@ The in-sandbox staging artefact is additionally created with `umask 077` and rem
 
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
-Host-side wrapper around `openshell sandbox download` that adds a live-sandbox readiness check.
-The sandbox source path is forwarded to OpenShell verbatim; a relative host destination is resolved against the caller's working directory before it reaches OpenShell, so the downloaded file lands where the user invoked the CLI from rather than inside the install directory.
-Absolute host destinations pass through unchanged, and the OpenShell transport keeps its file-system semantics (single-file vs directory copy, trailing-slash handling, overwrite behaviour).
+Host-side wrapper around `openshell sandbox download` that checks the live sandbox.
+The command confirms before and after transfer that the source remains a file or directory.
+Symbolic links, source-type changes, and other special source types are refused.
+If the command cannot confirm the source type, it exits without publishing.
+The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
+An existing destination directory is resolved to its canonical path before publication.
+The command refuses an existing file destination that is a symbolic link and a new destination below a symbolic-link parent.
+Regular files are published through a private temporary entry and atomically replace an existing regular file.
+Relative host destinations resolve against the caller's working directory.
+Absolute host destinations do not use caller-working-directory resolution.
 With no `host-dest` the destination defaults to the current directory.
 
 <AgentOnly variant="openclaw">
@@ -3161,10 +3186,20 @@ $$nemoclaw gc [--dry-run] [--yes|-y|--force]
 
 ### `$$nemoclaw uninstall`
 
-Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
+Run `uninstall.sh` to remove NemoClaw sandboxes, local gateway resources, related images and containers, and local state.
 The CLI runs the local `uninstall.sh` shipped with the installed npm package.
 If that local script is missing, the CLI does not auto-fetch a remote copy.
 It prints the versioned URL of the matching `uninstall.sh` so you can download, review, and run it manually.
+
+When the gateway is externally supervised, uninstall preserves its process, Docker resources, and OpenShell binaries.
+It still deletes the selected sandboxes and attempts to remove the modern local gateway registration.
+When uninstall confirms that no sibling gateways remain, it also deletes NemoClaw provider registrations.
+It does not use the legacy `gateway destroy` command for that gateway.
+<AgentOnly variant="openclaw">
+
+Refer to [Declare the OpenShell Gateway Lifecycle Authority](../deployment/gateway-lifecycle-authority).
+
+</AgentOnly>
 
 Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
@@ -3174,7 +3209,9 @@ For Local Ollama setups, uninstall also stops matching Ollama auth proxy process
 For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched.
 If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
-On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
+On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains NemoClaw-owned Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
+Keep a declared external gateway state directory outside that NemoClaw-owned path.
+Uninstall does not otherwise target the declared external directory.
 
 | Flag | Effect |
 |---|---|
@@ -3204,8 +3241,10 @@ The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-When no sibling gateways remain, uninstall also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
+When uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources.
+If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
+When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 
 `--yes` deliberately remains non-destructive for user data.
 It only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed entries.
@@ -3225,7 +3264,11 @@ Decision matrix:
 The preserved entries survive uninstall as inert files on disk.
 Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot restore` can use them.
 
-Preserving `sandboxes.json` does not make the recorded sandboxes recoverable on their own: uninstall removes the gateway registration, provider registrations, and Docker image those records depend on.
+The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own.
+Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration.
+After uninstall confirms that no sibling gateways remain, it also deletes provider registrations.
+For a NemoClaw-managed gateway, it also removes the Docker image.
+For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources.
 Uninstall warns about this at preserve time.
 After reinstalling, the installer reports such records as not found on their recorded gateway instead of claiming they were recovered; run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it.
 Pass `--destroy-user-data` at uninstall time if you prefer to purge the registry along with its dependencies.
@@ -3600,14 +3643,16 @@ Local bases are accepted only when NemoClaw builds and pins them during the curr
 <AgentOnly variant="deepagents">
 
 Set `NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF` to a LangChain Deep Agents Code sandbox-base tag or digest to override base-image resolution during onboarding.
-NemoClaw requires environment overrides to use the official remote repository and resolve to an immutable repository digest, then validates the requested image against the manifest-required `deepagents-code` package version before using it. Local bases are accepted only when NemoClaw builds and pins them during the current operation.
+NemoClaw requires environment overrides to use the official remote repository and resolve to an immutable repository digest, then validates the requested image against the manifest-required `deepagents-code` package version before using it.
+Local bases are accepted only when NemoClaw builds and pins them during the current operation.
 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
 
 Set `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` to a Hermes sandbox-base tag or digest to override base-image resolution during onboarding.
-NemoClaw requires environment overrides to use the official remote repository and resolve to an immutable repository digest, validates the requested image for the required MCP runtime, and keeps the final image bound to that trusted base. Local bases are accepted only when NemoClaw builds and pins them during the current operation.
+NemoClaw requires environment overrides to use the official remote repository and resolve to an immutable repository digest, validates the requested image for the required MCP runtime, and keeps the final image bound to that trusted base.
+Local bases are accepted only when NemoClaw builds and pins them during the current operation.
 
 </AgentOnly>
 
@@ -3642,7 +3687,8 @@ Collector and exporter failures are non-fatal to agent work.
 Native LangSmith tracing and ambient OTLP configuration remain disabled in the sandbox.
 The explicit opt-in can export bounded prompts, responses, tool arguments, tool results, and operational metadata, so operators must treat trace payloads as sensitive application data.
 The collector must enforce the operator's filtering and redaction requirements before remote forwarding because the local policy applies to the managed Python interpreter and does not provide authenticated tenant identity.
-For the complete receiver contract and a runnable LangSmith collector setup, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart#export-traces-through-a-local-collector).
+For a runnable LangSmith collector setup, refer to [Set Up Deep Agents Trace Export](/user-guide/deepagents/monitoring/set-up-deepagents-trace-export).
+For the receiver trust contract, refer to [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/understand-deepagents-trace-export).
 
 </AgentOnly>
 
@@ -3684,17 +3730,29 @@ Defaults are sized for typical hardware; override only if you see false-positive
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
 
-### Onboard Timeouts
+### Onboard and Sandbox Readiness Timeouts
 
 The following environment variables tune onboard-time wall-clock limits.
+`NEMOCLAW_SANDBOX_READY_TIMEOUT` also covers OpenShell command re-registration after onboarding applies policy presets.
+
+<AgentOnly variant="openclaw,hermes">
+`NEMOCLAW_SANDBOX_READY_TIMEOUT` also applies when managed recovery transactionally recreates an existing sandbox.
+</AgentOnly>
 Set them before running `$$nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for the post-create readiness wait, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the deadline expires onboarding deletes the orphaned sandbox and prints the retry hint. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness and OpenShell command re-registration after policy application, in seconds. Raise when the sandbox image build, gateway upload, in-sandbox boot, or post-policy re-registration exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the post-create deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls (2s apart, so ~60s by default) the post-create readiness wait tolerates before treating `Error` as terminal. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
+
+<AgentOnly variant="openclaw,hermes">
+
+For managed recovery, the same timeout covers OpenShell re-registration after transactional recreation.
+When the deadline expires, the primary dashboard or API host forward stays stopped.
+
+</AgentOnly>
 
 ```bash
 export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
@@ -3702,9 +3760,10 @@ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
 
-If a timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
+If the Ollama pull or post-create readiness timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
 The Ollama pull preserves its partial download for the next attempt.
-The readiness wait deletes the orphaned sandbox first so the next `$$nemoclaw onboard` starts clean.
+The post-create readiness wait deletes the orphaned sandbox first so the next `$$nemoclaw onboard` starts clean.
+A post-policy re-registration failure leaves the sandbox in place and reports that OpenShell did not re-register it.
 
 ### Lifecycle Behavior Flags
 

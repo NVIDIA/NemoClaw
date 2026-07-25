@@ -147,6 +147,7 @@ describe("sandbox base-image source identity", () => {
       "scripts/lib/reviewed-npm-archive.mts",
       "scripts/checks/node-tar-image-scan.mts",
       "scripts/patch-bundled-npm-tar.mts",
+      "scripts/upgrade-bundled-npm.mts",
       agentDockerfile,
     ]);
   });

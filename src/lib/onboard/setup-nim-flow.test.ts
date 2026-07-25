@@ -443,6 +443,44 @@ describe("createSetupNim", () => {
     expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
   });
 
+  it("reuses reachable Windows-host Ollama when PowerShell cannot find its executable (#7472)", async () => {
+    const model = "qwen3.6:35b";
+    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
+      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state) => {
+        expect(requestedModel).toBe(model);
+        expect(ollamaRunning).toBe(true);
+        state.model = model;
+        state.provider = "ollama-local";
+        state.endpointUrl = "http://host.docker.internal:11434/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-windows-ollama",
+        getNonInteractiveModel: () => model,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            ollamaHost: "host.docker.internal",
+            ollamaRunning: true,
+            isWindowsHostOllama: true,
+            isWsl: true,
+            hasWindowsOllama: false,
+            windowsHostOllamaDockerRequirement:
+              getWindowsHostOllamaDockerRequirement("docker-desktop"),
+          }),
+        handleRunningOllamaSelection,
+      }),
+    );
+
+    await setupNim(null, null);
+
+    expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
+  });
+
   it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {
     const providerProbe = vi.fn();
     const routeGuard = vi.fn(

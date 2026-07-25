@@ -176,6 +176,28 @@ describe("addSandboxPolicy", () => {
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 
+  it("exits non-zero when the add picker reaches stdin EOF (#7418)", async () => {
+    selectFromListMock.mockRejectedValueOnce(
+      Object.assign(new Error("Prompt closed before input"), { code: "EOF" }),
+    );
+
+    await expect(captureExit(() => addSandboxPolicy("test-sandbox"))).resolves.toBe(1);
+
+    // Names the real condition rather than reporting non-interactive mode,
+    // which is not what happened here.
+    expect(printedText()).toContain("No input available on stdin");
+    expect(applyPresetMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates a non-EOF picker failure instead of exiting (#7418)", async () => {
+    const failure = Object.assign(new Error("stdin read failed"), { code: "EIO" });
+    selectFromListMock.mockRejectedValueOnce(failure);
+
+    await expect(addSandboxPolicy("test-sandbox")).rejects.toBe(failure);
+
+    expect(applyPresetMock).not.toHaveBeenCalled();
+  });
+
   it("filters Hermes-only presets from the OpenClaw picker", async () => {
     arrangeSandbox("openclaw");
 
@@ -361,6 +383,17 @@ describe("removeSandboxPolicy", () => {
     await expect(captureExit(() => removeSandboxPolicy("test-sandbox"))).resolves.toBe(1);
 
     expect(printedText()).toContain("Non-interactive mode requires a preset name.");
+    expect(removePresetMock).not.toHaveBeenCalled();
+  });
+
+  it("exits non-zero when the remove picker reaches stdin EOF (#7418)", async () => {
+    selectForRemovalMock.mockRejectedValueOnce(
+      Object.assign(new Error("Prompt closed before input"), { code: "EOF" }),
+    );
+
+    await expect(captureExit(() => removeSandboxPolicy("test-sandbox"))).resolves.toBe(1);
+
+    expect(printedText()).toContain("No input available on stdin");
     expect(removePresetMock).not.toHaveBeenCalled();
   });
 });

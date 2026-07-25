@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  describeOllamaModelCapacity,
   effectiveGpuMemoryMB,
   findOllamaModelEntry,
   fittableOllamaModelTags,
@@ -38,6 +39,58 @@ describe("findOllamaModelEntry", () => {
 
   it("returns null for unknown tags", () => {
     expect(findOllamaModelEntry("definitely-not-a-real-model:99b")).toBeNull();
+  });
+});
+
+describe("describeOllamaModelCapacity", () => {
+  it("returns registry size and required memory for a known fitting tag", () => {
+    const entry = OLLAMA_MODEL_REGISTRY[OLLAMA_MODEL_REGISTRY.length - 1];
+    const facts = describeOllamaModelCapacity(entry.tag, {
+      type: "nvidia",
+      totalMemoryMB: 131_072,
+      availableMemoryMB: 131_072,
+    });
+    expect(facts.downloadSizeBytes).toBe(entry.downloadSizeBytes);
+    expect(facts.requiredMemoryMB).toBe(entry.requiredMemoryMB);
+    expect(facts.fits).toBe(true);
+  });
+
+  it("marks a known tag that exceeds available memory as not fitting", () => {
+    const entry = OLLAMA_MODEL_REGISTRY[0];
+    const facts = describeOllamaModelCapacity(entry.tag, {
+      type: "nvidia",
+      totalMemoryMB: 8_000,
+      availableMemoryMB: 8_000,
+    });
+    expect(facts.requiredMemoryMB).toBe(entry.requiredMemoryMB);
+    expect(facts.fits).toBe(false);
+  });
+
+  it("reports memory fit separately from compute eligibility", () => {
+    const gpu = {
+      type: "nvidia",
+      totalMemoryMB: 65_536,
+      availableMemoryMB: 60_000,
+      computeConstrained: true,
+    };
+
+    expect(describeOllamaModelCapacity("qwen3.6:35b", gpu).fits).toBe(true);
+    expect(modelFitsAvailableMemory("qwen3.6:35b", gpu)).toBe(false);
+  });
+
+  it("returns all-null facts for an unknown tag", () => {
+    const facts = describeOllamaModelCapacity("definitely-not-a-real-model:99b", {
+      type: "nvidia",
+      totalMemoryMB: 131_072,
+      availableMemoryMB: 131_072,
+    });
+    expect(facts).toEqual({ requiredMemoryMB: null, downloadSizeBytes: null, fits: null });
+  });
+
+  it("leaves fits null when host memory is unknown", () => {
+    const facts = describeOllamaModelCapacity(SMALLEST_OLLAMA_MODEL_TAG, null);
+    expect(facts.downloadSizeBytes).not.toBeNull();
+    expect(facts.fits).toBeNull();
   });
 });
 

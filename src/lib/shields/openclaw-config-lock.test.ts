@@ -314,4 +314,57 @@ describe("OpenClaw top-config guard host wiring", () => {
       expect.stringContaining("capability probe failed"),
     ]);
   });
+
+  it("sanitizes non-printable bytes and caps oversized guard issue text", () => {
+    const result: PrivilegedExecResult = {
+      status: 1,
+      signal: null,
+      stdout: [
+        JSON.stringify({
+          type: "issue",
+          code: "transition-failed\u001b[31m",
+          path: `${OPENCLAW_CONFIG_DIR}/openclaw.json\u0007`,
+          detail: `quarantined as .nemoclaw-rejected-openclaw.json-abc\u0000\u001b]0;title\u0007${"x".repeat(4096)}`,
+        }),
+        JSON.stringify({ type: "result", action: "lock", status: "failed" }),
+      ].join("\n"),
+      stderr: "",
+    };
+
+    const issues = parseOpenClawConfigGuardOutput("lock", result).issues;
+
+    expect(issues[0]).toContain("[transition-failed");
+    expect(issues[0]).toContain("quarantined as .nemoclaw-rejected-openclaw.json-abc");
+    expect(issues[0]).not.toMatch(/[^\x20-\x7e]/);
+    expect(issues[0]?.length).toBeLessThan(2500);
+  });
+
+  it("propagates the guard's synthesized-hash marker on a successful lock", () => {
+    const synthesized: PrivilegedExecResult = {
+      status: 0,
+      signal: null,
+      stdout: `${JSON.stringify({
+        type: "result",
+        action: "lock",
+        status: "ok",
+        configDir: OPENCLAW_CONFIG_DIR,
+        files: ["openclaw.json", ".config-hash"],
+        chattrApplied: false,
+        hashSynthesized: true,
+      })}\n`,
+      stderr: "",
+    };
+    const plain: PrivilegedExecResult = {
+      status: 0,
+      signal: null,
+      stdout: `${success("lock")}\n`,
+      stderr: "",
+    };
+
+    const parsed = parseOpenClawConfigGuardOutput("lock", synthesized);
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.hashSynthesized).toBe(true);
+    expect(parseOpenClawConfigGuardOutput("lock", plain).hashSynthesized).toBeUndefined();
+  });
 });

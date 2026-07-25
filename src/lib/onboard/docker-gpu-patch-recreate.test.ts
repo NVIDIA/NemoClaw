@@ -36,6 +36,7 @@ describe("Docker GPU recreate orchestration", () => {
         runOpenshell,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
+        detectSandboxFallbackDns: vi.fn(() => null),
         readDir: vi.fn(() => null),
         readFile: vi.fn(() => null),
       },
@@ -110,6 +111,7 @@ describe("Docker GPU recreate orchestration", () => {
         runOpenshell,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
+        detectSandboxFallbackDns: vi.fn(() => null),
       },
     );
 
