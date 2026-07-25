@@ -85,5 +85,7 @@ describe("policy preset prompt cancellation", () => {
     expect(result.stderr).toContain("No input available on stdin");
     expect(result.stderr).toContain(`${command} <preset>`);
     expect(result.status).toBe(1);
-  });
+    // Above the child's 30s cap, so a hung picker fails on the assertions
+    // above rather than as a bare suite timeout.
+  }, 45_000);
 });

@@ -850,10 +850,12 @@ function removePreset(
  * `rl.close()` itself emits `close`. Only a close that arrives before an
  * answer rejects.
  *
- * This adopts the EOF half of the `prompt()` contract in
- * `credentials/store.ts` (#5976), and not the whole contract: `prompt()` also
- * rejects on SIGINT and re-raises it, which these pickers have never done.
- * Adding SIGINT handling is a separate behavior change.
+ * Rejects with `code: "SIGINT"` when the operator presses Ctrl-C, and
+ * re-raises the signal so the process dies by SIGINT. Readline emits `close`
+ * for an interrupt as well as for EOF, so without a SIGINT listener an
+ * interrupt would be reported as a closed stdin.
+ *
+ * This matches the `prompt()` contract in `credentials/store.ts` (#5976).
  */
 function askPreset(question: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
@@ -872,6 +874,12 @@ function askPreset(question: string): Promise<string> {
       if (typeof process.stdin.unref === "function") process.stdin.unref();
       settle();
     };
+    // Runs before the `close` listener below, so an interrupt settles as
+    // SIGINT and the close that follows is ignored.
+    rl.on("SIGINT", () => {
+      finish(() => reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" })));
+      process.kill(process.pid, "SIGINT");
+    });
     rl.on("close", () =>
       finish(() => reject(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }))),
     );
