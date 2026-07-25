@@ -10,6 +10,7 @@ NemoClaw v0.0.95 adds explicit ownership for externally supervised OpenShell gat
 - Platforms can now declare whether NemoClaw or an external systemd service owns the OpenShell gateway lifecycle.
   NemoClaw validates the declared listener and keeps stop, recovery, and uninstall operations from changing an externally supervised gateway.
   Stopping a sandbox now removes its dashboard forward, forward startup retries terminated listener attempts, and managed recovery retries dropped OpenShell relay connections.
+  Hermes preserves managed gateway restart recovery.
   Uninstall keeps OpenShell-orphaned sibling sandboxes outside the selected cleanup scope.
   For more information, refer to [Declare the OpenShell Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority), [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 - Snapshot restore now replaces SQLite state files through staged atomic operations.
