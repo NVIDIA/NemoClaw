@@ -570,7 +570,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scorecardJobs.loadWorkflowRunJobs",
     "scripts/audit-test-runtime.mts",
     "runtimeAudit.auditTestRuntime",
+    "runtimeAudit.collectRuntimeHistorySamples",
     "runtimeAudit.formatRuntimeAuditSummary",
+    "scripts/scorecard/analyze-runtime-history.mts",
+    "runtimeHistory.buildRuntimeHistory",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -585,6 +588,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   }
   if (generate.env?.RUNTIME_ARTIFACTS !== "${{ runner.temp }}/e2e-runtime-audit") {
     errors.push("scorecard generator must read the downloaded runtime audit directory");
+  }
+  if (generate.env?.RUNTIME_SUMMARY_FILE !== "${{ runner.temp }}/e2e-runtime-summary.json") {
+    errors.push("scorecard generator must write the bounded runtime summary under runner temp");
   }
 
   const slack = findStep(job, "Post scorecard to Slack");
@@ -626,6 +632,20 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     if (slackScript.includes(forbidden)) {
       errors.push(`scorecard Slack publisher must not execute workflow-ref code via ${forbidden}`);
     }
+  }
+
+  const runtimeUpload = findStep(job, "Upload E2E runtime summary");
+  requirePinnedAction(errors, runtimeUpload, "scorecard runtime summary upload");
+  if (
+    !String(runtimeUpload.uses ?? "").startsWith(E2E_ARTIFACT_ACTION) ||
+    runtimeUpload.if !==
+      "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}" ||
+    runtimeUpload.with?.name !== "e2e-runtime-summary" ||
+    runtimeUpload.with?.path !== "${{ runner.temp }}/e2e-runtime-summary.json"
+  ) {
+    errors.push(
+      "scorecard must upload only the bounded scheduled runtime summary through the canonical E2E uploader",
+    );
   }
 }
 
