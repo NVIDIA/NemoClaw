@@ -50,6 +50,14 @@ export interface PreparedSandboxBuildContext extends CreateSandboxBuildContextRe
   };
 }
 
+function isSameFile(leftPath: string, rightPath: string): boolean {
+  try {
+    return fs.realpathSync(leftPath) === fs.realpathSync(rightPath);
+  } catch {
+    return path.resolve(leftPath) === path.resolve(rightPath);
+  }
+}
+
 function createCleanupBuildContext(buildCtx: string): () => boolean {
   return () => {
     try {
@@ -81,6 +89,23 @@ export function stageCreateSandboxBuildContext(
     if (!fs.statSync(fromResolved).isFile()) {
       error(`  Custom Dockerfile path is not a file: ${fromResolved}`);
       exit(1);
+    }
+    // The managed agent Dockerfile copies repository-root paths (src/,
+    // scripts/, nemoclaw-blueprint/), so the parent-directory contract can
+    // never satisfy it. Stage it exactly like the managed build instead of
+    // failing at the first COPY (#7205).
+    const agentDockerfile = input.agent?.dockerfilePath ?? null;
+    if (input.agent && agentDockerfile && isSameFile(fromResolved, agentDockerfile)) {
+      log(`  Using custom Dockerfile: ${fromResolved}`);
+      log(
+        `  This is the managed ${input.agent.displayName} Dockerfile; staging the repository root as the Docker build context.`,
+      );
+      build = input.createAgentSandbox(input.agent);
+      return {
+        ...build,
+        origin,
+        cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
+      };
     }
     const buildContextDir = path.dirname(fromResolved);
     if (isInsideIgnoredCustomBuildContextPath(buildContextDir)) {

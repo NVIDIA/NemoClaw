@@ -61,9 +61,10 @@ function sha256(value: string): string {
 
 function state(): PrGateState {
   return {
-    version: 3,
+    version: 4,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
+    checkoutRepository: "NVIDIA/NemoClaw",
     workflowSha: WORKFLOW_SHA,
     planHash: "c".repeat(64),
     correlationId: ORIGINAL_CORRELATION_ID,
