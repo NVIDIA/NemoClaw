@@ -15,6 +15,39 @@ const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const FIXTURE = "test/e2e/support/fixtures/e2e-progress-outcome.fixture.test.ts";
 
 describe("automatic E2E phase outcomes", () => {
+  it("redacts target identities and explicit progress events before console output", () => {
+    const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-redaction-"));
+    const secret = "progress-event-secret-value";
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [VITEST, "run", "--project", "e2e-support", FIXTURE, "--reporter=default"],
+        {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          killSignal: "SIGKILL",
+          timeout: 20_000,
+          env: {
+            ...process.env,
+            E2E_ARTIFACT_DIR: artifactDir,
+            E2E_TARGET_ID: `redaction-target-${secret}`,
+            NEMOCLAW_E2E_PROGRESS_EVENT_SECRET: secret,
+            NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: "redacted-event",
+            NEMOCLAW_RUN_LIVE_E2E: "1",
+          },
+        },
+      );
+
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(result.status, output).toBe(0);
+      expect(output).not.toContain(secret);
+      expect(output).toContain('target="redaction-target-[REDACTED]"');
+      expect(output).toContain("event: retry cleanup for [REDACTED]");
+    } finally {
+      fs.rmSync(artifactDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [
       "failed",
@@ -72,6 +105,7 @@ describe("automatic E2E phase outcomes", () => {
           {
             cwd: REPO_ROOT,
             encoding: "utf8",
+            killSignal: "SIGKILL",
             timeout: 20_000,
             env: {
               ...process.env,

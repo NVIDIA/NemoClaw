@@ -256,7 +256,7 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
-        "build-sandbox-images must retain its 15-minute producer budget",
+        "build-sandbox-images must retain its 45-minute producer budget",
         "runtime-overrides timeout must cover its 45-minute probe budget",
         "runtime-overrides must remain an independent consumer of build-sandbox-images",
         "OpenClaw producer must not run the failure-isolated runtime probe",

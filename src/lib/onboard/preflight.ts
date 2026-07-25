@@ -1131,6 +1131,13 @@ export interface ProbeContainerDnsOpts {
   runProbeImpl?: RunProbeFn;
   /** Override the probe name (test seam; pinned name for stable assertions). */
   probeName?: string;
+  /**
+   * Resolver to test with `docker run --dns <ip>`, so the probe exercises the
+   * exact DNS path a recreated sandbox will use rather than Docker defaults.
+   * Must be an IP address (validated) since it is interpolated into the shell
+   * command. Null/undefined preserves Docker defaults. (#7172)
+   */
+  dnsServer?: string | null;
   /** Inject a precomputed image-cache result; skips the pre-pull. */
   ensureImageCachedOverride?: EnsureProbeImageCachedResult;
 }
@@ -1557,10 +1564,18 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
       `probeName must be a plain DNS name (RFC 1035 label characters), got: ${JSON.stringify(probeName)}`,
     );
   }
+  // Validate the resolver as an IP before interpolating it into the shell
+  // command (same injection guard as probeName above); detectSandboxFallbackDns
+  // only yields validated IPv4 or null, but defend the seam regardless.
+  const dnsServer = opts.dnsServer ?? null;
+  if (dnsServer !== null && net.isIP(dnsServer) === 0) {
+    throw new Error(`dnsServer must be an IP address, got: ${JSON.stringify(dnsServer)}`);
+  }
+  const dnsArg = dnsServer !== null ? ` --dns ${dnsServer}` : "";
   const command = opts.command ?? [
     "sh",
     "-c",
-    `docker run --rm --pull=missing ${BUSYBOX_PROBE_IMAGE} nslookup ${probeName} 2>&1`,
+    `docker run --rm --pull=missing${dnsArg} ${BUSYBOX_PROBE_IMAGE} nslookup ${probeName} 2>&1`,
   ];
 
   // Pre-pull the busybox image so the timed probe below measures only

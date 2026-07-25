@@ -148,6 +148,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {
         web_search_provider: {
           completedAt: "2026-01-01T00:00:00.000Z",
@@ -604,6 +605,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -644,6 +646,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -677,6 +680,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -718,6 +722,7 @@ describe("handleSandboxState", () => {
       webSearch: decisionDeclined(),
       messaging: decisionDeclined(),
       resourceProfile: decisionSelected({ cpu: "4", memory: "8Gi" }),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
