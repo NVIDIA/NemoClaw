@@ -193,7 +193,7 @@
     {
       "name": "Declarative network policy",
       "status": "tested",
-      "notes": "YAML-defined egress with policy presets. Presets include `slack`, `discord`, `telegram`, `weather`, `openclaw-pricing`, `huggingface`, `npm`, `pypi`, `brew`, and others. Hot-reloadable at runtime with `$$nemoclaw <name> policy-add`."
+      "notes": "YAML-defined egress with policy presets. Presets include `slack`, `discord`, `telegram`, `weather`, `openclaw-pricing`, `huggingface`, `npm`, `pypi`, `brew`, and others. Hot-reloadable at runtime with `$$nemoclaw <name> policy add`."
     },
     {
       "name": "Snapshot and restore",

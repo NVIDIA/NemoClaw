@@ -452,7 +452,7 @@ Interactive onboarding ignores an invalid environment value and shows the normal
 
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
-Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy-add`](#$$nemoclaw-name-policy-add) across re-onboards.
+Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy add`](#$$nemoclaw-name-policy-add) across re-onboards.
 Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative.
 Onboarding removes any preset that is not in the list.
 `skip` leaves the applied set untouched and does not apply tier defaults.
@@ -1233,7 +1233,12 @@ NemoClaw resolves the sandbox's recorded owning OpenShell gateway before queryin
 If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+`baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
+`baselineExclusionStates` reports each recorded key with its current verification state.
+The `excluded` state means the reviewed entry still matches the active agent baseline and the key is absent from the live OpenShell policy.
+Other states identify agent drift, changed or removed baseline content, an unreadable baseline or live policy, or a live policy that contains the excluded key.
+`baselineExclusionTransition` is `null` when policy state is settled; otherwise it identifies the interrupted `exclude` or `restore` key that must be reconciled before sandbox creation or recreation, rebuild, or cross-sandbox snapshot cloning.
 The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable.
 Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route.
 When the live shared route differs, text output prints both routes and JSON output sets `routeDrift.live`, `routeDrift.recorded`, and `routeDrift.canConnect`.
@@ -1419,6 +1424,10 @@ Direct provider and upstream probes use the same authenticated model-invocation 
 For gateway runtimes, `doctor` also reports an informational `Serving process: not checked` result because its fresh sandbox probes do not attest the long-running gateway process.
 This result does not fail the readiness check.
 Terminal runtimes omit it because they have no long-running gateway process.
+
+For each recorded baseline exclusion, `doctor` compares the approval with the active agent baseline and verifies that the excluded key is absent from the live OpenShell policy.
+An unreadable live policy produces a warning because NemoClaw cannot verify enforcement.
+A live policy that contains the excluded key fails the check and requires policy repair before you rely on the exclusion.
 
 Warnings do not make the command fail.
 Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate.
@@ -1678,7 +1687,7 @@ Managed MCP ownership disables the local-only fallback because exact provider cl
 $$nemoclaw my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
 ```
 
-### `$$nemoclaw <name> policy-get`
+### `$$nemoclaw <name> policy get`
 
 Export the sandbox's round-trippable OpenShell base policy as YAML.
 The command runs `openshell policy get --base`, validates the returned policy, and strips the OpenShell metadata header.
@@ -1686,13 +1695,13 @@ The default output is suitable for review, editing, and later use with `openshel
 The command exits non-zero when OpenShell fails, returns an empty response, or returns content that is not valid policy YAML.
 
 ```bash
-$$nemoclaw my-assistant policy-get > current-policy.yaml
+$$nemoclaw my-assistant policy get > current-policy.yaml
 ```
 
 Use `--raw` only to inspect the unparsed OpenShell response, including its metadata header:
 
 ```bash
-$$nemoclaw my-assistant policy-get --raw
+$$nemoclaw my-assistant policy get --raw
 ```
 
 Do not pass `--raw` output to `openshell policy set` because the metadata header is not part of the policy document.
@@ -1701,7 +1710,7 @@ Do not pass `--raw` output to `openshell policy set` because the metadata header
 |------|-------------|
 | `--raw` | Print the unparsed `openshell policy get --base` response, including its metadata header. |
 
-### `$$nemoclaw <name> policy-add`
+### `$$nemoclaw <name> policy add`
 
 Add a policy preset to a sandbox.
 Presets extend the baseline network policy with additional endpoints.
@@ -1710,13 +1719,13 @@ The scope comes from the exact preset YAML and includes each endpoint's host, po
 When a lifecycle operation reapplies a preset, NemoClaw compares it with the live policy and reports whether the preset opens new egress, replaces a drifted entry, or is already effective with no new egress.
 
 ```bash
-$$nemoclaw my-assistant policy-add
+$$nemoclaw my-assistant policy add
 ```
 
 To apply a specific preset without the interactive picker, pass its name as a positional argument:
 
 ```bash
-$$nemoclaw my-assistant policy-add pypi --yes
+$$nemoclaw my-assistant policy add pypi --yes
 ```
 
 The positional form is required in scripted workflows.
@@ -1730,13 +1739,16 @@ The comparison requires both the preset content and the live policy.
 If either cannot be read, the command exits non-zero.
 The command also exits non-zero when the name belongs to a custom preset applied with `--from-file`.
 Use `--from-file` to apply that custom preset again.
-Built-in preset choices are scoped to the sandbox's active agent. Messaging channel presets appear only when NemoClaw has a matching channel policy for that agent; unavailable channel presets use the standard unknown-preset error before endpoint preview or confirmation.
+Built-in preset choices are scoped to the sandbox's active agent.
+Messaging channel presets appear only when NemoClaw has a matching channel policy for that agent; unavailable channel presets use the standard unknown-preset error before endpoint preview or confirmation.
+When a baseline key is durably excluded, NemoClaw reserves that key and refuses built-in, custom, channel, and MCP policy additions that would define it again.
+Restore the baseline entry before applying a preset that intentionally owns the same key, or rename a custom preset entry whose key represents different access.
 Custom preset files are tracked with the sandbox that applied them.
-`policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
-Before `policy-add` writes a merged policy, it reads and parses the round-trippable base policy from OpenShell.
+`policy list`, `policy add`, and `policy remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
+Before `policy add` writes a merged policy, it reads and parses the round-trippable base policy from OpenShell.
 If the base policy read returns non-empty output that NemoClaw cannot parse, the command exits non-zero instead of overwriting the live policy with only the new preset.
 Fix the gateway or policy read problem, then rerun the command.
-For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy-list` or `status`.
+For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy list` or `status`.
 Recover or re-onboard the sandbox, then re-apply the custom preset.
 
 | Flag | Description |
@@ -1749,61 +1761,67 @@ Recover or re-onboard the sandbox, then re-apply the custom preset.
 Use `--dry-run` to audit a preset before applying it:
 
 ```bash
-$$nemoclaw my-assistant policy-add --dry-run
+$$nemoclaw my-assistant policy add --dry-run
 ```
 
 Apply a custom preset file when you need to grant access to an endpoint that is not covered by a built-in preset:
 
 ```bash
-$$nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+$$nemoclaw my-assistant policy add --from-file ./presets/my-internal-api.yaml
 ```
 
 For batch workflows, apply all preset files from a directory:
 
 ```bash
-$$nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+$$nemoclaw my-assistant policy add --from-dir ./presets/ --yes
 ```
 
 Review every host in custom preset files before applying them.
 Custom presets bypass the built-in preset review process and can widen sandbox egress.
 
-### `$$nemoclaw <name> policy-list`
+### `$$nemoclaw <name> policy list`
 
 List available policy presets and show which ones are applied to the sandbox.
 The available built-in rows are scoped to the sandbox's active agent, so unsupported messaging channel policies are not listed for agents without matching channel policy files.
 The command cross-references the local registry against the live gateway state (via `openshell policy get`), so it flags presets that are applied in one place but not the other.
 This catches desync caused by external edits to the gateway policy or stale registry entries after a manual rollback.
 Preset summaries come only from the YAML `preset.description` field.
-NemoClaw does not render network-policy rule bodies as prose in `policy-list` output.
+NemoClaw does not render network-policy rule bodies as prose in `policy list` output.
+Recorded baseline exclusions appear in a separate section.
+`active` means the reviewed digest still matches the current baseline, `baseline changed — re-review required` means the current entry differs, and `baseline entry removed — restore to clear` means the current release no longer defines the key.
+Use `status` or `doctor` to additionally verify that the approval belongs to the active agent and the excluded key is absent from the live policy.
+`repair required — interrupted exclude/restore; rebuild blocked` means NemoClaw preserved a durable transaction journal after a crash or persistence failure; rerun the displayed exact policy command to reconcile it before sandbox creation or recreation, rebuild, or cross-sandbox snapshot cloning.
 
 Each active preset is annotated with its provenance so you can tell why it is applied:
 
 - `[from <tier> tier]` — the preset name matches an entry in the sandbox's current tier definition (see [Policy Tiers](../reference/network-policies#policy-tiers)).
 - `[from <agent> agent]` — the preset name matches a NemoClaw-managed agent preset and the active agent matches that label.
-- `[user-added]` — anything else: presets applied later through `policy-add`, presets that match no tier or agent default, or presets that match the opposite agent's reserved names on a sandbox running the other agent.
-- `[source unverified]` — the row is active but the local registry and live gateway state disagree. When the gateway cannot be queried, this renders as `[source unverified (gateway unreachable)]`. The provenance check is suppressed in these trust-degraded states because the source cannot be confirmed against both halves of the sandbox policy view.
+- `[user-added]` — anything else: presets applied later through `policy add`, presets that match no tier or agent default, or presets that match the opposite agent's reserved names on a sandbox running the other agent.
+- `[source unverified]` — the row is active but the local registry and live gateway state disagree.
+  When the gateway cannot be queried, this renders as `[source unverified (gateway unreachable)]`.
+  The provenance check is suppressed in these trust-degraded states because the source cannot be confirmed against both halves of the sandbox policy view.
 
 Provenance tags are inferred from the sandbox's current tier and agent metadata at display time and are not persisted per preset.
-A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy-add` after onboarding.
+A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding.
 Agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches that label.
 
 ```bash
-$$nemoclaw my-assistant policy-list
+$$nemoclaw my-assistant policy list
 ```
 
-### `$$nemoclaw <name> policy-remove`
+### `$$nemoclaw <name> policy remove`
 
 Remove a previously applied policy preset from a sandbox.
 The command lists only the presets currently applied, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
 
 ```bash
-$$nemoclaw my-assistant policy-remove
+$$nemoclaw my-assistant policy remove
 ```
 
 To remove a specific preset non-interactively, pass its name as a positional argument:
 
 ```bash
-$$nemoclaw my-assistant policy-remove pypi --yes
+$$nemoclaw my-assistant policy remove pypi --yes
 ```
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
@@ -1816,20 +1834,51 @@ If the preset is unknown or not currently applied, the command exits non-zero wi
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
 
-### `$$nemoclaw <name> policy-explain`
+### `$$nemoclaw <name> policy exclude`
+
+Persistently exclude one exact entry from the agent baseline policy after previewing the egress and support impact that the change removes.
+The preview names the supported features that may stop working.
+The command refuses an entry that does not have a reviewed feature-impact disclosure.
+The versioned exclusion record is bound to the reviewed baseline content and active agent, then replayed during rebuild.
+If the active agent or entry changes, rebuild fails closed until you clear or review the exclusion again.
+The command refuses to exclude a key that an applied preset already owns, because removing that live key would also remove the preset's access.
+The critical `managed_inference` entry cannot currently be excluded pending product direction.
+Use `--force` or `--yes` for explicit non-interactive acknowledgement, or `--dry-run` to preview without changing the sandbox.
+
+```bash
+$$nemoclaw my-assistant policy exclude nous_research --dry-run
+$$nemoclaw my-assistant policy exclude nous_research --force
+```
+
+When a release changes an excluded entry, first run `policy restore <key>` to clear the stale record, preview the current scope with `policy exclude <key> --dry-run`, and then explicitly exclude it again if you still accept the support impact.
+When a release removes the entry, run `policy restore <key>` only to clear the stale exclusion record; there is no replacement scope to review or re-approve.
+
+### `$$nemoclaw <name> policy restore`
+
+Restore a previously excluded entry from the current agent baseline and clear its durable exclusion record.
+Use `--dry-run` to preview the egress that would be restored.
+If a restore is interrupted, NemoClaw finalizes it only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled live target.
+If either value changed or the current baseline is unreadable, the journal remains in `repair required` state so you can inspect and re-review the current scope instead of silently accepting a different entry.
+
+```bash
+$$nemoclaw my-assistant policy restore nous_research --dry-run
+$$nemoclaw my-assistant policy restore nous_research
+```
+
+### `$$nemoclaw <name> policy explain`
 
 Print a redacted summary of the active policy context for a sandbox so an agent or operator can reason about what is allowed, what is blocked, and how to request a change.
-The output covers the recorded tier, the applied presets (built-in and custom) with their allowed host categories, the known presets that are not applied, the inspect/add/remove commands that change policy, and the support boundaries between NemoClaw, OpenShell, and the agent.
+The output covers the recorded tier, applied presets and allowed host categories, known unapplied presets, baseline exclusions and their support impact, policy-change commands, and the support boundaries between NemoClaw, OpenShell, and the agent.
 Raw policy YAML, rule bodies, and credential metadata are deliberately not included.
 
 ```bash
-$$nemoclaw my-assistant policy-explain
+$$nemoclaw my-assistant policy explain
 ```
 
 Pass `--json` to emit the same context as a structured object for agent consumption:
 
 ```bash
-$$nemoclaw my-assistant policy-explain --json
+$$nemoclaw my-assistant policy explain --json
 ```
 
 <AgentOnly variant="openclaw">
@@ -1837,7 +1886,7 @@ NemoClaw refreshes the rendered context inside the sandbox at `/sandbox/.opencla
 Pass `--write` to refresh that file on demand without changing the policy:
 
 ```bash
-$$nemoclaw my-assistant policy-explain --write
+$$nemoclaw my-assistant policy explain --write
 ```
 </AgentOnly>
 
@@ -2584,6 +2633,7 @@ With `--force`, NemoClaw preserves any captured loose files in the partial manif
 If the backup produced nothing usable, it continues from recorded registry metadata without restoring prior sandbox state.
 Use this recovery path only when losing the state that could not be backed up is acceptable.
 Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction.
+It also refuses a pending baseline exclusion transaction before opening a shields-down window, starting backup, or deleting the sandbox, and prints the exact `policy exclude` or `policy restore` command to rerun.
 For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
 For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.
 Before backup or deletion, rebuild checks the staged messaging configuration for credentials or channel resources already used by another registered sandbox.
@@ -2699,6 +2749,7 @@ Create a timestamped snapshot of sandbox state.
 Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
 The command requires shields to be down and keeps the shields check and backup under one per-sandbox transition.
 An expired auto-restore timer can interrupt a long-running backup and restore lockdown.
+When the sandbox has active baseline exclusions, successful output lists their keys and repeats that excluded egress leaves dependent agent features unsupported for that sandbox.
 
 ```bash
 $$nemoclaw my-assistant snapshot create
@@ -2742,6 +2793,7 @@ The selector accepts any of:
 Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source.
 When `dst` does not exist, it is auto-created by reusing the source sandbox's container image.
 No re-onboarding is needed.
+A cross-sandbox restore refuses to clone a source or replace an existing destination whose baseline exclusion transaction needs repair, before it creates or deletes anything.
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.
 If the existing destination has an active shields timer, the force path restores and verifies lockdown, revokes the timer, and then deletes the destination.
@@ -3691,7 +3743,8 @@ docker run --rm --name nemoclaw-jaeger \
 NEMOCLAW_OPENCLAW_OTEL=1 $$nemoclaw onboard
 ```
 
-Onboarding automatically applies the `openclaw-diagnostics-otel-local` preset at sandbox create and again during the policy step when `NEMOCLAW_OPENCLAW_OTEL=1`, so OTLP export is allowed before the gateway's first trace flush. If you enabled OTEL after an existing sandbox was created, run `$$nemoclaw <sandbox-name> policy-add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled at build time.
+Onboarding automatically applies the `openclaw-diagnostics-otel-local` preset at sandbox create and again during the policy step when `NEMOCLAW_OPENCLAW_OTEL=1`, so OTLP export is allowed before the gateway's first trace flush.
+If you enabled OTEL after an existing sandbox was created, run `$$nemoclaw <sandbox-name> policy add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled at build time.
 
 Then open `http://localhost:16686` and select the `openclaw-gateway` service.
 The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` (and subpaths) to `host.openshell.internal:4318` from `openclaw` and `node`.

@@ -53,7 +53,7 @@ For additional collector diagnostics, refer to [Troubleshooting the OpenTelemetr
 | --- | --- |
 | Collector exits at startup | Run the validation command again, then inspect `docker logs nemoclaw-otel-langsmith`. Confirm that the image is the Contrib `0.155.0` image and that all four `LANGSMITH_*` variables were set when the container was created. |
 | Port `4318` is already allocated | Run `ss -ltnp 'sport = :4318'` and stop the conflicting listener. The managed sandbox endpoint is fixed, so changing the collector port does not work. |
-| Collector is healthy but logs no trace count | Run `policy-list` and add `observability-otlp-local` if it is absent. Confirm that `docker port` shows the current `$OTLP_BIND_IP`. Run `nemo-deepagents <sandbox> rebuild --observability --yes` if the sandbox was started without the opt-in. |
+| Collector is healthy but logs no trace count | Run `policy list` and add `observability-otlp-local` if it is absent. Confirm that `docker port` shows the current `$OTLP_BIND_IP`. Run `nemo-deepagents <sandbox> rebuild --observability --yes` if the sandbox was started without the opt-in. |
 | Collector logs `401` | Replace an invalid or expired LangSmith API key, then recreate the collector. |
 | Collector logs `403` | Confirm that the service key can write to the target workspace and that `LANGSMITH_WORKSPACE_ID` matches that workspace. Organization-scoped service keys require `X-Tenant-Id`. |
 | Collector logs `404` | Confirm that `LANGSMITH_OTLP_TRACES_ENDPOINT` uses the correct US, EU, GCP-hosted APAC, AWS-hosted US, or self-hosted API base and ends in `/otel/v1/traces`. |

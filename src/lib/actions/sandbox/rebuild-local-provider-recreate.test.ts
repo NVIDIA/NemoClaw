@@ -18,6 +18,10 @@ import { createLocalInferenceRouteApplier } from "../../onboard/local-inference-
 
 const requireDist = createRequire(import.meta.url);
 const openshellRuntime = requireDist("../../adapters/openshell/runtime.js") as {
+  captureOpenshell(
+    args: string[],
+    options?: Record<string, unknown>,
+  ): { status: number | null; output?: string; stdout?: string; stderr?: string };
   runOpenshell(
     args: string[],
     options?: Record<string, unknown>,
@@ -144,6 +148,12 @@ describe("rebuild local-provider recreation", () => {
     credentialEnv,
     setup,
   }) => {
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "Not Found: sandbox not found",
+    });
     let harness!: RebuildFlowHarness;
     let setupResult: SetupResult | undefined;
     harness = createRebuildFlowHarness({

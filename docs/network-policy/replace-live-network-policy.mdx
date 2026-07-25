@@ -5,7 +5,7 @@ title: "Replace the Live Network Policy"
 sidebar-title: "Replace the Live Policy"
 description: "Export, edit, validate, and replace the complete live policy for a NemoClaw sandbox."
 description-agent: "Replaces the complete live sandbox policy. Use when a full policy edit cannot use NemoClaw policy presets."
-keywords: ["openshell policy set", "nemoclaw policy-get", "replace live network policy"]
+keywords: ["openshell policy set", "nemoclaw policy get", "replace live network policy"]
 content:
   type: "how_to"
 skill:
@@ -26,7 +26,7 @@ Applying a file that contains only one part silently removes the other entries.
 Start from the current round-trippable base policy so the applied presets remain in the file:
 
 ```bash
-$$nemoclaw my-assistant policy-get > current-policy.yaml
+$$nemoclaw my-assistant policy get > current-policy.yaml
 ```
 
 The command retrieves and validates the base policy.
@@ -59,7 +59,7 @@ For a durable source-of-truth change, update the baseline policy or record a cus
 Inspect the tracked preset state:
 
 ```bash
-$$nemoclaw my-assistant policy-list
+$$nemoclaw my-assistant policy list
 ```
 
 Inspect the effective OpenShell policy before testing the endpoint:

@@ -54,14 +54,14 @@ On an existing sandbox, skip mode leaves the live policy unchanged.
 Inspect the effective policy:
 
 ```bash
-nemo-deepagents "$SANDBOX_NAME" policy-list
+nemo-deepagents "$SANDBOX_NAME" policy list
 ```
 
 If `observability-otlp-local` is not active, preview and apply it:
 
 ```bash
-nemo-deepagents "$SANDBOX_NAME" policy-add observability-otlp-local --dry-run
-nemo-deepagents "$SANDBOX_NAME" policy-add observability-otlp-local --yes
+nemo-deepagents "$SANDBOX_NAME" policy add observability-otlp-local --dry-run
+nemo-deepagents "$SANDBOX_NAME" policy add observability-otlp-local --yes
 ```
 
 The preset permits only `POST /v1/traces` to `host.openshell.internal:4318` from `/opt/venv/bin/python3*`.

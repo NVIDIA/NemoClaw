@@ -16,6 +16,28 @@ export type OpenshellCaptureResult = {
 export type SandboxRecord = {
   name: string;
   agent?: string | null;
+  baselineExclusionTransition?: {
+    id: string;
+    operation: "exclude" | "restore";
+    exclusion: {
+      version: 1;
+      agent: string;
+      key: string;
+      digest: string;
+      acknowledgedAt?: string;
+      appliedAgentVersion?: string | null;
+    };
+    startedAt: string;
+    targetLiveDigest: string | null;
+  };
+  baselineExclusions?: Array<{
+    version: 1;
+    agent: string;
+    key: string;
+    digest: string;
+    acknowledgedAt?: string;
+    appliedAgentVersion?: string | null;
+  }>;
   fromDockerfile?: string | null;
   gatewayName?: string | null;
   imageTag?: string | null;
@@ -104,6 +126,10 @@ const lifecycleMock = vi.hoisted(() => {
 });
 
 export const backupSandboxStateMock = vi.fn();
+export const loadAgentMock = vi.fn((name: string) => ({
+  name,
+  policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
+}));
 export const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
 >((args) => defaultOpenshellResponses(args));
@@ -123,6 +149,14 @@ export const removePresetMock = vi.fn((_sandbox: string, _preset: string) => tru
 export const getPresetContentGatewayStateMock = vi.fn<
   (_sandbox: string, _content: string, _policyKey?: string) => "match" | "absent" | "drift" | null
 >(() => "absent");
+export const resolveAgentBaselinePolicyMock = vi.fn((agent: string) => ({
+  agent,
+  policyPath:
+    agent === "openclaw"
+      ? "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
+      : `/repo/agents/${agent}/policy-additions.yaml`,
+  content: "version: 1\nnetwork_policies: {}\n",
+}));
 export const builtinObservabilityPolicy =
   "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: host.openshell.internal\n";
 export const loadPresetForSandboxMock = vi.fn((_sandbox: string, preset: string) =>
@@ -132,6 +166,14 @@ export const getSandboxMock = vi.fn<(name?: string) => SandboxRecord | null>(() 
 export const isGatewayHealthyMock = vi.fn(() => true);
 export const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 export const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
+export const prepareInitialSandboxCreatePolicyMock = vi.fn(
+  (
+    policyPath: string,
+  ): { policyPath: string; appliedPresets: string[]; cleanup?: () => boolean } => ({
+    policyPath,
+    appliedPresets: [],
+  }),
+);
 export const registerSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
@@ -155,6 +197,10 @@ export { lifecycleMock, shieldsMock };
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
   dockerInspect: dockerInspectMock,
+}));
+
+vi.mock("../../agent/defs", () => ({
+  loadAgent: loadAgentMock,
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -183,6 +229,7 @@ vi.mock("../../policy", () => ({
   getPresetContentGatewayState: getPresetContentGatewayStateMock,
   loadPresetForSandbox: loadPresetForSandboxMock,
   removePreset: removePresetMock,
+  resolveAgentBaselinePolicy: resolveAgentBaselinePolicyMock,
 }));
 
 vi.mock("../../runner", () => ({
@@ -194,6 +241,10 @@ vi.mock("../../runner", () => ({
 
 vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: parseLiveSandboxNamesMock,
+}));
+
+vi.mock("../../onboard/initial-policy", () => ({
+  prepareInitialSandboxCreatePolicy: prepareInitialSandboxCreatePolicyMock,
 }));
 
 vi.mock("../../shields", () => ({
@@ -224,7 +275,9 @@ vi.mock("../../state/gateway", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
+  getConfiguredMessagingChannelsFromEntry: vi.fn(() => []),
   getCustomPolicies: getCustomPoliciesMock,
+  getDisabledMessagingChannelsFromEntry: vi.fn(() => []),
   getSandbox: getSandboxMock,
   listSandboxes: () => ({
     sandboxes: ["alpha", "beta", "gamma"].map((name) => getSandboxMock(name)).filter(Boolean),
@@ -276,6 +329,22 @@ export function resetSnapshotRestoreMocks(): void {
   getSandboxMock.mockReturnValue(null);
   isGatewayHealthyMock.mockReturnValue(true);
   listBackupsMock.mockReturnValue([]);
+  loadAgentMock.mockImplementation((name: string) => ({
+    name,
+    policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
+  }));
+  resolveAgentBaselinePolicyMock.mockImplementation((agent: string) => ({
+    agent,
+    policyPath:
+      agent === "openclaw"
+        ? "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
+        : `/repo/agents/${agent}/policy-additions.yaml`,
+    content: "version: 1\nnetwork_policies: {}\n",
+  }));
+  prepareInitialSandboxCreatePolicyMock.mockImplementation((policyPath: string) => ({
+    policyPath,
+    appliedPresets: [],
+  }));
   registerSandboxMock.mockReset();
   updateSandboxMock.mockReset();
   restoreSandboxStateMock.mockReturnValue({
@@ -285,6 +354,12 @@ export function resetSnapshotRestoreMocks(): void {
     failedDirs: [],
     failedFiles: [],
   });
+  streamSandboxCreateMock.mockImplementation(async () => ({
+    status: 0,
+    output: "",
+    sawProgress: false,
+    forcedReady: false,
+  }));
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
 }
 
