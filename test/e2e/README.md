@@ -152,6 +152,10 @@ graph as the live targets:
   remaining broken for 24 hours, rather than posting on every failed schedule.
 - `scorecard` writes the scheduled/manual result summary and posts it to the
   daily or full-run Slack route. The summary:
+  - separates queue time from execution time for the ten jobs with the longest
+    combined duration;
+  - reports the runner class as `standard`, `larger`, or `unknown` without
+    exposing runner labels;
   - adds this run's semantic phase runtime table;
   - compares each of the ten slowest current tests with up to ten prior
     completed scheduled runs; and
