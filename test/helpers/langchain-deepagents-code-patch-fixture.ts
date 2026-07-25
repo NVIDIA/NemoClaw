@@ -254,6 +254,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 _dotenv_loaded_values = {}
+CLI_MAX_RETRIES_KEY = "__deepagents_cli_max_retries__"
 
 
 def _preview_dotenv_environ(*, start_path=None):
@@ -429,14 +430,43 @@ def _run_single_hook(command, event, payload_bytes):
     `
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 settings = SimpleNamespace(shell_allow_list=["bash"])
+logger = logging.getLogger(__name__)
+
+
+class _Console:
+    def print(self, message):
+        print(message)
+
+
+def escape_markup(value):
+    return value
+
+
+def generate_thread_id():
+    return "thread-1"
+
+
+async def _run_non_interactive_impl(*args, **kwargs):
+    del args
+    return kwargs
 
 
 async def run_non_interactive(*args, **kwargs):
-    del args
-    return kwargs
+    console = _Console()
+    thread_id = generate_thread_id()
+    try:
+        return await _run_non_interactive_impl(*args, **kwargs)
+    except Exception as e:
+        logger.exception("Unexpected error during non-interactive execution")
+        console.print(
+            f"\\n[red]Unexpected error ({type(e).__name__}): "
+            f"{escape_markup(str(e))}[/red]"
+        )
+        return 1
 
 
 async def _run_startup_command(command, console, *, quiet):

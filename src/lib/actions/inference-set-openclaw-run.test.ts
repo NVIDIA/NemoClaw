@@ -166,4 +166,60 @@ describe("runInferenceSet OpenClaw routing", () => {
       primaryModelRef: "inference/anthropic.claude-sonnet-4-6-20260101-v1:0",
     });
   });
+
+  it("replaces a prior runtime provider marker when switching back to NVIDIA Build", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/openai/gpt-5.4-mini" } } },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            api: "openai-completions",
+            headers: {
+              "X-NemoClaw-Upstream-Provider": "compatible-endpoint",
+            },
+            models: [{ id: "openai/gpt-5.4-mini", name: "inference/openai/gpt-5.4-mini" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "openai/gpt-5.4-mini",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      session: baseSession({
+        provider: "compatible-endpoint",
+        model: "openai/gpt-5.4-mini",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    expect(config.models).toMatchObject({
+      providers: {
+        inference: {
+          headers: {
+            "X-NemoClaw-Upstream-Provider": "nvidia-prod",
+          },
+        },
+      },
+    });
+  });
 });
