@@ -2579,9 +2579,13 @@ For a sandbox with managed MCP servers, `--force` probes sandbox execution befor
 If that no-op cannot run, NemoClaw requires complete bridge entries and exact live policy and provider identities, without trying an in-sandbox adapter scrub or changing MCP ownership state.
 Each bridge must carry an explicit adapter matching the sandbox's recorded agent, and the registered policy must equal the canonical generated policy for that adapter, server name, URL endpoint, and current resolved-address pins.
 It rechecks the registry, recorded gateway, resolved targets, live generated policies, and provider identities immediately before deletion; incomplete adds, drift, or ambiguous ownership stop before deletion.
+NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
 Across every rebuild path, NemoClaw does not attempt to stop local NIM until sandbox deletion is positively confirmed, then attempts NIM cleanup on a best-effort basis.
-When `openshell sandbox delete` exits nonzero, an exact owner-gateway lookup distinguishes explicit absence from a confirmed `Ready` or `Running` sandbox; any other phase or probe failure is ambiguous.
-Explicit absence continues the rebuild, confirmed intact state triggers an attempt to restore prepared MCP state and any shields lockdown that rebuild temporarily opened, and any restoration failure is reported.
+When `openshell sandbox delete` exits nonzero, an exact recorded-gateway lookup distinguishes explicit absence from a confirmed `Ready` or `Running` sandbox.
+Any other phase or probe failure is ambiguous.
+Explicit absence continues the rebuild.
+Confirmed intact state triggers an attempt to restore prepared MCP state and any shields lockdown that rebuild temporarily opened.
+NemoClaw reports any MCP or shields restoration failure and does not present the operation as a successful rollback.
 Ambiguous state preserves MCP ownership and recovery metadata without attempting to stop NIM or claiming the original sandbox remains intact, and the rebuild process skips its immediate shields relock.
 Failures after a successful exec probe do not switch to the host-side path.
 Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction.
