@@ -296,8 +296,8 @@ describe("PR review ledger tools", () => {
       oneLine: "Same-session synthesis validation failed; the advisor result is incomplete.",
     });
     expect(fallback.reviewCompleteness.requiresHumanReview).toBe(true);
-    expect(fallback.reviewCompleteness.limitations[0]).toContain(
-      "Same-session synthesis validation failed",
+    expect(fallback.reviewCompleteness.limitations).toContain(
+      "Same-session synthesis validation failed; using canonical draft: validation turn failed",
     );
   });
 
