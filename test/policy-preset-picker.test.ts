@@ -203,8 +203,16 @@ async function runSelectionPromptAtSigint(
 
   try {
     return await policies[functionName](SELECT_FROM_LIST_ITEMS, { applied }).then(
-      () => ({ code: undefined as string | undefined, reraised: kill.mock.calls.length }),
-      (error: NodeJS.ErrnoException) => ({ code: error.code, reraised: kill.mock.calls.length }),
+      () => ({
+        code: undefined as string | undefined,
+        reraised: kill.mock.calls.length,
+        signal: kill.mock.calls[0]?.[1],
+      }),
+      (error: NodeJS.ErrnoException) => ({
+        code: error.code,
+        reraised: kill.mock.calls.length,
+        signal: kill.mock.calls[0]?.[1],
+      }),
     );
   } finally {
     stdin.ref = original.ref;
@@ -284,6 +292,7 @@ describe("policy preset pickers", () => {
 
       expect(result.code).toBe("SIGINT");
       expect(result.reraised).toBe(1);
+      expect(result.signal).toBe("SIGINT");
     }, 3_000);
   });
 
@@ -343,6 +352,7 @@ describe("policy preset pickers", () => {
 
       expect(result.code).toBe("SIGINT");
       expect(result.reraised).toBe(1);
+      expect(result.signal).toBe("SIGINT");
     }, 3_000);
   });
 
