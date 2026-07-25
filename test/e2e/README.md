@@ -16,6 +16,9 @@ before those targets run; local runners must provide it themselves.
   GitHub Actions check suite.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
+- `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
+  failures from approved `main` workflows and requests one full rerun only when
+  every non-passing job has authenticated GitHub-hosted runner-loss evidence.
 - Platform workflows such as macOS, WSL, sandbox image, and regression E2E
   call their target E2E tests directly. The Ollama auth proxy target is
   selected through `.github/workflows/e2e.yaml`.
@@ -177,6 +180,43 @@ graph as the live targets:
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
+
+### Hosted-runner recovery
+
+The trusted recovery workflow can request one full rerun of the latest eligible
+first attempt for these source workflows:
+
+- scheduled or manually dispatched `E2E main`;
+- `E2E / WSL` pushes to `main`;
+- `E2E / macOS` pushes to `main`; and
+- `CI / Platform Vitest Main Watch` pushes to `main`.
+
+The controller authenticates the active workflow name and path, repository,
+head repository, branch, run name, event, run URL, and first-attempt failure.
+It ignores E2E PR child runs and an eligible source run that has a newer
+eligible run for the same workflow.
+
+The complete non-passing job listing must contain only exact hosted-runner-loss
+markers for that workflow's approved runner labels.
+The E2E policy accepts only `ubuntu-latest`.
+The WSL and macOS policies accept only `cancelled` jobs with their exact
+platform label and exact GitHub internal-error annotation.
+The platform-watch policy applies those platform contracts to Windows and
+macOS jobs and the authenticated hosted-runner-loss contract to Ubuntu jobs.
+An ordinary assertion failure, mixed failure set, incomplete listing, custom or
+self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
+
+The controller collects and fingerprints the complete source, workflow,
+latest-run, job, check, annotation, and optional log evidence twice.
+It requests the full GitHub Actions rerun only when both snapshots match.
+The rerun executes every job in attempt two, not only the failed jobs.
+Neither a source attempt two nor a recovery-controller rerun can request
+another source rerun.
+
+The recovery job checks out only the trusted default-branch controller and does
+not check out source-run code.
+It receives no repository secrets and holds `actions: write` only for the
+bounded rerun request.
 
 ### Runner comparison telemetry
 
