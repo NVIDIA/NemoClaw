@@ -22,10 +22,9 @@ on:
       operation:
         description: E2E gate action to perform.
         required: true
-        default: approve-fork-e2e-skip
+        default: run-control-plane
         type: choice
         options:
-          - approve-fork-e2e-skip
           - run-control-plane
       pr_number:
         description: Pull request number for the selected E2E gate action.
@@ -40,13 +39,8 @@ on:
         required: true
         type: string
       review_reason:
-        description: Why this fork PR may skip credentialed E2E or this internal PR may run control-plane E2E.
+        description: Why this internal PR may run control-plane E2E.
         required: true
-        type: string
-      evidence_url:
-        description: Fork credentialed-E2E skip only; optional Actions run URL. Ignored by run-control-plane, whose evidence comes from the dispatched jobs.
-        required: false
-        default: ""
         type: string
 
 permissions: {}
@@ -135,7 +129,7 @@ jobs:
           --timeout-seconds 21480
 
   cancel-superseded:
-    if: ${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}
+    if: ${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -176,14 +170,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 330
     outputs:
-      control_plane_approval_mode: ${{ steps.start.outputs.control_plane_approval_mode }}
-      control_plane_approval_pr_number: ${{ steps.start.outputs.control_plane_approval_pr_number }}
-      control_plane_approval_head_sha: ${{ steps.start.outputs.control_plane_approval_head_sha }}
-      control_plane_approval_base_sha: ${{ steps.start.outputs.control_plane_approval_base_sha }}
-      fork_skip_mode: ${{ steps.start.outputs.fork_skip_mode }}
-      fork_skip_pr_number: ${{ steps.start.outputs.fork_skip_pr_number }}
-      fork_skip_head_sha: ${{ steps.start.outputs.fork_skip_head_sha }}
-      fork_skip_base_sha: ${{ steps.start.outputs.fork_skip_base_sha }}
+      approval_mode: ${{ steps.start.outputs.approval_mode }}
+      approval_environment: ${{ steps.start.outputs.approval_environment }}
+      approval_pr_number: ${{ steps.start.outputs.approval_pr_number }}
+      approval_head_sha: ${{ steps.start.outputs.approval_head_sha }}
+      approval_base_sha: ${{ steps.start.outputs.approval_base_sha }}
     permissions:
       actions: write
       checks: write
@@ -406,14 +397,14 @@ jobs:
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
 
-  approve-internal-e2e:
-    name: Approve credentialed E2E for internal PR
+  approve-e2e:
+    name: Approve credentialed E2E for reviewed PR
     needs: coordinate
-    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.control_plane_approval_mode != '' && github.run_attempt == 1 }}
+    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.approval_mode != '' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 330
     environment:
-      name: approve-credentialed-e2e-for-internal-pr
+      name: ${{ needs.coordinate.outputs.approval_environment }}
       deployment: false
     permissions:
       actions: write
@@ -421,7 +412,7 @@ jobs:
       contents: read
       pull-requests: read
     concurrency:
-      group: pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.control_plane_approval_pr_number }}-${{ needs.coordinate.outputs.control_plane_approval_head_sha }}-${{ needs.coordinate.outputs.control_plane_approval_base_sha }}
+      group: pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.approval_pr_number }}-${{ needs.coordinate.outputs.approval_head_sha }}-${{ needs.coordinate.outputs.approval_base_sha }}
       queue: max
       cancel-in-progress: false
     steps:
@@ -449,36 +440,45 @@ jobs:
           printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
 
       - id: start
-        name: Start approved internal E2E
+        name: Start approved E2E
         env:
+          APPROVAL_MODE: ${{ needs.coordinate.outputs.approval_mode }}
           APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
           APPROVAL_RUN_ID: ${{ github.run_id }}
-          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.control_plane_approval_base_sha }}
-          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.control_plane_approval_head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.approval_base_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.approval_head_sha }}
           GATE_RUN_ID: ${{ github.run_id }}
           GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.coordinate.outputs.control_plane_approval_pr_number }}
+          PR_NUMBER: ${{ needs.coordinate.outputs.approval_pr_number }}
           WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode start-approved-control-plane
-          --pr "$PR_NUMBER"
-          --head "$EXPECTED_HEAD_SHA"
-          --base "$EXPECTED_BASE_SHA"
-          --workflow-sha "$WORKFLOW_SHA"
-          --approval-run-id "$APPROVAL_RUN_ID"
-          --approval-run-attempt "$APPROVAL_RUN_ATTEMPT"
-          --gate-run-id "$GATE_RUN_ID"
-          --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT"
-          --work-dir "$WORK_DIR"
+        run: |
+          set -euo pipefail
+          case "$APPROVAL_MODE" in
+            start-approved-control-plane | start-approved-fork) ;;
+            *)
+              echo "::error::approval mode is invalid" >&2
+              exit 1
+              ;;
+          esac
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts \
+            --mode "$APPROVAL_MODE" \
+            --pr "$PR_NUMBER" \
+            --head "$EXPECTED_HEAD_SHA" \
+            --base "$EXPECTED_BASE_SHA" \
+            --workflow-sha "$WORKFLOW_SHA" \
+            --approval-run-id "$APPROVAL_RUN_ID" \
+            --approval-run-attempt "$APPROVAL_RUN_ATTEMPT" \
+            --gate-run-id "$GATE_RUN_ID" \
+            --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" \
+            --work-dir "$WORK_DIR"
 
       - name: Upload approved risk plan
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-e2e-approved-risk-plan-${{ needs.coordinate.outputs.control_plane_approval_head_sha }}
+          name: pr-e2e-approved-risk-plan-${{ needs.coordinate.outputs.approval_head_sha }}
           path: ${{ steps.workspace.outputs.work_dir }}/risk-plan.json
           if-no-files-found: ignore
           retention-days: 14
@@ -609,104 +609,3 @@ jobs:
       - name: Remove private workspace
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
-
-  approve-fork-e2e-skip:
-    name: Approve credentialed E2E skip for fork PR
-    needs: coordinate
-    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.fork_skip_mode != '' && github.run_attempt == 1 }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment:
-      name: approve-credentialed-e2e-skip-for-fork-pr
-      deployment: false
-    permissions:
-      actions: read
-      checks: write
-      contents: read
-      pull-requests: read
-    concurrency:
-      group: pr-e2e-gate-${{ github.repository }}-${{ needs.coordinate.outputs.fork_skip_pr_number }}-${{ needs.coordinate.outputs.fork_skip_head_sha }}-${{ needs.coordinate.outputs.fork_skip_base_sha }}
-      queue: max
-      cancel-in-progress: false
-    steps:
-      - name: Checkout controller
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Install controller dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Record approved credentialed E2E skip
-        env:
-          APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
-          APPROVAL_RUN_ID: ${{ github.run_id }}
-          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.fork_skip_base_sha }}
-          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.fork_skip_head_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.coordinate.outputs.fork_skip_pr_number }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode record-approved-fork-e2e-skip
-          --pr "$PR_NUMBER"
-          --head "$EXPECTED_HEAD_SHA"
-          --base "$EXPECTED_BASE_SHA"
-          --workflow-sha "$WORKFLOW_SHA"
-          --approval-run-id "$APPROVAL_RUN_ID"
-          --approval-run-attempt "$APPROVAL_RUN_ATTEMPT"
-
-  record-fork-e2e-skip:
-    name: Record credentialed E2E skip for fork PR
-    if: ${{ github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.operation == 'approve-fork-e2e-skip' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      checks: write
-      contents: read
-      pull-requests: read
-    concurrency:
-      group: pr-e2e-gate-${{ github.repository }}-${{ inputs.pr_number }}-${{ inputs.expected_head_sha }}-${{ inputs.expected_base_sha }}
-      queue: max
-      cancel-in-progress: false
-    steps:
-      - name: Checkout controller
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Install controller dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Record credentialed E2E skip
-        env:
-          EVIDENCE_URL: ${{ inputs.evidence_url }}
-          EXPECTED_BASE_SHA: ${{ inputs.expected_base_sha }}
-          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          MAINTAINER: ${{ github.triggering_actor }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          REVIEW_REASON: ${{ inputs.review_reason }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode record-fork-e2e-skip
-          --pr "$PR_NUMBER"
-          --head "$EXPECTED_HEAD_SHA"
-          --base "$EXPECTED_BASE_SHA"
-          --workflow-sha "$WORKFLOW_SHA"
-          --maintainer "$MAINTAINER"
-          --reason "$REVIEW_REASON"
-          --evidence-url "$EVIDENCE_URL"
