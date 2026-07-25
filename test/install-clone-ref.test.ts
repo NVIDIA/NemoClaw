@@ -104,29 +104,32 @@ describe("installer git checkout", () => {
   });
 });
 
-describe("installer version stamping", () => {
+describe("versioned installer payload stamping", () => {
   const extract = (stdout: string) => stdout.match(/START([\s\S]*?)STOP/)?.[1] ?? null;
 
   it("stamps a requested version tag and defers mutable refs to describe (#7474)", () => {
-    for (const installer of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER]) {
-      const stamp = (ref: string) => {
-        const result = spawnSync(
-          "bash",
-          [
-            "-c",
-            'source "$INSTALLER_UNDER_TEST"\nprintf START\nresolve_stamped_version "$REF"\nprintf STOP',
-          ],
-          { encoding: "utf8", env: { ...process.env, INSTALLER_UNDER_TEST: installer, REF: ref } },
-        );
-        expect(result.status, result.stderr).toBe(0);
-        return extract(result.stdout);
-      };
-      expect(stamp("v0.0.93")).toBe("0.0.93");
-      expect(stamp("refs/tags/v1.2.3")).toBe("1.2.3");
-      expect(stamp("lkg")).toBe("");
-      expect(stamp("latest")).toBe("");
-      expect(stamp("main")).toBe("");
-    }
+    // The root curl bootstrap owns ref selection and checkout, then delegates
+    // version stamping to this selected-ref payload.
+    const stamp = (ref: string) => {
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$INSTALLER_UNDER_TEST"\nprintf START\nresolve_stamped_version "$REF"\nprintf STOP',
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD, REF: ref },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      return extract(result.stdout);
+    };
+    expect(stamp("v0.0.93")).toBe("0.0.93");
+    expect(stamp("refs/tags/v1.2.3")).toBe("1.2.3");
+    expect(stamp("lkg")).toBe("");
+    expect(stamp("latest")).toBe("");
+    expect(stamp("main")).toBe("");
   });
 
   it("reports the stamped .version over a mismatched git describe (#7474)", () => {
@@ -145,7 +148,7 @@ describe("installer version stamping", () => {
         git(["-c", "tag.gpgSign=false", "tag", "-a", "v0.0.38", "-m", "old release"]).status,
       ).toBe(0);
 
-      const resolve = (installer: string) =>
+      const resolve = () =>
         spawnSync(
           "bash",
           [
@@ -156,7 +159,7 @@ describe("installer version stamping", () => {
             encoding: "utf8",
             env: {
               ...process.env,
-              INSTALLER_UNDER_TEST: installer,
+              INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
               NEMOCLAW_REPO_ROOT: tmp,
               NEMOCLAW_INSTALL_REF: "",
               NEMOCLAW_INSTALL_TAG: "",
@@ -164,17 +167,15 @@ describe("installer version stamping", () => {
           },
         );
 
-      for (const installer of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER]) {
-        fs.writeFileSync(path.join(tmp, ".version"), "0.0.93");
-        const withStamp = resolve(installer);
-        expect(withStamp.status, withStamp.stderr).toBe(0);
-        expect(extract(withStamp.stdout)).toBe("0.0.93");
+      fs.writeFileSync(path.join(tmp, ".version"), "0.0.93");
+      const withStamp = resolve();
+      expect(withStamp.status, withStamp.stderr).toBe(0);
+      expect(extract(withStamp.stdout)).toBe("0.0.93");
 
-        fs.rmSync(path.join(tmp, ".version"));
-        const withoutStamp = resolve(installer);
-        expect(withoutStamp.status, withoutStamp.stderr).toBe(0);
-        expect(extract(withoutStamp.stdout)).toBe("0.0.38");
-      }
+      fs.rmSync(path.join(tmp, ".version"));
+      const withoutStamp = resolve();
+      expect(withoutStamp.status, withoutStamp.stderr).toBe(0);
+      expect(extract(withoutStamp.stdout)).toBe("0.0.38");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
