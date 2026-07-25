@@ -70,7 +70,7 @@ const trustedPrActionPaths = {
 } as const;
 
 const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
-const trustedSetupNodeAction = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e";
+const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const installerHashBootstrapCommit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
 const installerHashBootstrapTree = "1fdf59efe40b78c407e222fd42043b23a61e199a";
 const installerHashBootstrapCreatedAt = "2026-07-02T19:35:41Z";
@@ -922,7 +922,7 @@ describe("pull request and main workflow contracts", () => {
     expect(bootstrapSetup.if).toBe(
       "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
     );
-    expect(bootstrapSetup.uses).toContain("actions/setup-node@");
+    expect(bootstrapSetup.uses).toBe(trustedSetupNodeAction);
     expect(bootstrapSetup.with?.["node-version"]).toBe("22");
     expect(bootstrapSetup.with?.cache).toBe("npm");
     const bootstrapInstall = requiredWorkflowStep(

@@ -19,6 +19,7 @@ const E2E_PATH = ".github/workflows/e2e.yaml";
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
+const TRUSTED_SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 
 type CoordinatorJob = WorkflowJob & {
   concurrency?: { group: string; queue?: "max"; "cancel-in-progress": boolean };
@@ -676,6 +677,7 @@ describe("PR E2E gate workflow", () => {
       ),
     ).toBe(true);
     expect(nodeSetups).toHaveLength(7);
+    expect(nodeSetups.every((setup) => setup.uses === TRUSTED_SETUP_NODE_ACTION)).toBe(true);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
     expect(installs).toHaveLength(6);
