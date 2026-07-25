@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0.0",
+  "status": "inconclusive",
+  "exitCode": 3,
+  "mutated": false,
+  "provenance": {
+    "nemoclawVersion": "0.1.0",
+    "sourceRevision": "21e60ae287e8c2a184f71406ac8b418f046330d1",
+    "observedAt": "2026-06-01T12:00:00Z"
+  },
+  "observations": [
+    { "id": "gpu.nvidia", "state": "unknown", "evidenceIds": ["gpu.permission-denied"] }
+  ],
+  "capabilities": [
+    { "id": "inference.nvidia-gpu", "state": "unknown", "evidenceIds": ["gpu.permission-denied"] }
+  ],
+  "qualifications": [
+    { "id": "platform.generic-linux", "status": "unknown", "capabilityIds": ["inference.nvidia-gpu"] }
+  ],
+  "findings": [
+    {
+      "id": "gpu.visibility-undetermined",
+      "severity": "warning",
+      "summary": "NemoClaw could not determine GPU visibility.",
+      "capabilityIds": ["inference.nvidia-gpu"],
+      "evidenceIds": ["gpu.permission-denied"]
+    }
+  ],
+  "evidence": [
+    { "id": "gpu.permission-denied", "summary": "The GPU query was denied." }
+  ]
+}
