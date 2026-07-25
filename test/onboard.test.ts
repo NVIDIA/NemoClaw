@@ -53,6 +53,7 @@ type OnboardTestInternals = {
     session: T,
     selectedAgentName: string,
   ) => T;
+  arePolicyPresetsApplied: (sandboxName: string, selectedPresets?: string[]) => boolean;
   pullAndResolveBaseImageDigest: () => { digest: string | null; ref: string } | null;
   createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
   SANDBOX_BASE_IMAGE: string;
@@ -90,6 +91,7 @@ const {
   getResumeConfigConflicts,
   getResumeSandboxConflict,
   clearAgentScopedResumeState,
+  arePolicyPresetsApplied,
   createSetupInference,
   SANDBOX_BASE_IMAGE,
 } = onboardTestInternals;
@@ -98,6 +100,10 @@ const createDirectSetupInferenceHarness =
   createDirectSetupInferenceHarnessFactory(createSetupInference);
 
 describe("onboard helpers", () => {
+  it("does not treat an empty policy preset selection as already applied (#6042)", () => {
+    expect(arePolicyPresetsApplied("unused", [])).toBe(false);
+  });
+
   it("adds host proxy variables to sandbox startup env args", () => {
     const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
 

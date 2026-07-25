@@ -655,7 +655,10 @@ The poll count is clamped to a minimum of `1` so the probe always runs at least 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
-If that directory contains a `.dockerignore`, onboarding applies those rules while calculating the context size and staging files for Docker.
+When the supplied path is the selected agent's own managed Dockerfile (for example, `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw applies one exception and stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths.
+This lets you edit the managed Dockerfile in place (for example to add Python packages) and rebuild from it with `--from`.
+For this managed exception, onboarding applies the `.dockerignore` from the repository root.
+For every other `--from` path, onboarding applies a `.dockerignore` from the Dockerfile's parent directory while calculating the context size and staging files for Docker.
 NemoClaw also applies additional secret-safety exclusions that override `.dockerignore` negation rules: credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key` are still skipped even if `.dockerignore` tries to include them.
 Without a `.dockerignore`, onboarding still skips common large or local-only directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
 Other build outputs such as `dist/`, `target/`, or `build/` are included unless your `.dockerignore` excludes them.
@@ -1403,6 +1406,11 @@ The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw g
 <AgentOnly variant="openclaw,hermes">
 For gateway-based agents, it also reports messaging channel conflicts.
 </AgentOnly>
+
+`doctor` also checks whether the sandbox registry contains the metadata required for snapshot, rebuild, upgrade, recovery, and reboot.
+When lifecycle metadata is incomplete, the report names the missing or invalid fields and affected operations without printing stored values.
+Dashboard metadata is required only for agents that manage a dashboard.
+If the registered gateway binding is invalid, `doctor` reports a failed gateway check and does not select, probe, or recover a gateway from that binding.
 
 For inference health, `doctor` treats the probe to `https://inference.local/v1/models` from inside the sandbox as authoritative.
 HTTP responses from `200` through `499`, including `401` and `403`, pass this check.

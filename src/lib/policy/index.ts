@@ -838,58 +838,88 @@ function removePreset(
 }
 
 /**
- * Interactive preset picker for the `policy-remove` command. Prompts on
- * stderr and resolves to the chosen preset name, or `null` if the user
- * cancels or enters an invalid selection.
+ * Ask one preset-picker question on stderr and resolve to the raw answer.
+ *
+ * Rejects with `code: "EOF"` when readline closes before the question is
+ * answered. A boot unit runs `nemoclaw <sandbox> policy-add < /dev/null`, and
+ * the `question` callback then never fires. Without this handler the picker
+ * promise never settles and the command exits 0 having applied nothing
+ * (#7418).
+ *
+ * `finish` marks the prompt done before closing readline, because
+ * `rl.close()` itself emits `close`. Only a close that arrives before an
+ * answer rejects.
+ *
+ * Rejects with `code: "SIGINT"` when the operator presses Ctrl-C, and
+ * re-raises the signal so the process dies by SIGINT. Readline emits `close`
+ * for an interrupt as well as for EOF, so without a SIGINT listener an
+ * interrupt would be reported as a closed stdin.
+ *
+ * This matches the `prompt()` contract in `credentials/store.ts` (#5976).
  */
-function selectForRemoval(
-  items: PresetInfo[],
-  { applied = [] }: SelectionOptions = {},
-): Promise<string | null> {
-  return new Promise<string | null>((resolve) => {
-    const appliedItems = items.filter((item) => applied.includes(item.name));
-    if (appliedItems.length === 0) {
-      process.stderr.write("\n  No presets are currently applied.\n\n");
-      resolve(null);
-      return;
-    }
-    process.stderr.write("\n  Applied presets:\n");
-    appliedItems.forEach((item, i) => {
-      const description = item.description ? ` — ${item.description}` : "";
-      process.stderr.write(`    ${i + 1}) ${item.name}${description}\n`);
-    });
-    process.stderr.write("\n");
-    const question = "  Choose preset to remove: ";
+function askPreset(question: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     // Re-attach stdin to the event loop — unref() on exit is sticky and
     // would otherwise leave a follow-up prompt waiting on a detached handle.
     if (typeof process.stdin.ref === "function") process.stdin.ref();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer: string) => {
+    let finished = false;
+    const finish = (settle: () => void) => {
+      if (finished) return;
+      finished = true;
       rl.close();
       // pause+unref so the process exits naturally after the last prompt.
       // The matching ref() above keeps subsequent prompts working.
       if (typeof process.stdin.pause === "function") process.stdin.pause();
       if (typeof process.stdin.unref === "function") process.stdin.unref();
-      const trimmed = answer.trim();
-      if (!trimmed) {
-        resolve(null);
-        return;
-      }
-      if (!/^\d+$/.test(trimmed)) {
-        process.stderr.write("\n  Invalid preset number.\n");
-        resolve(null);
-        return;
-      }
-      const num = Number(trimmed);
-      const item = appliedItems[num - 1];
-      if (!item) {
-        process.stderr.write("\n  Invalid preset number.\n");
-        resolve(null);
-        return;
-      }
-      resolve(item.name);
+      settle();
+    };
+    // Runs before the `close` listener below, so an interrupt settles as
+    // SIGINT and the close that follows is ignored.
+    rl.on("SIGINT", () => {
+      finish(() => reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" })));
+      process.kill(process.pid, "SIGINT");
     });
+    rl.on("close", () =>
+      finish(() => reject(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }))),
+    );
+    rl.question(question, (answer: string) => finish(() => resolve(answer)));
   });
+}
+
+/**
+ * Interactive preset picker for the `policy-remove` command. Prompts on
+ * stderr and resolves to the chosen preset name, or `null` if the user
+ * cancels or enters an invalid selection. Rejects with `code: "EOF"` when
+ * stdin closes before an answer (see `askPreset`).
+ */
+async function selectForRemoval(
+  items: PresetInfo[],
+  { applied = [] }: SelectionOptions = {},
+): Promise<string | null> {
+  const appliedItems = items.filter((item) => applied.includes(item.name));
+  if (appliedItems.length === 0) {
+    process.stderr.write("\n  No presets are currently applied.\n\n");
+    return null;
+  }
+  process.stderr.write("\n  Applied presets:\n");
+  appliedItems.forEach((item, i) => {
+    const description = item.description ? ` — ${item.description}` : "";
+    process.stderr.write(`    ${i + 1}) ${item.name}${description}\n`);
+  });
+  process.stderr.write("\n");
+  const trimmed = (await askPreset("  Choose preset to remove: ")).trim();
+  if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  const item = appliedItems[Number(trimmed) - 1];
+  if (!item) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  return item.name;
 }
 
 /**
@@ -1496,64 +1526,45 @@ function presetContentMatchesGateway(sandboxName: string, presetContent: string)
 /**
  * Interactive preset picker for the `policy-add` command. Prints the
  * presets on stderr (● applied, ○ not applied), prompts for a number, and
- * resolves to the chosen preset name or `null` on cancel.
+ * resolves to the chosen preset name or `null` on cancel. Rejects with
+ * `code: "EOF"` when stdin closes before an answer (see `askPreset`).
  */
-function selectFromList(
+async function selectFromList(
   items: PresetInfo[],
   { applied = [] }: SelectionOptions = {},
 ): Promise<string | null> {
-  return new Promise<string | null>((resolve) => {
-    process.stderr.write("\n  Available presets:\n");
-    items.forEach((item, i) => {
-      const marker = applied.includes(item.name) ? "●" : "○";
-      const description = item.description ? ` — ${item.description}` : "";
-      process.stderr.write(`    ${i + 1}) ${marker} ${item.name}${description}\n`);
-    });
-    process.stderr.write("\n  ● applied, ○ not applied\n\n");
-    const defaultIdx = items.findIndex((item) => !applied.includes(item.name));
-    const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
-    const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
-    // Re-attach stdin to the event loop — unref() on exit is sticky and
-    // would otherwise leave a follow-up prompt waiting on a detached handle.
-    if (typeof process.stdin.ref === "function") process.stdin.ref();
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer: string) => {
-      rl.close();
-      // pause+unref so the process exits naturally after the last prompt.
-      // The matching ref() above keeps subsequent prompts working.
-      if (typeof process.stdin.pause === "function") process.stdin.pause();
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      const trimmed = answer.trim();
-      const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
-      if (!effectiveInput) {
-        resolve(null);
-        return;
-      }
-      if (!/^\d+$/.test(effectiveInput)) {
-        process.stderr.write("\n  Invalid preset number.\n");
-        resolve(null);
-        return;
-      }
-      const num = Number(effectiveInput);
-      const item = items[num - 1];
-      if (!item) {
-        process.stderr.write("\n  Invalid preset number.\n");
-        resolve(null);
-        return;
-      }
-      if (applied.includes(item.name)) {
-        // The picker has no live-policy context to classify drift; the named
-        // path (policy-add <preset>) re-applies edited presets (#7323).
-        process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
-        process.stderr.write(
-          `  If its preset file changed, run '${CLI_NAME} <sandbox> policy-add ${item.name}' to re-apply it.\n`,
-        );
-        resolve(null);
-        return;
-      }
-      resolve(item.name);
-    });
+  process.stderr.write("\n  Available presets:\n");
+  items.forEach((item, i) => {
+    const marker = applied.includes(item.name) ? "●" : "○";
+    const description = item.description ? ` — ${item.description}` : "";
+    process.stderr.write(`    ${i + 1}) ${marker} ${item.name}${description}\n`);
   });
+  process.stderr.write("\n  ● applied, ○ not applied\n\n");
+  const defaultIdx = items.findIndex((item) => !applied.includes(item.name));
+  const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
+  const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
+  const trimmed = (await askPreset(question)).trim();
+  const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
+  if (!effectiveInput) return null;
+  if (!/^\d+$/.test(effectiveInput)) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  const item = items[Number(effectiveInput) - 1];
+  if (!item) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  if (applied.includes(item.name)) {
+    // The picker has no live-policy context to classify drift; the named
+    // path (policy-add <preset>) re-applies edited presets (#7323).
+    process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
+    process.stderr.write(
+      `  If its preset file changed, run '${CLI_NAME} <sandbox> policy-add ${item.name}' to re-apply it.\n`,
+    );
+    return null;
+  }
+  return item.name;
 }
 
 const PERMISSIVE_POLICY_PATH = path.join(

@@ -63,6 +63,52 @@ import { executeSandboxCommand, executeSandboxExecCommand } from "./process-reco
 
 const isNonInteractive = isNonInteractiveEnv;
 
+/**
+ * Report that `NEMOCLAW_NON_INTERACTIVE=1` leaves no interactive picker, and
+ * exit non-zero.
+ */
+function exitPresetNameRequired(usage: string): never {
+  console.error("  Non-interactive mode requires a preset name.");
+  console.error(`  Usage: ${usage}`);
+  process.exit(1);
+}
+
+/**
+ * Report that the picker prompt reached stdin EOF, and exit non-zero.
+ *
+ * Separate from `exitPresetNameRequired` because the conditions differ. That
+ * one means the operator set `NEMOCLAW_NON_INTERACTIVE=1`. This one means
+ * stdin closed while that variable was unset, so naming the variable would
+ * misdirect whoever reads the boot-unit log.
+ */
+function exitPromptStdinClosed(usage: string): never {
+  console.error("  No input available on stdin, so the preset picker cannot prompt.");
+  console.error(`  Usage: ${usage}`);
+  process.exit(1);
+}
+
+/**
+ * Await an interactive preset picker and convert a prompt EOF into exit 1.
+ *
+ * A boot unit that pipes or closes stdin without setting
+ * `NEMOCLAW_NON_INTERACTIVE=1` reaches the picker, and the prompt then hits
+ * EOF. Before #7418 the picker promise never settled, so the command exited 0
+ * having changed nothing. Automation could not distinguish an applied preset
+ * from a no-op. Any other failure propagates unchanged.
+ */
+async function pickPresetOrExit(
+  pick: () => Promise<string | null>,
+  usage: string,
+): Promise<string | null> {
+  try {
+    return await pick();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code !== "EOF") throw error;
+    exitPromptStdinClosed(usage);
+  }
+}
+
 type ChannelMutationOptions = {
   channel?: string;
   dryRun?: boolean;
@@ -217,12 +263,11 @@ async function addSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
+    const usage = `${CLI_NAME} <sandbox> policy-add <preset> [--yes] [--dry-run]`;
     if (isNonInteractive()) {
-      console.error("  Non-interactive mode requires a preset name.");
-      console.error(`  Usage: ${CLI_NAME} <sandbox> policy-add <preset> [--yes] [--dry-run]`);
-      process.exit(1);
+      exitPresetNameRequired(usage);
     }
-    answer = await policies.selectFromList(allPresets, { applied });
+    answer = await pickPresetOrExit(() => policies.selectFromList(allPresets, { applied }), usage);
   }
   if (!answer) return;
 
@@ -1632,12 +1677,14 @@ async function removeSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
+    const usage = `${CLI_NAME} <sandbox> policy-remove <preset> [--yes] [--dry-run]`;
     if (isNonInteractive()) {
-      console.error("  Non-interactive mode requires a preset name.");
-      console.error(`  Usage: ${CLI_NAME} <sandbox> policy-remove <preset> [--yes] [--dry-run]`);
-      process.exit(1);
+      exitPresetNameRequired(usage);
     }
-    answer = await policies.selectForRemoval(allPresets, { applied });
+    answer = await pickPresetOrExit(
+      () => policies.selectForRemoval(allPresets, { applied }),
+      usage,
+    );
   }
   if (!answer) return;
 
