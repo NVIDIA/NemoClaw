@@ -393,6 +393,7 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
       "clear the HTTPS pin sandbox",
       "start the public HTTPS compatible endpoint",
       "onboard with the placeholder endpoint",
+      "reject credential-bearing endpoint state",
       "switch to the DNS-backed HTTPS endpoint",
       "verify pinned route isolation and DNS rebinding",
       "verify private redirect rejection",
@@ -444,6 +445,7 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     contract: [
       "inference set routes a DNS-backed HTTPS endpoint through the local pinning adapter",
       "the real upstream hostname is never persisted to the NemoClaw sandbox registry",
+      "credential-bearing query and userinfo endpoints are rejected without changing host state",
       "OpenShell's own policy view never references the real upstream hostname",
       "a real chat completion round-trips through the pinned TLS connection to the public endpoint",
       "a DNS rebind of the upstream hostname after inference set does not redirect adapter traffic",
@@ -498,6 +500,48 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
   cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
+
+  progress.phase("reject credential-bearing endpoint state");
+  const userinfoEndpoint = new URL(endpointUrl);
+  userinfoEndpoint.username = "e2e-user";
+  userinfoEndpoint.password = apiKey;
+  for (const [shape, credentialEndpoint] of [
+    ["userinfo", userinfoEndpoint.toString()],
+    ["query", `${endpointUrl}?api_key=${encodeURIComponent(apiKey)}`],
+  ] as const) {
+    const rejected = await runNemoclawCli(
+      [
+        "inference",
+        "set",
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        model,
+        "--sandbox",
+        sandboxName,
+        "--endpoint-url",
+        credentialEndpoint,
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
+      ],
+      {
+        artifactName: `tc-inf-11-reject-${shape}-endpoint`,
+        artifacts,
+        env: { ...buildAvailabilityProbeEnv(), COMPATIBLE_API_KEY: apiKey },
+        progress,
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      },
+    );
+    const rejectedText = redactedResultText(rejected);
+    expect(rejected.exitCode, rejectedText).not.toBe(0);
+    expect(rejectedText).toContain("without userinfo, query, or fragment components");
+    const unchangedRegistry = fs.readFileSync(REGISTRY_FILE, "utf8");
+    expect(unchangedRegistry).not.toContain(apiKey);
+    expect(unchangedRegistry).not.toContain(endpointHostname);
+  }
 
   progress.phase("switch to the DNS-backed HTTPS endpoint");
   const inferenceSet = await runNemoclawCli(
