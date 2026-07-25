@@ -26,6 +26,7 @@ describe("gateway port conflict", () => {
 
     await failFastOnForeignGatewayPortConflict({
       gatewayPort: 8080,
+      externallySupervised: false,
       checkPortAvailable,
       getGatewayPortCheckOptions: () => ({ host: "127.0.0.1" }),
       isDockerDriverGatewayPortListener: () => false,
@@ -47,6 +48,7 @@ describe("gateway port conflict", () => {
 
     await failFastOnForeignGatewayPortConflict({
       gatewayPort: 8080,
+      externallySupervised: false,
       checkPortAvailable,
       getGatewayPortCheckOptions: () => ({ host: "127.0.0.1" }),
       isDockerDriverGatewayPortListener: () => false,
@@ -58,5 +60,22 @@ describe("gateway port conflict", () => {
 
   it("keeps Docker-driver gateway listeners on the gateway reuse path", () => {
     expect(couldBeNemoClawGatewayPortListener(blockedPort("python3"), () => true)).toBe(true);
+  });
+
+  it("defers an arbitrary declared external executable to exact attachment validation (#6576)", async () => {
+    const checkPortAvailable = vi.fn().mockResolvedValue(blockedPort("gatewayd"));
+    const exitProcess = vi.fn();
+
+    await failFastOnForeignGatewayPortConflict({
+      gatewayPort: 8080,
+      externallySupervised: true,
+      checkPortAvailable,
+      getGatewayPortCheckOptions: () => ({ host: "127.0.0.1" }),
+      isDockerDriverGatewayPortListener: () => false,
+      exitProcess,
+    });
+
+    expect(checkPortAvailable).not.toHaveBeenCalled();
+    expect(exitProcess).not.toHaveBeenCalled();
   });
 });

@@ -43,15 +43,15 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 $$nemoclaw upgrade-sandboxes --check
 ```
 
-If a support workflow asks you to pass the maintained tag explicitly, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
+If a support workflow asks you to pass the maintained tag explicitly, clear any inherited `NEMOCLAW_INSTALL_REF` and set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash
 ```
 
 Before upgrade work, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
 If any sandbox is skipped or fails, the installer exits before it changes the gateway.
-After backup, the installer compares the installed OpenShell version with the supported range declared by the prepared current source.
+After backup, the installer requires any existing OpenShell executable it will use to report a version, then compares that version with the supported range declared by the prepared current source.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
 If the installed OpenShell release cannot retire its gateway through a supported lifecycle command or the verified NemoClaw-owned gateway PID, the installer also stops after backup with the sandbox backups preserved.
 
@@ -84,6 +84,9 @@ $$nemoclaw <sandbox-name> snapshot create --name pre-upgrade
 $$nemoclaw update --yes
 $$nemoclaw upgrade-sandboxes --check
 ```
+
+Use `$$nemoclaw upgrade-sandboxes --check` to read sandbox state without starting, recovering, or selecting a gateway.
+When all your registered sandboxes resolve to one recorded gateway, the command queries that gateway instead of the gateway for your current `NEMOCLAW_GATEWAY_PORT`.
 
 Each rebuild destroys the old container and creates a new one while preserving the manifest-defined workspace or agent state that NemoClaw knows how to snapshot.
 `upgrade-sandboxes --check` can report a sandbox as stale because the running agent version is behind, because the managed NemoClaw image fingerprint differs from the current CLI, or both.

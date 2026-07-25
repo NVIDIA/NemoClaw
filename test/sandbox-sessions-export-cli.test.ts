@@ -119,7 +119,12 @@ describe("sandbox sessions export CLI", () => {
       expect(tarLine).not.toContain("trajectory.jsonl");
       expect(tarLine).toContain("chmod 600");
       expect(downloadLine).toContain("alpha");
-      expect(downloadLine).toContain(out);
+      // #7367: the download lands in a fresh staging dir next to the
+      // destination and is renamed into place only after verification, so the
+      // download target is a staging path — but the bundle ends up at `out`.
+      expect(downloadLine).toContain(".sessions-export-");
+      expect(downloadLine).toContain("bundle.tgz");
+      expect(fs.existsSync(out)).toBe(true);
       expect(cleanupLine).toBeDefined();
       expect(cleanupLine).toContain("/sandbox/.nemoclaw-staging/sessions-export-main-");
 
@@ -166,7 +171,17 @@ describe("sandbox sessions export CLI", () => {
       const downloadLines = calls.filter((line) => line.startsWith("sandbox download"));
       expect(downloadLines).toHaveLength(2);
       expect(downloadLines[0]).toContain("/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl");
-      expect(downloadLines[0]).toContain(path.join(outDir, "sid-a.jsonl"));
+      // #7367: each file downloads into a fresh staging dir under outDir and is
+      // renamed to its final path only after verification, so every download
+      // targets a staging path — the published files land at outDir/<file>.
+      // Assert staging for BOTH downloads so a regression on only the second
+      // file cannot pass (the stub still creates the final file either way).
+      expect(downloadLines[0]).toContain(path.join(outDir, ".sessions-export-"));
+      expect(downloadLines[0]).toContain("sid-a.jsonl");
+      expect(downloadLines[1]).toContain(path.join(outDir, ".sessions-export-"));
+      expect(downloadLines[1]).toContain("sid-b.jsonl");
+      expect(fs.existsSync(path.join(outDir, "sid-a.jsonl"))).toBe(true);
+      expect(fs.existsSync(path.join(outDir, "sid-b.jsonl"))).toBe(true);
 
       const manifest = JSON.parse(result.out.trim().split("\n").at(-1) as string);
       expect(manifest).toMatchObject({

@@ -2,11 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
-import { dockerCapture } from "../../adapters/docker/run";
-import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
+import { dockerCapture, dockerRun } from "../../adapters/docker/run";
+import {
+  findLabeledSandboxContainers,
+  OPENSHELL_MANAGED_BY_LABEL,
+  OPENSHELL_MANAGED_BY_VALUE,
+  OPENSHELL_SANDBOX_NAME_LABEL,
+} from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
+
+/** Read a registered sandbox's OpenShell driver, treating registry read
+ * failure as unknown so callers fail closed on driver-gated decisions. */
+function readSandboxDriver(name: string): string | null | undefined {
+  try {
+    return registry.getSandbox(name)?.openshellDriver;
+  } catch {
+    return undefined;
+  }
+}
+
+const DOCKER_ABSENCE_PROBE_TIMEOUT_MS = 5_000;
 
 /**
  * Backup support for registered docker-driver sandboxes whose container is
@@ -38,13 +55,7 @@ interface StartDeps {
 }
 
 const defaultStartDeps: StartDeps = {
-  getSandboxDriver: (name) => {
-    try {
-      return registry.getSandbox(name)?.openshellDriver;
-    } catch {
-      return undefined;
-    }
-  },
+  getSandboxDriver: readSandboxDriver,
   listSandboxNames: () => registry.listSandboxes().sandboxes.map((entry) => entry.name),
   listLabeledContainerNames: (sandboxName) =>
     findLabeledSandboxContainers(sandboxName).map((container) => container.name),
@@ -79,6 +90,66 @@ export function startStoppedSandboxContainerForBackup(
   if (status !== "exited" && status !== "created") return null;
   if (deps.dockerStart(containerName).trim() === "") return null;
   return { containerName };
+}
+
+interface ContainerAbsenceDeps {
+  getSandboxDriver: (name: string) => string | null | undefined;
+  /** Labeled container names for the sandbox, or null when the listing itself
+   * failed (dead daemon, timeout) and absence must not be concluded. */
+  listLabeledContainerNames: (name: string) => string[] | null;
+}
+
+const defaultContainerAbsenceDeps: ContainerAbsenceDeps = {
+  getSandboxDriver: readSandboxDriver,
+  // findLabeledSandboxContainers swallows docker errors (a dead daemon reads
+  // as "no containers"), which suits its recovery callers but not an absence
+  // proof. Run the same labeled listing status-checked instead: any spawn
+  // error, timeout, or non-zero exit yields null, never "absent". ignoreError
+  // prevents runner.run() from exiting the process when the listing fails.
+  listLabeledContainerNames: (name) => {
+    const result = dockerRun(
+      [
+        "ps",
+        "-a",
+        "--filter",
+        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        "--filter",
+        `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${name}`,
+        "--format",
+        "{{.Names}}",
+      ],
+      {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_ABSENCE_PROBE_TIMEOUT_MS,
+      },
+    );
+    if (result.error || result.status !== 0) return null;
+    return String(result.stdout || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  },
+};
+
+/**
+ * Returns true only when the registered sandbox uses Docker and a successful
+ * labeled `docker ps -a` returns no matching container.
+ *
+ * Returns false when the driver is not Docker, the registry read fails, or the
+ * Docker listing fails or times out. Callers must separately confirm gateway
+ * absence and same-gateway binding before classifying a sandbox as stranded.
+ */
+export function isSandboxContainerDefinitivelyAbsent(
+  sandboxName: string,
+  depsOverride: Partial<ContainerAbsenceDeps> = {},
+): boolean {
+  const deps: ContainerAbsenceDeps = { ...defaultContainerAbsenceDeps, ...depsOverride };
+  if (deps.getSandboxDriver(sandboxName) !== "docker") return false;
+  const labeledContainerNames = deps.listLabeledContainerNames(sandboxName);
+  return labeledContainerNames !== null && labeledContainerNames.length === 0;
 }
 
 interface StopDeps {

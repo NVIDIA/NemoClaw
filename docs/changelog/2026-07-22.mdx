@@ -1,0 +1,50 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.92
+
+NemoClaw v0.0.92 updates OpenClaw and its sandbox Node.js runtime, documents headless deployment, and strengthens security, installer, platform, and live E2E validation.
+
+- OpenClaw sandboxes now use OpenClaw 2026.7.1 and Node.js 22.23.1.
+  The reviewed build remediates vulnerable Axios plugin copies and the affected OpenTelemetry Jaeger diagnostics graph with integrity-pinned packages.
+  It also locks patched `mcporter` dependencies, preserves device-scope enforcement and private state during upgrades, and validates upgrades from NemoClaw v0.0.89.
+  A real-artifact regression confirms malformed Jaeger trace and baggage headers do not terminate the diagnostics process.
+- Remote deployment guidance now uses one provider-neutral headless Linux server workflow for OpenClaw, Hermes, and Deep Agents Code.
+  The guide covers unattended installation, loopback-only access, readiness checks, policy setup, updates, and recovery after a host reboot.
+  Retired Brev deployment routes redirect to the shared workflow.
+  For more information, refer to [Deploy NemoClaw to a Headless Server](/user-guide/openclaw/deployment/deploy-to-headless-server).
+- Live E2E tests now report ordered semantic phases, outcomes, durations, resource-release timing, and secret-safe stall diagnostics.
+  Each run saves a progress artifact that identifies where failures or stalls occurred.
+  Collection-time validation rejects missing or invalid phase plans before tests use live infrastructure.
+- Installer integrity checks now accept the reviewed OpenShell Homebrew formula transition only when the template hash matches its exact release asset set.
+  This maintains the fail-closed boundary while preserving the current archive-only installer contract.
+- Platform and image validation now compares canonical macOS watcher targets, raises the full WSL suite limit from 60 to 90 minutes, and capability-gates its Docker-only Hermes contract.
+  The WSL tag test still verifies that a rejected concurrent update cannot replace `latest`.
+  Hosted Hermes image exports now provision bounded swap before the final layer export.
+  Hermes guard tests raise the child-process allowance from 5 to 90 seconds and use WSL fixtures that match production ownership.
+  The validation and test changes do not alter runtime behavior or final image contents.
+- The canonical changelog now includes the previously missed v0.0.91 entry and corrects its legacy inference-selector guidance to match the tagged code.
+  This restores release-history validation without changing the immutable v0.0.91 tag.
+
+## v0.0.91
+
+NemoClaw v0.0.91 strengthens completed sandbox images, makes rebuild replacement safer, documents the Hermes API token lifecycle, expands qualified DGX Station guidance, and restores historical release validation.
+
+- Completed OpenClaw, Hermes, and Deep Agents Code images now replace affected `node-tar` installations with reviewed versions and scan the final filesystem before publication.
+  Current and historical OpenClaw security-revision verifiers also validate exact dependency versions, resolved archives, integrity metadata, executable identity, and transactional state restoration in constrained containers.
+  For more information, refer to the [OpenClaw 2026.6.10 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/openclaw-2026.6.10-dependency-review.md).
+- Rebuilds now carry validated local-base trust through Deep Agents Code image preparation, reuse the outer state backup during inner onboarding, and wait for OpenShell to confirm sandbox deletion before removing registry state or creating a replacement.
+  These checks prevent rebuild from rejecting its own current base, taking a second backup against stale gateway state, or racing an asynchronous sandbox deletion.
+  Rebuild also stops before deletion when a manifest-declared state file cannot be archived unless you pass `--force`.
+  Remote base-image overrides now require an official repository reference that resolves to an immutable digest.
+  NemoClaw accepts local bases only when the current operation builds and pins them.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Hermes guidance now explains when the API bearer token remains stable, when rebuild or invalid state rotates it, and how to retrieve the current value with `nemohermes <sandbox> gateway-token --quiet` instead of reading the generated environment file.
+  For more information, refer to the [NemoHermes CLI Commands Reference](/user-guide/hermes/reference/commands) and [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- DGX Station documentation now records qualified single-system GB300 profiles as tested with limitations while keeping dual-Station and dedicated-CI gaps explicit.
+  Coding-agent guidance also constructs non-interactive installs with explicit agent, provider, and release-tag variables and keeps Docker approval command-scoped.
+  For more information, refer to [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation), and the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
+- Historical OpenClaw gateway-upgrade and Hermes rebuild fixtures now use immutable reviewed inputs that match each pinned release's contract.
+  This restores deterministic coverage for legacy image upgrades, Hermes token rotation, stale-base replacement, and completed-image security checks without weakening production validation.

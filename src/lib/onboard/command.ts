@@ -181,11 +181,12 @@ export function resolveOnboardOptions(
 }
 
 // A prompt closed before the user answered (stdin EOF, e.g.
-// `nemoclaw onboard ... < /dev/null`). `prompt()` rejects these with code
-// "EOF" so callers can treat them as a deliberate cancellation rather than a
-// crash. See src/lib/credentials/store.ts.
-function isPromptCancellation(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === "EOF";
+// `nemoclaw onboard ... < /dev/null`) or the user pressed Ctrl+C. `prompt()`
+// rejects these with a code so callers can treat them as deliberate
+// cancellation rather than a crash. See src/lib/credentials/store.ts.
+function promptCancellationCode(error: unknown): "EOF" | "SIGINT" | null {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "EOF" || code === "SIGINT" ? code : null;
 }
 
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
@@ -199,10 +200,18 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   try {
     await deps.runOnboard(options);
   } catch (error) {
+    const cancellationCode = promptCancellationCode(error);
+    if (cancellationCode === "SIGINT") {
+      // The prompt has already restored terminal state and re-raised SIGINT.
+      // Let the onboard signal handler print resumable-step guidance and
+      // preserve status 130 without leaking this rejected prompt error through
+      // oclif as a raw stack trace (#7439).
+      return;
+    }
     // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
     // print a clear message and exit non-zero instead of either crashing with
     // a stack trace or — as in the original bug — exiting 0 silently (#5976).
-    if (!isPromptCancellation(error)) throw error;
+    if (cancellationCode !== "EOF") throw error;
     fail(deps, "  Installation cancelled");
   }
 }

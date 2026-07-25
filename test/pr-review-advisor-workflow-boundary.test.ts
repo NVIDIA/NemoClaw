@@ -1242,8 +1242,8 @@ process.exitCode = valid ? 0 : 1;`,
 
     const downgradedPublisherNode = validateMutation((source) =>
       source.replace(
-        '      - name: Setup Node for trusted publisher\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.0.0\n        with:\n          node-version: "22"',
-        '      - name: Setup Node for trusted publisher\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.0.0\n        with:\n          node-version: "20"',
+        '      - name: Setup Node for trusted publisher\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0\n        with:\n          node-version: "22"',
+        '      - name: Setup Node for trusted publisher\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0\n        with:\n          node-version: "20"',
       ),
     );
     expect(downgradedPublisherNode).toContain(

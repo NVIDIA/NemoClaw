@@ -257,14 +257,44 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
+      "test": "keeps every candidate on standard runners when $name (#7145)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
+      "test": "rejects malformed administrator workflow labels (#7145)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
+      "test": "routes only the measured heavy lanes on trusted main (#7145)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
+      "test": "keeps the fixed privileged program before candidate checkout in every protected job (#7145)",
+      "category": "security"
+    },
+    {
       "file": "test/fetch-guard-patch-regression.test.ts",
       "test": "requires classifier review and integrity evidence when the OpenClaw build pin changes",
       "category": "security"
     },
     {
       "file": "test/hermes-final-image-layout.test.ts",
+      "test": "keeps repository payload layers at their cache boundaries (#7144)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/hermes-final-image-layout.test.ts",
       "test": "keeps security entrypoint hashes synchronized with the copied files",
       "category": "security"
+    },
+    {
+      "file": "test/openclaw-final-image-layout.test.ts",
+      "test": "keeps repository payload layers at their cache boundaries (#6660)",
+      "category": "compatibility"
     },
     {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
@@ -318,8 +348,38 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "keeps the authoritative local-build allowance tied to same-head PR evidence",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
       "test": "records five independent successful samples for current main",
       "category": "compatibility"
+    },
+    {
+      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "test": "rebuilds a guarded plugin archive with the patched Axios graph bundled",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "test": "replaces the reviewed bundled Axios graph with the patched graph",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-dependency-review.test.ts",
+      "test": "copies the legacy OpenClaw remediation helper before the base build invokes it",
+      "category": "security"
     },
     {
       "file": "test/openclaw-dependency-review.test.ts",
@@ -329,6 +389,11 @@
     {
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/perl-critical-cve-remediation.test.ts",
+      "test": "builds the fixed upstream release from a checksum-pinned source archive (#7338)",
       "category": "security"
     },
     {

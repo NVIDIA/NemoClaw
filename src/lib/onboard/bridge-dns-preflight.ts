@@ -9,6 +9,19 @@
 
 import { failLine, warnLine } from "../cli/terminal-style";
 import { cliDisplayName, cliName } from "./branding";
+import {
+  BUSYBOX_PROBE_IMAGE,
+  DEFAULT_HOST_DNS_PROBE_HOSTNAME,
+  DOCKER_DESKTOP_WSL_INTEGRATION_HINT,
+  type DockerBridgeContainerStartProbeResult,
+  getDockerBridgeGatewayIp,
+  type HostAssessment,
+  isFatalContainerDnsProbeFailure,
+  isFatalHostDnsProbeFailure,
+  probeContainerDns,
+  probeDockerBridgeContainerStart,
+  probeHostDns,
+} from "./preflight";
 
 interface DaemonJsonDnsPatchOpts {
   /** daemon.json path to merge into (e.g. /etc/docker/daemon.json). */
@@ -66,20 +79,6 @@ function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
   ].join(" ");
   console.error(`${indent}${sudoPrefix}sh -c '${shBody.replace(/'/g, "'\"'\"'")}'`);
 }
-
-import {
-  BUSYBOX_PROBE_IMAGE,
-  DEFAULT_HOST_DNS_PROBE_HOSTNAME,
-  DOCKER_DESKTOP_WSL_INTEGRATION_HINT,
-  type DockerBridgeContainerStartProbeResult,
-  getDockerBridgeGatewayIp,
-  type HostAssessment,
-  isFatalContainerDnsProbeFailure,
-  isFatalHostDnsProbeFailure,
-  probeContainerDns,
-  probeDockerBridgeContainerStart,
-  probeHostDns,
-} from "./preflight";
 
 type Host = HostAssessment;
 
@@ -190,6 +189,10 @@ export function assertDockerBridgeAndContainerDnsHealthy(
   // blocks outbound UDP:53 to public resolvers leaves the sandbox build
   // unable to resolve registry.npmjs.org; npm then retries for ~15 min and
   // prints the cryptic `Exit handler never called`.
+  // This global runtime gate checks Docker's default container DNS path. The
+  // later recreation gate has the inspected container state needed to test a
+  // fallback resolver only when clone construction will actually inject it
+  // (explicit DNS and host networking suppress that fallback; #7172).
   const dns = probeContainerDns();
   const dnsIsFatal = isFatalContainerDnsProbeFailure(dns);
 

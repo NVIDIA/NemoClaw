@@ -5,7 +5,12 @@
 
 import os from "node:os";
 
-import type { SandboxGatewayBinding } from "../onboard/gateway-binding";
+import { resolveGatewayName, type SandboxGatewayBinding } from "../onboard/gateway-binding";
+import {
+  resolveGatewayTeardownAuthority,
+  type GatewayTeardownAuthorityResolver,
+} from "../onboard/gateway-teardown-authority";
+import { isExternallySupervised } from "../onboard/gateway-ownership";
 import {
   type HostGatewayProcessDeps,
   type StopHostGatewayResult,
@@ -31,6 +36,7 @@ export interface ReleaseGatewayPortDeps extends Partial<HostGatewayProcessDeps> 
   now?: () => number;
   sleep?: (ms: number) => void;
   stopHostGatewayProcesses?: typeof stopHostGatewayProcesses;
+  resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
   getSandbox?: (name: string) => SandboxGatewayBinding | null;
   probePortFree?: (port: number) => boolean;
 }
@@ -70,6 +76,8 @@ export function releaseManagedGatewayPort(
     depsOverrides.commandExists ??
     ((command: string) => defaultGatewayReleaseCommandExists(command, env));
   const stop = depsOverrides.stopHostGatewayProcesses ?? stopHostGatewayProcesses;
+  const resolveAuthority =
+    depsOverrides.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority;
   const getSandbox = depsOverrides.getSandbox ?? getRegisteredSandbox;
   const probePortFree = depsOverrides.probePortFree ?? defaultProbePortFree;
 
@@ -82,6 +90,23 @@ export function releaseManagedGatewayPort(
     );
     return {
       port: null,
+      released: false,
+      stopped: [],
+      remaining: [],
+      scanned: false,
+      skipped: true,
+    };
+  }
+
+  const gatewayName = resolveGatewayName(port);
+  const owner = resolveAuthority({ gatewayName, gatewayPort: port }, { env });
+  if (isExternallySupervised(owner)) {
+    log(
+      `Keeping externally supervised OpenShell gateway '${gatewayName}' running; ` +
+        "NemoClaw stopped only the selected sandbox.",
+    );
+    return {
+      port,
       released: false,
       stopped: [],
       remaining: [],
