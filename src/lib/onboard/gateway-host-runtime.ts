@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { isGatewayHealthy } from "../state/gateway";
-import type { DockerDriverGatewayPortListenerScan } from "./docker-driver-gateway-port-listener";
+import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 import {
   isDockerDriverGatewayHttpReady,
@@ -59,7 +59,7 @@ export interface GatewayHostRuntimeDeps {
   getGatewayPortListenerRawScan(
     portCheck: PortProbeResult,
     opts?: { gatewayBin?: string | null },
-  ): DockerDriverGatewayPortListenerScan;
+  ): GatewayPortListenerRawScan;
   getInstalledOpenshellVersion(): string | null;
   isGatewayHealthy?: typeof isGatewayHealthy;
   runCaptureOpenshell(args: string[], opts?: { ignoreError?: boolean }): string;

@@ -57,10 +57,7 @@ const ASSET_DIGESTS = new Map([
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
 const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
-const ARCHIVE_INSTALLER_TEMPLATE_SHA256 =
-  "a101f002bd8e02aa7b38960ddcb76c9fca419bc3766f6870446f6a7e99e14d78";
-const FORMULA_INSTALLER_TEMPLATE_SHA256 =
-  "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58";
+const INSTALLER_ASSETS = [...ASSETS, FORMULA_ASSET];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
@@ -495,11 +492,11 @@ function renderPinFunction(
 function replacePinFunction(
   source: string,
   functionName: string,
-  nextFunctionName: string,
+  nextMarker: string,
   replacement: string,
 ): string {
   const start = source.indexOf(`${functionName}() {`);
-  const next = source.indexOf(`\n${nextFunctionName}() {`, start);
+  const next = source.indexOf(`\n${nextMarker}`, start);
   expect(start, `${functionName} template start`).not.toBe(-1);
   expect(next, `${functionName} template end`).not.toBe(-1);
   return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
@@ -518,7 +515,7 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
   const withPinFunction = replacePinFunction(
     selected,
     "openshell_pinned_sha256",
-    "openshell_checksum_line",
+    "openshell_checksum_line() {",
     pinFunction,
   );
   const sandboxFunctionStart = withPinFunction.indexOf("pinned_sandbox_build_version() {");
@@ -542,28 +539,14 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
   return replacePinFunction(
     selected,
     "openshell_cli_pinned_sha256",
-    "openshell_checksum_line",
+    "openshell_checksum_line() {",
     pinFunction,
   );
-}
-
-function mapFixtureTemplateToFormulaContract(source: string): string {
-  // The fixture renders the current archive-only installer. Rebind the hashes
-  // in the copied parser so this test exercises the formula contract without
-  // copying the dependent PR's installer implementation into this branch.
-  const withoutArchiveContract = source.replace(ARCHIVE_INSTALLER_TEMPLATE_SHA256, "0".repeat(64));
-  const formulaContract = withoutArchiveContract.replace(
-    FORMULA_INSTALLER_TEMPLATE_SHA256,
-    ARCHIVE_INSTALLER_TEMPLATE_SHA256,
-  );
-  assert.notEqual(formulaContract, source, "trusted parser formula contract fixture must change");
-  return formulaContract;
 }
 
 function createFixture(
   openshellVersion = "0.0.72",
   formatting: PinFormatting = "canonical",
-  includeFormula = false,
 ): string {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
@@ -593,12 +576,7 @@ function createFixture(
     path.join(scriptsDir, "install-openshell.sh"),
     renderInstallerTemplate(
       openshellVersion,
-      renderPinFunction(
-        "openshell_pinned_sha256",
-        includeFormula ? [...ASSETS, FORMULA_ASSET] : ASSETS,
-        openshellVersion,
-        formatting,
-      ),
+      renderPinFunction("openshell_pinned_sha256", INSTALLER_ASSETS, openshellVersion, formatting),
     ),
   );
   fs.writeFileSync(
@@ -655,7 +633,6 @@ case "$url" in
         ;;
     esac
     ;;
-  *) exit 22 ;;
 esac
 `,
   );
@@ -690,10 +667,8 @@ function runFixture(
   openshellVersion?: string,
   trustedChecker = false,
   formatting: PinFormatting = "canonical",
-  includeFormula = false,
-  formulaTemplate = false,
 ) {
-  const fixtureRoot = createFixture(openshellVersion, formatting, includeFormula);
+  const fixtureRoot = createFixture(openshellVersion, formatting);
   const targetChecker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
   const trustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trusted-hash-check-"));
   const trustedCheckerPath = path.join(trustedRoot, "scripts", "check-installer-hash.sh");
@@ -706,15 +681,9 @@ function runFixture(
   tempDirs.push(trustedRoot);
   fs.mkdirSync(path.dirname(trustedParserPath), { recursive: true });
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), trustedCheckerPath);
-  const trustedParserSource = fs.readFileSync(
+  fs.copyFileSync(
     path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
-    "utf8",
-  );
-  fs.writeFileSync(
     trustedParserPath,
-    formulaTemplate
-      ? mapFixtureTemplateToFormulaContract(trustedParserSource)
-      : trustedParserSource,
   );
   fs.writeFileSync(
     targetChecker,
@@ -765,8 +734,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("verifies the reviewed Homebrew formula during the trust-anchor transition", () => {
-    const result = runFixture("complete", undefined, true, "canonical", true, true);
+  it("verifies the pinned Homebrew formula", () => {
+    const result = runFixture("complete", undefined, true);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(`OK: installer ${FORMULA_ASSET} (${FORMULA_DIGEST})`);
@@ -774,30 +743,12 @@ describe("installer hash verification", () => {
   });
 
   it("fails closed when the Homebrew formula digest does not match", () => {
-    const result = runFixture("formula-mismatch", undefined, true, "canonical", true, true);
+    const result = runFixture("formula-mismatch", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
       "STALE: installer openshell.rb digest does not match the pinned v0.0.72 release asset",
     );
-    expect(result.stdout).not.toContain("All installer hashes are current");
-  });
-
-  it("rejects a formula pin when the installer keeps the archive-only template", () => {
-    const result = runFixture("complete", undefined, true, "canonical", true);
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
-    expect(result.stdout).toContain("unexpected=[openshell.rb]");
-    expect(result.stdout).not.toContain("All installer hashes are current");
-  });
-
-  it("rejects the formula installer template when its formula pin is missing", () => {
-    const result = runFixture("complete", undefined, true, "canonical", false, true);
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
-    expect(result.stdout).toContain("missing=[openshell.rb]");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -1100,7 +1051,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
-    expect(result.stdout).toContain("14 OpenShell release-asset check(s) failed");
+    expect(result.stdout).toContain("15 OpenShell release-asset check(s) failed");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -1109,7 +1060,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("digest does not match the pinned v0.0.72 release asset");
-    expect(result.stdout).toContain("expected all 10 pinned asset references");
+    expect(result.stdout).toContain("expected all 11 pinned asset references");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
