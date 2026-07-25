@@ -139,17 +139,10 @@ function preferCandidate(candidate: ApiJob, existing: ApiJob | undefined): boole
   return (candidate.completed_at ?? "") > (existing.completed_at ?? "");
 }
 
-function normalizeApiJobs(
-  apiJobs: ApiJob[],
-  metaJobs: Set<string>,
-  explicitOnly: Set<string>,
-  selected: Set<string>,
-): ApiJob[] {
+function normalizeApiJobs(apiJobs: ApiJob[]): ApiJob[] {
   const dedupedByName = new Map<string, ApiJob>();
   for (const job of apiJobs) {
     const name = job.name.replace(/ \/ [^/]+$/u, "");
-    if (metaJobs.has(name)) continue;
-    if (explicitOnly.has(name) && !selected.has(name)) continue;
     const candidate = { ...job, name };
     if (preferCandidate(candidate, dedupedByName.get(name))) {
       dedupedByName.set(name, candidate);
@@ -189,7 +182,11 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
   const selected = new Set(input.explicitlySelected);
 
   if (input.apiJobs !== null) {
-    const jobs = normalizeApiJobs(input.apiJobs, metaJobs, explicitOnly, selected);
+    const eligibleJobs = input.apiJobs.filter((job) => {
+      const name = job.name.replace(/ \/ [^/]+$/u, "");
+      return !metaJobs.has(name) && (!explicitOnly.has(name) || selected.has(name));
+    });
+    const jobs = normalizeApiJobs(eligibleJobs);
     const classified = jobs.map((job) => ({ job, result: classifyApiJob(job) }));
     const counts = countResults(classified.map(({ result }) => result));
     return {
@@ -198,7 +195,7 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
         .filter(({ result }) => result === "failure")
         .map(({ job }) => ({ name: job.name, url: job.html_url ?? null })),
       ran: jobs.length - counts.skipped,
-      timingRows: summarizeJobTimings(jobs),
+      timingRows: summarizeJobTimings(eligibleJobs),
       total: jobs.length,
     };
   }
