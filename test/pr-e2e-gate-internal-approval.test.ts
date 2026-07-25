@@ -224,6 +224,7 @@ describe("PR E2E protected internal approval", () => {
       expect(requests.find((request) => request.url.endsWith("/dispatches"))?.body).toMatchObject({
         ref: "main",
         inputs: {
+          controller_check_id: "17",
           pr_number: "42",
           checkout_sha: HEAD_SHA,
           base_sha: BASE_SHA,

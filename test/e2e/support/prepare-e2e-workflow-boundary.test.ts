@@ -55,7 +55,7 @@ describe("prepare-e2e workflow boundary", () => {
     );
     const action = YAML.parse(source) as Record<string, unknown>;
     const runs = action.runs as { steps: WorkflowStep[] };
-    runs.steps.find((step) => step.name === "Set up Node")!.uses = "actions/setup-node@v6";
+    runs.steps.find((step) => step.name === "Set up Node")!.uses = "actions/setup-node@v7";
     runs.steps.find((step) => step.name === "Install root dependencies")!.run = "npm install";
     runs.steps.find((step) => step.name === "Build CLI")!.run = "echo skipped";
     fs.writeFileSync(actionPath, YAML.stringify(action));

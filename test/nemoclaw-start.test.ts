@@ -954,11 +954,6 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(configSet.stderr).toContain("openclaw config set");
       expect(configSet.stderr).toContain("nemoclaw onboard --resume");
 
-      const channelsAdd = runGuardedOpenclaw(setup, ["channels", "add", "slack"]);
-      expect(channelsAdd.status).toBe(1);
-      expect(channelsAdd.stderr).toContain("openclaw channels add");
-      expect(channelsAdd.stderr).toContain("nemoclaw <sandbox> channels add");
-
       const localAgent = runGuardedOpenclaw(setup, ["agent", "--local"]);
       expect(localAgent.status).toBe(1);
       expect(localAgent.stderr).toContain("--local");
@@ -1033,34 +1028,39 @@ exit 1
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-  // #2592 reported the guard did not fire for `openclaw channels add telegram`
-  // and `openclaw channels remove telegram` from inside the sandbox. The
-  // existing test above only exercises `add slack`. Lock in coverage for every
-  // (channel × op) combo so the guard cannot regress for any one of them
-  // while passing for another.
-  it("blocks every mutating channel-operation combination and surfaces the host-side hint (#2592)", () => {
+  it("blocks channel mutations and renders only validated host-side hints (#2592, #7292)", () => {
     const setup = writeProxyEnvWithGuard();
     try {
-      const channels = ["slack", "telegram", "discord", "wechat", "whatsapp"];
-      const ops = ["add", "remove"];
-      for (const op of ops) {
+      const channels = ["discord", "slack", "teams", "telegram", "wechat", "whatsapp"];
+      for (const op of ["add", "remove"]) {
         for (const channel of channels) {
-          const result = runGuardedOpenclaw(setup, ["channels", op, channel]);
+          const result = runGuardedShell(setup, [
+            "export OPENSHELL_SANDBOX=my-assistant",
+            shellOpenclawCommand(["channels", op, channel]),
+          ]);
           expect(result.status, `channels ${op} ${channel} should be blocked`).toBe(1);
-          expect(result.stderr).toContain(`openclaw channels ${op}`);
-          expect(result.stderr).toContain(`nemoclaw <sandbox> channels ${op}`);
+          expect(result.stderr).toContain(
+            `Run 'nemoclaw my-assistant channels ${op} ${channel}' on the host.`,
+          );
         }
       }
+      const marker = path.join(setup.tmpDir, "host-command-injection");
+      for (const args of [
+        ["channels", `add'; touch ${marker}; #`, "telegram"],
+        ["channels", "add", `telegram\n; touch ${marker}`],
+      ]) {
+        const result = runGuardedOpenclaw(setup, args);
+        expect(result.status).toBe(1);
+        expect(result.stderr).not.toContain(marker);
+        expect(result.stderr).toMatch(/channels (?:<operation> telegram|add <channel>)/);
+      }
+      expect(fs.existsSync(marker)).toBe(false);
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
 
-  // WhatsApp pairs entirely inside the sandbox via `openclaw channels login
-  // --channel whatsapp`, so the guard must allow that exact in-sandbox login
-  // path. WeChat completes pairing host-side and must stay blocked here so it
-  // cannot bypass NemoClaw's host-side registry/provider/rebuild path.
-  // `status` is read-only diagnostics and is similarly safe to allow.
+  // WhatsApp pairing is in-sandbox; status is read-only and does not persist changes.
   it("allows only WhatsApp `channels login` and read-only `channels status` inside the sandbox", () => {
     const setup = writeProxyEnvWithGuard();
     try {
