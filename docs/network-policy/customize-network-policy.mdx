@@ -26,7 +26,7 @@ NemoClaw declares sandbox policy in YAML, and [NVIDIA OpenShell](https://github.
 
 <Note>
 If a sandbox needs an HTTP service on the host, expose the service on a host IP that the OpenShell gateway can reach.
-Apply a custom preset with `$$nemoclaw <sandbox> policy-add --from-file`.
+Apply a custom preset with `$$nemoclaw <sandbox> policy add --from-file`.
 Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable.
 Refer to [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service).
 </Note>

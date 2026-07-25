@@ -109,6 +109,22 @@ export function listAgents(): string[] {
     .sort();
 }
 
+/** Resolve a non-OpenClaw agent's required, readable baseline policy. */
+export function requireAgentPolicyAdditionsPath(
+  agent: Pick<AgentDefinition, "name" | "policyAdditionsPath">,
+): string {
+  const policyPath = agent.policyAdditionsPath;
+  try {
+    if (!policyPath || !fs.statSync(policyPath).isFile()) throw new Error("missing policy file");
+    fs.accessSync(policyPath, fs.constants.R_OK);
+    return policyPath;
+  } catch {
+    throw new Error(
+      `Agent '${agent.name}' baseline policy is unavailable; a readable policy-additions.yaml is required. Refusing to substitute the OpenClaw baseline.`,
+    );
+  }
+}
+
 /**
  * Load and parse an agent manifest.
  */

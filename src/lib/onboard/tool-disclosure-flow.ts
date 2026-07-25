@@ -60,13 +60,14 @@ export function prepareSandboxToolDisclosure(
     }
   }
 
-  // Keep inspection and validation ahead of every mutation. Splitting these
-  // steps across lifecycle callbacks would require a transaction object to
-  // preserve this fail-closed ordering for registry and session state.
+  // Keep inspection and validation ahead of every mutation. MCP and baseline
+  // exclusions are registry-only rebuild intent: replacement registration
+  // overwrites the retained row, while a failed create leaves retry metadata.
   if (
     existingEntry &&
     !liveExists &&
     !preservedMcpState &&
+    (existingEntry.baselineExclusions?.length ?? 0) === 0 &&
     existingEntry.pendingRouteReservation !== true
   ) {
     registry.removeSandbox(sandboxName);

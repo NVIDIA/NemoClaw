@@ -6,6 +6,7 @@ import fs from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -111,32 +112,98 @@ describe("isDockerDriverGatewayHttpReady TLS env", () => {
     expect(readFileSync).toHaveBeenCalled();
     expect(readPaths[0]).toBe(path.join(tlsDir, "ca.crt"));
   });
+});
 
-  it("omits IP literals from TLS SNI while retaining the direct gRPC health probe", async () => {
-    vi.spyOn(fs, "readFileSync").mockReturnValue(Buffer.from("test TLS material") as never);
-    const stream = Object.assign(new EventEmitter(), {
-      close: vi.fn(),
-      end: vi.fn(),
-    });
-    const session = Object.assign(new EventEmitter(), {
-      close: vi.fn(),
-      request: vi.fn(() => stream),
-    });
-    const connect = vi.spyOn(http2, "connect").mockReturnValue(session as never);
+describe("isDockerDriverGatewayHttpReady TLS servername", () => {
+  const tlsDirs: string[] = [];
 
-    const probe = isDockerDriverGatewayHttpReady(
-      1_000,
-      "https://127.0.0.1:8080/openshell.v1.OpenShell/Health",
-      { OPENSHELL_LOCAL_TLS_DIR: "/tmp/nemoclaw-probe-tls" },
-    );
-    stream.emit("response", { ":status": 200, "content-type": "application/grpc" });
-    stream.emit("trailers", { "grpc-status": "0" });
-    stream.emit("end");
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    for (const dir of tlsDirs.splice(0)) {
+      fs.rmSync(dir, { force: true, recursive: true });
+    }
+  });
 
-    await expect(probe).resolves.toBe(true);
-    expect(connect).toHaveBeenCalledWith(
-      "https://127.0.0.1:8080",
-      expect.not.objectContaining({ servername: expect.anything() }),
-    );
+  function writeLocalTlsDir(): string {
+    const tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-tls-"));
+    tlsDirs.push(tlsDir);
+    fs.writeFileSync(path.join(tlsDir, "ca.crt"), "ca");
+    fs.mkdirSync(path.join(tlsDir, "client"));
+    fs.writeFileSync(path.join(tlsDir, "client", "tls.crt"), "cert");
+    fs.writeFileSync(path.join(tlsDir, "client", "tls.key"), "key");
+    return tlsDir;
+  }
+
+  function healthySessionStub(): http2.ClientHttp2Session {
+    const stream = new EventEmitter() as EventEmitter & {
+      close: () => void;
+      end: (payload?: Buffer) => void;
+    };
+    stream.close = () => undefined;
+    stream.end = () => {
+      setImmediate(() => {
+        stream.emit("response", {
+          [http2.constants.HTTP2_HEADER_STATUS]: 200,
+          [http2.constants.HTTP2_HEADER_CONTENT_TYPE]: "application/grpc",
+          "grpc-status": "0",
+        });
+        stream.emit("end");
+      });
+    };
+    const client = new EventEmitter() as EventEmitter & {
+      close: () => void;
+      request: () => typeof stream;
+    };
+    client.close = () => undefined;
+    client.request = () => stream;
+    return client as unknown as http2.ClientHttp2Session;
+  }
+
+  function spyOnHttp2Connect() {
+    return vi.spyOn(http2, "connect").mockImplementation(() => healthySessionStub());
+  }
+
+  function connectOptionsFrom(
+    connect: ReturnType<typeof spyOnHttp2Connect>,
+  ): Record<string, unknown> {
+    expect(connect).toHaveBeenCalledTimes(1);
+    return connect.mock.calls[0]?.[1] as Record<string, unknown>;
+  }
+
+  it("omits servername for an IP-literal gateway host, which Node 25 rejects as a TLS ServerName (#7527)", async () => {
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", writeLocalTlsDir());
+    const connect = spyOnHttp2Connect();
+
+    await expect(
+      isDockerDriverGatewayHttpReady(1_000, "https://127.0.0.1:8080/openshell.v1.OpenShell/Health"),
+    ).resolves.toBe(true);
+
+    expect(connectOptionsFrom(connect)).not.toHaveProperty("servername");
+  });
+
+  it("omits servername for a bracketed IPv6 gateway host (#7527)", async () => {
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", writeLocalTlsDir());
+    const connect = spyOnHttp2Connect();
+
+    await expect(
+      isDockerDriverGatewayHttpReady(1_000, "https://[::1]:8080/openshell.v1.OpenShell/Health"),
+    ).resolves.toBe(true);
+
+    expect(connectOptionsFrom(connect)).not.toHaveProperty("servername");
+  });
+
+  it("keeps servername for a DNS gateway hostname (#7527)", async () => {
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", writeLocalTlsDir());
+    const connect = spyOnHttp2Connect();
+
+    await expect(
+      isDockerDriverGatewayHttpReady(
+        1_000,
+        "https://host.openshell.internal:8080/openshell.v1.OpenShell/Health",
+      ),
+    ).resolves.toBe(true);
+
+    expect(connectOptionsFrom(connect).servername).toBe("host.openshell.internal");
   });
 });

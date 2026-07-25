@@ -134,6 +134,11 @@ describe("Hermes final image layout", () => {
   // source-shape-contract: compatibility -- Grouped payload layers preserve the measured Hermes layer budget without invalidating earlier build work
   it("keeps repository payload layers at their cache boundaries (#7144)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const doctorLayer = dockerRunCommandBetween(
+      dockerfile,
+      "# Run Hermes' upstream repair",
+      "# Install NemoClaw plugin into Hermes",
+    );
     const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
@@ -210,6 +215,11 @@ describe("Hermes final image layout", () => {
     expect(finalStage.indexOf("RUN check_metadata()")).toBeLessThan(
       finalStage.indexOf("node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts"),
     );
+    expect(doctorLayer).toContain(
+      "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
+    );
+    expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& rm -rf \/sandbox\/[.]cache$/u);
+    expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
   });
 
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image

@@ -88,14 +88,43 @@ describe("public route/display separation", () => {
       "sandbox:hosts:add",
       "sandbox:hosts:list",
       "sandbox:hosts:remove",
-      "sandbox:policy:add",
-      "sandbox:policy:explain",
-      "sandbox:policy:get",
-      "sandbox:policy:list",
-      "sandbox:policy:remove",
     ]);
     expect(sandboxRouteTokens("sandbox:gateway:token")).toEqual(["gateway-token"]);
     expect(sandboxRouteTokens("sandbox:config:rotate-token")).toEqual(["config", "rotate-token"]);
+  });
+
+  it.each([
+    { verb: "add", args: ["github", "--yes"] },
+    { verb: "explain", args: ["--json"] },
+    { verb: "get", args: ["--raw"] },
+    { verb: "list", args: [] },
+    { verb: "remove", args: ["github", "--yes"] },
+  ])("routes canonical and legacy policy $verb spellings to the same command (#7178)", ({
+    verb,
+    args,
+  }) => {
+    const commandId = `sandbox:policy:${verb}`;
+    const expectedArgs = ["alpha", ...args];
+    expect(sandboxRouteTokens(commandId)).toEqual(["policy", verb]);
+    expectNative(
+      translatePublicSandboxArgv("alpha", "policy", [verb, ...args]),
+      commandId,
+      expectedArgs,
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", `policy-${verb}`, args),
+      commandId,
+      expectedArgs,
+    );
+  });
+
+  it("routes new policy subcommands only through their canonical two-token spelling (#7178)", () => {
+    expectNative(
+      translatePublicSandboxArgv("alpha", "policy", ["exclude", "nous_research", "--force"]),
+      "sandbox:policy:exclude",
+      ["alpha", "nous_research", "--force"],
+    );
+    expect(sandboxRouteTokens("sandbox:policy:restore")).toEqual(["policy", "restore"]);
   });
 });
 
