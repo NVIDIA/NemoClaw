@@ -9,7 +9,7 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export type WorkflowJob = {
-  concurrency?: { group: string; "cancel-in-progress": boolean };
+  concurrency?: { group: string; queue?: "max"; "cancel-in-progress": boolean };
   environment?: string | { name: string; deployment?: boolean };
   if?: string;
   name?: string;
