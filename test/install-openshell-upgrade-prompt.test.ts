@@ -33,7 +33,13 @@ function runInstallerOpenshellVersionFlow(
   fs.writeFileSync(registry, '{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
   fs.writeFileSync(gatewayState, "gateway-original\n");
   writeExecutable(path.join(setupDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n");
-  writeExecutable(path.join(setupDir, "lib", "station-vllm-conflict.sh"), "#!/usr/bin/env bash\n");
+  writeExecutable(
+    path.join(setupDir, "lib", "station-vllm-conflict.sh"),
+    `#!/usr/bin/env bash
+handle_station_vllm_conflict() { :; }
+consume_station_local_vllm_resume() { return 1; }
+`,
+  );
   writeExecutable(healthyOpenshell, installedOpenshellBody);
   setupOpenshell(bin);
 
@@ -43,6 +49,8 @@ function runInstallerOpenshellVersionFlow(
       "-c",
       `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 SCRIPT_DIR="${setupDir}"
+_CLI_PATH=""
+_CLI_BIN="nemoclaw-test-missing"
 resolve_nemoclaw_gateway_port() { printf '8080\\n'; }
 preflight_explicit_express_flags() { :; }
 print_banner() { :; }
