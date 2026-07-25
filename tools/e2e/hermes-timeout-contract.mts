@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const HERMES_TIMEOUT_HEADROOM_MINUTES = 15;
+export const HERMES_TIMEOUT_HEADROOM_MAX_MINUTES = 30;
 
 export const HERMES_E2E_TEST_TIMEOUT_MINUTES = 70;
 export const HERMES_DISCORD_TEST_TIMEOUT_MINUTES = 75;

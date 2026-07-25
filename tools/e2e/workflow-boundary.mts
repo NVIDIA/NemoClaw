@@ -19,6 +19,7 @@ import {
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
 import {
   HERMES_TIMEOUT_CONTRACTS,
+  HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
   HERMES_TIMEOUT_HEADROOM_MINUTES,
 } from "./hermes-timeout-contract.mts";
 import {
@@ -2780,12 +2781,14 @@ function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): 
     jobTimeoutMinutes,
   } of HERMES_TIMEOUT_CONTRACTS) {
     const actualJobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
+    const maximumJobTimeoutMinutes = innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES;
     if (
       !Number.isInteger(actualJobTimeoutMinutes) ||
-      (actualJobTimeoutMinutes as number) < jobTimeoutMinutes
+      (actualJobTimeoutMinutes as number) < jobTimeoutMinutes ||
+      (actualJobTimeoutMinutes as number) > maximumJobTimeoutMinutes
     ) {
       errors.push(
-        `${jobName} timeout must be at least ${jobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus ${HERMES_TIMEOUT_HEADROOM_MINUTES} minutes of job headroom`,
+        `${jobName} timeout must be between ${jobTimeoutMinutes} and ${maximumJobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with ${HERMES_TIMEOUT_HEADROOM_MINUTES}-${HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes of job headroom`,
       );
     }
   }
