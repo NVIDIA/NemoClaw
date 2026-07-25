@@ -6,6 +6,7 @@ type ApiJob = {
   conclusion?: string | null;
   created_at?: string | null;
   html_url?: string | null;
+  id?: number | null;
   labels?: string[] | null;
   name: string;
   run_attempt?: number | null;
@@ -89,20 +90,7 @@ function countResults(
   };
 }
 
-function elapsedMs(
-  start: string | null | undefined,
-  finish: string | null | undefined,
-): number | null {
-  if (!start || !finish) return null;
-  const startMs = Date.parse(start);
-  const finishMs = Date.parse(finish);
-  if (!Number.isFinite(startMs) || !Number.isFinite(finishMs) || finishMs < startMs) return null;
-  return finishMs - startMs;
-}
-
-function normalizeRunnerClass(
-  labels: string[] | null | undefined,
-): JobTimingRow["runnerClass"] {
+function normalizeRunnerClass(labels: string[] | null | undefined): JobTimingRow["runnerClass"] {
   if (!labels || labels.length === 0) return "unknown";
   const normalized = new Set(labels.map((label) => label.toLowerCase()));
   if (normalized.has("self-hosted")) return "unknown";
@@ -110,18 +98,92 @@ function normalizeRunnerClass(
   return "larger";
 }
 
+type JobExecutionTiming = {
+  createdMs: number | null;
+  executionFingerprint: string;
+  executionMs: number;
+  job: ApiJob;
+  queueMs: number | null;
+};
+
+function executionFingerprint(job: ApiJob): string | null {
+  if (!job.started_at || !job.completed_at || !job.conclusion) return null;
+  const startedMs = Date.parse(job.started_at);
+  const completedMs = Date.parse(job.completed_at);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(completedMs) || completedMs < startedMs) {
+    return null;
+  }
+  return JSON.stringify([startedMs, completedMs, job.conclusion]);
+}
+
+function jobExecutionTiming(job: ApiJob): JobExecutionTiming | null {
+  const fingerprint = executionFingerprint(job);
+  if (!fingerprint || !job.started_at || !job.completed_at) return null;
+  const createdMs = job.created_at ? Date.parse(job.created_at) : Number.NaN;
+  const startedMs = Date.parse(job.started_at);
+  const completedMs = Date.parse(job.completed_at);
+  const hasCoherentQueue = Number.isFinite(createdMs) && createdMs <= startedMs;
+  return {
+    createdMs: hasCoherentQueue ? createdMs : null,
+    executionFingerprint: fingerprint,
+    executionMs: completedMs - startedMs,
+    job,
+    queueMs: hasCoherentQueue ? startedMs - createdMs : null,
+  };
+}
+
+function timingExecutionKey(name: string, executionFingerprint: string): string {
+  return JSON.stringify([name, executionFingerprint]);
+}
+
+function preferTimingRepresentative(
+  candidate: JobExecutionTiming,
+  existing: JobExecutionTiming | undefined,
+): boolean {
+  if (!existing) return true;
+  const candidateIsCoherent = candidate.queueMs !== null;
+  const existingIsCoherent = existing.queueMs !== null;
+  if (candidateIsCoherent !== existingIsCoherent) return candidateIsCoherent;
+  const candidateAttempt = candidate.job.run_attempt ?? 0;
+  const existingAttempt = existing.job.run_attempt ?? 0;
+  if (candidateAttempt !== existingAttempt) return candidateAttempt < existingAttempt;
+  const candidateCreatedMs = candidate.createdMs ?? Number.POSITIVE_INFINITY;
+  const existingCreatedMs = existing.createdMs ?? Number.POSITIVE_INFINITY;
+  if (candidateCreatedMs !== existingCreatedMs) return candidateCreatedMs < existingCreatedMs;
+  return (candidate.job.id ?? 0) < (existing.job.id ?? 0);
+}
+
 function summarizeJobTimings(jobs: ApiJob[]): JobTimingRow[] {
-  return jobs
-    .map(
-      (job): JobTimingRow => ({
-        executionMs: elapsedMs(job.started_at, job.completed_at),
-        name: job.name,
-        outcome: classifyApiJob(job),
-        queueMs: elapsedMs(job.created_at, job.started_at),
-        runnerClass: normalizeRunnerClass(job.labels),
-      }),
-    )
-    .filter((row) => row.executionMs !== null || row.queueMs !== null)
+  const latestByName = new Map<string, ApiJob>();
+  const timingByExecution = new Map<string, JobExecutionTiming>();
+  for (const job of jobs) {
+    if (preferCandidate(job, latestByName.get(job.name))) {
+      latestByName.set(job.name, job);
+    }
+    const timing = jobExecutionTiming(job);
+    if (!timing) continue;
+    const key = timingExecutionKey(job.name, timing.executionFingerprint);
+    if (preferTimingRepresentative(timing, timingByExecution.get(key))) {
+      timingByExecution.set(key, timing);
+    }
+  }
+
+  return [...latestByName.values()]
+    .flatMap((job): JobTimingRow[] => {
+      const fingerprint = executionFingerprint(job);
+      if (!fingerprint) return [];
+      const timing = timingByExecution.get(timingExecutionKey(job.name, fingerprint));
+      if (!timing) return [];
+      return [
+        {
+          executionMs: timing.executionMs,
+          name: timing.job.name,
+          outcome: classifyApiJob(timing.job),
+          queueMs: timing.queueMs,
+          runnerClass: normalizeRunnerClass(timing.job.labels),
+        },
+      ];
+    })
     .sort(
       (left, right) =>
         (right.executionMs ?? 0) +
@@ -158,6 +220,7 @@ async function loadWorkflowRunJobs({
 }: WorkflowRunJobsDeps): Promise<ApiJob[] | null> {
   try {
     return await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+      filter: "all",
       owner: context.repo.owner,
       repo: context.repo.repo,
       run_id: context.runId,

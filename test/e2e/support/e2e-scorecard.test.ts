@@ -433,6 +433,29 @@ describe("E2E scorecard", () => {
     ).toMatchObject({ failure: 0, ran: 1, success: 1, total: 1 });
   });
 
+  it("requests every workflow-run attempt before reconciling job timing (#7140)", async () => {
+    const listJobsForWorkflowRun = {};
+    const paginate = vi.fn().mockResolvedValue([]);
+
+    await expect(
+      scorecardJobs.loadWorkflowRunJobs({
+        context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 30149286459 },
+        core: { warning: vi.fn() },
+        github: {
+          paginate,
+          rest: { actions: { listJobsForWorkflowRun } },
+        },
+      }),
+    ).resolves.toEqual([]);
+    expect(paginate).toHaveBeenCalledWith(listJobsForWorkflowRun, {
+      filter: "all",
+      owner: "NVIDIA",
+      per_page: 100,
+      repo: "NemoClaw",
+      run_id: 30149286459,
+    });
+  });
+
   it("uses canonical API jobs, latest reruns, and direct failure links", () => {
     expect(
       scorecardJobs.summarizeJobs({
@@ -486,6 +509,113 @@ describe("E2E scorecard", () => {
     });
   });
 
+  it("reports the latest distinct execution with coherent queue timing (#7140)", () => {
+    const summary = scorecardJobs.summarizeJobs({
+      apiJobs: [
+        {
+          completed_at: "2026-07-25T07:35:20Z",
+          conclusion: "success",
+          created_at: "2026-07-25T07:26:40Z",
+          id: 89656816239,
+          labels: ["ubuntu-latest"],
+          name: "rebuild-hermes",
+          run_attempt: 1,
+          started_at: "2026-07-25T07:26:42Z",
+          status: "completed",
+        },
+        {
+          completed_at: "2026-07-25T07:35:20Z",
+          conclusion: "success",
+          created_at: "2026-07-25T07:51:18Z",
+          id: 89658784877,
+          labels: ["ubuntu-latest"],
+          name: "rebuild-hermes",
+          run_attempt: 2,
+          started_at: "2026-07-25T07:26:42Z",
+          status: "completed",
+        },
+        {
+          completed_at: "2026-07-25T07:38:25Z",
+          conclusion: "failure",
+          created_at: "2026-07-25T07:26:40Z",
+          id: 89656816838,
+          labels: ["ubuntu-latest"],
+          name: "channels-stop-start (hermes)",
+          run_attempt: 1,
+          started_at: "2026-07-25T07:26:44Z",
+          status: "completed",
+        },
+        {
+          completed_at: "2026-07-25T08:04:08Z",
+          conclusion: "success",
+          created_at: "2026-07-25T07:51:19Z",
+          id: 89658785555,
+          labels: ["ubuntu-latest"],
+          name: "channels-stop-start (hermes)",
+          run_attempt: 2,
+          started_at: "2026-07-25T07:51:22Z",
+          status: "completed",
+        },
+        {
+          completed_at: "2026-07-25T07:34:45Z",
+          conclusion: "failure",
+          created_at: "2026-07-25T07:26:40Z",
+          id: 89656816172,
+          labels: ["ubuntu-latest"],
+          name: "openclaw-tui-chat-correlation",
+          run_attempt: 1,
+          started_at: "2026-07-25T07:26:42Z",
+          status: "completed",
+        },
+        {
+          completed_at: "2026-07-25T08:00:30Z",
+          conclusion: "failure",
+          created_at: "2026-07-25T07:51:18Z",
+          id: 89658784677,
+          labels: ["ubuntu-latest"],
+          name: "openclaw-tui-chat-correlation",
+          run_attempt: 2,
+          started_at: "2026-07-25T07:51:23Z",
+          status: "completed",
+        },
+      ],
+      explicitOnlyJobNames: [],
+      explicitlySelected: [],
+      metaJobNames: [],
+      needs: {},
+    });
+
+    expect(summary).toMatchObject({
+      failedJobs: [{ name: "openclaw-tui-chat-correlation", url: null }],
+      failure: 1,
+      success: 2,
+      total: 3,
+    });
+    expect(summary.timingRows).toEqual([
+      {
+        executionMs: 766_000,
+        name: "channels-stop-start (hermes)",
+        outcome: "success",
+        queueMs: 3_000,
+        runnerClass: "standard",
+      },
+      {
+        executionMs: 547_000,
+        name: "openclaw-tui-chat-correlation",
+        outcome: "failure",
+        queueMs: 5_000,
+        runnerClass: "standard",
+      },
+      {
+        executionMs: 518_000,
+        name: "rebuild-hermes",
+        outcome: "success",
+        queueMs: 2_000,
+        runnerClass: "standard",
+      },
+    ]);
+  });
+
   it("keeps every matrix execution eligible for the timing ranking", () => {
     const summary = scorecardJobs.summarizeJobs({
       apiJobs: [
@@ -516,6 +646,53 @@ describe("E2E scorecard", () => {
 
     expect(summary).toMatchObject({ success: 1, total: 1 });
     expect(summary.timingRows.map(({ name }) => name)).toEqual(["matrix / slow", "matrix / fast"]);
+  });
+
+  it("suppresses an incoherent latest queue without using stale execution timing (#7140)", () => {
+    const summary = scorecardJobs.summarizeJobs({
+      apiJobs: [
+        {
+          completed_at: "2026-07-25T07:01:00Z",
+          conclusion: "success",
+          created_at: "2026-07-25T07:00:00Z",
+          labels: ["ubuntu-latest"],
+          name: "live / hermes",
+          run_attempt: 1,
+          started_at: "2026-07-25T07:00:03Z",
+          status: "completed",
+        },
+        {
+          completed_at: "2026-07-25T08:01:00Z",
+          conclusion: "failure",
+          created_at: "2026-07-25T08:02:00Z",
+          labels: ["ubuntu-latest"],
+          name: "live / hermes",
+          run_attempt: 2,
+          started_at: "2026-07-25T08:00:05Z",
+          status: "completed",
+        },
+      ],
+      explicitOnlyJobNames: [],
+      explicitlySelected: [],
+      metaJobNames: [],
+      needs: {},
+    });
+
+    expect(summary).toMatchObject({
+      failedJobs: [{ name: "live", url: null }],
+      failure: 1,
+      success: 0,
+      total: 1,
+    });
+    expect(summary.timingRows).toEqual([
+      {
+        executionMs: 55_000,
+        name: "live / hermes",
+        outcome: "failure",
+        queueMs: null,
+        runnerClass: "standard",
+      },
+    ]);
   });
 
   it("falls back to needs without counting unselected explicit-only jobs", () => {
