@@ -36,6 +36,13 @@ function fakeDocker(body: string) {
   return dir;
 }
 
+function fakeSleep(dir: string) {
+  const executable = path.join(dir, "sleep");
+  writeFileSync(executable, '#!/usr/bin/env bash\nset -eu\nprintf "%s\\n" "$1" >> "$SLEEP_LOG"\n', {
+    mode: 0o755,
+  });
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -235,5 +242,192 @@ resolver_try_candidates reject first second`);
     expect(readFileSync(githubEnv, "utf8")).toBe(
       "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n",
     );
+  });
+});
+
+describe("base image pull recovery (#7140)", () => {
+  it("retries a transient transport failure and succeeds on the third attempt", () => {
+    const bin = fakeDocker(`
+count="$(cat "$PULL_COUNT" 2>/dev/null || printf 0)"
+count=$((count + 1))
+printf "%s\\n" "$count" > "$PULL_COUNT"
+if ((count < 3)); then
+  printf "%s\\n" "failed to do request: net/http: TLS handshake timeout" >&2
+  exit 1
+fi`);
+    const pullCount = path.join(bin, "pull-count");
+    const sleepLog = path.join(bin, "sleep.log");
+
+    const result = run(
+      `
+sleep() { printf '%s\\n' "$1" >> "$SLEEP_LOG"; }
+resolver_pull example:test`,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+        PULL_COUNT: pullCount,
+        SLEEP_LOG: sleepLog,
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(pullCount, "utf8")).toBe("3\n");
+    expect(readFileSync(sleepLog, "utf8")).toBe("1\n2\n");
+    expect(result.stderr).toContain("TLS handshake timeout");
+  });
+
+  it("fails with a distinct status after exhausting transient registry retries", () => {
+    const secret = "registry-bearer-secret";
+    const bin = fakeDocker(`
+count="$(cat "$PULL_COUNT" 2>/dev/null || printf 0)"
+count=$((count + 1))
+printf "%s\\n" "$count" > "$PULL_COUNT"
+printf "%s\\n" "unexpected HTTP status: 503 Service Unavailable Authorization: Bearer $PULL_SECRET" >&2
+exit 1`);
+    const pullCount = path.join(bin, "pull-count");
+    const sleepLog = path.join(bin, "sleep.log");
+
+    const result = run(
+      `
+sleep() { printf '%s\\n' "$1" >> "$SLEEP_LOG"; }
+resolver_pull example:test
+printf 'unreachable'`,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+        PULL_COUNT: pullCount,
+        PULL_SECRET: secret,
+        SLEEP_LOG: sleepLog,
+      },
+    );
+
+    expect(result.status).toBe(75);
+    expect(result.stdout).not.toContain("unreachable");
+    expect(readFileSync(pullCount, "utf8")).toBe("3\n");
+    expect(readFileSync(sleepLog, "utf8")).toBe("1\n2\n");
+    expect(result.stderr).toContain("503 Service Unavailable");
+    expect(result.stderr).toContain("[redacted]");
+    expect(result.stderr).not.toContain(secret);
+  });
+
+  it.each([
+    ["missing manifest", "manifest unknown"],
+    ["missing manifest with transport text", "manifest unknown; service unavailable"],
+    ["missing repository", "repository does not exist or may require 'docker login'"],
+    ["authorization rejection", "unauthorized: authentication required"],
+    ["HTTP authorization rejection", "unexpected HTTP status: 403 Service Unavailable"],
+    ["digest mismatch", "downloaded layer does not match the expected digest"],
+    ["invalid reference", "invalid reference format"],
+    ["platform incompatibility", "no matching manifest for linux/arm64 in the manifest list"],
+    ["unclassified daemon rejection", "daemon policy rejected this pull"],
+  ])("does not retry a deterministic %s failure", (_name, diagnostic) => {
+    const bin = fakeDocker(`
+count="$(cat "$PULL_COUNT" 2>/dev/null || printf 0)"
+count=$((count + 1))
+printf "%s\\n" "$count" > "$PULL_COUNT"
+printf "%s\\n" "$PULL_DIAGNOSTIC" >&2
+exit 1`);
+    const pullCount = path.join(bin, "pull-count");
+    const sleepLog = path.join(bin, "sleep.log");
+
+    const result = run(
+      `
+sleep() { printf '%s\\n' "$1" >> "$SLEEP_LOG"; }
+resolver_pull example:test`,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+        PULL_COUNT: pullCount,
+        PULL_DIAGNOSTIC: diagnostic,
+        SLEEP_LOG: sleepLog,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(readFileSync(pullCount, "utf8")).toBe("1\n");
+    expect(result.stderr).toContain(diagnostic);
+    expect(() => readFileSync(sleepLog, "utf8")).toThrow();
+  });
+
+  it.each([
+    ["transport timeout", "net/http: TLS handshake timeout"],
+    ["client timeout", "request canceled while waiting for connection (Client.Timeout exceeded)"],
+    ["network outage", "dial tcp: network is unreachable"],
+    ["HTTP server failure", "unexpected HTTP status: 502 Bad Gateway"],
+    ["HTTP throttling", "unexpected HTTP status: 429 Too Many Requests"],
+    ["registry rate limit", "toomanyrequests: rate limit exceeded"],
+  ])("positively classifies a transient %s diagnostic", (_name, diagnostic) => {
+    const result = run('resolver_pull_diagnostic_is_transient "$PULL_DIAGNOSTIC"', {
+      PULL_DIAGNOSTIC: diagnostic,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("surfaces sanitized terminal diagnostics instead of suppressing stderr", () => {
+    const basicSecret = "registry-password";
+    const foldedSecret = "folded-registry-secret";
+    const querySecret = "registry-query-token";
+    const bin = fakeDocker(`
+printf "%s\\n" \
+  "pull access denied at https://registry-user:$BASIC_SECRET@example.test/v2/image?token=$QUERY_SECRET" \
+  "Authorization:" \
+  "  Bearer $FOLDED_SECRET" >&2
+exit 1`);
+
+    const result = run("resolver_pull example:test", {
+      BASIC_SECRET: basicSecret,
+      FOLDED_SECRET: foldedSecret,
+      PATH: `${bin}:${process.env.PATH}`,
+      QUERY_SECRET: querySecret,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("pull access denied");
+    expect(result.stderr).toContain("[redacted]");
+    expect(result.stderr).not.toContain(basicSecret);
+    expect(result.stderr).not.toContain(foldedSecret);
+    expect(result.stderr).not.toContain(querySecret);
+  });
+
+  it("prevents an exhausted transient pull from triggering a local Hermes build", () => {
+    const bin = fakeDocker(`
+printf "%s\\0" "$@" >> "$DOCKER_LOG"
+printf "\\0" >> "$DOCKER_LOG"
+if [[ "$1" == pull ]]; then
+  printf "%s\\n" "unexpected status code 503: Service Unavailable" >&2
+  exit 1
+fi
+if [[ "$1" == build ]]; then exit 42; fi
+exit 1`);
+    fakeSleep(bin);
+    const dockerLog = path.join(bin, "docker.log");
+    const githubEnv = path.join(bin, "github.env");
+    const sleepLog = path.join(bin, "sleep.log");
+    writeFileSync(githubEnv, "");
+    const resolver = hermesAction.runs.steps.find(
+      (step) => step.name === "Resolve Hermes sandbox base image",
+    )?.run;
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", resolver ?? ""], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        DOCKER_LOG: dockerLog,
+        GITHUB_ACTION_PATH: path.join(repoRoot, ".github/actions/resolve-hermes-base-image"),
+        GITHUB_ENV: githubEnv,
+        PATH: `${bin}:${process.env.PATH}`,
+        SLEEP_LOG: sleepLog,
+      },
+    });
+
+    expect(result.status).toBe(75);
+    expect(readFileSync(githubEnv, "utf8")).toBe("");
+    expect(readFileSync(sleepLog, "utf8")).toBe("1\n2\n");
+    const calls = readFileSync(dockerLog, "utf8")
+      .split("\0\0")
+      .filter(Boolean)
+      .map((call) => call.split("\0").filter(Boolean));
+    expect(calls.filter((args) => args[0] === "pull")).toHaveLength(3);
+    expect(calls.some((args) => args[0] === "build")).toBe(false);
   });
 });
