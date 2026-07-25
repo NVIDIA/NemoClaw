@@ -121,6 +121,9 @@ echo "${DOCKER_HOST:-}"
 docker info
 ```
 
+The managed default gateway service accepts `DOCKER_HOST` only as an absolute local `unix://` socket path.
+It rejects remote endpoints and relative socket paths before service startup.
+
 ### macOS first-run failures
 
 The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
@@ -884,17 +887,57 @@ Follow these steps to reconnect.
    - **Linux:** start Docker if it is not already running (`sudo systemctl start docker`)
    - **macOS:** open Docker Desktop or start Colima (`colima start`)
 
+1. Check the managed OpenShell gateway service.
+
+   If a custom-port gateway is NemoClaw-managed, skip this service check and continue with the NemoClaw recovery step using the same environment value.
+   Only the default port `8080` uses a NemoClaw-managed service.
+   If the gateway is externally supervised, inspect and restart it through the supervisor declared by `NEMOCLAW_GATEWAY_MANAGEMENT`, regardless of port.
+
+   On Apple Silicon macOS with Homebrew, inspect and restart the official formula service.
+
+   ```bash
+   brew services list
+   brew services restart openshell
+   ```
+
+   If Homebrew is present but `openshell` is missing or comes from another tap, rerun the NemoClaw installer.
+   Onboarding does not use the standalone fallback while Homebrew is present.
+
+   On Linux package installs, inspect and restart the upstream service.
+
+   ```bash
+   systemctl --user status openshell-gateway
+   systemctl --user restart openshell-gateway
+   ```
+
+   On Linux tarball installs, inspect and restart the marked NemoClaw service.
+
+   ```bash
+   systemctl --user status nemoclaw-openshell-gateway
+   systemctl --user restart nemoclaw-openshell-gateway
+   ```
+
+   The tarball unit is under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when `XDG_CONFIG_HOME` is not absolute.
+   It starts with your user session; NemoClaw does not enable lingering.
+   Without Homebrew on macOS, or without a reachable systemd user manager on Linux, continue with the standalone recovery step below.
+
 1. Check sandbox state.
 
    ```bash
    openshell sandbox list
    ```
 
-   If the sandbox shows `Ready`, skip to step 4.
+   If the sandbox shows `Ready`, skip to step 5.
 
 1. Recover the managed gateway (if needed).
 
-   If the sandbox is not listed or the command fails, let NemoClaw recover the managed gateway and sandbox registration:
+   If the sandbox is not listed after the service restart, or `systemctl --user` is unavailable, first ask NemoClaw to reconnect through the recorded sandbox:
+
+   ```bash
+   $$nemoclaw <name> status
+   ```
+
+   If that cannot restore the gateway registration, resume onboarding to recreate the managed gateway metadata:
 
    ```bash
    $$nemoclaw onboard --resume
