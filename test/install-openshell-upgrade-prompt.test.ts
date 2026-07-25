@@ -105,6 +105,7 @@ function runPreinstallUpgradeGuard(
     hasOldCli?: boolean;
     openshellOnPath?: boolean;
     openshellVersion?: string;
+    openshellVersionCommandFails?: boolean;
     registryJson?: string;
     userLocalOpenshell?: boolean;
   } = {},
@@ -118,6 +119,7 @@ function runPreinstallUpgradeGuard(
   const currentCli = path.join(bin, "nemoclaw-current");
   const preparedFlag = path.join(tmp, "prepared-current-cli");
   const currentSource = path.join(tmp, "current-source");
+  const registry = path.join(home, ".nemoclaw", "sandboxes.json");
 
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.mkdirSync(path.join(currentSource, "nemoclaw-blueprint"), { recursive: true });
@@ -126,16 +128,18 @@ function runPreinstallUpgradeGuard(
     path.join(currentSource, "nemoclaw-blueprint", "blueprint.yaml"),
     `min_openshell_version: "${options.currentMinOpenshellVersion ?? "0.0.85"}"\nmax_openshell_version: "0.0.85"\n`,
   );
-  fs.writeFileSync(
-    path.join(home, ".nemoclaw", "sandboxes.json"),
-    options.registryJson ?? '{"sandboxes":{"alpha":{"name":"alpha"}}}',
-  );
+  fs.writeFileSync(registry, options.registryJson ?? '{"sandboxes":{"alpha":{"name":"alpha"}}}');
   const currentCliAvailable = options.currentCliAvailable === false ? "0" : "1";
   const currentBackupSucceeds = options.currentBackupSucceeds === false ? "0" : "1";
   const openshellVersion = options.openshellVersion ?? "0.0.36";
   const gatewayDestroySucceeds = options.gatewayDestroySucceeds === true ? "1" : "0";
   const gatewayProcessStopSucceeds = options.gatewayProcessStopSucceeds === false ? "0" : "1";
   const gatewayRemoveSucceeds = options.gatewayRemoveSucceeds === false ? "0" : "1";
+  const openshellVersionCommandFails = options.openshellVersionCommandFails === true ? "1" : "0";
+  const installedOpenshellVersionOverride =
+    options.openshellVersionCommandFails === true
+      ? ""
+      : `installed_openshell_version() { printf '${openshellVersion}'; }`;
 
   writeExecutable(
     oldCli,
@@ -162,6 +166,9 @@ exit 0
   );
   const openshellScript = `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${openshellLog}"
+if [ "\${1:-}" = "--version" ] && [ "${openshellVersionCommandFails}" = "1" ]; then
+  exit 7
+fi
 if [ "\${1:-} \${2:-}" = "gateway remove" ] && [ "${gatewayRemoveSucceeds}" != "1" ]; then
   exit 4
 fi
@@ -191,7 +198,7 @@ exit 0
     _CLI_BIN=nemoclaw
     HOME="${home}"
     NEMOCLAW_SOURCE_ROOT="${currentSource}"
-    installed_openshell_version() { printf '${openshellVersion}'; }
+    ${installedOpenshellVersionOverride}
     stop_legacy_openshell_gateway_process() {
       printf 'gateway process-stop\n' >> "${openshellLog}"
       [ "${gatewayProcessStopSucceeds}" = "1" ]
@@ -234,6 +241,7 @@ exit 0
     result,
     cliLog: fs.existsSync(cliLog) ? fs.readFileSync(cliLog, "utf-8") : "",
     openshellLog: fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf-8") : "",
+    registry: fs.readFileSync(registry, "utf-8"),
   };
 }
 
@@ -598,6 +606,27 @@ require_reportable_openshell_version`,
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
+  it("rejects a broken user-local OpenShell before preparing recovery (#7300)", () => {
+    const registryJson = '{"sandboxes":{"alpha":{"name":"alpha"}}}';
+    const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        hasOldCli: false,
+        openshellOnPath: false,
+        openshellVersionCommandFails: true,
+        registryJson,
+        userLocalOpenshell: true,
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("could not report its version");
+    expect(cliLog).toBe("");
+    expect(openshellLog.split(/\r?\n/)).toContain("--version");
+    expect(openshellLog).not.toContain("gateway");
+    expect(registry).toBe(registryJson);
+  });
+
   it("leaves recovery preparation untouched when OpenShell is not installed (#6114)", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
@@ -684,7 +713,7 @@ require_reportable_openshell_version`,
     expect(openshellLog).toBe("");
   });
 
-  it("fails closed after backup when the installed OpenShell version is unknown", () => {
+  it("fails closed before backup when the installed OpenShell version is unknown", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
@@ -696,10 +725,8 @@ require_reportable_openshell_version`,
     );
 
     expect(result.status).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain(
-      "Could not determine the installed OpenShell version",
-    );
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(result.stdout + result.stderr).toContain("could not report its version");
+    expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
   });
 

@@ -2296,6 +2296,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     prefer_user_local_openshell
   fi
   command_exists openshell || return 0
+  require_reportable_openshell_version
 
   if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
     error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
