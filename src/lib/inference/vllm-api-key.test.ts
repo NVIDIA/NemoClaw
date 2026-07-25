@@ -78,7 +78,8 @@ describe("dual-Station vLLM API key persistence", () => {
     vi.doMock("node:fs", async (importOriginal) => {
       const actual = await importOriginal<typeof import("node:fs")>();
       const constants = { ...actual.constants, O_NOFOLLOW: undefined };
-      return { ...actual, constants, default: { ...actual.default, constants } };
+      const actualDefault = (actual as { default?: typeof fs }).default ?? actual;
+      return { ...actual, constants, default: { ...actualDefault, constants } };
     });
     const unavailable = await import("./vllm-api-key");
 
