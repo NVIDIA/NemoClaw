@@ -29,6 +29,7 @@ const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
 const GATE_RUN_ID = 77;
 const APPROVAL_RUN_ID = 123;
+const DCODE_PATCH = "agents/langchain-deepagents-code/patch-managed-deepagents-code.py";
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -278,7 +279,7 @@ function successfulApprovedForkRoutes(approvals: unknown) {
 }
 
 describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
-  it("plans a risky fork without dispatching secret-bearing E2E", async () => {
+  it("requires the selected target and skip approval before a DCode runtime fork can pass E2E (#7463)", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -304,7 +305,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
+            () => githubResponse([{ filename: DCODE_PATCH }]),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
