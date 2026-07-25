@@ -157,7 +157,8 @@ describe("rebuild resume snapshot repair", () => {
       } as never),
       vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args: unknown) => {
         const argv = Array.isArray(args) ? args.map(String) : [];
-        return argv.join(" ") === "sandbox get alpha"
+        return argv.join(" ") === "sandbox get alpha" ||
+          argv.join(" ") === "sandbox get -g nemoclaw alpha"
           ? ({
               status: 1,
               output: "sandbox alpha not found",

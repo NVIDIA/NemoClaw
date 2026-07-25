@@ -527,7 +527,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     );
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
-    if (argv.join(" ") === "sandbox get alpha") {
+    if (
+      argv.join(" ") === "sandbox get alpha" ||
+      argv.join(" ") === "sandbox get -g nemoclaw alpha"
+    ) {
       return {
         status: 1,
         output: "sandbox alpha not found",
