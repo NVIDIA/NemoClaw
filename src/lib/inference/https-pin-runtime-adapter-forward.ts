@@ -229,9 +229,11 @@ export async function forwardHttpsPinnedRequest(options: {
 
   return new Promise((resolve) => {
     let settled = false;
+    let absoluteDeadline: NodeJS.Timeout | undefined;
     const resolveOnce = (status: number) => {
       if (settled) return;
       settled = true;
+      if (absoluteDeadline) clearTimeout(absoluteDeadline);
       res.off("close", onClientClose);
       resolve(status);
     };
@@ -259,6 +261,10 @@ export async function forwardHttpsPinnedRequest(options: {
         ...(isHttps ? { servername: target.targetUrl.hostname } : {}),
       },
       (upstreamRes) => {
+        if (settled || res.destroyed) {
+          upstreamRes.destroy();
+          return;
+        }
         const status = upstreamRes.statusCode || 502;
         if (status >= 300 && status < 400) {
           upstreamRes.resume();
@@ -294,14 +300,11 @@ export async function forwardHttpsPinnedRequest(options: {
       resolveOnce(0);
     };
     res.once("close", onClientClose);
-    upstreamReq.setTimeout(
-      options.upstreamTimeoutMs ?? HTTPS_PIN_RUNTIME_ADAPTER_UPSTREAM_TIMEOUT_MS,
-      () => {
-        upstreamReq.destroy(
-          new ForwardHttpError(504, "Upstream request timed out.", "upstream_timeout"),
-        );
-      },
-    );
+    absoluteDeadline = setTimeout(() => {
+      upstreamReq.destroy(
+        new ForwardHttpError(504, "Upstream request timed out.", "upstream_timeout"),
+      );
+    }, options.upstreamTimeoutMs ?? HTTPS_PIN_RUNTIME_ADAPTER_UPSTREAM_TIMEOUT_MS);
     upstreamReq.on("error", (err) => {
       failRequest(err);
     });

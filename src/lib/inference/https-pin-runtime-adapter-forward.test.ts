@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   type CaMaterial,
@@ -26,6 +27,7 @@ const servers: http.Server[] = [];
 const tlsServers: Array<{ close: () => Promise<void> }> = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     servers.map(
       (server) =>
@@ -291,6 +293,66 @@ describe("forwardHttpsPinnedRequest header handling (#6141)", () => {
     const response = await fetch(`${baseUrl}/base`, { method: "POST", body: "{}" });
     expect(response.status).toBe(504);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "upstream_timeout" } });
+  });
+
+  it("bounds the upstream deadline before connection establishment (#6141)", async () => {
+    const upstreamReq = new EventEmitter() as unknown as http.ClientRequest;
+    const destroy = vi.fn((err?: Error) => {
+      err ? upstreamReq.emit("error", err) : undefined;
+      return upstreamReq;
+    });
+    (upstreamReq as unknown as { end: unknown }).end = vi.fn();
+    (upstreamReq as unknown as { destroy: unknown }).destroy = destroy;
+    vi.spyOn(http, "request").mockImplementation(() => upstreamReq);
+
+    const target: HttpsPinTarget = {
+      targetUrl: new URL("http://forward-test.example/base"),
+      pinnedAddress: "192.0.2.1",
+      credential: TEST_CREDENTIAL,
+    };
+    const adapter = createForwardTestServer(target, { upstreamTimeoutMs: 25 });
+    const { baseUrl } = await listen(adapter);
+
+    const response = await fetch(`${baseUrl}/base`, { method: "POST", body: "{}" });
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "upstream_timeout" } });
+    expect(destroy).toHaveBeenCalled();
+  });
+
+  it("discards a late upstream response after the deadline settles (#6141)", async () => {
+    const upstreamReq = new EventEmitter() as unknown as http.ClientRequest;
+    (upstreamReq as unknown as { end: unknown }).end = vi.fn();
+    (upstreamReq as unknown as { destroy: unknown }).destroy = vi.fn((err?: Error) => {
+      err ? upstreamReq.emit("error", err) : undefined;
+      return upstreamReq;
+    });
+    let responseCallback: ((res: http.IncomingMessage) => void) | undefined;
+    vi.spyOn(http, "request").mockImplementation(((...args: unknown[]) => {
+      responseCallback = args[args.length - 1] as (res: http.IncomingMessage) => void;
+      return upstreamReq;
+    }) as typeof http.request);
+
+    const target: HttpsPinTarget = {
+      targetUrl: new URL("http://forward-test.example/base"),
+      pinnedAddress: "192.0.2.1",
+      credential: TEST_CREDENTIAL,
+    };
+    const adapter = createForwardTestServer(target, { upstreamTimeoutMs: 20 });
+    const { baseUrl } = await listen(adapter);
+
+    const response = await fetch(`${baseUrl}/base`, { method: "POST", body: "{}" });
+    expect(response.status).toBe(504);
+
+    const lateResponse = new EventEmitter() as unknown as http.IncomingMessage;
+    (lateResponse as unknown as { statusCode: number }).statusCode = 200;
+    (lateResponse as unknown as { headers: http.IncomingHttpHeaders }).headers = {};
+    const lateDestroy = vi.fn();
+    (lateResponse as unknown as { destroy: unknown }).destroy = lateDestroy;
+    (lateResponse as unknown as { pipe: unknown }).pipe = vi.fn();
+
+    expect(() => responseCallback?.(lateResponse)).not.toThrow();
+    expect(lateDestroy).toHaveBeenCalled();
   });
 });
 
