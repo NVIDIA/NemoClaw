@@ -24,7 +24,7 @@ function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
 }
 
 describe("doctor lifecycle registration checks", () => {
-  it("keeps a complete managed sandbox clean", () => {
+  it("reports a complete managed sandbox registration as ok", () => {
     expect(buildLifecycleRegistrationCheck("alpha", sandbox(), "nemoclaw")).toMatchObject({
       group: "Sandbox",
       label: "Lifecycle registration",
@@ -33,7 +33,7 @@ describe("doctor lifecycle registration checks", () => {
     });
   });
 
-  it("warns when a live-looking Brev fast-path row lacks lifecycle metadata", () => {
+  it("warns when a Brev fast-path registry entry lacks lifecycle metadata", () => {
     const incomplete: SandboxEntry = {
       name: "alpha",
       agent: "openclaw",

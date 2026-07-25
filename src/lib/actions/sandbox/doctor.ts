@@ -367,8 +367,7 @@ function collectRegisteredSandboxChecks(
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
   } catch {
-    // Keep the conservative managed-dashboard contract when the agent
-    // definition itself cannot be loaded.
+    // Require dashboard metadata when the agent definition cannot be loaded.
   }
   checks.push(
     buildLifecycleRegistrationCheck(sandboxName, sb, CLI_NAME, { dashboardPortRequired }),

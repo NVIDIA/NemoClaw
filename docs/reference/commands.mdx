@@ -1404,6 +1404,11 @@ The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw g
 For gateway-based agents, it also reports messaging channel conflicts.
 </AgentOnly>
 
+`doctor` also checks whether the sandbox registry contains the metadata required for snapshot, rebuild, upgrade, recovery, and reboot.
+When lifecycle metadata is incomplete, the report names the missing or invalid fields and affected operations without printing stored values.
+Dashboard metadata is required only for agents that manage a dashboard.
+If the registered gateway binding is invalid, `doctor` reports a failed gateway check and does not select, probe, or recover a gateway from that binding.
+
 For inference health, `doctor` treats the probe to `https://inference.local/v1/models` from inside the sandbox as authoritative.
 HTTP responses from `200` through `499`, including `401` and `403`, pass this check.
 HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check.
