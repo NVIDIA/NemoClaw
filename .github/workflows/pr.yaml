@@ -285,8 +285,79 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout trusted reviewed npm audit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-reviewed-npm-audit
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-reviewed-npm-audit
+            ci/npm-audit-exceptions.json
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Detect trusted reviewed npm audit schema
+        id: trusted-reviewed-npm-audit
+        shell: bash
+        run: |
+          if grep -Fq 'NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT' \
+              .trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit/action.yaml \
+            && grep -Fq 'resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT)' \
+              .trusted-reviewed-npm-audit/scripts/audit-reviewed-npm-graph.mts \
+            && [ -f .trusted-reviewed-npm-audit/ci/npm-audit-exceptions.json ] \
+            && [ -f .trusted-reviewed-npm-audit/ci/reviewed-npm-audit.json ] \
+            && [ -f .trusted-reviewed-npm-audit/scripts/lib/openclaw-npm-remediation.mts ] \
+            && [ -f .trusted-reviewed-npm-audit/scripts/lib/reviewed-npm-audit.mts ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One-time bootstrap for this PR only. The action, driver, and helper are
+      # pinned to its signed first commit; every later PR must use its base SHA.
+      - name: Checkout pinned bootstrap reviewed npm audit
+        if: ${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && github.event.pull_request.number == 6830 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: HOYALIM/NemoClaw
+          ref: 0c7dd29394d2c4db660c4d09f3654c0789e200d0
+          path: .trusted-reviewed-npm-audit-bootstrap
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-reviewed-npm-audit
+            ci/npm-audit-exceptions.json
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Reject unavailable trusted reviewed npm audit
+        if: ${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && (github.event.pull_request.number != 6830 || github.event.pull_request.head.repo.full_name != 'HOYALIM/NemoClaw') }}
+        shell: bash
+        run: |
+          echo "::error::Trusted base SHA does not contain the schema-2 reviewed npm audit"
+          exit 1
+
       - name: Audit reviewed production npm graphs
-        uses: ./.github/actions/ci-reviewed-npm-audit
+        if: ${{ steps.trusted-reviewed-npm-audit.outputs.available == 'true' }}
+        uses: ./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/reviewed-npm-audit
+
+      - name: Audit reviewed production npm graphs (pinned bootstrap)
+        if: ${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && github.event.pull_request.number == 6830 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}
+        uses: ./.trusted-reviewed-npm-audit-bootstrap/.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/reviewed-npm-audit
 
   cli-test-shards:
     needs: changes
