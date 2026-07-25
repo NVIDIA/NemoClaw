@@ -42,18 +42,9 @@ runs:
         }
 
         base_inputs_changed() {
-          if ! git diff --quiet -- "${base_inputs[@]}"; then
-            return 0
-          fi
-
-          local base_ref="${GITHUB_BASE_REF:-main}"
-          git fetch --no-tags --depth=1 origin \
-            "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}" >/dev/null 2>&1 || true
-          if ! git rev-parse --verify "origin/${base_ref}^{commit}" >/dev/null 2>&1; then
-            return 1
-          fi
-
-          ! git diff --quiet "origin/${base_ref}" HEAD -- "${base_inputs[@]}"
+          resolver_base_inputs_changed_since_base \
+            "${GITHUB_BASE_REF:-main}" \
+            "${base_inputs[@]}"
         }
 
         use_local_base() {
