@@ -18,6 +18,10 @@ import {
 } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
 import {
+  HERMES_TIMEOUT_CONTRACTS,
+  HERMES_TIMEOUT_HEADROOM_MINUTES,
+} from "./hermes-timeout-contract.mts";
+import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
@@ -128,29 +132,6 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "staging-brev-launchable",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
-const HERMES_TIMEOUT_HEADROOM_MINUTES = 15;
-const HERMES_TIMEOUT_CONTRACTS = [
-  {
-    innerTest: "test/e2e/live/hermes-e2e.test.ts",
-    innerTimeoutMinutes: 70,
-    jobName: "hermes-e2e",
-  },
-  {
-    innerTest: "test/e2e/live/hermes-e2e.test.ts",
-    innerTimeoutMinutes: 70,
-    jobName: "hermes-dashboard",
-  },
-  {
-    innerTest: "test/e2e/live/hermes-discord.test.ts",
-    innerTimeoutMinutes: 75,
-    jobName: "hermes-discord",
-  },
-  {
-    innerTest: "test/e2e/live/hermes-shields-config.test.ts",
-    innerTimeoutMinutes: 45,
-    jobName: "hermes-shields-config",
-  },
-] as const;
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -2792,15 +2773,16 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
 }
 
 function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): void {
-  for (const { innerTest, innerTimeoutMinutes, jobName } of HERMES_TIMEOUT_CONTRACTS) {
-    const jobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
-    const minimumJobTimeoutMinutes = innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MINUTES;
-    if (
-      !Number.isSafeInteger(jobTimeoutMinutes) ||
-      (jobTimeoutMinutes as number) < minimumJobTimeoutMinutes
-    ) {
+  for (const {
+    innerTest,
+    innerTimeoutMinutes,
+    jobName,
+    jobTimeoutMinutes,
+  } of HERMES_TIMEOUT_CONTRACTS) {
+    const actualJobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
+    if (actualJobTimeoutMinutes !== jobTimeoutMinutes) {
       errors.push(
-        `${jobName} timeout must be at least ${minimumJobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus ${HERMES_TIMEOUT_HEADROOM_MINUTES} minutes of job headroom`,
+        `${jobName} timeout must be ${jobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus exactly ${HERMES_TIMEOUT_HEADROOM_MINUTES} minutes of job headroom`,
       );
     }
   }

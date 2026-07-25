@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateHermesGpuStartupWorkflowBoundary } from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
+import { HERMES_TIMEOUT_CONTRACTS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { readRepoText, readWorkflow } from "../../helpers/e2e-workflow-contract";
 
@@ -176,28 +177,22 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
-  it.each([
-    [
-      "hermes-e2e",
-      84,
-      "hermes-e2e timeout must be at least 85 minutes to cover the 70-minute Vitest timeout in test/e2e/live/hermes-e2e.test.ts plus 15 minutes of job headroom",
-    ],
-    [
-      "hermes-dashboard",
-      84,
-      "hermes-dashboard timeout must be at least 85 minutes to cover the 70-minute Vitest timeout in test/e2e/live/hermes-e2e.test.ts plus 15 minutes of job headroom",
-    ],
-    [
-      "hermes-discord",
-      89,
-      "hermes-discord timeout must be at least 90 minutes to cover the 75-minute Vitest timeout in test/e2e/live/hermes-discord.test.ts plus 15 minutes of job headroom",
-    ],
-    [
-      "hermes-shields-config",
-      59,
-      "hermes-shields-config timeout must be at least 60 minutes to cover the 45-minute Vitest timeout in test/e2e/live/hermes-shields-config.test.ts plus 15 minutes of job headroom",
-    ],
-  ])("rejects %s job timeouts without required headroom", (jobName, timeoutMinutes, message) => {
+  const invalidHermesTimeouts = HERMES_TIMEOUT_CONTRACTS.flatMap(
+    ({ innerTest, innerTimeoutMinutes, jobName, jobTimeoutMinutes }) =>
+      [jobTimeoutMinutes - 1, jobTimeoutMinutes + 1].map((timeoutMinutes) => ({
+        jobName,
+        message: `${jobName} timeout must be ${jobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus exactly 15 minutes of job headroom`,
+        timeoutMinutes,
+      })),
+  );
+
+  it.each(
+    invalidHermesTimeouts,
+  )("rejects $jobName timeout $timeoutMinutes outside its exact headroom contract", ({
+    jobName,
+    timeoutMinutes,
+    message,
+  }) => {
     const errors = wfErrors((workflow) => {
       workflow.jobs[jobName]["timeout-minutes"] = timeoutMinutes;
     }, validateE2eWorkflowBoundary);
