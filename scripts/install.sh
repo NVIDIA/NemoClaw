@@ -928,7 +928,7 @@ print_usage_notice_body_shell() {
 }
 
 show_usage_notice_shell() {
-  local notice_json version title prompt notice_body answer answer_lc
+  local notice_json version title prompt notice_body answer answer_lc answer_trimmed
   notice_json="$(usage_notice_config_path)"
   if [[ ! -f "$notice_json" ]]; then
     error "Third-party software notice configuration not found."
@@ -954,16 +954,24 @@ show_usage_notice_shell() {
   printf "  ──────────────────────────────────────────────────\n"
   printf "%s\n" "$notice_body"
   printf "\n"
-  printf "  %s" "${prompt:-Type 'yes' to accept the NemoClaw license and third-party software notice and continue [no]: }"
-  if ! IFS= read -r answer; then
-    printf "\n  Installation cancelled\n" >&2
-    return 1
-  fi
-  answer_lc="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$answer_lc" != "yes" ]]; then
+  while true; do
+    printf "  %s" "${prompt:-Type 'yes' to accept the NemoClaw license and third-party software notice and continue [no]: }"
+    if ! IFS= read -r answer; then
+      printf "\n  Installation cancelled\n" >&2
+      return 1
+    fi
+    answer_lc="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$answer_lc" == "yes" ]]; then
+      break
+    fi
+    answer_trimmed="$(printf "%s" "$answer_lc" | tr -d '[:space:]')"
+    if [[ "$answer_trimmed" == y* ]]; then
+      printf "  Did you mean 'yes'? Type the full word 'yes' to accept.\n" >&2
+      continue
+    fi
     printf "  Installation cancelled\n" >&2
     return 1
-  fi
+  done
 
   save_usage_notice_acceptance_shell "$version"
   return 0
