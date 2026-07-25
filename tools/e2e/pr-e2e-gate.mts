@@ -23,6 +23,18 @@ import {
   riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
+import {
+  type HostedRunnerLossPolicy,
+  isHostedRunnerLossInspectionCandidate,
+  MAX_RUNNER_LOSS_JOB_ANNOTATIONS,
+  MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES,
+  needsHostedRunnerShutdownLog,
+  verifiedRunnerLossEvidence,
+  type WorkflowJob,
+  type WorkflowJobAnnotation,
+  type WorkflowJobCheckEvidence,
+  type WorkflowJobLogEvidence,
+} from "./hosted-runner-loss.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
 import {
@@ -86,26 +98,12 @@ const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
 const MAX_WORKFLOW_JOB_PAGES = 10;
 const MAX_JOB_ANNOTATION_PAGES = 1;
-const MAX_RUNNER_LOSS_JOB_ANNOTATIONS = 20;
 const MAX_JOB_ANNOTATION_IDENTITY_BYTES = 8 * 1024;
 const MAX_JOB_ANNOTATION_TEXT_BYTES = 16 * 1024;
 const MAX_RUNNER_LOSS_JOB_ANNOTATION_BYTES = 64 * 1024;
-const HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE =
-  "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.";
-const HOSTED_RUNNER_SHUTDOWN_MESSAGE =
-  "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
-const HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE = "The operation was canceled.";
-const HOSTED_RUNNER_EXIT_143_MESSAGE = "Process completed with exit code 143.";
-const HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE = "Cleaning up orphan processes";
 const MAX_RUNNER_LOSS_JOB_INSPECTIONS = 20;
-const MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES = 64 * 1024;
-const MAX_RUNNER_LOSS_ORPHAN_PROCESSES = 64;
 const RUNNER_LOSS_JOB_LOG_TIMEOUT_MS = 30_000;
 const JOB_LOG_DOWNLOAD_HOST_PATTERN = /^productionresultssa[0-9]+\.blob\.core\.windows\.net$/u;
-const JOB_LOG_TIMESTAMPED_LINE_PATTERN =
-  /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{7}Z) (.*)$/u;
-const JOB_LOG_ORPHAN_PROCESS_PATTERN =
-  /^Terminate orphan process: pid \(([1-9][0-9]*)\) \(([A-Za-z0-9._+ -]{1,128})\)$/u;
 const GITHUB_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/u;
 const MAX_REPORTED_WORKFLOW_JOBS = 10;
 const MAX_WAIVER_REASON_CHARS = 500;
@@ -119,6 +117,7 @@ const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "in_progress",
 ] as const;
 const ACTIVE_WORKFLOW_RUN_STATUS_SET = new Set<string>(ACTIVE_WORKFLOW_RUN_STATUSES);
+const PR_E2E_HOSTED_RUNNER_LOSS_POLICY: HostedRunnerLossPolicy = {};
 const TERMINAL_WORKFLOW_RUN_CONCLUSIONS = [
   "success",
   "failure",
@@ -261,60 +260,6 @@ type WorkflowRun = {
 };
 
 type WorkflowRunsResponse = { workflow_runs: WorkflowRun[] };
-type WorkflowJobAnnotation = {
-  path: string;
-  blobHref: string;
-  startLine: number;
-  startColumn: number | null;
-  endLine: number;
-  endColumn: number | null;
-  annotationLevel: string;
-  title: string;
-  message: string;
-  rawDetails: string;
-};
-type WorkflowJobLogEvidence = {
-  etag: string;
-  totalBytes: number;
-  tail: string;
-};
-type HostedRunnerShutdownLogMarker = {
-  shutdownTimestamp: string;
-  terminalTimestamp: string;
-  cleanupTimestamp: string;
-  lastTimestamp: string;
-  annotationMessage: string;
-  interruptedStepConclusion: "cancelled" | "failure";
-};
-type WorkflowJob = {
-  id: number;
-  name: string;
-  runId?: number;
-  runAttempt?: number;
-  headSha?: string;
-  runUrl?: string;
-  apiUrl?: string;
-  htmlUrl?: string;
-  checkRunUrl?: string;
-  status?: string;
-  conclusion: string | null;
-  runnerId?: number | null;
-  runnerName?: string | null;
-  runnerGroupId?: number | null;
-  runnerGroupName?: string | null;
-  labels?: string[];
-  annotations?: WorkflowJobAnnotation[];
-  logEvidence?: WorkflowJobLogEvidence;
-  startedAt?: string | null;
-  completedAt?: string | null;
-  steps: Array<{
-    name: string;
-    status?: string;
-    conclusion: string | null;
-    startedAt?: string | null;
-    completedAt?: string | null;
-  }>;
-};
 type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
 type CheckRun = {
   id: number;
@@ -1835,7 +1780,10 @@ async function listWorkflowJobAnnotations(
   job: WorkflowJob,
   runId: number,
   runAttempt: number,
-): Promise<WorkflowJobAnnotation[]> {
+): Promise<{
+  annotations: WorkflowJobAnnotation[];
+  checkEvidence: WorkflowJobCheckEvidence;
+}> {
   const apiRepository = `https://api.github.com/repos/${repository}`;
   const webRepository = `https://github.com/${repository}`;
   const expectedRunUrl = `${apiRepository}/actions/runs/${runId}`;
@@ -1866,9 +1814,10 @@ async function listWorkflowJobAnnotations(
     check.html_url !== expectedHtmlUrl ||
     check.details_url !== expectedHtmlUrl ||
     check.status !== "completed" ||
-    check.conclusion !== "failure" ||
+    check.conclusion !== job.conclusion ||
     !isObjectRecord(check.app) ||
     check.app.id !== GITHUB_ACTIONS_APP_ID ||
+    check.app.slug !== "github-actions" ||
     !isObjectRecord(check.output) ||
     !Number.isSafeInteger(check.output.annotations_count) ||
     (check.output.annotations_count as number) < 0 ||
@@ -1877,6 +1826,20 @@ async function listWorkflowJobAnnotations(
     throw new Error("workflow job check run does not match the exact failed job");
   }
   const expectedCount = check.output.annotations_count as number;
+  const checkEvidence: WorkflowJobCheckEvidence = {
+    id: check.id as number,
+    name: check.name as string,
+    headSha: check.head_sha as string,
+    apiUrl: check.url as string,
+    htmlUrl: check.html_url as string,
+    detailsUrl: check.details_url as string,
+    status: check.status as string,
+    conclusion: check.conclusion as string,
+    appId: check.app.id as number,
+    appSlug: check.app.slug as string,
+    annotationsCount: expectedCount,
+    annotationsUrl: check.output.annotations_url as string,
+  };
   if (expectedCount > MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
     throw new Error("workflow job annotation count exceeds the hosted-runner-loss limit");
   }
@@ -1908,7 +1871,7 @@ async function listWorkflowJobAnnotations(
     if (annotations.length > expectedCount) {
       throw new Error("workflow job annotation listing exceeds the trusted annotation count");
     }
-    if (annotations.length === expectedCount) return annotations;
+    if (annotations.length === expectedCount) return { annotations, checkEvidence };
     if (value.length < MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
       throw new Error("workflow job annotation listing is incomplete");
     }
@@ -2127,7 +2090,10 @@ async function listNonPassingWorkflowJobs(
   token: string,
   runId: number,
   runAttempt: number,
-  options: { includeAnnotations?: boolean } = {},
+  options: {
+    includeAnnotations?: boolean;
+    hostedRunnerLossPolicy?: HostedRunnerLossPolicy;
+  } = {},
 ): Promise<{ jobs: WorkflowJob[]; complete: boolean }> {
   if (
     !Number.isSafeInteger(runId) ||
@@ -2164,36 +2130,25 @@ async function listNonPassingWorkflowJobs(
         (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
       );
       if (options.includeAnnotations) {
-        const runnerLossCandidates = nonPassingJobs.filter(
-          hasTrustedHostedRunnerLossInspectionStepShape,
+        const hostedRunnerLossPolicy = options.hostedRunnerLossPolicy ?? {};
+        const runnerLossCandidates = nonPassingJobs.filter((job) =>
+          isHostedRunnerLossInspectionCandidate(job, hostedRunnerLossPolicy),
         );
         if (runnerLossCandidates.length > MAX_RUNNER_LOSS_JOB_INSPECTIONS) {
           throw new Error("workflow run exceeded the hosted-runner-loss inspection limit");
         }
         for (const job of runnerLossCandidates) {
-          job.annotations = await listWorkflowJobAnnotations(
+          const evidence = await listWorkflowJobAnnotations(
             repository,
             token,
             job,
             runId,
             runAttempt,
           );
+          job.annotations = evidence.annotations;
+          job.checkEvidence = evidence.checkEvidence;
           const workflowSha = job.headSha ?? "";
-          if (
-            !hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha) &&
-            (hasCompatibleHostedRunnerShutdownAnnotations(
-              job,
-              repository,
-              workflowSha,
-              HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE,
-            ) ||
-              hasCompatibleHostedRunnerShutdownAnnotations(
-                job,
-                repository,
-                workflowSha,
-                HOSTED_RUNNER_EXIT_143_MESSAGE,
-              ))
-          ) {
+          if (needsHostedRunnerShutdownLog(job, repository, workflowSha, hostedRunnerLossPolicy)) {
             try {
               job.logEvidence = await downloadWorkflowJobLogTail(repository, token, job.id);
             } catch {
@@ -2336,332 +2291,6 @@ function ciFailureReport(options: {
     summary: summary.join("\n"),
     errorMessage: `${options.prNumber ? `PR #${options.prNumber}: ${prUrl}` : "Triggering PR unavailable"}; CI run attempt ${options.ciRunAttempt}: ${ciRunUrl}; CI / Pull Request concluded ${conclusion}; jobs that did not pass: ${jobMessage}${truncationMessage}`,
     ciRunUrl,
-  };
-}
-
-const GITHUB_HOSTED_RUNNER_NAME_PATTERN = /^GitHub Actions [1-9][0-9]*$/u;
-
-function trustedWorkflowJobAnnotations(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-): WorkflowJobAnnotation[] | null {
-  if (job.headSha !== workflowSha || !Array.isArray(job.annotations)) return null;
-  const blobPrefix = `https://github.com/${repository}/blob/${workflowSha}/`;
-  if (
-    job.annotations.some((annotation) => annotation.blobHref !== `${blobPrefix}${annotation.path}`)
-  ) {
-    return null;
-  }
-  return job.annotations;
-}
-
-/**
- * GitHub records a lost hosted runner as a completed failed job with no
- * ordinary failed step. Older Jobs API responses left the interrupted step
- * `in_progress`; current responses can terminalize it as `cancelled`, skip the
- * remaining cleanup, and append the synthetic successful `Complete job` step.
- * A user or concurrency cancellation concludes the job itself as `cancelled`,
- * while an ordinary assertion records a failed step. The step shape must be
- * paired with either a canonical GitHub runner-loss annotation or an
- * authenticated exact terminal shutdown log.
- */
-function hasTrustedHostedRunnerLossAnnotation(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-): boolean {
-  const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
-  if (!annotations) return false;
-  const failures = annotations.filter((annotation) => annotation.annotationLevel === "failure");
-  return (
-    failures.length === 1 &&
-    failures[0]?.path === ".github" &&
-    failures[0].startLine === 1 &&
-    failures[0].startColumn === null &&
-    failures[0].endLine === 1 &&
-    failures[0].endColumn === null &&
-    failures[0].title === "" &&
-    failures[0].rawDetails === "" &&
-    failures[0].message === HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE
-  );
-}
-
-function hasCompatibleHostedRunnerShutdownAnnotations(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-  expectedMessage: string,
-): boolean {
-  const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
-  if (!annotations) return false;
-  const failures = annotations.filter((annotation) => annotation.annotationLevel === "failure");
-  const failure = failures[0];
-  return (
-    failures.length === 1 &&
-    failure?.path === ".github" &&
-    failure.startLine === failure.endLine &&
-    failure.startColumn === null &&
-    failure.endColumn === null &&
-    failure.title === "" &&
-    failure.rawDetails === "" &&
-    failure.message === expectedMessage
-  );
-}
-
-function jobLogTimestampSecond(timestamp: string): string | null {
-  const second = `${timestamp.slice(0, 19)}Z`;
-  const milliseconds = Date.parse(second);
-  return Number.isFinite(milliseconds) &&
-    new Date(milliseconds).toISOString().slice(0, 19) === timestamp.slice(0, 19)
-    ? second
-    : null;
-}
-
-function parseHostedRunnerShutdownLogTail(logTail: string): HostedRunnerShutdownLogMarker | null {
-  if (!logTail.endsWith("\n") || logTail.endsWith("\n\n")) return null;
-  const lines = logTail.slice(0, -1).split("\n");
-  const shutdownMessage = `##[error]${HOSTED_RUNNER_SHUTDOWN_MESSAGE}`;
-  const shutdownIndex = lines
-    .map((line) => JOB_LOG_TIMESTAMPED_LINE_PATTERN.exec(line)?.[2] ?? "")
-    .lastIndexOf(shutdownMessage);
-  if (shutdownIndex < 0) return null;
-  const terminalLines = lines.slice(shutdownIndex);
-  if (terminalLines.length < 3 || terminalLines.length > 3 + MAX_RUNNER_LOSS_ORPHAN_PROCESSES) {
-    return null;
-  }
-  if (terminalLines.some((line) => line.includes("\r"))) return null;
-  const parsed = terminalLines.map((line) => JOB_LOG_TIMESTAMPED_LINE_PATTERN.exec(line));
-  if (parsed.some((line) => line === null)) return null;
-  const timestamps = parsed.map((line) => line?.[1] ?? "");
-  const timestampSeconds = timestamps.map(jobLogTimestampSecond);
-  const messages = parsed.map((line) => line?.[2] ?? "");
-  const terminalMessage = messages[1];
-  const interruptedStepConclusion =
-    terminalMessage === `##[error]${HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE}`
-      ? "cancelled"
-      : terminalMessage === `##[error]${HOSTED_RUNNER_EXIT_143_MESSAGE}`
-        ? "failure"
-        : null;
-  if (
-    timestampSeconds.some((timestamp) => timestamp === null) ||
-    messages[0] !== shutdownMessage ||
-    interruptedStepConclusion === null ||
-    messages[2] !== HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE ||
-    timestamps[0]! >= timestamps[1]! ||
-    timestamps.slice(1).some((timestamp, index) => timestamp < timestamps[index]!)
-  ) {
-    return null;
-  }
-  const orphanProcesses = messages
-    .slice(3)
-    .map((message) => JOB_LOG_ORPHAN_PROCESS_PATTERN.exec(message));
-  const orphanProcessIds = orphanProcesses.map((process) => process?.[1] ?? "");
-  if (
-    orphanProcesses.some((process) => process === null) ||
-    new Set(orphanProcessIds).size !== orphanProcessIds.length
-  ) {
-    return null;
-  }
-  return {
-    shutdownTimestamp: timestamps[0]!,
-    terminalTimestamp: timestamps[1]!,
-    cleanupTimestamp: timestamps[2]!,
-    lastTimestamp: timestamps.at(-1)!,
-    annotationMessage: terminalMessage!.slice("##[error]".length),
-    interruptedStepConclusion,
-  };
-}
-
-function isBoundedWorkflowJobLogEvidence(evidence: WorkflowJobLogEvidence): boolean {
-  const tailBytes = Buffer.byteLength(evidence.tail, "utf8");
-  return (
-    /^"[^"\r\n]{1,128}"$/u.test(evidence.etag) &&
-    Number.isSafeInteger(evidence.totalBytes) &&
-    evidence.totalBytes > 0 &&
-    tailBytes > 0 &&
-    tailBytes <= evidence.totalBytes &&
-    tailBytes <= MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES
-  );
-}
-
-function hasTrustedHostedRunnerShutdownLog(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-): boolean {
-  const evidence = job.logEvidence;
-  if (!evidence || !isBoundedWorkflowJobLogEvidence(evidence)) return false;
-  const marker = parseHostedRunnerShutdownLogTail(evidence.tail);
-  if (
-    !marker ||
-    !hasCompatibleHostedRunnerShutdownAnnotations(
-      job,
-      repository,
-      workflowSha,
-      marker.annotationMessage,
-    ) ||
-    !hasTrustedHostedRunnerLossStepShapeForConclusion(job, marker.interruptedStepConclusion, {
-      allowLegacyStrandedStep: false,
-    })
-  ) {
-    return false;
-  }
-  const interruptedSteps = job.steps.filter(
-    (step) => step.status === "completed" && step.conclusion === marker.interruptedStepConclusion,
-  );
-  const interruptedStep = interruptedSteps[0];
-  if (
-    interruptedSteps.length !== 1 ||
-    !job.startedAt ||
-    !job.completedAt ||
-    !interruptedStep?.startedAt ||
-    !interruptedStep.completedAt
-  ) {
-    return false;
-  }
-  const shutdownSecond = jobLogTimestampSecond(marker.shutdownTimestamp);
-  const terminalSecond = jobLogTimestampSecond(marker.terminalTimestamp);
-  const cleanupSecond = jobLogTimestampSecond(marker.cleanupTimestamp);
-  const lastSecond = jobLogTimestampSecond(marker.lastTimestamp);
-  return (
-    shutdownSecond !== null &&
-    terminalSecond !== null &&
-    cleanupSecond !== null &&
-    lastSecond !== null &&
-    job.startedAt <= interruptedStep.startedAt &&
-    interruptedStep.startedAt <= shutdownSecond &&
-    terminalSecond === interruptedStep.completedAt &&
-    interruptedStep.completedAt <= cleanupSecond &&
-    cleanupSecond <= lastSecond &&
-    lastSecond <= job.completedAt
-  );
-}
-
-function hasTrustedHostedRunnerLossStepShapeForConclusion(
-  job: WorkflowJob,
-  interruptedStepConclusion: "cancelled" | "failure",
-  options: { allowLegacyStrandedStep: boolean },
-): boolean {
-  if (
-    job.status !== "completed" ||
-    job.conclusion !== "failure" ||
-    !Number.isSafeInteger(job.runnerId) ||
-    (job.runnerId ?? 0) < 1 ||
-    typeof job.runnerName !== "string" ||
-    !GITHUB_HOSTED_RUNNER_NAME_PATTERN.test(job.runnerName) ||
-    job.runnerGroupId !== 0 ||
-    job.runnerGroupName !== "GitHub Actions" ||
-    !Array.isArray(job.labels) ||
-    !job.labels.includes("ubuntu-latest") ||
-    job.labels.includes("self-hosted")
-  ) {
-    return false;
-  }
-  const strandedSteps = job.steps.filter(
-    (step) => step.status === "in_progress" && step.conclusion === null,
-  );
-  const strandedIndex = job.steps.findIndex(
-    (step) => step.status === "in_progress" && step.conclusion === null,
-  );
-  const legacyStrandedStep =
-    strandedSteps.length === 1 &&
-    job.steps
-      .slice(0, strandedIndex)
-      .every(
-        (step) =>
-          step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
-      ) &&
-    job.steps
-      .slice(strandedIndex + 1)
-      .every((step) => step.status === "pending" && step.conclusion === null);
-  if (
-    options.allowLegacyStrandedStep &&
-    interruptedStepConclusion === "cancelled" &&
-    legacyStrandedStep
-  ) {
-    return true;
-  }
-
-  const interruptedStepIndexes = job.steps.flatMap((step, index) =>
-    step.status === "completed" && step.conclusion === interruptedStepConclusion ? [index] : [],
-  );
-  if (interruptedStepIndexes.length !== 1) return false;
-  const interruptedIndex = interruptedStepIndexes[0]!;
-  if (job.steps[interruptedIndex]?.name === "Complete job") return false;
-  const beforeInterruption = job.steps.slice(0, interruptedIndex);
-  const afterInterruption = job.steps.slice(interruptedIndex + 1);
-  const syntheticCompletion = afterInterruption.at(-1);
-  const skippedCleanup = afterInterruption.slice(0, -1);
-  return (
-    beforeInterruption.every(
-      (step) =>
-        step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
-    ) &&
-    skippedCleanup.length > 0 &&
-    skippedCleanup.every(
-      (step) =>
-        step.name !== "Complete job" &&
-        step.status === "completed" &&
-        step.conclusion === "skipped",
-    ) &&
-    syntheticCompletion?.name === "Complete job" &&
-    syntheticCompletion.status === "completed" &&
-    syntheticCompletion.conclusion === "success"
-  );
-}
-
-function hasTrustedHostedRunnerLossStepShape(job: WorkflowJob): boolean {
-  return hasTrustedHostedRunnerLossStepShapeForConclusion(job, "cancelled", {
-    allowLegacyStrandedStep: true,
-  });
-}
-
-function hasTrustedHostedRunnerLossInspectionStepShape(job: WorkflowJob): boolean {
-  return (
-    hasTrustedHostedRunnerLossStepShape(job) ||
-    hasTrustedHostedRunnerLossStepShapeForConclusion(job, "failure", {
-      allowLegacyStrandedStep: false,
-    })
-  );
-}
-
-function hasTrustedHostedRunnerLossMarker(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-): boolean {
-  return (
-    (hasTrustedHostedRunnerLossStepShape(job) &&
-      hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha)) ||
-    hasTrustedHostedRunnerShutdownLog(job, repository, workflowSha)
-  );
-}
-
-export function verifiedRunnerLossEvidence(options: {
-  repository: string;
-  workflowSha: string;
-  workflowConclusion: string | null;
-  jobs: readonly WorkflowJob[];
-  jobDetailsAvailable: boolean;
-  jobDetailsComplete: boolean;
-}): WorkflowAttemptEvidence | null {
-  if (
-    !options.jobDetailsAvailable ||
-    !options.jobDetailsComplete ||
-    options.jobs.length === 0 ||
-    options.workflowConclusion !== "failure"
-  ) {
-    return null;
-  }
-  const hasTrustedMarker = (job: WorkflowJob): boolean =>
-    hasTrustedHostedRunnerLossMarker(job, options.repository, options.workflowSha);
-  const runnerLostMarkerCount = options.jobs.filter(hasTrustedMarker).length;
-  const otherNonPassingEvidencePresent = options.jobs.some((job) => !hasTrustedMarker(job));
-  return {
-    terminalClassificationPresent: otherNonPassingEvidencePresent,
-    jobConclusion: "failure",
-    runnerLostMarkerCount,
   };
 }
 
@@ -3520,6 +3149,7 @@ export async function retryRunnerLossPrGate(
 
     const jobDetails = await listNonPassingWorkflowJobs(repository, token, command.childRunId, 1, {
       includeAnnotations: true,
+      hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
     });
     await requireUnchangedCompletedWorkflowRun(repository, token, child, {
       childRunId: command.childRunId,
@@ -3536,6 +3166,7 @@ export async function retryRunnerLossPrGate(
       jobs: jobDetails.jobs,
       jobDetailsAvailable: true,
       jobDetailsComplete: jobDetails.complete,
+      policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
     });
     const retryDecision = runnerLossEvidence
       ? decideRetry({
@@ -3564,7 +3195,10 @@ export async function retryRunnerLossPrGate(
       token,
       command.childRunId,
       1,
-      { includeAnnotations: true },
+      {
+        includeAnnotations: true,
+        hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
+      },
     );
     await requireUnchangedCompletedWorkflowRun(repository, token, child, {
       childRunId: command.childRunId,
@@ -3583,6 +3217,7 @@ export async function retryRunnerLossPrGate(
       jobs: confirmedJobDetails.jobs,
       jobDetailsAvailable: true,
       jobDetailsComplete: confirmedJobDetails.complete,
+      policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
     });
     const confirmedRetryDecision = confirmedRunnerLossEvidence
       ? decideRetry({
@@ -4368,6 +4003,7 @@ export async function finishPrGate(options: {
       try {
         const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId, 1, {
           includeAnnotations: true,
+          hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
         });
         await requireUnchangedCompletedWorkflowRun(repository, token, child, {
           childRunId: options.childRunId,
@@ -4397,6 +4033,7 @@ export async function finishPrGate(options: {
           jobs,
           jobDetailsAvailable,
           jobDetailsComplete,
+          policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
         }),
       });
     }
