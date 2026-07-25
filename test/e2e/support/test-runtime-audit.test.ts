@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   auditTestRuntime,
+  collectRuntimeHistorySamples,
   formatRuntimeAudit,
   formatRuntimeAuditSummary,
 } from "../../../scripts/audit-test-runtime.mts";
@@ -89,6 +90,16 @@ describe("test runtime audit", () => {
         "| variable test-target | variable test | 2 | 30.0s | 50.0s | 50.0s | 20.0s | inference (40.0s, failed) |",
       );
       expect(formatRuntimeAuditSummary(rows)).toContain("## E2E Test Phase Runtime");
+      expect(collectRuntimeHistorySamples([root])[0]).toEqual({
+        target: "variable test-target",
+        scenario: "variable test",
+        durationMs: 30_000,
+        outcome: "failed",
+        phases: [
+          { label: "inference", durationMs: 40_000, outcome: "failed" },
+          { label: "install", durationMs: 8_000, outcome: "passed" },
+        ],
+      });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
