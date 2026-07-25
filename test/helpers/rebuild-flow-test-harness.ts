@@ -382,6 +382,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
+      const overrideResult = overrides.runOpenshell?.(argv);
+      if (overrideResult) return overrideResult;
       if (
         argv.join(" ") === "sandbox get alpha" ||
         argv.join(" ") === "sandbox get -g nemoclaw alpha"
@@ -393,7 +395,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           stderr: "sandbox alpha not found",
         };
       }
-      return overrides.runOpenshell ? overrides.runOpenshell(argv) : { status: 0, output: "" };
+      return { status: 0, output: "" };
     });
   const defaultRemovalReceipt = {
     entry: preDeleteSandboxEntry,

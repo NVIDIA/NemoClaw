@@ -31,7 +31,7 @@ function providerRuntime(
 ) {
   return (args: string[]) => {
     if (args[0] !== "provider" || args[1] !== "get") {
-      return { status: 0, output: "", stdout: "", stderr: "" };
+      return undefined;
     }
     const provider = args[2];
     if (!registeredProviders.includes(provider)) {
@@ -211,7 +211,10 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
           preferredInferenceApi: "openai-completions",
         },
         hydrateCredentialEnv: () => "host-provider-key",
-        runOpenshell: (args) => (providerLookups.shift() ?? registeredProvider)(args),
+        runOpenshell: (args) =>
+          args[0] === "provider"
+            ? (providerLookups.shift() ?? registeredProvider)(args)
+            : undefined,
         staleRecovery: true,
       });
       configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
@@ -281,7 +284,10 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
           preferredInferenceApi: "openai-completions",
         },
         hydrateCredentialEnv: () => "host-provider-key",
-        runOpenshell: (args) => (providerLookups.shift() ?? indeterminateProvider)(args),
+        runOpenshell: (args) =>
+          args[0] === "provider"
+            ? (providerLookups.shift() ?? indeterminateProvider)(args)
+            : undefined,
         staleRecovery: true,
       });
       configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {

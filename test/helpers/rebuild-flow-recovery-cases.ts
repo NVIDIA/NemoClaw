@@ -456,7 +456,7 @@ export function registerRebuildFlowRecoveryTests(): void {
           if (command === "sandbox get -g nemoclaw alpha") {
             return { status: 0, output: "Phase: Ready", stdout: "Phase: Ready", stderr: "" };
           }
-          return { status: 0, output: "" };
+          return undefined;
         },
       });
 
