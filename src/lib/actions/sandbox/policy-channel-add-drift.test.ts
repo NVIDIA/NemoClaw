@@ -194,7 +194,7 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
       "  Preset 'pypi' was applied as a custom preset (--from-file).",
     );
     expect(errSpy).toHaveBeenCalledWith(
-      `  Edit and re-apply it with --from-file, or run '${CLI_NAME} alpha policy-remove pypi' first.`,
+      `  Edit and re-apply it with --from-file, or run '${CLI_NAME} alpha policy remove pypi' first.`,
     );
     expect(gatewayStateMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
     expect(errSpy).toHaveBeenCalledWith(
       "  Could not read the live sandbox policy to compare (is the sandbox gateway running?).",
     );
-    expect(errSpy).not.toHaveBeenCalledWith(expect.stringContaining("policy-remove"));
+    expect(errSpy).not.toHaveBeenCalledWith(expect.stringContaining("policy remove"));
     expect(applyPresetMock).not.toHaveBeenCalled();
     expect(refreshSpy).not.toHaveBeenCalled();
   });

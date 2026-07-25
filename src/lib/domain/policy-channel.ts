@@ -30,6 +30,13 @@ export type PolicyRemoveOptions = {
   force?: boolean;
 };
 
+export type PolicyBaselineOptions = {
+  key?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+};
+
 function customPolicySourceFromOptions(options: PolicyAddOptions): CustomPolicySource {
   if (options.fromFile !== undefined && options.fromDir !== undefined) {
     return { kind: "error", message: "--from-file and --from-dir are mutually exclusive." };

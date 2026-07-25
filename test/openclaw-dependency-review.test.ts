@@ -275,6 +275,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain(
       "The mcporter locked graph reported no findings across `138` dependencies",
     );
+    expect(review).toContain("`@hono/node-server` to patched release `2.0.11`");
     expect(review).toContain("GHSA-frvp-7c67-39w9");
     expect(review).toContain("Hono finding remains in the reviewed OpenClaw graph");
     expect(review).toContain("GHSA-v422-hmwv-36x6");
@@ -668,8 +669,8 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
 
   it("accepts reviewed base-image versions and rejects injected build arguments", () => {
     const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
-    const buildAndPush = baseImages.jobs["build-and-push"] as WorkflowJob;
-    const guard = requiredStep(buildAndPush, "Validate production Docker build args");
+    const buildOpenClawPlatforms = baseImages.jobs["build-openclaw-platforms"] as WorkflowJob;
+    const guard = requiredStep(buildOpenClawPlatforms, "Validate production Docker build args");
 
     for (const [input, expectedOutput] of [
       ["", "openclaw_build_arg=\n"],

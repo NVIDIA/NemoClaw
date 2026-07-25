@@ -284,7 +284,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     }
     if (failedPresets.length > 0) {
       console.error(`  ${YW}\u26a0${R} Failed to restore presets: ${failedPresets.join(", ")}`);
-      console.error(`    Re-apply manually with: ${CLI_NAME} ${sandboxName} policy-add`);
+      console.error(`    Re-apply manually with: ${CLI_NAME} ${sandboxName} policy add`);
     }
   }
 
