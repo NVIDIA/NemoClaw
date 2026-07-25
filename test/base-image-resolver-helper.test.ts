@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -317,6 +317,22 @@ printf 'unreachable'`,
     ["digest mismatch", "downloaded layer does not match the expected digest"],
     ["invalid reference", "invalid reference format"],
     ["platform incompatibility", "no matching manifest for linux/arm64 in the manifest list"],
+    ["HTTP bad request", "failed to do request: unexpected HTTP status: 400 Bad Request"],
+    ["HTTP request timeout", "failed to do request: unexpected HTTP status: 408 Request Timeout"],
+    ["HTTP client rejection", "failed to do request: unexpected HTTP status: 418 I'm a teapot"],
+    [
+      "HTTP client closed request",
+      "failed to do request: unexpected HTTP status: 499 Client Closed",
+    ],
+    [
+      "certificate verification rejection",
+      "failed to do request: x509: certificate signed by unknown authority; connection reset",
+    ],
+    [
+      "TLS certificate rejection",
+      "failed to do request: remote error: tls: bad certificate; service unavailable",
+    ],
+    ["generic request rejection", "failed to do request"],
     ["unclassified daemon rejection", "daemon policy rejected this pull"],
   ])("does not retry a deterministic %s failure", (_name, diagnostic) => {
     const bin = fakeDocker(`
@@ -361,38 +377,137 @@ resolver_pull example:test`,
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("surfaces sanitized terminal diagnostics instead of suppressing stderr", () => {
+  it("redacts complete credential headers and prevents log-command injection", () => {
     const basicSecret = "registry-password";
+    const cookieSecret = "session-cookie-secret";
+    const cookieSecondSecret = "second-cookie-secret";
     const foldedSecret = "folded-registry-secret";
+    const negotiateSecret = "negotiate-registry-secret";
+    const proxySecret = "proxy-registry-secret";
     const querySecret = "registry-query-token";
+    const registryAuthSecret = "registry-auth-secret";
+    const registryConfigSecret = "registry-config-secret";
+    const setCookieSecret = "set-cookie-secret";
     const bin = fakeDocker(`
-printf "%s\\n" \
+printf "%s\\r\\n" \
   "pull access denied at https://registry-user:$BASIC_SECRET@example.test/v2/image?token=$QUERY_SECRET" \
+  "Authorization: Negotiate $NEGOTIATE_SECRET" \
+  "Proxy-Authorization: CustomScheme $PROXY_SECRET" \
+  "Cookie: session=$COOKIE_SECRET; second=$COOKIE_SECOND_SECRET" \
+  "Set-Cookie: session=$SET_COOKIE_SECRET; Secure; HttpOnly, second=also-secret" \
+  "X-Registry-Auth: $REGISTRY_AUTH_SECRET" \
+  "X-Registry-Config: {\\"auth\\":\\"$REGISTRY_CONFIG_SECRET\\"}" \
   "Authorization:" \
-  "  Bearer $FOLDED_SECRET" >&2
+  "  Bearer $FOLDED_SECRET" \
+  $'\\033[31m\\r::warning::forged-pull-command' >&2
 exit 1`);
 
     const result = run("resolver_pull example:test", {
       BASIC_SECRET: basicSecret,
+      COOKIE_SECRET: cookieSecret,
+      COOKIE_SECOND_SECRET: cookieSecondSecret,
       FOLDED_SECRET: foldedSecret,
+      NEGOTIATE_SECRET: negotiateSecret,
       PATH: `${bin}:${process.env.PATH}`,
+      PROXY_SECRET: proxySecret,
       QUERY_SECRET: querySecret,
+      REGISTRY_AUTH_SECRET: registryAuthSecret,
+      REGISTRY_CONFIG_SECRET: registryConfigSecret,
+      SET_COOKIE_SECRET: setCookieSecret,
     });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("pull access denied");
     expect(result.stderr).toContain("[redacted]");
-    expect(result.stderr).not.toContain(basicSecret);
-    expect(result.stderr).not.toContain(foldedSecret);
-    expect(result.stderr).not.toContain(querySecret);
+    for (const secret of [
+      basicSecret,
+      cookieSecret,
+      cookieSecondSecret,
+      foldedSecret,
+      negotiateSecret,
+      proxySecret,
+      querySecret,
+      registryAuthSecret,
+      registryConfigSecret,
+      setCookieSecret,
+    ]) {
+      expect(result.stderr).not.toContain(secret);
+    }
+    expect(result.stderr).not.toContain("\u001b");
+    expect(result.stderr).not.toContain("\n::warning::forged-pull-command");
   });
 
-  it("prevents an exhausted transient pull from triggering a local Hermes build", () => {
+  it.each([
+    [
+      "multiple Cookie values",
+      "Cookie: first=cookie-one; second=cookie-two; preferences=dark mode",
+      ["cookie-one", "cookie-two", "dark mode"],
+    ],
+    [
+      "multiple Set-Cookie values",
+      "Set-Cookie: first=set-cookie-one; Secure, second=set-cookie-two; HttpOnly",
+      ["set-cookie-one", "set-cookie-two"],
+    ],
+    [
+      "Docker registry authorization",
+      "X-Registry-Auth: registry-auth-value",
+      ["registry-auth-value"],
+    ],
+    [
+      "Docker registry configuration",
+      'X-Registry-Config: {"auths":{"registry.example":{"auth":"registry-config-value"}}}',
+      ["registry-config-value"],
+    ],
+    [
+      "arbitrary authorization scheme",
+      "Authorization: Negotiate negotiate-value",
+      ["negotiate-value"],
+    ],
+    [
+      "arbitrary proxy authorization scheme",
+      "Proxy-Authorization: CustomScheme proxy-value",
+      ["proxy-value"],
+    ],
+    [
+      "folded authorization value",
+      "Authorization:\r\n\tNegotiate folded-negotiate-value",
+      ["folded-negotiate-value"],
+    ],
+  ])("redacts a complete %s", (_name, raw, secrets) => {
+    const result = run('printf "%s" "$RAW_DIAGNOSTIC" | resolver_sanitize_pull_diagnostic', {
+      RAW_DIAGNOSTIC: raw,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("[redacted]");
+    for (const secret of secrets) expect(result.stdout).not.toContain(secret);
+  });
+
+  it("bounds captured stderr and preserves a deterministic Docker status", () => {
+    const bin = fakeDocker(`
+printf "%s\\n" "daemon policy rejected this pull" >&2
+head -c 100000 /dev/zero | tr '\\0' x >&2
+exit 42`);
+
+    const result = run("resolver_pull example:test", {
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: bin,
+    });
+
+    expect(result.status).toBe(42);
+    expect(result.stderr).toContain("daemon policy rejected this pull");
+    expect(result.stderr).toContain("diagnostic truncated at 65536 bytes");
+    expect(result.stderr.length).toBeLessThan(1_000);
+    expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
+  });
+
+  it("bounds exhausted transient output and prevents a local Hermes build", () => {
     const bin = fakeDocker(`
 printf "%s\\0" "$@" >> "$DOCKER_LOG"
 printf "\\0" >> "$DOCKER_LOG"
 if [[ "$1" == pull ]]; then
   printf "%s\\n" "unexpected status code 503: Service Unavailable" >&2
+  head -c 100000 /dev/zero | tr '\\0' x >&2
   exit 1
 fi
 if [[ "$1" == build ]]; then exit 42; fi
@@ -416,6 +531,7 @@ exit 1`);
         GITHUB_ACTION_PATH: path.join(repoRoot, ".github/actions/resolve-hermes-base-image"),
         GITHUB_ENV: githubEnv,
         PATH: `${bin}:${process.env.PATH}`,
+        RUNNER_TEMP: bin,
         SLEEP_LOG: sleepLog,
       },
     });
@@ -423,11 +539,13 @@ exit 1`);
     expect(result.status).toBe(75);
     expect(readFileSync(githubEnv, "utf8")).toBe("");
     expect(readFileSync(sleepLog, "utf8")).toBe("1\n2\n");
+    expect(result.stderr.match(/diagnostic truncated at 65536 bytes/g)).toHaveLength(3);
     const calls = readFileSync(dockerLog, "utf8")
       .split("\0\0")
       .filter(Boolean)
       .map((call) => call.split("\0").filter(Boolean));
     expect(calls.filter((args) => args[0] === "pull")).toHaveLength(3);
     expect(calls.some((args) => args[0] === "build")).toBe(false);
+    expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
   });
 });
