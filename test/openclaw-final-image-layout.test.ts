@@ -28,7 +28,7 @@ describe("OpenClaw final image layout", () => {
       },
       {
         stage: "openclaw-patch-payload",
-        copies: 8,
+        copies: 9,
         metadata: "/ /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw",
       },
       {
@@ -73,6 +73,7 @@ describe("OpenClaw final image layout", () => {
       "/scripts/patch-bundled-npm-tar.mts 'root:root:755'",
       "/opt/nemoclaw/openclaw.plugin.json 'root:root:644'",
       "/usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755'",
+      "/usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts 'root:root:755'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root:700'",
       "/usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
