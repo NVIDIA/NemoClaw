@@ -206,7 +206,7 @@ describe("Hermes GPU boundary", () => {
     }, validateE2eWorkflowBoundary);
 
     expect(insufficient).toContain(message);
-    expect(additional).not.toContain(message);
+    expect(additional).toEqual([]);
     expect(excessive).toContain(message);
   });
 
