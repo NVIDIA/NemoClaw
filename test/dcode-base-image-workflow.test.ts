@@ -21,12 +21,19 @@ type WorkflowStep = {
 
 type PublisherMatrixEntry = {
   agent?: string;
+  arch?: string;
   display_name?: string;
   dockerfile?: string;
   image?: string;
+  platform?: string;
+  runner?: string;
 };
 
 type WorkflowJob = {
+  name?: string;
+  needs?: string | string[];
+  "runs-on"?: string;
+  "timeout-minutes"?: number;
   strategy?: {
     "fail-fast"?: boolean;
     matrix?: { include?: PublisherMatrixEntry[] };
@@ -80,15 +87,36 @@ function publisherBuildSteps(candidate: Workflow): Omit<Publisher, "dockerfile" 
 
 function publisherJobs(candidate: Workflow): Publisher[] {
   return publisherBuildSteps(candidate).flatMap(({ jobName, job, build, buildIndex }) =>
-    (job.strategy?.matrix?.include ?? []).map((matrix) => ({
-      jobName: `${jobName} (${matrix.display_name ?? matrix.agent ?? "unnamed"})`,
-      job,
-      build,
-      buildIndex,
-      dockerfile: renderMatrixValue(build.with?.file, matrix),
-      matrix,
-    })),
+    (job.strategy?.matrix?.include ?? [])
+      .filter((matrix) => matrix.display_name)
+      .map((matrix) => ({
+        jobName: `${jobName} (${matrix.display_name})`,
+        job,
+        build,
+        buildIndex,
+        dockerfile: renderMatrixValue(build.with?.file, matrix),
+        matrix,
+      })),
   );
+}
+
+function openClawPlatformPublishers(candidate: Workflow): Publisher[] {
+  const jobName = "build-openclaw-platforms";
+  const job = candidate.jobs?.[jobName];
+  const steps = job?.steps ?? [];
+  const buildIndex = steps.findIndex((step) => step.uses?.startsWith("docker/build-push-action@"));
+  const build = steps[buildIndex];
+  if (!job || !build) {
+    return [];
+  }
+  return (job.strategy?.matrix?.include ?? []).map((matrix) => ({
+    jobName: `${jobName} (${matrix.arch ?? "unnamed"})`,
+    job,
+    build,
+    buildIndex,
+    dockerfile: renderMatrixValue(build.with?.file, matrix),
+    matrix,
+  }));
 }
 
 function copiedInputs(dockerfile: string): string[] {
@@ -229,7 +257,7 @@ describe("base-image publication behavior", () => {
   // source-shape-contract: security -- Publisher mutations must preserve immutable actions, guarded arguments, and trusted registry cache ownership
   it("accepts every discovered publisher and rejects supply-chain mutations", () => {
     const publishers = publisherJobs(workflow);
-    expect(publisherBuildSteps(workflow)).toHaveLength(1);
+    expect(publisherBuildSteps(workflow)).toHaveLength(2);
     expect(
       publishers.map(({ dockerfile, matrix }) => ({
         agent: matrix.agent,
@@ -237,11 +265,6 @@ describe("base-image publication behavior", () => {
         image: matrix.image,
       })),
     ).toEqual([
-      {
-        agent: "openclaw",
-        dockerfile: "Dockerfile.base",
-        image: "nvidia/nemoclaw/sandbox-base",
-      },
       {
         agent: "hermes",
         dockerfile: "agents/hermes/Dockerfile.base",
@@ -304,8 +327,100 @@ describe("base-image publication behavior", () => {
     );
   });
 
+  it("publishes OpenClaw atomically from native architecture runners", () => {
+    const publishers = openClawPlatformPublishers(workflow);
+    const platformJob = workflow.jobs?.["build-openclaw-platforms"];
+    const manifestJob = workflow.jobs?.["build-and-push-openclaw"];
+
+    expect(platformJob?.["timeout-minutes"]).toBe(60);
+    expect(platformJob?.strategy?.["fail-fast"]).toBe(false);
+    expect(
+      publishers.map(({ matrix }) => ({
+        agent: matrix.agent,
+        arch: matrix.arch,
+        platform: matrix.platform,
+        runner: matrix.runner,
+      })),
+    ).toEqual([
+      {
+        agent: "openclaw",
+        arch: "amd64",
+        platform: "linux/amd64",
+        runner: "ubuntu-24.04",
+      },
+      {
+        agent: "openclaw",
+        arch: "arm64",
+        platform: "linux/arm64",
+        runner: "ubuntu-24.04-arm",
+      },
+    ]);
+
+    for (const { job, build, buildIndex, dockerfile, matrix } of publishers) {
+      const steps = job.steps ?? [];
+      const guardIndex = steps.findIndex((step) =>
+        (step.run ?? "").includes("scripts/check-production-build-args.sh"),
+      );
+      const digestExport = steps.find((step) => step.name === "Export platform digest");
+      const digestUpload = steps.find((step) => step.name === "Upload platform digest");
+      const cacheSuffix = `buildcache-${matrix.arch}`;
+
+      expect(dockerfile).toBe("Dockerfile.base");
+      expect(job["runs-on"]).toBe("${{ matrix.runner }}");
+      expect(steps.some((step) => step.uses?.startsWith("docker/setup-qemu-action@"))).toBe(false);
+      expect(guardIndex).toBeGreaterThanOrEqual(0);
+      expect(guardIndex).toBeLessThan(buildIndex);
+      expect(hasAgentScopedOpenClawVersion(steps[guardIndex])).toBe(true);
+      expect(build.with?.platforms).toBe("${{ matrix.platform }}");
+      expect(build.with?.outputs).toBe(
+        "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true",
+      );
+      expect(build.with?.tags).toBeUndefined();
+      expect(renderMatrixValue(build.with?.["cache-from"], matrix)).toContain(cacheSuffix);
+      expect(renderMatrixValue(build.with?.["cache-to"], matrix)).toContain(
+        `${cacheSuffix},mode=max`,
+      );
+      expect(digestExport?.run).toContain("^sha256:[0-9a-f]{64}$");
+      expect(digestUpload?.with?.name).toBe("openclaw-base-digest-${{ matrix.arch }}");
+      for (const step of steps.filter((step) => step.uses)) {
+        expect(step.uses, `${matrix.arch}: ${step.name}`).toMatch(FULL_SHA_ACTION);
+      }
+    }
+
+    expect(manifestJob?.name).toBe("Build and push OpenClaw base image");
+    expect(manifestJob?.needs).toBe("build-openclaw-platforms");
+    expect(manifestJob?.["timeout-minutes"]).toBe(10);
+    expect(
+      manifestJob?.steps?.some((step) => step.uses?.startsWith("docker/build-push-action@")),
+    ).toBe(false);
+    const download = manifestJob?.steps?.find((step) => step.name === "Download platform digests");
+    const metadata = manifestJob?.steps?.find((step) => step.id === "meta");
+    const createManifest = manifestJob?.steps?.find(
+      (step) => step.name === "Create and verify multi-platform manifest",
+    );
+    expect(download?.with).toMatchObject({
+      pattern: "openclaw-base-digest-*",
+      "merge-multiple": true,
+    });
+    expect(metadata?.with?.images).toBe("${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base");
+    expect(metadata?.with?.tags).toContain("type=raw,value=latest");
+    expect(metadata?.with?.tags).toContain("type=ref,event=tag");
+    expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
+    expect(createManifest?.run).toContain('"${#digest_files[@]}" -ne 2');
+    expect(createManifest?.run).toContain(
+      'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
+    );
+    expect(createManifest?.run).toContain('"amd64,arm64"');
+    for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
+      expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
+    }
+  });
+
   it("keeps shared apt dependencies pinned and aligned across discovered base images (#6679)", () => {
-    const dockerfiles = publisherJobs(workflow).map(({ dockerfile }) => dockerfile);
+    const dockerfiles = [
+      ...openClawPlatformPublishers(workflow).map(({ dockerfile }) => dockerfile),
+      ...publisherJobs(workflow).map(({ dockerfile }) => dockerfile),
+    ].filter((dockerfile, index, all) => all.indexOf(dockerfile) === index);
     const curlVersions = dockerfiles.map((dockerfile) => pinnedAptVersion(dockerfile, "curl"));
 
     expect(new Set(dockerfiles).size).toBe(dockerfiles.length);
