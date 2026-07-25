@@ -40,7 +40,7 @@ function runUsageNoticePrompt(answer: string) {
 }
 
 describe("installer third-party software acceptance prompt", () => {
-  it("does not accept a bare y and suggests the full word yes (#7469)", () => {
+  it("does not accept a bare y when the re-prompt reaches EOF (#7469)", () => {
     const { result, stateExists } = runUsageNoticePrompt("y\n");
     const output = `${result.stdout}${result.stderr}`;
 
@@ -48,5 +48,16 @@ describe("installer third-party software acceptance prompt", () => {
     expect(output).toContain("Did you mean 'yes'?");
     expect(output).toContain("Installation cancelled");
     expect(stateExists).toBe(false);
+  });
+
+  it("re-prompts after a bare y and accepts only a subsequent yes (#7469)", () => {
+    const { result, stateExists } = runUsageNoticePrompt("y\nyes\n");
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("Did you mean 'yes'?");
+    expect(output.match(/Type 'yes'/g)).toHaveLength(2);
+    expect(output).not.toContain("Installation cancelled");
+    expect(stateExists).toBe(true);
   });
 });
