@@ -98,58 +98,62 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  describe.runIf(spawnSync("expect", ["-v"], { encoding: "utf8" }).status === 0)(
-    "paired Expect behavior",
-    () => {
-      function runPair(command: string, timeoutSeconds = 1) {
-        const script = `set timeout ${timeoutSeconds}
+  describe.runIf(
+    spawnSync("expect", ["-v"], {
+      encoding: "utf8",
+      timeout: 5000,
+      killSignal: "SIGKILL",
+    }).status === 0,
+  )("paired Expect behavior", () => {
+    function runPair(command: string, timeoutSeconds = 1) {
+      const script = `set timeout ${timeoutSeconds}
 proc mark {name} { puts "ISSUE6194_MARK $name" }
 ${buildIssue6194PairExpectProcedure()}spawn sh -c {${command}}
 expect_pair_or_exit {FIRST_SIGNAL} first {SECOND_SIGNAL} second 20 21 22 23
 exit 0
 `;
-        const startedAt = Date.now();
-        const result = spawnSync("expect", ["-c", script], {
-          encoding: "utf8",
-          timeout: 2500,
-        });
-        return { ...result, elapsedMs: Date.now() - startedAt };
-      }
-
-      it.each([
-        ["first then second", "printf 'FIRST_SIGNAL\\n'; sleep 0.05; printf 'SECOND_SIGNAL\\n'"],
-        ["second then first", "printf 'SECOND_SIGNAL\\n'; sleep 0.05; printf 'FIRST_SIGNAL\\n'"],
-      ])("accepts %s", (_name, command) => {
-        const result = runPair(command);
-
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        expect(result.stdout).toContain("ISSUE6194_MARK first");
-        expect(result.stdout).toContain("ISSUE6194_MARK second");
+      const startedAt = Date.now();
+      const result = spawnSync("expect", ["-c", script], {
+        encoding: "utf8",
+        timeout: 2500,
+        killSignal: "SIGKILL",
       });
+      return { ...result, elapsedMs: Date.now() - startedAt };
+    }
 
-      it.each([
-        ["first signal timeout", "printf 'SECOND_SIGNAL\\n'; sleep 2", 20],
-        ["first signal EOF", "printf 'SECOND_SIGNAL\\n'", 21],
-        ["second signal timeout", "printf 'FIRST_SIGNAL\\n'; sleep 2", 22],
-        ["second signal EOF", "printf 'FIRST_SIGNAL\\n'", 23],
-      ])("preserves the %s exit", (_name, command, expectedExit) => {
-        const result = runPair(command);
+    it.each([
+      ["first then second", "printf 'FIRST_SIGNAL\\n'; sleep 0.05; printf 'SECOND_SIGNAL\\n'"],
+      ["second then first", "printf 'SECOND_SIGNAL\\n'; sleep 0.05; printf 'FIRST_SIGNAL\\n'"],
+    ])("accepts %s", (_name, command) => {
+      const result = runPair(command);
 
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(expectedExit);
-      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("ISSUE6194_MARK first");
+      expect(result.stdout).toContain("ISSUE6194_MARK second");
+    });
 
-      it("keeps repeated redraws inside one timeout", () => {
-        const repeatedSecondSignals = Array.from(
-          { length: 30 },
-          () => "printf 'SECOND_SIGNAL\\n'; sleep 0.1",
-        ).join("; ");
-        const result = runPair(`${repeatedSecondSignals}; sleep 2`);
+    it.each([
+      ["first signal timeout", "printf 'SECOND_SIGNAL\\n'; sleep 2", 20],
+      ["first signal EOF", "printf 'SECOND_SIGNAL\\n'", 21],
+      ["second signal timeout", "printf 'FIRST_SIGNAL\\n'; sleep 2", 22],
+      ["second signal EOF", "printf 'FIRST_SIGNAL\\n'", 23],
+    ])("preserves the %s exit", (_name, command, expectedExit) => {
+      const result = runPair(command);
 
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(20);
-        expect(result.elapsedMs).toBeLessThan(2200);
-      });
-    },
-  );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(expectedExit);
+    });
+
+    it("keeps repeated redraws inside one timeout", () => {
+      const repeatedSecondSignals = Array.from(
+        { length: 30 },
+        () => "printf 'SECOND_SIGNAL\\n'; sleep 0.1",
+      ).join("; ");
+      const result = runPair(`${repeatedSecondSignals}; sleep 2`);
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(20);
+      expect(result.elapsedMs).toBeLessThan(2200);
+    });
+  });
 
   it("confirms the two-step Ctrl+C exit without waiting for the global timeout", () => {
     const script = buildIssue6194TuiExpectScript();
