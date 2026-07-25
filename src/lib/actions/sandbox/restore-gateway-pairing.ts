@@ -57,11 +57,11 @@ export async function establishRestoredSandboxGatewayPairing(
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
   try {
-    // Clone creation starts the agent before the snapshot replaces its runtime
-    // state. Restart through the existing supervisor boundary so the restored
-    // state is observed without replacing the OpenShell control-plane session.
-    deps.restartRestoredSandboxGateway(targetSandbox);
     for (let attempt = 0; attempt < RESTORE_GATEWAY_PAIRING_ATTEMPTS; attempt += 1) {
+      // Registration approved by the first pass is not visible until the
+      // gateway restarts. Repeat supervisor-mediated restart and host-forward
+      // recovery before every bounded attempt.
+      deps.restartRestoredSandboxGateway(targetSandbox);
       deps.warmupScopeUpgrade(targetSandbox);
       deps.autoPairScopeApproval(targetSandbox);
       if (deps.verifyGatewayPairing(targetSandbox)) {

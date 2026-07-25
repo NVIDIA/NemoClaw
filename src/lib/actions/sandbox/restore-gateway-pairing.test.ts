@@ -66,10 +66,43 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       "warmup",
       "approve",
       "verify",
+      "restart",
       "warmup",
       "approve",
       "verify",
     ]);
+  });
+
+  it("restarts the gateway before verifying registration approved by the first attempt (#7431)", async () => {
+    let lifecycleGeneration = 0;
+    let approvedGeneration: number | null = null;
+    let approvalPending = false;
+    const restartRestoredSandboxGateway = vi.fn(() => {
+      lifecycleGeneration += 1;
+    });
+    const warmupScopeUpgrade = vi.fn(() => {
+      if (approvedGeneration === null) approvalPending = true;
+    });
+    const autoPairScopeApproval = vi.fn(() => {
+      if (!approvalPending) return;
+      approvedGeneration = lifecycleGeneration;
+      approvalPending = false;
+    });
+    const verifyGatewayPairing = vi.fn(
+      () => approvedGeneration !== null && lifecycleGeneration > approvedGeneration,
+    );
+
+    await establishRestoredSandboxGatewayPairing("beta", {
+      restartRestoredSandboxGateway,
+      warmupScopeUpgrade,
+      autoPairScopeApproval,
+      verifyGatewayPairing,
+    });
+
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
+    expect(autoPairScopeApproval).toHaveBeenCalledTimes(2);
+    expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
   });
 
   it("fails before pairing when the restored gateway cannot restart (#7431)", async () => {
@@ -112,18 +145,20 @@ describe("establishRestoredSandboxGatewayPairing", () => {
   });
 
   it("fails when two authenticated verification runs cannot use the restored gateway (#7431)", async () => {
+    const restartRestoredSandboxGateway = vi.fn();
     const warmupScopeUpgrade = vi.fn();
     const autoPairScopeApproval = vi.fn();
     const verifyGatewayPairing = vi.fn(() => false);
 
     await expect(
       establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway: vi.fn(() => {}),
+        restartRestoredSandboxGateway,
         warmupScopeUpgrade,
         autoPairScopeApproval,
         verifyGatewayPairing,
       }),
     ).rejects.toThrow("authenticated gateway verification run did not succeed");
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
     expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
     expect(autoPairScopeApproval).toHaveBeenCalledTimes(2);
     expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
