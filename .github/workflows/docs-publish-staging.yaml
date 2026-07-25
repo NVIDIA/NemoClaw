@@ -130,6 +130,14 @@ jobs:
               continue
             fi
             preview_url="https://${FERN_ORG}-preview-${preview_id}.docs.buildwithfern.com${INSTANCE_PATH}"
-            npx --yes "fern-api@${FERN_VERSION}" docs preview delete "$preview_url"
+            if ! delete_output=$(npx --yes "fern-api@${FERN_VERSION}" docs preview delete "$preview_url" 2>&1); then
+              if grep -Fxq "Domain not registered" <<< "$delete_output"; then
+                echo "::notice::Fern preview ${preview_id} does not exist."
+                continue
+              fi
+              printf '%s\n' "$delete_output" >&2
+              exit 1
+            fi
+            printf '%s\n' "$delete_output"
             echo "Deleted Fern preview ${preview_id}."
           done <<< "$PREVIEW_IDS"

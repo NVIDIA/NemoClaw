@@ -25,7 +25,7 @@ import { InferenceSetError } from "./inference-set-error";
  */
 export type RegistryInferenceMetadata = Pick<
   SandboxEntry,
-  "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "nimContainer"
+  "endpointUrl" | "endpointSource" | "credentialEnv" | "preferredInferenceApi" | "nimContainer"
 >;
 
 export interface ExplicitCustomRouteOptions {
@@ -192,6 +192,7 @@ function explicitCustomProviderMetadataWithoutDns(
   // borrowing from an unrelated onboard session or global OpenShell provider.
   return {
     endpointUrl: normalizeCustomEndpointUrlWithoutDns(options.endpointUrl),
+    endpointSource: "inference-set",
     credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
     preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
     nimContainer: null,
@@ -215,6 +216,7 @@ function matchingSessionMetadata(options: {
   }
   return {
     endpointUrl: session.endpointUrl,
+    endpointSource: null,
     credentialEnv: session.credentialEnv ?? null,
     preferredInferenceApi: session.preferredInferenceApi ?? null,
     nimContainer: session.nimContainer ?? null,
@@ -234,6 +236,7 @@ function registryMetadataForProviderSwitch(options: {
   if (entry.provider === provider) {
     return {
       endpointUrl: entry.endpointUrl ?? null,
+      endpointSource: entry.endpointSource ?? null,
       credentialEnv: entry.credentialEnv ?? null,
       preferredInferenceApi: entry.preferredInferenceApi ?? null,
       nimContainer: entry.nimContainer ?? null,
@@ -250,6 +253,7 @@ function registryMetadataForProviderSwitch(options: {
   }
   return {
     endpointUrl: null,
+    endpointSource: null,
     credentialEnv: null,
     preferredInferenceApi: null,
     nimContainer: null,
@@ -324,6 +328,7 @@ export async function finalizeInferenceSetRoute(options: {
   provider: string;
   model: string;
   canReuseRecordedRoute: boolean;
+  onboardEndpointUrl: string | null;
   getSandboxes: () => SandboxEntry[];
   rewriteUrlWithDnsPinning: RewriteConfigUrlsWithDnsPinning;
 }): Promise<{
@@ -338,15 +343,29 @@ export async function finalizeInferenceSetRoute(options: {
     };
   }
   let endpointUrl: string;
+  let endpointSource: RegistryInferenceMetadata["endpointSource"];
   try {
-    // A supplied endpoint always goes through the host DNS-pinning SSRF guard,
-    // even when it equals the value already recorded for this sandbox. The
-    // registry value is not exclusive onboarding provenance because inference
-    // set persists it too, so equality must never authorize a guard bypass.
-    endpointUrl = await normalizeCustomEndpointUrl(
+    const suppliedEndpoint = normalizeCustomEndpointUrlWithoutDns(
       prepared.preliminaryExplicitMetadata.endpointUrl,
-      options.rewriteUrlWithDnsPinning,
     );
+    const onboardEndpoint = options.onboardEndpointUrl
+      ? normalizeCustomEndpointUrlWithoutDns(options.onboardEndpointUrl)
+      : null;
+    // The recorded URL alone is not an authority boundary because inference
+    // set writes it too. Bypass DNS re-resolution only when the registry also
+    // carries the endpoint's onboarding source and the canonical identities
+    // match exactly. Missing, inference-set, or mismatched provenance remains
+    // on the full DNS-pinning SSRF path (#6321).
+    if (onboardEndpoint !== null && suppliedEndpoint === onboardEndpoint) {
+      endpointUrl = suppliedEndpoint;
+      endpointSource = "onboard";
+    } else {
+      endpointUrl = await normalizeCustomEndpointUrl(
+        suppliedEndpoint,
+        options.rewriteUrlWithDnsPinning,
+      );
+      endpointSource = "inference-set";
+    }
   } catch (error) {
     // Only augment the SSRF/DNS-pinning rejection. Missing or malformed URLs
     // keep their original diagnostics so the guidance cannot contradict them.
@@ -369,6 +388,7 @@ export async function finalizeInferenceSetRoute(options: {
   const registryMetadata: RegistryInferenceMetadata = {
     ...prepared.preliminaryExplicitMetadata,
     endpointUrl,
+    endpointSource,
   };
   assertGatewayRouteCompatibility({
     gatewayName: prepared.gatewayName,

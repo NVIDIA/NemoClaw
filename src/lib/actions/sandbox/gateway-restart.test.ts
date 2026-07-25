@@ -21,7 +21,7 @@ describe("gateway restart failure markers", () => {
       ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
       [
         "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement",
-        "privileged control unavailable",
+        "supervisor unavailable",
       ],
       ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
       ["SUPERVISOR_REBUILD_REQUIRED", "privileged control unavailable"],
@@ -189,6 +189,36 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
+  it("distinguishes a supervisor that becomes unavailable during replacement (#7484)", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps({
+        requestGatewaySupervisorAction: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr: [
+            "SUPERVISOR_UNAVAILABLE",
+            "NEMOCLAW_CONTROL_STAGE=await-replacement",
+            "NEMOCLAW_SUPERVISOR_PID=40",
+            "NEMOCLAW_GATEWAY_PID=0",
+          ].join("\n"),
+        })),
+      });
+      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+
+      expect(result).toMatchObject({
+        ok: false,
+        failureLayer: "supervisor unavailable",
+        detail: expect.stringContaining("NEMOCLAW_CONTROL_STAGE=await-replacement"),
+      });
+      expect(console.error).toHaveBeenCalledWith(
+        "  Failure layer: supervisor unavailable - gateway restart failed for 'alpha'.",
+      );
+    } finally {
+      restore();
+    }
+  });
+
   it("reports Hermes boundary refusals without hiding diagnostics in quiet mode", () => {
     const restore = silenceConsole();
     try {
@@ -262,6 +292,57 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       expect(errorOutput).toContain("OPENAI_API_KEY=<REDACTED>");
       expect(errorOutput).not.toContain("\u001b");
       expect(errorOutput).not.toContain("sk-review-secret");
+    } finally {
+      restore();
+    }
+  });
+
+  it("prints bounded redacted evidence for a Hermes health timeout (#7484)", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps({
+        requestGatewaySupervisorAction: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr: [
+            "GATEWAY_HEALTH_TIMEOUT",
+            "NEMOCLAW_CONTROL_STAGE=await-replacement",
+            "NEMOCLAW_SUPERVISOR_PID=40",
+            "NEMOCLAW_GATEWAY_PID=5252",
+            "\u001b[31mNEMOCLAW_START_LOG=[gateway] Hermes gateway launch failed; token=sk-review-secret\u0007",
+            "NEMOCLAW_START_LOG=[gateway] Hermes URL https://user:password@example.test/path?token=query-secret",
+            "NEMOCLAW_START_LOG=[gateway] Hermes HF_TOKEN=hf-review-secret",
+            ...Array.from(
+              { length: 15 },
+              (_, index) => `NEMOCLAW_START_LOG=[gateway] Hermes bounded marker ${index}`,
+            ),
+          ].join("\n"),
+        })),
+      });
+      const result = restartSandboxGateway("alpha", { deps });
+
+      expect(result).toMatchObject({
+        ok: false,
+        failureLayer: "health timeout",
+        detail: expect.stringContaining("NEMOCLAW_GATEWAY_PID=5252"),
+      });
+      expect(result.ok).toBe(false);
+      const detail = (result as Extract<typeof result, { ok: false }>).detail;
+      expect(detail).toContain("token=<REDACTED>");
+      expect(detail).toContain("HF_TOKEN=<REDACTED>");
+      expect(detail).not.toContain("sk-review-secret");
+      expect(detail).not.toContain("password");
+      expect(detail).not.toContain("query-secret");
+      expect(detail).not.toContain("hf-review-secret");
+      expect(detail).not.toContain("\u001b");
+      expect(detail).not.toContain("\u0007");
+      const errorOutput = vi.mocked(console.error).mock.calls.join("\n");
+      expect(vi.mocked(console.error).mock.calls).toHaveLength(13);
+      expect(errorOutput).toContain("NEMOCLAW_START_LOG=[gateway] Hermes bounded marker 14");
+      expect(errorOutput).not.toContain("NEMOCLAW_START_LOG=[gateway] Hermes bounded marker 2");
+      expect(errorOutput).not.toContain("sk-review-secret");
+      expect(errorOutput).not.toContain("query-secret");
+      expect(errorOutput).not.toContain("hf-review-secret");
     } finally {
       restore();
     }

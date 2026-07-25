@@ -39,12 +39,15 @@ Review the [Prerequisites](prerequisites) before you begin.
 
     ```bash
     export NEMOCLAW_AGENT=hermes
+    export NEMOCLAW_SANDBOX_NAME=my-hermes
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    Choose an inference provider and model, provide its credential when prompted, and give the sandbox a name such as `my-hermes`.
+    If the installer offers Express, you can accept it to use managed local inference for that platform.
+    Otherwise, choose an inference provider and model, then provide its credential when prompted.
+    The install command uses `my-hermes` as the sandbox name.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
   </Step>
 
@@ -72,7 +75,7 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 </Steps>
 
-## Considerations
+## Installation and Runtime Details
 
 Use these details when your first-run path needs more control.
 
@@ -88,6 +91,7 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Automate or repeat onboarding">
+    The hosted installer follows the maintained last-known-good (`lkg`) release tag by default.
     For a scripted installation, provide the required values before running the installer.
 
     ```bash
@@ -107,6 +111,15 @@ Use these details when your first-run path needs more control.
   <Accordion title="Use the dashboard and API remotely">
     Hermes forwards its dashboard on port `18789` and its OpenAI-compatible API on port `8642`.
     For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to the externally reachable dashboard origin before onboarding.
+
+    ```bash
+    export NEMOCLAW_AGENT=hermes
+    export NEMOCLAW_SANDBOX_NAME=my-hermes
+    export CHAT_UI_URL="https://hermes.example.com:18789"
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
+
+    NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL`, binds it for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
     Otherwise, leave it unset and use SSH port forwarding for remote access.
 
     ```bash
@@ -115,7 +128,9 @@ Use these details when your first-run path needs more control.
     ```
 
     Configure API clients with the base URL `http://127.0.0.1:8642/v1` after forwarding port `8642`.
-    Hermes handles dashboard and API authentication itself, so do not append an OpenClaw `#token=` fragment to either URL.
+    Run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
+    Pass the token in the client's `Authorization` header.
+    Do not append an OpenClaw `#token=` fragment to either URL.
     Treat the dashboard as a local management UI and protect it before you expose it on a shared network.
   </Accordion>
 
@@ -132,26 +147,16 @@ Use these details when your first-run path needs more control.
     Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for the recovery workflow.
   </Accordion>
 
-  <Accordion title="Host and Installer Details">
-    Install Docker, start it, and confirm the current shell can reach it before Hermes onboarding builds the sandbox image.
-    On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
-    If it changes group membership, run the printed `newgrp docker` command before rerunning the installer.
-    On macOS, start Docker Desktop or Colima before you run the installer.
+  <Accordion title="Use Docker and supported platforms">
+    Review [Prerequisites](prerequisites) for Docker requirements and the setup-oriented platform table.
+    Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
+    Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
+
+    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
+    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
     The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
-
-    The hosted installer follows the maintained last-known-good (`lkg`) release tag by default.
-    To expose the Hermes dashboard from a headless host through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding to the externally reachable origin for dashboard port `18789`.
-    NemoClaw derives the forwarded dashboard port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
-    The OpenAI-compatible API remains available separately on port `8642`.
-
-    ```bash
-    export NEMOCLAW_AGENT=hermes
-    export CHAT_UI_URL="https://hermes.example.com:18789"
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-    ```
-
-    Leave `CHAT_UI_URL` unset when you use SSH local port forwarding to `127.0.0.1:18789`.
-    Hermes API clients authenticate with the bearer token from the generated Hermes environment, not an OpenClaw dashboard URL token.
+    Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles, Station choices, and headless setup.
+    Refer to [Platform Support](../reference/platform-support) for current validation status.
   </Accordion>
 
   <Accordion title="Onboarding and Integration Details">

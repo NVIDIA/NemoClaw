@@ -41,7 +41,13 @@ function runRecoveryBeforeOnboard(
     ? recoveryExitCode
     : [recoveryExitCode, recoveryExitCode];
   const payloadDir = path.join(tmp, "payload");
+  const payloadLibDir = path.join(payloadDir, "lib");
   fs.mkdirSync(payloadDir);
+  fs.mkdirSync(payloadLibDir);
+  fs.copyFileSync(
+    path.join(path.dirname(INSTALLER_PAYLOAD), "lib", "station-vllm-conflict.sh"),
+    path.join(payloadLibDir, "station-vllm-conflict.sh"),
+  );
   fs.mkdirSync(path.join(tmp, ".nemoclaw"));
   fs.writeFileSync(
     path.join(tmp, ".nemoclaw", "sandboxes.json"),

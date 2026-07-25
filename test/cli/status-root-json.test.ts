@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
+import { writeExternalGatewayAuthoritySession } from "../helpers/gateway-authority-session";
 import { runWithEnv } from "./helpers";
 
 describe("CLI root status JSON", () => {
@@ -91,6 +92,7 @@ describe("CLI root status JSON", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeExternalGatewayAuthoritySession(home);
 
     try {
       const r = runWithEnv("status --json", {
@@ -116,6 +118,19 @@ describe("CLI root status JSON", () => {
           healthy: true,
           state: "healthy_named",
         },
+        gatewayAuthority: {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: "http://127.0.0.1:8080/",
+          supervisor: {
+            kind: "systemd-system",
+            serviceName: "openshell-gateway.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+          requiredCapabilities: ["gateway.health", "sandbox.create"],
+        },
         sandboxes: [
           {
             name: sandboxName,
@@ -139,9 +154,57 @@ describe("CLI root status JSON", () => {
       expect(r.out).not.toMatch(
         /Bearer|nvapi-|sk-|xoxb-|xapp-|password|api[-_]?key|dashboard-secret|should-not-render/i,
       );
+      expect(r.out).not.toContain("private-gateway-state");
     } finally {
       fs.rmSync(serviceDir, { recursive: true, force: true });
     }
+  });
+
+  it("status text identifies the selected management mode and redacted owner (#6576)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-authority-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".nemoclaw", "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "configured-model",
+            provider: "configured-provider",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "status" ]; then echo "Gateway: nemoclaw"; echo "Status: Connected"; exit 0; fi',
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then echo "Gateway: nemoclaw"; exit 0; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    writeExternalGatewayAuthoritySession(home);
+
+    const result = runWithEnv("status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("Gateway authority: externally-supervised");
+    expect(result.out).toContain(
+      "Owner: systemd-system openshell-gateway.service (/usr/local/bin/openshell-gateway)",
+    );
+    expect(result.out).toContain("Endpoint: http://127.0.0.1:8080/");
+    expect(result.out).not.toContain("private-gateway-state");
   });
 
   it("status --json reports gateway health and exits 1 when gateway is unhealthy", () => {

@@ -31,7 +31,7 @@ import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
   looksLikeForwardPortConflict,
-  runDetachedForwardStartWithPortReleaseRetries,
+  runDetachedForwardStartWithRetries,
 } from "./forward-start";
 import {
   ensureMessagingHostForwardForSandbox,
@@ -262,11 +262,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
     if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-    const stopForwardForSandbox = createSandboxForwardStopper({
-      runOpenshell: deps.runOpenshell,
-      runCaptureOpenshell: deps.runCaptureOpenshell,
-      sandboxName,
-    });
+    const makeStopForwardForSandbox = () =>
+      createSandboxForwardStopper({
+        runOpenshell: deps.runOpenshell,
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        sandboxName,
+      });
+    const stopForwardForSandbox = makeStopForwardForSandbox();
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
@@ -319,7 +321,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     parsedUrl.port = String(actualPort);
     const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
     stopForwardForSandbox(actualPort);
-    const { ok: fwdOk, diagnostic: fwdDiagnostic } = runDetachedForwardStartWithPortReleaseRetries(
+    const { ok: fwdOk, diagnostic: fwdDiagnostic } = runDetachedForwardStartWithRetries(
       buildDetachedForwardStartSpawn(
         deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
       ),
@@ -329,7 +331,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       { port: actualPort, sandboxName },
       () => {
         deps.sleep(1);
-        stopForwardForSandbox(actualPort);
+        // The setup stopper intentionally de-duplicates ports. A port-conflict
+        // retry needs a fresh sandbox-scoped stopper so it can preserve the
+        // established conflict-recovery behavior despite that one-shot guard.
+        makeStopForwardForSandbox()(actualPort);
       },
       { onProgress: buildForwardStartProgressLogger(actualPort) },
     );

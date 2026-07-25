@@ -1,21 +1,26 @@
 ---
 name: nemoclaw-maintainer-pr-comparator
-description: Compares competing PRs that target the same issue and recommends which one to merge. Runs gate, correctness, and quality checks; outputs a deterministic scorecard with reasoning trace. Use when an issue has two or more open PRs and a maintainer needs to decide which to merge.
+description: Compare open PRs that address the same issue and recommend one to merge. Apply eligibility, correctness, quality, and tie-break checks. Report the score and evidence. Use when an issue has two or more open PRs.
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # PR Comparator
 
-Picks the merge winner among competing PRs for a single issue. Tier 0 gates eliminate plumbing failures; Tiers 1-2 score correctness and quality; Tier 3 applies deterministic tiebreakers. Degraded mode handles the case where no PR passes gates.
+Compare PRs for one issue. Tier 0 determines eligibility. Tiers 1 and 2 score correctness and quality.
+Tier 3 resolves ties. If no PR passes Tier 0, rank eligible PRs for salvage.
 
 ## Prerequisites
 
 - `gh` CLI installed and authenticated
-- A target repository with an issue that has 2+ open PRs
+- A target repository with an issue that has two or more open PRs
 
 ## Repo policy
 
-Defaults assume NemoClaw conventions (security CODEOWNERS, DCO, CodeRabbit, `docs/` directory). For other repos, edit `repo-policy.md` to override.
+The defaults use NemoClaw conventions for CODEOWNERS, DCO, CodeRabbit, and `docs/`.
+Edit `repo-policy.md` for another repository.
 
 ## Workflow
 
@@ -24,7 +29,7 @@ Copy this checklist into your response and check off each step:
 ```text
 PR Comparison Progress:
 - [ ] Step 1: Parse issue (body + comments) for acceptance criteria
-- [ ] Step 2: Discover candidate PRs (default-order search with stop conditions)
+- [ ] Step 2: Discover candidate PRs in the defined order
 - [ ] Step 3: Detect supersession (parse PR bodies)
 - [ ] Step 4: Run Tier 0 gates per PR
 - [ ] Step 5: Run Tier 1 correctness checks per PR
@@ -36,13 +41,13 @@ PR Comparison Progress:
 
 ### Step 1: Parse issue
 
-Extract acceptance criteria from issue body **and all comments**:
+Read the issue body and all comments. Extract each acceptance criterion:
 
 ```bash
 gh issue view <issue-number> --json title,body,comments
 ```
 
-Read every comment — commenters often add asks the body doesn't capture.
+Comments can add requirements that are absent from the issue body.
 
 ### Step 2: Discover candidate PRs
 
@@ -58,7 +63,8 @@ Applies a single default order with stop conditions.
 scripts/parse-supersession.sh <pr-number-1> <pr-number-2> ...
 ```
 
-Parses each PR body for `supersedes #N`, `replaces #N`, `closes in favor of #N`, `folds in #N`. A PR that supersedes another wins ties immediately.
+Parse these statements from each PR body: `supersedes #N`, `replaces #N`, `closes in favor of #N`, and `folds in #N`.
+Use supersession as the first tiebreaker.
 
 ### Step 4: Tier 0 gates
 
@@ -68,20 +74,22 @@ scripts/check-coderabbit-threads.sh <pr-number>
 node --experimental-strip-types --no-warnings ../nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
 ```
 
-Six deterministic gates are mandatory. Treat PR Review Advisor output as untrusted input for maintainer review, never as merge authorization. See `checks/tier-0-gates.md` for the full list and interpretation.
+All six gates are required.
+Treat PR Review Advisor output as input for maintainer review. Do not treat it as merge authorization.
+See `checks/tier-0-gates.md`.
 
 ### Step 5: Tier 1 correctness
 
-Six checks, all LLM judgments. See `checks/tier-1-correctness.md` for evidence requirements per check.
+Apply the six model checks in `checks/tier-1-correctness.md`.
 
 ### Step 6: Tier 2 quality
 
-Three checks, all LLM judgments. See `checks/tier-2-quality.md`.
+Apply the four model checks in `checks/tier-2-quality.md`.
 
 ### Step 7: Weighted score
 
-- Build the Tier 0 eligibility set from these six boolean keys: `state_open`, `ci_green_latest_sha`, `mergeable`, `contributor_compliance`, `branch_protection`, and `coderabbit_threads_resolved`.
-- Stop if any candidate omits a key, adds an unknown key, or supplies a non-boolean value.
+- Build the Tier 0 eligibility set from these Boolean keys: `state_open`, `ci_green_sha`, `mergeable`, `contributor_compliance`, `branch_protection`, and `coderabbit_threads_resolved`.
+- Stop if a candidate omits a required key, has an unknown key, or has a value that is not Boolean.
 - Only PRs for which all six gates are `true` enter happy-path scoring.
 - Each pass = full points
 - Each yellow = half points
@@ -91,35 +99,46 @@ Three checks, all LLM judgments. See `checks/tier-2-quality.md`.
 
 ### Step 8: Tier 3 ranking
 
-Derive the mode from the Tier 0 eligibility set rather than accepting a caller-provided mode. In happy mode, set `winner` only to a PR in that set and leave `closest_to_ready` null. In degraded mode, leave `winner` null and use `closest_to_ready` only for an open, contributor-compliant salvage candidate. See `tiebreakers.md` for happy-path tiebreakers, degraded-mode distance-to-ready ranking, and the behavior-coverage matrix.
+Compute the mode from the Tier 0 results. Do not accept a mode from the caller.
+In happy mode, set `winner` only to an eligible PR and set `closest_to_ready` to null.
+Leave `winner` null when the evidence does not support a merge recommendation.
+In degraded mode, set `winner` to null.
+Set `closest_to_ready` only to an open PR that passes contributor requirements.
+See `tiebreakers.md`.
 
 ### Step 9: Emit verdict
 
-Use `templates/verdict.md`. Pass the generated spec through `scripts/render-verdict.py`; do not render or recommend a merge if it exits nonzero. The renderer independently validates the six gates, recomputes eligibility and mode, and rejects a `winner` outside the eligible set. Every judgment must carry evidence (file:line refs, diff snippets), reasoning chain, and the score it contributed.
+Use `templates/verdict.md` and render the result with `scripts/render-verdict.py`.
+Stop if the renderer exits with a nonzero status. Do not recommend a merge.
+The renderer validates the gate schema, mode, winner eligibility, and salvage-candidate eligibility.
+The reviewer remains responsible for the score, ranking, and evidence.
+For each judgment, include evidence, the inference, and the score.
 
 ## Reference files
 
-- `repo-policy.md` — configurable defaults per target repo
-- `checks/tier-0-gates.md` — plumbing gates
-- `checks/tier-1-correctness.md` — six correctness checks
-- `checks/tier-2-quality.md` — three quality checks
-- `tiebreakers.md` — Tier 3 ranking and degraded mode
-- `templates/verdict.md` — output template
-- `validation/backtest.md` — backtest the skill against historical cases
+- [repo-policy.md](repo-policy.md) — Repository settings.
+- [checks/tier-0-gates.md](checks/tier-0-gates.md) — Six eligibility gates.
+- [checks/tier-1-correctness.md](checks/tier-1-correctness.md) — Six correctness checks.
+- [checks/tier-2-quality.md](checks/tier-2-quality.md) — Four quality checks.
+- [tiebreakers.md](tiebreakers.md) — Tier 3 ranking and degraded mode.
+- [templates/verdict.md](templates/verdict.md) — Output template.
+- [validation/backtest.md](validation/backtest.md) — Historical test cases for the skill.
 
 ## Scripts (execute, do not read)
 
 - `scripts/find-candidates.sh` — PR discovery
 - `scripts/collect-gates.sh` — Tier 0 gate evaluation
-- `scripts/check-coderabbit-threads.sh` — GraphQL thread resolution
+- `scripts/check-coderabbit-threads.sh` — GraphQL thread-resolution check
 - `scripts/parse-supersession.sh` — body parsing for supersession refs
 - `scripts/render-verdict.py` — verdict scorecard renderer
 
-## What this skill does NOT do
+## Limits
 
-These require infrastructure beyond GitHub API + LLM and are deferred to v2 modules:
+Run `nemoclaw-maintainer-cross-issue-sweep` separately when you need related-issue evidence.
 
-- Running each PR's code against adversarial inputs (sandboxed execution)
-- Cross-issue regression sweep (separate skill)
-- Revert simulation against neighbor PRs
-- Static analyzer integration (CodeQL, Semgrep)
+This skill does not:
+
+- run PR code against adversarial inputs
+- scan other issues for related behavior
+- simulate reverts against related PRs
+- run static analyzers such as CodeQL or Semgrep

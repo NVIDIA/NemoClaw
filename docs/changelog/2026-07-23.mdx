@@ -1,0 +1,32 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.93
+
+NemoClaw v0.0.93 updates DGX Station and DGX Spark onboarding, adds resumable managed vLLM download guidance, preserves installer cancellation status, rejects Intel macOS before downloads, and strengthens release validation.
+
+- DGX Station Express now recognizes the stock no-OTA DGX OS `7.6.x` workstation family when its release marker proves the expected GB300 lineage.
+  The existing hardware, driver, ECC, Docker, CDI, and container GPU checks still apply, and future release families remain fail-closed.
+  Stock DGX OS and AI Developer Tools profiles can keep an idle PackageKit daemon because those paths preserve factory packages, but active or malformed package transactions still block preparation.
+  Full Station Express end-to-end qualification for the accepted no-OTA DGX OS `7.6.x` profile remains pending.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- When Station Express detects an existing vLLM workload, NemoClaw leaves the workload unchanged and reports an exact manual stop command.
+  The default choice preserves the managed Express recipe and prints an exact revision-pinned resume command.
+  The alternative keeps the running vLLM and continues through advanced manual Local vLLM setup while preserving the selected installer revision and ports across a login handoff or interrupted retry.
+  A non-interactive run preserves Express and does not change the host.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation) and the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
+- Managed vLLM onboarding now explains optional Hugging Face read-token authentication before large public-model downloads.
+  NemoClaw passes the token only to the temporary downloader, sanitizes downloader output across standard output and standard error, and prints resumable HTTP `429` recovery steps that reuse the existing cache.
+  On DGX Spark, non-interactive onboarding with no requested or recorded provider now selects a running local vLLM first, then managed vLLM, and then NVIDIA Endpoints when neither local option is available.
+  DGX Station and other hosts keep their existing unset-provider behavior.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
+- The public installer now rejects Intel macOS before it resolves a release reference or performs network work, and it reports that macOS requires Apple Silicon.
+  Pressing Ctrl+C at a hidden onboarding credential prompt now preserves exit status `130` and resumable-session guidance without printing the rejected prompt error or a Node.js stack.
+  For more information, refer to [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Release validation now waits for the relevant base image before final-main E2E fanout, tests the staging Brev Launchable, centralizes larger-runner selection, and retries one confirmed hosted-runner loss.
+  E2E runs also publish semantic phase durations and runner-comparison telemetry while ignoring base-image run history that cannot affect the candidate.
+  These controls separate infrastructure loss from product failures and keep candidate validation tied to the image under test.
+- Documentation checks now require a documentation-writer receipt for docs-only PRs and record the matching PR without redundant receipt metadata.
+  Quickstart platform guidance and inference command references now match the supported CLI paths, and the historical v0.0.91 audit follow-up remains part of the canonical changelog.

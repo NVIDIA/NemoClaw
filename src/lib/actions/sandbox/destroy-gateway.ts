@@ -11,6 +11,11 @@ import {
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
 } from "../../onboard/gateway-binding";
+import { isExternallySupervised } from "../../onboard/gateway-ownership";
+import {
+  type GatewayTeardownAuthorityResolver,
+  resolveGatewayTeardownAuthority,
+} from "../../onboard/gateway-teardown-authority";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 
@@ -20,6 +25,10 @@ export type DestroyRunOpenshell = (
 ) => { status: number | null; stdout?: string; stderr?: string };
 
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
+
+export interface CleanupGatewayDeps {
+  resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
+}
 
 // Compute the Docker-driver gateway state directory that belongs to
 // `gatewayName`. `stopHostGatewayProcesses` defaults to the bare leaf
@@ -71,7 +80,17 @@ export function selectGatewayForSandboxDestroy(
 export function cleanupGatewayAfterLastSandbox(
   gatewayName: string,
   runOpenshell?: DestroyRunOpenshell,
+  deps: CleanupGatewayDeps = {},
 ): void {
+  const perGatewayState = resolvePerGatewayState(gatewayName);
+  if (!perGatewayState) {
+    throw new Error(`Refusing cleanup for noncanonical NemoClaw gateway '${gatewayName}'.`);
+  }
+  const owner = (deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority)(
+    { gatewayName, gatewayPort: perGatewayState.port },
+    { env: process.env },
+  );
+  const externallySupervised = isExternallySupervised(owner);
   const openshell =
     runOpenshell ??
     (require("../../adapters/openshell/runtime") as { runOpenshell: DestroyRunOpenshell })
@@ -86,7 +105,7 @@ export function cleanupGatewayAfterLastSandbox(
   // ports the live openshell tracks; this catches orphans whose openshell
   // record was lost across upgrades or failed onboards.
   stopStaleDashboardListeners();
-  if (process.platform === "linux" || process.platform === "darwin") {
+  if (!externallySupervised && (process.platform === "linux" || process.platform === "darwin")) {
     // Sandbox destroy is conservative: only stop the host gateway whose PID
     // file we wrote during onboard. Disable the pgrep sweep so a stray
     // openshell-gateway under another user/project on the same host (rare but
@@ -96,7 +115,6 @@ export function cleanupGatewayAfterLastSandbox(
     // per-port pid file rather than defaulting to the bare instance's. The
     // expected gateway name and port also gate `openshell gateway start`
     // cmdlines so a stale pid file cannot kill another gateway instance.
-    const perGatewayState = resolvePerGatewayState(gatewayName);
     const stopOptions: {
       openShellGatewayName?: string;
       openShellGatewayPort?: number;
@@ -108,12 +126,10 @@ export function cleanupGatewayAfterLastSandbox(
       preserveRuntimeFilesOnNonMatching: true,
       usePgrepFallback: false,
     };
-    if (perGatewayState) {
-      stopOptions.stateDir = perGatewayState.stateDir;
-      stopOptions.pidFile = path.join(perGatewayState.stateDir, "openshell-gateway.pid");
-      stopOptions.openShellGatewayName = gatewayName;
-      stopOptions.openShellGatewayPort = perGatewayState.port;
-    }
+    stopOptions.stateDir = perGatewayState.stateDir;
+    stopOptions.pidFile = path.join(perGatewayState.stateDir, "openshell-gateway.pid");
+    stopOptions.openShellGatewayName = gatewayName;
+    stopOptions.openShellGatewayPort = perGatewayState.port;
     const stopResult = stopHostGatewayProcesses({}, stopOptions);
     const unverifiablePids = [...new Set(stopResult.skippedNonMatchingPids)];
     if (unverifiablePids.length > 0) {
@@ -160,10 +176,20 @@ export function cleanupGatewayAfterLastSandbox(
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (removeResult.status !== 0) {
-    openshell(["gateway", "destroy", "-g", gatewayName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    if (externallySupervised) {
+      console.warn(
+        `Could not remove local registration for externally supervised gateway '${gatewayName}'. ` +
+          "NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
+      );
+    } else {
+      openshell(["gateway", "destroy", "-g", gatewayName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+  }
+  if (externallySupervised) {
+    return;
   }
   dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
     ignoreError: true,

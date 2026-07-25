@@ -403,6 +403,7 @@ export function createSetupNim(
             isWindowsHostOllama,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
             hermesProviderAvailable,
+            preferManagedVllmDefault: gpu?.platform === "spark",
             ...recordedProviderReaders,
           });
           if (providerSelection.kind === "failure") {
@@ -643,11 +644,20 @@ export function createSetupNim(
       deps,
     );
     const selectedModel = isBackToSelection(model) ? null : model;
+    const recoveredRegistryRouteMatches =
+      recoveredRegistryRoute?.provider === provider &&
+      recoveredRegistryRoute.endpointUrl === endpointUrl;
+    const endpointSource = recoveredRegistryRouteMatches
+      ? (recoveredRegistryRoute.endpointSource ?? null)
+      : endpointPinnedAddresses || endpointTrustedPrivateCapability
+        ? "onboard"
+        : null;
     await deps.maybePromptForInferenceInputCapability(selectedModel);
     return {
       model: selectedModel,
       provider,
       endpointUrl,
+      endpointSource,
       credentialEnv,
       hermesAuthMethod,
       hermesToolGateways,

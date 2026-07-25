@@ -1340,7 +1340,7 @@ process.exit(0);
 });
 
 describe("Hermes durable state files", () => {
-  it("backs up and restores SOUL.md plus the SQLite state database without credential files", () => {
+  it("restores durable state without overwriting a replacement home's API key (#7175)", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-snapshot-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1348,15 +1348,19 @@ describe("Hermes durable state files", () => {
       const binDir = path.join(fixture, "bin");
       const fakeRoot = path.join(fixture, "sandbox-root");
       const hermesDir = path.join(fakeRoot, ".hermes");
+      const envPath = path.join(hermesDir, ".env");
       const runtimeDir = path.join(hermesDir, "runtime");
       const sshLog = path.join(fixture, "ssh-log.jsonl");
+      const readText = (filePath: string) => fs.readFileSync(filePath, "utf-8");
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
       fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "original soul\n");
       fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "original history\n");
       fs.writeFileSync(path.join(runtimeDir, "state.db"), "original sqlite backup\n");
       fs.writeFileSync(path.join(hermesDir, "config.yaml"), "token: should-not-copy\n");
-      fs.writeFileSync(path.join(hermesDir, ".env"), "API_TOKEN=should-not-copy\n");
+      const originalEnv = `API_SERVER_KEY=${"a".repeat(64)}\n`;
+      const replacementEnv = `API_SERVER_KEY=${"b".repeat(64)}\n`;
+      fs.writeFileSync(envPath, originalEnv);
       fs.writeFileSync(path.join(hermesDir, "auth.json"), '{"token":"should-not-copy"}\n');
 
       const openshell = path.join(binDir, "openshell");
@@ -1448,6 +1452,8 @@ process.exit(0);
 
       const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
       expect(backup.success).toBe(true);
+      expect(backup.manifest).toBeDefined();
+      const backupPath = backup.manifest!.backupPath;
       expect(backup.backedUpFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.stateFiles).toEqual([
@@ -1456,32 +1462,26 @@ process.exit(0);
         { path: "runtime/state.db", strategy: "sqlite_backup" },
         { path: "kanban.db", strategy: "sqlite_backup" },
       ]);
-      expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "SOUL.md"), "utf-8")).toBe(
-        "original soul\n",
+      expect(readText(path.join(backupPath, "SOUL.md"))).toBe("original soul\n");
+      expect(readText(path.join(backupPath, ".hermes_history"))).toBe("original history\n");
+      expect(readText(path.join(backupPath, "runtime", "state.db"))).toBe(
+        "original sqlite backup\n",
       );
-      expect(
-        fs.readFileSync(path.join(backup.manifest!.backupPath, ".hermes_history"), "utf-8"),
-      ).toBe("original history\n");
-      expect(
-        fs.readFileSync(path.join(backup.manifest!.backupPath, "runtime", "state.db"), "utf-8"),
-      ).toBe("original sqlite backup\n");
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "config.yaml"))).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "auth.json"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, "config.yaml"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, ".env"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, "auth.json"))).toBe(false);
 
       fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "changed soul\n");
       fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "changed history\n");
       fs.writeFileSync(path.join(runtimeDir, "state.db"), "changed db\n");
+      fs.writeFileSync(envPath, replacementEnv);
       const restore = sandboxState.restoreSandboxState("hermes", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
-      expect(fs.readFileSync(path.join(hermesDir, "SOUL.md"), "utf-8")).toBe("original soul\n");
-      expect(fs.readFileSync(path.join(hermesDir, ".hermes_history"), "utf-8")).toBe(
-        "original history\n",
-      );
-      expect(fs.readFileSync(path.join(runtimeDir, "state.db"), "utf-8")).toBe(
-        "original sqlite backup\n",
-      );
+      expect(readText(path.join(hermesDir, "SOUL.md"))).toBe("original soul\n");
+      expect(readText(path.join(hermesDir, ".hermes_history"))).toBe("original history\n");
+      expect(readText(path.join(runtimeDir, "state.db"))).toBe("original sqlite backup\n");
+      expect(readText(envPath)).toBe(replacementEnv);
 
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).toContain("sqlite3.connect");

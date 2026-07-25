@@ -184,10 +184,19 @@ describe("E2E scorecard", () => {
   it("loads typed scorecard helpers through the native github-script require boundary", () => {
     const script = `
       const path = require('node:path');
-      for (const file of ['analyze-trace-timing.mts', 'summarize-jobs.mts', 'build-slack-blocks.mts', 'coordinate-scorecard.mts']) {
+      for (const file of [
+        'analyze-runtime-history.mts',
+        'analyze-trace-timing.mts',
+        'summarize-jobs.mts',
+        'build-slack-blocks.mts',
+        'coordinate-scorecard.mts',
+        'read-artifact-zip.mts',
+      ]) {
         const loaded = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard', file));
         if (Object.keys(loaded).length === 0) process.exit(2);
       }
+      const runtimeAudit = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/audit-test-runtime.mts'));
+      if (Object.keys(runtimeAudit).length === 0) process.exit(2);
     `;
     const result = spawnSync(process.execPath, ["--experimental-strip-types", "-e", script], {
       cwd: process.cwd(),
@@ -472,8 +481,41 @@ describe("E2E scorecard", () => {
       ran: 4,
       skipped: 0,
       success: 3,
+      timingRows: [],
       total: 4,
     });
+  });
+
+  it("keeps every matrix execution eligible for the timing ranking", () => {
+    const summary = scorecardJobs.summarizeJobs({
+      apiJobs: [
+        {
+          completed_at: "2026-07-24T00:00:20Z",
+          conclusion: "success",
+          created_at: "2026-07-24T00:00:00Z",
+          labels: ["ubuntu-latest"],
+          name: "matrix / fast",
+          started_at: "2026-07-24T00:00:05Z",
+          status: "completed",
+        },
+        {
+          completed_at: "2026-07-24T00:02:00Z",
+          conclusion: "success",
+          created_at: "2026-07-24T00:00:00Z",
+          labels: ["ubuntu-latest"],
+          name: "matrix / slow",
+          started_at: "2026-07-24T00:00:10Z",
+          status: "completed",
+        },
+      ],
+      explicitOnlyJobNames: [],
+      explicitlySelected: [],
+      metaJobNames: [],
+      needs: {},
+    });
+
+    expect(summary).toMatchObject({ success: 1, total: 1 });
+    expect(summary.timingRows.map(({ name }) => name)).toEqual(["matrix / slow", "matrix / fast"]);
   });
 
   it("falls back to needs without counting unselected explicit-only jobs", () => {
@@ -499,6 +541,7 @@ describe("E2E scorecard", () => {
       ran: 2,
       skipped: 1,
       success: 1,
+      timingRows: [],
       total: 3,
     });
   });

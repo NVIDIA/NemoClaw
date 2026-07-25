@@ -191,7 +191,7 @@ describe("native PR E2E required job", () => {
     expect(urls[0]).toContain("E2E%20%2F%20PR%20Gate%20Coordination");
   });
 
-  it("selects the newest exact-diff check after marker-backed immutable history", async () => {
+  it("selects the newest PR/base SHA check after marker-backed immutable history", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       githubResponse(
         listing([
@@ -208,13 +208,58 @@ describe("native PR E2E required job", () => {
             id: 18,
             status: "in_progress",
             conclusion: null,
-            output: { title: "Maintainer authorization required to run E2E" },
+            output: { title: "E2E reviewer authorization required to run E2E" },
           }),
         ]),
       ),
     );
 
     await expect(findCoordinationCheck(identity)).resolves.toMatchObject({ id: 18 });
+  });
+
+  it.each([
+    { label: "the source marker is removed before reservation", replacement: false },
+    { label: "the reserved replacement is closed after create response loss", replacement: true },
+  ])("observes a terminal retry-controller failure when $label", async ({ replacement }) => {
+    const older = check(undefined, {
+      id: 16,
+      conclusion: "failure",
+      output: {
+        title: "PR prerequisite CI did not pass",
+        summary: "Prerequisite CI failed.\n\n<!-- nemoclaw-pr-e2e-retry:v1:prerequisite-ci -->",
+      },
+    });
+    const source = check(undefined, {
+      id: 17,
+      conclusion: "failure",
+      output: {
+        title: replacement ? "Selected E2E did not pass" : "Runner-loss retry could not start",
+        summary: replacement
+          ? "Runner disappeared.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->"
+          : "Runner disappeared. The automatic retry controller could not start.",
+      },
+    });
+    const replacementCheck = check(undefined, {
+      id: 18,
+      conclusion: "failure",
+      output: {
+        title: "Runner-loss retry could not start",
+        summary: "The reserved replacement was terminalized without a retry marker.",
+      },
+    });
+    const checks = replacement ? [older, source, replacementCheck] : [older, source];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(githubResponse(listing(checks)));
+
+    const current = await findCoordinationCheck(identity);
+    expect(classifyCoordinationCheck(current, identity.repository)).toEqual({
+      state: "complete",
+      result: {
+        conclusion: "failure",
+        title: "Runner-loss retry could not start",
+        detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/99",
+        logUrls: ["https://github.com/NVIDIA/NemoClaw/actions/runs/99"],
+      },
+    });
   });
 
   it.each([
@@ -236,9 +281,9 @@ describe("native PR E2E required job", () => {
         check(undefined, { status: "in_progress", conclusion: null }),
         check(undefined, { id: 18, status: "in_progress", conclusion: null }),
       ],
-      expectedError: "Multiple active exact-diff coordination checks exist",
+      expectedError: "Multiple active coordination checks exist for one PR/base SHA pair",
     },
-  ])("rejects exact-diff coordination history with $label", async ({ checks, expectedError }) => {
+  ])("rejects PR/base SHA coordination history with $label", async ({ checks, expectedError }) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(githubResponse(listing(checks)));
 
     await expect(findCoordinationCheck(identity)).rejects.toThrow(expectedError);
@@ -257,7 +302,7 @@ describe("native PR E2E required job", () => {
     });
   });
 
-  it("rejects an exact-diff identity claimed by another app", async () => {
+  it("rejects a PR/base SHA identity claimed by another app", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       githubResponse(listing([check(undefined, { app: { id: 1 } })])),
     );
@@ -284,7 +329,7 @@ describe("native PR E2E required job", () => {
                   ? check(undefined, {
                       status: "in_progress",
                       conclusion: null,
-                      output: { title: "Maintainer authorization required to run E2E" },
+                      output: { title: "E2E reviewer authorization required to run E2E" },
                     })
                   : coordinationQueries === 2
                     ? check(undefined, {
@@ -422,6 +467,6 @@ describe("native PR E2E required job", () => {
 
     await expect(
       waitForRequiredGate(identity, { timeoutMs: 100, pollIntervalMs: 10 }),
-    ).rejects.toThrow("no longer matches the exact head and base revision");
+    ).rejects.toThrow("not the expected open PR with the observed PR SHA and base SHA");
   });
 });
