@@ -3,7 +3,7 @@
   "$id": "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "title": "NemoClaw system readiness report",
-  "description": "Version 1 consumer-neutral contract for a read-only system readiness report. Unknown major versions are incompatible. Consumers must ignore unrecognized optional fields in major version 1. Evidence is bounded diagnostic context and does not affect compatibility decisions unless a capability or finding references it by evidenceId.",
+  "description": "Version 1 consumer-neutral contract for a read-only system readiness report. Unknown major versions are incompatible. Consumers must ignore unrecognized optional fields in major version 1. Evidence is bounded diagnostic context and does not affect compatibility decisions unless a capability or finding references its ID in evidenceIds.",
   "type": "object",
   "required": ["schemaVersion", "status", "exitCode", "mutated", "provenance", "observations", "capabilities", "qualifications", "findings", "evidence"],
   "properties": {
