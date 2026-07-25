@@ -66,6 +66,18 @@ describe("describeOllamaModelCapacity", () => {
     expect(facts.fits).toBe(false);
   });
 
+  it("reports memory fit separately from compute eligibility", () => {
+    const gpu = {
+      type: "nvidia",
+      totalMemoryMB: 65_536,
+      availableMemoryMB: 60_000,
+      computeConstrained: true,
+    };
+
+    expect(describeOllamaModelCapacity("qwen3.6:35b", gpu).fits).toBe(true);
+    expect(modelFitsAvailableMemory("qwen3.6:35b", gpu)).toBe(false);
+  });
+
   it("returns all-null facts for an unknown tag", () => {
     const facts = describeOllamaModelCapacity("definitely-not-a-real-model:99b", {
       type: "nvidia",

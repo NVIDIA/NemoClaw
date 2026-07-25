@@ -124,7 +124,7 @@ export function describeOllamaModelCapacity(tag: string, gpu: GpuInfo | null): O
   return {
     requiredMemoryMB: entry.requiredMemoryMB,
     downloadSizeBytes: entry.downloadSizeBytes,
-    fits: memory == null ? null : modelFitsAvailableMemory(tag, gpu),
+    fits: memory == null ? null : entry.requiredMemoryMB <= memory,
   };
 }
 
