@@ -52,14 +52,41 @@ proc expect_or_exit {pattern markName timeoutExit eofExit} {
     eof { exit $eofExit }
   }
 }
+proc expect_pair_or_exit {firstPattern firstMark secondPattern secondMark firstTimeoutExit firstEofExit secondTimeoutExit secondEofExit} {
+  set firstSeen 0
+  set secondSeen 0
+  while {!$firstSeen || !$secondSeen} {
+    expect {
+      -nocase -re $firstPattern {
+        if {!$firstSeen} {
+          mark $firstMark
+          set firstSeen 1
+        }
+      }
+      -nocase -re $secondPattern {
+        if {!$secondSeen} {
+          mark $secondMark
+          set secondSeen 1
+        }
+      }
+      timeout {
+        send "\\003"
+        if {!$firstSeen} { exit $firstTimeoutExit }
+        exit $secondTimeoutExit
+      }
+      eof {
+        if {!$firstSeen} { exit $firstEofExit }
+        exit $secondEofExit
+      }
+    }
+  }
+}
 spawn openshell sandbox exec --name $sandbox --tty -- sh -lc "export TERM=xterm-256color; cd /sandbox; openclaw tui --session $session"
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_initial 10 11
 send -- "Reply with the three fragments joined by underscores: NEMOCLAW6194, CHAT, OK. Put only that joined token on its own line. Do not use tools.\\r"
-expect_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply 20 21
-expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23
+expect_pair_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply {connected[^\\r\\n]*idle} connected_idle_after_chat 20 21 22 23
 send -- "/nemoclaw status\\r"
-expect_or_exit {NemoClaw Status} slash_status_output 30 31
-expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33
+expect_pair_or_exit {NemoClaw Status} slash_status_output {connected[^\\r\\n]*idle} connected_idle_after_status 30 31 32 33
 # Network-rule approvals belong to the separate OpenShell terminal UI. Keep
 # this OpenClaw TUI regression scoped to inputs it can perform directly so a
 # tool-less hosted model cannot turn assistant prose into a test oracle.
