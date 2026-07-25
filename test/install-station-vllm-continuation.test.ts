@@ -75,8 +75,12 @@ fi
       "999 1 python3 python3 -m vllm.entrypoints.openai.api_server --model hidden-model",
     ],
     [
+      "Python vLLM module after interpreter options",
+      "1000 1 python3 python3 -u -X dev -m vllm.entrypoints.openai.api_server --model hidden-model",
+    ],
+    [
       "docker-init vLLM executable",
-      "1000 1 docker-init docker-init -- /usr/bin/vllm serve hidden-model",
+      "1001 1 docker-init docker-init -- /usr/bin/vllm serve hidden-model",
     ],
   ])("recognizes an active %s", (_name, processRow) => {
     const { result, output } = runInstallerSourced(`

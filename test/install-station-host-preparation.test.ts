@@ -449,7 +449,8 @@ check_agent_and_inference_conflicts
       `
 ps() {
   printf '998 1 vllm /usr/local/bin/vllm serve first-sensitive-model\n'
-  printf '999 1 python3 python3 -m vllm.entrypoints.openai.api_server --model second-sensitive-model\n'
+  printf '999 1 python3 python3 -u -m vllm.entrypoints.openai.api_server --model second-sensitive-model\n'
+  printf '1000 1 docker-init docker-init -- /usr/bin/vllm serve third-sensitive-model\n'
 }
 ss() { :; }
 check_agent_and_inference_conflicts
@@ -458,10 +459,13 @@ check_agent_and_inference_conflicts
     expect(active.result.status, active.output).toBe(12);
     expect(active.output).toMatch(/vLLM inference workload is active: pid=998 process=vllm/);
     expect(active.output).toContain("pid=999 process=python3");
+    expect(active.output).toContain("pid=1000 process=docker-init");
     expect(active.output).toContain("stop_command='kill -- 998'");
     expect(active.output).toContain("stop_command='kill -- 999'");
+    expect(active.output).toContain("stop_command='kill -- 1000'");
     expect(active.output).not.toContain("first-sensitive-model");
     expect(active.output).not.toContain("second-sensitive-model");
+    expect(active.output).not.toContain("third-sensitive-model");
   });
 
   it("blocks vLLM during forced factory-runtime validation", () => {
