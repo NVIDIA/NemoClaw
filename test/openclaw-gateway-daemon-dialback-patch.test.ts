@@ -17,6 +17,7 @@ import {
   patchOpenClawGatewayDaemonDialback,
   TOOL_TARGET_MARKER,
 } from "../scripts/patch-openclaw-gateway-daemon-dialback.mts";
+import { restoreEnv } from "./helpers/env-test-helpers";
 
 const PATCH_SCRIPT = path.join(
   import.meta.dirname,
@@ -72,17 +73,13 @@ function withGatewayEnvironment<T>(
   const previousUrl = process.env.OPENCLAW_GATEWAY_URL;
   try {
     process.title = values.title;
-    if (values.openshell === undefined) delete process.env.OPENSHELL_SANDBOX;
-    else process.env.OPENSHELL_SANDBOX = values.openshell;
-    if (values.url === undefined) delete process.env.OPENCLAW_GATEWAY_URL;
-    else process.env.OPENCLAW_GATEWAY_URL = values.url;
+    restoreEnv("OPENSHELL_SANDBOX", values.openshell);
+    restoreEnv("OPENCLAW_GATEWAY_URL", values.url);
     return run();
   } finally {
     process.title = previousTitle;
-    if (previousSandbox === undefined) delete process.env.OPENSHELL_SANDBOX;
-    else process.env.OPENSHELL_SANDBOX = previousSandbox;
-    if (previousUrl === undefined) delete process.env.OPENCLAW_GATEWAY_URL;
-    else process.env.OPENCLAW_GATEWAY_URL = previousUrl;
+    restoreEnv("OPENSHELL_SANDBOX", previousSandbox);
+    restoreEnv("OPENCLAW_GATEWAY_URL", previousUrl);
   }
 }
 
