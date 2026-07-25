@@ -267,8 +267,11 @@ describe("promptOllamaModel size and memory annotations", () => {
     expect(result).toBe("qwen3.5:9b");
     expect(menu).toContain("Total GPU memory: 7.81 GB");
     expect(menu).toContain("exceeds total memory");
+    expect(menu).toContain("fits the host's total GPU memory");
+    expect(menu).toContain("may not fit total GPU memory; choose a smaller model");
     expect(menu).not.toContain("Available GPU memory");
     expect(menu).not.toContain("exceeds available memory");
+    expect(menu).not.toContain("currently available");
   });
 
   it("renders name-only for an installed tag the registry does not know", async () => {
