@@ -218,6 +218,15 @@ not check out source-run code.
 It receives no repository secrets and holds `actions: write` only for the
 bounded rerun request.
 
+The runner-allocation and internal-error failures originate in the
+GitHub-hosted Actions service, outside repository-controlled workflow code, so
+this controller contains the failure without claiming to repair its source.
+Remove the recovery workflow and controller after the supported source
+workflows record 30 consecutive days with no first-attempt failure accepted by
+the exact recovery classifier, or when those workflows stop using
+GitHub-hosted runners. Any accepted recovery request resets that observation
+window.
+
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
