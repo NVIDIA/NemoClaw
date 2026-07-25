@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   classifyGatewayFailure,
@@ -12,6 +12,7 @@ import {
   printDockerRuntimeDownGuidance,
   type SandboxContainerFailureRunners,
 } from "../src/lib/actions/sandbox/gateway-failure-classifier.js";
+import * as registry from "../src/lib/state/registry.js";
 
 function makeRunners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
   return {
@@ -76,6 +77,44 @@ describe("classifyGatewayFailure", () => {
     });
     expect(result.layer).toBe("container_exited");
     expect(result.detail).toContain("exited");
+  });
+
+  it("uses the sandbox owning gateway container and port for non-default gateway sandboxes", async () => {
+    const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "my-sandbox",
+      gatewayName: "nemoclaw-8081",
+      gatewayPort: 8081,
+    } as never);
+    const checkedRunning: string[] = [];
+    const checkedExisting: string[] = [];
+    const probedPorts: number[] = [];
+
+    try {
+      const result = await classifyGatewayFailure("my-sandbox", {
+        runners: makeRunners({
+          dockerIsRunning: (container) => {
+            checkedRunning.push(container);
+            return false;
+          },
+          dockerExists: (container) => {
+            checkedExisting.push(container);
+            return container === "openshell-cluster-nemoclaw-8081";
+          },
+          portProbe: async (port) => {
+            probedPorts.push(port);
+            return false;
+          },
+        }),
+      });
+
+      expect(result.layer).toBe("container_exited");
+      expect(result.detail).toContain("openshell-cluster-nemoclaw-8081");
+      expect(checkedRunning).toEqual(["openshell-cluster-nemoclaw-8081"]);
+      expect(checkedExisting).toEqual(["openshell-cluster-nemoclaw-8081"]);
+      expect(probedPorts).toEqual([8081]);
+    } finally {
+      getSandbox.mockRestore();
+    }
   });
 
   it("does not call dockerIsRunning / dockerExists / portProbe when docker info fails", async () => {
