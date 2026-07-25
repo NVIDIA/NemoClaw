@@ -10,10 +10,13 @@ NemoClaw v0.0.87 adds bounded DGX Station factory-image qualification paths, fix
 - DGX Station Express recognizes the exact April 2026 NVIDIA Colossus BaseOS and June 2026 NVIDIA AI Developer Tools GB300 factory profiles for qualification.
   The installer preserves each factory kernel, driver, Docker, and NVIDIA Container Toolkit stack, applies only the bounded access or runtime preparation required by that exact profile, and rejects identity, package, service, GPU, or runtime drift.
   DGX Station remains Deferred while physical qualification continues.
-  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/prerequisites/dgx-station-preparation) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- Station Express adds the temporary `--force-station-install` flag for a genuine DGX Station GB300 whose release metadata is not recognized.
+  The flag bypasses only the release-metadata allowlist, rejects recognized profiles and other hardware, requires an interactive prompt, and preserves the GB300 hardware, GPU, ECC, Docker, Buildx, NVIDIA Container Toolkit, CDI, and container-visibility checks.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
 - Station Express onboarding now accepts both the current six-field installer resume receipt and the legacy three-field format after host preparation requires a reboot.
   The current format validates the agent, sandbox name, and policy tier in addition to the pinned revision, model, and receipt generation, while malformed, unsupported, or extended receipts remain fail-closed for troubleshooting.
-  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/prerequisites/dgx-station-preparation).
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
 - Managed Deep Agents Code onboarding now persists the `nemoclaw-dcode-entrypoint` startup command when the OpenShell Docker driver recreates a sandbox.
   The recreated container also receives the required `nproc=512:512` and `nofile=65536:65536` limits, so the managed runtime remains available after a gateway restart without weakening its process and file-descriptor boundaries.
   For more information, refer to [Security Best Practices](/user-guide/deepagents/security/best-practices).

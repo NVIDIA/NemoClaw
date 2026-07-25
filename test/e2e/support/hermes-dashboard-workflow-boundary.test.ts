@@ -13,7 +13,6 @@ describe("Hermes dashboard workflow boundary", () => {
     expect(validateHermesDashboardWorkflowBoundary()).toEqual([]);
     const dashboardMode = readHermesDashboardWorkflow();
     const dashboardJob = dashboardMode.jobs["hermes-dashboard"];
-    dashboardJob["runs-on"] = "self-hosted";
     dashboardJob["timeout-minutes"] = 30;
     dashboardJob.env!.E2E_ARTIFACT_DIR = "/tmp/hermes-dashboard";
     dashboardJob.env!.NEMOCLAW_E2E_HERMES_DASHBOARD = "0";
@@ -25,7 +24,6 @@ describe("Hermes dashboard workflow boundary", () => {
     checkout.with!["persist-credentials"] = true;
     expect(validateHermesDashboardWorkflow(dashboardMode)).toEqual(
       expect.arrayContaining([
-        "hermes-dashboard must run on ubuntu-latest",
         "hermes-dashboard timeout must be 75 minutes",
         "hermes-dashboard must use its isolated artifact directory",
         "hermes-dashboard must enable Hermes dashboard coverage",

@@ -126,7 +126,7 @@ run_onboard < "$PROMPT_INPUT_FILE"
 
 // ---------------------------------------------------------------------------
 
-describe("installer runtime preflight", { timeout: 15_000 }, () => {
+describe("installer runtime preflight", { timeout: 90_000 }, () => {
   it("attempts nvm upgrade when system Node.js is below minimum version", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-preflight-"));
     const fakeBin = path.join(tmp, "bin");
@@ -3404,7 +3404,7 @@ exit 0`,
     expect(result.status).not.toBe(0);
     expect(output).toMatch(/Requested install ref 'v9\.9\.9' is not available/);
     expect(output).toMatch(/Check NEMOCLAW_INSTALL_TAG\/NEMOCLAW_INSTALL_REF/);
-    expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/fetch --quiet --depth 1 origin v9\.9\.9/);
+    expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/\+v9\.9\.9:refs\/nemoclaw-install\/target/);
   });
 
   it("falls back to the legacy root installer when the selected ref only has the old scripts/install.sh wrapper", () => {

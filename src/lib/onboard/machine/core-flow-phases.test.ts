@@ -415,6 +415,7 @@ describe("core onboard flow phases", () => {
       {
         gatewayName: "nemoclaw",
         allowToolsIncompatible: false,
+        endpointSource: null,
         reservationSessionId: session.sessionId,
       },
     );
@@ -430,6 +431,79 @@ describe("core onboard flow phases", () => {
       hermesToolGateways: ["nous-web"],
       sandboxGpuConfig: { mode: "cdi" },
     });
+  });
+
+  it.each([
+    [
+      "matching",
+      "compatible-endpoint",
+      "https://persisted.example.test/v1",
+      "onboard",
+      "https://persisted.example.test/v1",
+      true,
+    ],
+    [
+      "endpoint-mismatched",
+      "compatible-endpoint",
+      "https://other.example.test/v1",
+      null,
+      null,
+      false,
+    ],
+    ["provider-mismatched", "nvidia-prod", "https://persisted.example.test/v1", null, null, false],
+  ] as const)("binds %s persisted onboard provenance to its exact provider endpoint", async (_label, registeredProvider, registeredEndpointUrl, expectedSource, expectedOnboardEndpointUrl, expectTrustedUrl) => {
+    const setupInference = vi.fn(async () => ({ ok: true as const }));
+    const getSandboxRegistryEntry = vi.fn((_sandboxName: string) => ({
+      name: "my-sandbox",
+      provider: registeredProvider,
+      model: "custom/model",
+      endpointUrl: registeredEndpointUrl,
+      endpointSource: "onboard" as const,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gpuEnabled: false,
+      policies: [],
+    }));
+    const [providerPhase] = createPhases({
+      providerDeps: {
+        setupInference,
+        hydrateCredentialEnv: vi.fn(() => "host-key"),
+      },
+      sandboxDeps: {
+        getSandboxRegistryEntry,
+      },
+    });
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "https://persisted.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      steps: { provider_selection: completeStep() },
+    });
+
+    const result = await providerPhase.run(
+      context({
+        resume: true,
+        session,
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://persisted.example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+
+    const inferenceOptions = setupInference.mock.calls[0]?.at(-1) as
+      | { endpointSource?: string | null; onboardEndpointUrl?: string }
+      | undefined;
+    expect(inferenceOptions).toMatchObject({ endpointSource: expectedSource });
+    expect(inferenceOptions?.onboardEndpointUrl ?? null).toBe(expectedOnboardEndpointUrl);
+    expect(Object.hasOwn(inferenceOptions ?? {}, "onboardEndpointUrl")).toBe(expectTrustedUrl);
+    expect(result.context.endpointSource).toBe(expectedSource);
+    expect(result.context.onboardEndpointUrl ?? null).toBe(expectedOnboardEndpointUrl);
+    expect(getSandboxRegistryEntry).toHaveBeenCalledWith("my-sandbox");
   });
 
   it("uses the strict runner for fresh provider selection sessions", async () => {

@@ -104,6 +104,11 @@ function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
     conclusion: null,
+    output: {
+      title: "Waiting for PR CI",
+      summary:
+        "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.",
+    },
     app: { id: 15368 },
     ...overrides,
   };
@@ -233,6 +238,7 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
     name: "E2E",
     path: ".github/workflows/e2e.yaml",
     workflow_id: 304268429,
+    run_attempt: 1,
     event: "workflow_dispatch",
     head_sha: gate.workflowSha,
     status: "completed",
@@ -715,7 +721,7 @@ describe("PR E2E controller", () => {
     ).toThrow(/display_title/u);
   });
 
-  it("seeds one idempotent exact-diff gate", async () => {
+  it("seeds one idempotent gate for a PR/base SHA pair", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -729,10 +735,10 @@ describe("PR E2E controller", () => {
     expect(requests[1]?.url).toContain(`/commits/${HEAD_SHA}/check-runs?`);
   });
 
-  it("closes a stale retarget check before reusing the original base check", async () => {
+  it("does not mutate a newer-base gate that appears after live validation", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const otherBaseSha = "c".repeat(40);
+    const newerBaseSha = "c".repeat(40);
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -743,19 +749,18 @@ describe("PR E2E controller", () => {
               url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
             () =>
               githubResponse({
-                total_count: 2,
+                total_count: 1,
                 check_runs: [
-                  exactPrGateCheck(),
                   exactPrGateCheck({
                     id: 18,
-                    external_id: prGateExternalId(42, HEAD_SHA, otherBaseSha),
+                    external_id: prGateExternalId(42, HEAD_SHA, newerBaseSha),
                   }),
                 ],
               }),
           ),
           githubFetchRoute(
-            ({ url, method }) => url.endsWith("/check-runs/18") && method === "PATCH",
-            (request) => prGateMutationResponse(request, 18),
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -765,14 +770,18 @@ describe("PR E2E controller", () => {
     await expect(seedPrGate(42, HEAD_SHA, BASE_SHA)).resolves.toBe(17);
     expect(requests).toHaveLength(3);
     expect(requests[2]).toMatchObject({
-      method: "PATCH",
+      method: "POST",
       body: {
-        status: "completed",
-        conclusion: "failure",
-        output: { title: "PR base changed" },
+        external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
+        status: "in_progress",
       },
     });
-    expect(requests.some((request) => request.url.endsWith("/check-runs"))).toBe(false);
+    expect(
+      requests.some(
+        (request) =>
+          request.url.endsWith("/check-runs/18") && !["GET", "HEAD"].includes(request.method),
+      ),
+    ).toBe(false);
   });
 
   it("rejects a seeded identity claimed by another GitHub App", async () => {
@@ -887,7 +896,7 @@ describe("PR E2E controller", () => {
     }
   });
 
-  it("closes a superseded exact-diff check without failing the controller", async () => {
+  it("closes a superseded PR/base SHA check without failing the controller", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-superseded-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -1354,7 +1363,7 @@ describe("PR E2E controller", () => {
       expect(gate.expectedJobs).toEqual(BROAD_JOBS);
       expect(gate.expectedTargets).toEqual([]);
       expect(requests.filter((request) => request.url.includes("/pulls?"))).toHaveLength(1);
-      // Finalization brackets evidence parsing with exact-diff reads so a PR update cannot
+      // Finalization reads the PR/base SHA pair before and after parsing so a PR update cannot
       // turn stale evidence into a current-revision result.
       expect(requests.filter((request) => request.url.endsWith("/pulls/42"))).toHaveLength(4);
       const checkCreation = requests.find(
@@ -1367,7 +1376,7 @@ describe("PR E2E controller", () => {
         status: "in_progress",
         output: {
           title: "Waiting for PR CI",
-          summary: expect.stringContaining("exact PR head and base revision"),
+          summary: expect.stringContaining("PR SHA and base SHA"),
         },
       });
       const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));

@@ -24,6 +24,7 @@ import {
 } from "./messaging/hooks/status-runner";
 import type { MessagingAgentId } from "./messaging/manifest";
 import { resolveGatewayName } from "./onboard/gateway-binding";
+import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
@@ -271,6 +272,7 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     showServiceStatus,
     getServiceStatuses,
     getGatewayHealth: probeGatewayHealth,
+    getGatewayAuthority: () => summarizeForDebug()?.gatewayAuthority ?? null,
     getActiveSessionCount: sessionDeps
       ? (name) => {
           try {

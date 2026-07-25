@@ -12,6 +12,7 @@ import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
+  isNvidiaEndpointRateLimitFailure,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
 } from "../live/messaging-providers-helpers.ts";
@@ -142,6 +143,33 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(() => parseRuntimeProofPort(rawPort)).toThrow(/runtime proof port/u);
   });
 
+  it("classifies only rate-limited NVIDIA endpoint validation failures", () => {
+    expect(
+      isNvidiaEndpointRateLimitFailure(
+        "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
+      ),
+    ).toBe(true);
+    expect(
+      isNvidiaEndpointRateLimitFailure(
+        "NVIDIA Endpoints endpoint validation failed: too many requests",
+      ),
+    ).toBe(true);
+    expect(
+      isNvidiaEndpointRateLimitFailure(
+        [
+          "Using Other OpenAI-compatible endpoint with model: nvidia/nvidia/nemotron-3-ultra",
+          "No GITHUB_TOKEN (60 req/hr rate limit — set it for better rates)",
+          "Docker GPU patch failed: spawnSync docker ETIMEDOUT",
+        ].join("\n"),
+      ),
+    ).toBe(false);
+    expect(
+      isNvidiaEndpointRateLimitFailure(
+        "NVIDIA Endpoints endpoint validation failed: invalid credential",
+      ),
+    ).toBe(false);
+  });
+
   it("keeps the Slack allow, deny, feedback, and send contract on installed exports", () => {
     expectValidModuleSource(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE);
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("prepareSlackMessage");
@@ -168,7 +196,7 @@ describe("messaging provider installed-runtime proofs", () => {
       fs.mkdirSync(slackPackageRoot, { recursive: true });
       fs.writeFileSync(
         path.join(slackProject, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.6.10" } }),
+        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
       );
       fs.mkdirSync(path.join(unrelatedProject, "node_modules", "@openclaw", "slack"), {
         recursive: true,
@@ -242,7 +270,7 @@ describe("messaging provider installed-runtime proofs", () => {
     );
   });
 
-  it("requires the reviewed Slack pipeline/runtime proof in the default 2026.6.10 live lane", () => {
+  it("requires the reviewed Slack pipeline/runtime proof in the default 2026.7.1 live lane", () => {
     expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
       'installedSlackProof.proof === "openclaw-pipeline-runtime"',
     );

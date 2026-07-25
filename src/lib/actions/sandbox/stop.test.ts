@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
+import { teardownSandboxDashboardForward } from "./forward-recovery";
 import { type SandboxStopDeps, stopSandbox } from "./stop";
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
@@ -26,6 +27,8 @@ function harness(overrides: Partial<SandboxStopDeps> = {}) {
   >(() => [container("openshell-my-sandbox", true)]);
   const stopSandboxChannels = vi.fn<NonNullable<SandboxStopDeps["stopSandboxChannels"]>>();
   const dockerStop = vi.fn<NonNullable<SandboxStopDeps["dockerStop"]>>(() => ({ status: 0 }));
+  const teardownSandboxDashboardForward =
+    vi.fn<NonNullable<SandboxStopDeps["teardownSandboxDashboardForward"]>>();
   const log = vi.fn<(message: string) => void>();
   const warn = vi.fn<(message: string) => void>();
   const deps: SandboxStopDeps = {
@@ -34,6 +37,7 @@ function harness(overrides: Partial<SandboxStopDeps> = {}) {
     printDockerRuntimeDownGuidance,
     findLabeledSandboxContainers,
     stopSandboxChannels,
+    teardownSandboxDashboardForward,
     dockerStop,
     log,
     warn,
@@ -42,6 +46,7 @@ function harness(overrides: Partial<SandboxStopDeps> = {}) {
   return {
     deps,
     dockerStop,
+    teardownSandboxDashboardForward,
     findLabeledSandboxContainers,
     getSandbox,
     isDockerRuntimeDown,
@@ -51,6 +56,78 @@ function harness(overrides: Partial<SandboxStopDeps> = {}) {
     warn,
   };
 }
+
+describe("teardownSandboxDashboardForward", () => {
+  it("stops only the selected sandbox's resolved dashboard forward on its gateway (#7227)", () => {
+    const getSandbox = vi.fn(() =>
+      sandbox({
+        dashboardPort: 19443,
+        gatewayName: "nemoclaw-18080",
+        gatewayPort: 18080,
+      }),
+    );
+    const resolveSandboxDashboardPort = vi.fn(() => 19443);
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const isLocalForwardReachable = vi
+      .fn<() => boolean>()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    expect(() =>
+      teardownSandboxDashboardForward("selected-sandbox", {
+        getSandbox,
+        isLocalForwardReachable,
+        resolveSandboxDashboardPort,
+        runOpenshell,
+      }),
+    ).not.toThrow();
+
+    expect(resolveSandboxDashboardPort).toHaveBeenCalledWith(
+      "selected-sandbox",
+      expect.objectContaining({ getSandbox: expect.any(Function) }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "stop", "19443", "selected-sandbox", "--gateway", "nemoclaw-18080"],
+      {
+        ignoreError: true,
+        stdio: "ignore",
+        timeout: 30_000,
+      },
+    );
+    expect(isLocalForwardReachable).toHaveBeenCalledTimes(2);
+    expect(isLocalForwardReachable).toHaveBeenNthCalledWith(1, 19443);
+    expect(isLocalForwardReachable).toHaveBeenNthCalledWith(2, 19443);
+  });
+
+  it("does not throw when OpenShell cannot be launched (#7227)", () => {
+    const runOpenshell = vi.fn(() => {
+      throw new Error("spawn openshell ENOENT");
+    });
+
+    expect(() =>
+      teardownSandboxDashboardForward("selected-sandbox", {
+        getSandbox: () => sandbox(),
+        resolveSandboxDashboardPort: () => 19443,
+        runOpenshell,
+      }),
+    ).not.toThrow();
+  });
+
+  it("does not probe the port when OpenShell reports cleanup failure (#7227)", () => {
+    const isLocalForwardReachable = vi.fn(() => false);
+
+    expect(() =>
+      teardownSandboxDashboardForward("selected-sandbox", {
+        getSandbox: () => sandbox(),
+        isLocalForwardReachable,
+        resolveSandboxDashboardPort: () => 19443,
+        runOpenshell: () => ({ status: 1 }),
+      }),
+    ).not.toThrow();
+
+    expect(isLocalForwardReachable).not.toHaveBeenCalled();
+  });
+});
 
 describe("stopSandbox", () => {
   it("gracefully stops in-sandbox channels before stopping the container (#6026)", () => {
@@ -70,6 +147,57 @@ describe("stopSandbox", () => {
     expect(h.stopSandboxChannels.mock.invocationCallOrder[0]).toBeLessThan(
       h.dockerStop.mock.invocationCallOrder[0],
     );
+  });
+
+  it("tears down the host-side dashboard port-forward after stopping the container (#7227)", () => {
+    const h = harness();
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
+    // Release the forward only after the container is stopped, never before.
+    expect(h.dockerStop.mock.invocationCallOrder[0]).toBeLessThan(
+      h.teardownSandboxDashboardForward.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps a successful stop successful when dashboard cleanup cannot launch (#7227)", () => {
+    const teardownSandboxDashboardForward = vi.fn(() => {
+      throw new Error("spawn openshell EACCES");
+    });
+    const h = harness({ teardownSandboxDashboardForward });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
+    expect(h.warn).toHaveBeenCalledWith(
+      "  Warning: could not release the dashboard port-forward: spawn openshell EACCES",
+    );
+  });
+
+  it("does not release the dashboard forward when the container failed to stop (#7227)", () => {
+    const h = harness({ dockerStop: vi.fn(() => ({ status: 1 })) });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+  });
+
+  it("releases a leftover dashboard forward for an already-stopped sandbox — idempotent (#7227)", () => {
+    const h = harness({
+      findLabeledSandboxContainers: vi.fn(() => [container("openshell-my-sandbox", false)]),
+    });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    // No container to stop, but a repeated stop must still converge on no
+    // leftover dashboard listener (e.g. a forward orphaned by an earlier stop).
+    expect(result.exitCode).toBe(0);
+    expect(h.dockerStop).not.toHaveBeenCalled();
+    expect(h.teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
   });
 
   it("routes channel-stop reporter lines through the action's log and warn (#6026)", () => {
@@ -248,6 +376,7 @@ describe("stopSandbox", () => {
 
     expect(result.exitCode).toBe(1);
     expect(h.dockerStop).toHaveBeenCalledTimes(2);
+    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
     expect(h.dockerStop).toHaveBeenNthCalledWith(
       2,
       "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",

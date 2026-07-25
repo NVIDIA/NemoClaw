@@ -63,6 +63,52 @@ import { executeSandboxCommand, executeSandboxExecCommand } from "./process-reco
 
 const isNonInteractive = isNonInteractiveEnv;
 
+/**
+ * Report that `NEMOCLAW_NON_INTERACTIVE=1` leaves no interactive picker, and
+ * exit non-zero.
+ */
+function exitPresetNameRequired(usage: string): never {
+  console.error("  Non-interactive mode requires a preset name.");
+  console.error(`  Usage: ${usage}`);
+  process.exit(1);
+}
+
+/**
+ * Report that the picker prompt reached stdin EOF, and exit non-zero.
+ *
+ * Separate from `exitPresetNameRequired` because the conditions differ. That
+ * one means the operator set `NEMOCLAW_NON_INTERACTIVE=1`. This one means
+ * stdin closed while that variable was unset, so naming the variable would
+ * misdirect whoever reads the boot-unit log.
+ */
+function exitPromptStdinClosed(usage: string): never {
+  console.error("  No input available on stdin, so the preset picker cannot prompt.");
+  console.error(`  Usage: ${usage}`);
+  process.exit(1);
+}
+
+/**
+ * Await an interactive preset picker and convert a prompt EOF into exit 1.
+ *
+ * A boot unit that pipes or closes stdin without setting
+ * `NEMOCLAW_NON_INTERACTIVE=1` reaches the picker, and the prompt then hits
+ * EOF. Before #7418 the picker promise never settled, so the command exited 0
+ * having changed nothing. Automation could not distinguish an applied preset
+ * from a no-op. Any other failure propagates unchanged.
+ */
+async function pickPresetOrExit(
+  pick: () => Promise<string | null>,
+  usage: string,
+): Promise<string | null> {
+  try {
+    return await pick();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code !== "EOF") throw error;
+    exitPromptStdinClosed(usage);
+  }
+}
+
 type ChannelMutationOptions = {
   channel?: string;
   dryRun?: boolean;
@@ -86,7 +132,11 @@ const YW = useColor ? "\x1b[1;33m" : "";
  * `--yes`/`-y`/`--force` (or `NEMOCLAW_NON_INTERACTIVE=1`) skips the
  * confirmation prompt. `--from-dir` applies non-hidden files in lexicographic
  * order and aborts at the first failure (already-applied presets are not
- * rolled back).
+ * rolled back). Naming an already-applied preset compares the preset content
+ * against the live policy: a match is a successful no-op, while drift (an
+ * edited preset file) re-applies the preset through the normal path (#7323).
+ * Names owned by a custom (--from-file) preset are refused; re-apply those
+ * with `--from-file`.
  */
 export async function addSandboxPolicy(
   sandboxName: string,
@@ -149,6 +199,7 @@ async function addSandboxPolicyUnlocked(
   const applied = policies.getAppliedPresets(sandboxName);
 
   let answer = null;
+  let reapplyState: "drift" | "absent" | null = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();
     const preset = allPresets.find((item: { name: string }) => item.name === normalized);
@@ -160,24 +211,76 @@ async function addSandboxPolicyUnlocked(
       process.exit(1);
     }
     if (applied.includes(preset.name)) {
-      console.error(`  Preset '${preset.name}' is already applied.`);
-      process.exit(1);
+      // #7323: the registry name alone must not block a re-add. Users edit
+      // preset files in place (for example to add `tls: skip` endpoints), so
+      // compare the preset content against the live gateway policy and fall
+      // through to a normal re-apply when it drifted.
+      const customNames = registry
+        .getCustomPolicies(sandboxName)
+        .map((entry: { name: string }) => entry.name);
+      if (customNames.includes(preset.name)) {
+        // A custom preset owns this name, so the built-in content is the
+        // wrong comparison baseline; re-applying it would clobber the custom
+        // policy and double-register the name.
+        console.error(`  Preset '${preset.name}' was applied as a custom preset (--from-file).`);
+        console.error(
+          `  Edit and re-apply it with --from-file, or run '${CLI_NAME} ${sandboxName} policy-remove ${preset.name}' first.`,
+        );
+        process.exit(1);
+      }
+      const appliedContent = policies.loadPresetForSandbox(sandboxName, preset.name);
+      if (!appliedContent) {
+        console.error(`  Could not read the content of preset '${preset.name}'.`);
+        process.exit(1);
+      }
+      const appliedState = policies.getPresetContentGatewayState(sandboxName, appliedContent);
+      if (appliedState === "match") {
+        // The desired state already holds: exit 0 so converging scripts can
+        // call policy-add idempotently, mirroring how applyPreset treats a
+        // byte-identical re-application as a successful no-op.
+        console.log(
+          `  Preset '${preset.name}' is already applied and matches the live policy; nothing to do.`,
+        );
+        return;
+      }
+      if (appliedState === null) {
+        // Live policy unreadable: drift is unverifiable, so refuse rather
+        // than guess.
+        console.error(`  Preset '${preset.name}' is already applied.`);
+        console.error(
+          "  Could not read the live sandbox policy to compare (is the sandbox gateway running?).",
+        );
+        process.exit(1);
+      }
+      // State-only notice: the downstream flow reports the dry-run,
+      // confirmation, and apply outcomes.
+      reapplyState = appliedState;
+      console.log(
+        appliedState === "drift"
+          ? `  Preset '${preset.name}' no longer matches the live policy.`
+          : `  Preset '${preset.name}' is recorded as applied but missing from the live policy.`,
+      );
     }
     answer = preset.name;
   } else {
+    const usage = `${CLI_NAME} <sandbox> policy-add <preset> [--yes] [--dry-run]`;
     if (isNonInteractive()) {
-      console.error("  Non-interactive mode requires a preset name.");
-      console.error(`  Usage: ${CLI_NAME} <sandbox> policy-add <preset> [--yes] [--dry-run]`);
-      process.exit(1);
+      exitPresetNameRequired(usage);
     }
-    answer = await policies.selectFromList(allPresets, { applied });
+    answer = await pickPresetOrExit(() => policies.selectFromList(allPresets, { applied }), usage);
   }
   if (!answer) return;
 
   const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) return;
 
-  policies.logPresetScope(presetContent);
+  if (reapplyState) {
+    // A re-add replaces the recorded entries, so use the state-aware heading
+    // instead of the fresh-add "would be opened" preview.
+    policies.logPresetScopeForState(answer, presetContent, reapplyState);
+  } else {
+    policies.logPresetScope(presetContent);
+  }
 
   const presetWarning = policies.getPresetValidationWarning(answer);
   if (presetWarning) {
@@ -1574,12 +1677,14 @@ async function removeSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
+    const usage = `${CLI_NAME} <sandbox> policy-remove <preset> [--yes] [--dry-run]`;
     if (isNonInteractive()) {
-      console.error("  Non-interactive mode requires a preset name.");
-      console.error(`  Usage: ${CLI_NAME} <sandbox> policy-remove <preset> [--yes] [--dry-run]`);
-      process.exit(1);
+      exitPresetNameRequired(usage);
     }
-    answer = await policies.selectForRemoval(allPresets, { applied });
+    answer = await pickPresetOrExit(
+      () => policies.selectForRemoval(allPresets, { applied }),
+      usage,
+    );
   }
   if (!answer) return;
 

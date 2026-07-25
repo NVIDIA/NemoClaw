@@ -39,8 +39,8 @@ const OPENROUTER_ENDPOINT_PATH = "/api/v1";
 
 function readSettings(env: NodeJS.ProcessEnv): Settings {
   const providerKey = normalizeCommentMetadata(
-    env.NEMOCLAW_PROVIDER_KEY || "inference",
-    "NEMOCLAW_PROVIDER_KEY",
+    env.NEMOCLAW_INFERENCE_PROVIDER_ID || env.NEMOCLAW_PROVIDER_KEY || "inference",
+    "NEMOCLAW_INFERENCE_PROVIDER_ID",
   );
   return {
     model: readRequiredEnv(env, "NEMOCLAW_MODEL"),
@@ -49,7 +49,10 @@ function readSettings(env: NodeJS.ProcessEnv): Settings {
     ),
     providerKey,
     upstreamProvider: normalizeCommentMetadata(
-      env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "inference",
+      env.NEMOCLAW_UPSTREAM_PROVIDER ||
+        env.NEMOCLAW_INFERENCE_PROVIDER_ID ||
+        env.NEMOCLAW_PROVIDER_KEY ||
+        "inference",
       "NEMOCLAW_UPSTREAM_PROVIDER",
     ),
     upstreamEndpointUrl: normalizeOptionalEndpointUrl(
