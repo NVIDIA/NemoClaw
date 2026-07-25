@@ -34,11 +34,15 @@ import type { Readable, Writable } from "node:stream";
 
 const REDACTED = "<REDACTED>";
 const EXPLICIT_REDACTED = "[REDACTED]";
-// Keep the fixture-owned explicit sentinel stable when already-redacted output
+// Keep both fixture-owned sentinels stable when already-redacted output
 // crosses another artifact boundary. Tight boundaries ensure a sentinel
 // embedded in a longer credential value remains eligible for canonical
-// redaction instead of becoming a bypass.
-const SAFE_EXPLICIT_REDACTION_PATTERN = /(^|[\s=:,'"(]|\[|\{)\[REDACTED\](?=$|[\s,;:.'")\]}])/g;
+// redaction instead of becoming a bypass. A JSON-escaped quote is also a
+// safe boundary; protecting it prevents a context match from consuming the
+// escape and leaving the serialized JSON malformed.
+const SAFE_REDACTION_SENTINEL_PATTERN =
+  /(^|[\s=:,'"(]|\[|\{)(?:\[REDACTED\]|<REDACTED>)(?=$|[\s,;:.'")\]}]|\\")/g;
+const JSON_ESCAPED_QUOTE_PATTERN = /\\"/g;
 const MANAGED_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127}|(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127})`;
 const SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
   `(["'])${MANAGED_CREDENTIAL_REFERENCE_SOURCE}\\1`,
@@ -155,15 +159,16 @@ function protectSafeRedactionValues(text: string): {
   do {
     markerPrefix = `\uE000 ${randomUUID()} `;
   } while (text.includes(markerPrefix));
-  const protect = (pattern: RegExp): void => {
+  const protect = (pattern: RegExp, markerBoundary = ""): void => {
     pattern.lastIndex = 0;
     protectedText = protectedText.replace(pattern, (value) => {
-      const marker = `${markerPrefix}${references.length} \uE001`;
+      const marker = `${markerBoundary}${markerPrefix}${references.length} \uE001`;
       references.push({ marker, value });
       return marker;
     });
   };
-  protect(SAFE_EXPLICIT_REDACTION_PATTERN);
+  protect(SAFE_REDACTION_SENTINEL_PATTERN);
+  protect(JSON_ESCAPED_QUOTE_PATTERN, " ");
   protect(SAFE_ENV_ASSIGNMENT_PATTERN);
   protect(SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN);
   protect(SAFE_STANDALONE_CREDENTIAL_REFERENCE_PATTERN);

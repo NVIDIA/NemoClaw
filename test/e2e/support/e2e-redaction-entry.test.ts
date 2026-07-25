@@ -120,6 +120,38 @@ describe("fixture redaction entry point", () => {
     expect(once).toBe("TOKEN=[REDACTED]");
     expect(redactString(once)).toBe(once);
     expect(redactString("TOKEN=prefix[REDACTED]suffix")).toBe("TOKEN=<REDACTED>");
+    expect(redactString("TOKEN=prefix<REDACTED>suffix")).toBe("TOKEN=<REDACTED>");
+  });
+
+  it.each([
+    "[REDACTED]",
+    "<REDACTED>",
+  ])("keeps the %s sentinel stable before a JSON-escaped quote", (sentinel) => {
+    const value = `TOKEN=${sentinel}"`;
+    const serialized = JSON.stringify({ value });
+    const redacted = redactString(serialized);
+
+    expect(redacted).toBe(serialized);
+    expect(JSON.parse(redacted)).toEqual({ value });
+  });
+
+  it("keeps contextual TOKEN and API_KEY redaction parseable across an embedded quote", () => {
+    const opaqueToken = "opaque-unregistered-token-value";
+    const opaqueApiKey = "opaque-unregistered-api-key-value";
+    const serialized = JSON.stringify({
+      TOKEN: `${opaqueToken}"`,
+      API_KEY: opaqueApiKey,
+    });
+    const redacted = redactString(serialized);
+
+    expect(redacted.includes(opaqueToken)).toBe(false);
+    expect(redacted.includes(opaqueApiKey)).toBe(false);
+    expect(/[\uE000-\uF8FF]/u.test(redacted)).toBe(false);
+    expect(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu.test(redacted)).toBe(false);
+    expect(JSON.parse(redacted)).toEqual({
+      TOKEN: '<REDACTED>"',
+      API_KEY: "<REDACTED>",
+    });
   });
 
   it("redacts a complete multi-segment LangSmith key without exposing its tail", () => {

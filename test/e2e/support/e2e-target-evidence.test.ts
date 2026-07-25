@@ -55,6 +55,47 @@ describe("target evidence", () => {
     }
   });
 
+  it("keeps JSON artifacts parseable when redacted values contain escaped quotes (#7140)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-json-redaction-"));
+    const registeredSecret = "registered-raw-artifact-secret";
+    const opaqueToken = "opaque-unregistered-token-value";
+    const opaqueApiKey = "opaque-unregistered-api-key-value";
+    const managedReference = "openshell:resolve:env:DISCORD_BOT_TOKEN";
+    try {
+      const artifacts = new ArtifactSink(root);
+      artifacts.addRedactionValues([registeredSecret]);
+
+      const artifactPath = await artifacts.writeJson("quoted-secrets.json", {
+        explicitSentinel: 'TOKEN=[REDACTED]"',
+        canonicalSentinel: 'TOKEN=<REDACTED>"',
+        registeredSecret: `TOKEN=${registeredSecret}"`,
+        [`key-${registeredSecret}`]: "registered secret in property name",
+        TOKEN: `${opaqueToken}"`,
+        API_KEY: opaqueApiKey,
+        managedReference,
+      });
+      const serialized = fs.readFileSync(artifactPath, "utf8");
+      const parsed = JSON.parse(serialized);
+
+      expect(serialized).toContain('TOKEN=[REDACTED]\\"');
+      expect(serialized).toContain('TOKEN=<REDACTED>\\"');
+      expect(serialized.includes(registeredSecret)).toBe(false);
+      expect(serialized.includes(opaqueToken)).toBe(false);
+      expect(serialized.includes(opaqueApiKey)).toBe(false);
+      expect(parsed).toEqual({
+        explicitSentinel: 'TOKEN=[REDACTED]"',
+        canonicalSentinel: 'TOKEN=<REDACTED>"',
+        registeredSecret: 'TOKEN=[REDACTED]"',
+        "key-[REDACTED]": "registered secret in property name",
+        TOKEN: '<REDACTED>"',
+        API_KEY: "<REDACTED>",
+        managedReference,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid identifiers, results, and conflicting contract names", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-target-evidence-invalid-"));
     try {
