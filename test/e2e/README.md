@@ -181,9 +181,11 @@ graph as the live targets:
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for the #7145 contract: 12 routed workflow lane identities / 15
+telemetry for 14 routed workflow lane identities / 17
 concrete job executions.
 
+- `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
+- `bedrock-runtime-compatible-anthropic` with the `hermes` shard
 - `common-egress-agent` with the `openclaw-balanced-weather`,
   `openclaw-open-reference`, and `hermes-open-reference` shards
 - `rebuild-hermes`
@@ -201,7 +203,12 @@ concrete job executions.
 The three extra executions come from `common-egress-agent`, which runs three
 scenario shards, and `hermes-inference-switch`, which runs both listed modes.
 The OpenClaw matrix entries for `mcp-bridge`,
-`channels-stop-start`, and `security-posture` are not instrumented.
+`channels-stop-start`, `security-posture`, and
+`bedrock-runtime-compatible-anthropic` are not instrumented.
+The #7145 standard-versus-larger-runner cohort compares the same lane and
+equivalent workload while varying the runner class. The newly instrumented
+`agent-turn-latency` and Bedrock Hermes lanes extend diagnostic coverage; this
+change does not route them to a larger runner.
 
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
