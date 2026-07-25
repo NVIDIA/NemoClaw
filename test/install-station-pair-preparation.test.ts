@@ -1187,7 +1187,7 @@ exit 96
 });
 
 describe("dual-DGX Station installer handoff", () => {
-  it("selects Ultra only after the coordinator returns a validated ready pair", () => {
+  it("changes the Ultra topology only after the coordinator returns a validated ready pair", () => {
     const argsFile = path.join(os.tmpdir(), `nemoclaw-pair-args-${process.pid}-${Date.now()}`);
     const { result, output, home } = runInstallerBody(
       `
@@ -1203,7 +1203,9 @@ station_installer_revision() { printf '%s' "$PAIR_REVISION"; }
 station_dual_pair_resume_pending() { return 0; }
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
-unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL NEMOCLAW_DGX_STATION_PEER NEMOCLAW_DGX_STATION_SSH_BINDING
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+unset NEMOCLAW_DGX_STATION_PEER NEMOCLAW_DGX_STATION_SSH_BINDING
 ensure_station_express_pair
 printf 'RESULT peer=%s model=%s selector=%s binding=%s\n' "\${NEMOCLAW_DGX_STATION_PEER:-}" "\${NEMOCLAW_MODEL:-}" "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_DGX_STATION_SSH_BINDING:-}"
 `,
@@ -1215,7 +1217,9 @@ printf 'RESULT peer=%s model=%s selector=%s binding=%s\n' "\${NEMOCLAW_DGX_STATI
     );
     try {
       expect(result.status, output).toBe(0);
-      expect(output).toContain("RESULT peer=10.10.0.2 model=nemotron-ultra selector=");
+      expect(output).toContain(
+        "RESULT peer=10.10.0.2 model=nemotron-ultra selector=nemotron-3-ultra-550b-a55b",
+      );
       const expectedToken = JSON.parse(coordinatorResult("ready")).sshBinding;
       expect(output).toContain(`binding=${expectedToken}`);
       const args = fs.readFileSync(argsFile, "utf8");
@@ -1248,7 +1252,9 @@ _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=1
 NEMOCLAW_DGX_STATION_PEER="$PAIR_PEER"
-unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL NEMOCLAW_DGX_STATION_SSH_BINDING
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+unset NEMOCLAW_DGX_STATION_SSH_BINDING
 ensure_station_express_pair
 printf 'RESULT peer=%s model=%s binding=%s\n' "$NEMOCLAW_DGX_STATION_PEER" "$NEMOCLAW_MODEL" "$NEMOCLAW_DGX_STATION_SSH_BINDING"
 `,
@@ -1286,7 +1292,9 @@ station_installer_revision() { printf '%s' "$PAIR_REVISION"; }
 station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
-unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL NEMOCLAW_DGX_STATION_PEER
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+unset NEMOCLAW_DGX_STATION_PEER
 NEMOCLAW_DGX_STATION_SSH_BINDING='stale'
 ensure_station_express_pair
 printf 'RESULT peer=%s model=%s selector=%s binding=%s\n' "\${NEMOCLAW_DGX_STATION_PEER:-}" "\${NEMOCLAW_MODEL:-}" "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_DGX_STATION_SSH_BINDING:-}"
@@ -1296,7 +1304,9 @@ printf 'RESULT peer=%s model=%s selector=%s binding=%s\n' "\${NEMOCLAW_DGX_STATI
     try {
       expect(result.status, output).toBe(0);
       expect(output).toContain("No trusted reciprocal dual-DGX Station pair was detected");
-      expect(output).toContain("RESULT peer= model= selector= binding=");
+      expect(output).toContain(
+        "RESULT peer= model=nvidia/nemotron-3-ultra-550b-a55b selector=nemotron-3-ultra-550b-a55b binding=",
+      );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -1362,11 +1372,14 @@ node() {
   command node "$@"
 }
 station_installer_revision() { printf '%s' "$PAIR_REVISION"; }
-save_station_express_resume() { _STATION_EXPRESS_RESUME_REVISION="$PAIR_REVISION"; printf 'SAVED_EXPRESS_RESUME\n'; }
+save_station_express_resume() { _STATION_EXPRESS_RESUME_REVISION="$PAIR_REVISION" _STATION_EXPRESS_RESUME_AGENT='openclaw' _STATION_EXPRESS_RESUME_SANDBOX='my-assistant' _STATION_EXPRESS_RESUME_POLICY_TIER='balanced' _STATION_EXPRESS_RESUME_GATEWAY_PORT='8080' _STATION_EXPRESS_RESUME_DASHBOARD_PORT='18789' _STATION_EXPRESS_RESUME_VLLM_PORT='8000'; printf 'SAVED_EXPRESS_RESUME\n'; }
 station_dual_pair_resume_pending() { return 0; }
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
-unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL NEMOCLAW_DGX_STATION_PEER
+_STATION_INSTALL_MODE='express'
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+unset NEMOCLAW_DGX_STATION_PEER
 ensure_station_express_pair
 `,
       { PAIR_RESULT: coordinatorResult("reboot-required"), PAIR_REVISION: REVISION },
@@ -1403,7 +1416,9 @@ _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_INSTALL_MODE='express'
 station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
-unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL NEMOCLAW_DGX_STATION_PEER
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
+unset NEMOCLAW_DGX_STATION_PEER
 ensure_station_express_pair
 `,
       { PAIR_REVISION: REVISION },
@@ -1415,7 +1430,7 @@ ensure_station_express_pair
         true,
       );
       expect(fs.readFileSync(path.join(home, ".nemoclaw", "station-express-resume"), "utf8")).toBe(
-        `revision=${REVISION}\nmodel=auto\ngeneration=0123456789abcdef0123456789abcdef\n` +
+        `revision=${REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=0123456789abcdef0123456789abcdef\n` +
           "agent=openclaw\nsandbox=my-assistant\npolicy_tier=balanced\n" +
           "gateway_port=8080\ndashboard_port=18789\nvllm_port=8000\nmode=express\n",
       );

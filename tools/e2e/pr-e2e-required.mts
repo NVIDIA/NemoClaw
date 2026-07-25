@@ -27,7 +27,6 @@ const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-required";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const AUTHORIZATION_TITLES = new Set(["Maintainer approval required to skip credentialed E2E"]);
 const MAX_LOG_URLS = 20;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
@@ -321,10 +320,7 @@ export function classifyCoordinationCheck(
   if (check.status !== "completed") {
     return { state: "waiting", description: title, ...links };
   }
-  if (
-    check.conclusion === "failure" &&
-    (AUTHORIZATION_TITLES.has(title) || hasRetryableFailureMarker(check))
-  ) {
+  if (check.conclusion === "failure" && hasRetryableFailureMarker(check)) {
     return { state: "waiting", description: title, ...links };
   }
   if (
@@ -421,7 +417,7 @@ async function main(): Promise<void> {
     baseSha: requiredArgument(args.base, "base"),
   };
   const timeoutSeconds = parsePositiveInteger(args.timeoutSeconds, "timeout-seconds");
-  if (timeoutSeconds > 10_200) throw new Error("--timeout-seconds must not exceed 10200");
+  if (timeoutSeconds > 21_480) throw new Error("--timeout-seconds must not exceed 21480");
   const result = await waitForRequiredGate(identity, { timeoutMs: timeoutSeconds * 1000 });
   appendJobSummary();
   console.log(`E2E / PR Gate completed: ${formatRequiredGateOutcome(result)}`);

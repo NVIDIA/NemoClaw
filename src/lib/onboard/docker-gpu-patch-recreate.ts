@@ -16,6 +16,7 @@ import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
+  getDockerGpuCloneFallbackDns,
   dockerContainerName,
   parseDockerInspectJson,
   sameContainerId,
@@ -35,6 +36,7 @@ import type {
   DockerGpuPatchMode,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
+import { isFatalContainerDnsProbeFailure, probeContainerDns } from "./preflight";
 import { waitForOpenShellSupervisorReconnect } from "./docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
@@ -55,6 +57,7 @@ type RecreateDeps = Required<
     | "sleep"
     | "now"
     | "detectSandboxFallbackDns"
+    | "probeContainerDns"
     | "detectTegraDeviceGroupGids"
   >
 > &
@@ -74,6 +77,7 @@ function recreateDeps(deps: DockerGpuPatchDeps): RecreateDeps {
     },
     now: () => new Date(),
     detectSandboxFallbackDns: () => detectSandboxFallbackDns(),
+    probeContainerDns: (options) => probeContainerDns(options),
     detectTegraDeviceGroupGids: () => detectTegraDeviceGroupGids(),
     ...deps,
   };
@@ -234,6 +238,30 @@ export function recreateOpenShellDockerSandboxContainer(
     cloneOptions.requiredUlimits = options.requiredUlimits ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
+    const cloneFallbackDns = getDockerGpuCloneFallbackDns(inspect, cloneOptions);
+    if (cloneFallbackDns) {
+      const dnsProbe = d.probeContainerDns({ dnsServer: cloneFallbackDns });
+      if (isFatalContainerDnsProbeFailure(dnsProbe)) {
+        const detail = String(dnsProbe.details || "")
+          .trim()
+          .split("\n")
+          .slice(-4)
+          .join("\n");
+        throw new Error(
+          `Sandbox DNS preflight failed using --dns ${cloneFallbackDns} ` +
+            `(reason: ${dnsProbe.reason ?? "unknown"}) before container recreation.` +
+            (detail ? `\n${detail}` : ""),
+        );
+      }
+      if (dnsProbe.ok) {
+        console.log(`  ✓ Sandbox fallback DNS works with --dns ${cloneFallbackDns}`);
+      } else {
+        console.warn(
+          `  ⚠ Sandbox fallback DNS probe inconclusive with --dns ${cloneFallbackDns} ` +
+            `(reason: ${dnsProbe.reason ?? "unknown"}); continuing without blocking recreation.`,
+        );
+      }
+    }
     if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {

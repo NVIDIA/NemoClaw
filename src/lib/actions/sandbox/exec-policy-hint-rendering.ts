@@ -23,8 +23,8 @@ export function buildPolicyDenialExecHint(
     `${cliName}: recent network policy denial detected${target} inside sandbox '${sandboxName}'.`,
     "  The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.",
     `  See the denied flow:    ${cliName} ${sandboxName} logs --tail 50`,
-    `  Review applied presets: ${cliName} ${sandboxName} policy-list`,
-    `  Allow the host:         ${cliName} ${sandboxName} policy-add <preset>`,
+    `  Review applied presets: ${cliName} ${sandboxName} policy list`,
+    `  Allow the host:         ${cliName} ${sandboxName} policy add <preset>`,
     `  Silence this hint:      export ${POLICY_HINT_SUPPRESS_ENV}=1`,
   ].join("\n");
 }

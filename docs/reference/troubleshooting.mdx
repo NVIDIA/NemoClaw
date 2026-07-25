@@ -489,7 +489,7 @@ First confirm that the provider credential and matching policy preset exist.
 
 ```bash
 $$nemoclaw credentials list
-$$nemoclaw <name> policy-list
+$$nemoclaw <name> policy list
 ```
 
 Look for `<name>-brave-search` with the `brave` preset or `<name>-tavily-search` with the `tavily` preset.
@@ -1200,13 +1200,13 @@ The Tavily flow only opens Python egress for project code or manually configured
 Confirm that the target sandbox has the `tavily` preset applied:
 
 ```bash
-nemo-deepagents <name> policy-list
+nemo-deepagents <name> policy list
 ```
 
 If it is missing, apply the preset, register the host-side credential, and rebuild so the provider attaches:
 
 ```bash
-nemo-deepagents <name> policy-add tavily --yes
+nemo-deepagents <name> policy add tavily --yes
 export TAVILY_API_KEY=tvly-...
 nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
 unset TAVILY_API_KEY
@@ -1298,8 +1298,8 @@ curl: (56) CONNECT tunnel failed, response 403
 $$nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'oc-fresh'.
   The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.
   See the denied flow:    $$nemoclaw oc-fresh logs --tail 50
-  Review applied presets: $$nemoclaw oc-fresh policy-list
-  Allow the host:         $$nemoclaw oc-fresh policy-add <preset>
+  Review applied presets: $$nemoclaw oc-fresh policy list
+  Allow the host:         $$nemoclaw oc-fresh policy add <preset>
   Silence this hint:      export NEMOCLAW_NO_POLICY_HINT=1
 ```
 
@@ -1334,18 +1334,19 @@ If the host should be reachable, allow it with a built-in preset or apply a revi
 </AgentOnly>
 
 ```bash
-$$nemoclaw <name> policy-add <preset>
+$$nemoclaw <name> policy add <preset>
 ```
 
 <AgentOnly variant="deepagents">
 
 ```bash
-nemo-deepagents <name> policy-add --from-file ./my-preset.yaml --yes
+nemo-deepagents <name> policy add --from-file ./my-preset.yaml --yes
 ```
 
 </AgentOnly>
 
-Replace `<preset>` with a real preset name such as `github`, `pypi`, or `npm`. Run `$$nemoclaw <name> policy-add` with no preset to list the available presets.
+Replace `<preset>` with a real preset name such as `github`, `pypi`, or `npm`.
+Run `$$nemoclaw <name> policy add` with no preset to list the available presets.
 
 ### Sandbox creation reports a TLS certificate mismatch
 
@@ -1484,6 +1485,9 @@ If readiness still fails after the extended budget, inspect the gateway and sand
 openshell sandbox list
 $$nemoclaw <name> status
 ```
+
+If onboarding instead reports that the sandbox "did not re-register with OpenShell after policy application," the same timeout controls that post-policy command-readiness probe.
+Raise the budget before retrying, then inspect the same gateway and sandbox status if re-registration still fails.
 
 ### Sandbox onboard fails with "entered Error phase before it became ready"
 
@@ -1630,6 +1634,31 @@ If the sandbox still cannot start or reports that no baseline is available, rebu
 ```bash
 $$nemoclaw <name> rebuild
 ```
+
+### `shields up` or `shields down` fails after `.config-hash` was removed
+
+`/sandbox/.openclaw/.config-hash` is the integrity sidecar for `openclaw.json`; deleting it during a manual config edit removes the file the shields guard captures alongside the config.
+From the default mutable posture, `$$nemoclaw <name> shields up` regenerates a stale hash from the current `openclaw.json` bytes.
+On sandboxes with the updated guard, the same command synthesizes a truly absent `.config-hash` under the frozen tree.
+Only a truly absent file is repaired; an unexpected file type at that name still fails closed.
+`$$nemoclaw <name> shields down` does not synthesize the hash: with the file missing it fails closed without modifying the config.
+If shields are already up, another `shields up` also fails closed when the hash is missing.
+Do not use mutable-posture synthesis to recover a locked sandbox.
+
+Sandboxes created by an older NemoClaw release keep the older guard baked into the container image, where a missing `.config-hash` makes the transition fail closed and quarantine `openclaw.json` by renaming it to `.nemoclaw-rejected-openclaw.json-<random>` in the same directory.
+The config bytes are preserved, not deleted.
+Upgrade the NemoClaw CLI before either recovery path because an older CLI restages the older guard.
+To preserve the quarantined settings, copy the file to the host before rebuilding:
+
+```bash
+docker exec <container> ls -a /sandbox/.openclaw
+docker cp <container>:/sandbox/.openclaw/<quarantine-file> ./openclaw.json.recovered
+$$nemoclaw <name> rebuild --yes
+```
+
+After the rebuild, inspect `./openclaw.json.recovered` and reapply required settings with the host-side `config set` command.
+Do not overwrite the regenerated `openclaw.json` with an unreviewed quarantine copy.
+To discard the quarantined settings, upgrade the CLI and run `$$nemoclaw <name> rebuild --yes` without copying the file.
 
 </AgentOnly>
 
@@ -1951,7 +1980,7 @@ Inside the running sandbox, processes continue to use the OpenShell L7 proxy for
 ### Agent cannot reach a host-side HTTP service
 
 When a sandbox needs to call an HTTP service running on the host, use the normal OpenShell network policy path.
-Expose the service on a host IP address that the OpenShell gateway can reach, create a custom NemoClaw policy preset for that IP and port, and apply it with `$$nemoclaw <sandbox> policy-add --from-file`.
+Expose the service on a host IP address that the OpenShell gateway can reach, create a custom NemoClaw policy preset for that IP and port, and apply it with `$$nemoclaw <sandbox> policy add --from-file`.
 The sandbox request then flows through the OpenShell proxy while NemoClaw preserves the existing live policy entries.
 
 Do not rely on `host.docker.internal` or `host.openshell.internal` as a general-purpose host-service path.
@@ -1995,7 +2024,7 @@ network_policies:
 Apply the preset to the running sandbox with the NemoClaw CLI:
 
 ```bash
-$$nemoclaw my-assistant policy-add --from-file ./host-memory-api.yaml
+$$nemoclaw my-assistant policy add --from-file ./host-memory-api.yaml
 ```
 
 After you apply the policy, retry the request from inside the sandbox without disabling the proxy:
@@ -2028,7 +2057,7 @@ To permanently allow an endpoint, add it to the network policy.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for details.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-For Deep Agents, use `nemo-deepagents <name> policy-add <preset>` for built-in presets or `nemo-deepagents <name> policy-add --from-file <preset.yaml>` for reviewed custom presets.
+For Deep Agents, use `nemo-deepagents <name> policy add <preset>` for built-in presets or `nemo-deepagents <name> policy add --from-file <preset.yaml>` for reviewed custom presets.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
@@ -2314,6 +2343,11 @@ Identify the matching path before applying the recovery guidance.
 | `Cleanup could not be proven safe` | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and OpenShell-managed Docker containers labeled for that sandbox are absent, then rerun onboarding. |
 | The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics, repair the NVIDIA Container Toolkit/CDI configuration, clean up the failed sandbox, and rerun onboarding. |
 | A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
+
+For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that exact `--dns` path before it stops the original container.
+If the probe confirms that the resolver is unreachable, recreation stops and leaves the original container in place.
+An IPv6-only upstream list does not become a compatibility override; NemoClaw preserves Docker's default resolver path instead.
+Containers with explicit DNS settings or host networking keep their existing DNS path and do not use the fallback probe.
 
 #### Ordinary native Linux bounded fallback
 

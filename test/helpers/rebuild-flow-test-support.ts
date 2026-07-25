@@ -64,6 +64,9 @@ export type RebuildFlowOverrides = {
   };
   restoreMcpBridgesAfterRebuild?: () => Promise<void>;
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
+  agentPolicyAdditionsContent?: string;
+  preflightWithProductionBaselineResolver?: boolean;
+  preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
   sandboxEntry?: Record<string, unknown>;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
@@ -88,6 +91,16 @@ export type RebuildFlowOverrides = {
     output: string;
     stdout?: string;
     stderr?: string;
+  };
+  captureOpenshell?: (
+    args: string[],
+    options?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    output?: string;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
   };
   backupPolicyPresets?: string[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
@@ -129,6 +142,7 @@ export type RebuildFlowHarness = {
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
+  captureOpenshellSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxRebuildSpy: MockInstance;

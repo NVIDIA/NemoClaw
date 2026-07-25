@@ -43,6 +43,7 @@ const INSTALLER_INTEGRATION_TESTS = new Set([
   "test/install-build-dependency-preflight.test.ts",
   "test/install-clone-ref.test.ts",
   "test/install-express-prompt.test.ts",
+  "test/install-express-wsl-ollama.test.ts",
   "test/install-openshell-version-check.test.ts",
   "test/install-preflight-docker-bootstrap.test.ts",
   "test/install-preflight.test.ts",
@@ -52,6 +53,7 @@ const INSTALLER_INTEGRATION_TESTS = new Set([
   "test/install-station-dgx-os.test.ts",
   "test/install-station-docker-repository.test.ts",
   "test/install-station-host-preparation.test.ts",
+  "test/install-station-vllm-continuation.test.ts",
   "test/install-station-package-state.test.ts",
   "test/install-station-package-transaction.test.ts",
 ]);

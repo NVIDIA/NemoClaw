@@ -441,13 +441,78 @@ check_agent_and_inference_conflicts
     const active = runSourced(
       STATION_PREPARE,
       `
-ps() { printf '999 1 python python -m vllm serve model\n'; }
+ps() { printf '999 1 python python -m vllm serve sensitive-model-name\n'; }
 ss() { :; }
 check_agent_and_inference_conflicts
 `,
     );
-    expect(active.result.status, active.output).not.toBe(0);
-    expect(active.output).toMatch(/Agent or inference workload is active/);
+    expect(active.result.status, active.output).toBe(12);
+    expect(active.output).toMatch(/vLLM inference workload is active: pid=999 process=python/);
+    expect(active.output).toContain("stop_command='kill -- 999'");
+    expect(active.output).toContain("NemoClaw did not stop or modify it");
+    expect(active.output).not.toContain("sensitive-model-name");
+  });
+
+  it("blocks vLLM during forced factory-runtime validation", () => {
+    const forced = runSourced(
+      STATION_PREPARE,
+      `
+require_command() { :; }
+check_platform() { STATION_HOST_PROFILE=forced-factory-runtime; }
+check_package_managers_idle() { :; }
+check_dgx_os_docker_selection() { :; }
+check_capacity() { :; }
+check_network() { :; }
+check_failed_units() { :; }
+capture_docker_container_baseline() { printf 'DOCKER_BASELINE_CAPTURED\n'; }
+check_dgx_os_runtime_commands() { :; }
+ps() { printf '999 1 python python -m vllm serve model\n'; }
+ss() { :; }
+run_check
+`,
+    );
+    expect(forced.result.status, forced.output).toBe(12);
+    expect(forced.output).toContain("DOCKER_BASELINE_CAPTURED");
+    expect(forced.output).toMatch(/vLLM inference workload is active/);
+    expect(forced.output).toContain("stop_command='kill -- 999'");
+  });
+
+  it("reports an exact stop command for an existing vLLM container", () => {
+    const active = runSourced(
+      STATION_PREPARE,
+      `
+MODE=--check
+docker() {
+  printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'
+}
+check_vllm_container_conflicts
+`,
+    );
+
+    expect(active.result.status, active.output).toBe(12);
+    expect(active.output).toContain("container_id=1234567890ab");
+    expect(active.output).toContain("stop_command='docker stop -- 1234567890ab'");
+    expect(active.output).not.toContain("hidden-model-name");
+  });
+
+  it("blocks an active agent before offering a vLLM container handoff (#7287)", () => {
+    const active = runSourced(
+      STATION_PREPARE,
+      `
+MODE=--check
+ps() { printf '999 1 openshell openshell gateway\n'; }
+ss() { :; }
+docker() {
+  printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'
+}
+check_initial_workload_quiescence
+`,
+    );
+
+    expect(active.result.status, active.output).toBe(1);
+    expect(active.output).toContain("Agent workload is active: pid=999 process=openshell");
+    expect(active.output).not.toContain("container_id=1234567890ab");
+    expect(active.output).not.toContain("hidden-model-name");
   });
 
   it("refuses an installed CUDA keyring version that differs from the pin", () => {

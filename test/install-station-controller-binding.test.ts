@@ -66,6 +66,7 @@ fix_npm_permissions() { :; }
 preinstall_backup_and_retire_legacy_gateway() { :; }
 install_nemoclaw() { record_order install; }
 verify_nemoclaw() { :; }
+require_reportable_openshell_version() { :; }
 command_exists() { return 0; }
 registered_sandbox_count() { printf '0\n'; }
 run_installer_host_preflight() { return 0; }
@@ -378,9 +379,11 @@ node() {
 station_installer_revision() { printf '%040d' 0; }
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
+_STATION_INSTALL_MODE='express'
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
 _STATION_EXPRESS_MIGRATING_LEGACY_HEAD=1
-unset NEMOCLAW_VLLM_MODEL NEMOCLAW_DGX_STATION_PEER
+NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+unset NEMOCLAW_DGX_STATION_PEER
 ensure_station_express_pair
 `,
       { ARGS_FILE: argsFile },

@@ -649,8 +649,8 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
   const producer = workflow.jobs[producerName] ?? {};
   const runtimeName = "runtime-overrides";
   const runtimeJob = workflow.jobs[runtimeName] ?? {};
-  if (producer["timeout-minutes"] !== 15) {
-    errors.push("build-sandbox-images must retain its 15-minute producer budget");
+  if (producer["timeout-minutes"] !== 45) {
+    errors.push("build-sandbox-images must retain its 45-minute producer budget");
   }
   if (runtimeJob["timeout-minutes"] !== 60) {
     errors.push("runtime-overrides timeout must cover its 45-minute probe budget");

@@ -249,7 +249,7 @@ if ! @run restore`;
     pi < 0 ||
     ni !== pi + 1 ||
     ni + 1 !== steps.indexOf(runStep) ||
-    node?.uses !== "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e" ||
+    node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
     asRecord(node?.with)["node-version"] !== "22" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||

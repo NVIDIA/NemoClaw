@@ -27,7 +27,7 @@ type JsonObject = Record<string, any>;
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
-  kind: "axios" | "core" | "jaeger" | "legacy-core";
+  kind: "axios" | "core" | "current-core" | "jaeger" | "legacy-core";
   version: "2026.3.11" | "2026.6.10" | "2026.7.1";
 }>;
 
@@ -85,6 +85,15 @@ const BRACE_EXPANSION_INTEGRITY =
   "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
 const BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz";
+const CURRENT_BRACE_EXPANSION_VERSION = "5.0.8";
+const CURRENT_BRACE_EXPANSION_INTEGRITY =
+  "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==";
+const CURRENT_BRACE_EXPANSION_TARBALL =
+  "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz";
+const CURRENT_FAST_URI_VERSION = "3.1.4";
+const CURRENT_FAST_URI_INTEGRITY =
+  "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==";
+const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz";
 const JAEGER_PROPAGATOR_VERSION = "2.9.0";
 const JAEGER_PROPAGATOR_INTEGRITY =
   "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
@@ -138,6 +147,14 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
       "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
     kind: "core",
     version: "2026.6.10",
+  },
+  // openclaw/openclaw#113584: remove after a supported OpenClaw archive
+  // publishes both corrected transitive resolutions in its shrinkwrap.
+  "openclaw@2026.7.1": {
+    expectedPatchedTreeIntegrity:
+      "sha512-/D/vAtyFEvd0TvYxFBfBN/chwW8WGaAy8bH40ojjJSRuN+P461qnbfiMTHydA7asXN/69y2NnQHs7b3pDh8+0g==",
+    kind: "current-core",
+    version: "2026.7.1",
   },
   "openclaw@2026.3.11": {
     kind: "legacy-core",
@@ -497,6 +514,62 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   writeJson(shrinkwrapPath, shrinkwrap);
 }
 
+export function patchCurrentOpenClawCorePackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, "openclaw", "2026.7.1", "OpenClaw core");
+  if (
+    packageJson.dependencies?.minimatch !== "10.2.5" ||
+    packageJson.dependencies?.["@modelcontextprotocol/sdk"] !== "1.29.0" ||
+    packageJson.dependencies?.["brace-expansion"] !== undefined ||
+    packageJson.dependencies?.["fast-uri"] !== undefined
+  ) {
+    throw new Error("openclaw@2026.7.1 dependency boundary changed after review");
+  }
+
+  const shrinkwrap = readJson(shrinkwrapPath);
+  if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
+    throw new Error("openclaw@2026.7.1 must ship an npm lockfileVersion 3 shrinkwrap");
+  }
+  const packages = shrinkwrap.packages as JsonObject;
+  const root = packages[""] as JsonObject;
+  requirePackageIdentity(root, "openclaw", "2026.7.1", "OpenClaw shrinkwrap root");
+  const braceExpansion = packages["node_modules/brace-expansion"] as JsonObject | undefined;
+  const fastUri = packages["node_modules/fast-uri"] as JsonObject | undefined;
+  const minimatch = packages["node_modules/minimatch"] as JsonObject | undefined;
+  const ajv = packages["node_modules/ajv"] as JsonObject | undefined;
+  if (
+    braceExpansion?.version !== "5.0.7" ||
+    braceExpansion.resolved !==
+      "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz" ||
+    braceExpansion.integrity !==
+      "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==" ||
+    braceExpansion.dependencies?.["balanced-match"] !== "^4.0.2" ||
+    minimatch?.dependencies?.["brace-expansion"] !== "^5.0.5"
+  ) {
+    throw new Error("openclaw@2026.7.1 brace-expansion layout changed after review");
+  }
+  if (
+    fastUri?.version !== "3.1.2" ||
+    fastUri.resolved !== "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.2.tgz" ||
+    fastUri.integrity !==
+      "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==" ||
+    ajv?.version !== "8.20.0" ||
+    ajv.dependencies?.["fast-uri"] !== "^3.0.1"
+  ) {
+    throw new Error("openclaw@2026.7.1 fast-uri layout changed after review");
+  }
+
+  braceExpansion.version = CURRENT_BRACE_EXPANSION_VERSION;
+  braceExpansion.resolved = CURRENT_BRACE_EXPANSION_TARBALL;
+  braceExpansion.integrity = CURRENT_BRACE_EXPANSION_INTEGRITY;
+  fastUri.version = CURRENT_FAST_URI_VERSION;
+  fastUri.resolved = CURRENT_FAST_URI_TARBALL;
+  fastUri.integrity = CURRENT_FAST_URI_INTEGRITY;
+  writeJson(shrinkwrapPath, shrinkwrap);
+}
+
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
   const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
@@ -768,6 +841,61 @@ export function buildRemediatedOpenClawPluginArchive(
       join(sourcePackage, "node_modules", "@openclaw", "fs-safe"),
     );
     patchOpenClawCorePackageGraph(sourcePackage);
+  } else if (remediation.kind === "current-core") {
+    const braceExpansionArchive = packReplacement(
+      `brace-expansion@${CURRENT_BRACE_EXPANSION_VERSION}`,
+      CURRENT_BRACE_EXPANSION_INTEGRITY,
+      CURRENT_BRACE_EXPANSION_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const fastUriArchive = packReplacement(
+      `fast-uri@${CURRENT_FAST_URI_VERSION}`,
+      CURRENT_FAST_URI_INTEGRITY,
+      CURRENT_FAST_URI_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const braceExpansionPackage = extractArchive(
+      braceExpansionArchive.archivePath,
+      join(remediationRoot, "brace-expansion"),
+      remediationRoot,
+      env,
+    );
+    const fastUriPackage = extractArchive(
+      fastUriArchive.archivePath,
+      join(remediationRoot, "fast-uri"),
+      remediationRoot,
+      env,
+    );
+    const braceExpansionPackageJson = readJson(join(braceExpansionPackage, "package.json"));
+    const fastUriPackageJson = readJson(join(fastUriPackage, "package.json"));
+    requirePackageIdentity(
+      braceExpansionPackageJson,
+      "brace-expansion",
+      CURRENT_BRACE_EXPANSION_VERSION,
+      "OpenClaw brace-expansion remediation package",
+    );
+    requireDependencyShape(
+      braceExpansionPackageJson,
+      { "balanced-match": "^4.0.2" },
+      `brace-expansion@${CURRENT_BRACE_EXPANSION_VERSION}`,
+    );
+    requirePackageIdentity(
+      fastUriPackageJson,
+      "fast-uri",
+      CURRENT_FAST_URI_VERSION,
+      "OpenClaw fast-uri remediation package",
+    );
+    if (
+      fastUriPackageJson.dependencies !== undefined &&
+      Object.keys(fastUriPackageJson.dependencies).length !== 0
+    ) {
+      throw new Error(
+        `fast-uri@${CURRENT_FAST_URI_VERSION} dependency graph changed; review the remediation before updating it`,
+      );
+    }
+    patchCurrentOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "legacy-core") {
     const bundledTarPath = join(sourcePackage, "node_modules", "tar");
     if (existsSync(bundledTarPath)) {

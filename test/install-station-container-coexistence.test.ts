@@ -109,6 +109,7 @@ check_network() { :; }
 check_package_managers_idle() { :; }
 check_dpkg_database_health() { :; }
 check_failed_units() { :; }
+check_vllm_container_conflicts() { :; }
 check_agent_and_inference_conflicts() { :; }
 verify_dual_station_controller_uid_binding() { :; }
 driver_loaded_exact() { return 0; }

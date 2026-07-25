@@ -59,7 +59,7 @@ NemoClaw v0.0.82 adds non-destructive sandbox stop and start commands, protects 
 - Custom policy application rejects catch-all destinations before widening sandbox egress.
   Runtime custom presets now reject `*`, `0.0.0.0`, `0.0.0.0/0`, `::`, and `::/0` while continuing to allow scoped subdomain wildcards such as `*.example.com`.
   The same semantic check protects repository validation, `policy-add --from-file`, and in-memory custom preset application.
-  For more information, refer to [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy).
+  For more information, refer to [Create Custom Policy Presets](/user-guide/openclaw/network-policy/configure-policies/create-custom-policy-presets).
 - NemoClaw now requires Node.js 22.19 or later for host installs and contributor tooling, matching current OpenClaw runtime and advisor SDK requirements.
   Ubuntu 26.04 has a digest-pinned userspace contract lane for CLI, preflight, installer, and platform checks, while Docker-host, AppArmor, Landlock, and live onboarding validation remain pending.
   For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).

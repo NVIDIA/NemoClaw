@@ -305,6 +305,7 @@ test(
     const fakeOpenAI = await startFakeOpenAiCompatibleServer({
       chatContent: "OK",
       host: "0.0.0.0",
+      progress,
       publicHost: "host.openshell.internal",
       responseText: "OK",
     });

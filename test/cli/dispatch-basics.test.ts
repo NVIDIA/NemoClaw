@@ -361,7 +361,7 @@ describe("CLI dispatch", () => {
           argv: ["policy", "set"],
           entered: "policy set",
           command: "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
-          notes: ["nemoclaw <sandbox-name> policy-add <preset>"],
+          notes: ["nemoclaw <sandbox-name> policy add <preset>"],
         },
         {
           argv: ["gateway", "stop"],

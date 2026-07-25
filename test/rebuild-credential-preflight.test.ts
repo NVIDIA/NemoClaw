@@ -171,6 +171,14 @@ const requiredFeatures = "request-body-credential-rewrite websocket-credential-r
 if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.85\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
+if (a[0] === "sandbox" && a[1] === "get") {
+  if (fs.existsSync(${JSON.stringify(deleteMarker)})) {
+    process.stderr.write("Not Found: sandbox not found\\n");
+    process.exit(1);
+  }
+  process.stdout.write("Sandbox: ${sandboxName}\\nPhase: Ready\\n");
+  process.exit(0);
+}
 if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(${sandboxDeleteExitCode}); }
 if (a[0] === "sandbox" && a[1] === "get") {
   if (fs.existsSync(${JSON.stringify(deleteMarker)})) { process.stderr.write("sandbox ${sandboxName} not found\\n"); process.exit(1); }

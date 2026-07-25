@@ -403,6 +403,7 @@ export function createSetupNim(
             isWindowsHostOllama,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
             hermesProviderAvailable,
+            preferManagedVllmDefault: gpu?.platform === "spark",
             ...recordedProviderReaders,
           });
           if (providerSelection.kind === "failure") {

@@ -37,6 +37,9 @@ NemoClaw v0.0.91 strengthens completed sandbox images, makes rebuild replacement
   For more information, refer to the [OpenClaw 2026.6.10 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/openclaw-2026.6.10-dependency-review.md).
 - Rebuilds now carry validated local-base trust through Deep Agents Code image preparation, reuse the outer state backup during inner onboarding, and wait for OpenShell to confirm sandbox deletion before removing registry state or creating a replacement.
   These checks prevent rebuild from rejecting its own current base, taking a second backup against stale gateway state, or racing an asynchronous sandbox deletion.
+  Rebuild also stops before deletion when a manifest-declared state file cannot be archived unless you pass `--force`.
+  Remote base-image overrides now require an official repository reference that resolves to an immutable digest.
+  NemoClaw accepts local bases only when the current operation builds and pins them.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Hermes guidance now explains when the API bearer token remains stable, when rebuild or invalid state rotates it, and how to retrieve the current value with `nemohermes <sandbox> gateway-token --quiet` instead of reading the generated environment file.
   For more information, refer to the [NemoHermes CLI Commands Reference](/user-guide/hermes/reference/commands) and [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).

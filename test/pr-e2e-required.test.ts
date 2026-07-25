@@ -86,20 +86,23 @@ describe("native PR E2E required job", () => {
     expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
   });
 
-  it("classifies fork-skip approval failures as pending", () => {
+  it("treats completed authorization failures as terminal", () => {
     expect(
       classifyCoordinationCheck(
         check("E2E / PR Gate", {
           conclusion: "failure",
-          output: { title: "Maintainer approval required to skip credentialed E2E" },
+          output: { title: "E2E reviewer authorization failed" },
         }),
         identity.repository,
       ),
     ).toEqual({
-      state: "waiting",
-      description: "Maintainer approval required to skip credentialed E2E",
-      detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/99",
-      logUrls: ["https://github.com/NVIDIA/NemoClaw/actions/runs/99"],
+      state: "complete",
+      result: {
+        conclusion: "failure",
+        title: "E2E reviewer authorization failed",
+        detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/99",
+        logUrls: ["https://github.com/NVIDIA/NemoClaw/actions/runs/99"],
+      },
     });
   });
 
@@ -208,13 +211,58 @@ describe("native PR E2E required job", () => {
             id: 18,
             status: "in_progress",
             conclusion: null,
-            output: { title: "Maintainer authorization required to run E2E" },
+            output: { title: "E2E reviewer authorization required to run E2E" },
           }),
         ]),
       ),
     );
 
     await expect(findCoordinationCheck(identity)).resolves.toMatchObject({ id: 18 });
+  });
+
+  it.each([
+    { label: "the source marker is removed before reservation", replacement: false },
+    { label: "the reserved replacement is closed after create response loss", replacement: true },
+  ])("observes a terminal retry-controller failure when $label", async ({ replacement }) => {
+    const older = check(undefined, {
+      id: 16,
+      conclusion: "failure",
+      output: {
+        title: "PR prerequisite CI did not pass",
+        summary: "Prerequisite CI failed.\n\n<!-- nemoclaw-pr-e2e-retry:v1:prerequisite-ci -->",
+      },
+    });
+    const source = check(undefined, {
+      id: 17,
+      conclusion: "failure",
+      output: {
+        title: replacement ? "Selected E2E did not pass" : "Runner-loss retry could not start",
+        summary: replacement
+          ? "Runner disappeared.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->"
+          : "Runner disappeared. The automatic retry controller could not start.",
+      },
+    });
+    const replacementCheck = check(undefined, {
+      id: 18,
+      conclusion: "failure",
+      output: {
+        title: "Runner-loss retry could not start",
+        summary: "The reserved replacement was terminalized without a retry marker.",
+      },
+    });
+    const checks = replacement ? [older, source, replacementCheck] : [older, source];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(githubResponse(listing(checks)));
+
+    const current = await findCoordinationCheck(identity);
+    expect(classifyCoordinationCheck(current, identity.repository)).toEqual({
+      state: "complete",
+      result: {
+        conclusion: "failure",
+        title: "Runner-loss retry could not start",
+        detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/99",
+        logUrls: ["https://github.com/NVIDIA/NemoClaw/actions/runs/99"],
+      },
+    });
   });
 
   it.each([
@@ -284,7 +332,7 @@ describe("native PR E2E required job", () => {
                   ? check(undefined, {
                       status: "in_progress",
                       conclusion: null,
-                      output: { title: "Maintainer authorization required to run E2E" },
+                      output: { title: "E2E reviewer authorization required to run E2E" },
                     })
                   : coordinationQueries === 2
                     ? check(undefined, {

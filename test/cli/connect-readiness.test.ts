@@ -46,7 +46,7 @@ describe("CLI connect readiness", () => {
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -97,7 +97,7 @@ describe("CLI connect readiness", () => {
     expect(r.out.includes("Waiting for sandbox 'alpha' to be ready")).toBeTruthy();
     expect(r.out.includes("Sandbox is ready. Connecting")).toBeTruthy();
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
-    expect(calls).toContain("sandbox get alpha");
+    expect(calls).toContain("sandbox get -g nemoclaw alpha");
     expect(
       calls.filter((call) => call === "sandbox list -g nemoclaw").length,
     ).toBeGreaterThanOrEqual(2);
@@ -136,7 +136,7 @@ describe("CLI connect readiness", () => {
           "#!/usr/bin/env bash",
           `marker_file=${JSON.stringify(markerFile)}`,
           'printf \'%s\\n\' "$*" >> "$marker_file"',
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
           "  echo 'Sandbox:'",
           "  echo",
           "  echo '  Id: abc'",
@@ -221,7 +221,7 @@ describe("CLI connect readiness", () => {
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -253,7 +253,7 @@ describe("CLI connect readiness", () => {
     expect(r.out.includes("nemoclaw alpha logs --follow")).toBeTruthy();
     expect(r.out.includes("nemoclaw alpha status")).toBeTruthy();
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
-    expect(calls).toContain("sandbox get alpha");
+    expect(calls).toContain("sandbox get -g nemoclaw alpha");
     expect(calls).toContain("sandbox list -g nemoclaw");
     expect(calls).not.toContain("should-not-connect");
   });

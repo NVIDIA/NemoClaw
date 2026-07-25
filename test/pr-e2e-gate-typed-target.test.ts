@@ -23,9 +23,10 @@ const DCODE_CHECK =
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: [DCODE_CHECK] });
   return {
-    version: 3,
+    version: 4,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
+    checkoutRepository: "NVIDIA/NemoClaw",
     workflowSha: WORKFLOW_SHA,
     planHash: plan.planHash,
     correlationId: CORRELATION_ID,
@@ -80,7 +81,9 @@ describe("PR E2E typed-target gate (#7031)", () => {
     await expect(
       dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: [],
         targets: ["ubuntu-repo-cloud-openclaw"],
         prNumber: 42,

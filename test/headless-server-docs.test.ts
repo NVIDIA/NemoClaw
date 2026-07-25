@@ -63,7 +63,7 @@ describe("headless server deployment guide contracts", () => {
 
   it("keeps the supported noninteractive policy and skill commands copyable (#7180)", () => {
     expect(guide).toContain(
-      "$$nemoclaw headless-agent policy-add --from-file ./presets/internal-status.yaml --yes",
+      "$$nemoclaw headless-agent policy add --from-file ./presets/internal-status.yaml --yes",
     );
     expect(guide).toContain("$$nemoclaw headless-agent skill install ./my-skill/");
   });
@@ -121,7 +121,7 @@ describe("headless server deployment guide contracts", () => {
     expect(guide).toContain(
       "| Item | Same-container restart | Snapshot and restore | Rebuild or sandbox upgrade |",
     );
-    expect(guide).toContain("| Custom preset YAML applied with `policy-add` |");
+    expect(guide).toContain("| Custom preset YAML applied with `policy add` |");
     expect(guide).toContain("| Arbitrary files outside manifest state |");
     expect(guide).toContain("| Manually installed system or global packages |");
     expect(guide).toContain("| Direct edits to generated profile, config, or environment files |");
