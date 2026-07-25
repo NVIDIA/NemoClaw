@@ -81,6 +81,8 @@ WORKDIR /tmp/perl-source
 # declaration, so pin the known target result instead of synthesizing a
 # conflicting prototype. Remove this override when the QEMU-backed multi-arch
 # build in .github/workflows/base-image.yaml passes without it.
+# Perl's test_harness schedules independent upstream tests through TEST_JOBS.
+# This preserves the full suite without serial QEMU execution.
 RUN curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o /tmp/perl.tar.xz "https://www.cpan.org/src/5.0/perl-${PERL_VERSION}.tar.xz" \
@@ -97,7 +99,8 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL \
         -Dman1dir=none \
         -Dman3dir=none \
     && make -j"$(nproc)" \
-    && make test \
+    && TEST_JOBS="$(nproc)" PERL_TEST_HARNESS_ASAP=1 \
+        make -j"$(nproc)" test_harness \
     && make install DESTDIR=/tmp/perl-root
 
 RUN package_version="${PERL_VERSION}-${PERL_PACKAGE_REVISION}" \

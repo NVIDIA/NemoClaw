@@ -9,6 +9,7 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../../trace";
 import type { GatewayContainerState } from "../../gateway-container-running";
+import { createGatewayReuseHelpers } from "../../gateway-reuse";
 import {
   type GatewayAttachmentProbe,
   type GatewayOwner,
@@ -194,6 +195,74 @@ describe("handleGatewayState", () => {
         },
       },
     });
+  });
+
+  it("starts the gateway when stderr-only status marks the selected gateway stale (#7087)", async () => {
+    const statusOutput = [
+      "Server Status",
+      "",
+      "Gateway: nemoclaw",
+      "Error: Connection refused",
+    ].join("\n");
+    const gatewayReuseSnapshot = createGatewayReuseHelpers({
+      gatewayName: "nemoclaw",
+      runCaptureOpenshell: vi.fn((args: string[], opts?: Record<string, unknown>) =>
+        args[0] === "status" && opts?.includeStderr === true ? statusOutput : "",
+      ),
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      cliDisplayName: () => "NemoClaw",
+    }).getGatewayReuseSnapshot();
+    const { deps, calls } = createDeps();
+
+    const result = await handleGatewayState(
+      baseOptions(deps, gatewayReuseSnapshot.gatewayReuseState),
+    );
+
+    expect(gatewayReuseSnapshot.gatewayReuseState).toBe("stale");
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.startStep).toHaveBeenCalledWith("gateway");
+    expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(result.gatewayReuseState).toBe("stale");
+  });
+
+  it("completes one gateway step when a refused-status start succeeds on retry (#7087)", async () => {
+    const startGateway = vi
+      .fn<GatewayStateOptions<Gpu>["deps"]["startGateway"]>()
+      .mockRejectedValueOnce(new Error("gateway start failed"))
+      .mockResolvedValueOnce(undefined);
+    const { deps, calls } = createDeps({ startGateway });
+
+    await expect(handleGatewayState(baseOptions(deps, "stale"))).rejects.toThrow(
+      "gateway start failed",
+    );
+
+    expect(calls.startStep).toHaveBeenCalledOnce();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+
+    const result = await handleGatewayState(baseOptions(deps, "stale"));
+
+    expect(startGateway).toHaveBeenCalledTimes(2);
+    expect(calls.startStep).toHaveBeenCalledTimes(2);
+    expect(calls.complete).toHaveBeenCalledOnce();
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(result.gatewayReuseState).toBe("stale");
+    expect(result.stateResult).toEqual(
+      expect.objectContaining({
+        type: "transition",
+        next: "provider_selection",
+        metadata: expect.objectContaining({
+          state: "gateway",
+          gatewayReuseState: "stale",
+        }),
+      }),
+    );
   });
 
   it("reuses healthy gateways on fresh runs", async () => {
