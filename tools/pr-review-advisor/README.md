@@ -171,9 +171,10 @@ the independent PR E2E controller does not consume advisor output.
 Findings can also include safe simplification metadata with delete, stdlib,
 native, YAGNI, or shrink tags; those suggestions must keep validation, security, data-loss prevention,
 and required tests intact.
-The canonical ledger normalizer reports `merge_as_is` only when a completed review has no open findings.
+The canonical ledger normalizer reports `merge_as_is` only when a completed, non-low-confidence review
+has no open findings.
 It reports `merge_after_fixes` when any blocker, warning, or suggestion remains open.
-It reserves `info_only` for skipped, unavailable, or incomplete review evidence, and reports
+It reserves `info_only` for skipped, unavailable, incomplete, or low-confidence review evidence, and reports
 `superseded` when competing work replaces the PR.
 These recommendations describe advisor findings only.
 They never approve a PR, replace required human review, or change the repository's merge gates.

@@ -443,9 +443,11 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(prompt).toContain(
       "Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status",
     );
-    expect(prompt).toContain("merge_as_is means a completed review has no open findings");
     expect(prompt).toContain(
-      "info_only is reserved for skipped, unavailable, or incomplete review evidence",
+      "merge_as_is means a completed, non-low-confidence review has no open findings",
+    );
+    expect(prompt).toContain(
+      "info_only is reserved for skipped, unavailable, incomplete, or low-confidence review evidence",
     );
     expect(prompt).toContain("merge_as_is never approves the PR or replaces required human review");
     expect(prompt).toContain(

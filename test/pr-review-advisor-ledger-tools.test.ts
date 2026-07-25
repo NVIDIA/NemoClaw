@@ -239,6 +239,35 @@ describe("PR review ledger tools", () => {
     expect(canonical.reviewCompleteness.requiresHumanReview).toBe(true);
   });
 
+  it("keeps a low-confidence empty canonical ledger fail-closed as info_only", () => {
+    const result = normalizeReviewResult(
+      {
+        summary: {
+          recommendation: "merge_as_is",
+          confidence: "low",
+          oneLine: "No actionable findings remain.",
+        },
+        findings: [],
+        reviewCompleteness: {
+          limitations: ["Review confidence remained low."],
+          requiresHumanReview: true,
+        },
+      },
+      reviewMetadata(),
+    );
+
+    const canonical = withCanonicalReviewLedgerFindings(
+      result,
+      createReviewFindingLedger().snapshot(),
+    );
+
+    expect(canonical.summary).toMatchObject({
+      confidence: "low",
+      recommendation: "info_only",
+    });
+    expect(canonical.reviewCompleteness.requiresHumanReview).toBe(true);
+  });
+
   it("binds mutations to the runner stage and exposes the canonical snapshot (#6446)", async () => {
     const ledger = createReviewFindingLedger();
     const controller = createReviewLedgerToolController(ledger);
