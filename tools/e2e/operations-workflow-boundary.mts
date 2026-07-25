@@ -211,6 +211,12 @@ function validateControllerAuthorization(
     source.match(/controller_auth_poll_seconds=(\d+)/u)?.[1] ?? "",
     10,
   );
+  if (maxAttempts !== 45) {
+    errors.push("Controller authentication must use exactly 45 polling attempts");
+  }
+  if (pollSeconds !== 2) {
+    errors.push("Controller authentication must use two-second polling intervals");
+  }
   if (
     !Number.isSafeInteger(maxAttempts) ||
     !Number.isSafeInteger(pollSeconds) ||
