@@ -120,6 +120,7 @@ const {
   finalizeCreatedSandbox,
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
+const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
 const {
   isLinuxDockerDriverGatewayEnabled,
 }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
@@ -507,8 +508,8 @@ const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } =
   require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
-const { applyPreflightGatewayCleanup } =
-  require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
+const { runPreflightGatewaySequence } =
+  require("./onboard/preflight-gateway-sequence") as typeof import("./onboard/preflight-gateway-sequence");
 const { verifyGatewayContainerRunning } =
   require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
 const { applyHealthyPortReuse } =
@@ -517,8 +518,6 @@ const { destroyGatewayWithVolumeCleanup } =
   require("./onboard/gateway-destroy") as typeof import("./onboard/gateway-destroy");
 const { gatewayCliSupportsLifecycleCommands } =
   require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
-const { reconcilePreflightGatewayReuseState } =
-  require("./onboard/preflight-gateway-reuse") as typeof import("./onboard/preflight-gateway-reuse");
 const {
   getGatewayReuseHealthWaitConfig,
   isDockerDriverGatewayHttpReady: probeDockerDriverGatewayHttpReady,
@@ -580,6 +579,8 @@ import {
 } from "./messaging-channel-config";
 import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
+import { bindGatewayAuthorityToCheckpoint } from "./onboard/gateway-authority-checkpoint";
+import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -646,6 +647,7 @@ const {
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   getDockerDriverGatewayStateDir,
+  getGatewayPortListenerRawScan,
   isDockerDriverGatewayPortListener,
   isDockerDriverGatewayProcess,
   isDockerDriverGatewayProcessAlive,
@@ -1372,10 +1374,6 @@ function checkGatewayPortAvailable() {
   return checkPortAvailable(GATEWAY_PORT, dockerDriverGatewayEnv.getGatewayPortCheckOptions());
 }
 
-function getGatewayLocalEndpoint(): string {
-  return dockerDriverGatewayEnv.getGatewayHttpsEndpoint(GATEWAY_PORT);
-}
-
 const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
   createGatewayBootstrapRepairHelpers({
     buildGatewayClusterExecArgv,
@@ -1482,19 +1480,21 @@ async function preflight(
   });
 
   ensureOpenshellForOnboard();
+  // Bind the one lifecycle authority before applying any legacy listener-name
+  // heuristic. An external supervisor may intentionally use an arbitrary
+  // executable name; its listener is validated exactly by the downstream FSM.
+  const gatewayExternallySupervised = isGatewayExternallySupervised();
   await failFastOnForeignGatewayPortConflict({
     gatewayPort: GATEWAY_PORT,
+    externallySupervised: gatewayExternallySupervised,
     checkPortAvailable,
     getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions,
     isDockerDriverGatewayPortListener,
     exitProcess: (code) => process.exit(code),
   });
 
-  // Classify gateway state before port checks. Legacy non-Docker-driver
-  // path destroys stale/unnamed gateways here so the port frees up for
-  // checks below; Docker-driver path defers the destructive recreate to
-  // step [2/8] (see applyPreflightGatewayCleanup). If another gateway is
-  // active but the named one exists, select it to avoid false conflicts.
+  // Classify gateway state before port checks; the legacy path destroys
+  // stale/unnamed gateways here while the Docker-driver path defers (#2020).
   const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
   let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
   gatewayReuseState = await refreshDockerDriverGatewayReuseState(gatewayReuseState);
@@ -1503,10 +1503,16 @@ async function preflight(
   // metadata can be stale after a manual `docker rm`. See #2020. Newer
   // package-managed OpenShell gateways do not have an openshell-cluster-*
   // Docker container, so the live CLI health check is the source of truth.
-  gatewayReuseState = await reconcilePreflightGatewayReuseState({
+  // The reuse/cleanup/orphan stages run as one composed sequence so external
+  // supervision is enforced across the whole path, not per stage (#6576).
+  gatewayReuseState = await runPreflightGatewaySequence({
     gatewayReuseState,
+    externallySupervised: gatewayExternallySupervised,
     supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
     gatewayName: GATEWAY_NAME,
+    cliDisplayName: cliDisplayName(),
+    dashboardPort: getOnboardDashboardPort(),
     verifyGatewayContainerRunning,
     recoverGatewayRuntime,
     waitForGatewayHttpReady,
@@ -1516,59 +1522,19 @@ async function preflight(
         ignoreError: true,
       }),
     stopAllDashboardForwards,
-    destroyGateway,
-    destroyGatewayForReuse,
     getGatewayClusterImageDrift,
     exitProcess: (code) => process.exit(code),
-  });
-
-  gatewayReuseState = applyPreflightGatewayCleanup({
-    gatewayReuseState,
-    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
-    cliDisplayName: cliDisplayName(),
-    dashboardPort: getOnboardDashboardPort(),
-    log: console.log,
-    warn: console.warn,
-    runOpenshell,
     destroyGateway,
     destroyGatewayForReuse,
+    runOpenshell,
+    dockerInspect,
+    dockerStop,
+    dockerRm,
+    dockerRemoveVolumesByPrefix,
+    clearRegistry: registry.clearAll,
+    log: console.log,
+    warn: console.warn,
   });
-
-  // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
-  // during gateway start). The container may still be running even though
-  // OpenShell has no metadata for it (gatewayReuseState === "missing").
-  if (gatewayReuseState === "missing" && !isLinuxDockerDriverGatewayEnabled()) {
-    const containerName = `openshell-cluster-${GATEWAY_NAME}`;
-    const inspectResult = dockerInspect(
-      ["--type", "container", "--format", "{{.State.Status}}", containerName],
-      { ignoreError: true, suppressOutput: true },
-    );
-    if (inspectResult.status === 0) {
-      console.log("  Cleaning up orphaned gateway container...");
-      dockerStop(containerName, {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      dockerRm(containerName, {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      const postInspectResult = dockerInspect(["--type", "container", containerName], {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      if (postInspectResult.status !== 0) {
-        dockerRemoveVolumesByPrefix(`openshell-cluster-${GATEWAY_NAME}`, {
-          ignoreError: true,
-          suppressOutput: true,
-        });
-        registry.clearAll();
-        console.log("  ✓ Orphaned gateway container removed");
-      } else {
-        console.warn("  ! Found an orphaned gateway container, but automatic cleanup failed.");
-      }
-    }
-  }
 
   // Required ports — gateway, plus the dashboard port when an explicit one
   // is requested. envVar is the override env var documented in
@@ -1587,19 +1553,20 @@ async function preflight(
     dashboardPort: dashboardPortToCheck,
     dashboardLabel: `${cliDisplayName()} dashboard`,
   });
-  for (const { port, label, envVar } of requiredPorts) {
+  for (const { kind, port, label, envVar } of requiredPorts) {
     const portCheckOptions =
-      port === GATEWAY_PORT ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
+      kind === "gateway" ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
     let portCheck = await checkPortAvailable(port, portCheckOptions);
     if (!portCheck.ok) {
       const reuse = await applyHealthyPortReuse({
+        kind,
         port,
-        gatewayPort: GATEWAY_PORT,
         dashboardPort: getOnboardDashboardPort(),
         label,
         runtimeDisplayName: cliDisplayName(),
         gatewayName: GATEWAY_NAME,
         gatewayReuseState,
+        externallySupervised: gatewayExternallySupervised,
         portCheckOptions,
         supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         destroyGateway,
@@ -1612,7 +1579,7 @@ async function preflight(
         ({ gatewayReuseState, portCheck } = reuse);
         if (portCheck.ok) continue;
       }
-      if (port === GATEWAY_PORT) {
+      if (kind === "gateway") {
         const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck);
         if (dockerGatewayPid !== null) {
           rememberDockerDriverGatewayPid(dockerGatewayPid);
@@ -1626,7 +1593,7 @@ async function preflight(
       // (e.g. dashboard forward left behind after destroy). Only kill the process
       // if its command line contains "openshell" to avoid killing unrelated SSH
       // tunnels the user may have set up on the same port. (#1950)
-      if (port === getOnboardDashboardPort() && portCheck.process === "ssh" && portCheck.pid) {
+      if (kind === "dashboard" && portCheck.process === "ssh" && portCheck.pid) {
         const outcome = await tryCleanupOrphanedDashboardForward({
           port,
           pid: portCheck.pid,
@@ -1737,6 +1704,7 @@ async function startGatewayWithOptions(
     gpuPassthrough = false,
   }: { exitOnFailure?: boolean; gpuPassthrough?: boolean } = {},
 ) {
+  assertGatewayStartAllowed(exitOnFailure);
   step(2, 8, "Starting OpenShell gateway");
 
   if (isLinuxDockerDriverGatewayEnabled()) {
@@ -2135,6 +2103,7 @@ async function startGateway(
 
 async function startGatewayForRecovery(options = {}): Promise<void> {
   return require("./onboard/gateway-recovery").startGatewayForRecovery(options, {
+    assertGatewayStartAllowed,
     getGatewayStartEnv,
     runCaptureOpenshell,
     runOpenshell,
@@ -2143,29 +2112,35 @@ async function startGatewayForRecovery(options = {}): Promise<void> {
   });
 }
 
-function getGatewayStartEnv(): Record<string, string> {
-  const gatewayEnv = dockerDriverGatewayEnv.getGatewayStartNetworkEnv(GATEWAY_PORT);
-  const openshellVersion = getInstalledOpenshellVersion();
-  const stableGatewayImage = openshellVersion
-    ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
-    : null;
-  if (stableGatewayImage && openshellVersion) {
-    gatewayEnv.OPENSHELL_CLUSTER_IMAGE = stableGatewayImage;
-    gatewayEnv.IMAGE_TAG = openshellVersion;
-    const overlayOverride = applyOverlayfsAutoFix(stableGatewayImage);
-    if (overlayOverride) {
-      gatewayEnv.OPENSHELL_CLUSTER_IMAGE = overlayOverride;
-    }
-  }
-  return gatewayEnv;
-}
-
 const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
   assessHost: preflightUtils.assessHost,
   ensurePatchedClusterImage: clusterImagePatch.ensurePatchedClusterImage,
 });
 
+const {
+  assertGatewayStartAllowed,
+  bindGatewayOwner,
+  getGatewayLocalEndpoint,
+  getGatewayOwner,
+  getGatewayStartEnv,
+  isGatewayExternallySupervised,
+  machineGatewayOwnerDeps,
+  resetGatewayOwnerBinding,
+} = createGatewayHostRuntime({
+  applyOverlayfsAutoFix,
+  checkGatewayPortAvailable,
+  gatewayName: () => GATEWAY_NAME,
+  gatewayPort: () => GATEWAY_PORT,
+  getGatewayPortListenerRawScan,
+  getInstalledOpenshellVersion,
+  runCaptureOpenshell,
+  runOpenshell,
+  resolveOpenShellGatewayBinary,
+  waitForGatewayHttpReady,
+});
+
 async function recoverGatewayRuntime() {
+  assertGatewayStartAllowed(false);
   if (isLinuxDockerDriverGatewayEnabled()) {
     try {
       await startDockerDriverGateway({ exitOnFailure: false });
@@ -3425,10 +3400,10 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       _envModelRemote ||
       (recoveredFromSandbox && recoveredModel) ||
       remoteConfig.defaultModel;
-    const selectedCredentialEnv = requireValue(
-      state.credentialEnv,
-      `Missing credential env for ${remoteConfig.label}`,
-    );
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const selectedCredentialEnv = requireValue(state.credentialEnv, `Missing credential env for ${remoteConfig.label}`);
+    const compatibleNoAuth = selected.key === "custom" && Boolean(state.endpointUrl && compatibleEndpointGatewayRoute.gatewayReachableCompatibleEndpointUrl(state.provider, state.endpointUrl) !== state.endpointUrl);
+    const useNoAuth = compatibleNoAuth && (!isNonInteractive() || (process.env.NEMOCLAW_COMPATIBLE_AUTH_MODE || "").trim().toLowerCase() === "none");
     const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
       selectedKey: selected.key,
       endpointUrl: state.endpointUrl,
@@ -3459,23 +3434,20 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       state.model = defaultModel;
       state.assertRouteCompatible?.();
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
+      if (useNoAuth) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV; else recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
         { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
         { resolveProviderCredential, readRecordedInferenceRoute: (name) => readRecordedInferenceRoute(name, args.recoverySessionId), readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
       );
     } else {
-      const credentialResult = await credentialPrompt.ensureNamedCredential(
-        selectedCredentialEnv,
-        `${remoteConfig.label} API key`,
-        remoteConfig.helpUrl,
-        openrouterSelection.credentialValidatorForProvider(selected.key),
-      );
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      const credentialResult = await credentialPrompt.ensureNamedCredential(selectedCredentialEnv, compatibleNoAuth ? `${remoteConfig.label} API key (press Enter for no authentication)` : `${remoteConfig.label} API key`, remoteConfig.helpUrl, openrouterSelection.credentialValidatorForProvider(selected.key), compatibleNoAuth);
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
+      if (credentialResult === "") state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
     }
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
+    if (!useNoAuth) openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
     let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
     if (openrouterSelection.isOpenAiLikeRemoteProvider(selected.key)) {
       const modelAuthMode = getProbeAuthMode(state.provider);
@@ -3833,7 +3805,6 @@ const computeSetupPresetSuggestions = (
     tierName,
     options,
   );
-
 async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
@@ -3848,6 +3819,7 @@ async function setupPoliciesWithSelection(
         note,
         isNonInteractive,
         waitForSandboxReady,
+        waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
         syncPresetSelection,
         selectPolicyTier,
         setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
@@ -3973,12 +3945,14 @@ async function preflightAuthoritativeRebuildTarget(
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  resetGatewayOwnerBinding();
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
   const previousOpenshellGateway = process.env.OPENSHELL_GATEWAY;
+  const previousOpenshellLocalTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
   const preparedDcodeRuntime = preparedDcodeRebuild.createPreparedDcodeRebuildRuntime(
     opts,
     authoritativeGateway?.name ?? GATEWAY_NAME,
@@ -4191,6 +4165,15 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     ({ name: GATEWAY_NAME, port: GATEWAY_PORT } = onboardGateway);
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    const resolvedGatewayOwner = getGatewayOwner();
+    let checkpointedGatewayOwner = resolvedGatewayOwner;
+    session = onboardSession.updateSession((currentSession) => {
+      checkpointedGatewayOwner = bindGatewayAuthorityToCheckpoint(
+        currentSession,
+        resolvedGatewayOwner,
+      );
+    });
+    bindGatewayOwner(checkpointedGatewayOwner);
     console.log("");
     console.log(`  ${cliDisplayName()} Onboarding`);
     if (isNonInteractive()) note("  (non-interactive mode)");
@@ -4267,6 +4250,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       gatewayName: GATEWAY_NAME,
       recreateSandbox: isRecreateSandbox,
       gatewayDeps: {
+        ...machineGatewayOwnerDeps,
         refreshDockerDriverGatewayReuseState,
         gatewayCliSupportsLifecycleCommands: () =>
           gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
@@ -4585,8 +4569,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
       },
       finalizationDeps: {
-        ensureAgentDashboardForward: (name, selectedAgent) =>
-          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
@@ -4662,6 +4646,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     GATEWAY_PORT = previousGatewayBinding.port;
     if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
     else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
+    if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
+    else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
+    resetGatewayOwnerBinding();
   }
 }
 

@@ -76,6 +76,7 @@ describe("openshell helpers", () => {
       parseVersionFromText("built on 2026.7.1, dcode 0.1.12, dcode 0.2.0", "dcode --version"),
     ).toBe("0.1.12");
     expect(parseVersionFromText("dcode 0.1.12", "/opt/venv/bin/dcode --version")).toBe("0.1.12");
+    expect(parseVersionFromText("OpenClaw 2026.5.27.1", "openclaw --version")).toBeNull();
     expect(parseVersionFromText("no version here")).toBeNull();
   });
 
@@ -287,6 +288,31 @@ describe("openshell helpers", () => {
     expect(calls).toEqual([
       ["sandbox", "get", "alpha"],
       ["sandbox", "ssh-config", "alpha"],
+    ]);
+  });
+
+  it("scopes both sandbox lookups to the requested gateway (#7429)", () => {
+    const calls: string[][] = [];
+    const spawnSyncImpl: OpenshellSpawnSync = (_command, args) => {
+      calls.push([...args]);
+      return makeSpawnResult({
+        status: 0,
+        stdout: args.includes("get") ? "alpha Ready\n" : "Host openshell-alpha\n",
+        stderr: "",
+      });
+    };
+
+    captureSandboxSshConfigCommand("openshell", "alpha", {
+      spawnSyncImpl,
+      gatewayName: "nemoclaw-18080",
+    });
+
+    // Both hops must carry the gateway: `get` succeeding on one gateway while
+    // `ssh-config` resolves against another would emit a config for the wrong
+    // sandbox.
+    expect(calls).toEqual([
+      ["sandbox", "get", "-g", "nemoclaw-18080", "alpha"],
+      ["sandbox", "ssh-config", "-g", "nemoclaw-18080", "alpha"],
     ]);
   });
 

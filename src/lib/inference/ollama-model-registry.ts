@@ -20,7 +20,8 @@
  *
  * New models go here, in descending size order; the selector walks the
  * list top-down and keeps every entry whose `requiredMemoryMB` fits the
- * host's currently available memory.
+ * effective capacity measurement (available memory when reported,
+ * otherwise total memory).
  */
 
 import type { GpuInfo } from "./local";
@@ -39,8 +40,8 @@ export interface OllamaModelEntry {
   computeIntensive?: boolean;
 }
 
-// Largest first. The selector walks this list, filters by available memory,
-// and reverses the result so menus render smallest-first.
+// Largest first. The selector walks this list, filters by the effective
+// capacity measurement, and reverses the result so menus render smallest-first.
 export const OLLAMA_MODEL_REGISTRY: readonly OllamaModelEntry[] = [
   {
     tag: "qwen3.6:35b",
@@ -84,12 +85,12 @@ export function effectiveGpuMemoryMB(gpu: GpuInfo | null): number | null {
 }
 
 /**
- * `true` when the registered tag fits the host's currently available
- * memory. Unknown tags (e.g. user-supplied `NEMOCLAW_MODEL` values that
- * the registry has never seen) and unknown memory both return `true` so
- * the caller does not refuse to proceed when we have nothing to compare
- * against — the runner's own validation is the final authority in that
- * case.
+ * `true` when the registered tag fits the effective capacity measurement:
+ * available memory when reported, otherwise total memory. Unknown tags
+ * (e.g. user-supplied `NEMOCLAW_MODEL` values that the registry has never
+ * seen) and unknown memory both return `true` so the caller does not refuse
+ * to proceed when we have nothing to compare against — the runner's own
+ * validation is the final authority in that case.
  */
 export function modelFitsAvailableMemory(tag: string, gpu: GpuInfo | null): boolean {
   const entry = findOllamaModelEntry(tag);
@@ -98,6 +99,33 @@ export function modelFitsAvailableMemory(tag: string, gpu: GpuInfo | null): bool
   const memory = effectiveGpuMemoryMB(gpu);
   if (memory == null) return true;
   return entry.requiredMemoryMB <= memory;
+}
+
+export interface OllamaModelCapacity {
+  requiredMemoryMB: number | null;
+  downloadSizeBytes: number | null;
+  fits: boolean | null;
+}
+
+/**
+ * Registry-only capacity facts for a menu entry: required GPU memory,
+ * download size, and whether the tag fits the effective capacity measurement
+ * (available memory when reported, otherwise total memory). Reads the registry
+ * synchronously so the model menu can annotate every line without a per-model
+ * network probe. Unknown tags return all `null`; `fits` is `null` when host
+ * memory is unknown.
+ */
+export function describeOllamaModelCapacity(tag: string, gpu: GpuInfo | null): OllamaModelCapacity {
+  const entry = findOllamaModelEntry(tag);
+  if (!entry) {
+    return { requiredMemoryMB: null, downloadSizeBytes: null, fits: null };
+  }
+  const memory = effectiveGpuMemoryMB(gpu);
+  return {
+    requiredMemoryMB: entry.requiredMemoryMB,
+    downloadSizeBytes: entry.downloadSizeBytes,
+    fits: memory == null ? null : entry.requiredMemoryMB <= memory,
+  };
 }
 
 /**
@@ -132,12 +160,13 @@ export function fittableOllamaModelTags(gpu: GpuInfo | null): string[] {
 }
 
 /**
- * `true` when at least one registry entry fits the host's currently
- * available memory. Returns `true` when memory is unknown so callers do
- * not warn blind. Confirmed-eligible device types (`nvidia`, `apple`)
- * compare against the registry; ambiguous types fall through to `true`
- * for the same reason as `fittableOllamaModelTags` — we cannot tell, so
- * the runner is left to surface any real failure.
+ * `true` when at least one registry entry fits the effective capacity
+ * measurement (available memory when reported, otherwise total memory).
+ * Returns `true` when memory is unknown so callers do not warn blind.
+ * Confirmed-eligible device types (`nvidia`, `apple`) compare against the
+ * registry; ambiguous types fall through to `true` for the same reason as
+ * `fittableOllamaModelTags` — we cannot tell, so the runner is left to
+ * surface any real failure.
  */
 export function anyRegistryModelFits(gpu: GpuInfo | null): boolean {
   if (!gpu || (gpu.type !== "nvidia" && gpu.type !== "apple")) return true;

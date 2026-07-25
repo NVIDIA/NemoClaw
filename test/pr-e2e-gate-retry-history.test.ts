@@ -267,7 +267,9 @@ describe("PR E2E controller retry history", () => {
         },
       });
       expect(JSON.stringify(completion?.body)).toContain("Review deployments");
-      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("fork_skip_mode=");
+      expect(fs.readFileSync(outputPath, "utf8")).toContain(
+        "approval_mode=start-approved-control-plane",
+      );
       expect(fs.readFileSync(outputPath, "utf8")).toContain("check_id=18");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {

@@ -59,6 +59,22 @@ export function bindLocalAgentBaseImageToPinnedProvenance(
   return baseImage.bindLocalAgentBaseImageToPinnedProvenance(agent, imageRef);
 }
 
+export function bindLocalAgentBaseImageHandoffToResolution(
+  agent: AgentDefinition,
+  sourceRef: string,
+  handoffRef: string,
+  metadata: import("../sandbox-base-image").SandboxBaseImageResolutionMetadata,
+  reusedResolutionHint: import("../sandbox-base-image").SandboxBaseImageResolutionMetadata,
+): ReturnType<typeof baseImage.bindLocalAgentBaseImageHandoffToResolution> {
+  return baseImage.bindLocalAgentBaseImageHandoffToResolution(
+    agent,
+    sourceRef,
+    handoffRef,
+    metadata,
+    reusedResolutionHint,
+  );
+}
+
 export function pinTrustedAgentBaseImageOverrideForOperation(
   overrideEnvVar: string,
   override: import("../sandbox-base-image").TrustedLocalBaseImageOverride,
