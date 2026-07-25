@@ -79,6 +79,8 @@ WORKDIR /tmp/perl-source
 # Pin the reviewed d_syscallproto result for trixie's libc so both native
 # architectures use the same known declaration instead of relying on a
 # Configure probe that previously returned a false negative under QEMU.
+# Remove this override only after the pinned base image and Perl release report
+# d_syscallproto=define from native Configure probes on amd64 and arm64.
 # Perl's test_harness schedules independent upstream tests through TEST_JOBS.
 # This preserves the full suite while using each native runner efficiently.
 RUN curl --proto '=https' --tlsv1.2 -fsSL \
