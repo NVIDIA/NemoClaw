@@ -1392,6 +1392,11 @@ describe("Hermes sandbox provisioning", () => {
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
     fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
+    for (const cache of ["npm", "electron", "node-gyp"]) {
+      const cachePath = path.join(rootCache, cache);
+      fs.mkdirSync(cachePath, { recursive: true });
+      fs.writeFileSync(path.join(cachePath, "build-only-cache"), "unused after image assembly\n");
+    }
     const command = dockerRunCommandBetween(
       dockerfile,
       "# Published base images can lag Dockerfile.base",
@@ -1411,6 +1416,9 @@ describe("Hermes sandbox provisioning", () => {
       expect(calls).toContain(`npm run build --prefix ${hermesWebDir}`);
       expect(fs.existsSync(hermesWebDist)).toBe(true);
       expect(fs.existsSync(path.join(hermesWebDir, "node_modules"))).toBe(false);
+      for (const cache of ["npm", "electron", "node-gyp"]) {
+        expect(() => fs.lstatSync(path.join(rootCache, cache))).toThrow();
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
