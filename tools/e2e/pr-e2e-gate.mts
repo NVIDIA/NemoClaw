@@ -2085,7 +2085,7 @@ function validateWorkflowJobsPage(value: unknown): WorkflowJobsPage {
   };
 }
 
-async function listNonPassingWorkflowJobs(
+export async function listNonPassingWorkflowJobs(
   repository: string,
   token: string,
   runId: number,
@@ -2655,7 +2655,7 @@ async function requireUnchangedCompletedWorkflowRun(
   }
 }
 
-function workflowJobEvidenceFingerprint(details: {
+export function workflowJobEvidenceFingerprint(details: {
   jobs: readonly WorkflowJob[];
   complete: boolean;
 }): string {
