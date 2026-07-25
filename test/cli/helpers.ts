@@ -279,6 +279,25 @@ export function writeSandboxRegistry(
   );
 }
 
+export function writeDoctorSandboxRegistry(
+  home: string,
+  sandboxName = "alpha",
+  overrides: SandboxOverrides = {},
+): void {
+  writeSandboxRegistry(home, sandboxName, {
+    agent: "openclaw",
+    openshellDriver: "docker",
+    openshellVersion: "0.0.72",
+    nemoclawVersion: "0.0.95",
+    fromDockerfile: null,
+    dashboardPort: 18_789,
+    imageTag: "nemoclaw-openclaw:test",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8_080,
+    ...overrides,
+  });
+}
+
 // Several sandbox commands (status, connect, logs, policy-list) now preflight
 // `docker info` to classify a Docker daemon outage (#4428). Tests that should
 // exercise the normal (Docker-up) path must stub a healthy `docker info` so
@@ -373,7 +392,7 @@ export function createDoctorTestSetup(
   const { home, bin: localBin } = resources.home(prefix);
   const markerFile = path.join(home, "doctor-calls");
   fs.mkdirSync(localBin, { recursive: true });
-  writeSandboxRegistry(home, sandboxName);
+  writeDoctorSandboxRegistry(home, sandboxName);
 
   fs.writeFileSync(
     path.join(localBin, "openshell"),

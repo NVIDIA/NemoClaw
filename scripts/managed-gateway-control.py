@@ -102,6 +102,56 @@ CONTROL_STAGES = frozenset(
         "cleanup-expected-exit",
     }
 )
+START_LOG_PATH = "/tmp/nemoclaw-start.log"
+MAX_START_LOG_DIAGNOSTIC_BYTES = 16 * 1024
+MAX_START_LOG_DIAGNOSTIC_LINES = 6
+MAX_START_LOG_DIAGNOSTIC_LINE_CHARS = 512
+START_LOG_DIAGNOSTIC_PATTERNS = (
+    re.compile(
+        r"\[gateway\] Hermes runtime preparation refused automatic respawn; retrying in 5s"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes gateway launch failed; retrying under the same supervisor"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes auxiliary repair failed; retrying while the exact gateway remains supervised"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes replacement gateway failed listener or health validation; stopping the exact child"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child"
+    ),
+    re.compile(
+        r"\[gateway\] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes gateway pid [1-9][0-9]* exited \(rc=[0-9]+; authenticated host authorization\); respawning without charging crash quarantine in 2s"
+    ),
+    re.compile(r"\[gateway\] Hermes gateway respawned \(pid [1-9][0-9]*\)"),
+    re.compile(
+        r"\[gateway\] CRITICAL: [1-9][0-9]* exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway\.log"
+    ),
+    re.compile(
+        r"\[gateway\] CRITICAL: (?:exact Hermes replacement|unhealthy Hermes gateway|initial Hermes gateway) could not be stopped; managed supervisor is quarantined without another launch"
+    ),
+    re.compile(
+        r"\[SECURITY\] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox"
+    ),
+    re.compile(
+        r"\[CRITICAL\] Newly launched Hermes (?:gateway|gateway-log|dashboard|dashboard-log|api-socat|dashboard-socat) pid [1-9][0-9]* failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child"
+    ),
+    re.compile(
+        r"\[CRITICAL\] Unproven Hermes (?:gateway|gateway-log|dashboard|dashboard-log|api-socat|dashboard-socat) child exited; managed supervisor remains quarantined until sandbox recreation"
+    ),
+)
+ANSI_ESCAPE_RE = re.compile(
+    r"\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])"
+)
+CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]")
 
 
 class ControlError(RuntimeError):
@@ -115,15 +165,18 @@ class ControlError(RuntimeError):
 
 @contextmanager
 def _control_stage(stage: str) -> Iterator[None]:
-    """Attach one fixed, non-sensitive lifecycle stage to generic failures."""
+    """Attach one fixed lifecycle stage to health or supervisor loss."""
 
     if stage not in CONTROL_STAGES:
         raise AssertionError(f"unknown managed-control stage: {stage}")
     try:
         yield
     except ControlError as error:
-        if error.code == "SUPERVISOR_UNAVAILABLE" and error.stage is None:
-            raise ControlError(error.code, stage=stage) from error
+        if (
+            error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE")
+            and error.stage is None
+        ):
+            error.stage = stage
         raise
 
 
@@ -1597,6 +1650,142 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
                     _clear_expected_exit_lease(expected_exit_lease)
 
 
+def _sanitize_start_log_diagnostic_line(line: str) -> str | None:
+    # Do not normalize attacker-controlled text into an accepted event. The
+    # exact supervisor UID is shared with the sandbox agent in managed
+    # OpenShell, so these lines remain non-authoritative operator evidence.
+    if (
+        len(line) > MAX_START_LOG_DIAGNOSTIC_LINE_CHARS
+        or ANSI_ESCAPE_RE.search(line)
+        or CONTROL_CHAR_RE.search(line)
+    ):
+        return None
+    if not any(
+        pattern.fullmatch(line) for pattern in START_LOG_DIAGNOSTIC_PATTERNS
+    ):
+        return None
+    return line
+
+
+def _start_log_metadata_is_allowed(
+    metadata: os.stat_result, supervisor_uid: int
+) -> bool:
+    return bool(
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == supervisor_uid
+        and metadata.st_nlink == 1
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+    )
+
+
+def _start_log_metadata_snapshot(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _read_start_log_diagnostic_excerpt(
+    reader: ProcReader, supervisor: ProcessIdentity
+) -> tuple[str, ...]:
+    """Read a stable bounded tail owned by the exact managed supervisor UID."""
+
+    path = _system_path(START_LOG_PATH)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    fd = -1
+    try:
+        _recapture_exact_identity(reader, supervisor)
+        if len(set(supervisor.uids)) != 1:
+            return ()
+        supervisor_uid = supervisor.uids[0]
+        fd = os.open(path, flags)
+        before = os.fstat(fd)
+        if not _start_log_metadata_is_allowed(before, supervisor_uid):
+            return ()
+        offset = max(0, before.st_size - MAX_START_LOG_DIAGNOSTIC_BYTES)
+        os.lseek(fd, offset, os.SEEK_SET)
+        chunks: list[bytes] = []
+        remaining = before.st_size - offset
+        while remaining > 0:
+            chunk = os.read(fd, min(4096, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(fd)
+        _recapture_exact_identity(reader, supervisor)
+        if _start_log_metadata_snapshot(before) != _start_log_metadata_snapshot(
+            after
+        ):
+            return ()
+    except (ControlError, OSError, PermissionError, ProcessLookupError):
+        return ()
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+    raw = b"".join(chunks)
+    if offset > 0:
+        _, separator, raw = raw.partition(b"\n")
+        if not separator:
+            return ()
+    lines = (
+        _sanitize_start_log_diagnostic_line(line)
+        for line in raw.decode("utf-8", errors="replace").splitlines()
+    )
+    return tuple(line for line in lines if line)[-MAX_START_LOG_DIAGNOSTIC_LINES:]
+
+
+def _managed_failure_diagnostics() -> tuple[str, ...]:
+    """Return bounded, non-authoritative evidence for an operator."""
+
+    supervisor_pid = "unavailable"
+    gateway_pid = "unavailable"
+    start_log_excerpt: tuple[str, ...] = ()
+    try:
+        agent = _detect_agent()
+        with ProcReader() as reader:
+            supervisor = _discover_supervisor(reader)
+            supervisor_pid = str(supervisor.pid)
+            spec = _agent_spec(agent, reader, supervisor)
+            candidates = _gateway_candidates(reader, supervisor, spec)
+            if candidates:
+                current_gateway = _recapture_exact_identity(reader, candidates[0])
+                gateway_pid = str(current_gateway.pid)
+            else:
+                gateway_pid = "0"
+            if agent == "hermes":
+                start_log_excerpt = _read_start_log_diagnostic_excerpt(
+                    reader, supervisor
+                )
+    except (ControlError, OSError, PermissionError, ProcessLookupError):
+        # Diagnostics are best effort; keep fail-closed defaults when process
+        # state cannot be re-proven.
+        pass
+
+    diagnostics = [
+        f"NEMOCLAW_SUPERVISOR_PID={supervisor_pid}",
+        f"NEMOCLAW_GATEWAY_PID={gateway_pid}",
+    ]
+    diagnostics.extend(
+        f"NEMOCLAW_START_LOG={line}"
+        for line in start_log_excerpt
+    )
+    return tuple(diagnostics)
+
+
 def _validate_request(argv: list[str]) -> tuple[str, str]:
     if len(argv) != 2:
         raise ControlError("SUPERVISOR_INVALID_REQUEST")
@@ -1619,8 +1808,15 @@ def main(argv: list[str]) -> int:
         return 0
     except ControlError as error:
         print(error.code, file=sys.stderr)
-        if error.code == "SUPERVISOR_UNAVAILABLE" and error.stage is not None:
+        if error.stage is not None:
             print(f"NEMOCLAW_CONTROL_STAGE={error.stage}", file=sys.stderr)
+            if error.code in ("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_UNAVAILABLE"):
+                try:
+                    diagnostics = _managed_failure_diagnostics()
+                except Exception:  # diagnostics must not hide the original failure
+                    diagnostics = ()
+                for diagnostic in diagnostics:
+                    print(diagnostic, file=sys.stderr)
         return 1
     except (OSError, subprocess.SubprocessError):
         print("GATEWAY_FAILED", file=sys.stderr)

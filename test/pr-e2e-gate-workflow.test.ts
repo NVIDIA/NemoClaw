@@ -19,6 +19,7 @@ const E2E_PATH = ".github/workflows/e2e.yaml";
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
+const TRUSTED_SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 
 type CoordinatorJob = WorkflowJob & {
   concurrency?: { group: string; queue?: "max"; "cancel-in-progress": boolean };
@@ -298,6 +299,8 @@ describe("PR E2E gate workflow", () => {
     const ciWorkflow = readYaml<Workflow>(".github/workflows/pr.yaml");
     const ciRequired =
       "${{ github.event.action != 'edited' || github.event.changes.base != null }}";
+    const requiredObserverCondition =
+      "github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed'";
     const ciVerification = step(ciWorkflow.jobs.checks, "Verify required PR checks");
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const initialize = workflow.jobs.initialize;
@@ -321,7 +324,8 @@ describe("PR E2E gate workflow", () => {
     expect(workflow["run-name"]).toContain("github.event.pull_request.number");
     expect(workflow["run-name"]).toContain("github.event.pull_request.head.sha");
     expect(workflow["run-name"]).toContain("github.event.pull_request.base.sha");
-    expect(workflow["run-name"]).toContain("github.event.changes.base != null");
+    expect(workflow["run-name"]).toContain("github.event.action != 'closed'");
+    expect(workflow["run-name"]).not.toContain("github.event.changes.base != null");
     expect(workflow.on).toEqual({
       workflow_run: {
         workflows: ["CI / Pull Request"],
@@ -403,11 +407,10 @@ describe("PR E2E gate workflow", () => {
     );
     expect(initialize.concurrency?.queue).toBe("max");
     expect(initialize.concurrency?.["cancel-in-progress"]).toBe(false);
-    expect(required.name).toBe("E2E / PR Gate");
-    expect(required.if).toContain("github.event_name == 'pull_request_target'");
-    expect(required.if).toContain("github.event.action != 'closed'");
-    expect(required.if).toContain("github.event.action != 'edited'");
-    expect(required.if).toContain("github.event.changes.base != null");
+    expect(required.name).toBe(
+      `\${{ ${requiredObserverCondition} && 'E2E / PR Gate' || 'E2E / PR Gate (not applicable)' }}`,
+    );
+    expect(required.if).toBe(`\${{ ${requiredObserverCondition} }}`);
     expect(required.permissions).toEqual({
       checks: "read",
       contents: "read",
@@ -674,6 +677,7 @@ describe("PR E2E gate workflow", () => {
       ),
     ).toBe(true);
     expect(nodeSetups).toHaveLength(7);
+    expect(nodeSetups.every((setup) => setup.uses === TRUSTED_SETUP_NODE_ACTION)).toBe(true);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
     expect(installs).toHaveLength(6);
