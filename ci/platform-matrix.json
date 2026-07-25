@@ -39,7 +39,7 @@
       "status": "caveated",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Start the container runtime (Colima or Docker Desktop) before running the installer. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight."
+      "notes": "Start the container runtime (Colima or Docker Desktop) before running the installer. When Homebrew is available, OpenShell uses its official formula and the gateway appears in `brew services list` as `openshell`; without Homebrew, NemoClaw uses the standalone OpenShell install and detached gateway fallback. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight."
     },
     {
       "name": "DGX OS (Spark)",
@@ -231,7 +231,7 @@
     {
       "name": "Intel Mac (macOS x86_64)",
       "status": "unsupported",
-      "notes": "OpenShell does not publish macOS x86_64 standalone gateway assets. The top-level installer rejects Intel Mac hosts before release-ref resolution or downloads (`install.sh:108`), and the OpenShell installer retains a downstream asset guard (`scripts/install-openshell.sh:689`). See issue #954 (closed)."
+      "notes": "The supported OpenShell Homebrew gateway service path is Apple Silicon only, and OpenShell does not publish macOS x86_64 standalone gateway assets. The top-level installer rejects Intel Mac hosts before release-ref resolution or downloads (`install.sh:108`), and the OpenShell installer retains a downstream asset guard (`scripts/install-openshell.sh:689`). See issue #954 (closed)."
     },
     {
       "name": "Non-Ubuntu/Debian Linux distros",

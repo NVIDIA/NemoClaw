@@ -158,7 +158,7 @@
     },
     {
       "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "compiles host-preservation probes for every post-reboot recovery target",
+      "test": "compiles gateway-health and host-preservation probes for every post-reboot recovery target",
       "category": "security"
     },
     {
