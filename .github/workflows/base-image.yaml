@@ -23,6 +23,9 @@ on:
       # takes effect immediately after merge instead of waiting for another tag.
       - ".github/workflows/base-image.yaml"
       - "Dockerfile.base"
+      - "agents/openclaw/openclaw-runtime/package.json"
+      - "agents/openclaw/openclaw-runtime/package-lock.json"
+      - "scripts/lib/reviewed-npm-archive.mts"
       - "agents/hermes/Dockerfile.base"
       - "agents/langchain-deepagents-code/Dockerfile.base"
       - "agents/langchain-deepagents-code/manifest.yaml"
@@ -34,7 +37,6 @@ on:
       - "nemoclaw-blueprint/blueprint.yaml"
       - "scripts/lib/openclaw-npm-remediation.mts"
       - "scripts/lib/reviewed-npm-audit.mts"
-      - "scripts/lib/reviewed-npm-archive.mts"
       - "scripts/checks/node-tar-image-scan.mts"
       - "scripts/patch-bundled-npm-tar.mts"
       - "scripts/upgrade-bundled-npm.mts"
