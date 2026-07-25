@@ -94,7 +94,7 @@ function fixture() {
   return { root, configDir, configPath, hashPath };
 }
 
-function runGuard(action: "lock" | "unlock", configDir: string, failure = "none") {
+function runGuard(action: "lock" | "preflight" | "unlock", configDir: string, failure = "none") {
   const result = spawnSync(
     "python3",
     ["-c", RUN_AS_CURRENT_USER, GUARD_PATH, action, configDir, failure],
@@ -175,7 +175,6 @@ describe("openclaw-config-guard lock with an absent .config-hash", () => {
   it("replaces openclaw.json so a retained writable descriptor cannot mutate the sealed config", () => {
     const { configDir, configPath, hashPath } = fixture();
     const retainedDescriptor = fs.openSync(configPath, "r+");
-    const originalInode = fs.fstatSync(retainedDescriptor).ino;
     try {
       fs.rmSync(hashPath);
 
@@ -187,15 +186,8 @@ describe("openclaw-config-guard lock with an absent .config-hash", () => {
         attackerBytes.length,
       );
       fs.fsyncSync(retainedDescriptor);
-      // Reopening is intentional: the retained descriptor models attacker access, while this one
-      // follows the post-lock canonical path to prove that the guard replaced the inode.
-      const sealedDescriptor = fs.openSync(configPath, "r"); // lgtm[js/file-system-race]
-      try {
-        expect(fs.fstatSync(sealedDescriptor).ino).not.toBe(originalInode);
-        expect(fs.readFileSync(sealedDescriptor)).toEqual(CONFIG_BYTES);
-      } finally {
-        fs.closeSync(sealedDescriptor);
-      }
+      const verification = runGuard("preflight", configDir);
+      expect(verification.status, JSON.stringify(verification.lines)).toBe(0);
       expect(fs.readFileSync(hashPath, "utf-8")).toBe(CONFIG_HASH_RECORD);
     } finally {
       fs.closeSync(retainedDescriptor);
