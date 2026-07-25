@@ -978,26 +978,9 @@ function currentCheckRollup(
     const headBinding = associationLessHeadBinding(metadata);
     if (
       metadata.event === "pull_request" &&
-      metadata.path === ".github/workflows/installer-hash-check.yaml"
+      (metadata.path === ".github/workflows/installer-hash-check.yaml" ||
+        metadata.path === ".github/workflows/pr.yaml")
     ) {
-      if (
-        metadata.immutablePrDiff === false ||
-        metadata.exactDiff === false ||
-        metadata.headShaMatches === false ||
-        headBinding === "other"
-      ) {
-        return "other";
-      }
-      if (
-        metadata.immutablePrDiff === true &&
-        metadata.headShaMatches === true &&
-        (metadata.exactDiff === true || headBinding === "current")
-      ) {
-        return "current";
-      }
-      return "unknown";
-    }
-    if (metadata.event === "pull_request" && metadata.path === ".github/workflows/pr.yaml") {
       if (
         metadata.immutablePrDiff === false ||
         metadata.exactDiff === false ||
