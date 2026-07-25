@@ -189,7 +189,7 @@ describe("openclaw-config-guard lock with an absent .config-hash", () => {
       fs.fsyncSync(retainedDescriptor);
       // Reopening is intentional: the retained descriptor models attacker access, while this one
       // follows the post-lock canonical path to prove that the guard replaced the inode.
-      const sealedDescriptor = fs.openSync(configPath, "r"); // codeql[js/file-system-race]
+      const sealedDescriptor = fs.openSync(configPath, "r"); // lgtm[js/file-system-race]
       try {
         expect(fs.fstatSync(sealedDescriptor).ino).not.toBe(originalInode);
         expect(fs.readFileSync(sealedDescriptor)).toEqual(CONFIG_BYTES);
