@@ -94,7 +94,7 @@ function fixture() {
   return { root, configDir, configPath, hashPath };
 }
 
-function runGuard(action: "lock" | "unlock", configDir: string, failure = "none") {
+function runGuard(action: "lock" | "preflight" | "unlock", configDir: string, failure = "none") {
   const result = spawnSync(
     "python3",
     ["-c", RUN_AS_CURRENT_USER, GUARD_PATH, action, configDir, failure],
@@ -170,6 +170,28 @@ describe("openclaw-config-guard lock with an absent .config-hash", () => {
     expect(fs.readFileSync(configPath)).toEqual(CONFIG_BYTES);
     expect(fs.readFileSync(hashPath, "utf-8")).toBe(CONFIG_HASH_RECORD);
     expect(rejectedNames(configDir)).toEqual([]);
+  });
+
+  it("replaces openclaw.json so a retained writable descriptor cannot mutate the sealed config", () => {
+    const { configDir, configPath, hashPath } = fixture();
+    const retainedDescriptor = fs.openSync(configPath, "r+");
+    try {
+      fs.rmSync(hashPath);
+
+      const result = runGuard("lock", configDir);
+
+      expect(result.status, JSON.stringify(result.lines)).toBe(0);
+      const attackerBytes = Buffer.from('{"gateway":{"port":19999}}\n');
+      expect(fs.writeSync(retainedDescriptor, attackerBytes, 0, attackerBytes.length, 0)).toBe(
+        attackerBytes.length,
+      );
+      fs.fsyncSync(retainedDescriptor);
+      const verification = runGuard("preflight", configDir);
+      expect(verification.status, JSON.stringify(verification.lines)).toBe(0);
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe(CONFIG_HASH_RECORD);
+    } finally {
+      fs.closeSync(retainedDescriptor);
+    }
   });
 
   it("relocks idempotently after a synthesized-hash lock without rewriting inodes", () => {
