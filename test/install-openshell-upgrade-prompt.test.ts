@@ -24,6 +24,7 @@ function runInstallerOpenshellVersionFlow(
   const setupDir = path.join(tmp, "setup");
   const registry = path.join(home, ".nemoclaw", "sandboxes.json");
   const gatewayState = path.join(tmp, "gateway.state");
+  const backupLog = path.join(tmp, "backup.log");
   const installLog = path.join(tmp, "install.log");
   const healthyOpenshell = path.join(tmp, "healthy-openshell");
 
@@ -61,6 +62,10 @@ install_nodejs() { :; }
 ensure_supported_runtime() { :; }
 fix_npm_permissions() { :; }
 preinstall_backup_and_retire_legacy_gateway() {
+  command_exists openshell || return 0
+  printf 'backup\\n' >>"${backupLog}"
+  [ -n "$(installed_openshell_version 2>/dev/null || true)" ] ||
+    error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
   printf 'gateway-retired\\n' >"${gatewayState}"
   printf '{"sandboxes":{}}\\n' >"${registry}"
 }
@@ -86,6 +91,7 @@ main --non-interactive --yes-i-accept-third-party-software`,
 
   return {
     result,
+    backupLog: fs.existsSync(backupLog) ? fs.readFileSync(backupLog, "utf-8") : "",
     gatewayState: fs.readFileSync(gatewayState, "utf-8"),
     registry: fs.readFileSync(registry, "utf-8"),
     installLog: fs.existsSync(installLog) ? fs.readFileSync(installLog, "utf-8") : "",
@@ -325,43 +331,43 @@ require_reportable_openshell_version`,
   const versionPrintingBrokenOpenshell =
     '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 1\n';
 
-  it("rejects a broken OpenShell before gateway or sandbox mutation (#7300)", () => {
-    const { result, gatewayState, registry, installLog } = runInstallerOpenshellVersionFlow(
-      (bin) => {
+  it("backs up before rejecting a broken OpenShell without gateway or sandbox mutation (#7300)", () => {
+    const { result, backupLog, gatewayState, registry, installLog } =
+      runInstallerOpenshellVersionFlow((bin) => {
         writeExecutable(path.join(bin, "openshell"), brokenOpenshell);
-      },
-    );
+      });
 
     expect(result.status, result.stdout + result.stderr).not.toBe(0);
-    expect(result.stderr + result.stdout).toContain("could not report its version");
+    expect(result.stderr + result.stdout).toContain("stopped after backup");
+    expect(backupLog).toBe("backup\n");
     expect(gatewayState).toBe("gateway-original\n");
     expect(registry).toBe('{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
     expect(installLog).toBe("");
   });
 
-  it("rejects a failed OpenShell version command before gateway or sandbox mutation (#7300)", () => {
-    const { result, gatewayState, registry, installLog } = runInstallerOpenshellVersionFlow(
-      (bin) => {
+  it("backs up before rejecting a failed OpenShell version command without mutation (#7300)", () => {
+    const { result, backupLog, gatewayState, registry, installLog } =
+      runInstallerOpenshellVersionFlow((bin) => {
         writeExecutable(path.join(bin, "openshell"), versionPrintingBrokenOpenshell);
-      },
-    );
+      });
 
     expect(result.status, result.stdout + result.stderr).not.toBe(0);
-    expect(result.stderr + result.stdout).toContain("could not report its version");
+    expect(result.stderr + result.stdout).toContain("stopped after backup");
+    expect(backupLog).toBe("backup\n");
     expect(gatewayState).toBe("gateway-original\n");
     expect(registry).toBe('{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
     expect(installLog).toBe("");
   });
 
-  it("rejects invalid OpenShell version output before gateway or sandbox mutation (#7300)", () => {
-    const { result, gatewayState, registry, installLog } = runInstallerOpenshellVersionFlow(
-      (bin) => {
+  it("backs up before rejecting invalid OpenShell version output without mutation (#7300)", () => {
+    const { result, backupLog, gatewayState, registry, installLog } =
+      runInstallerOpenshellVersionFlow((bin) => {
         writeExecutable(path.join(bin, "openshell"), invalidVersionOpenshell);
-      },
-    );
+      });
 
     expect(result.status, result.stdout + result.stderr).not.toBe(0);
-    expect(result.stderr + result.stdout).toContain("could not report its version");
+    expect(result.stderr + result.stdout).toContain("stopped after backup");
+    expect(backupLog).toBe("backup\n");
     expect(gatewayState).toBe("gateway-original\n");
     expect(registry).toBe('{"sandboxes":{"alpha":{"name":"alpha"}}}\n');
     expect(installLog).toBe("");
@@ -606,8 +612,9 @@ require_reportable_openshell_version`,
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("rejects a broken user-local OpenShell before preparing recovery (#7300)", () => {
-    const registryJson = '{"sandboxes":{"alpha":{"name":"alpha"}}}';
+  it("backs up before rejecting a broken user-local OpenShell without retiring the gateway (#7300)", () => {
+    const registryJson =
+      '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}';
     const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
@@ -620,8 +627,8 @@ require_reportable_openshell_version`,
     );
 
     expect(result.status).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain("could not report its version");
-    expect(cliLog).toBe("");
+    expect(result.stdout + result.stderr).toContain("stopped after backup");
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog.split(/\r?\n/)).toContain("--version");
     expect(openshellLog).not.toContain("gateway");
     expect(registry).toBe(registryJson);
@@ -713,21 +720,25 @@ require_reportable_openshell_version`,
     expect(openshellLog).toBe("");
   });
 
-  it("fails closed before backup when the installed OpenShell version is unknown", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("fails closed after backup when the installed OpenShell version is unknown", () => {
+    const registryJson =
+      '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}';
+    const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         hasOldCli: false,
         openshellVersion: "",
-        registryJson:
-          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+        registryJson,
       },
     );
 
     expect(result.status).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain("could not report its version");
-    expect(cliLog).toBe("");
+    expect(result.stdout + result.stderr).toContain(
+      "Could not determine the installed OpenShell version",
+    );
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toBe("");
+    expect(registry).toBe(registryJson);
   });
 
   it("uses a supported legacy destroy verb without stopping a recorded host process", () => {

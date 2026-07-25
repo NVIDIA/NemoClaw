@@ -2010,7 +2010,7 @@ installed_openshell_version() {
 }
 
 # Fail closed when OpenShell is present but cannot report its version. An absent
-# binary is valid before install_nemoclaw; its caller validates again afterward.
+# binary is valid because OpenShell installation can be deferred.
 require_reportable_openshell_version() {
   command_exists openshell || return 0
   [ -n "$(installed_openshell_version 2>/dev/null || true)" ] && return 0
@@ -2296,7 +2296,6 @@ preinstall_backup_and_retire_legacy_gateway() {
     prefer_user_local_openshell
   fi
   command_exists openshell || return 0
-  require_reportable_openshell_version
 
   if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
     error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
@@ -4055,7 +4054,6 @@ main() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
-  require_reportable_openshell_version
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw
