@@ -31,6 +31,7 @@ function makeVirtualClock(startMs = 1_000_000_000_000) {
 }
 
 function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecoveryDeps {
+  const clock = makeVirtualClock();
   return {
     assertGatewayStartAllowed: vi.fn(),
     getGatewayClusterContainerState: () => "missing",
@@ -38,7 +39,8 @@ function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecove
     runCaptureOpenshell: vi.fn(() => "Disconnected"),
     runOpenshell: vi.fn(() => ({ status: 0 })),
     getContainerRuntime: () => "docker",
-    sleepSeconds: vi.fn(),
+    sleepSeconds: clock.sleeper,
+    now: clock.now,
     startGatewayWithOptions: vi.fn(
       async () => undefined,
     ) as GatewayRecoveryDeps["startGatewayWithOptions"],
