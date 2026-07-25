@@ -54,6 +54,10 @@ export function createDockerDriverGatewayPortListenerHelpers(
     portCheck: PortProbeResult,
     opts?: DockerDriverGatewayPortListenerOptions,
   ): DockerDriverGatewayPortListenerScan;
+  getGatewayPortListenerRawScan(
+    portCheck: PortProbeResult,
+    opts?: DockerDriverGatewayPortListenerOptions,
+  ): DockerDriverGatewayPortListenerScan;
   isDockerDriverGatewayPortListener(
     portCheck: PortProbeResult,
     opts?: DockerDriverGatewayPortListenerOptions,
@@ -86,13 +90,21 @@ export function createDockerDriverGatewayPortListenerHelpers(
     return isGateway(pid, opts.gatewayBin) ? pid : null;
   }
 
-  function getDockerDriverGatewayPortListenerScan(
+  /**
+   * Every live process holding the gateway port, with no assumption about what
+   * kind of gateway it is.
+   *
+   * Docker-driver identity is deliberately not applied here: an externally
+   * supervised gateway (#6576) is an ordinary systemd-run executable with none
+   * of the Docker-driver env markers, so filtering by them would discard the
+   * very listener the caller is trying to recognize. Callers that need
+   * Docker-driver identity use getDockerDriverGatewayPortListenerScan instead.
+   */
+  function getGatewayPortListenerRawScan(
     portCheck: PortProbeResult,
     opts: DockerDriverGatewayPortListenerOptions = {},
   ): DockerDriverGatewayPortListenerScan {
     const candidates = new Set<number>();
-    const primaryPid = getDockerDriverGatewayPortListenerPid(portCheck, opts);
-    if (primaryPid !== null) candidates.add(primaryPid);
 
     let result: ListenerCaptureResult;
     try {
@@ -108,6 +120,19 @@ export function createDockerDriverGatewayPortListenerHelpers(
       for (const pid of parseListenerPids(result.stdout)) candidates.add(pid);
     }
 
+    const alive = opts.isPidAliveFn ?? deps.isPidAlive;
+    return { pids: Array.from(candidates).filter((pid) => alive(pid)), complete };
+  }
+
+  function getDockerDriverGatewayPortListenerScan(
+    portCheck: PortProbeResult,
+    opts: DockerDriverGatewayPortListenerOptions = {},
+  ): DockerDriverGatewayPortListenerScan {
+    const raw = getGatewayPortListenerRawScan(portCheck, opts);
+    const candidates = new Set<number>(raw.pids);
+    const primaryPid = getDockerDriverGatewayPortListenerPid(portCheck, opts);
+    if (primaryPid !== null) candidates.add(primaryPid);
+
     const platform = opts.platform ?? process.platform;
     const alive = opts.isPidAliveFn ?? deps.isPidAlive;
     const isGateway =
@@ -116,13 +141,14 @@ export function createDockerDriverGatewayPortListenerHelpers(
         deps.isDockerDriverGatewayProcess(pid, gatewayBin, platform));
     return {
       pids: Array.from(candidates).filter((pid) => alive(pid) && isGateway(pid, opts.gatewayBin)),
-      complete,
+      complete: raw.complete,
     };
   }
 
   return {
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayPortListenerScan,
+    getGatewayPortListenerRawScan,
     isDockerDriverGatewayPortListener: (portCheck, opts) =>
       getDockerDriverGatewayPortListenerPid(portCheck, opts) !== null,
   };

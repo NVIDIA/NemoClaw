@@ -19,14 +19,18 @@ import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   buildLocalBaseTag,
   createSandboxBaseImageBuildProvenance,
+  createSandboxBaseImageBuildProvenanceKey,
   createSandboxBaseImageResolutionKey,
   createSandboxBaseImageResolutionMetadata,
   getImageGlibcVersion,
   inspectLocalImageMetadata,
   OPENSHELL_SANDBOX_MIN_GLIBC,
+  parseContentAddressedSandboxBaseImageId,
+  parseTemporarySandboxBaseImageId,
   type ResolveBaseImageOptions,
   resolveSandboxBaseImage,
   SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
+  SANDBOX_BASE_RESOLUTION_SCHEMA,
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
   SandboxBaseImageResolutionError,
@@ -53,6 +57,7 @@ export interface EnsureAgentBaseImageResult {
   imageTag: string | null;
   built: boolean;
   resolutionMetadata?: SandboxBaseImageResolutionMetadata;
+  reusedResolutionHint?: SandboxBaseImageResolutionMetadata;
   trustedLocalOverride?: TrustedLocalBaseImageOverride;
 }
 
@@ -342,6 +347,84 @@ export function bindLocalAgentBaseImageToPinnedProvenance(
     : null;
 }
 
+/**
+ * Mint a one-operation trust lease for an exact rebuild handoff only from the
+ * outer resolver's already-validated local metadata. The public build label is
+ * supporting evidence, never authority by itself.
+ */
+export function bindLocalAgentBaseImageHandoffToResolution(
+  agent: AgentDefinition,
+  sourceRef: string,
+  handoffRef: string,
+  metadata: SandboxBaseImageResolutionMetadata,
+  reusedResolutionHint: SandboxBaseImageResolutionMetadata,
+): TrustedLocalBaseImageOverride | null {
+  const baseDockerfile = agent.dockerfileBasePath;
+  const localImageName = `nemoclaw-${agent.name}-sandbox-base-local`;
+  const expectedImageId = parseContentAddressedSandboxBaseImageId(localImageName, handoffRef);
+  const temporaryHandoffImageId = parseTemporarySandboxBaseImageId(localImageName, handoffRef);
+  const normalizedMetadataImageId = metadata.imageId.trim().toLowerCase();
+  if (!baseDockerfile || metadata !== reusedResolutionHint) return null;
+  const resolutionOptions = createAgentBaseImageResolutionOptions(agent, baseDockerfile, {});
+  const canonicalSourceImageId =
+    parseTemporarySandboxBaseImageId(localImageName, sourceRef) === null
+      ? parseContentAddressedSandboxBaseImageId(localImageName, sourceRef)
+      : null;
+  const stableSourceHandoff =
+    sourceRef === resolutionOptions.localTag &&
+    temporaryHandoffImageId === normalizedMetadataImageId;
+  const canonicalSourceHandoff =
+    canonicalSourceImageId === normalizedMetadataImageId && handoffRef === sourceRef;
+  if (
+    metadata.schema !== SANDBOX_BASE_RESOLUTION_SCHEMA ||
+    metadata.key !== createSandboxBaseImageResolutionKey(resolutionOptions) ||
+    metadata.imageName !== resolutionOptions.imageName ||
+    metadata.source !== "local" ||
+    metadata.digest !== null ||
+    metadata.ref !== sourceRef ||
+    (!stableSourceHandoff && !canonicalSourceHandoff) ||
+    !expectedImageId ||
+    normalizedMetadataImageId !== expectedImageId
+  ) {
+    return null;
+  }
+
+  const source = inspectLocalImageMetadata(sourceRef);
+  const handoff = handoffRef === sourceRef ? source : inspectLocalImageMetadata(handoffRef);
+  const sourceImageId = typeof source?.Id === "string" ? source.Id.trim().toLowerCase() : "";
+  const handoffImageId = typeof handoff?.Id === "string" ? handoff.Id.trim().toLowerCase() : "";
+  if (
+    sourceImageId !== normalizedMetadataImageId ||
+    source?.Os !== metadata.os ||
+    source?.Architecture !== metadata.architecture ||
+    handoffImageId !== normalizedMetadataImageId ||
+    handoff?.Os !== metadata.os ||
+    handoff?.Architecture !== metadata.architecture
+  ) {
+    return null;
+  }
+
+  const expectedProvenanceKey = createSandboxBaseImageBuildProvenanceKey(resolutionOptions);
+  const sourceLabels =
+    source.Config?.Labels && typeof source.Config.Labels === "object"
+      ? (source.Config.Labels as Record<string, unknown>)
+      : {};
+  const handoffLabels =
+    handoff.Config?.Labels && typeof handoff.Config.Labels === "object"
+      ? (handoff.Config.Labels as Record<string, unknown>)
+      : {};
+  const provenance = sourceLabels[SANDBOX_BASE_BUILD_PROVENANCE_LABEL];
+  if (
+    typeof provenance !== "string" ||
+    !new RegExp(`^${expectedProvenanceKey}\\.[0-9a-f]{64}$`).test(provenance) ||
+    handoffLabels[SANDBOX_BASE_BUILD_PROVENANCE_LABEL] !== provenance
+  ) {
+    return null;
+  }
+
+  return { ref: handoffRef, provenance };
+}
+
 function createLocalResolutionMetadata(
   options: ResolveBaseImageOptions,
   imageTag: string,
@@ -466,6 +549,9 @@ export function ensureAgentBaseImage(
   }
 
   const explicitOverride = process.env[overrideEnvVar]?.trim();
+  const trustedLocalOverride = explicitOverride
+    ? trustedLocalOverrideLeases.get(overrideEnvVar)
+    : undefined;
   const trustedRemoteOverride = trustedRemoteOverrideLeases.get(overrideEnvVar);
   const canonicalEnv = { ...process.env };
   delete canonicalEnv[overrideEnvVar];
@@ -476,7 +562,7 @@ export function ensureAgentBaseImage(
           env: canonicalEnv,
           resolutionHint: trustedRemoteOverride.resolutionMetadata,
         })
-      : resolveExactImage(explicitOverride, trustedLocalOverrideLeases.get(overrideEnvVar))
+      : resolveExactImage(explicitOverride, trustedLocalOverride)
     : resolveSandboxBaseImage(resolutionOptions);
   if (resolved) {
     if (!hermesFinalDockerfileAcceptsBase(agent, resolved)) {
@@ -485,10 +571,24 @@ export function ensureAgentBaseImage(
       );
     }
     console.log(`  Using ${agent.displayName} base image: ${resolved.ref}`);
+    const operationScopedLocalLease =
+      explicitOverride &&
+      trustedLocalOverride?.ref === explicitOverride &&
+      resolved.ref === explicitOverride &&
+      resolved.source === "local";
+    const reusedResolutionHint =
+      options.forceBaseImageRefresh !== true &&
+      options.resolutionHint &&
+      resolved.metadata === options.resolutionHint
+        ? options.resolutionHint
+        : null;
     return {
       imageTag: resolved.ref,
       built: false,
-      ...(resolved.metadata ? { resolutionMetadata: resolved.metadata } : {}),
+      ...(!operationScopedLocalLease && resolved.metadata
+        ? { resolutionMetadata: resolved.metadata }
+        : {}),
+      ...(reusedResolutionHint ? { reusedResolutionHint } : {}),
     };
   }
   if (process.platform === "linux" || resolutionOptions.validateImage) {

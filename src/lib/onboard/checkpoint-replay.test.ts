@@ -23,6 +23,7 @@ function checkpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoi
     webSearch: decisionUnset(),
     messaging: decisionUnset(),
     resourceProfile: decisionUnset(),
+    gatewayAuthority: decisionUnset(),
     effectGroups: {},
     bindings: { credentialEnvs: [], registeredProviders: [] },
     ...overrides,

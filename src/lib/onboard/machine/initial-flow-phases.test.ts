@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
 import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
+import { resolveGatewayOwner } from "../gateway-ownership";
 import {
   createInitialOnboardFlowPhases,
   type InitialOnboardFlowContext,
@@ -118,6 +119,25 @@ describe("initial onboard flow phases", () => {
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
+        resolveGatewayOwner: () =>
+          resolveGatewayOwner({
+            gatewayName: "nemoclaw",
+            gatewayPort: 31818,
+            declaration: null,
+            hasPackagedService: false,
+          }),
+        attachGateway: vi.fn(),
+        probeGatewayAttachment: async () => ({
+          gatewayPort: 31818,
+          httpReady: true,
+          portOccupied: true,
+          listenerPids: [4242],
+          listenerScanComplete: true,
+          listenerStartTime: null,
+          supervisorActive: null,
+          listenerExecPath: null,
+          listenerSupervisorMatch: null,
+        }),
         refreshDockerDriverGatewayReuseState: async (state) => state,
         gatewayCliSupportsLifecycleCommands: () => false,
         verifyGatewayContainerRunning: () => "running",
@@ -154,7 +174,19 @@ describe("initial onboard flow phases", () => {
     expect(preflight.context.gpuPassthrough).toBe(true);
     expect(gateway.result).toEqual(
       advanceTo("provider_selection", {
-        metadata: { state: "gateway", gatewayReuseState: "healthy" },
+        metadata: {
+          state: "gateway",
+          gatewayReuseState: "healthy",
+          gatewayOwner: {
+            gatewayName: "nemoclaw",
+            gatewayPort: 31818,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          },
+        },
       }),
     );
     expect(notes).toContain(
@@ -330,6 +362,25 @@ describe("initial onboard flow phases", () => {
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
+        resolveGatewayOwner: () =>
+          resolveGatewayOwner({
+            gatewayName: "nemoclaw",
+            gatewayPort: 31818,
+            declaration: null,
+            hasPackagedService: false,
+          }),
+        attachGateway: vi.fn(),
+        probeGatewayAttachment: async () => ({
+          gatewayPort: 31818,
+          httpReady: true,
+          portOccupied: true,
+          listenerPids: [4242],
+          listenerScanComplete: true,
+          listenerStartTime: null,
+          supervisorActive: null,
+          listenerExecPath: null,
+          listenerSupervisorMatch: null,
+        }),
         refreshDockerDriverGatewayReuseState: vi.fn(async (state) => {
           calls.push("refresh-gateway-reuse");
           return state;

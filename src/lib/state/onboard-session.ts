@@ -19,6 +19,7 @@ import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import { describeGatewayOwner, type GatewayOwnerDescription } from "../onboard/gateway-ownership";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -299,6 +300,7 @@ export interface DebugSessionSummary {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  gatewayAuthority: GatewayOwnerDescription | null;
   machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
 }
@@ -1699,6 +1701,10 @@ export function summarizeForDebug(
   session: Session | null = loadSession(),
 ): DebugSessionSummary | null {
   if (!session) return null;
+  const gatewayAuthority =
+    session.checkpoint?.gatewayAuthority.kind === "selected"
+      ? describeGatewayOwner(session.checkpoint.gatewayAuthority.value)
+      : null;
   return {
     version: session.version,
     sessionId: session.sessionId,
@@ -1725,6 +1731,7 @@ export function summarizeForDebug(
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
+    gatewayAuthority,
     machine: session.machine,
     steps: Object.fromEntries(
       Object.entries(session.steps).map(([name, step]) => [

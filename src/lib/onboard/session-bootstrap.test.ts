@@ -382,6 +382,7 @@ describe("prepareOnboardSession", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
@@ -432,6 +433,7 @@ describe("prepareOnboardSession", () => {
       webSearch: decisionUnset(),
       messaging: decisionUnset(),
       resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };

@@ -22,7 +22,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
   deps: {
-    ensureAgentDashboardForward(sandboxName: string, agent: NonNullable<Agent>): number;
+    ensureAgentDashboardForward(sandboxName: string, agent: Agent): number;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
@@ -143,10 +143,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
 
-  if (agent && manageDashboard) {
-    deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
-  }
-
   const allStagedMigrated =
     stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((key) => migratedLegacyKeys.has(key));
   const unmigratedLegacyKeys = stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key));
@@ -188,6 +184,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     // Scope warm-up can outlive a forward that was healthy after policy recovery.
     // Recheck the gateway and forward before verification, restarting only when needed.
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    // Reconcile after the final recovery because any restart above can
+    // invalidate the forward created earlier in onboarding.
+    deps.ensureAgentDashboardForward(sandboxName, agent);
   }
 
   await deps.recordPostVerifyStarted();
