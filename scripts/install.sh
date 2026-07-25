@@ -942,13 +942,12 @@ show_usage_notice_shell() {
   fi
   answer_lc="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
   if [[ "$answer_lc" != "yes" ]]; then
-    # A "y"-style near-miss (or "yes" with stray whitespace) is a common typo for
-    # the exact word this prompt requires; point the user at it instead of a bare
-    # cancel. Acceptance is unchanged: only the literal word "yes" accepts.
+    # Acceptance remains exact: a y-style near-miss only receives recovery
+    # guidance and still cancels the installation.
     local answer_trimmed
     answer_trimmed="$(printf "%s" "$answer_lc" | tr -d '[:space:]')"
     if [[ "$answer_trimmed" == y* ]]; then
-      printf "  Did you mean 'yes'? Type the full word 'yes' to accept; re-run the installer to try again.\n" >&2
+      printf "  Did you mean 'yes'? Type the full word 'yes' to accept. Rerun the installer to try again.\n" >&2
     fi
     printf "  Installation cancelled\n" >&2
     return 1
