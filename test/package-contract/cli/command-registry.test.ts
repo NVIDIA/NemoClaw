@@ -56,7 +56,7 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 61 entries", () => {
+    it("registers the full sandbox command set including connection info (#7473)", () => {
       // 53 visible + 8 hidden (shields×3 + config get/set/rotate-token +
       // inference get/set).
       // 53 visible includes the sessions group (root + list + reset + delete +
@@ -226,7 +226,7 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 36 unique action tokens including empty string", () => {
+    it("exposes the connection action token among the unique sandbox actions (#7473)", () => {
       const tokens = sandboxActionTokens();
       expect(tokens).toHaveLength(36);
       // Must contain every first-level sandbox action plus the empty default action.

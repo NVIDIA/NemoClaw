@@ -11,7 +11,7 @@ function entry(overrides: Partial<SandboxEntry> & { name: string }): SandboxEntr
   return overrides as SandboxEntry;
 }
 
-describe("connection info command", () => {
+describe("connection info command (#7473)", () => {
   it("reprints the connection block for a running OpenClaw sandbox", () => {
     const printDashboard = vi.fn();
     const fetchToken = vi.fn(() => "secret-token");

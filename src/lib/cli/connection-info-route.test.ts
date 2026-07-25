@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { sandboxActionTokens } from "./command-registry";
 import { sandboxRouteTokens } from "./public-route-metadata";
 
-describe("connection info public route", () => {
+describe("connection info public route (#7473)", () => {
   it("maps the nested command id onto the connection info grammar", () => {
     expect(sandboxRouteTokens("sandbox:connection:info")).toEqual(["connection", "info"]);
   });
