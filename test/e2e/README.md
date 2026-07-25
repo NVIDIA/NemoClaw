@@ -729,8 +729,8 @@ exactly one failure annotation. Its message must be
 `The operation was canceled.` for one completed `cancelled` workload step or
 `Process completed with exit code 143.` for one completed `failure` workload
 step. The annotation must use `.github`, equal start and end lines, null
-columns, and empty title and detail fields. Every annotation must use a blob URL
-bound to the same workflow commit. The controller accepts at most 20
+columns, and null or empty title and detail fields. Every annotation must use a
+blob URL bound to the same workflow commit. The controller accepts at most 20
 annotations, bounds each text field, and limits the normalized annotation
 evidence to 64 KiB. This permits trusted bounded non-failure notices beside the
 sole failure annotation without allowing annotation output to exhaust the
