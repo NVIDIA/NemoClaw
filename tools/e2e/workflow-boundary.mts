@@ -2780,9 +2780,12 @@ function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): 
     jobTimeoutMinutes,
   } of HERMES_TIMEOUT_CONTRACTS) {
     const actualJobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
-    if (actualJobTimeoutMinutes !== jobTimeoutMinutes) {
+    if (
+      !Number.isInteger(actualJobTimeoutMinutes) ||
+      (actualJobTimeoutMinutes as number) < jobTimeoutMinutes
+    ) {
       errors.push(
-        `${jobName} timeout must be ${jobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus exactly ${HERMES_TIMEOUT_HEADROOM_MINUTES} minutes of job headroom`,
+        `${jobName} timeout must be at least ${jobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus ${HERMES_TIMEOUT_HEADROOM_MINUTES} minutes of job headroom`,
       );
     }
   }

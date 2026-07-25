@@ -177,27 +177,28 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
-  const invalidHermesTimeouts = HERMES_TIMEOUT_CONTRACTS.flatMap(
-    ({ innerTest, innerTimeoutMinutes, jobName, jobTimeoutMinutes }) =>
-      [jobTimeoutMinutes - 1, jobTimeoutMinutes + 1].map((timeoutMinutes) => ({
-        jobName,
-        message: `${jobName} timeout must be ${jobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus exactly 15 minutes of job headroom`,
-        timeoutMinutes,
-      })),
+  const hermesTimeoutBoundaries = HERMES_TIMEOUT_CONTRACTS.map(
+    ({ innerTest, innerTimeoutMinutes, jobName, jobTimeoutMinutes }) => ({
+      jobName,
+      message: `${jobName} timeout must be at least ${jobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus 15 minutes of job headroom`,
+      minimumTimeoutMinutes: jobTimeoutMinutes,
+    }),
   );
 
-  it.each(
-    invalidHermesTimeouts,
-  )("rejects $jobName timeout $timeoutMinutes outside its exact headroom contract", ({
+  it.each(hermesTimeoutBoundaries)("requires at least 15 minutes of outer headroom for $jobName", ({
     jobName,
-    timeoutMinutes,
     message,
+    minimumTimeoutMinutes,
   }) => {
-    const errors = wfErrors((workflow) => {
-      workflow.jobs[jobName]["timeout-minutes"] = timeoutMinutes;
+    const insufficient = wfErrors((workflow) => {
+      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes - 1;
+    }, validateE2eWorkflowBoundary);
+    const additional = wfErrors((workflow) => {
+      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes + 1;
     }, validateE2eWorkflowBoundary);
 
-    expect(errors).toContain(message);
+    expect(insufficient).toContain(message);
+    expect(additional).not.toContain(message);
   });
 
   it("rejects unconditional live secret in hermes-e2e mock run step", () => {
