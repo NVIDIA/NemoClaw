@@ -10,6 +10,7 @@ type DockerGatewayPortListenerClassifier = (portCheck: PortProbeResult) => boole
 
 export interface GatewayPortConflictDeps {
   gatewayPort: number;
+  externallySupervised: boolean;
   checkPortAvailable: CheckPortAvailable;
   getGatewayPortCheckOptions: () => CheckPortOpts;
   isDockerDriverGatewayPortListener: DockerGatewayPortListenerClassifier;
@@ -46,6 +47,7 @@ export function couldBeNemoClawGatewayPortListener(
 
 export async function failFastOnForeignGatewayPortConflict({
   gatewayPort,
+  externallySupervised,
   checkPortAvailable,
   getGatewayPortCheckOptions,
   isDockerDriverGatewayPortListener,
@@ -53,6 +55,10 @@ export async function failFastOnForeignGatewayPortConflict({
   serviceHints = getPortConflictServiceHints(),
   writeError,
 }: GatewayPortConflictDeps): Promise<void> {
+  // External ownership was resolved and bound by the caller before reaching
+  // this legacy name heuristic. Defer its arbitrary executable to the exact
+  // downstream supervisor/cgroup/executable/capability/health validation.
+  if (externallySupervised) return;
   const portCheck = await checkPortAvailable(gatewayPort, getGatewayPortCheckOptions());
   if (
     portCheck.ok ||

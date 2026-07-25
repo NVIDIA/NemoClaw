@@ -283,7 +283,17 @@ def _run_single_hook(command, event, payload_bytes): return None
 `,
   "client/non_interactive.py": `from __future__ import annotations
 
-async def run_non_interactive(*args, **kwargs): return kwargs
+async def run_non_interactive(*args, **kwargs):
+    try:
+        return kwargs
+    except Exception as e:
+        logger.exception("Unexpected error during non-interactive execution")
+        console.print(
+            f"\\n[red]Unexpected error ({type(e).__name__}): "
+            f"{escape_markup(str(e))}[/red]"
+        )
+        return 1
+
 async def _run_startup_command(command, console, *, quiet): return command
 `,
 };

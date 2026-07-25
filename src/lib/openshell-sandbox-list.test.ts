@@ -29,7 +29,10 @@ vi.mock("./gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
 }));
 
-import { captureSandboxListWithGatewayPreflightOrExit } from "./openshell-sandbox-list";
+import {
+  captureNamedGatewaySandboxListReadOnly,
+  captureSandboxListWithGatewayPreflightOrExit,
+} from "./openshell-sandbox-list";
 
 const context = {
   action: "checking sandbox state",
@@ -261,5 +264,66 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     expect(errorSpy).not.toHaveBeenCalledWith(
       expect.stringContaining("Failed to query running sandboxes"),
     );
+  });
+});
+
+describe("read-only named-gateway sandbox list (#7279)", () => {
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.detectPreflightIssue.mockReturnValue(null);
+    mocks.detectResultIssue.mockReturnValue(null);
+    mocks.captureOpenshell.mockReturnValue({ status: 0, output: "alpha Ready" });
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists the named gateway with -g and never recovers or selects", () => {
+    const result = captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080");
+
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-18080"],
+      { ignoreError: true },
+    );
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(result).toEqual({ status: 0, output: "alpha Ready" });
+  });
+
+  it("stays non-fatal when the recorded gateway is down", () => {
+    mocks.captureOpenshell.mockReturnValue({
+      status: 1,
+      output: "tcp connect error: Connection refused",
+    });
+
+    const result = captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080");
+
+    expect(result.status).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+  });
+
+  it("still exits on a state-RPC result drift issue", () => {
+    mocks.detectResultIssue.mockReturnValue(imageDriftIssue);
+
+    expect(() => captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080")).toThrow(
+      "process.exit(1)",
+    );
+    expect(mocks.printIssue).toHaveBeenCalledWith(imageDriftIssue, context);
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+  });
+
+  it("exits before listing on a preflight drift issue", () => {
+    mocks.detectPreflightIssue.mockReturnValue(hostProcessDriftIssue);
+
+    expect(() => captureNamedGatewaySandboxListReadOnly(context, "nemoclaw-18080")).toThrow(
+      "process.exit(1)",
+    );
+    expect(mocks.captureOpenshell).not.toHaveBeenCalled();
   });
 });

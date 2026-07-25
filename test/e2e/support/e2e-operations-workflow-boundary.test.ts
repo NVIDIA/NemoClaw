@@ -64,6 +64,43 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("pins the scorecard's current-run progress artifact action", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const download = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Download E2E progress artifacts",
+    )!;
+    download.uses = "actions/download-artifact@0000000000000000000000000000000000000000";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must download this run's E2E artifacts into the runtime audit directory",
+    );
+  });
+
+  it("limits the scorecard artifact download to E2E progress sources", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const download = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Download E2E progress artifacts",
+    )!;
+    download.with!.pattern = "*";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must download this run's E2E artifacts into the runtime audit directory",
+    );
+  });
+
+  it("publishes only the bounded scheduled runtime summary through the canonical uploader", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const upload = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Upload E2E runtime summary",
+    )!;
+    upload.if = "always()";
+    upload.with!.path = "${{ runner.temp }}/e2e-runtime-audit";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must upload only the bounded scheduled runtime summary through the canonical E2E uploader",
+    );
+  });
+
   it("rejects controller protocol and PR validation drift", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.on?.workflow_dispatch?.inputs?.base_sha;
@@ -375,8 +412,22 @@ describe("E2E operations workflow boundary", () => {
         summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard\n\n### Onboard Performance Budget",
       }),
     };
+    const runtimeAudit = {
+      auditTestRuntime: vi.fn().mockReturnValue([{ target: "full-e2e" }]),
+      collectRuntimeHistorySamples: vi.fn().mockReturnValue([{ target: "full-e2e" }]),
+      formatRuntimeAuditSummary: vi
+        .fn()
+        .mockReturnValue("## E2E Test Phase Runtime\n\n| Target | Slowest observed phase |"),
+    };
+    const runtimeHistory = {
+      buildRuntimeHistory: vi
+        .fn()
+        .mockResolvedValue("## E2E Nightly Runtime Trend\n\n| Target | Prior median |"),
+    };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
+      ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
+      ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       ["/workspace/scripts/scorecard/coordinate-scorecard.mts", coordinator],
       ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
       ["/workspace/scripts/scorecard/summarize-jobs.mts", scorecardJobs],
@@ -391,6 +442,8 @@ describe("E2E operations workflow boundary", () => {
         EXPLICIT_ONLY_JOBS: "",
         GITHUB_WORKSPACE: "/workspace",
         JOBS: "",
+        RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
+        RUNTIME_SUMMARY_FILE: "/runner/e2e-runtime-summary.json",
         TARGETS: "",
       },
     };
@@ -412,6 +465,18 @@ describe("E2E operations workflow boundary", () => {
     );
 
     expect(traceTiming.buildTraceTimingResult).toHaveBeenCalledWith({ github: {}, context, core });
+    expect(runtimeAudit.auditTestRuntime).toHaveBeenCalledWith(["/runner/e2e-runtime-audit"]);
+    expect(runtimeAudit.collectRuntimeHistorySamples).toHaveBeenCalledWith([
+      "/runner/e2e-runtime-audit",
+    ]);
+    expect(runtimeHistory.buildRuntimeHistory).toHaveBeenCalledWith(
+      { github: {}, context, core },
+      [{ target: "full-e2e" }],
+      "/runner/e2e-runtime-summary.json",
+    );
+    expect(runtimeAudit.auditTestRuntime.mock.invocationCallOrder[0]).toBeLessThan(
+      traceTiming.buildTraceTimingResult.mock.invocationCallOrder[0],
+    );
     expect(warning).toHaveBeenCalledWith("Cloud onboard advisory performance budget exceeded");
     expect(coordinator.buildScorecard).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -427,7 +492,105 @@ describe("E2E operations workflow boundary", () => {
       }),
     );
     expect(summary.addRaw).toHaveBeenCalledWith(
-      expect.stringContaining("### Onboard Performance Budget"),
+      expect.stringMatching(
+        /### Onboard Performance Budget[\s\S]*## E2E Test Phase Runtime[\s\S]*## E2E Nightly Runtime Trend/u,
+      ),
+    );
+    expect(summary.write).toHaveBeenCalledOnce();
+    expect(setOutput).toHaveBeenCalledWith("scorecardData", expect.any(String));
+    expect(setOutput).toHaveBeenCalledWith("slackData", expect.any(String));
+  });
+
+  it("keeps scorecard outputs available when a progress artifact is invalid", async () => {
+    const script = workflowScript("scorecard", "Generate E2E scorecard").replace(
+      "${{ toJSON(needs) }}",
+      JSON.stringify({ "generate-matrix": { result: "success" } }),
+    );
+    const warning = vi.fn();
+    const setOutput = vi.fn();
+    const summary = {
+      addRaw: vi.fn(),
+      write: vi.fn().mockResolvedValue(undefined),
+    };
+    summary.addRaw.mockReturnValue(summary);
+    const runtimeAudit = {
+      auditTestRuntime: vi.fn(() => {
+        throw new Error("invalid progress artifact");
+      }),
+      collectRuntimeHistorySamples: vi.fn(),
+      formatRuntimeAuditSummary: vi.fn(),
+    };
+    const runtimeHistory = { buildRuntimeHistory: vi.fn() };
+    const runtimeModules = new Map<string, unknown>([
+      ["path", { join: (...parts: string[]) => parts.join("/") }],
+      ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
+      ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
+      [
+        "/workspace/scripts/scorecard/coordinate-scorecard.mts",
+        {
+          buildScorecard: vi.fn().mockReturnValue({
+            scorecardData: { ran: 0, runMode: "Scheduled E2E", total: 0 },
+            slackData: { channel: "daily", payload: { attachments: [], text: "scorecard" } },
+            summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard",
+          }),
+        },
+      ],
+      [
+        "/workspace/scripts/scorecard/analyze-trace-timing.mts",
+        {
+          buildTraceTimingResult: vi.fn().mockResolvedValue({
+            budgetWarningMessage: undefined,
+            traceSummaryLines: [],
+            traceTimingLine: "Trace: unavailable",
+          }),
+        },
+      ],
+      [
+        "/workspace/scripts/scorecard/summarize-jobs.mts",
+        { loadWorkflowRunJobs: vi.fn().mockResolvedValue([]) },
+      ],
+    ]);
+    const runtimeRequire = (specifier: string) => {
+      const runtimeModule = runtimeModules.get(specifier);
+      expect(runtimeModule, `Unexpected scorecard require: ${specifier}`).toBeDefined();
+      return runtimeModule;
+    };
+    const processMock = {
+      env: {
+        EXPLICIT_ONLY_JOBS: "",
+        GITHUB_WORKSPACE: "/workspace",
+        JOBS: "",
+        RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
+        RUNTIME_SUMMARY_FILE: "/runner/e2e-runtime-summary.json",
+        TARGETS: "",
+      },
+    };
+    const context = {
+      actor: "scorecard-test",
+      eventName: "schedule",
+      repo: { owner: "NVIDIA", repo: "NemoClaw" },
+      runId: 123,
+      serverUrl: "https://github.com",
+    };
+
+    await new AsyncFunction("require", "process", "github", "context", "core", script)(
+      runtimeRequire,
+      processMock,
+      {},
+      context,
+      { setOutput, summary, warning },
+    );
+
+    expect(warning).toHaveBeenCalledWith(
+      "E2E test phase runtime summary unavailable: invalid progress artifact",
+    );
+    expect(runtimeAudit.formatRuntimeAuditSummary).not.toHaveBeenCalled();
+    expect(runtimeAudit.collectRuntimeHistorySamples).not.toHaveBeenCalled();
+    expect(runtimeHistory.buildRuntimeHistory).not.toHaveBeenCalled();
+    expect(summary.addRaw).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /The summary is unavailable because a `test-progress.json` artifact was invalid\.[\s\S]*The trend is unavailable because a `test-progress.json` artifact was invalid\./u,
+      ),
     );
     expect(summary.write).toHaveBeenCalledOnce();
     expect(setOutput).toHaveBeenCalledWith("scorecardData", expect.any(String));

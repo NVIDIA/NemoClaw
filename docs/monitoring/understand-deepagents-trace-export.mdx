@@ -1,0 +1,87 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand Deep Agents Trace Export"
+sidebar-title: "Understand Trace Export"
+description: "Review the data, redaction limits, transport, and trust boundaries for Deep Agents trace export."
+description-agent: "Explains Deep Agents trace export boundaries. Use when evaluating captured data, redaction limits, OTLP transport, fail-open behavior, or collector trust."
+keywords: ["deep agents trace export", "nemoclaw otlp privacy", "dcode observability security"]
+content:
+  type: "concept"
+---
+NemoClaw can export Deep Agents Code traces to an OTLP/HTTP collector that you operate on the host.
+Review the data and trust boundaries before you enable the exporter.
+
+## Understand the Export Path
+
+The sandbox always targets `http://host.openshell.internal:4318/v1/traces`.
+The host collector owns the remote backend, credentials, TLS, batching, retry, and optional filtering.
+Changing from LangSmith to another OTLP-compatible backend does not require a sandbox rebuild or policy change.
+
+The sandbox reports `service.name=nemoclaw-langchain-deepagents-code`.
+The OTLP library adds standard transport headers such as content type and content length.
+The managed exporter cannot add operator-supplied custom or authentication headers.
+It cannot select a remote endpoint or receive a backend credential.
+
+Native LangSmith tracing and ambient OpenTelemetry exporter configuration remain disabled inside the sandbox.
+Do not put `LANGSMITH_API_KEY` or another backend credential in the sandbox.
+
+Exporter initialization, delivery, and flush failures do not stop Deep Agents Code work.
+This fail-open behavior keeps tracing outages from blocking the agent.
+Successful agent work does not prove that traces were delivered.
+
+## Review Captured Data
+
+Trace export is off by default and requires an explicit onboarding or rebuild choice.
+When enabled, the exporter can include bounded prompts, model responses, tool arguments, tool results, operation names, model and tool names, and success or error information.
+Treat the traces as sensitive application data.
+
+Managed capture selects at most 8,000 source characters from each captured string before adding truncation metadata.
+It limits each mapping or sequence to 50 items and limits nesting to 8 levels.
+Each captured value also has an aggregate budget of 2,048 traversed nodes and 50,000 source string characters.
+Repeated or cyclic containers become a reference-omission marker.
+
+After bounding a value, a JSON encoding longer than 50,000 characters becomes a constant opaque marker and a 16,000-character serialized preview.
+Other opaque objects become the same constant marker without reading their class name or string representation.
+Binary values become their byte count.
+
+Dictionary key names are bounded, and credential-shaped matches in key names become `<redacted-secret>`.
+When a dictionary key matches a recognized credential, header, cookie, password, token, checkpoint, resume, or interrupt class, its value becomes `<redacted>`.
+Original exception text becomes a stable redacted error.
+
+Model request traces include only bounded messages and a sanitized model identifier.
+They exclude request headers, `model_settings`, `response_format`, and tool definitions or schemas.
+
+Model and tool spans carry bounded content for debugging.
+LangGraph node scopes export only bounded node names, a static integration label, and success or error status.
+They omit graph inputs and outputs, callback metadata, checkpoint payloads, and interrupt or resume values.
+
+The exporter also applies a best-effort scrub pass to captured strings.
+It replaces recognized provider API keys, bearer tokens, private key blocks, and similar values with `<redacted-secret>`.
+Identifier fields use the identifier-safe text `redacted-secret`.
+
+This pattern-based pass is not exhaustive.
+An obfuscated secret, an unrecognized credential shape, or other sensitive text can still be exported.
+Complete redaction depends on upstream content controls and the processors in the host collector.
+
+## Treat the Receiver as a Trust Boundary
+
+<Warning>
+The `observability-otlp-local` preset authorizes `/opt/venv/bin/python3*`.
+This permission covers the managed Python environment rather than only the `dcode` launcher.
+Sandbox Python can forge spans, resource attributes, and `service.name`.
+The collector must not use trace fields as authenticated tenant identity.
+Any process that can reach the receiver can submit trace content without a receiver credential.
+</Warning>
+
+Bind the receiver only to the private sandbox bridge.
+Use it only with trusted local sandboxes.
+Apply your organization's filtering or redaction requirements before remote export.
+This path is not a multi-tenant identity or data-loss-prevention boundary.
+
+## Next Steps
+
+- [Set Up Deep Agents Trace Export](set-up-deepagents-trace-export) enables the sandbox and configures a host collector.
+- [Verify Deep Agents Trace Export](verify-deepagents-trace-export) proves local and remote delivery.
+- [Manage Deep Agents Trace Export](manage-deepagents-trace-export) stops, disables, reconfigures, or removes trace export.
+- [Credential Storage](../security/credential-storage) explains host and sandbox credential boundaries.

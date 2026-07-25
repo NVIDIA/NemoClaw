@@ -257,6 +257,24 @@ describe("createSetupNimOllamaHandlers", () => {
     assert.equal(state.allowToolsIncompatible, true);
   });
 
+  it("uses the reachable Windows-host endpoint for running Ollama (#7472)", async () => {
+    const state = makeState();
+    const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        getLocalProviderBaseUrl: () => "http://host.docker.internal:11434/v1",
+      }),
+    );
+
+    const result = await handleRunningOllamaSelection(null, "qwen3.6:35b", null, true, state);
+
+    expect(result).toBe("selected");
+    expect(state).toMatchObject({
+      model: "llama3.1:8b",
+      provider: "ollama-local",
+      endpointUrl: "http://host.docker.internal:11434/v1",
+    });
+  });
+
   it("passes the Hermes Ollama context floor to systemd repair and model validation", async () => {
     const state = makeState();
     state.ollamaContextWindowFloor = MIN_HERMES_OLLAMA_CONTEXT_WINDOW;

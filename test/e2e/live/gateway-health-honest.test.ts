@@ -22,6 +22,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const GATEWAY_NAME = "nemoclaw-18080";
+const LIVE_TIMEOUT_MS = 10 * 60_000;
 
 function gatewayStateDir(): string {
   return path.join(os.homedir(), ".local", "state", "nemoclaw", "openshell-docker-gateway-18080");
@@ -34,6 +35,7 @@ function writeExecutable(file: string, content: string): void {
 }
 
 test("onboard surfaces crashed Docker-driver gateway instead of reporting healthy (#3111)", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "stage crashed Docker gateway fixture",
