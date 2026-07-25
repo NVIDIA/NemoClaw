@@ -394,6 +394,32 @@ describe("hosted-runner recovery controller", () => {
     expect(requests.some((request) => request.url.endsWith("/rerun-failed-jobs"))).toBe(false);
   });
 
+  it("requests a rerun when GitHub returns null annotation title and raw details (#7140)", async () => {
+    const annotation = { ...runnerLossAnnotation(), title: null, raw_details: null };
+    const requests = setupRoutes({ annotations: [[annotation], [annotation]] });
+
+    await expect(recoverHostedRunnerLoss(recoveryRequest())).resolves.toMatchObject({
+      action: "rerun-requested",
+    });
+    expect(mutationRequests(requests)).toHaveLength(1);
+  });
+
+  it.each([
+    ["a non-string title", { title: 7 }],
+    ["non-string raw details", { raw_details: false }],
+    ["an oversized title", { title: "x".repeat(16 * 1024 + 1) }],
+    ["oversized raw details", { raw_details: "x".repeat(16 * 1024 + 1) }],
+  ])("rejects an annotation with $label (#7140)", async (_label, override) => {
+    const requests = setupRoutes({
+      annotations: [[{ ...runnerLossAnnotation(), ...override }]],
+    });
+
+    await expect(recoverHostedRunnerLoss(recoveryRequest())).rejects.toThrow(
+      /invalid workflow job annotation/u,
+    );
+    expect(mutationRequests(requests)).toEqual([]);
+  });
+
   it.each([
     {
       label: "E2E on Windows",

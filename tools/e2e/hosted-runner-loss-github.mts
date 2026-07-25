@@ -136,8 +136,12 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
 }
 
 function validateWorkflowJobAnnotation(value: unknown): WorkflowJobAnnotation {
+  if (!isObjectRecord(value)) {
+    throw new Error("GitHub returned an invalid workflow job annotation");
+  }
+  const title = value.title === null ? "" : value.title;
+  const rawDetails = value.raw_details === null ? "" : value.raw_details;
   if (
-    !isObjectRecord(value) ||
     typeof value.path !== "string" ||
     value.path.length === 0 ||
     Buffer.byteLength(value.path, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
@@ -153,12 +157,12 @@ function validateWorkflowJobAnnotation(value: unknown): WorkflowJobAnnotation {
       (!Number.isSafeInteger(value.end_column) || (value.end_column as number) < 1)) ||
     typeof value.annotation_level !== "string" ||
     Buffer.byteLength(value.annotation_level, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
-    typeof value.title !== "string" ||
-    Buffer.byteLength(value.title, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
+    typeof title !== "string" ||
+    Buffer.byteLength(title, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
     typeof value.message !== "string" ||
     Buffer.byteLength(value.message, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
-    typeof value.raw_details !== "string" ||
-    Buffer.byteLength(value.raw_details, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES
+    typeof rawDetails !== "string" ||
+    Buffer.byteLength(rawDetails, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES
   ) {
     throw new Error("GitHub returned an invalid workflow job annotation");
   }
@@ -170,9 +174,9 @@ function validateWorkflowJobAnnotation(value: unknown): WorkflowJobAnnotation {
     endLine: value.end_line as number,
     endColumn: value.end_column as number | null,
     annotationLevel: value.annotation_level,
-    title: value.title,
+    title,
     message: value.message,
-    rawDetails: value.raw_details,
+    rawDetails,
   };
 }
 
