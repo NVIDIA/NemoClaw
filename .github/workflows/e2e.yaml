@@ -2087,7 +2087,7 @@ jobs:
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}
-    timeout-minutes: 75
+    timeout-minutes: 85
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-e2e"
@@ -2428,7 +2428,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-dashboard'] }}
-    timeout-minutes: 75
+    timeout-minutes: 85
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-dashboard"
@@ -2507,7 +2507,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-discord,') || contains(format(',{0},', inputs.targets), ',hermes-discord,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}
-    timeout-minutes: 75
+    timeout-minutes: 90
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-discord"
@@ -2843,7 +2843,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-shields-config,') || contains(format(',{0},', inputs.targets), ',hermes-shields-config,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-shields-config'] }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-shields-config"

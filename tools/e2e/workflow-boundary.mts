@@ -128,6 +128,29 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "staging-brev-launchable",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
+const HERMES_TIMEOUT_HEADROOM_MINUTES = 15;
+const HERMES_TIMEOUT_CONTRACTS = [
+  {
+    innerTest: "test/e2e/live/hermes-e2e.test.ts",
+    innerTimeoutMinutes: 70,
+    jobName: "hermes-e2e",
+  },
+  {
+    innerTest: "test/e2e/live/hermes-e2e.test.ts",
+    innerTimeoutMinutes: 70,
+    jobName: "hermes-dashboard",
+  },
+  {
+    innerTest: "test/e2e/live/hermes-discord.test.ts",
+    innerTimeoutMinutes: 75,
+    jobName: "hermes-discord",
+  },
+  {
+    innerTest: "test/e2e/live/hermes-shields-config.test.ts",
+    innerTimeoutMinutes: 45,
+    jobName: "hermes-shields-config",
+  },
+] as const;
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -2768,6 +2791,21 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
 
+function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): void {
+  for (const { innerTest, innerTimeoutMinutes, jobName } of HERMES_TIMEOUT_CONTRACTS) {
+    const jobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
+    const minimumJobTimeoutMinutes = innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MINUTES;
+    if (
+      !Number.isSafeInteger(jobTimeoutMinutes) ||
+      (jobTimeoutMinutes as number) < minimumJobTimeoutMinutes
+    ) {
+      errors.push(
+        `${jobName} timeout must be at least ${minimumJobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} plus ${HERMES_TIMEOUT_HEADROOM_MINUTES} minutes of job headroom`,
+      );
+    }
+  }
+}
+
 function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "diagnostics";
   const targetName = "diagnostics";
@@ -4619,6 +4657,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateCloudInferenceJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
+  validateHermesTimeoutHeadroom(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "hermes-discord", "hermes-discord");
   validateNetworkPolicyJob(errors, jobs);
   validateCommonEgressAgentJob(errors, jobs);

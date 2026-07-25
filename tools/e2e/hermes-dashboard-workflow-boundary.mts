@@ -67,7 +67,7 @@ export function validateHermesDashboardWorkflow(workflow: HermesDashboardWorkflo
   }
 
   requireEqual(errors, job.needs, "generate-matrix", `${JOB_NAME} must depend on generate-matrix`);
-  requireEqual(errors, job["timeout-minutes"], 75, `${JOB_NAME} timeout must be 75 minutes`);
+  requireEqual(errors, job["timeout-minutes"], 85, `${JOB_NAME} timeout must be 85 minutes`);
   requireEqual(errors, env.E2E_JOB, "1", `${JOB_NAME} must be free-standing`);
   requireEqual(
     errors,

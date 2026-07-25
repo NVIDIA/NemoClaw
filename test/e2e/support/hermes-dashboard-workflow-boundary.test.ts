@@ -24,7 +24,7 @@ describe("Hermes dashboard workflow boundary", () => {
     checkout.with!["persist-credentials"] = true;
     expect(validateHermesDashboardWorkflow(dashboardMode)).toEqual(
       expect.arrayContaining([
-        "hermes-dashboard timeout must be 75 minutes",
+        "hermes-dashboard timeout must be 85 minutes",
         "hermes-dashboard must use its isolated artifact directory",
         "hermes-dashboard must enable Hermes dashboard coverage",
         "hermes-dashboard must not expose the inference key at job scope",
