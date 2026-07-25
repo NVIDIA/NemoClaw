@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { TestModule } from "vitest/node";
+import type { TestModule, Vitest } from "vitest/node";
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
 import {
   classifyLiveTestOutcome,
@@ -79,10 +79,18 @@ export function configuredEnvironment(
   return { ...values, testedSha };
 }
 
-function counts(testModules: ReadonlyArray<TestModule>) {
+function matchesNamePattern(fullName: string, pattern: RegExp | undefined): boolean {
+  if (!pattern) return true;
+  const stablePattern = new RegExp(pattern.source, pattern.flags);
+  // Vitest joins suite names with spaces when it applies testNamePattern.
+  return stablePattern.test(fullName.replaceAll(" > ", " "));
+}
+
+function counts(testModules: ReadonlyArray<TestModule>, testNamePattern?: RegExp) {
   const result = { passed: 0, failed: 0, skipped: 0, pending: 0 };
   for (const module of testModules) {
     for (const test of module.children.allTests()) {
+      if (!matchesNamePattern(test.fullName, testNamePattern)) continue;
       result[test.result().state] += 1;
     }
   }
@@ -158,6 +166,7 @@ export function writeRiskSignal(
   testModules: ReadonlyArray<TestModule>,
   unhandledErrors: ReadonlyArray<unknown>,
   runReason: TestRunEndReason,
+  testNamePattern?: RegExp,
 ): E2eRiskSignal {
   const signal: E2eRiskSignal = {
     version: 1,
@@ -167,7 +176,7 @@ export function writeRiskSignal(
     testedSha: environment.testedSha,
     planHash: environment.planHash,
     correlationId: environment.correlationId,
-    ...counts(testModules),
+    ...counts(testModules, testNamePattern),
     unhandledErrors: unhandledErrors.length,
     runReason,
   };
@@ -181,11 +190,16 @@ export function writeRiskSignal(
 export default class E2eRiskSignalReporter implements Reporter {
   private readonly environment: RiskSignalEnvironment | null;
   private readonly outcomeFile: string | null;
+  private testNamePattern: RegExp | undefined;
   private processTimedOut = false;
 
   constructor() {
     this.environment = configuredEnvironment(process.env);
     this.outcomeFile = configuredLiveTestOutcomeFile(process.env);
+  }
+
+  onInit(vitest: Vitest): void {
+    this.testNamePattern = vitest.config.testNamePattern;
   }
 
   onTestRunStart(): void {
@@ -207,7 +221,7 @@ export default class E2eRiskSignalReporter implements Reporter {
     reason: TestRunEndReason,
   ): void {
     if (this.environment) {
-      writeRiskSignal(this.environment, testModules, unhandledErrors, reason);
+      writeRiskSignal(this.environment, testModules, unhandledErrors, reason, this.testNamePattern);
     }
     if (this.outcomeFile) {
       writeLiveTestOutcome(

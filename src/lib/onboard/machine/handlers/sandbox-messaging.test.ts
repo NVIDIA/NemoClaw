@@ -173,6 +173,7 @@ function withMessagingCheckpoint(
     webSearch: decisionUnset(),
     messaging: decisionSelected({ selectedChannels, disabledChannels }),
     resourceProfile: decisionUnset(),
+    gatewayAuthority: decisionUnset(),
     effectGroups: {},
     bindings: { credentialEnvs: [], registeredProviders: [] },
   };

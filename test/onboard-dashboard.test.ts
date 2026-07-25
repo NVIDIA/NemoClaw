@@ -29,6 +29,53 @@ function createTokenDownloadRunOpenshell() {
   });
 }
 
+function createListenerFailureRecoveryHarness(targetPort: number) {
+  const sandboxName = "my-sandbox";
+  const foreignPort = targetPort === 18789 ? 19000 : 18789;
+  let targetStopCount = 0;
+  let forwardListCallsAfterStop = 0;
+  const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+    const stoppedTarget = args.join(" ") === `forward stop ${targetPort} ${sandboxName}`;
+    targetStopCount += Number(stoppedTarget);
+    forwardListCallsAfterStop = stoppedTarget ? 0 : forwardListCallsAfterStop;
+    return { status: 0 };
+  });
+  const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+    const isForwardList = args.join(" ") === "forward list";
+    forwardListCallsAfterStop += Number(isForwardList && targetStopCount > 0);
+    const output = [
+      "SANDBOX BIND PORT PID STATUS",
+      `other-sandbox 127.0.0.1 ${foreignPort} 42000 running`,
+      ...(forwardListCallsAfterStop >= 2
+        ? [`${sandboxName} 127.0.0.1 ${targetPort} 42001 running`]
+        : []),
+    ].join("\n");
+    return isForwardList ? output : "";
+  });
+  const sleep = vi.fn();
+  const diagnostic = `local forward listener did not open on 127.0.0.1:${targetPort} within 10000ms\n`;
+  const helpers = createOnboardDashboardHelpers({
+    runOpenshell,
+    runCaptureOpenshell,
+    openshellArgv: () => [
+      process.execPath,
+      "-e",
+      `require("node:fs").writeSync(2, ${JSON.stringify(diagnostic)})`,
+    ],
+    cliName: () => "nemoclaw",
+    agentProductName: () => "NemoClaw",
+    getProviderLabel: (provider: string) => provider,
+    note: vi.fn(),
+    isWsl: () => false,
+    redact: (value: unknown) => String(value),
+    sleep,
+    printAgentDashboardUi: vi.fn(),
+    listSandboxes: () => ({ sandboxes: [] }),
+  });
+
+  return { helpers, runOpenshell, sleep, sandboxName, foreignPort };
+}
+
 describe("onboard dashboard helpers", () => {
   it("prints platform-appropriate service hints for port conflicts", () => {
     expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
@@ -114,6 +161,34 @@ describe("onboard dashboard helpers", () => {
       ignoreError: true,
       suppressOutput: true,
     });
+  });
+
+  it("retries a terminated dashboard listener without repeat cleanup (#7266)", () => {
+    const { helpers, runOpenshell, sleep, sandboxName, foreignPort } =
+      createListenerFailureRecoveryHarness(18789);
+
+    expect(helpers.ensureDashboardForward(sandboxName, "http://127.0.0.1:18789")).toBe(18789);
+
+    const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
+    expect(
+      stopArgs.filter((args) => args.join(" ") === `forward stop 18789 ${sandboxName}`),
+    ).toHaveLength(1);
+    expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("retries a terminated fixed-agent listener without repeat cleanup (#7266)", () => {
+    const { helpers, runOpenshell, sleep, sandboxName, foreignPort } =
+      createListenerFailureRecoveryHarness(8642);
+
+    expect(helpers.ensureAgentFixedForward(sandboxName, 8642, "agent UI")).toBe(true);
+
+    const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
+    expect(
+      stopArgs.filter((args) => args.join(" ") === `forward stop 8642 ${sandboxName}`),
+    ).toHaveLength(1);
+    expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {

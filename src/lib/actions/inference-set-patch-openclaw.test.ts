@@ -179,6 +179,43 @@ describe("patchOpenClawInferenceConfig", () => {
     expect(result.changed).toBe(false);
   });
 
+  it("records a provider switch in a request marker without replacing other headers", () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/old-model" } } },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "unused",
+            api: "openai-completions",
+            headers: {
+              "X-Existing": "keep",
+              "x-nemoclaw-upstream-provider": "nvidia-prod",
+            },
+            models: [{ id: "nvidia/old-model", name: "inference/nvidia/old-model" }],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(
+      config,
+      "compatible-endpoint",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "openai-completions",
+      undefined,
+      "compatible-endpoint",
+    );
+
+    const models = config.models as ConfigObject;
+    const providers = models.providers as ConfigObject;
+    const inference = providers.inference as ConfigObject;
+    expect(inference.headers).toEqual({
+      "X-Existing": "keep",
+      "X-NemoClaw-Upstream-Provider": "compatible-endpoint",
+    });
+  });
+
   it("seeds new Anthropic routes with the required default reply budget", () => {
     const config: ConfigObject = { agents: {}, models: { providers: {} } };
 
