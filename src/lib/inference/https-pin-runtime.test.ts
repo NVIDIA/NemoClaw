@@ -4,11 +4,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN,
-  HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_ORIGIN,
   buildHttpsPinRouteBaseUrl,
   buildHttpsPinRouteLoopbackBaseUrl,
   computeHttpsPinRouteId,
+  HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN,
+  HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_ORIGIN,
+  HTTPS_PIN_RUNTIME_ADAPTER_SANDBOX_HOST,
   isHttpsPinRuntimeEligible,
   parseHttpsPinRouteId,
   resolveHttpsPinCredentialHeader,
@@ -123,6 +124,9 @@ describe("buildHttpsPinRouteBaseUrl / buildHttpsPinRouteLoopbackBaseUrl (#6141)"
   it("parses only the exact opaque route base", () => {
     const id = "a".repeat(64);
     expect(parseHttpsPinRouteId(buildHttpsPinRouteBaseUrl(id))).toBe(id);
+    expect(
+      parseHttpsPinRouteId(`http://${HTTPS_PIN_RUNTIME_ADAPTER_SANDBOX_HOST}:22438/route/${id}`),
+    ).toBe(id);
     expect(parseHttpsPinRouteId(`${buildHttpsPinRouteBaseUrl(id)}/v1`)).toBeNull();
     expect(parseHttpsPinRouteId(`${buildHttpsPinRouteBaseUrl(id)}?secret=1`)).toBeNull();
     expect(parseHttpsPinRouteId(`https://example.test/route/${id}`)).toBeNull();

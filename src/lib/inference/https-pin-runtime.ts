@@ -104,12 +104,19 @@ export function buildHttpsPinRouteLoopbackBaseUrl(routeId: string): string {
   return `${HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_ORIGIN}/route/${routeId}`;
 }
 
-/** Parse only the exact opaque adapter-base shape persisted by NemoClaw. */
+/**
+ * Parse only the opaque adapter route shape persisted by NemoClaw.
+ *
+ * The port is intentionally not compared with the current process setting:
+ * cleanup must still recognize routes persisted before an explicit adapter
+ * port change.
+ */
 export function parseHttpsPinRouteId(baseUrl: string | null | undefined): string | null {
   const url = parseUrl(baseUrl);
   if (
     !url ||
-    url.origin !== HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN ||
+    url.protocol !== "http:" ||
+    url.hostname !== HTTPS_PIN_RUNTIME_ADAPTER_SANDBOX_HOST ||
     url.search ||
     url.hash ||
     url.username ||
