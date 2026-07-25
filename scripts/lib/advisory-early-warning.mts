@@ -9,11 +9,19 @@
 // gate: only exact npm package-name plus semver-range matches are marked
 // "investigate", and ambiguous CPE-to-npm matches stay "informational".
 
+import { deriveCveId } from "./nvd-reconciliation.mts";
+
 export type AdvisoryConfidence = "exact" | "ambiguous";
 export type AdvisoryAction = "investigate" | "informational";
 
 export type AdvisorySignal = Readonly<{
   advisoryId: string;
+  /**
+   * CVE id from the advisory record's `cve_id` field, present only when
+   * well-formed. Used solely for supplementary NVD reconciliation
+   * (scripts/lib/nvd-reconciliation.mts); it never affects correlation.
+   */
+  cveId?: string;
   package: string;
   vulnerableRange: string;
   matchedVersions: readonly string[];
@@ -222,6 +230,7 @@ type SignalEvidence = {
 
 type SignalDraft = {
   advisoryId: string;
+  cveId?: string;
   package: string;
   exact: SignalEvidence;
   ambiguous: SignalEvidence;
@@ -263,6 +272,7 @@ export function correlateAdvisories(
   for (const input of advisories) {
     const advisory = parseAdvisory(input);
     if (!advisory) continue;
+    const cveId = deriveCveId(input) ?? undefined;
     for (const vulnerability of advisory.vulnerabilities) {
       const versions = versionsByName.get(vulnerability.packageName);
       if (!versions || versions.size === 0) continue;
@@ -295,6 +305,10 @@ export function correlateAdvisories(
         exact: { ranges: [], versions: new Set<string>() },
         ambiguous: { ranges: [], versions: new Set<string>() },
       };
+      // Duplicate records for one advisory may disagree on carrying a CVE id
+      // (e.g. repository-level vs global fetch); the first record with a
+      // well-formed cve_id wins.
+      draft.cveId ??= cveId;
       addEvidence(
         confidence === "exact" ? draft.exact : draft.ambiguous,
         vulnerability.vulnerableRange,
@@ -309,6 +323,7 @@ export function correlateAdvisories(
       const evidence = confidence === "exact" ? draft.exact : draft.ambiguous;
       return {
         advisoryId: draft.advisoryId,
+        ...(draft.cveId === undefined ? {} : { cveId: draft.cveId }),
         package: draft.package,
         vulnerableRange: evidence.ranges.join("; "),
         matchedVersions: [...evidence.versions].sort(),

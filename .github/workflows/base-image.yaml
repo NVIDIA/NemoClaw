@@ -37,6 +37,7 @@ on:
       - "scripts/lib/reviewed-npm-archive.mts"
       - "scripts/checks/node-tar-image-scan.mts"
       - "scripts/patch-bundled-npm-tar.mts"
+      - "scripts/upgrade-bundled-npm.mts"
       - "scripts/lib/sandbox-rlimits.sh"
   workflow_dispatch:
     inputs:

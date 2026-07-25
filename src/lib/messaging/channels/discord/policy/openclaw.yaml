@@ -18,7 +18,8 @@ network_policies:
           - allow: { method: POST, path: "/**" }
           - allow: { method: PUT, path: "/**" }
           - allow: { method: PATCH, path: "/**" }
-          # DELETE only on message and reaction endpoints — not all paths
+          - allow: { method: DELETE, path: "/api/v*/applications/*/commands/*" }
+          # DELETE only on application-command, message, and reaction endpoints — not all paths
           # Reaction DELETE requires an extra path segment: /reactions/{emoji}/@me or /{user_id}
           - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
           - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }

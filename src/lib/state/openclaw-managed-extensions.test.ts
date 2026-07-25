@@ -258,3 +258,72 @@ describe("OpenClaw managed extension cleanup", () => {
     expect(buildRestoreCleanupCommand("/sandbox/.openclaw", [], [], new Set())).toBe(":");
   });
 });
+
+describe("restore stale content cleanup", () => {
+  it("clears stale contents of declared dirs missing from the backup while preserving the directory", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-content-"));
+    try {
+      const workspace = path.join(root, "workspace");
+      const nested = path.join(workspace, "sub");
+      fs.mkdirSync(nested, { recursive: true });
+      fs.writeFileSync(path.join(workspace, "stale.txt"), "post-snapshot");
+      fs.writeFileSync(path.join(nested, "child"), "post-snapshot");
+      const sessions = path.join(root, "sessions");
+      fs.mkdirSync(sessions);
+      fs.writeFileSync(path.join(sessions, "s"), "1");
+
+      const command = buildRestoreCleanupCommand(root, ["sessions"], [], new Set(), [
+        "workspace",
+        "sessions",
+        "memories",
+      ]);
+      expect(command).toContain("rm -rf -- '" + sessions + "'");
+      expect(command).not.toContain("d='" + sessions + "'");
+      execFileSync("bash", ["-c", command], { stdio: "pipe" });
+
+      expect(fs.existsSync(workspace)).toBe(true);
+      expect(fs.existsSync(path.join(workspace, "stale.txt"))).toBe(false);
+      expect(fs.existsSync(nested)).toBe(false);
+      expect(fs.existsSync(sessions)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the directory mode when clearing stale contents", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-mode-"));
+    try {
+      const workspace = path.join(root, "workspace");
+      fs.mkdirSync(workspace);
+      fs.chmodSync(workspace, 0o2770);
+      fs.writeFileSync(path.join(workspace, "stale"), "x");
+
+      const command = buildRestoreCleanupCommand(root, [], [], new Set(), ["workspace"]);
+      execFileSync("bash", ["-c", command], { stdio: "pipe" });
+
+      expect(fs.existsSync(path.join(workspace, "stale"))).toBe(false);
+      expect(fs.statSync(workspace).mode & 0o777).toBe(0o770);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not clear a declared dir that is a symlink", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-symlink-"));
+    try {
+      const realDir = path.join(root, "real");
+      fs.mkdirSync(realDir);
+      fs.writeFileSync(path.join(realDir, "keep"), "1");
+      const workspace = path.join(root, "workspace");
+      fs.symlinkSync(realDir, workspace);
+
+      const command = buildRestoreCleanupCommand(root, [], [], new Set(), ["workspace"]);
+      execFileSync("bash", ["-c", command], { stdio: "pipe" });
+
+      expect(fs.lstatSync(workspace).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(path.join(realDir, "keep"))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
