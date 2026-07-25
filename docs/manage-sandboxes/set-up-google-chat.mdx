@@ -22,7 +22,8 @@ Continue to open the Control UI through `http://127.0.0.1:18789`; the Google Cha
 Prepare the Google Cloud resources before you enable the channel.
 
 - Enable the Google Chat API and configure the Chat app that the sandbox will run.
-- Create a service account and download a JSON key.
+- Create a service account and download a JSON key. The JSON must contain
+  non-empty `client_email` and `private_key` string fields.
 - Minify the service-account JSON to one line before you paste it at the `GOOGLECHAT_SERVICE_ACCOUNT` prompt.
 - Choose an HTTP endpoint connection in **Google Chat API** > **Configuration** > **Connection settings**.
 
@@ -70,6 +71,7 @@ NemoClaw applies the `googlechat` network policy preset and registers a sandbox-
 OpenShell uses the service-account key as gateway-side refresh material to mint short-lived tokens with the `chat.bot` scope.
 NemoClaw passes the private key to the OpenShell command through an ephemeral child-process environment value, not through a command-line argument.
 The service-account private key does not enter the sandbox, and the OpenShell proxy inserts the minted bearer token into allowed requests to `chat.googleapis.com`.
+The Google Chat policy does not rewrite request bodies with credentials.
 
 The channel policy permits Node.js to read the Google Chat REST API and to create, update, or delete messages under the `/v1/spaces/` tree.
 It also permits Node.js GET requests to any path on `www.googleapis.com` because the Google authentication library controls the public certificate URL used to verify inbound event tokens.
