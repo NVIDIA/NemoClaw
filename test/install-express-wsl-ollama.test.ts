@@ -34,6 +34,7 @@ describe("installer Windows WSL express Ollama selection (sourced)", () => {
 
   function dockerStubBin(operatingSystem: string, exitCode = 0) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-stub-"));
+    writeExecutable(path.join(dir, "timeout"), '#!/usr/bin/env bash\nshift\nexec "$@"\n');
     writeExecutable(
       path.join(dir, "docker"),
       `#!/usr/bin/env bash\nif [ "$1" = "info" ]; then\n  printf '%s\\n' "${operatingSystem}"\nfi\nexit ${exitCode}\n`,

@@ -353,6 +353,7 @@ describe("createSetupNimOllamaHandlers", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
       makeDeps({
+        process: { ...process, platform: "linux" } as NodeJS.Process,
         installOllamaOnLinux: install,
         shouldFrontOllamaWithProxy: () => true,
         startOllamaAuthProxy: startProxy,
