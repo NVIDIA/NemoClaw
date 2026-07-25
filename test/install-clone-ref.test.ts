@@ -145,7 +145,7 @@ describe("installer version stamping", () => {
         git(["-c", "tag.gpgSign=false", "tag", "-a", "v0.0.38", "-m", "old release"]).status,
       ).toBe(0);
 
-      const resolve = () =>
+      const resolve = (installer: string) =>
         spawnSync(
           "bash",
           [
@@ -156,7 +156,7 @@ describe("installer version stamping", () => {
             encoding: "utf8",
             env: {
               ...process.env,
-              INSTALLER_UNDER_TEST: CURL_PIPE_INSTALLER,
+              INSTALLER_UNDER_TEST: installer,
               NEMOCLAW_REPO_ROOT: tmp,
               NEMOCLAW_INSTALL_REF: "",
               NEMOCLAW_INSTALL_TAG: "",
@@ -164,15 +164,17 @@ describe("installer version stamping", () => {
           },
         );
 
-      fs.writeFileSync(path.join(tmp, ".version"), "0.0.93");
-      const withStamp = resolve();
-      expect(withStamp.status, withStamp.stderr).toBe(0);
-      expect(extract(withStamp.stdout)).toBe("0.0.93");
+      for (const installer of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER]) {
+        fs.writeFileSync(path.join(tmp, ".version"), "0.0.93");
+        const withStamp = resolve(installer);
+        expect(withStamp.status, withStamp.stderr).toBe(0);
+        expect(extract(withStamp.stdout)).toBe("0.0.93");
 
-      fs.rmSync(path.join(tmp, ".version"));
-      const withoutStamp = resolve();
-      expect(withoutStamp.status, withoutStamp.stderr).toBe(0);
-      expect(extract(withoutStamp.stdout)).toBe("0.0.38");
+        fs.rmSync(path.join(tmp, ".version"));
+        const withoutStamp = resolve(installer);
+        expect(withoutStamp.status, withoutStamp.stderr).toBe(0);
+        expect(extract(withoutStamp.stdout)).toBe("0.0.38");
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
