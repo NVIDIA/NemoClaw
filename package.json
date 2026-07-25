@@ -108,6 +108,7 @@
     "nemoclaw/openclaw.plugin.json",
     "nemoclaw/package.json",
     "nemoclaw-blueprint/",
+    "schemas/network-policy.schema.json",
     "schemas/sandbox-policy.schema.json",
     "scripts/",
     "docs/resources/local-credential-form.html",

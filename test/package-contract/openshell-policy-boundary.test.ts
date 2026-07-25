@@ -211,6 +211,9 @@ describe("OpenShell policy boundary package contract", () => {
       const archivePath = path.join(tempDir, archives[0]!);
       execFileSync("tar", ["-xzf", archivePath, "-C", tempDir]);
       const installedRoot = path.join(tempDir, "package");
+      expect(fs.existsSync(path.join(installedRoot, "schemas", "network-policy.schema.json"))).toBe(
+        true,
+      );
       expect(fs.existsSync(path.join(installedRoot, "schemas", "sandbox-policy.schema.json"))).toBe(
         true,
       );
