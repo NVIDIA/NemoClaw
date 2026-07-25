@@ -6,6 +6,7 @@ import { OLLAMA_PORT } from "../core/ports";
 import {
   findReachableOllamaHost,
   getLocalProviderAvailabilityEndpoint,
+  isLocalProviderProbeOutputHealthy,
   OLLAMA_HOST_DOCKER_INTERNAL,
 } from "../inference/local";
 import type { NvidiaPlatform } from "../inference/nim";
@@ -121,9 +122,13 @@ function probeVllmRunning(runCapture: RunCapture): boolean {
   const writeOut = endpoint.endsWith("/health")
     ? ["--noproxy", "*", "--write-out", "%{http_code}"]
     : [];
-  return !!runCapture(["curl", "-sf", ...LOCAL_PROVIDER_PROBE_CURL_ARGS, ...writeOut, endpoint], {
-    ignoreError: true,
-  });
+  const output = runCapture(
+    ["curl", "-sf", ...LOCAL_PROVIDER_PROBE_CURL_ARGS, ...writeOut, endpoint],
+    {
+      ignoreError: true,
+    },
+  );
+  return isLocalProviderProbeOutputHealthy(endpoint, output);
 }
 
 function probeWindowsOllamaReachable(input: {

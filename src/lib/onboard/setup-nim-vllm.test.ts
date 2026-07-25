@@ -176,6 +176,23 @@ describe("setupNim vLLM route containment", () => {
     );
   });
 
+  it("treats an unexpected undefined managed binding as absent", async () => {
+    const runCapture = vi.fn(() => JSON.stringify({ data: [{ id: "served/model" }] }));
+    const queryVllmModels = vi.fn(() => "");
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture,
+        getManagedVllmProviderBinding: () => undefined as never,
+        queryVllmModels,
+      }),
+    );
+
+    await expect(handler(state(null))).resolves.toBe("selected");
+    expect(runCapture).toHaveBeenCalled();
+    expect(queryVllmModels).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith("  ✓ Using existing vLLM on localhost:8000");
+  });
+
   it("fails closed before endpoint probes when managed auth state is unsafe", async () => {
     const queryVllmModels = vi.fn(() => "");
     const validateOpenAiLikeSelection = vi.fn(async () => ({ ok: true }));

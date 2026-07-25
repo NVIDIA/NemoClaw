@@ -247,7 +247,7 @@ export function createSetupNimVllmHandler(
     }
 
     const apiKey = managedBinding?.apiKey ?? null;
-    const managedDualEndpoint = managedBinding !== null;
+    const managedDualEndpoint = managedBinding != null;
     console.log(
       managedDualEndpoint
         ? "  ✓ Using managed dual-Station vLLM endpoint"

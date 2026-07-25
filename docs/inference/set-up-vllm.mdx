@@ -211,7 +211,8 @@ Without terminal access, the installer stops before it installs Docker or build 
 The registered single-Station Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
 Configure the physical rails and SSH host-key and authentication trust before installation.
 NemoClaw does not modify rail configuration, enroll SSH trust, or reboot either host automatically.
-If either host requires a reboot after pinned prerequisite changes, the installer stops with status `10` and resumes only after the manual reboot with owner-only state tied to the printed exact revision and reciprocal identity.
+If the local host requires a reboot during initial preparation, the installer stops with status `10`; its owner-only receipt preserves the printed exact revision and Express selections.
+After reciprocal peer qualification begins, the pair state additionally binds SSH, GPU, and rail identity and names either host that must be rebooted manually.
 The registered two-Station Ultra recipe tracks the [latest NVIDIA dual-Station playbook](https://build.nvidia.com/station/nemoclaw/dual-nodes).
 It pins vLLM `0.25.1` and Ray `2.56.0`, uses one tensor-parallel rank per Station with pipeline parallelism across the pair, serves the `nemotron-ultra` alias with a `262144`-token model limit, and retains the Nemotron reasoning and tool-call parsers.
 The single-Station fallback keeps NemoClaw's bridge-networked managed-inference topology and publishes port `8000` through Docker.

@@ -12,7 +12,7 @@ Do not run the Station preparation helper separately or reproduce Express by pre
 
 The installer provides these Station Express choices:
 
-1. The ordinary installer checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails. A qualified pair selects `nemotron-3-ultra-550b-a55b`, served as `nemotron-ultra` through the vLLM 0.25.1 and Ray 2.56.0 dual-Station recipe; otherwise it retains the single-Station `deepseek-v4-flash` default, served as `deepseek-ai/DeepSeek-V4-Flash`.
+1. The ordinary installer selects `nemotron-3-ultra-550b-a55b`, served as `nemotron-ultra`, and checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails. A qualified pair uses the vLLM 0.25.1 and Ray 2.56.0 dual-Station recipe; otherwise it retains the single-Station Ultra recipe.
 2. The explicit `--station-deepseek` flag selects `deepseek-v4-flash`, served as `deepseek-ai/DeepSeek-V4-Flash`.
 
 Both choices use the same Station detection, host-preparation, consent, suggested-policy, default-sandbox, and revision resume flow.
@@ -31,7 +31,7 @@ Before asking for consent, explain all of these boundaries:
 Ask: "Which DGX Station Express option would you like?"
 Choices:
 
-1. Automatic pair selection: use Nemotron 3 Ultra 550B only if a trusted two-Station pair qualifies; otherwise use single-Station DeepSeek V4 Flash.
+1. Automatic pair selection: use Nemotron 3 Ultra 550B with a qualified trusted pair when available; otherwise use the single-Station Ultra recipe.
 2. DeepSeek V4 Flash, the explicit `--station-deepseek` override.
 3. Neither, let me choose the runtime and model normally.
 

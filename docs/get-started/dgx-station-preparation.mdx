@@ -181,7 +181,9 @@ NemoClaw checks only the two deterministic `/30` counterpart addresses; it does 
 Station preparation binds the preparing non-root account's UID in root-owned `/etc/nemoclaw/dual-station-controller-uid`.
 Rebinding requires an administrator to remove that file before preparation is rerun as the replacement account.
 If either Station requires a reboot, the installer stops with status `10` and names the host to reboot manually.
-Owner-only resume state binds the exact NemoClaw revision, preparation helper, SSH host key, GPU identities, and reciprocal rails; the installer never reboots either host automatically.
+The initial local-host receipt preserves the accepted NemoClaw revision and Express selections.
+After reciprocal peer qualification begins, owner-only pair state additionally binds the preparation helper, SSH host key, GPU identities, and reciprocal rails.
+The installer never reboots either host automatically.
 
 <Warning title="Trusted Pair Boundary">
 The dual-Station runtime uses unauthenticated Ray, NCCL, and vLLM coordination traffic, including the Ray head on TCP port `6379` and Ray's worker traffic.

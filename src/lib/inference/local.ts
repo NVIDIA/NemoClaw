@@ -556,6 +556,12 @@ export function getLocalProviderAvailabilityEndpoint(provider: string): string |
   return getLocalProviderHealthEndpoint(provider);
 }
 
+export function isLocalProviderProbeOutputHealthy(endpoint: string, output: string): boolean {
+  const normalized = output.trim();
+  if (!normalized || normalized === "000") return false;
+  return endpoint.endsWith("/health") ? normalized === "200" : true;
+}
+
 export function getLocalProviderHealthCheck(provider: string): string[] | null {
   const endpoint = getLocalProviderAvailabilityEndpoint(provider);
   if (provider === "vllm-local" && endpoint?.endsWith("/health")) {
@@ -593,7 +599,10 @@ export function isLocalProviderHostHealthy(
   const command = getLocalProviderHealthCheck(provider);
   if (!command) return false;
   const capture = runCaptureImpl ?? runCapture;
-  return Boolean(capture(command, { ignoreError: true }));
+  return isLocalProviderProbeOutputHealthy(
+    command.at(-1) ?? "",
+    capture(command, { ignoreError: true }),
+  );
 }
 
 export function getLocalProviderLabel(provider: string): string | null {
@@ -954,7 +963,7 @@ export function validateLocalProvider(
   }
 
   const output = capture(command, { ignoreError: true });
-  if (!output) {
+  if (!isLocalProviderProbeOutputHealthy(command.at(-1) ?? "", output)) {
     switch (provider) {
       case "vllm-local":
         return {
@@ -979,7 +988,7 @@ export function validateLocalProvider(
   // Retry container reachability check with backoff
   for (let attempt = 1; attempt <= CONTAINER_CHECK_MAX_ATTEMPTS; attempt++) {
     const containerOutput = capture(containerCommand, { ignoreError: true });
-    if (containerOutput) {
+    if (isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", containerOutput)) {
       return { ok: true };
     }
     if (attempt < CONTAINER_CHECK_MAX_ATTEMPTS) {

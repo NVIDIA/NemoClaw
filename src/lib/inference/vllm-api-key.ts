@@ -96,7 +96,10 @@ export function ensureDualStationVllmApiKey(options: DualStationVllmApiKeyOption
   }
 
   const filePath = dualStationVllmApiKeyPath(stateDir);
-  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") {
+    throw new Error("Secure no-follow file opens are unavailable on this platform");
+  }
   let fd: number | undefined;
   try {
     fd = fs.openSync(

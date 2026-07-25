@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   dualStationVllmApiKeyPath,
@@ -22,6 +22,8 @@ function temporaryDirectory(): string {
 }
 
 afterEach(() => {
+  vi.doUnmock("node:fs");
+  vi.resetModules();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -69,5 +71,21 @@ describe("dual-Station vLLM API key persistence", () => {
 
     expect(() => loadDualStationVllmApiKey({ stateDir })).toThrow("symbolic link");
     expect(() => ensureDualStationVllmApiKey({ stateDir })).toThrow("symbolic link");
+  });
+
+  it("fails closed when secure no-follow opens are unavailable", async () => {
+    vi.resetModules();
+    vi.doMock("node:fs", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("node:fs")>();
+      const constants = { ...actual.constants, O_NOFOLLOW: undefined };
+      return { ...actual, constants, default: { ...actual.default, constants } };
+    });
+    const unavailable = await import("./vllm-api-key");
+
+    expect(() =>
+      unavailable.ensureDualStationVllmApiKey({
+        stateDir: path.join(temporaryDirectory(), "state"),
+      }),
+    ).toThrow("Secure no-follow file opens are unavailable");
   });
 });
