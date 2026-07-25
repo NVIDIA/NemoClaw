@@ -47,7 +47,7 @@ describe("platform Vitest main workflow", () => {
     expect(stepNames.indexOf("Install macOS test dependencies")).toBeLessThan(
       stepNames.indexOf("Run full Vitest suite on macOS"),
     );
-    expect(setupPython.uses).toBe("actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1");
+    expect(setupPython.uses).toBe("actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97");
     expect(setupPython.with).toMatchObject({
       "python-version": "3.14",
       cache: "pip",

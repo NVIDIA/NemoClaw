@@ -30,7 +30,13 @@ const {
   probeOllamaModelCapabilities,
   validateOllamaModel,
 } = require("../local");
-const { anyRegistryModelFits, modelFitsAvailableMemory } = require("../ollama-model-registry");
+const {
+  anyRegistryModelFits,
+  describeOllamaModelCapacity,
+  effectiveGpuMemoryMB,
+  modelFitsAvailableMemory,
+} = require("../ollama-model-registry");
+const { formatBytes } = require("./model-size");
 const { isOllamaAuthProxyCommandLine }: typeof import("./process") = require("./process");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
@@ -494,6 +500,27 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   };
 }
 
+function formatOllamaMemoryMB(memoryMB: number): string {
+  return formatBytes(memoryMB * 1024 * 1024);
+}
+
+function annotateOllamaModelOption(tag: string, gpu: GpuInfo | null): string {
+  const facts = describeOllamaModelCapacity(tag, gpu);
+  const hasAvailableMemory =
+    typeof gpu?.availableMemoryMB === "number" && gpu.availableMemoryMB > 0;
+  const parts: string[] = [];
+  if (typeof facts.downloadSizeBytes === "number") {
+    parts.push(`${formatBytes(facts.downloadSizeBytes)} download`);
+  }
+  if (typeof facts.requiredMemoryMB === "number") {
+    parts.push(`~${formatOllamaMemoryMB(facts.requiredMemoryMB)} VRAM`);
+  }
+  if (facts.fits === false) {
+    parts.push(hasAvailableMemory ? "exceeds available memory" : "exceeds total memory");
+  }
+  return parts.length > 0 ? `  (${parts.join(" · ")})` : "";
+}
+
 async function promptOllamaModel(
   gpu: GpuInfo | null = null,
   promptOptions: { defaultModel?: string | null; excludeModels?: ReadonlySet<string> } = {},
@@ -533,8 +560,16 @@ async function promptOllamaModel(
 
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
+  const effectiveMemoryMB = effectiveGpuMemoryMB(gpu);
+  const hasAvailableMemory =
+    typeof gpu?.availableMemoryMB === "number" && gpu.availableMemoryMB > 0;
+  const capacityLabel = hasAvailableMemory ? "currently available GPU memory" : "total GPU memory";
+  if (typeof effectiveMemoryMB === "number") {
+    const memoryKind = hasAvailableMemory ? "Available" : "Total";
+    console.log(`  ${memoryKind} GPU memory: ${formatOllamaMemoryMB(effectiveMemoryMB)}.`);
+  }
   options.forEach((option: string, index: number) => {
-    console.log(`    ${index + 1}) ${option}`);
+    console.log(`    ${index + 1}) ${option}${annotateOllamaModelOption(option, gpu)}`);
   });
   console.log(`    ${options.length + 1}) Other...`);
   if (!usingInstalled) {
@@ -543,13 +578,15 @@ async function promptOllamaModel(
       console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
     } else {
       console.log(
-        "  No installed Ollama model fits the host's currently available memory; showing starter models instead.",
+        `  No installed Ollama model fits the host's ${capacityLabel}; showing starter models instead.`,
       );
     }
   }
   if (!usingInstalled && !anyRegistryModelFits(gpu)) {
     console.log(
-      "  ! Even the smallest known bootstrap model may not fit currently available GPU memory; free memory or expect the runner to reject the load.",
+      `  ! Even the smallest known bootstrap model may not fit ${capacityLabel}; ${
+        hasAvailableMemory ? "free memory" : "choose a smaller model"
+      } or expect the runner to reject the load.`,
     );
   }
   console.log("");

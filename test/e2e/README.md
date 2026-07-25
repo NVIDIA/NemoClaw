@@ -62,13 +62,16 @@ no alternate checkout SHA is requested. PR-gate dispatches therefore remain on
 standard runners even though they use the trusted workflow definition from
 `main`.
 
-Exact-head PR-gate dispatches use a bounded swap fallback for the hosted
-Hermes image-building lanes that remain on those standard runners. The trusted
-workflow provisions the fallback as the first job step, before checking out or
-executing the candidate revision. It requires a controller-supplied lowercase
-40-hex checkout SHA, matching trusted workflow and dispatch revisions, and an
-ephemeral GitHub-hosted Linux x64 runner. Candidate code cannot supply the
-program or arguments passed to `sudo`.
+Exact-head PR-gate dispatches and direct scheduled or manual `main` runs use a
+bounded swap fallback for eligible hosted Hermes image-building lanes. The
+fallback does not change runner routing. The trusted workflow provisions the
+fallback as the first job step, before checking out or executing the selected
+revision. Exact-head mode requires a controller-supplied lowercase 40-hex
+checkout SHA plus matching trusted workflow and dispatch revisions. Direct-main
+mode rejects alternate checkout and workflow revisions and requires the
+workflow source to match the run revision. Both modes require an ephemeral
+GitHub-hosted Linux x64 runner. Candidate code cannot supply the program or
+arguments passed to `sudo`.
 
 The trusted step requires at least 32 GiB (34,359,738,368 bytes) of usable swap.
 It reuses active swap that meets this requirement.
@@ -87,20 +90,20 @@ Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
-the Hermes Bedrock and stable MCP shards, and the `hermes-e2e`,
-`hermes-dashboard`, and Hermes security-posture tests. Scheduled and ordinary
-manual `main` runs, larger-runner executions, rebuild lanes with
-workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
-shards do not use it.
+the Hermes Bedrock and stable MCP shards, the Hermes common-egress and channel
+stop/start shards, and the `hermes-e2e`, `hermes-dashboard`, `hermes-discord`,
+and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
+dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes shards do not use it.
+Candidate-authored workflow definitions and fork-owned runs cannot reach it.
 
 The fallback exists because the alternate-checkout trust boundary deliberately
 keeps PR-authored code from selecting the administrator-managed larger-runner
 label; changing the PR checkout cannot safely grant itself that capacity.
-Remove the fallback only after the trusted controller routes exact-head PR
-gates to an ephemeral GitHub-hosted runner with at least 32 GB RAM without
-weakening the exact-SHA guard, and five consecutive runs of every protected
-lane complete without runner loss while runner-pressure telemetry reports less
-than 1 GiB of swap used.
+Remove the fallback only after trusted main and exact-head PR runs use
+ephemeral GitHub-hosted runners with at least 32 GB RAM without weakening the
+source guards, and five consecutive runs of every protected lane complete
+without runner loss while runner-pressure telemetry reports less than 1 GiB of
+swap used.
 
 The eligible set is limited to the measured or repeatedly interrupted heavy
 lanes:
@@ -147,10 +150,30 @@ graph as the live targets:
   retired. Any future issue escalation should use a separately reviewed
   exceptional threshold, such as the same lane failing twice consecutively or
   remaining broken for 24 hours, rather than posting on every failed schedule.
-- `scorecard` writes the scheduled/manual result summary, adds this run's
-  semantic phase runtime table, compares the trusted cloud-onboard timing
-  summary with the latest prior-release `e2e.yaml` run, and posts to the daily
-  or full-run Slack route.
+- `scorecard` writes the scheduled/manual result summary and posts it to the
+  daily or full-run Slack route. The summary:
+  - separates queue time from execution time for the ten jobs with the longest
+    combined duration;
+  - reports the runner class as `standard`, `larger`, or `unknown` without
+    exposing runner labels;
+  - adds this run's semantic phase runtime table;
+  - compares each of the ten slowest current tests with up to ten prior
+    completed scheduled runs; and
+  - compares the trusted cloud-onboard timing summary with the latest
+    prior-release `e2e.yaml` run.
+- The nightly comparison reads only validated `e2e-runtime-summary.json`
+  artifacts retained for 14 days. Manual runs can display the comparison but
+  never enter its baseline. The table reports the current outcome, prior median
+  and p95, prior pass/fail/skip counts and rates, the failure streak including
+  the current run, and the most common failed phase across the compared runs.
+  It marks a total or phase regression only when the current duration exceeds
+  the prior median by both at least 20% and at least 30 seconds.
+- A separate flake watch shows at most five current tests that both passed and
+  failed across the current run and up to ten prior completed scheduled runs.
+  It ranks them by pass/fail flips and then failure count. It reports
+  pass/fail/skip counts, failure rate, pass/fail flips, current failure streak,
+  and the most common failed phase. The failure-rate denominator and
+  pass/fail-flip count exclude skips.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
@@ -183,7 +206,8 @@ The OpenClaw matrix entries for `mcp-bridge`,
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
 
-- an `initialize` endpoint after workspace preparation;
+- an `initialize` endpoint after workspace preparation and any fixed-capacity
+  rebuild swap;
 - a distinct `scenario-start` for every test handled by the execution;
 - a `periodic` sample on an approximately 60-second fixed cadence;
 - a `phase` sample before each semantic phase transition and when the final
@@ -202,7 +226,9 @@ records exist to reserve the last slot for `finalize`. A missing, historical-v1,
 already-finalized, full, or invalid ledger permanently disables comparison
 sampling for that test progress instance. In `rebuild-hermes` and
 `rebuild-hermes-stale-base`, where legacy phase resource evidence is configured,
-the existing five-minute full snapshot then becomes the best-effort fallback.
+the workflow establishes its 32 GiB swap before `initialize` so the ledger sees
+one stable swap capacity. If canonical sampling becomes unavailable, the
+existing five-minute full snapshot becomes the best-effort fallback.
 That full profile may run `ps`, `docker stats`, and `docker system df`
 sequentially with a 15-second timeout each, or 45 seconds in the worst case;
 canonical sampling suppresses this heavier collection while it remains active.
@@ -319,12 +345,13 @@ npm run test:runtime-audit -- path/to/run-1 path/to/run-2
 The audit groups each test by target and optional shard, ranks the groups by
 p95 runtime, and reports variability plus the slowest observed phase's duration
 and outcome. Scheduled and ordinary manual runs include the same table for that
-run in the GitHub Actions scorecard summary. Keep phase
-labels specific to test behavior, call `progress.phase("literal phase label")`
-at the declared boundaries in order, and transition through the final
-test-declared phase on every passing path. Both fixtures reject a passing test
-that never reaches that phase; only the stateful live fixture enters its
-resource-release phase automatically.
+run in the GitHub Actions scorecard summary. Their nightly trend uses only the
+bounded timing and outcome summary rather than downloading historical raw test
+artifacts. Keep phase labels specific to test behavior, call
+`progress.phase("literal phase label")` at the declared boundaries in order,
+and transition through the final test-declared phase on every passing path.
+Both fixtures reject a passing test that never reaches that phase; only the
+stateful live fixture enters its resource-release phase automatically.
 Validate phase coverage without executing test bodies with:
 
 ```bash
@@ -421,6 +448,12 @@ Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 family is a conservative path boundary that includes non-documentation files
 under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
 policy, dependency and test configuration, and preparation and upload actions.
+Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
+the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
+through cold onboarding and a real first turn.
+The repository-root `Dockerfile.base` remains in only the `platform-install`
+family. It selects `cloud-onboard` and does not trigger the cold `full-e2e`
+path.
 The Deep Agents Code headless-inference check additionally selects the exact
 `ubuntu-repo-cloud-langchain-deepagents-code` typed target. That target is
 hashed into the risk plan beside the control-plane floor jobs, so the
@@ -801,8 +834,8 @@ memory-heavy image build. The rebuild fixture verifies that floor and
 provisions the same swap file on GitHub Actions when a trusted control-plane
 run uses the workflow definition from `main`. Those paths build large Hermes
 image layers and can otherwise exhaust the runner's default memory and swap
-during Docker layer export. Other E2E jobs keep the standard runner memory
-configuration except for the exact-head Hermes PR-gate fallback described in
+during Docker layer export. Apart from those rebuild and export paths, E2E jobs
+add swap only through the trusted Hermes main-workflow fallback described in
 [Larger-runner routing](#larger-runner-routing).
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
