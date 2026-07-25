@@ -184,10 +184,19 @@ describe("E2E scorecard", () => {
   it("loads typed scorecard helpers through the native github-script require boundary", () => {
     const script = `
       const path = require('node:path');
-      for (const file of ['analyze-trace-timing.mts', 'summarize-jobs.mts', 'build-slack-blocks.mts', 'coordinate-scorecard.mts']) {
+      for (const file of [
+        'analyze-runtime-history.mts',
+        'analyze-trace-timing.mts',
+        'summarize-jobs.mts',
+        'build-slack-blocks.mts',
+        'coordinate-scorecard.mts',
+        'read-artifact-zip.mts',
+      ]) {
         const loaded = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard', file));
         if (Object.keys(loaded).length === 0) process.exit(2);
       }
+      const runtimeAudit = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/audit-test-runtime.mts'));
+      if (Object.keys(runtimeAudit).length === 0) process.exit(2);
     `;
     const result = spawnSync(process.execPath, ["--experimental-strip-types", "-e", script], {
       cwd: process.cwd(),

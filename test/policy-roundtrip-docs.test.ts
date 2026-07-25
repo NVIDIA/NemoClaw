@@ -7,8 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROUND_TRIP_DOCS = [
-  "docs/network-policy/customize-network-policy.mdx",
-  "docs/network-policy/integration-policy-examples.mdx",
+  "docs/network-policy/replace-live-network-policy.mdx",
   "docs/reference/cli-selection-guide.mdx",
   "docs/reference/network-policies.mdx",
 ];
@@ -19,10 +18,10 @@ function readDoc(docPath: string): string {
 
 describe("policy round-trip documentation examples", () => {
   it("keeps the URL-based MCP recipe least-privilege and narrowly scoped (#5322)", () => {
-    const text = readDoc("docs/network-policy/customize-network-policy.mdx");
+    const text = readDoc("docs/network-policy/create-custom-policy-presets.mdx");
     const section = text
-      .split("### Custom Recipe: URL-Based MCP Server")[1]
-      ?.split("### Export, Edit, and Set the Base Policy")[0];
+      .split("## Configure a URL-Based MCP Server")[1]
+      ?.split("## Related Topics")[0];
 
     expect(section).toBeDefined();
     expect(section).toContain('- allow: { method: GET, path: "/mcp" }');
@@ -32,10 +31,10 @@ describe("policy round-trip documentation examples", () => {
     expect(section?.match(/- \{ path: \/usr\/local\/bin\//g)).toHaveLength(1);
     expect(section).toContain("only the process that opens the connection");
     expect(section).toContain("terminate a session");
-    expect(section).toContain("do not replace it with `/**`");
-    expect(section).toContain("does not disable OpenShell's SSRF protection");
+    expect(section).toContain("Do not replace the route with `/**`");
+    expect(section).toContain("does not disable OpenShell SSRF protection");
     expect(section).toContain("getaddrinfo EAI_AGAIN");
-    expect(section).toContain("is not fixed by widening this allowlist");
+    expect(section).toContain("Widening this allowlist does not fix");
   });
 
   it("uses the NemoClaw base-policy export instead of a metadata-stripping pipeline", () => {

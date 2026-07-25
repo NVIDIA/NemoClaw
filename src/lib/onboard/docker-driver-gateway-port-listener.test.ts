@@ -127,3 +127,51 @@ describe("Docker-driver gateway port listener discovery", () => {
     expect(runCaptureEx).toHaveBeenNthCalledWith(2, ["lsof", "-ti", ":18081", "-sTCP:LISTEN"]);
   });
 });
+
+describe("raw gateway port listener enumeration (#6576)", () => {
+  it("returns a live listener the Docker-driver filter would discard", () => {
+    // An externally supervised gateway is an ordinary systemd process with no
+    // Docker-driver markers, so isDockerDriverGatewayProcess returns false for
+    // it. The raw scan must still report it; the filtered scan must not.
+    const runCaptureEx = vi.fn(() => ({ stdout: "4242\n", exitCode: 0, timedOut: false }));
+    const { helpers } = makeHelpers({
+      runCaptureEx,
+      isPidAlive: () => true,
+      isDockerDriverGatewayProcess: () => false,
+    });
+    const portCheck = { ok: false, process: "openshell-gateway", pid: 4242 } as const;
+
+    expect(helpers.getGatewayPortListenerRawScan(portCheck)).toEqual({
+      pids: [4242],
+      complete: true,
+    });
+    expect(helpers.getDockerDriverGatewayPortListenerScan(portCheck)).toEqual({
+      pids: [],
+      complete: true,
+    });
+  });
+
+  it("drops a dead PID from the raw enumeration", () => {
+    const runCaptureEx = vi.fn(() => ({ stdout: "4242\n5353\n", exitCode: 0, timedOut: false }));
+    const { helpers } = makeHelpers({
+      runCaptureEx,
+      isPidAlive: (pid: number) => pid === 4242,
+    });
+
+    expect(
+      helpers.getGatewayPortListenerRawScan({ ok: false, process: "x", pid: 4242 }).pids,
+    ).toEqual([4242]);
+  });
+
+  it("reports an incomplete scan when lsof cannot enumerate against a held port", () => {
+    const runCaptureEx = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+    const { helpers } = makeHelpers({ runCaptureEx });
+
+    // Port held (ok:false) but lsof saw nothing: a visibility contradiction, so
+    // the single-owner claim cannot be proven.
+    expect(helpers.getGatewayPortListenerRawScan({ ok: false, process: "x", pid: 0 })).toEqual({
+      pids: [],
+      complete: false,
+    });
+  });
+});

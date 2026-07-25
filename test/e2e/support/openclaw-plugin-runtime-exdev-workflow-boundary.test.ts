@@ -77,7 +77,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     expect(validateOpenClawPluginRuntimeExdevWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "openclaw-plugin-runtime-exdev must run on ubuntu-latest",
-        "openclaw-plugin-runtime-exdev must retain its 130 minute runtime proof budget",
+        "openclaw-plugin-runtime-exdev must retain its 105 minute runtime proof budget",
         "openclaw-plugin-runtime-exdev must hold only contents: read",
         "openclaw-plugin-runtime-exdev must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev",
         "openclaw-plugin-runtime-exdev must remain enabled for scheduled and empty manual runs",
@@ -85,7 +85,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
         "openclaw-plugin-runtime-exdev action 'actions/checkout@v6' must pin a full SHA",
         "openclaw-plugin-runtime-exdev checkout must disable persisted credentials",
         "openclaw-plugin-runtime-exdev must use the reviewed prepare-e2e action",
-        "openclaw-plugin-runtime-exdev step 'Pre-pull release-matched Docker Hub builder image' must run: docker pull node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d",
+        "openclaw-plugin-runtime-exdev step 'Pre-pull release-matched Docker Hub builder image' must run: docker pull node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba",
         "openclaw-plugin-runtime-exdev must always revoke Docker auth before the release-pinned fixture",
         "openclaw-plugin-runtime-exdev step 'Remove Docker auth before release-pinned fixture' must run: bash .github/scripts/docker-auth-cleanup.sh",
         "openclaw-plugin-runtime-exdev runtime proof must not receive workflow credentials",

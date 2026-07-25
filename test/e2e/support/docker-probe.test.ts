@@ -1,11 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: spawnMock,
+}));
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
@@ -13,6 +25,7 @@ import {
   DockerProbe,
   redactDockerProbeResult,
 } from "../fixtures/docker-probe.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 
 async function readArtifact(root: string, relativePath: string): Promise<string> {
@@ -103,6 +116,89 @@ describe("DockerProbe secret hygiene", () => {
       const artifact = await readArtifact(artifactsRoot, relativePath);
       expect(artifact).not.toContain(secret);
       expect(artifact).toContain("[REDACTED]");
+    }
+  });
+
+  it("kills real-branch Docker output at the capture limit without retaining payload (#7101)", async () => {
+    const secret = "DOCKER_OUTPUT_LIMIT_SECRET";
+    const outputBytes = 10 * 1024 * 1024 + Buffer.byteLength(secret);
+    const output = secret.repeat(Math.ceil(outputBytes / Buffer.byteLength(secret)));
+    const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-output-limit-"));
+    const artifacts = new ArtifactSink(artifactsRoot);
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const childKill = vi.fn(() => true);
+    const childPid = 42_424;
+    const child = Object.assign(new EventEmitter(), {
+      pid: childPid,
+      stdout,
+      stderr,
+      stdin: null,
+      kill: childKill,
+    }) as unknown as ChildProcess;
+    const progress = startTestProgress(
+      "DockerProbe real-branch output limit",
+      ["run noisy Docker command", "verify safe artifacts"],
+      {
+        clearTimer: () => undefined,
+        logLine: () => undefined,
+        setTimer: () => ({}),
+        targetId: "docker-probe-output-limit",
+      },
+    );
+    const processKill = vi.spyOn(process, "kill").mockImplementation((() => {
+      queueMicrotask(() => child.emit("close", null, "SIGKILL"));
+      return true;
+    }) as typeof process.kill);
+    spawnMock.mockReset();
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        stderr.write(`before-limit:${secret}`);
+        stdout.write(output);
+        stderr.write(`after-limit:${secret}`);
+      });
+      return child;
+    });
+    onTestFinished(() => {
+      progress.stop();
+      processKill.mockRestore();
+      spawnMock.mockReset();
+    });
+
+    const probe = new DockerProbe(artifacts, (text) => text, undefined, progress);
+    const marker = "[docker-probe output exceeded safe capture limit]";
+    const result = await probe.run(["version"], {
+      artifactName: "output-limit",
+      timeoutMs: 10_000,
+    });
+    progress.phase("verify safe artifacts");
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(processKill).toHaveBeenCalledWith(-childPid, "SIGKILL");
+    expect(childKill).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      command: ["docker", "version"],
+      exitCode: null,
+      signal: "SIGKILL",
+      stdout: marker,
+      stderr: marker,
+      error: "Docker output exceeded the safe capture limit",
+    });
+    const [stdoutArtifact, stderrArtifact, resultArtifactText] = await Promise.all([
+      readArtifact(artifactsRoot, "docker/001-output-limit.stdout.txt"),
+      readArtifact(artifactsRoot, "docker/001-output-limit.stderr.txt"),
+      readArtifact(artifactsRoot, "docker/001-output-limit.result.json"),
+    ]);
+    expect(stdoutArtifact).toBe(marker);
+    expect(stderrArtifact).toBe(marker);
+    expect(JSON.parse(resultArtifactText)).toEqual(result);
+    for (const published of [
+      JSON.stringify(result),
+      stdoutArtifact,
+      stderrArtifact,
+      resultArtifactText,
+    ]) {
+      expect(published).not.toContain(secret);
     }
   });
 
