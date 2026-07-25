@@ -6,8 +6,9 @@
 // onboard.setupInference (#767). Bedrock Runtime is delegated to
 // `onboard/bedrock-runtime.ts` exactly as the inline branch did.
 
-import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/config";
+import * as inference from "../../inference/config";
 import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
+import { noAuthProxy as noAuth } from "../../inference/ollama/proxy";
 import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
@@ -238,10 +239,24 @@ export async function setupRemoteProviderInference(
     (deleteProviderWithRecovery as unknown as NonNullable<
       RemoteProviderDeps["deleteGatewayProvider"]
     >);
+  const previousProxyCredential = credentialEnv ? process.env[credentialEnv] : undefined;
+  const proxy =
+    credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV ? noAuth(endpointUrl!) : null;
+  if (proxy) process.env[credentialEnv!] = proxy.credentialValue;
+  const restoreUncommittedProxy = () => {
+    if (!proxy) return;
+    proxy.restore();
+    if (previousProxyCredential === undefined) {
+      delete process.env[credentialEnv!];
+    } else {
+      process.env[credentialEnv!] = previousProxyCredential;
+    }
+  };
   while (true) {
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
-    const gatewayEndpointUrl = gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
+    const gatewayEndpointUrl =
+      proxy?.baseUrl ?? gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
     let providerResult;
     if (reuseGatewayCredentialWithoutLocalKey) {
       providerResult = reuseRegisteredProviderWithGatewayEndpoint({
@@ -272,7 +287,7 @@ export async function setupRemoteProviderInference(
         // already end in /v1. Re-add the suffix so the probe and the runtime
         // route exercise the identical URL.
         const openAiSurfaceBaseUrl =
-          getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
+          inference.getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
         const surfaceProbe = await probeOpenAiSurface(
           openAiSurfaceBaseUrl,
           model,
@@ -330,6 +345,7 @@ export async function setupRemoteProviderInference(
       capabilityCache?.invalidate();
       error(`  ${providerResult.message}`);
       if (isNonInteractive()) {
+        restoreUncommittedProxy();
         return exitProcess(providerResult.status || 1);
       }
       const retry = await promptValidationRecovery(
@@ -342,8 +358,10 @@ export async function setupRemoteProviderInference(
         continue;
       }
       if (retry === "selection" || retry === "model") {
+        restoreUncommittedProxy();
         return { done: true, result: { retry: "selection" } };
       }
+      restoreUncommittedProxy();
       return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
@@ -357,6 +375,7 @@ export async function setupRemoteProviderInference(
     }
     const applyResult = runOpenshell(argsv, { ignoreError: true });
     if (applyResult.status === 0) {
+      proxy?.persist();
       break;
     }
     const message =
@@ -365,6 +384,7 @@ export async function setupRemoteProviderInference(
     capabilityCache?.invalidate();
     error(`  ${message}`);
     if (isNonInteractive()) {
+      restoreUncommittedProxy();
       return exitProcess(applyResult.status || 1);
     }
     const retry = await promptValidationRecovery(
@@ -377,8 +397,10 @@ export async function setupRemoteProviderInference(
       continue;
     }
     if (retry === "selection" || retry === "model") {
+      restoreUncommittedProxy();
       return { done: true, result: { retry: "selection" } };
     }
+    restoreUncommittedProxy();
     return exitProcess(applyResult.status || 1);
   }
   return { done: false };

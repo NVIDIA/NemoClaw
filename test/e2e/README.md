@@ -209,7 +209,9 @@ Each execution writes one bounded, ordered v2 time series to the canonical
 - an `initialize` endpoint after workspace preparation and any fixed-capacity
   rebuild swap;
 - a distinct `scenario-start` for every test handled by the execution;
-- a `periodic` sample on an approximately 60-second fixed cadence;
+- a `periodic` sample on an approximately 15-second fixed cadence for
+  `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
+  60-second fixed cadence for every other execution;
 - a `phase` sample before each semantic phase transition and when the final
   phase stops; and
 - a `finalize` endpoint from an `always()` step immediately before artifact
@@ -224,11 +226,14 @@ catch-up burst. Each successful append also prints one bounded
 The v2 ledger accepts at most 256 samples. Ordinary sampling stops once 255
 records exist to reserve the last slot for `finalize`. A missing, historical-v1,
 already-finalized, full, or invalid ledger permanently disables comparison
-sampling for that test progress instance. In `rebuild-hermes` and
-`rebuild-hermes-stale-base`, where legacy phase resource evidence is configured,
-the workflow establishes its 32 GiB swap before `initialize` so the ledger sees
-one stable swap capacity. If canonical sampling becomes unavailable, the
-existing five-minute full snapshot becomes the best-effort fallback.
+sampling for that test progress instance. The two Hermes rebuild lanes use their
+shorter cadence to improve Docker/BuildKit peak-RSS evidence without changing
+the ledger bound, schema, privacy contract, or reserved final slot. In
+`rebuild-hermes` and `rebuild-hermes-stale-base`, where legacy phase resource
+evidence is configured, the workflow establishes its 32 GiB swap before
+`initialize` so the ledger sees one stable swap capacity. If canonical sampling
+becomes unavailable, the existing five-minute full snapshot becomes the
+best-effort fallback.
 That full profile may run `ps`, `docker stats`, and `docker system df`
 sequentially with a 15-second timeout each, or 45 seconds in the worst case;
 canonical sampling suppresses this heavier collection while it remains active.
