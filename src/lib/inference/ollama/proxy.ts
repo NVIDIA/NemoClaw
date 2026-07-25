@@ -506,6 +506,8 @@ function formatOllamaMemoryMB(memoryMB: number): string {
 
 function annotateOllamaModelOption(tag: string, gpu: GpuInfo | null): string {
   const facts = describeOllamaModelCapacity(tag, gpu);
+  const hasAvailableMemory =
+    typeof gpu?.availableMemoryMB === "number" && gpu.availableMemoryMB > 0;
   const parts: string[] = [];
   if (typeof facts.downloadSizeBytes === "number") {
     parts.push(`${formatBytes(facts.downloadSizeBytes)} download`);
@@ -514,7 +516,7 @@ function annotateOllamaModelOption(tag: string, gpu: GpuInfo | null): string {
     parts.push(`~${formatOllamaMemoryMB(facts.requiredMemoryMB)} VRAM`);
   }
   if (facts.fits === false) {
-    parts.push("exceeds available memory");
+    parts.push(hasAvailableMemory ? "exceeds available memory" : "exceeds total memory");
   }
   return parts.length > 0 ? `  (${parts.join(" · ")})` : "";
 }
@@ -558,9 +560,13 @@ async function promptOllamaModel(
 
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
-  const availableMemoryMB = effectiveGpuMemoryMB(gpu);
-  if (typeof availableMemoryMB === "number") {
-    console.log(`  Available GPU memory: ${formatOllamaMemoryMB(availableMemoryMB)}.`);
+  const effectiveMemoryMB = effectiveGpuMemoryMB(gpu);
+  if (typeof effectiveMemoryMB === "number") {
+    const memoryKind =
+      typeof gpu?.availableMemoryMB === "number" && gpu.availableMemoryMB > 0
+        ? "Available"
+        : "Total";
+    console.log(`  ${memoryKind} GPU memory: ${formatOllamaMemoryMB(effectiveMemoryMB)}.`);
   }
   options.forEach((option: string, index: number) => {
     console.log(`    ${index + 1}) ${option}${annotateOllamaModelOption(option, gpu)}`);

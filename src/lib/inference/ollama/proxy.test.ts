@@ -255,6 +255,22 @@ describe("promptOllamaModel size and memory annotations", () => {
     expect(menu).toContain("~11.72 GB VRAM");
   });
 
+  it("labels total memory separately when available memory is unknown", async () => {
+    const setup = loadProxyWithMocks({ installed: ["qwen3.5:9b"], promptValues: [""] });
+    active = setup;
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await setup.proxy.promptOllamaModel({
+      type: "nvidia",
+      totalMemoryMB: 8_000,
+    });
+    const menu = logSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
+    expect(result).toBe("qwen3.5:9b");
+    expect(menu).toContain("Total GPU memory: 7.81 GB");
+    expect(menu).toContain("exceeds total memory");
+    expect(menu).not.toContain("Available GPU memory");
+    expect(menu).not.toContain("exceeds available memory");
+  });
+
   it("renders name-only for an installed tag the registry does not know", async () => {
     const setup = loadProxyWithMocks({ installed: ["my-custom:model"], promptValues: [""] });
     active = setup;
