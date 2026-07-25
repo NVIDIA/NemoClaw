@@ -14,7 +14,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        request_body_credential_rewrite: true
         # Write methods are scoped to the Chat REST `spaces` tree (not "/**") so
         # the bot can only send/edit/delete within Chat spaces. Mutations are
         # POST/PATCH/DELETE — the Chat API defines no PUT for these resources.

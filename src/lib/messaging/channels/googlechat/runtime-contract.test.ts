@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { googlechatManifest } from "./manifest";
+
+const googlechatPolicy = readFileSync(new URL("./policy/openclaw.yaml", import.meta.url), "utf8");
 
 // Locks the sandbox-runtime security contract the Google Chat channel depends on:
 // the two boot preloads that keep the private key out of the sandbox and route
@@ -43,5 +46,9 @@ describe("googlechat runtime security contract", () => {
       expect(preload?.optional).toBe(false);
       expect(preload?.injectInto).toContain("boot");
     }
+  });
+
+  it("keeps credential rewriting out of Google Chat request bodies", () => {
+    expect(googlechatPolicy).not.toContain("request_body_credential_rewrite");
   });
 });
