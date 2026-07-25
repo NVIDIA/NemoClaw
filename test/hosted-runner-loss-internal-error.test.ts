@@ -354,8 +354,15 @@ describe("hosted-runner GitHub internal-error evidence", () => {
     ).toBeNull();
   });
 
+  it("rejects an empty internal-error policy (#7140)", () => {
+    expect(() =>
+      confirmsInternalError(internalErrorJob(), {
+        githubInternalError: {} as never,
+      }),
+    ).toThrow(/policy/u);
+  });
+
   it.each([
-    {},
     { githubInternalError: { approvedRunnerLabels: [], approvedJobConclusions: ["cancelled"] } },
     {
       githubInternalError: {
@@ -395,14 +402,6 @@ describe("hosted-runner GitHub internal-error evidence", () => {
     },
     { unsupported: true },
   ])("rejects malformed internal-error policy %# (#7140)", (policy) => {
-    if (Object.keys(policy).length === 0) {
-      expect(() =>
-        confirmsInternalError(internalErrorJob(), {
-          githubInternalError: policy as never,
-        }),
-      ).toThrow(/policy/u);
-      return;
-    }
     expect(() =>
       confirmsInternalError(internalErrorJob(), policy as HostedRunnerLossPolicy),
     ).toThrow(/policy/u);

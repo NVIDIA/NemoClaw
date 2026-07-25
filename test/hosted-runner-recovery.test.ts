@@ -252,7 +252,8 @@ function setupRoutes(options: RouteOptions = {}) {
                 : { total_count: 0, jobs: [] };
             for (const candidate of listing?.jobs ?? []) {
               const job = candidate as ReturnType<typeof hostedRunnerLossJob>;
-              if (Number.isSafeInteger(job.id)) lastJobs.set(job.id, job);
+              expect(Number.isSafeInteger(job.id)).toBe(true);
+              lastJobs.set(job.id, job);
             }
             return githubResponse(listing);
           },
@@ -262,8 +263,8 @@ function setupRoutes(options: RouteOptions = {}) {
           (request) => {
             const id = Number(request.url.split("/").at(-1));
             const job = lastJobs.get(id);
-            if (!job) throw new Error(`missing job fixture for check ${id}`);
-            return githubResponse(checkRun(job));
+            expect(job, `missing job fixture for check ${id}`).toBeDefined();
+            return githubResponse(checkRun(job!));
           },
         ),
         githubFetchRoute(
@@ -271,11 +272,11 @@ function setupRoutes(options: RouteOptions = {}) {
           (request) => {
             const id = Number(/\/check-runs\/([1-9][0-9]*)\/annotations/u.exec(request.url)?.[1]);
             const job = lastJobs.get(id);
-            if (!job) throw new Error(`missing job fixture for annotations ${id}`);
+            expect(job, `missing job fixture for annotations ${id}`).toBeDefined();
             const defaultAnnotation =
-              job.conclusion === "cancelled"
-                ? runnerLossAnnotation(INTERNAL_ERROR_MESSAGE, job.head_sha)
-                : runnerLossAnnotation(RUNNER_LOSS_MESSAGE, job.head_sha);
+              job!.conclusion === "cancelled"
+                ? runnerLossAnnotation(INTERNAL_ERROR_MESSAGE, job!.head_sha)
+                : runnerLossAnnotation(RUNNER_LOSS_MESSAGE, job!.head_sha);
             const annotations = options.annotations?.[
               Math.min(annotationRead, (options.annotations?.length ?? 1) - 1)
             ] ?? [defaultAnnotation];
@@ -618,29 +619,31 @@ describe("hosted-runner recovery controller", () => {
     {
       label: "zero jobs",
       listing: { total_count: 0, jobs: [] },
-      rejects: false,
     },
     {
       label: "incomplete listing",
       listing: { total_count: 2, jobs: [hostedRunnerLossJob()] },
-      rejects: false,
     },
-    {
-      label: "duplicate job IDs",
-      listing: {
-        total_count: 2,
-        jobs: [hostedRunnerLossJob(), hostedRunnerLossJob({ name: "duplicate" })],
-      },
-      rejects: true,
-    },
-  ])("never reruns with $label (#7140)", async ({ listing, rejects }) => {
+  ])("never reruns with $label (#7140)", async ({ listing }) => {
     const requests = setupRoutes({ jobListings: [listing] });
-    const recovery = recoverHostedRunnerLoss(recoveryRequest());
-    if (rejects) {
-      await expect(recovery).rejects.toThrow(/duplicate workflow job IDs/u);
-    } else {
-      await expect(recovery).resolves.toMatchObject({ action: "ignored" });
-    }
+    await expect(recoverHostedRunnerLoss(recoveryRequest())).resolves.toMatchObject({
+      action: "ignored",
+    });
+    expect(mutationRequests(requests)).toEqual([]);
+  });
+
+  it("never reruns a listing with duplicate job IDs (#7140)", async () => {
+    const requests = setupRoutes({
+      jobListings: [
+        {
+          total_count: 2,
+          jobs: [hostedRunnerLossJob(), hostedRunnerLossJob({ name: "duplicate" })],
+        },
+      ],
+    });
+    await expect(recoverHostedRunnerLoss(recoveryRequest())).rejects.toThrow(
+      /duplicate workflow job IDs/u,
+    );
     expect(mutationRequests(requests)).toEqual([]);
   });
 
