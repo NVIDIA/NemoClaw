@@ -835,6 +835,12 @@ export function recordSynthesisValidationFailureOnDraft(
 ): ReviewAdvisorResult {
   return {
     ...result,
+    summary: {
+      ...result.summary,
+      confidence: "low",
+      recommendation: "info_only",
+      oneLine: "Same-session synthesis validation failed; the advisor result is incomplete.",
+    },
     reviewCompleteness: {
       ...result.reviewCompleteness,
       limitations: [

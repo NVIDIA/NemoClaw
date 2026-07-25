@@ -9,6 +9,7 @@ import {
   canonicalRetryFallback,
   normalizeReviewResult,
   partialLedgerFailureResult,
+  recordSynthesisValidationFailureOnDraft,
   reviewLedgerConsistencyIssues,
   withCanonicalReviewLedgerFindings,
 } from "../tools/pr-review-advisor/analyze.mts";
@@ -266,6 +267,38 @@ describe("PR review ledger tools", () => {
       recommendation: "info_only",
     });
     expect(canonical.reviewCompleteness.requiresHumanReview).toBe(true);
+  });
+
+  it("marks a canonical draft incomplete when synthesis validation fails (#7521)", () => {
+    const result = normalizeReviewResult(
+      {
+        summary: {
+          recommendation: "merge_as_is",
+          confidence: "high",
+          oneLine: "No actionable findings remain.",
+        },
+        findings: [],
+        reviewCompleteness: {
+          limitations: [],
+          requiresHumanReview: false,
+        },
+      },
+      reviewMetadata(),
+    );
+    const canonical = canonicalRetryFallback(result, createReviewFindingLedger().snapshot());
+
+    expect(canonical).not.toBeNull();
+    const fallback = recordSynthesisValidationFailureOnDraft(canonical!, "validation turn failed");
+
+    expect(fallback.summary).toMatchObject({
+      confidence: "low",
+      recommendation: "info_only",
+      oneLine: "Same-session synthesis validation failed; the advisor result is incomplete.",
+    });
+    expect(fallback.reviewCompleteness.requiresHumanReview).toBe(true);
+    expect(fallback.reviewCompleteness.limitations[0]).toContain(
+      "Same-session synthesis validation failed",
+    );
   });
 
   it("binds mutations to the runner stage and exposes the canonical snapshot (#6446)", async () => {
