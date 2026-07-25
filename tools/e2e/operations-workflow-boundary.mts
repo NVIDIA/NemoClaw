@@ -190,6 +190,9 @@ function validateControllerAuthorization(
     "https://github.com/${GITHUB_REPOSITORY}/runs/${CONTROLLER_CHECK_ID}",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}",
     "[Selected E2E run ${RUN_ID}](${expected_run_url})",
+    '--header "Cache-Control: no-cache"',
+    '--header "Pragma: no-cache"',
+    '[[ "$summary" == "$expected_summary" ]]',
     '.name == "E2E / PR Gate Coordination"',
     ".app.id == 15368",
     '.app.slug == "github-actions"',
@@ -202,6 +205,29 @@ function validateControllerAuthorization(
     if (!source.includes(fragment)) {
       errors.push(`Controller authentication must retain ${fragment}`);
     }
+  }
+  const maxAttempts = Number.parseInt(
+    source.match(/controller_auth_max_attempts=(\d+)/u)?.[1] ?? "",
+    10,
+  );
+  const pollSeconds = Number.parseInt(
+    source.match(/controller_auth_poll_seconds=(\d+)/u)?.[1] ?? "",
+    10,
+  );
+  if (maxAttempts !== 45) {
+    errors.push("Controller authentication must use exactly 45 polling attempts");
+  }
+  if (pollSeconds !== 2) {
+    errors.push("Controller authentication must use two-second polling intervals");
+  }
+  if (
+    !Number.isSafeInteger(maxAttempts) ||
+    !Number.isSafeInteger(pollSeconds) ||
+    (maxAttempts - 1) * pollSeconds <= 60
+  ) {
+    errors.push(
+      "Controller authentication polling window must exceed GitHub's 60-second check cache",
+    );
   }
 }
 

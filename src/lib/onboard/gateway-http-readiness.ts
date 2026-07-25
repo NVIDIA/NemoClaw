@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
+import net from "node:net";
 import path from "node:path";
 
 import { getGatewayHttpEndpoint, getGatewayHttpsEndpoint } from "../core/gateway-address";
@@ -229,13 +230,21 @@ function dockerDriverGatewayHttp2ConnectOptions(
   const localTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
   if (!localTlsDir) return undefined;
   try {
-    return {
+    const options: http2.SecureClientSessionOptions = {
       ca: fs.readFileSync(path.join(localTlsDir, "ca.crt")),
       cert: fs.readFileSync(path.join(localTlsDir, "client", "tls.crt")),
       key: fs.readFileSync(path.join(localTlsDir, "client", "tls.key")),
       rejectUnauthorized: true,
-      servername: parsed.hostname,
     };
+    // Node 25 rejects an IP-literal TLS ServerName (RFC 6066; DEP0123 became a
+    // thrown error). For IP endpoints, certificate verification matches the
+    // connection IP against the certificate's IP SANs without SNI, so only
+    // send servername for DNS hostnames.
+    const bareHostname = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+    if (net.isIP(bareHostname) === 0) {
+      options.servername = parsed.hostname;
+    }
+    return options;
   } catch {
     return undefined;
   }

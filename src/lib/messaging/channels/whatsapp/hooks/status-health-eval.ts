@@ -281,7 +281,7 @@ function policyCoverageSignal(input: WhatsappProbeInput): DiagnosticSignal {
       label: "Policy coverage",
       severity: "fail",
       detail: "whatsapp preset is not applied to the sandbox",
-      hint: "run `nemoclaw <sandbox> policy-add whatsapp` and rebuild the sandbox",
+      hint: "run `nemoclaw <sandbox> policy add whatsapp` and rebuild the sandbox",
     };
   }
   if (input.presetOnGateway === null) {

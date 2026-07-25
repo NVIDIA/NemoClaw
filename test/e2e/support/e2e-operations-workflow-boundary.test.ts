@@ -234,6 +234,48 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("requires fresh controller state for longer than GitHub's check cache (#7140)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate controller dispatch",
+    )!;
+    authentication.run = String(authentication.run)
+      .replace('--header "Cache-Control: no-cache"', '--header "Cache-Control: max-age=60"')
+      .replace("[Selected E2E run ${RUN_ID}](${expected_run_url})", "")
+      .replace("controller_auth_max_attempts=45", "controller_auth_max_attempts=15");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        'Controller authentication must retain --header "Cache-Control: no-cache"',
+        "Controller authentication must retain [Selected E2E run ${RUN_ID}](${expected_run_url})",
+        "Controller authentication polling window must exceed GitHub's 60-second check cache",
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "attempt count",
+      "controller_auth_max_attempts=45",
+      "controller_auth_max_attempts=46",
+      "Controller authentication must use exactly 45 polling attempts",
+    ],
+    [
+      "poll interval",
+      "controller_auth_poll_seconds=2",
+      "controller_auth_poll_seconds=3",
+      "Controller authentication must use two-second polling intervals",
+    ],
+  ])("rejects controller %s drift (#7140)", (_name, current, replacement, expectedError) => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate controller dispatch",
+    )!;
+    authentication.run = String(authentication.run).replace(current, replacement);
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(expectedError);
+  });
+
   it("fails a valid-looking manual fork dispatch before controller API authentication", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(

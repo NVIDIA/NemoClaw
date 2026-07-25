@@ -20,7 +20,7 @@ NemoClaw validates both tokens before it saves Slack credentials or enables the 
 This validation calls the live Slack APIs `auth.test` and `apps.connections.open`, so the tokens must belong to a real Slack app.
 
 If Slack rejects the tokens, NemoClaw skips the Slack channel and does not apply the `slack` network policy preset.
-When Slack is skipped, the preset does not appear as applied in `$$nemoclaw <name> policy-list`.
+When Slack is skipped, the preset does not appear as applied in `$$nemoclaw <name> policy list`.
 
 To exercise channel setup with placeholder tokens in a restricted network or hermetic test environment, set `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1`.
 Slack token format checks still apply.

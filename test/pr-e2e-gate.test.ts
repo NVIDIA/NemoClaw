@@ -1250,6 +1250,19 @@ describe("PR E2E controller", () => {
       expect(outputs).toContain("dispatched=true");
       expect(outputs).not.toContain("approval_mode=");
       expect(outputs).not.toContain("finalized=true");
+      const runningUpdate = requests.find(
+        (request) =>
+          request.url.endsWith("/check-runs/17") &&
+          request.method === "PATCH" &&
+          (request.body as { output?: { title?: string } }).output?.title ===
+            "Running 3 E2E checks",
+      );
+      expect(runningUpdate?.body).toMatchObject({
+        details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+        output: {
+          summary: expect.stringContaining("[Selected E2E run 23]"),
+        },
+      });
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -1408,9 +1421,7 @@ describe("PR E2E controller", () => {
           ),
         },
       });
-      expect(
-        (checkUpdates[1]?.body as { output?: { summary?: string } } | undefined)?.output?.summary,
-      ).toContain("upgrade-stale-sandbox");
+      expect(JSON.stringify(checkUpdates[1]?.body)).toContain("upgrade-stale-sandbox");
       expect(checkUpdates[2]?.body).toMatchObject({
         status: "completed",
         conclusion: "success",

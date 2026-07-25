@@ -77,6 +77,16 @@ export type RebuildFlowOverrides = {
   agentName?: string;
   sessionAgentName?: string | null;
   applyPreset?: (presetName: string) => boolean;
+  captureOpenshell?: (
+    args: string[],
+    options?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    output?: string;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
+  };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
@@ -162,6 +172,7 @@ export type RebuildFlowHarness = {
   restoreSandboxEntrySpy: MockInstance;
   restoreRegistryEntryIfMissingSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
+  captureOpenshellSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
   prepareMcpBridgesForRebuildSpy: MockInstance;
@@ -525,6 +536,19 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           failedFiles: [],
         })),
     );
+  const captureOpenshellSpy = vi
+    .spyOn(openshellRuntime, "captureOpenshell")
+    .mockImplementation((args: unknown, options?: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      return overrides.captureOpenshell
+        ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
+        : {
+            status: 1,
+            output: "",
+            stdout: "",
+            stderr: "Not Found: sandbox not found",
+          };
+    });
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
     if (argv.join(" ") === "sandbox get alpha") {
@@ -726,6 +750,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreSandboxEntrySpy,
     restoreRegistryEntryIfMissingSpy,
     restoreSandboxStateSpy,
+    captureOpenshellSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
     prepareMcpBridgesForRebuildSpy,

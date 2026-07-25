@@ -81,7 +81,7 @@ The following endpoint groups are allowed by default:
 <AgentOnly variant="hermes">
 
 Hermes baseline endpoint groups are declared by the Hermes agent policy additions.
-Use `$$nemoclaw <sandbox> policy-list` or `openshell policy get --base <sandbox>` on a live sandbox to inspect the exact applied baseline.
+Use `$$nemoclaw <sandbox> policy list` or `openshell policy get --base <sandbox>` on a live sandbox to inspect the exact applied baseline.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -136,10 +136,12 @@ Apply maintained presets such as `github`, `pypi`, or `tavily` only when the san
 
 During onboarding, the wizard prompts for a policy tier that determines the default set of presets applied on top of the baseline policy.
 The baseline policy is always applied regardless of the selected tier.
+An operator can persistently exclude a specific baseline entry with [`policy exclude`](#excluding-a-baseline-entry) when they accept reduced, unsupported functionality.
+This is the supported registry-backed way to replay a live exact-key removal during rebuild; raw `openshell policy set` edits are not replayed, while edits made to the source baseline itself are applied when the sandbox is recreated.
 
 | Tier | Presets included | Description |
 |------|------------------|-------------|
-| Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions; reapply them later with `policy-add` only after reviewing the additional egress. |
+| Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions; reapply them later with `policy add` only after reviewing the additional egress. |
 | Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, selected `brave` or `tavily` web search preset | Full dev tooling and web search when you select a provider the active agent supports. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
 | Open | `npm`, `pypi`, `huggingface`, `brew`, selected `brave` or `tavily` web search preset, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
 
@@ -170,9 +172,9 @@ When LangChain Deep Agents Code is onboarded with `--observability`, NemoClaw ad
 The Restricted tier suppresses this agent-required preset during onboarding and rebuild reconciliation.
 An operator can add it manually after reviewing the additional egress, but the next Restricted reconciliation removes it.
 </AgentOnly>
-The applied set therefore reflects the chosen tier *plus* any agent-required presets, so `policy-list` may show one or more presets that do not appear in the tier table above.
-The `policy-list` provenance tags are inferred from the current tier YAML and the active agent at display time and are not persisted per preset.
-A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy-add` after onboarding; agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches.
+The applied set therefore reflects the chosen tier *plus* any agent-required presets, so `policy list` may show one or more presets that do not appear in the tier table above.
+The `policy list` provenance tags are inferred from the current tier YAML and the active agent at display time and are not persisted per preset.
+A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding; agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches.
 Claude Code direct egress is not included in any policy tier.
 If you install and run the Claude Code CLI inside the sandbox with its own credentials, apply the `claude-code` preset explicitly.
 Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.
@@ -279,7 +281,7 @@ To replace the live policy with a complete base policy file, export the current 
 Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
 
 ```bash
-$$nemoclaw <sandbox-name> policy-get > current-policy.yaml
+$$nemoclaw <sandbox-name> policy get > current-policy.yaml
 ```
 
 NemoClaw strips the OpenShell metadata header and exits non-zero if it cannot validate the base policy.
@@ -290,3 +292,62 @@ Edit or review `current-policy.yaml`, then apply it:
 ```bash
 openshell policy set --policy current-policy.yaml --wait <sandbox-name>
 ```
+
+### Excluding a baseline entry
+
+The baseline policy applies to every sandbox, but an operator can persistently exclude a specific baseline entry when they accept reduced, unsupported functionality in exchange for tighter egress.
+
+Preview the exact scope, then exclude an exact baseline key:
+
+```bash
+$$nemoclaw <sandbox-name> policy exclude <key> --dry-run
+$$nemoclaw <sandbox-name> policy exclude <key> --force
+```
+
+The command prints every endpoint, method/path rule, and binary the exclusion removes.
+It also names the supported features that may stop working before it requires explicit acknowledgement (`--force` in non-interactive use).
+NemoClaw refuses to exclude an entry that does not have a reviewed feature-impact disclosure, so a new baseline entry cannot bypass this review.
+The versioned exclusion record is bound to the reviewed entry content and active agent, recorded in the sandbox registry, and replayed on rebuild.
+If the sandbox's active agent changes, NemoClaw requires you to clear or review the exclusion again instead of applying an approval from another agent baseline.
+NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies the exact live result before publishing the durable intent.
+If the process or persistence layer fails between those steps, `policy list`, `policy explain`, and `status` report `repair required`.
+Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only an exact source or target state.
+An unreadable live policy, or one that matches neither the pre-mutation source nor the intended target, remains fail-closed for manual inspection instead of being guessed or overwritten.
+An interrupted restore finalizes only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled target; if either changes or becomes unreadable, the journal remains pending for inspection and re-review.
+If a later release changes that entry, create and rebuild fail closed until re-review; if the release removes it, they fail closed until the stale record is cleared.
+The critical `managed_inference` entry cannot be excluded because it carries the required route to managed inference.
+NemoClaw enforces this both when the command runs and whenever durable exclusion state is replayed.
+
+An excluded baseline key remains reserved while the exclusion is active.
+NemoClaw refuses onboarding, rebuild, built-in and custom presets, messaging channel policies, and generated MCP policies that would define the same key and silently restore its egress.
+It also refuses to exclude a key that an applied preset already owns.
+Restore the baseline entry before applying a preset that intentionally owns the key, or rename a custom entry whose key represents different access.
+
+To recover from baseline drift, first check whether the release changed the entry's content or removed it entirely (`$$nemoclaw <sandbox-name> policy explain` or `doctor` reports which).
+
+If the entry still exists with different content, clear the stale record, review the current scope, and explicitly approve it again only if you still accept the impact:
+
+```bash
+$$nemoclaw <sandbox-name> policy restore <key>
+$$nemoclaw <sandbox-name> policy exclude <key> --dry-run
+$$nemoclaw <sandbox-name> policy exclude <key> --force
+```
+
+If the release removed the entry entirely, `policy exclude <key>` fails with "Unknown baseline entry" because there is nothing left to exclude.
+Clear the stale record instead:
+
+```bash
+$$nemoclaw <sandbox-name> policy restore <key>
+```
+
+List active exclusions with `policy list`.
+`policy explain`, `status`, `doctor`, and snapshot and rebuild summaries also disclose active exclusions and their reduced-support impact.
+Status and doctor compare each approval with the active agent baseline and verify that the excluded key is absent from the live OpenShell policy.
+An unreadable live policy is unverified, while a live policy that contains the key is a mismatch that requires repair before you rely on the exclusion.
+Restore an entry against the current baseline and clear its exclusion:
+
+```bash
+$$nemoclaw <sandbox-name> policy restore <key>
+```
+
+Excluding a baseline entry leaves agent features that depend on it unsupported for that sandbox.
