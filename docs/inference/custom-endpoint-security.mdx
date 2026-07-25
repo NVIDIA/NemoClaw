@@ -57,6 +57,10 @@ The real upstream hostname and path never reach the sandbox or the persisted reg
 Endpoint URLs containing userinfo, a query string, or a fragment are rejected rather than stripped or persisted.
 
 Each opaque route has its own sandbox-facing adapter credential, distinct from both the real upstream credential and the host-only control credential; a credential issued for one route cannot authorize another route.
+Before starting or reusing the adapter, NemoClaw inspects the exact IPAM subnets assigned to the `openshell-docker` network.
+The adapter accepts route requests only from loopback or those inspected subnets and returns a not-found response to peers on other private or LAN networks.
+NemoClaw refuses to expose the adapter when it cannot discover a valid bridge subnet.
+Adapter reuse also requires an authenticated health proof for the same source-subnet policy, so a running process with a stale or different policy is replaced.
 After an adapter restart, routes other than the one that triggered recovery return a recovery-needed response until their original `inference set --endpoint-url` command is rerun.
 Switching away from a route or destroying its last sandbox reference revokes it; a scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
 
