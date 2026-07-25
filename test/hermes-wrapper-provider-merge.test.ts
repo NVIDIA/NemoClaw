@@ -18,7 +18,6 @@ import { describe, expect, it } from "vitest";
 import { canRun, runWrapper } from "./helpers/hermes-wrapper-harness.ts";
 
 describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge", () => {
-
   it("merges separate --provider and -m flags into the combined form (#7361)", () => {
     const run = runWrapper(["--provider", "opencode-zen", "-m", "nemotron-3-ultra-free"], {});
 
@@ -83,6 +82,36 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     expect(run.realArgv).toEqual(["-m", "opencode-zen/nemotron-3-ultra-free"]);
   });
 
+  it("passes through duplicate provider flags as ambiguous (#7361)", () => {
+    const argv = [
+      "--provider=opencode-zen",
+      "--provider",
+      "opencode-zen",
+      "-m",
+      "nemotron-3-ultra-free",
+    ];
+
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
+  it("passes through mixed duplicate model flags as ambiguous (#7361)", () => {
+    const argv = [
+      "--provider",
+      "opencode-zen",
+      "-m",
+      "nemotron-3-ultra-free",
+      "--model=nemotron-3-ultra-free",
+    ];
+
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
   it("merges flags before -- and preserves arguments after (#7361)", () => {
     const run = runWrapper(
       ["--provider", "opencode-zen", "-m", "nemotron-3-ultra-free", "--", "extra"],
@@ -90,19 +119,11 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     );
 
     expect(run.status).toBe(0);
-    expect(run.realArgv).toEqual([
-      "-m",
-      "opencode-zen/nemotron-3-ultra-free",
-      "--",
-      "extra",
-    ]);
+    expect(run.realArgv).toEqual(["-m", "opencode-zen/nemotron-3-ultra-free", "--", "extra"]);
   });
 
   it("does not merge flags that appear only after -- (#7361)", () => {
-    const run = runWrapper(
-      ["--", "--provider", "opencode-zen", "-m", "nemotron-3-ultra-free"],
-      {},
-    );
+    const run = runWrapper(["--", "--provider", "opencode-zen", "-m", "nemotron-3-ultra-free"], {});
 
     expect(run.status).toBe(0);
     expect(run.realArgv).toEqual([
