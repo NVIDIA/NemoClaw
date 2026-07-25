@@ -216,8 +216,13 @@ dgx_station_release_value() {
   printf '%s' "$value"
 }
 
+dgx_station_no_ota_stock_version_is_supported() {
+  local version=${1:-}
+  [[ "$version" =~ ^7\.6\.[0-9]+$ ]]
+}
+
 dgx_station_release_profile() {
-  local path=$1 ota_pretty="" pretty version build_date platform
+  local path=$1 ota_pretty="" ota_key pretty version build_date platform
   dgx_station_release_schema_is_valid "$path" || return 1
   platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
   [[ "$platform" == "DGX Server for GALAXY-GB300" ]] || return 1
@@ -247,13 +252,23 @@ dgx_station_release_profile() {
     return 0
   fi
 
-  # No-OTA factory images are separate, exact profiles. Do not infer support
-  # merely from a missing OTA identity: internal BaseOS and customer images
-  # use different software stacks and qualification evidence.
-  dgx_station_release_value "$path" DGX_OTA_DATE >/dev/null 2>&1 && return 1
+  # Stock DGX OS 7.6 uses stable workstation lineage fields without DGX_OTA_*
+  # metadata. Qualify that release family and leave its build date diagnostic;
+  # the factory-runtime path still proves GB300, driver, ECC, Docker, CDI, and
+  # container GPU capability before onboarding. Other no-OTA factory images
+  # remain exact profiles because they carry separately qualified stacks.
+  for ota_key in DGX_OTA_PRETTY_NAME DGX_OTA_VERSION DGX_OTA_DATE; do
+    dgx_station_release_value "$path" "$ota_key" >/dev/null 2>&1 && return 1
+  done
   pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
   version="$(dgx_station_release_value "$path" DGX_SWBUILD_VERSION)" || return 1
   build_date="$(dgx_station_release_value "$path" DGX_SWBUILD_DATE)" || return 1
+
+  if [[ "$pretty" == "NVIDIA DGX GB300WS" ]] \
+    && dgx_station_no_ota_stock_version_is_supported "$version"; then
+    printf '%s' supported-dgx-os
+    return 0
+  fi
 
   case "${pretty}|${version}|${build_date}" in
     "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
@@ -311,6 +326,11 @@ fatal() {
   exit 1
 }
 
+existing_vllm_conflict() {
+  printf '[station-prepare] %s ERROR: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
+  exit 12
+}
+
 on_error() {
   local rc=$?
   local line=${1:-unknown}
@@ -328,13 +348,15 @@ Usage: prepare-dgx-station-host.sh --check|--apply|--verify [--force-station-ins
   --verify  Read-only host verification plus ephemeral GPU container tests.
   --force-station-install
             Bypass only the DGX release-metadata allowlist. ARM64 Ubuntu 24.04,
-            Station GB300 hardware, and all factory-runtime health checks still
-            apply. The existing driver and container runtime are preserved.
+            Station GB300 hardware, workload quiescence, and all factory-runtime
+            health checks still apply. The existing driver and container runtime
+            are preserved.
 
 Exit 10 from --apply means an operator-controlled reboot is required. After
 the reboot, run --apply once more, followed by --verify.
 Exit 11 means Docker-group membership was added. Start a new login session and
 run --apply again; a reboot is not required.
+Exit 12 means an existing vLLM workload requires an installer ownership choice.
 EOF
 }
 
@@ -894,8 +916,10 @@ check_package_managers_idle() {
   local phase=${1:-Station preflight} active locks process_pattern
   process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|unattended-upgr|unattended-upgrade)$'
   # Ubuntu keeps packagekitd resident after APT refreshes. Generic apply mode
-  # quiesces it separately before the repository/package critical section.
-  if [[ "$STATION_HOST_PROFILE" != "generic-ubuntu" ]]; then
+  # quiesces it before package mutation, while stock DGX OS and AI Developer
+  # Tools preserve factory packages. BaseOS keeps its existing fail-closed
+  # process gate because that profile validates an exact package inventory.
+  if [[ "$STATION_HOST_PROFILE" == "colossus-baseos" ]]; then
     process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|packagekitd|unattended-upgr|unattended-upgrade)$'
   fi
   active="$(ps -eo pid=,comm= | awk -v pattern="$process_pattern" '$2 ~ pattern {print}')"
@@ -905,12 +929,53 @@ check_package_managers_idle() {
       || fatal "Unable to inspect APT and dpkg locks during ${phase}"
     [[ -z "$locks" ]] || fatal "An APT or dpkg lock is active during ${phase}: ${locks}"
   fi
+  check_factory_packagekit_transactions_idle "$phase"
   info "package_manager=idle phase=${phase// /_}"
 }
 
 packagekit_unit_property() {
   local property=$1
   systemctl show "$PACKAGEKIT_UNIT" -p "$property" --value 2>/dev/null
+}
+
+check_factory_packagekit_transactions_idle() {
+  local phase=$1 load_state active_state transaction_output transaction_type transaction_count transaction_paths
+  case "$STATION_HOST_PROFILE" in
+    stock-dgx-os | ai-developer-tools) ;;
+    *) return 0 ;;
+  esac
+
+  load_state="$(packagekit_unit_property LoadState)" \
+    || fatal "Unable to inspect the PackageKit service during ${phase}"
+  if [[ "$load_state" == "not-found" ]]; then
+    info "packagekit=not_installed"
+    return 0
+  fi
+  [[ "$load_state" == "loaded" ]] \
+    || fatal "PackageKit service has an unexpected load state during ${phase}: ${load_state}"
+
+  active_state="$(packagekit_unit_property ActiveState)" \
+    || fatal "Unable to inspect the PackageKit runtime state during ${phase}"
+  if [[ "$active_state" == "inactive" ]]; then
+    info "packagekit_transactions=none phase=${phase// /_}"
+    return 0
+  fi
+  [[ "$active_state" == "active" ]] \
+    || fatal "PackageKit is not in a stable state during ${phase}: ${active_state}"
+
+  require_command busctl
+  transaction_output="$(busctl --system call \
+    org.freedesktop.PackageKit /org/freedesktop/PackageKit \
+    org.freedesktop.PackageKit GetTransactionList 2>/dev/null)" \
+    || fatal "Unable to query active PackageKit transactions during ${phase}"
+  read -r transaction_type transaction_count transaction_paths <<<"$transaction_output"
+  [[ "$transaction_type" == "ao" && "$transaction_count" =~ ^[0-9]+$ ]] \
+    || fatal "PackageKit returned malformed transaction state during ${phase}: ${transaction_output}"
+  ((transaction_count == 0)) \
+    || fatal "An active PackageKit transaction blocks ${phase}: ${transaction_output}"
+  [[ -z "$transaction_paths" ]] \
+    || fatal "PackageKit returned inconsistent empty transaction state during ${phase}: ${transaction_output}"
+  info "packagekit_transactions=none phase=${phase// /_}"
 }
 
 restore_packagekit_after_transaction() {
@@ -1145,7 +1210,7 @@ require_no_running_docker_containers() {
   command -v docker >/dev/null 2>&1 || return 0
   query_host_docker ps --format '{{.ID}} {{.Names}}'
   [[ -z "$DOCKER_QUERY_OUTPUT" ]] \
-    || fatal "Running Docker containers block ${action}: ${DOCKER_QUERY_OUTPUT}"
+    || fatal "Running Docker containers block ${action}: ${DOCKER_QUERY_OUTPUT}. Stop the listed containers before Station Express. Then rerun the installer."
   info "running_docker_containers=none action=${action}"
 }
 
@@ -1217,10 +1282,24 @@ check_failed_units() {
   ((blocking == 0)) || fatal "Unqualified failed system units block Station preparation"
 }
 
+check_vllm_container_conflicts() {
+  local vllm_containers=""
+  if command -v docker >/dev/null 2>&1; then
+    query_host_docker ps --no-trunc --format '{{.ID}}|{{.Image}}|{{.Command}}'
+    vllm_containers="$(awk -F '|' '
+      tolower($2 " " $3) ~ /(^|[^[:alnum:]_])vllm([^[:alnum:]_]|$)/ {
+        print "container_id=" substr($1, 1, 12) " stop_command=\047docker stop -- " substr($1, 1, 12) "\047"
+      }
+    ' <<<"$DOCKER_QUERY_OUTPUT")"
+  fi
+  [[ -z "$vllm_containers" ]] \
+    || existing_vllm_conflict "vLLM inference workload is active: ${vllm_containers}. NemoClaw did not stop or modify it."
+}
+
 check_agent_and_inference_conflicts() {
-  local processes matches listeners
+  local processes agent_matches inference_matches listeners
   processes="$(ps -eo pid=,ppid=,comm=,args=)"
-  matches="$(awk -v self="$$" -v parent="$PPID" '
+  agent_matches="$(awk -v self="$$" -v parent="$PPID" '
     {
       pid=$1
       ppid=$2
@@ -1228,16 +1307,46 @@ check_agent_and_inference_conflicts() {
       $1=$2=$3=""
       args=tolower($0)
       if (pid == self || pid == parent) next
-      if (comm ~ /^(vllm|nemoclaw|openshell)$/ ||
-          args ~ /(^|[[:space:]\/])(vllm|nemoclaw|openshell)([[:space:]:]|\.js([[:space:]]|$)|$)/) print
+      if (comm ~ /^(nemoclaw|openshell)$/ ||
+          args ~ /(^|[[:space:]\/])(nemoclaw|openshell)([[:space:]:]|\.js([[:space:]]|$)|$)/) {
+        print "pid=" pid " process=" comm
+      }
     }
   ' <<<"$processes")"
-  [[ -z "$matches" ]] || fatal "Agent or inference workload is active: ${matches}"
+  [[ -z "$agent_matches" ]] \
+    || fatal "Agent workload is active: ${agent_matches}. Stop the listed agent process before Station Express. Then rerun the installer."
+
+  if [[ "${1:-}" == "--prefer-container-guidance" ]]; then
+    check_vllm_container_conflicts
+  fi
+
+  inference_matches="$(awk -v self="$$" -v parent="$PPID" '
+    {
+      pid=$1
+      ppid=$2
+      comm=tolower($3)
+      $1=$2=$3=""
+      args=tolower($0)
+      if (pid == self || pid == parent) next
+      if (comm == "vllm" ||
+          args ~ /(^|[[:space:]\/])vllm([[:space:]:]|\.js([[:space:]]|$)|$)/) {
+        print "pid=" pid " process=" comm " stop_command=\047kill -- " pid "\047"
+      }
+    }
+  ' <<<"$processes")"
+  [[ -z "$inference_matches" ]] \
+    || existing_vllm_conflict "vLLM inference workload is active: ${inference_matches}. NemoClaw did not stop or modify it."
 
   listeners="$(ss -H -ltn 2>/dev/null | awk '$4 ~ /:8000$/ {print}')"
-  [[ -z "$listeners" ]] || fatal "Port 8000 is already listening: ${listeners}"
+  [[ -z "$listeners" ]] \
+    || fatal "Port 8000 is already listening: ${listeners}. Stop the service that owns port 8000 before Station Express. Then rerun the installer."
 
   info "agent_inference_workloads=none port_8000=free"
+}
+
+check_initial_workload_quiescence() {
+  check_agent_and_inference_conflicts --prefer-container-guidance
+  require_no_running_docker_containers "initial Station host preparation"
 }
 
 require_docker_mutation_quiescence() {
@@ -1405,9 +1514,8 @@ common_preflight() {
   check_capacity
   check_network
   check_failed_units
-  check_agent_and_inference_conflicts
   capture_docker_container_baseline
-  require_no_running_docker_containers "initial Station host preparation"
+  check_initial_workload_quiescence
 }
 
 verify_file_sha256() {

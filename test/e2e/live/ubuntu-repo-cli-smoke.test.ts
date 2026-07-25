@@ -8,7 +8,10 @@ import path from "node:path";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
+const LIVE_TIMEOUT_MS = 2 * 60_000;
+
 test("ubuntu repo cli smoke", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm the compiled NemoClaw CLI is available",

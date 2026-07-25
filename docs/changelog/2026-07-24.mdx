@@ -1,0 +1,64 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.95
+
+NemoClaw v0.0.95 adds explicit ownership for externally supervised OpenShell gateways, strengthens recovery and state-transfer paths, expands inference compatibility, refreshes sandbox security packages, and requires E2E evidence from executed runs while separating runner wait time from test execution.
+
+- Platforms can now declare whether NemoClaw or an external systemd service owns the OpenShell gateway lifecycle.
+  NemoClaw validates the declared listener and keeps stop, recovery, and uninstall operations from changing an externally supervised gateway.
+  Stopping a sandbox now removes its dashboard forward, forward startup retries terminated listener attempts, and managed recovery retries dropped OpenShell relay connections.
+  Hermes preserves managed gateway restart recovery.
+  Uninstall keeps OpenShell-orphaned sibling sandboxes outside the selected cleanup scope.
+  For more information, refer to [Declare the OpenShell Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority), [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+- Snapshot restore now replaces SQLite state files through staged atomic operations.
+  Strict `backup-all` skips stranded orphan sandboxes, and `nemoclaw <name> download` verifies that each requested host artifact exists before reporting success.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Onboarding now reuses a reachable Ollama service on Windows hosts and falls back to the standard CDI directories when Docker reports no CDI specification directories.
+  OpenRouter forwarding applies a connection-establishment deadline, and managed NVIDIA Build Nemotron-3 requests omit the unsupported top-level `thinking` field.
+  Managed Deep Agents Code preserves configured headless retry limits while classifying provider failures.
+  For more information, refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Configure Inference Timeouts](/user-guide/openclaw/inference/manage-inference/configure-inference-timeouts), and [NemoClaw Quickstart with Deep Agents](/user-guide/deepagents/get-started/quickstart).
+- When a base-image override is supplied, NemoClaw accepts only an official immutable remote digest or a local image built and pinned during the current operation.
+  Rebuilds can reuse those local images, OpenClaw runtime checks validate version output, and shields preserve `openclaw.json` when a legacy lock has no config hash.
+  The base images also update bundled npm packages, Perl, libexpat, and jq to address reviewed security findings, while the final OpenClaw image uses fewer payload layers.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Architecture Details](/user-guide/openclaw/reference/architecture), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- The default OpenClaw Discord policy now allows the bot to manage its own application commands without granting unrelated Discord API access.
+  For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](/user-guide/openclaw/reference/network-policies).
+- Release E2E automation no longer accepts a skipped PR gate as passing evidence.
+  Root image changes select the full suite, direct `main` runs provision Hermes swap, retry reservations clean up after terminal outcomes, and runtime reports separate runner wait time from execution time.
+  Nightly history and selected-test risk signals make infrastructure delays and product failures easier to distinguish.
+
+## v0.0.94
+
+NemoClaw v0.0.94 strengthens sandbox restore and update behavior, adds machine-readable onboarding progress, improves policy and security evidence, reduces Hermes image build time, and makes live E2E failures easier to classify.
+
+- Snapshot restore now clears stale contents only from state directories declared by the snapshot manifest.
+  It preserves target-only directories and directories whose backup failed.
+  Cross-sandbox OpenClaw restores re-establish gateway pairing and verify it with an authenticated agent run.
+  Hermes images repair virtual-environment access for the sandbox user, and session exports verify that each download produced the expected host artifact.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- `nemoclaw upgrade-sandboxes --check` now reads sandbox state without starting, recovering, or selecting a gateway.
+  When registered sandboxes resolve to one recorded gateway, the command queries that gateway instead of the gateway selected by the current environment.
+  For more information, refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes).
+- `policy-add` now compares an already-applied catalog preset with the live policy.
+  It exits without mutation when the content matches and previews the update when the preset changed.
+  Network policy guidance now explains when an endpoint requires `tls: skip` raw TLS passthrough and identifies the lost L7 inspection and credential-resolution controls.
+  For more information, refer to [Apply Policy Presets](/user-guide/openclaw/network-policy/configure-policies/apply-policy-presets), [Configure Raw TLS Passthrough](/user-guide/openclaw/network-policy/configure-policies/configure-raw-tls-passthrough), [Common NemoClaw Integration Policy Examples](/user-guide/openclaw/network-policy/integration-policy-examples), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Onboarding now supports `--events=jsonl` for a versioned, redacted stream of canonical state-machine events.
+  The human-readable progress stream remains on standard error, and closing or slowing the event stream does not cancel onboarding.
+  DGX Spark resume preserves the selected managed vLLM Express path, managed vLLM rejects a model that does not support the detected platform before downloads, and compatibility recovery selects and probes one usable IPv4 resolver.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- DGX Station qualification now accepts an OTA-upgraded GB300 release marker that omits `DGX_OTA_PRETTY_NAME` when the base workstation identity is present.
+  The metadata override guidance now distinguishes recognized GB300 hardware from release-marker variants without weakening runtime checks.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
+- `sandbox doctor --json` now redacts token-shaped values at both machine-readable output boundaries while preserving the exit status from the original report.
+  Reviewed npm audits now retain scanner, registry, timing, package, advisory, report-path, and failure provenance.
+  A read-only advisory correlation tool can identify exact npm package and range matches before a reviewed audit record appears, while ambiguous matches remain informational and do not block a release.
+- Hermes image assembly now groups repository payloads into five ownership-preserving BuildKit layers.
+  The first hosted comparison reduced the production build step from 205 seconds to 101 seconds and the layer export from 178.8 seconds to 70.4 seconds.
+  Build-time checks preserve file contents, modes, owners, scanner ordering, and cache boundaries.
+- Live E2E validation now isolates long-running lanes, trusts exact-head Hermes swap setup, stabilizes cancelled child lifecycles, parallelizes plugin EXDEV coverage, and records periodic runner-pressure telemetry.
+  These changes distinguish hosted-runner loss from product failures while retaining the cold-onboard performance budget as a separate release signal.
+  Documentation validation also keeps agent-variant checks read-only, accepts an absent Fern preview as a non-blocking condition, and uses Fern `5.80.1`.

@@ -14,6 +14,10 @@ const remoteProviderConfig = {
   hermesProvider: { providerName: "hermes-provider" },
 };
 
+// Ternary accessor (no `if`, per the changed-test-file conditionals guardrail).
+const selectedKey = (result: ReturnType<typeof resolveRequestedProviderSelection>) =>
+  result.kind === "selected" ? result.selected.key : null;
+
 function resolve(overrides: Partial<Parameters<typeof resolveRequestedProviderSelection>[0]> = {}) {
   return resolveRequestedProviderSelection({
     options: [option("build")],
@@ -127,5 +131,43 @@ describe("resolveRequestedProviderSelection", () => {
       assert.equal(result.selected.key, "build");
       assert.equal(result.recoveredFromSandbox, false);
     }
+  });
+
+  it("auto-selects managed vLLM on a DGX managed-vLLM platform when no provider is given (#7293)", () => {
+    const result = resolve({
+      options: [option("build"), option("install-vllm")],
+      preferManagedVllmDefault: true,
+    });
+
+    assert.equal(selectedKey(result), "install-vllm");
+  });
+
+  it("auto-selects an already-running local vLLM on a managed-vLLM platform (#7293)", () => {
+    // When vLLM is already running, the menu exposes only `vllm` (not install-vllm).
+    const result = resolve({
+      options: [option("build"), option("vllm")],
+      preferManagedVllmDefault: true,
+    });
+
+    assert.equal(selectedKey(result), "vllm");
+  });
+
+  it("keeps the cloud default when the caller does not prefer managed vLLM (#7293)", () => {
+    // The menu can expose managed vLLM without changing the automatic selection.
+    const result = resolve({
+      options: [option("build"), option("install-vllm")],
+      preferManagedVllmDefault: false,
+    });
+
+    assert.equal(selectedKey(result), "build");
+  });
+
+  it("keeps the cloud default when no managed-vLLM entry is available (#7293)", () => {
+    const result = resolve({
+      options: [option("build"), option("openai")],
+      preferManagedVllmDefault: true,
+    });
+
+    assert.equal(selectedKey(result), "build");
   });
 });
