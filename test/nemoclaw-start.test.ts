@@ -1031,20 +1031,20 @@ exit 1
   it("blocks channel mutations and renders only validated host-side hints (#2592, #7292)", () => {
     const setup = writeProxyEnvWithGuard();
     try {
+      const marker = path.join(setup.tmpDir, "host-command-injection");
       const channels = ["discord", "slack", "teams", "telegram", "wechat", "whatsapp"];
       for (const op of ["add", "remove"]) {
         for (const channel of channels) {
+          const label = op + channel === "addtelegram" ? `bad; touch ${marker}` : "my-assistant";
+          const hint = label === "my-assistant" ? label : "<name>";
           const result = runGuardedShell(setup, [
-            "export OPENSHELL_SANDBOX=my-assistant",
+            `export OPENSHELL_SANDBOX=${JSON.stringify(label)}`,
             shellOpenclawCommand(["channels", op, channel]),
           ]);
           expect(result.status, `channels ${op} ${channel} should be blocked`).toBe(1);
-          expect(result.stderr).toContain(
-            `Run 'nemoclaw my-assistant channels ${op} ${channel}' on the host.`,
-          );
+          expect(result.stderr).toContain(`nemoclaw ${hint} channels ${op} ${channel}`);
         }
       }
-      const marker = path.join(setup.tmpDir, "host-command-injection");
       for (const args of [
         ["channels", `add'; touch ${marker}; #`, "telegram"],
         ["channels", "add", `telegram\n; touch ${marker}`],
