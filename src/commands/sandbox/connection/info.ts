@@ -31,7 +31,9 @@ type ConnectionInfoRuntimeBridge = {
 let runtimeBridgeFactory = (): ConnectionInfoRuntimeBridge => {
   const onboard = require("../../../lib/onboard") as {
     fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;
-    printDashboard: PrintDashboardFn;
+  };
+  const dashboard = require("../../../lib/onboard/dashboard") as {
+    getOnboardDashboardHelpers: () => { printDashboard: PrintDashboardFn };
   };
   const registry = require("../../../lib/state/registry") as {
     getSandbox: (name: string) => SandboxEntry | null;
@@ -51,7 +53,7 @@ let runtimeBridgeFactory = (): ConnectionInfoRuntimeBridge => {
     fetchToken: onboard.fetchGatewayAuthTokenFromSandbox,
     loadAgent: (agentName: string) => defs.loadAgent(agentName),
     isTerminalAgent: (agent: AgentDefinition) => defs.isTerminalAgent(agent),
-    printDashboard: onboard.printDashboard,
+    printDashboard: dashboard.getOnboardDashboardHelpers().printDashboard,
   };
 };
 
