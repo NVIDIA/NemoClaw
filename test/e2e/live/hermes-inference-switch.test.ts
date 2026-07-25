@@ -380,12 +380,24 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   progress.phase("run Hermes CLI against switched provider");
   const hermesCli = await runHermesCliPongWithRetry({
     run: (attempt) =>
-      sandbox.exec(SANDBOX_NAME, ["hermes", "-z", "Reply with exactly one word: PONG"], {
-        artifactName: `hermes-cli-z-after-switch-${attempt}`,
-        env: env(),
-        redactionValues,
-        timeoutMs: 150_000,
-      }),
+      sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "hermes",
+          "-z",
+          "Reply with exactly one word: PONG",
+          "--provider",
+          SWITCH_PROVIDER,
+          "--model",
+          SWITCH_MODEL,
+        ],
+        {
+          artifactName: `hermes-cli-split-provider-model-after-switch-${attempt}`,
+          env: env(),
+          redactionValues,
+          timeoutMs: 150_000,
+        },
+      ),
   });
   expect(hermesCli.exitCode, resultText(hermesCli)).toBe(0);
   expect(hermesCli.stdout).toMatch(/\bPONG\b/iu);
