@@ -10,10 +10,11 @@
  * routes. Routes are registered on an already-running adapter through an
  * authenticated control-plane `PUT /control/routes/:routeId` call instead of
  * a full respawn, because respawning would lose every other route's
- * credential value — those values are seeded into the process only at spawn
- * time or via a control-plane call and are never written to disk. Persisted
- * recovery bookkeeping contains only opaque route ids, provider type,
- * non-secret token generation values, and timestamps.
+ * credential value — those values enter the process only through the
+ * authenticated loopback control plane and are never written to disk or
+ * placed in the child process environment. Persisted recovery bookkeeping
+ * contains only opaque route ids, provider type, non-secret token generation
+ * values, and timestamps.
  *
  * If the adapter process dies, only the next route whose owning command calls
  * `ensureHttpsPinRuntimeAdapter` recovers automatically; other previously
@@ -773,31 +774,18 @@ export function createHttpsPinRuntimeAdapterServer(options: {
   return server;
 }
 
-function parseBootstrapRoute(
-  raw: string | undefined,
-): { routeId: string; route: RouteRuntime; allowedSourceCidrs: string[] } | null {
-  if (!raw) return null;
+function parseAllowedSourceCidrs(raw: string | undefined): string[] {
+  if (!raw) return [];
   try {
-    const parsed = JSON.parse(raw) as {
-      routeId?: unknown;
-      targetBaseUrl?: unknown;
-      pinnedAddresses?: unknown;
-      providerType?: unknown;
-      credentialValue?: unknown;
-      generation?: unknown;
-      allowedSourceCidrs?: unknown;
-    };
-    if (typeof parsed.routeId !== "string" || !parsed.routeId) return null;
-    const route = parseRoutePutBody(parsed as JsonObject);
-    const allowedSourceCidrs = Array.isArray(parsed.allowedSourceCidrs)
-      ? parsed.allowedSourceCidrs.filter(
+    const parsed = JSON.parse(raw) as unknown;
+    const allowedSourceCidrs = Array.isArray(parsed)
+      ? parsed.filter(
           (entry): entry is string => typeof entry === "string" && Boolean(entry.trim()),
         )
       : [];
-    buildAllowedRouteSourceMatcher(allowedSourceCidrs);
-    return { routeId: parsed.routeId, route, allowedSourceCidrs };
+    return buildAllowedRouteSourceMatcher(allowedSourceCidrs).cidrs;
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -840,29 +828,25 @@ export function startHttpsPinRuntimeAdapterFromEnv(): http.Server {
     throw new Error("NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT must be a valid port");
   }
 
-  const bootstrap = parseBootstrapRoute(
-    process.env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_BOOTSTRAP_ROUTE,
+  const allowedSourceCidrs = parseAllowedSourceCidrs(
+    process.env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ALLOWED_SOURCE_CIDRS,
   );
-  const initialRoutes: Record<string, RouteRuntime> = bootstrap
-    ? { [bootstrap.routeId]: bootstrap.route }
-    : {};
   const orphanedRoutes = parseOrphanedRoutes(
     process.env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTES,
   );
 
   const server = createHttpsPinRuntimeAdapterServer({
     controlToken,
-    allowedSourceCidrs: bootstrap?.allowedSourceCidrs ?? [],
-    initialRoutes,
+    allowedSourceCidrs,
     orphanedRoutes,
   });
   server.listen(port, HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST, () => {
     defaultAdapterLogger("adapter_ready", {
       bindHost: HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST,
       port,
-      routeCount: Object.keys(initialRoutes).length,
+      routeCount: 0,
       orphanedRouteCount: Object.keys(orphanedRoutes).length,
-      allowedSourceCidrs: bootstrap?.allowedSourceCidrs.join(",") ?? "",
+      allowedSourceCidrs: allowedSourceCidrs.join(","),
       logPath: LOG_PATH,
     });
     console.log(
@@ -1302,11 +1286,6 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
         : crypto.randomBytes(16).toString("hex");
     const controlToken = await ensureAdapterProcessLocked({
       routeId,
-      endpointUrl: options.endpointUrl,
-      pinnedAddresses,
-      providerType: options.providerType,
-      credentialValue: options.credentialValue,
-      generation,
       allowedSourceCidrs,
     });
 
@@ -1481,14 +1460,22 @@ async function findReusableAdapterControlToken(
     : null;
 }
 
+function buildAdapterChildEnv(
+  controlToken: string,
+  allowedSourceCidrs: readonly string[],
+  orphanedRoutes: Record<string, OrphanedRouteMeta>,
+): Record<string, string> {
+  return {
+    NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT: String(HTTPS_PIN_RUNTIME_ADAPTER_PORT),
+    [HTTPS_PIN_RUNTIME_ADAPTER_CONTROL_TOKEN_ENV]: controlToken,
+    NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ALLOWED_SOURCE_CIDRS: JSON.stringify(allowedSourceCidrs),
+    NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTES: JSON.stringify(orphanedRoutes),
+  };
+}
+
 /** Returns the host-only control token, reusing the running process when possible or spawning fresh. */
-async function ensureAdapterProcessLocked(bootstrap: {
+async function ensureAdapterProcessLocked(options: {
   routeId: string;
-  endpointUrl: string;
-  pinnedAddresses: string[];
-  providerType: HttpsPinCredentialProviderType;
-  credentialValue: string;
-  generation: string;
   allowedSourceCidrs: string[];
 }): Promise<string> {
   validateAdapterPortConfiguration();
@@ -1499,7 +1486,7 @@ async function ensureAdapterProcessLocked(bootstrap: {
   // an upgrade cannot keep older forwarding security behavior alive.
   const reusableToken = await findReusableAdapterControlToken(
     priorToken,
-    bootstrap.allowedSourceCidrs,
+    options.allowedSourceCidrs,
   );
   if (reusableToken) return reusableToken;
 
@@ -1517,24 +1504,11 @@ async function ensureAdapterProcessLocked(bootstrap: {
   const priorState = readLocalAdapterJsonFile(STATE_PATH);
   const { orphanedRoutes, persistedRoutes } = computeRespawnState(
     extractPersistedRoutes(priorState),
-    bootstrap.routeId,
+    options.routeId,
   );
   const child = spawnDetachedNodeAdapter({
     scriptPath: getAdapterScriptPath(),
-    env: {
-      NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT: String(HTTPS_PIN_RUNTIME_ADAPTER_PORT),
-      [HTTPS_PIN_RUNTIME_ADAPTER_CONTROL_TOKEN_ENV]: token,
-      NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_BOOTSTRAP_ROUTE: JSON.stringify({
-        routeId: bootstrap.routeId,
-        targetBaseUrl: bootstrap.endpointUrl,
-        pinnedAddresses: bootstrap.pinnedAddresses,
-        providerType: bootstrap.providerType,
-        credentialValue: bootstrap.credentialValue,
-        generation: bootstrap.generation,
-        allowedSourceCidrs: bootstrap.allowedSourceCidrs,
-      }),
-      NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTES: JSON.stringify(orphanedRoutes),
-    },
+    env: buildAdapterChildEnv(token, options.allowedSourceCidrs, orphanedRoutes),
     // This is a long-lived, credential-bearing process, so it gets a
     // purpose-built minimal environment rather than the general subprocess
     // allowlist -- it must not inherit DOCKER_HOST/KUBECONFIG/SSH_AUTH_SOCK/
@@ -1544,7 +1518,7 @@ async function ensureAdapterProcessLocked(bootstrap: {
   });
   try {
     persistLocalAdapterPid(PID_PATH, child.pid);
-    if (!(await waitForAdapterHealth(token, bootstrap.allowedSourceCidrs))) {
+    if (!(await waitForAdapterHealth(token, options.allowedSourceCidrs))) {
       throw new Error(
         `HTTPS Pin Runtime adapter did not become healthy on ${HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_ORIGIN}`,
       );
@@ -1570,7 +1544,9 @@ export const __test = {
   ORPHANED_ROUTE_RECOVERY_BOUNDARY,
   CURRENT_ADAPTER_IDENTITY,
   deriveRouteToken,
+  buildAdapterChildEnv,
   buildContainedForwardPath,
+  parseAllowedSourceCidrs,
   waitForAdapterProcessExit,
   persistRouteState,
   getAdapterScriptPath,

@@ -1297,6 +1297,31 @@ describe("computeRespawnState orphaned-route bookkeeping (#6141)", () => {
   });
 });
 
+describe("HTTPS Pin Runtime adapter child environment (#6141)", () => {
+  it("keeps upstream route credentials out of the long-lived child environment", () => {
+    const env = __test.buildAdapterChildEnv(TEST_CONTROL_TOKEN, ["172.17.0.0/16"], {
+      orphaned: {
+        providerType: "openai",
+        generation: TEST_ROUTE_GENERATION,
+      },
+    });
+
+    expect(env).not.toHaveProperty("NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_BOOTSTRAP_ROUTE");
+    expect(env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ALLOWED_SOURCE_CIDRS).toBe('["172.17.0.0/16"]');
+    expect(JSON.stringify(env)).not.toContain("sk-upstream-secret");
+    expect(JSON.stringify(env)).not.toContain("real-upstream.example");
+  });
+
+  it("accepts only a validated JSON array of bridge source CIDRs", () => {
+    expect(__test.parseAllowedSourceCidrs('["172.17.0.0/16","fd00::/64"]')).toEqual([
+      "172.17.0.0/16",
+      "fd00::/64",
+    ]);
+    expect(__test.parseAllowedSourceCidrs('["not-a-cidr"]')).toEqual([]);
+    expect(__test.parseAllowedSourceCidrs('{"cidr":"172.17.0.0/16"}')).toEqual([]);
+  });
+});
+
 describe("ensureHttpsPinRuntimeAdapter preflight-before-credential ordering (#6141)", () => {
   const privateLookup: EndpointDnsLookupFn = async () => [{ address: "10.48.203.205", family: 4 }];
   const publicLookup: EndpointDnsLookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
