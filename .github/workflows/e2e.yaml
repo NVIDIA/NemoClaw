@@ -223,18 +223,24 @@ jobs:
           [[ "$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$ ]] || { echo "::error::controller_check_id must be a positive integer"; exit 1; }
           expected_external_id="nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}"
           expected_run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+          expected_check_url="https://github.com/${GITHUB_REPOSITORY}/runs/${CONTROLLER_CHECK_ID}"
           jobs_summary="${JOBS//,/, }"
           targets_summary="${TARGETS//,/, }"
-          expected_summary="Risk plan ${PLAN_HASH} selected jobs: ${jobs_summary:-none}; targets: ${targets_summary:-none}."
+          expected_summary="[Selected E2E run ${RUN_ID}](${expected_run_url})"$'\n\n'"Risk plan ${PLAN_HASH} selected jobs: ${jobs_summary:-none}; targets: ${targets_summary:-none}."
           check_json=""
           for _attempt in {1..15}; do
             if check_json="$(curl --fail --silent --show-error --proto '=https' \
               --header "Authorization: Bearer ${GITHUB_TOKEN}" \
               --header "Accept: application/vnd.github+json" \
               --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}")" &&
-              [[ "$(jq -r '.details_url // ""' <<< "$check_json")" == "$expected_run_url" ]]; then
-              break
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}")"; then
+              details_url="$(jq -r '.details_url // ""' <<< "$check_json")"
+              summary="$(jq -r '.output.summary // ""' <<< "$check_json")"
+              if [[ "$summary" == "$expected_summary" ]] &&
+                { [[ "$details_url" == "$expected_run_url" ]] ||
+                  [[ "$details_url" == "$expected_check_url" ]]; }; then
+                break
+              fi
             fi
             check_json=""
             sleep 2
@@ -244,6 +250,7 @@ jobs:
             --argjson check_id "$CONTROLLER_CHECK_ID" \
             --arg external_id "$expected_external_id" \
             --arg head_sha "$CHECKOUT_SHA" \
+            --arg check_url "$expected_check_url" \
             --arg run_url "$expected_run_url" \
             --arg summary "$expected_summary" \
             '
@@ -255,7 +262,7 @@ jobs:
               .external_id == $external_id and
               .status == "in_progress" and
               .conclusion == null and
-              .details_url == $run_url and
+              (.details_url == $run_url or .details_url == $check_url) and
               .output.summary == $summary
             ' <<< "$check_json" >/dev/null ||
             { echo "::error::controller check does not authorize this exact E2E run"; exit 1; }

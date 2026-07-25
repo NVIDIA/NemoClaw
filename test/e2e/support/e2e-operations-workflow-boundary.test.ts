@@ -25,6 +25,61 @@ function workflowScript(jobName: string, stepName: string): string {
   return step?.with?.script as string;
 }
 
+function runControllerAuthentication(detailsUrl: string, summaryRunId = 23) {
+  const workflow = readE2eOperationsWorkflow();
+  const authentication = workflow.jobs["generate-matrix"].steps!.find(
+    (step) => step.name === "Authenticate controller dispatch",
+  )!;
+  const headSha = "a".repeat(40);
+  const baseSha = "b".repeat(40);
+  const planHash = "c".repeat(64);
+  const check = JSON.stringify({
+    id: 17,
+    name: "E2E / PR Gate Coordination",
+    app: { id: 15368, slug: "github-actions" },
+    head_sha: headSha,
+    external_id: `nemoclaw-pr-e2e:v2:42:${headSha}:${baseSha}`,
+    status: "in_progress",
+    conclusion: null,
+    details_url: detailsUrl,
+    output: {
+      summary: `[Selected E2E run ${summaryRunId}](https://github.com/NVIDIA/NemoClaw/actions/runs/${summaryRunId})\n\nRisk plan ${planHash} selected jobs: credential-sanitization; targets: none.`,
+    },
+  });
+  return spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-e",
+      "-o",
+      "pipefail",
+      "-c",
+      `curl() { printf '%s' "$FAKE_CHECK"; }\nsleep() { :; }\n${authentication.run!}`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ACTOR: "github-actions[bot]",
+        BASE_SHA: baseSha,
+        CHECKOUT_SHA: headSha,
+        CONTROLLER_CHECK_ID: "17",
+        CORRELATION_ID: "123e4567-e89b-42d3-a456-426614174000",
+        FAKE_CHECK: check,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_TOKEN: "unused",
+        JOBS: "credential-sanitization",
+        PLAN_HASH: planHash,
+        PR_NUMBER: "42",
+        RUN_ATTEMPT: "1",
+        RUN_ID: "23",
+        TARGETS: "",
+      },
+    },
+  );
+}
+
 describe("E2E operations workflow boundary", () => {
   it("accepts the checked-in workflow and rejects aggregation, permission, and secret-scope drift", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
@@ -146,7 +201,7 @@ describe("E2E operations workflow boundary", () => {
         "Controller authentication must bind CONTROLLER_CHECK_ID",
         'Controller authentication must retain "$ACTOR" == "github-actions[bot]"',
         "Controller authentication must retain .app.id == 15368",
-        "Controller authentication must retain .details_url == $run_url",
+        "Controller authentication must retain (.details_url == $run_url or .details_url == $check_url)",
         "Controller validation must be activated only by checkout_sha",
         "Controller validation must bind BASE_SHA",
         "Controller validation must bind CHECKOUT_REPOSITORY",
@@ -214,61 +269,21 @@ describe("E2E operations workflow boundary", () => {
     expect(result.stderr).not.toContain("curl:");
   });
 
-  it("accepts a controller check bound to the exact child run and selected plan", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate controller dispatch",
-    )!;
-    const headSha = "a".repeat(40);
-    const baseSha = "b".repeat(40);
-    const planHash = "c".repeat(64);
-    const check = JSON.stringify({
-      id: 17,
-      name: "E2E / PR Gate Coordination",
-      app: { id: 15368, slug: "github-actions" },
-      head_sha: headSha,
-      external_id: `nemoclaw-pr-e2e:v2:42:${headSha}:${baseSha}`,
-      status: "in_progress",
-      conclusion: null,
-      details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
-      output: {
-        summary: `Risk plan ${planHash} selected jobs: credential-sanitization; targets: none.`,
-      },
-    });
-    const result = spawnSync(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-e",
-        "-o",
-        "pipefail",
-        "-c",
-        `curl() { printf '%s' "$FAKE_CHECK"; }\n${authentication.run!}`,
-      ],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          ACTOR: "github-actions[bot]",
-          BASE_SHA: baseSha,
-          CHECKOUT_SHA: headSha,
-          CONTROLLER_CHECK_ID: "17",
-          CORRELATION_ID: "123e4567-e89b-42d3-a456-426614174000",
-          FAKE_CHECK: check,
-          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          GITHUB_TOKEN: "unused",
-          JOBS: "credential-sanitization",
-          PLAN_HASH: planHash,
-          PR_NUMBER: "42",
-          RUN_ATTEMPT: "1",
-          RUN_ID: "23",
-          TARGETS: "",
-        },
-      },
-    );
-
+  it.each([
+    ["child-run URL", "https://github.com/NVIDIA/NemoClaw/actions/runs/23"],
+    ["GitHub canonical check URL", "https://github.com/NVIDIA/NemoClaw/runs/17"],
+  ])("accepts a controller check with the %s and exact child-run summary", (_label, url) => {
+    const result = runControllerAuthentication(url);
     expect(result.status, result.stderr || result.stdout).toBe(0);
+  });
+
+  it("rejects a canonical check URL whose summary names a different child run", () => {
+    const result = runControllerAuthentication("https://github.com/NVIDIA/NemoClaw/runs/17", 24);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "trusted controller authorization was not published for this run",
+    );
   });
 
   it("binds controller dispatch to the exact checkout, plan, and correlation identity (#6955)", () => {

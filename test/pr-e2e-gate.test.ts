@@ -1403,9 +1403,14 @@ describe("PR E2E controller", () => {
         status: "in_progress",
         output: {
           title: "Running 13 E2E checks",
-          summary: expect.stringContaining("upgrade-stale-sandbox"),
+          summary: expect.stringContaining(
+            "[Selected E2E run 23](https://github.com/NVIDIA/NemoClaw/actions/runs/23)",
+          ),
         },
       });
+      expect(
+        (checkUpdates[1]?.body as { output?: { summary?: string } } | undefined)?.output?.summary,
+      ).toContain("upgrade-stale-sandbox");
       expect(checkUpdates[2]?.body).toMatchObject({
         status: "completed",
         conclusion: "success",

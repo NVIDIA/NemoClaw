@@ -187,15 +187,16 @@ function validateControllerAuthorization(
     '"$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$',
     "nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}",
     "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}",
+    "https://github.com/${GITHUB_REPOSITORY}/runs/${CONTROLLER_CHECK_ID}",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}",
-    `[[ "$(jq -r '.details_url // ""' <<< "$check_json")" == "$expected_run_url" ]]`,
+    "[Selected E2E run ${RUN_ID}](${expected_run_url})",
     '.name == "E2E / PR Gate Coordination"',
     ".app.id == 15368",
     '.app.slug == "github-actions"',
     ".external_id == $external_id",
     '.status == "in_progress"',
     ".conclusion == null",
-    ".details_url == $run_url",
+    "(.details_url == $run_url or .details_url == $check_url)",
     ".output.summary == $summary",
   ]) {
     if (!source.includes(fragment)) {
