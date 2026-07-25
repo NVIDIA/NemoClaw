@@ -1225,11 +1225,12 @@ jobs:
           cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
 
       - name: Run inference routing live test
-        # Direct E2E coverage. The always-on PR-safe slices prove invalid-key,
-        # unreachable-endpoint, and localhost-compatible gateway routing
-        # without spending live provider quota. Credential-backed isolation
-        # and provider smokes live in inference-routing-provider-smoke.test.ts;
-        # any future secret-bearing lane must run that file from trusted main.
+        # Direct PR-safe E2E coverage proves invalid-key, unreachable-endpoint,
+        # localhost-compatible routing, namespace-aware HTTPS pinning, DNS
+        # rebinding resistance, private-target redirect rejection, and
+        # credential-bearing URL state rejection without live provider quota.
+        # Provider smokes live in inference-routing-provider-smoke.test.ts; any
+        # future secret-bearing lane must run that file from trusted main.
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/inference-routing.test.ts
