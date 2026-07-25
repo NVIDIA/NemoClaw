@@ -49,7 +49,8 @@ If a support workflow asks you to pass the maintained tag explicitly, clear any 
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash
 ```
 
-Before upgrade work, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
+Before it prepares recovery or creates backups, the installer requires any existing OpenShell executable it will use to report a version.
+Only after that validation does it prepare the current NemoClaw CLI without replacing OpenShell and require a fresh backup of every registered sandbox.
 If any sandbox is skipped or fails, the installer exits before it changes the gateway.
 After backup, the installer compares the installed OpenShell version with the supported range declared by the prepared current source.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
