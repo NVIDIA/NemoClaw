@@ -37,6 +37,7 @@ function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecove
     getGatewayStartEnv: () => ({ OPENSHELL_DRIVERS: "docker" }),
     runCaptureOpenshell: vi.fn(() => "Disconnected"),
     runOpenshell: vi.fn(() => ({ status: 0 })),
+    getContainerRuntime: () => "docker",
     sleepSeconds: vi.fn(),
     startGatewayWithOptions: vi.fn(
       async () => undefined,
