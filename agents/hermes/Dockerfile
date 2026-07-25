@@ -491,7 +491,8 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
-    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
+    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts \
+    && rm -rf /sandbox/.cache
 
 # Install NemoClaw plugin into Hermes
 # hadolint ignore=DL3059
@@ -751,6 +752,7 @@ RUN check_metadata() { \
     check_absent /root/.npm \
     && check_absent /root/.cache/electron \
     && check_absent /root/.cache/node-gyp \
+    && check_absent /sandbox/.cache \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
