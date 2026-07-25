@@ -126,7 +126,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     changedFiles.filter(
       (file) =>
         file === DEEPAGENTS_HEADLESS_INFERENCE_CHECK ||
-        (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && !/\.(?:md|mdx)$/u.test(file)),
+        (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
     ),
   );
   return matchedFiles.length > 0

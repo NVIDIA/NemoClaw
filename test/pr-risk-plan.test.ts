@@ -125,6 +125,8 @@ describe("deterministic PR risk plan", () => {
     const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles });
     const docsAndTestsOnly = plan(
       "agents/langchain-deepagents-code/dependency-review.md",
+      "agents/langchain-deepagents-code/runtime-notes.mdx",
+      "agents/langchain-deepagents-code/resolver.test.ts",
       "test/langchain-deepagents-code-managed-model-params.test.ts",
     );
 
