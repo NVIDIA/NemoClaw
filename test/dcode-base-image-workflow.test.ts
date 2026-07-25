@@ -102,13 +102,10 @@ function publisherJobs(candidate: Workflow): Publisher[] {
 
 function openClawPlatformPublishers(candidate: Workflow): Publisher[] {
   const jobName = "build-openclaw-platforms";
-  const job = candidate.jobs?.[jobName];
+  const job = candidate.jobs?.[jobName] as WorkflowJob;
   const steps = job?.steps ?? [];
   const buildIndex = steps.findIndex((step) => step.uses?.startsWith("docker/build-push-action@"));
-  const build = steps[buildIndex];
-  if (!job || !build) {
-    return [];
-  }
+  const build = steps[buildIndex] as WorkflowStep;
   return (job.strategy?.matrix?.include ?? []).map((matrix) => ({
     jobName: `${jobName} (${matrix.arch ?? "unnamed"})`,
     job,
