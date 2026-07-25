@@ -1119,13 +1119,12 @@ describe("pull request and main workflow contracts", () => {
 
   // source-shape-contract: security -- Downloaded CI tooling must use a committed digest rather than upstream metadata
   it("pins downloaded CI tooling to reviewed integrity", () => {
-    const staticRunsJoined = stepRuns(sharedActions.staticChecks).join("\n");
-
-    expect(staticRunsJoined).toContain(
-      'HADOLINT_SHA256="6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"',
-    );
-    expect(staticRunsJoined).not.toContain('"${HADOLINT_URL}.sha256"');
-    expect(staticRunsJoined).not.toContain("EXPECTED=$(curl");
+    const docsRuns = stepRuns(prWorkflow.jobs["docs-only-checks"]).join("\n");
+    for (const runs of [stepRuns(sharedActions.staticChecks).join("\n"), docsRuns]) {
+      expect(runs).toContain("6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47");
+      expect(runs).not.toMatch(/HADOLINT_URL.*sha256|EXPECTED=\$\(curl/);
+    }
+    expect(docsRuns.indexOf("HADOLINT_SHA256")).toBeLessThan(docsRuns.indexOf("prek run"));
   });
 
   it("validates CLI shard inputs before using them in shell commands", () => {
