@@ -32,6 +32,7 @@ function makeVirtualClock(startMs = 1_000_000_000_000) {
 
 function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecoveryDeps {
   return {
+    assertGatewayStartAllowed: vi.fn(),
     getGatewayClusterContainerState: () => "missing",
     getGatewayStartEnv: () => ({ OPENSHELL_DRIVERS: "docker" }),
     runCaptureOpenshell: vi.fn(() => "Disconnected"),
@@ -281,5 +282,41 @@ describe("gateway recovery", () => {
 
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
+  });
+});
+
+describe("gateway lifecycle authority during recovery", () => {
+  it("starts no gateway on any recovery branch when an external supervisor owns it (#6576)", async () => {
+    const ownershipError = new Error("owned by openshell-gateway.service");
+    const deps = createDeps({
+      assertGatewayStartAllowed: vi.fn(() => {
+        throw ownershipError;
+      }),
+    });
+
+    // The cross-port, non-default-name target is the branch that reaches a raw
+    // `openshell gateway start` without going through startGatewayWithOptions.
+    await expect(
+      startGatewayForRecovery({ gatewayName: "nemoclaw-8090", gatewayPort: 8090 }, deps),
+    ).rejects.toThrow(ownershipError);
+
+    expect(deps.assertGatewayStartAllowed).toHaveBeenCalledWith(false, {
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+    });
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
+  });
+
+  it("still recovers normally when NemoClaw owns the gateway lifecycle (#6576)", async () => {
+    const deps = createDeps({ assertGatewayStartAllowed: vi.fn() });
+
+    await startGatewayForRecovery({}, deps);
+
+    expect(deps.assertGatewayStartAllowed).toHaveBeenCalledWith(false, {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    expect(deps.startGatewayWithOptions).toHaveBeenCalledOnce();
   });
 });

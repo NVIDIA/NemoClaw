@@ -21,11 +21,13 @@ export const PREPARE_E2E_ACTION = PREPARE_E2E_ACTION_PROVENANCE.reference;
 export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
+const PREINSTALLED_E2E_JOBS = new Set(["staging-brev-launchable"]);
 
 const NO_BUILD_JOBS = new Set([
   "generate-matrix",
   "bootstrap-install-smoke",
   "ollama-auth-proxy",
+  "security-posture",
   "shields-config",
   "snapshot-commands",
   "spark-install",
@@ -104,7 +106,8 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       .filter(([jobName, value]) => {
         const job = record(value);
         return (
-          jobName === "generate-matrix" || jobName === "live" || record(job.env).E2E_JOB === "1"
+          !PREINSTALLED_E2E_JOBS.has(jobName) &&
+          (jobName === "generate-matrix" || jobName === "live" || record(job.env).E2E_JOB === "1")
         );
       })
       .map(([jobName]) => jobName),

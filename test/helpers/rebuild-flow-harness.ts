@@ -141,6 +141,8 @@ export type RebuildFlowHarness = {
   disposePreparedDcodeRebuildImageSpy: MockInstance;
   errorSpy: MockInstance;
   ensureAgentBaseImageSpy: MockInstance;
+  pinTrustedAgentBaseImageOverrideForOperationSpy: MockInstance;
+  restoreTrustedAgentBaseImageOverrideSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
@@ -276,9 +278,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   const agentName = overrides.agentName ?? "openclaw";
-  const agentBaseImageRef = `nemoclaw-${agentName}-base:test`;
+  const agentDisplayName =
+    agentName === "langchain-deepagents-code"
+      ? "Deep Agents Code"
+      : agentName === "hermes"
+        ? "Hermes Agent"
+        : "OpenClaw";
+  const agentBaseImageId = `sha256:${"a".repeat(64)}`;
+  const agentBaseImageRef = `nemoclaw-${agentName}-sandbox-base-local:image-${agentBaseImageId.slice("sha256:".length)}`;
   const agentDef = {
     name: agentName,
+    displayName: agentDisplayName,
     expectedVersion: "0.2.0",
     dockerfileBasePath: "/tmp/Dockerfile.base",
     runtime: { kind: "terminal" },
@@ -295,7 +305,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ok: true,
     imageTag: null,
   });
-  const agentBaseImageId = `sha256:${"a".repeat(64)}`;
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],
@@ -309,7 +318,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return overrides.sandboxBaseImageLabelsOutput;
     }
     if (args[0] === "{{.Id}}") {
-      const imageId = imageIdsByRef.get(String(args[1]));
+      const imageRef = String(args[1]);
+      if (imageRef === agentBaseImageRef && dcodeBaseImageIds.length > 0) {
+        return dcodeBaseImageIds.shift()!;
+      }
+      const imageId = imageIdsByRef.get(imageRef);
       if (imageId) return imageId;
     }
     return dcodeBaseImageIds.shift() ?? "sha256:dcode-base";
@@ -323,10 +336,19 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     return { status: 0 };
   });
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
+  const trustedLocalOverride = {
+    ref: agentBaseImageRef,
+    provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
+  };
   const ensureAgentBaseImageSpy = vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
     imageTag: agentBaseImageRef,
     built: true,
+    trustedLocalOverride,
   });
+  const restoreTrustedAgentBaseImageOverrideSpy = vi.fn();
+  const pinTrustedAgentBaseImageOverrideForOperationSpy = vi
+    .spyOn(agentOnboard, "pinTrustedAgentBaseImageOverrideForOperation")
+    .mockReturnValue(restoreTrustedAgentBaseImageOverrideSpy);
   const sessionAgentName =
     overrides.sessionAgentName === undefined ? agentName : overrides.sessionAgentName;
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
@@ -334,13 +356,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       ? null
       : ({ name: sessionAgentName } as never),
   );
-  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(
-    agentName === "langchain-deepagents-code"
-      ? "Deep Agents Code"
-      : agentName === "hermes"
-        ? "Hermes Agent"
-        : "OpenClaw",
-  );
+  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(agentDisplayName);
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
     async (...args: unknown[]) => {
       const gatewayName =
@@ -511,6 +527,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     );
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
+    if (argv.join(" ") === "sandbox get alpha") {
+      return {
+        status: 1,
+        output: "sandbox alpha not found",
+        stdout: "",
+        stderr: "sandbox alpha not found",
+      };
+    }
     return argv[0] === "provider" && argv[1] === "get"
       ? {
           status: 0,
@@ -681,6 +705,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     disposePreparedDcodeRebuildImageSpy,
     errorSpy,
     ensureAgentBaseImageSpy,
+    pinTrustedAgentBaseImageOverrideForOperationSpy,
+    restoreTrustedAgentBaseImageOverrideSpy,
     executeSandboxCommandSpy,
     checkAndRecoverSandboxProcessesSpy,
     ensureMessagingHostForwardAfterRebuildSpy,

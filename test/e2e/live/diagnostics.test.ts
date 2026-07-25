@@ -46,17 +46,13 @@ function redactForAssertion(text: string, apiKey: string): string {
     .replace(/nvapi-[A-Za-z0-9_-]{10,}/g, "<REDACTED>");
 }
 
-function runRawNodeCliForLeakAssertion(
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  timeoutMs: number,
-): RawCommandResult {
+function runRawNodeCliForLeakAssertion(args: string[], env: NodeJS.ProcessEnv): RawCommandResult {
   const result = spawnSync("node", [CLI_ENTRYPOINT, ...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     env,
     killSignal: "SIGKILL",
-    timeout: timeoutMs,
+    timeout: 60_000,
   });
   return {
     status: result.status,
@@ -114,7 +110,17 @@ function assertNoSecretInExtractedArchive(extractDir: string, apiKey: string): v
 
 test("diagnostics CLI creates sanitized archives and validates sandbox/credential diagnostics", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "validate diagnostics runtime prerequisites",
+      "exercise quick debug archive",
+      "install diagnostics sandbox",
+      "inspect sanitized full and scoped archives",
+      "validate sandbox status and config",
+      "audit and reset gateway credentials",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   expect(
     fs.existsSync(CLI_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -191,6 +197,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     }),
   );
 
+  progress.phase("exercise quick debug archive");
   const version = await host.command("node", [CLI_ENTRYPOINT, "--version"], {
     artifactName: "diagnostics-nemoclaw-version",
     env: testEnv(home),
@@ -222,6 +229,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     "debug --quick must complete within the legacy 30s process timeout plus harness scheduling grace",
   ).toBeLessThanOrEqual(DEBUG_QUICK_TIMEOUT_MS + 5_000);
 
+  progress.phase("install diagnostics sandbox");
   const install = await host.command(
     "bash",
     ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -235,6 +243,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   );
   expect(install.exitCode, resultText(install)).toBe(0);
 
+  progress.phase("inspect sanitized full and scoped archives");
   const fullDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-debug-full-"));
   const fullArchive = path.join(fullDir, "debug-full.tar.gz");
   const extractDir = path.join(fullDir, "extracted");
@@ -296,6 +305,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     false,
   );
 
+  progress.phase("validate sandbox status and config");
   const config = await sandbox.exec(
     SANDBOX_NAME,
     ["sh", "-lc", "cat /sandbox/.openclaw/openclaw.json"],
@@ -318,7 +328,8 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   expect(status.exitCode, resultText(status)).toBe(0);
   expect(resultText(status)).toMatch(/Model/i);
 
-  const rawCredentialsList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
+  progress.phase("audit and reset gateway credentials");
+  const rawCredentialsList = runRawNodeCliForLeakAssertion(["credentials", "list"], env);
   const credentialsOutput = rawResultText(rawCredentialsList);
   const credentialsStdout = rawCredentialsList.stdout;
   expect(rawCredentialsList.status, redactForAssertion(credentialsOutput, apiKey)).toBe(0);
@@ -387,7 +398,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     expect(reset.exitCode, resultText(reset)).toBe(0);
     expect(reset.stdout, resultText(reset)).toContain(`Removed provider '${hosted.providerName}'`);
 
-    const rawPostResetList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
+    const rawPostResetList = runRawNodeCliForLeakAssertion(["credentials", "list"], env);
     const postResetOutput = rawResultText(rawPostResetList);
     expect(rawPostResetList.status, redactForAssertion(postResetOutput, apiKey)).toBe(0);
     expect(

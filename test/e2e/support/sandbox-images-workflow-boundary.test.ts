@@ -197,6 +197,22 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("requires bounded swap before every hosted Hermes image export", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    for (const jobName of ["build-hermes-sandbox-image", "messaging-plan-image-boundary"]) {
+      const job = imageWorkflow.jobs[jobName];
+      const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
+      swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
+    }
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        'build-hermes-sandbox-image Hermes export swap must include sudo swapon "$swap_file"',
+        'messaging-plan-image-boundary Hermes export swap must include sudo swapon "$swap_file"',
+      ]),
+    );
+  });
+
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-sandbox-images"];
@@ -240,7 +256,7 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
-        "build-sandbox-images must retain its 15-minute producer budget",
+        "build-sandbox-images must retain its 45-minute producer budget",
         "runtime-overrides timeout must cover its 45-minute probe budget",
         "runtime-overrides must remain an independent consumer of build-sandbox-images",
         "OpenClaw producer must not run the failure-isolated runtime probe",

@@ -33,6 +33,19 @@ const canonicalOpenShellPolicyAlias = [
     replacement: canonicalOpenShellPolicyBoundary,
   },
 ];
+const e2ePhaseCollectionAlias =
+  process.env.NEMOCLAW_E2E_PHASE_COLLECTION === "1"
+    ? [
+        {
+          find: "../../../dist/lib/onboard/docker-driver-gateway-launch",
+          replacement: path.resolve("src/lib/onboard/docker-driver-gateway-launch.ts"),
+        },
+        {
+          find: "../../../dist/lib/onboard/docker-driver-gateway-local-tls",
+          replacement: path.resolve("src/lib/onboard/docker-driver-gateway-local-tls.ts"),
+        },
+      ]
+    : [];
 const typedSourceTransform = {
   oxc: {
     include: /\.(?:[cm]?ts|[jt]sx)$/,
@@ -121,6 +134,7 @@ export default defineConfig({
             "test/e2e/support/**",
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
+            "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
             "test/install-preflight.test.ts",
@@ -144,6 +158,7 @@ export default defineConfig({
           setupFiles: [fixtureUmaskSetup],
           include: [
             "test/install-express-prompt.test.ts",
+            "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
             "test/install-preflight.test.ts",
@@ -189,7 +204,7 @@ export default defineConfig({
         ...typedSourceTransform,
         test: {
           name: "e2e-live",
-          alias: canonicalOpenShellPolicyAlias,
+          alias: [...canonicalOpenShellPolicyAlias, ...e2ePhaseCollectionAlias],
           // Register the typed-source require hook in the worker so live suites
           // can import source modules that resolve siblings via a runtime
           // `require("../module")` (e.g. inference/ollama-runtime-context.ts).

@@ -647,7 +647,6 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
         '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
         '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-        '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
         '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         "_TOOL_REDIRECTS=()",
@@ -897,7 +896,6 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-      '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
       '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       "emit_messaging_connect_runtime_preload_exports() { :; }",
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
@@ -1542,7 +1540,6 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
-
   it("approves only known client identities and does not reprocess handled requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
@@ -1569,7 +1566,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
-  printf 'list:%s:%s:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(envLog)}
+  printf 'list:%s:%s:%s:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "\${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}" >> ${JSON.stringify(envLog)}
   count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
   count=$((count + 1))
   echo "$count" > ${JSON.stringify(stateFile)}
@@ -1624,7 +1621,8 @@ exit 2
         "ok-agent-cli",
       ]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
-      expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
+      expect(envLogLines[0]).toBe("list:ws://127.0.0.1:18789:18789:test-gateway-token:1");
+      expect(envLogLines).toContain("list:unset:unset:unset:unset");
       expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
       expect(envLogLines).toContain("approve:ok-agent-cli:unset:unset:unset");
       expect(envLogLines).not.toContain("approve:ok-webchat:unset:unset:unset");
@@ -3551,9 +3549,7 @@ describe("Telegram diagnostics (#2766)", () => {
         "_SANDBOX_HOME=/sandbox",
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
-        `_WS_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "ws-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-        `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
@@ -3784,7 +3780,6 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-        `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `_MESSAGING_CONNECT_PRELOADS_FILE=${JSON.stringify(connectPreloadsPath)}`,
         extractShellFunctionFromSource(src, "emit_messaging_connect_runtime_preload_exports"),
@@ -4767,9 +4762,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         "harden_auth_profiles() { :; }",
         '_SANDBOX_SAFETY_NET=""',
         '_PROXY_FIX_SCRIPT=""',
-        '_WS_FIX_SCRIPT=""',
         '_NEMOTRON_FIX_SCRIPT=""',
-        '_SECCOMP_GUARD_SCRIPT=""',
         '_CIAO_GUARD_SCRIPT=""',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',

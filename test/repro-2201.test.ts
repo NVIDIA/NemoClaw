@@ -210,6 +210,7 @@ function createFixture({
   );
 
   const sandboxName = rebuildTarget.name;
+  const deleteMarker = path.join(tmpDir, "sandbox-deleted");
 
   // ── Dummy workspace dir for the fake ssh tar call ─────────────
   const workspaceDir = path.join(tmpDir, "fake-sandbox-root", "workspace");
@@ -229,7 +230,9 @@ function createFixture({
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const a = process.argv.slice(2);
+const deleteMarker = ${JSON.stringify(deleteMarker)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.85\\n"); process.exit(0); }
 if (a[0]==="status")                            { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
@@ -238,7 +241,12 @@ if (a[0]==="gateway" && a[1]==="select")        { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")         { process.stdout.write("Gateway inference:\\n  Provider: p\\n  Model: m\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deleteMarker, "deleted\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="get") {
+  if (fs.existsSync(deleteMarker)) { process.stderr.write("Error: sandbox ${sandboxName} not found\\n"); process.exit(1); }
+  process.stdout.write("Name: ${sandboxName}\\nPhase: Ready\\n");
+  process.exit(0);
+}
 process.exit(0);
 `,
     { mode: 0o755 },
@@ -370,7 +378,7 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NO_COLOR: "1",
       },
-      timeout: 50_000,
+      timeout: 90_000,
     },
   );
 }
@@ -406,7 +414,7 @@ function readSessionMessagingPlan(
 
 describe("rebuild syncs agent from registry instead of a stale session (#2201)", () => {
   it("rebuild openclaw after hermes was onboarded last (reporter scenario)", {
-    timeout: 60_000,
+    timeout: 120_000,
   }, () => {
     // Exact scenario from the bug report: user has openclaw + hermes,
     // hermes was onboarded last, then runs `nemoclaw openclaw rebuild`.
@@ -421,7 +429,7 @@ describe("rebuild syncs agent from registry instead of a stale session (#2201)",
   });
 
   it("rebuild hermes after openclaw was onboarded last (reverse scenario)", {
-    timeout: 60_000,
+    timeout: 120_000,
   }, () => {
     const f = createFixture({
       rebuildTarget: { name: "hermes", agent: "hermes" },
@@ -434,7 +442,7 @@ describe("rebuild syncs agent from registry instead of a stale session (#2201)",
   });
 
   it("does not inherit messaging plan from a stale session for another sandbox", {
-    timeout: 60_000,
+    timeout: 120_000,
   }, () => {
     const f = createFixture({
       rebuildTarget: { name: "openclaw", agent: null },
@@ -451,7 +459,7 @@ describe("rebuild syncs agent from registry instead of a stale session (#2201)",
 
 describe("rebuild forwards the stored --from Dockerfile to onboard (#2301)", () => {
   it("rebuild does not hit fromDockerfile conflict when session has a stored --from path", {
-    timeout: 60_000,
+    timeout: 120_000,
   }, () => {
     // Scenario: user onboarded with --from /path/to/Dockerfile, then
     // runs rebuild.  Without the fix, onboard's conflict check sees

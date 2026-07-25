@@ -236,6 +236,10 @@ vi.mock("../../state/sandbox", () => ({
   restoreSandboxState: restoreSandboxStateMock,
 }));
 
+vi.mock("./restore-gateway-pairing", () => ({
+  establishRestoredSandboxGatewayPairing: vi.fn(),
+}));
+
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
   removeSandboxRegistryEntry: vi.fn(),
