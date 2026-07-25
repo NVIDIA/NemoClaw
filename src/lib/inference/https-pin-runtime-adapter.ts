@@ -523,6 +523,12 @@ export function createHttpsPinRuntimeAdapterServer(options: {
       const url = new URL(req.url || "/", "http://127.0.0.1");
 
       if (req.method === "GET" && url.pathname === "/health") {
+        if (!allowedRouteSources.matches(req.socket.remoteAddress)) {
+          sendJson(res, 404, {
+            error: { message: "Not found", type: "not_found", code: "not_found" },
+          });
+          return;
+        }
         sendJson(res, 200, {
           ok: true,
           routeCount: routes.size,

@@ -97,7 +97,7 @@ describe("createHttpsPinRuntimeAdapterServer health and auth (#6141)", () => {
     expect(routeAFirst).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it("exposes an unauthenticated health endpoint without leaking the token", async () => {
+  it("exposes safe health over loopback without leaking the token", async () => {
     const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: TEST_CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
@@ -904,7 +904,8 @@ describe("createHttpsPinRuntimeAdapterServer control-plane loopback restriction 
       url: "/health",
       remoteAddress: "172.17.0.2",
     });
-    expect(health.body).toMatchObject({ routeCount: 0 });
+    expect(health.status).toBe(404);
+    expect(health.body).toMatchObject({ error: { code: "not_found" } });
   });
 
   it("still allows route registration over loopback", async () => {
@@ -982,6 +983,22 @@ describe("createHttpsPinRuntimeAdapterServer OpenShell bridge source restriction
     });
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ error: { code: "not_found" } });
+  });
+
+  it("hides health metadata from a private peer outside the inspected bridge subnet", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({
+      controlToken: TEST_CONTROL_TOKEN,
+      allowedSourceCidrs: ["172.17.0.0/16"],
+    });
+
+    const response = await dispatchFakeRequest(adapter, {
+      method: "GET",
+      url: "/health",
+      remoteAddress: "192.168.50.8",
+    });
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({ error: { code: "not_found" } });
+    expect(response.body).not.toHaveProperty("routeCount");
   });
 
   it("still passes a route-forward request over loopback through to route lookup", async () => {
