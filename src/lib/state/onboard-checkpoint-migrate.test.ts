@@ -87,6 +87,7 @@ describe("resolveCheckpointForResume", () => {
     webSearch: decisionUnset(),
     messaging: decisionUnset(),
     resourceProfile: decisionUnset(),
+    gatewayAuthority: decisionUnset(),
     effectGroups: {},
     bindings: { credentialEnvs: [], registeredProviders: [] },
   };

@@ -2394,6 +2394,7 @@ ensure_hermes_supervised_auxiliaries() {
       "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID \
       "$DASHBOARD_PID" "$dashboard_user" || return 1
   fi
+  ensure_dashboard_log_stream || return 1
   ensure_gateway_log_stream || return 1
 }
 
@@ -2417,6 +2418,9 @@ refresh_hermes_supervised_child_pids() {
     && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
   hermes_tracked_role_is_current dashboard-log "${DASHBOARD_LOG_TAIL_PID:-}" current \
     && SANDBOX_CHILD_PIDS+=("$DASHBOARD_LOG_TAIL_PID")
+  # Each tracked child can be absent while a service is replaced. Return success
+  # so `set -e` callers can launch the replacement gateway.
+  return 0
 }
 
 hermes_cleanup_on_signal() {
@@ -2840,7 +2844,10 @@ record_hermes_managed_gateway_exit() {
 }
 
 recover_hermes_gateway_current_user() {
+  local replacement_reached_internal_health
+
   while :; do
+    replacement_reached_internal_health=0
     until prepare_hermes_nonroot_runtime; do
       if [ "$HERMES_MCP_INTEGRITY_FAILED" -eq 1 ]; then
         echo "[SECURITY] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox" >&2
@@ -2856,6 +2863,7 @@ recover_hermes_gateway_current_user() {
       continue
     fi
     if wait_for_hermes_gateway_internal "$GATEWAY_PID"; then
+      replacement_reached_internal_health=1
       # The gateway and its socat relay are separate supervised children. A
       # transient relay repair failure must not churn an internally healthy,
       # identity-pinned replacement or charge that churn against the gateway
@@ -2885,7 +2893,11 @@ recover_hermes_gateway_current_user() {
       done
     fi
 
-    echo "[gateway] Hermes replacement failed health or auxiliary validation; stopping the exact child" >&2
+    if [ "$replacement_reached_internal_health" -eq 1 ]; then
+      echo "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child" >&2
+    else
+      echo "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child" >&2
+    fi
     if ! hermes_stop_tracked_role \
       gateway "$GATEWAY_PID" current "$INTERNAL_PORT"; then
       echo "[gateway] CRITICAL: exact Hermes replacement could not be stopped; managed supervisor is quarantined without another launch" >&2

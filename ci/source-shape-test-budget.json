@@ -292,6 +292,11 @@
       "category": "security"
     },
     {
+      "file": "test/openclaw-final-image-layout.test.ts",
+      "test": "keeps repository payload layers at their cache boundaries (#6660)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
       "category": "security"
@@ -384,6 +389,11 @@
     {
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/perl-critical-cve-remediation.test.ts",
+      "test": "builds the fixed upstream release from a checksum-pinned source archive (#7338)",
       "category": "security"
     },
     {

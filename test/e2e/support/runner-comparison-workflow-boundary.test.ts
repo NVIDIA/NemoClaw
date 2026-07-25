@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  HERMES_REBUILD_SWAP_STEP,
   RUNNER_COMPARISON_COMMAND,
   RUNNER_COMPARISON_FINALIZE_STEP,
   RUNNER_COMPARISON_INITIALIZE_STEP,
@@ -40,6 +41,7 @@ const JOBS = [
   "rebuild-hermes-stale-base",
   "security-posture",
 ] as const;
+const REBUILD_JOBS = ["rebuild-hermes", "rebuild-hermes-stale-base"] as const;
 
 function loadWorkflow(): Workflow {
   return structuredClone(readWorkflow()) as Workflow;
@@ -156,9 +158,10 @@ describe("runner comparison E2E workflow boundary (#7145)", () => {
       lateSteps[initializeIndex + 1]!,
       lateSteps[initializeIndex]!,
     ];
-    expect(validateRunnerComparisonWorkflow(lateInitialize)).toContain(
-      `${jobId} must initialize runner comparison telemetry immediately after prepare-e2e`,
-    );
+    const expectedInitializeError = REBUILD_JOBS.includes(jobId as (typeof REBUILD_JOBS)[number])
+      ? `${jobId} must establish rebuild swap before initializing runner comparison telemetry`
+      : `${jobId} must initialize runner comparison telemetry immediately after prepare-e2e`;
+    expect(validateRunnerComparisonWorkflow(lateInitialize)).toContain(expectedInitializeError);
 
     const afterPublication = loadWorkflow();
     const publicationSteps = afterPublication.jobs[jobId]!.steps;
@@ -171,6 +174,35 @@ describe("runner comparison E2E workflow boundary (#7145)", () => {
     ];
     expect(validateRunnerComparisonWorkflow(afterPublication)).toContain(
       `${jobId} must finalize runner comparison telemetry immediately before artifact scanning or upload`,
+    );
+  });
+
+  it.each(
+    REBUILD_JOBS,
+  )("initializes %s telemetry only after workflow-managed swap reaches its final capacity", (jobId) => {
+    const workflow = loadWorkflow();
+    const jobSteps = workflow.jobs[jobId]!.steps;
+    const swap = step(workflow, jobId, HERMES_REBUILD_SWAP_STEP);
+    const initialize = step(workflow, jobId, RUNNER_COMPARISON_INITIALIZE_STEP);
+    const swapIndex = jobSteps.indexOf(swap);
+    const initializeIndex = jobSteps.indexOf(initialize);
+
+    expect(initializeIndex).toBe(swapIndex + 1);
+
+    [jobSteps[swapIndex], jobSteps[initializeIndex]] = [initialize, swap];
+    expect(validateRunnerComparisonWorkflow(workflow)).toContain(
+      `${jobId} must establish rebuild swap before initializing runner comparison telemetry`,
+    );
+  });
+
+  it.each(REBUILD_JOBS)("rejects %s telemetry when rebuild swap is delayed", (jobId) => {
+    const workflow = loadWorkflow();
+    const jobSteps = workflow.jobs[jobId]!.steps;
+    const swapIndex = jobSteps.indexOf(step(workflow, jobId, HERMES_REBUILD_SWAP_STEP));
+    jobSteps.splice(swapIndex, 0, { name: "Unexpected step before rebuild swap" });
+
+    expect(validateRunnerComparisonWorkflow(workflow)).toContain(
+      `${jobId} must establish rebuild swap before initializing runner comparison telemetry`,
     );
   });
 

@@ -48,11 +48,16 @@ if (preservable) {
   fs.mkdirSync(path.join(home, ".nemoclaw", "backups"), { recursive: true });
 }
 const okResult: RunResult = { status: 0, stdout: "", stderr: "" };
+const knownGatewayListResult: RunResult = {
+  status: 0,
+  stdout: JSON.stringify([{ name: "nemoclaw" }]),
+  stderr: "",
+};
 
 const { exitCode } = runUninstallPlan(
   { assumeYes: false, deleteModels: false, keepOpenShell: true },
   {
-    commandExists: () => false,
+    commandExists: (command) => command === "openshell",
     // Hermetic env: the runtime merges the real process.env, so a developer
     // shell exporting NEMOCLAW_* knobs (non-interactive mode, destroy-user-
     // data acknowledgement, agent branding) would change which prompts run
@@ -68,7 +73,10 @@ const { exitCode } = runUninstallPlan(
     existsSync: fs.existsSync,
     kill: () => true,
     rmSync: (() => {}) as never,
-    run: () => okResult,
+    run: (command, args) =>
+      command === "openshell" && args[0] === "gateway" && args[1] === "list"
+        ? knownGatewayListResult
+        : okResult,
     runDocker: () => okResult,
     // readLine and isTty are deliberately NOT injected: the default
     // readLineFromStdin/isStdinTty pair reading the pty is what is under test.

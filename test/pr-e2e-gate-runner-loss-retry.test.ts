@@ -35,6 +35,11 @@ const JOB_LOG_RANGE_BYTES = 64 * 1024;
 const RUNNER_SHUTDOWN_MESSAGE =
   "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
 const EXIT_143_MESSAGE = "Process completed with exit code 143.";
+const RESERVED_CHECK_OUTPUT = {
+  title: "Waiting for PR CI",
+  summary:
+    "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.",
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -1093,9 +1098,17 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
   });
 
   it.each([
-    { label: "before reservation", replacement: false },
-    { label: "after a create response is lost", replacement: true },
-  ])("terminalizes retry setup $label with older retryable history", async ({ replacement }) => {
+    { label: "before reservation", replacement: false, replacementDetailsUrl: null },
+    { label: "after a lost create response", replacement: true, replacementDetailsUrl: null },
+    {
+      label: "after a create response is lost with GitHub's self check URL",
+      replacement: true,
+      replacementDetailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/18",
+    },
+  ])("terminalizes retry setup $label with older retryable history", async ({
+    replacement,
+    replacementDetailsUrl,
+  }) => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     const older = checkRun(16, {
@@ -1109,12 +1122,8 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     const reserved = checkRun(18, {
       status: "in_progress",
       conclusion: null,
-      details_url: null,
-      output: {
-        title: "Waiting for PR CI",
-        summary:
-          "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.",
-      },
+      details_url: replacementDetailsUrl,
+      output: RESERVED_CHECK_OUTPUT,
     });
     const history = replacement ? [older, source, reserved] : [older, source];
     vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -1155,15 +1164,18 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     }
   });
 
-  it("rejects an ambiguous retry replacement without mutating either check", async () => {
+  it.each([
+    ["unexpected owner", null, { title: "Unexpected owner", summary: "Not canonical." }],
+    ["wrong self URL", "https://github.com/NVIDIA/NemoClaw/runs/999", RESERVED_CHECK_OUTPUT],
+  ])("rejects a reserved replacement with %s", async (_label, detailsUrl, output) => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     const source = checkRun(17);
     const ambiguous = checkRun(18, {
       status: "in_progress",
       conclusion: null,
-      details_url: null,
-      output: { title: "Unexpected owner", summary: "Not a canonical reservation." },
+      details_url: detailsUrl,
+      output,
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(

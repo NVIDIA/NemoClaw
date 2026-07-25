@@ -77,6 +77,7 @@ export function deriveCheckpointFromSession(session: Session): OnboardCheckpoint
     webSearch: webSearchDecision(session),
     messaging: messagingDecision(session),
     resourceProfile: resourceDecision(session),
+    gatewayAuthority: decisionUnset(),
     effectGroups: {},
     bindings: {
       // Provider/inference resume owns and revalidates the primary inference
@@ -99,7 +100,7 @@ export function resolveCheckpointForResume(rawSession: unknown): CheckpointLoadR
   const session = normalizeSession(rawSession as JsonValue);
   if (!session) return { status: "none" };
 
-  if (inspected.status === "loaded") {
+  if (inspected.status === "loaded" || inspected.status === "migrated") {
     // A checkpoint copied from another session's file would otherwise supply
     // identity, bindings, and effect receipts for the wrong onboarding run.
     if (inspected.checkpoint.sessionId !== session.sessionId) return { status: "corrupt" };

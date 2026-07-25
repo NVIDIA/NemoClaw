@@ -18,6 +18,12 @@ export { formatSandboxGpuPassthroughNote } from "./sandbox-gpu-notes";
 
 const SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS = 30_000;
 
+// Docker Engine's built-in CDI spec directories. `docker info` can report no
+// CDISpecDirs (daemon unreachable from this process, or an engine that omits
+// the field) even though CDI works, so the preflight falls back to these
+// before declaring CDI unsupported (#7330).
+const FALLBACK_DOCKER_CDI_SPEC_DIRS = ["/etc/cdi", "/var/run/cdi"];
+
 export type SandboxGpuPreflightDeps = WslDockerDesktopDetectionDeps & {
   getDockerCdiSpecDirs?: () => string[];
   findReadableNvidiaCdiSpecFiles?: (dirs: string[]) => string[];
@@ -368,7 +374,9 @@ export function validateSandboxGpuPreflight(
     return;
   }
 
-  const cdiSpecDirs = (deps.getDockerCdiSpecDirs ?? getDockerCdiSpecDirs)();
+  const reportedCdiSpecDirs = (deps.getDockerCdiSpecDirs ?? getDockerCdiSpecDirs)();
+  const cdiSpecDirs =
+    reportedCdiSpecDirs.length > 0 ? reportedCdiSpecDirs : FALLBACK_DOCKER_CDI_SPEC_DIRS;
   const cdiSpecFiles = (deps.findReadableNvidiaCdiSpecFiles ?? findReadableNvidiaCdiSpecFiles)(
     cdiSpecDirs,
   );
