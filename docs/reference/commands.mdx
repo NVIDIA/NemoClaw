@@ -655,7 +655,7 @@ The poll count is clamped to a minimum of `1` so the probe always runs at least 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
-One exception: when the supplied path is the selected agent's own managed Dockerfile (for example `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths.
+One exception applies when the supplied path is the selected agent's own managed Dockerfile (for example `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths.
 This lets you edit the managed Dockerfile in place (for example to add Python packages) and rebuild from it with `--from`.
 For this managed exception, onboarding applies the `.dockerignore` from the repository root.
 For every other `--from` path, onboarding applies a `.dockerignore` from the Dockerfile's parent directory while calculating the context size and staging files for Docker.
