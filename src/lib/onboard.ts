@@ -2251,7 +2251,7 @@ async function createSandboxWithBaseImageResolution(
     ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
     : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
+  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, baselineExclusions: sandboxRegistration.baselineExclusionsForCreate(sandboxName), ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
     {
       sandboxName,
@@ -2863,7 +2863,7 @@ async function createSandboxWithBaseImageResolution(
           ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared),
+          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared, resolvedCreateIntent.policy.options.baselineExclusions),
           plannedMessagingState,
           preservedMcpState,
           hermesToolGateways,
@@ -3887,7 +3887,6 @@ const recordInitialPreflightTransition =
   onboardRuntimeBoundary.recordInitialPreflightTransition.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
-
 /** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
@@ -3912,6 +3911,7 @@ async function preflightAuthoritativeRebuildTarget(
     await authoritativeRebuildTarget.preflightAuthoritativeRebuildTarget(
       { ...opts, controlUiPort: opts.controlUiPort ?? null },
       {
+        resolveBaselinePolicy: (sandboxName) => policies.resolveSandboxBaselinePolicy(sandboxName),
         runFatalRuntimePreflight: () =>
           fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
             {
@@ -4359,9 +4359,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         repairLocalInferenceSystemdOverrideOrExit,
         isNonInteractive,
         getOpenshellBinary,
-        needsBedrockRuntimeAdapter: (providerName, url) =>
-          providerName === "compatible-anthropic-endpoint" &&
-          bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        needsBedrockRuntimeAdapter: (providerName, url) => providerName === "compatible-anthropic-endpoint" && bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
         isInferenceRouteReady,
         isRoutedInferenceProvider,
         reconcileModelRouter,
@@ -4427,7 +4426,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         getSandboxRegistryEntry: registry.getSandbox,
         normalizeHermesToolGatewaySelections,
         stringSetsEqual,
-        removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
+        removeSandboxFromRegistry: registry.removeSandboxWithReceipt.bind(registry),
+        restoreSandboxRegistryEntryIfMissing: registry.restoreSandboxEntryIfMissing.bind(registry),
         repairRecordedSandbox,
         ensureValidatedWebSearchCredential,
         isBackToSelection,

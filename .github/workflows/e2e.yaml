@@ -225,26 +225,31 @@ jobs:
           expected_run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
           jobs_summary="${JOBS//,/, }"
           targets_summary="${TARGETS//,/, }"
-          expected_summary="Risk plan ${PLAN_HASH} selected jobs: ${jobs_summary:-none}; targets: ${targets_summary:-none}."
+          expected_summary="Risk plan ${PLAN_HASH} selected jobs: ${jobs_summary:-none}; targets: ${targets_summary:-none}. Child run: ${expected_run_url}."
+          controller_auth_max_attempts=45
+          controller_auth_poll_seconds=2
           check_json=""
-          for _attempt in {1..15}; do
+          for ((_attempt = 1; _attempt <= controller_auth_max_attempts; _attempt++)); do
             if check_json="$(curl --fail --silent --show-error --proto '=https' \
               --header "Authorization: Bearer ${GITHUB_TOKEN}" \
               --header "Accept: application/vnd.github+json" \
+              --header "Cache-Control: no-cache" \
+              --header "Pragma: no-cache" \
               --header "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}")" &&
-              [[ "$(jq -r '.details_url // ""' <<< "$check_json")" == "$expected_run_url" ]]; then
+              [[ "$(jq -r '.output.summary // ""' <<< "$check_json")" == "$expected_summary" ]]; then
               break
             fi
             check_json=""
-            sleep 2
+            if (( _attempt < controller_auth_max_attempts )); then
+              sleep "$controller_auth_poll_seconds"
+            fi
           done
           [[ -n "$check_json" ]] || { echo "::error::trusted controller authorization was not published for this run"; exit 1; }
           jq -e \
             --argjson check_id "$CONTROLLER_CHECK_ID" \
             --arg external_id "$expected_external_id" \
             --arg head_sha "$CHECKOUT_SHA" \
-            --arg run_url "$expected_run_url" \
             --arg summary "$expected_summary" \
             '
               .id == $check_id and
@@ -255,7 +260,6 @@ jobs:
               .external_id == $external_id and
               .status == "in_progress" and
               .conclusion == null and
-              .details_url == $run_url and
               .output.summary == $summary
             ' <<< "$check_json" >/dev/null ||
             { echo "::error::controller check does not authorize this exact E2E run"; exit 1; }
@@ -1457,6 +1461,11 @@ jobs:
       - *dockerhub-auth
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run agent turn latency live Vitest test
@@ -1479,6 +1488,11 @@ jobs:
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/agent-turn-latency.test.ts
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
       - name: Upload agent turn latency artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -5157,6 +5171,12 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
+      - name: Initialize runner comparison telemetry
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Run Bedrock Runtime compatible Anthropic live test
         # Direct Vitest coverage for
         # Preserves the
@@ -5166,6 +5186,12 @@ jobs:
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Upload Bedrock Runtime compatible Anthropic artifacts
         if: always()

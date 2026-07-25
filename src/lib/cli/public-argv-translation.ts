@@ -5,7 +5,7 @@ import {
   getRegisteredOclifCommandMetadata,
   getRegisteredOclifCommandsMetadata,
 } from "./oclif-metadata";
-import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
+import { globalRouteTokenVariants, sandboxRouteTokenVariants } from "./public-route-metadata";
 
 export type NativeArgvTranslation = {
   kind: "nativeArgv";
@@ -52,10 +52,9 @@ function sandboxRoutes(): SandboxRoute[] {
   return [...commandIds]
     .filter((commandId) => commandId.startsWith("sandbox:"))
     .filter((commandId) => !hasChildCommand(commandId, commandIds))
-    .map((commandId) => ({
-      commandId,
-      publicTokens: sandboxRouteTokens(commandId) ?? [],
-    }))
+    .flatMap((commandId) =>
+      sandboxRouteTokenVariants(commandId).map((publicTokens) => ({ commandId, publicTokens })),
+    )
     .filter((route) => route.publicTokens.length > 0)
     .sort((a, b) => b.publicTokens.length - a.publicTokens.length);
 }

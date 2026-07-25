@@ -27,6 +27,9 @@ const {
 } = await import("../src/lib/policy/semantic-validation");
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const NETWORK_POLICY_SCHEMA = "schemas/network-policy.schema.json";
+const NETWORK_POLICY_SCHEMA_ID =
+  "https://github.com/NVIDIA/NemoClaw/schemas/network-policy.schema.json";
 
 interface ConfigTarget {
   schema: string;
@@ -194,7 +197,14 @@ function compileConfigSchema(
   repoRelative: string,
   ajv = new Ajv({ allErrors: true, strict: false, $data: true }),
 ) {
-  return ajv.compile(loadSchema(repoRelative));
+  const schema = loadSchema(repoRelative) as { $id?: string };
+  if (schema.$id === NETWORK_POLICY_SCHEMA_ID) {
+    return ajv.getSchema(NETWORK_POLICY_SCHEMA_ID) ?? ajv.compile(schema);
+  }
+  if (!ajv.getSchema(NETWORK_POLICY_SCHEMA_ID)) {
+    ajv.addSchema(loadSchema(NETWORK_POLICY_SCHEMA));
+  }
+  return ajv.compile(schema);
 }
 
 type ValidationParams = { additionalProperty?: string; unevaluatedProperty?: string };
@@ -372,8 +382,8 @@ function main(): void {
 
 // Export for unit tests without re-running main().
 export {
-  DANGEROUS_HOSTS,
   compileConfigSchema,
+  DANGEROUS_HOSTS,
   discoverTargets,
   findDangerousHosts,
   findDangerousRouterApiBases,

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
   runBackup: vi.fn(),
+  runDestroy: vi.fn(),
   runPreflight: vi.fn(),
   runShields: vi.fn(),
 }));
@@ -15,6 +16,10 @@ vi.mock("./rebuild-backup-phase", () => ({
 
 vi.mock("./rebuild-preflight-phase", () => ({
   runRebuildPreflightPhase: phaseMocks.runPreflight,
+}));
+
+vi.mock("./rebuild-destroy-phase", () => ({
+  runRebuildDestroyPhase: phaseMocks.runDestroy,
 }));
 
 vi.mock("./rebuild-shields-phase", () => ({
@@ -65,5 +70,49 @@ describe("rebuild shields relock guard", () => {
     expect(phaseMocks.runBackup).toHaveBeenCalledOnce();
     expect(relockShields).toHaveBeenCalledWith(true);
     expect(rebuildWindow.relocked).toBe(true);
+  });
+
+  it("blocks a pending baseline transition before shields, backup, or destroy phases begin (#7194)", async () => {
+    const bail = vi.fn();
+    phaseMocks.runPreflight.mockResolvedValue({
+      sandboxEntry: {
+        name: "alpha",
+        customPolicies: [],
+        baselineExclusionTransition: {
+          id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
+          operation: "restore",
+          exclusion: {
+            version: 1,
+            agent: "openclaw",
+            key: "agents.openclaw.default",
+            digest: "a".repeat(64),
+          },
+          startedAt: "2026-07-19T00:00:00.000Z",
+          targetLiveDigest: "b".repeat(64),
+        },
+      },
+      targetConfig: { durableConfig: { webSearchConfig: null } },
+      recreateOptions: { observabilityEnabled: false },
+      liveState: { staleRecovery: false, staleRegistrySnapshot: null },
+      recoveryManifest: null,
+      dcodePreflight: { cleanup: cleanupDcodePreflight },
+      preparedImage: null,
+      releaseOnboardLock,
+      log: vi.fn(),
+      bail,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+
+    expect(bail).toHaveBeenCalledWith(
+      "Pending baseline policy restore for 'agents.openclaw.default' blocks rebuild.",
+      1,
+    );
+    expect(phaseMocks.runShields).not.toHaveBeenCalled();
+    expect(phaseMocks.runBackup).not.toHaveBeenCalled();
+    expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
+    expect(cleanupDcodePreflight).toHaveBeenCalledOnce();
+    expect(releaseOnboardLock).toHaveBeenCalledOnce();
   });
 });

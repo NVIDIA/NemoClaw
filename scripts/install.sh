@@ -3639,6 +3639,88 @@ clear_station_express_resume() {
   done
 }
 
+# Report the container runtime's operating-system string (e.g. "Docker Desktop"
+# or "Ubuntu 24.04.4 LTS"). Bounded with a hard timeout so a wedged,
+# misconfigured, or dead-DOCKER_HOST daemon cannot hang the interactive express
+# prompt: this runs from describe_express_install before ensure_docker, and WSL
+# skips ensure_docker entirely. Empty on timeout or error.
+express_wsl_docker_operating_system() {
+  timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
+}
+
+# Resolve Docker's effective context name: the DOCKER_CONTEXT override if set,
+# otherwise the persisted currentContext from Docker's config (what
+# `docker context use` writes). A missing config or a config with no
+# currentContext uses Docker's "default"; an unreadable or unparseable config
+# fails closed as non-local.
+express_wsl_docker_active_context() {
+  if [ -n "${DOCKER_CONTEXT:-}" ]; then
+    printf '%s' "${DOCKER_CONTEXT}"
+    return 0
+  fi
+  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
+  local ctx="" parse_status=0
+  if [ ! -e "$cfg" ]; then
+    printf '%s' "default"
+    return 0
+  fi
+  if [ -e "$cfg" ] && [ ! -r "$cfg" ]; then
+    printf '%s' "__unknown__"
+    return 0
+  fi
+  if command -v node >/dev/null 2>&1; then
+    ctx="$(
+      node - "$cfg" <<'NODE'
+const fs = require("node:fs");
+
+let config;
+try {
+  config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+} catch {
+  process.exit(1);
+}
+if (config === null || typeof config !== "object" || Array.isArray(config)) process.exit(1);
+if (!Object.prototype.hasOwnProperty.call(config, "currentContext")) process.exit(2);
+if (typeof config.currentContext !== "string") process.exit(1);
+process.stdout.write(config.currentContext);
+NODE
+    )" || parse_status=$?
+    if [ "$parse_status" -eq 0 ]; then
+      printf '%s' "$ctx"
+      return 0
+    fi
+    if [ "$parse_status" -eq 2 ]; then
+      printf '%s' "default"
+      return 0
+    fi
+    printf '%s' "__unknown__"
+    return 0
+  fi
+  printf '%s' "__unknown__"
+}
+
+# True only when the Docker CLI targets the LOCAL default daemon: the active
+# context is "default" and no DOCKER_HOST override is set. A DOCKER_HOST, a
+# DOCKER_CONTEXT override, or a persisted currentContext other than "default"
+# (a context name like desktop-linux is not proof of a local endpoint — it can be
+# pointed at a remote daemon) can reach a remote Docker Desktop whose sandbox
+# containers cannot reach this machine's Windows-host Ollama (PRA-1). Fails closed
+# (non-local) on any non-default, unreadable, or unparseable context.
+express_wsl_docker_target_is_local() {
+  [ -z "${DOCKER_HOST:-}" ] || return 1
+  [ "$(express_wsl_docker_active_context)" = "default" ]
+}
+
+# Windows-host Ollama only works through LOCAL Docker Desktop WSL integration
+# (host.docker.internal routes to the Windows host). Native Docker Engine (#3695),
+# a remote/unknown target, or a failed probe can't reach it, so use WSL-local
+# Ollama instead; the onboard provider setup fronts that loopback daemon with
+# the sandbox auth proxy when containers cannot reach host loopback (#7318).
+express_wsl_can_use_windows_host_ollama() {
+  express_wsl_docker_target_is_local || return 1
+  express_wsl_docker_operating_system | grep -qi 'docker desktop'
+}
+
 activate_express_install() {
   local platform="$1"
   _SELECTED_EXPRESS_PLATFORM="$platform"
@@ -3668,7 +3750,11 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      export NEMOCLAW_PROVIDER=install-windows-ollama
+      if express_wsl_can_use_windows_host_ollama; then
+        export NEMOCLAW_PROVIDER=install-windows-ollama
+      else
+        export NEMOCLAW_PROVIDER=install-ollama
+      fi
       ;;
   esac
 }
@@ -3839,7 +3925,11 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      inference_summary="Windows-host Ollama through host.docker.internal"
+      if express_wsl_can_use_windows_host_ollama; then
+        inference_summary="Windows-host Ollama through host.docker.internal"
+      else
+        inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
+      fi
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     *)
