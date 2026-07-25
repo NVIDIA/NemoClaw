@@ -256,11 +256,16 @@ export function createDynamicGatewayRuntimeHelpers(deps: DynamicGatewayRuntimeDe
     const targetUrl = url ?? `${deps.getDockerDriverGatewayEndpoint(deps.getGatewayPort())}/`;
     return deps.probeGatewayHttpReady(timeoutMs, targetUrl, method, signal);
   };
-  const isDockerDriverGatewayHttpReady = (timeoutMs?: number, url?: string) =>
+  const isDockerDriverGatewayHttpReady = (
+    timeoutMs?: number,
+    url?: string,
+    env?: NodeJS.ProcessEnv,
+  ) =>
     deps.probeDockerDriverGatewayHttpReady(
       timeoutMs,
       url ??
         `${deps.getDockerDriverGatewayEndpoint(deps.getGatewayPort())}/openshell.v1.OpenShell/Health`,
+      env,
     );
   const waitForGatewayHttpReady = (
     opts: import("./gateway-http-readiness").WaitForGatewayHttpReadyOpts = {},
