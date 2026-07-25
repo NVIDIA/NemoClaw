@@ -55,10 +55,16 @@ After SSRF validation passes, NemoClaw starts a local reverse-proxy adapter on t
 The sandbox, its OpenShell provider configuration and network policy, and the persisted sandbox registry only ever see the opaque local base `http://host.openshell.internal:<port>/route/<id>`.
 The real upstream hostname and path never reach the sandbox or the persisted registry; host recovery state stores only the opaque route ID, provider type, a non-secret token generation value, and timestamps.
 Endpoint URLs containing userinfo, a query string, or a fragment are rejected rather than stripped or persisted.
+For an OpenAI-compatible endpoint entered as a bare origin, the adapter preserves the incoming `/v1` request path.
+For an endpoint with a path prefix, the adapter keeps forwarded requests beneath that prefix and rejects traversal-shaped paths.
+One 30-second total upstream deadline covers connection setup, TLS negotiation, and the complete response; the adapter closes a response that arrives after the deadline instead of relaying it.
 
 Each opaque route has its own sandbox-facing adapter credential, distinct from both the real upstream credential and the host-only control credential; a credential issued for one route cannot authorize another route.
+NemoClaw does not place upstream route credentials in the adapter child-process environment.
+After startup, the host CLI registers each route and its credential in adapter memory through an authenticated loopback-only control plane.
 Before starting or reusing the adapter, NemoClaw inspects the exact IPAM subnets assigned to the `openshell-docker` network.
-The adapter accepts route requests only from loopback or those inspected subnets and returns a not-found response to peers on other private or LAN networks.
+The adapter accepts route-forwarding and non-control health requests only from loopback or those inspected subnets and returns a not-found response to peers on other private or LAN networks.
+Authenticated control health and route-registration requests remain loopback-only.
 NemoClaw refuses to expose the adapter when it cannot discover a valid bridge subnet.
 Adapter reuse also requires an authenticated health proof for the same source-subnet policy, so a running process with a stale or different policy is replaced.
 After an adapter restart, routes other than the one that triggered recovery return a recovery-needed response until their original `inference set --endpoint-url` command is rerun.
