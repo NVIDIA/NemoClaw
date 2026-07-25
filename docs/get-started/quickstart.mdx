@@ -217,9 +217,10 @@ Use these details when your first-run path needs more control.
     This build-time setting is baked into the image and setting it after onboarding does not affect an existing sandbox.
     </Note>
 
-    If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell, requires a fresh backup of every registered sandbox before it changes the gateway, and runs `nemoclaw upgrade-sandboxes --auto` after the host upgrade.
-    After backup, it retires the running gateway before replacing OpenShell only when the installed OpenShell version is outside the current release's supported range; an unknown installed version or an invalid or missing range stops the update without retiring the gateway, while any retirement failure stops the update with the sandbox backups preserved.
-    Successful recovery rebuilds stale sandboxes, restores validated backups for registered sandboxes that are not Ready, and skips generic onboarding rather than creating an additional sandbox or requesting a new provider credential.
+    If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox before it changes the gateway.
+    After backup, it requires any existing OpenShell executable it will use to report a version and compares that version with the current release's supported range.
+    It retires the running gateway before replacing OpenShell only when that version is outside the supported range; an unknown installed version or an invalid or missing range stops the update without retiring the gateway, while any retirement failure stops the update with the sandbox backups preserved.
+    After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto`; successful recovery rebuilds stale sandboxes, restores validated backups for registered sandboxes that are not Ready, and skips generic onboarding rather than creating an additional sandbox or requesting a new provider credential.
     If the recovery pass exits 0 but a recorded sandbox is not found on its own recorded gateway, such as after `nemoclaw uninstall` removed the gateway and Docker image while preserving `sandboxes.json`, the installer finishes with `Installation completed with warnings` and remediation guidance instead of claiming the sandbox was recovered.
     For pre-fingerprint OpenClaw and Hermes registry entries, confirm that every listed sandbox used a NemoClaw-managed image before recovery onto the current managed image.
     In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of printed names only after you verify every named sandbox used a managed image.

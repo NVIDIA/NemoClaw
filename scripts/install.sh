@@ -66,7 +66,18 @@ resolve_installer_version() {
     printf "%s" "${NEMOCLAW_INSTALL_REF#v}"
     return
   fi
-  # Prefer git tags (works in dev clones and CI)
+  # Prefer the .version file stamped during install: it records the exact
+  # requested tag, while describe on a shallow clone can resolve a different
+  # nearby tag.
+  if [[ -f "${repo_root}/.version" ]]; then
+    local file_ver
+    file_ver="$(cat "${repo_root}/.version")"
+    if [[ -n "$file_ver" ]]; then
+      printf "%s" "$file_ver"
+      return
+    fi
+  fi
+  # Fall back to git tags (dev clones and CI have no .version)
   if command -v git &>/dev/null && [[ -e "${repo_root}/.git" ]]; then
     local git_ver=""
     if git_ver="$(git -C "$repo_root" describe --tags --match 'v*' 2>/dev/null)"; then
@@ -75,15 +86,6 @@ resolve_installer_version() {
         printf "%s" "$git_ver"
         return
       fi
-    fi
-  fi
-  # Fall back to .version file (stamped during install)
-  if [[ -f "${repo_root}/.version" ]]; then
-    local file_ver
-    file_ver="$(cat "${repo_root}/.version")"
-    if [[ -n "$file_ver" ]]; then
-      printf "%s" "$file_ver"
-      return
     fi
   fi
   # Last resort: package.json
@@ -151,15 +153,32 @@ resolve_release_tag() {
   printf "%s" "${NEMOCLAW_INSTALL_TAG:-$DEFAULT_INSTALL_REF}"
 }
 
+# Map an install ref to the version string to stamp into .version. Prints the
+# semver for an immutable version tag; prints nothing for mutable (lkg/latest)
+# or non-version refs so callers fall back to git describe.
+resolve_stamped_version() {
+  local ref="${1:-}" version=""
+  case "$ref" in
+    refs/tags/*) version="${ref#refs/tags/}" ;;
+    *) version="$ref" ;;
+  esac
+  version="${version#v}"
+  if is_mutable_install_ref "$ref" \
+    || ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    return 0
+  fi
+  printf "%s" "$version"
+}
+
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
   git init --quiet "$dest"
   git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-  if ! git -C "$dest" fetch --quiet --depth 1 origin "$ref"; then
+  if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
     error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
   fi
-  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
+  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
 }
 
 # ---------------------------------------------------------------------------
@@ -1935,10 +1954,16 @@ install_nemoclaw() {
     # --match "v*"` works at runtime (the shallow clone only has the
     # single ref we asked for).
     git -C "$nemoclaw_src" fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
-    # Also stamp .version as a fallback for environments where git is
-    # unavailable or tags are pruned later.
-    git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
-      | sed 's/^v//' >"$nemoclaw_src/.version" || true
+    # Stamp .version from the requested ref so the recorded version matches the
+    # installed tag, even when a shallow clone cannot name it via describe.
+    local stamped_version
+    stamped_version="$(resolve_stamped_version "$release_ref")"
+    if [[ -n "$stamped_version" ]]; then
+      printf '%s' "$stamped_version" >"$nemoclaw_src/.version"
+    else
+      git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
+        | sed 's/^v//' >"$nemoclaw_src/.version" || true
+    fi
     if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
       spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
         || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
@@ -2222,9 +2247,20 @@ run_preupgrade_backup() {
   NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" backup-all 2>&1
 }
 
+# Return nonzero when OpenShell is absent or its version command fails.
 installed_openshell_version() {
   command_exists openshell || return 1
-  openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+  local version_output
+  version_output="$(openshell --version 2>/dev/null)" || return 1
+  printf "%s\n" "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+# Fail closed when OpenShell is present but cannot report its version. An absent
+# binary is valid because OpenShell installation can be deferred.
+require_reportable_openshell_version() {
+  command_exists openshell || return 0
+  [ -n "$(installed_openshell_version 2>/dev/null || true)" ] && return 0
+  error "OpenShell is present on PATH but could not report its version. Refusing to start onboarding with an undeterminable OpenShell version — reinstall a supported OpenShell (run scripts/install-openshell.sh) or remove the broken binary, then rerun the installer."
 }
 
 truthy_env() {
@@ -4267,6 +4303,7 @@ main() {
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw
+  require_reportable_openshell_version
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
   # shell PATH cache no longer suppresses auto-onboarding (#3276). Falls

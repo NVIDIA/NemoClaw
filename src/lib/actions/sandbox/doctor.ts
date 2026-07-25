@@ -16,6 +16,7 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
+import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
@@ -28,6 +29,7 @@ import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import { captureHostCommand } from "./doctor-host-command";
 import { collectInferenceChecks, type DoctorInferenceRoute } from "./doctor-inference";
+import { buildLifecycleRegistrationCheck } from "./doctor-lifecycle-registration";
 import { collectMessagingDoctorChecks } from "./doctor-messaging";
 import {
   buildDoctorReport,
@@ -361,6 +363,15 @@ function collectRegisteredSandboxChecks(
 ): DoctorCheck[] {
   if (!sb) return [];
   const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
+  let dashboardPortRequired = true;
+  try {
+    dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
+  } catch {
+    // Require dashboard metadata when the agent definition cannot be loaded.
+  }
+  checks.push(
+    buildLifecycleRegistrationCheck(sandboxName, sb, CLI_NAME, { dashboardPortRequired }),
+  );
   const permsCheck = buildConfigPermsCheck(sandboxName, wantsFix, {
     inspect: shields.inspectMutableConfigPerms,
     repair: shields.repairMutableConfigPerms,
@@ -401,11 +412,24 @@ function shouldReportServingProcessHealth(agentName: string | null | undefined):
 async function collectDoctorChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
-  gatewayName: string,
+  gatewayName: string | null,
   intent: DoctorIntent,
 ): Promise<DoctorCheck[]> {
   const host = collectHostChecks();
-  const gateway = await collectGatewayChecks(gatewayName, sb, host.openshellBin, !intent.asJson);
+  const gateway: GatewayProbe = gatewayName
+    ? await collectGatewayChecks(gatewayName, sb, host.openshellBin, !intent.asJson)
+    : {
+        connected: false,
+        checks: [
+          {
+            group: "Gateway",
+            label: "Registered gateway binding",
+            status: "fail",
+            detail: "skipped because the registered gateway binding is invalid",
+            hint: `re-register or re-onboard '${sandboxName}' before running lifecycle commands`,
+          },
+        ],
+      };
   const sandbox = collectSandboxReadinessChecks(sandboxName, host.openshellBin, gateway.connected);
   const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected);
   return [
@@ -431,7 +455,14 @@ export async function runSandboxDoctor(
   if (!intent) return undefined;
 
   const sb = registry.getSandbox(sandboxName);
-  const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+  let gatewayName: string | null = resolveGatewayName(GATEWAY_PORT);
+  if (sb) {
+    try {
+      gatewayName = resolveSandboxGatewayName(sb);
+    } catch {
+      gatewayName = null;
+    }
+  }
   const checks = await collectDoctorChecks(sandboxName, sb, gatewayName, intent);
   const report = buildDoctorReport(sandboxName, checks);
   if (intent.asJson && options.quietJson) return report;

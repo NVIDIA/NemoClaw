@@ -30,7 +30,10 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
   function getGatewayReuseSnapshot(): GatewayReuseSnapshot {
     const gatewayName = currentGatewayName();
     const probeOptions = { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS };
-    const gatewayStatus = deps.runCaptureOpenshell(["status"], probeOptions);
+    const gatewayStatus = deps.runCaptureOpenshell(["status"], {
+      ...probeOptions,
+      includeStderr: true,
+    });
     const gwInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
       ...probeOptions,
     });

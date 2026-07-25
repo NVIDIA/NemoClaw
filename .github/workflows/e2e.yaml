@@ -125,7 +125,7 @@ jobs:
 
       - name: Set up Node for publication verification
         if: ${{ steps.publication_mode.outputs.required == '1' }}
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
@@ -234,7 +234,7 @@ jobs:
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base commit"; exit 1; }
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -385,7 +385,7 @@ jobs:
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       # invalidState: a profile plugin installed with --no-deps can import even
       # when an incomplete base image omitted its required upstream packages.
@@ -540,7 +540,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run tagged credential-free test
         env:
@@ -583,7 +583,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -849,7 +849,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (matrix.agent == 'hermes' || matrix.agent == 'deepagents') }}
@@ -984,7 +984,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
@@ -1088,7 +1088,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         # The migrated skill-agent lane invokes helper scripts that call
@@ -1163,7 +1163,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw skill CLI live test
         env:
@@ -1200,7 +1200,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run inference routing live test
         # Direct E2E coverage. The always-on PR-safe slices prove invalid-key,
@@ -1244,7 +1244,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run cloud inference live test
         # The Vitest test
@@ -1294,7 +1294,7 @@ jobs:
 
       - *dockerhub-auth
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run GPU Ollama live Vitest test
@@ -1371,7 +1371,7 @@ jobs:
 
       - *dockerhub-auth
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run agent turn latency live Vitest test
@@ -1427,7 +1427,7 @@ jobs:
 
       - *dockerhub-auth
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run Kimi compatibility live Vitest test
@@ -1513,7 +1513,7 @@ jobs:
 
       - *dockerhub-auth
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
         continue-on-error: true
@@ -1572,7 +1572,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1627,7 +1627,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -1670,7 +1670,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1739,7 +1739,7 @@ jobs:
           packages: expect iptables
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -1796,7 +1796,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run credential sanitization live test
         # Preserves the
@@ -1840,7 +1840,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run credential migration live test
         # This live test
@@ -1891,7 +1891,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: |
@@ -1948,7 +1948,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run Hermes Slack live test
         # Preserves the
@@ -2021,7 +2021,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2158,10 +2158,10 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Reassert trusted Node runtime
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         env:
           BASH_ENV: /dev/null
           E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
@@ -2361,7 +2361,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2436,7 +2436,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2521,7 +2521,7 @@ jobs:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         # Runs without workflow tokens, Docker credentials, or NVIDIA_INFERENCE_API_KEY.
@@ -2612,7 +2612,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2696,7 +2696,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -2767,7 +2767,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2818,7 +2818,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         # Direct Vitest execution uses bin/nemoclaw.js instead of install.sh,
@@ -2888,7 +2888,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Add swap for Hermes image rebuild
         shell: bash
@@ -3002,7 +3002,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Add swap for Hermes image rebuild
         shell: bash
@@ -3108,7 +3108,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -3171,7 +3171,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -3234,7 +3234,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run overlayfs autofix live test
         env:
@@ -3277,7 +3277,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -3339,7 +3339,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: |
@@ -3397,7 +3397,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3474,7 +3474,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Verify Jetson GPU availability
         run: |
@@ -3528,7 +3528,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3583,7 +3583,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3637,7 +3637,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3735,7 +3735,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -3822,7 +3822,7 @@ jobs:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3912,7 +3912,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3965,7 +3965,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4019,7 +4019,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4071,7 +4071,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run token rotation live test
         # Preserve the original runner class: ubuntu-latest with Docker/OpenShell
@@ -4122,7 +4122,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run messaging compatible endpoint live test
         # Preserves the fake OpenAI-compatible endpoint, Telegram messaging
@@ -4230,7 +4230,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenShell gateway upgrade live Vitest test
         # Keep the original v0.0.36 fixture on x86_64 and validate the exact
@@ -4280,7 +4280,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run messaging providers live Vitest test
         # The test keeps
@@ -4339,7 +4339,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -4383,7 +4383,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run Model Router provider-routed inference live test
         # Preserves the real provider-routed onboard, host model-router health, and
@@ -4427,7 +4427,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
@@ -4477,7 +4477,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Verify CLI launcher
         run: |
@@ -4535,7 +4535,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run sandbox survival live test
         # This intentionally
@@ -4582,7 +4582,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run diagnostics live test
         # This preserves the
@@ -4646,7 +4646,7 @@ jobs:
           bash .github/scripts/docker-auth-cleanup.sh
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw custom-plugin release baseline live test
         run: |
@@ -4713,7 +4713,7 @@ jobs:
           bash .github/scripts/docker-auth-cleanup.sh
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test
         run: |
@@ -4784,7 +4784,7 @@ jobs:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw TUI chat correlation live test
         env:
@@ -4845,7 +4845,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         # This target invokes `bin/nemoclaw.js onboard` directly, so install
@@ -4940,7 +4940,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run OpenClaw inference switch live test
         # Preserves
@@ -5018,7 +5018,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Run Bedrock Runtime compatible Anthropic live test
         # Direct Vitest coverage for
@@ -5062,7 +5062,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5105,7 +5105,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5160,7 +5160,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -5229,7 +5229,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell
         env:
@@ -5321,7 +5321,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
@@ -5406,7 +5406,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: |
@@ -5470,7 +5470,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5527,7 +5527,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install OpenShell CLI
         run: |
@@ -5591,7 +5591,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Install and verify cloudflared prerequisite
         env:
@@ -5668,7 +5668,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
 
