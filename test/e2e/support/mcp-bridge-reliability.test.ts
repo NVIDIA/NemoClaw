@@ -24,10 +24,18 @@ const HERMES_BROKEN_PIPE = `  Effective egress that would be opened:
   \u2502 { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) })
   \u251c\u2500\u25b6 error reading a body from connection
   \u2570\u2500\u25b6 stream closed because of a broken pipe`;
+const HERMES_FAKE_BROKEN_PIPE = HERMES_BROKEN_PIPE.replaceAll(
+  "mcp-bridge-concurrent",
+  "mcp-bridge-fake",
+);
 
 describe("MCP bridge transient classification", () => {
   it("accepts only the Hermes managed-restart broken-pipe signature (#6692)", () => {
     expect(isHermesRestartTransportFailure("hermes-config", HERMES_BROKEN_PIPE)).toBe(true);
+    expect(isHermesRestartTransportFailure("hermes-config", HERMES_FAKE_BROKEN_PIPE, "fake")).toBe(
+      true,
+    );
+    expect(isHermesRestartTransportFailure("hermes-config", HERMES_FAKE_BROKEN_PIPE)).toBe(false);
     expect(isHermesRestartTransportFailure("mcporter", HERMES_BROKEN_PIPE)).toBe(false);
     expect(isHermesRestartTransportFailure("deepagents-config", HERMES_BROKEN_PIPE)).toBe(false);
     expect(isHermesRestartTransportFailure("hermes-config", "h2 protocol error")).toBe(false);
@@ -80,6 +88,23 @@ describe("MCP bridge transient classification", () => {
         committedBridgeVerified: true,
         diagnostic: HERMES_BROKEN_PIPE,
         originalResult: { exitCode: 1 },
+        retry,
+      }),
+    ).resolves.toBe(retryResult);
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("binds the retry signature to the selected bridge policy", async () => {
+    const retryResult = { exitCode: 1 };
+    const retry = vi.fn(async () => retryResult);
+
+    await expect(
+      retryAfterHermesRestartTransportFailure({
+        adapter: "hermes-config",
+        committedBridgeVerified: true,
+        diagnostic: HERMES_FAKE_BROKEN_PIPE,
+        originalResult: { exitCode: 1 },
+        serverName: "fake",
         retry,
       }),
     ).resolves.toBe(retryResult);

@@ -23,6 +23,7 @@ import { test as e2eTest, expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { type McpBridgeShard, resolveMcpBridgeShard } from "./mcp-bridge-agent-selection.ts";
+import { addBridgeConcurrentlyAndReadStatus } from "./mcp-bridge-concurrent-add.ts";
 import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
@@ -30,7 +31,7 @@ import {
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import { buildMcpBridgeExactMainEnv, buildMcpBridgeOnboardEnv } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
-import { retryAfterHermesRestartTransportFailure } from "./mcp-bridge-reliability.ts";
+import type { McpAdapter } from "./mcp-bridge-reliability.ts";
 import {
   buildMcpDnsRebindingProbeScript,
   hostAddressForSandbox,
@@ -76,7 +77,6 @@ function mcpBridgeShardTest(shard: McpBridgeShard) {
 const test = mcpBridgeShardTest("openclaw");
 
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
-type McpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
 const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
   "deepagents-config": 3 * 60_000,
   "hermes-config": 12 * 60_000,
@@ -425,78 +425,11 @@ async function assertConcurrentAddSerialized(
   cleanup.add(`remove ${options.artifactPrefix} concurrent MCP bridge`, () =>
     cleanupMcpBridge(host, options.sandboxName, CONCURRENT_SERVER_NAME, options.expectedAdapter),
   );
-  const args = [
-    options.sandboxName,
-    "mcp",
-    "add",
-    CONCURRENT_SERVER_NAME,
-    "--url",
-    options.mcpUrl,
-    "--env",
-    "FAKE_MCP_SECRET",
-  ];
-  const env = {
-    ...buildAvailabilityProbeEnv(),
-    FAKE_MCP_SECRET: HOST_SECRET,
-  };
-  const attempts = await Promise.all(
-    ["first", "second"].map((attempt) =>
-      host.nemoclaw(args, {
-        artifactName: `${options.artifactPrefix}-mcp-concurrent-add-${attempt}`,
-        env,
-        redactionValues: [HOST_SECRET],
-        // Keep both clients alive through Hermes' bounded restart and config
-        // reload; the loser then acquires the lock and rejects the duplicate.
-        timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
-      }),
-    ),
-  );
-  const successful = attempts.filter((result) => result.exitCode === 0);
-  const rejected = attempts.filter((result) => result.exitCode !== 0);
-  expect(successful).toHaveLength(1);
-  expect(rejected).toHaveLength(1);
-  const status = await host.nemoclaw(
-    [options.sandboxName, "mcp", "status", CONCURRENT_SERVER_NAME, "--json"],
-    {
-      artifactName: `${options.artifactPrefix}-mcp-concurrent-add-coherent-status`,
-      env,
-      redactionValues: [HOST_SECRET],
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(status, `${options.artifactPrefix} concurrent add leaves one coherent bridge`);
-  expect(JSON.parse(status.stdout)).toMatchObject({
-    server: CONCURRENT_SERVER_NAME,
-    url: options.mcpUrl,
-    support: { adapter: options.expectedAdapter },
-    env: { names: ["FAKE_MCP_SECRET"], ready: true, missing: [] },
-    provider: {
-      registryPresent: true,
-      gatewayPresent: true,
-      attached: true,
-      credentialReady: true,
-    },
-    policy: { registryPresent: true, gatewayPresent: true },
-    adapter: { registered: true },
+  await addBridgeConcurrentlyAndReadStatus(host, {
+    ...options,
+    mutationTimeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
+    serverName: CONCURRENT_SERVER_NAME,
   });
-  const duplicateRejection = await retryAfterHermesRestartTransportFailure({
-    adapter: options.expectedAdapter,
-    committedBridgeVerified: true,
-    diagnostic: resultText(rejected[0]!),
-    originalResult: rejected[0]!,
-    retry: () =>
-      host.nemoclaw(args, {
-        artifactName: `${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`,
-        env,
-        redactionValues: [HOST_SECRET],
-        timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
-      }),
-  });
-  expectExitNonZero(
-    duplicateRejection,
-    `${options.artifactPrefix} concurrent MCP add rejects the serialized duplicate`,
-    /already exists/,
-  );
   const remove = await host.nemoclaw(
     [options.sandboxName, "mcp", "remove", CONCURRENT_SERVER_NAME],
     {
@@ -1229,19 +1162,16 @@ mcpBridgeShardTest("hermes")(
     );
 
     progress.phase("configure and inspect the Hermes MCP bridge");
-    await assertConcurrentAddSerialized(host, cleanup, {
-      sandboxName: HERMES_SANDBOX_NAME,
-      mcpUrl,
-      expectedAdapter: "hermes-config",
-      artifactPrefix: "hermes",
-    });
-
+    // Keep the serialized winner as the bridge under test. Its coherent status
+    // proof replaces a second add/reload without weakening later lifecycle checks.
     const initialDiscoveryOffset = fakeMcp.requests.length;
-    const providerName = await addBridgeAndReadStatus(host, {
+    const providerName = await addBridgeConcurrentlyAndReadStatus(host, {
       sandboxName: HERMES_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
+      mutationTimeoutMs: MCP_MUTATION_TIMEOUT_MS["hermes-config"],
+      serverName: SERVER_NAME,
     });
     await assertAuthenticatedMcpDiscovery(fakeMcp, {
       requestOffset: initialDiscoveryOffset,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
+export type McpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
 const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
   `Error: x code: 'Unknown error', message: "h2 protocol error: error reading a body`,
   `| from connection", source: hyper::Error(Body, Error { kind: Io(Custom`,
@@ -9,21 +10,28 @@ const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
   `|-> error reading a body from connection`,
   `|-> stream closed because of a broken pipe`,
 ].join("\n");
-const HERMES_RESTART_SUCCESS_PREFIX = new RegExp(
-  `^${[
-    String.raw`Effective egress that would be opened:`,
-    String.raw`(?:.*\n)*?\s*- (?<host>[a-z0-9-]+\.trycloudflare\.com):\d+[^\n]*`,
-    String.raw`(?:.*\n)*?Applied preset: mcp-bridge-concurrent`,
-    String.raw`Narrowing sandbox egress — removing: \k<host>`,
-    String.raw`Removed preset: mcp-bridge-concurrent`,
-    String.raw`✓ Policy version (?<cleanupVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
-    String.raw`✓ Policy version \k<cleanupVersion> loaded \(active version: \k<cleanupVersion>\)`,
-    String.raw`Preset not found: mcp-bridge-concurrent`,
-    String.raw`✓ Policy version (?<commitVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
-    String.raw`✓ Policy version \k<commitVersion> loaded \(active version: \k<commitVersion>\)`,
-  ].join("\n")}$`,
-  "u",
-);
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function hermesRestartSuccessPrefix(serverName: string): RegExp {
+  const policyName = escapeRegExp(`mcp-bridge-${serverName}`);
+  return new RegExp(
+    `^${[
+      String.raw`Effective egress that would be opened:`,
+      String.raw`(?:.*\n)*?\s*- (?<host>[a-z0-9-]+\.trycloudflare\.com):\d+[^\n]*`,
+      String.raw`(?:.*\n)*?Applied preset: ${policyName}`,
+      String.raw`Narrowing sandbox egress — removing: \k<host>`,
+      String.raw`Removed preset: ${policyName}`,
+      String.raw`✓ Policy version (?<cleanupVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
+      String.raw`✓ Policy version \k<cleanupVersion> loaded \(active version: \k<cleanupVersion>\)`,
+      String.raw`Preset not found: ${policyName}`,
+      String.raw`✓ Policy version (?<commitVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
+      String.raw`✓ Policy version \k<commitVersion> loaded \(active version: \k<commitVersion>\)`,
+    ].join("\n")}$`,
+    "u",
+  );
+}
 
 function normalizeHermesTransportDiagnostic(diagnostic: string): string {
   return diagnostic
@@ -38,7 +46,11 @@ function normalizeHermesTransportDiagnostic(diagnostic: string): string {
     .join("\n");
 }
 
-export function isHermesRestartTransportFailure(adapter: string, diagnostic: string): boolean {
+export function isHermesRestartTransportFailure(
+  adapter: McpAdapter,
+  diagnostic: string,
+  serverName = "concurrent",
+): boolean {
   // The producer is OpenShell's sandbox-exec HTTP/2 stream while the packaged
   // Hermes transaction helper performs its acknowledged SIGUSR1 gateway reload.
   // NemoClaw cannot repair that transport from this E2E boundary. The live
@@ -51,21 +63,28 @@ export function isHermesRestartTransportFailure(adapter: string, diagnostic: str
   const suffix = `\n${HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX}`;
   if (!normalized.endsWith(suffix)) return false;
 
-  return HERMES_RESTART_SUCCESS_PREFIX.test(normalized.slice(0, -suffix.length));
+  return hermesRestartSuccessPrefix(serverName).test(normalized.slice(0, -suffix.length));
 }
 
 export async function retryAfterHermesRestartTransportFailure<T>(options: {
-  adapter: string;
+  adapter: McpAdapter;
   committedBridgeVerified: boolean;
   diagnostic: string;
   originalResult: T;
+  serverName?: string;
   retry: () => Promise<T>;
 }): Promise<T> {
   if (!options.committedBridgeVerified) {
     throw new Error("Hermes restart retry requires a verified committed bridge");
   }
   if (/already exists/iu.test(options.diagnostic)) return options.originalResult;
-  if (!isHermesRestartTransportFailure(options.adapter, options.diagnostic)) {
+  if (
+    !isHermesRestartTransportFailure(
+      options.adapter,
+      options.diagnostic,
+      options.serverName ?? "concurrent",
+    )
+  ) {
     throw new Error("rejected concurrent add was not a known Hermes restart transport failure");
   }
   return options.retry();
