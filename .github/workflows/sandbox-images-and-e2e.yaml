@@ -27,7 +27,7 @@ permissions:
 jobs:
   build-sandbox-images:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - &checkout
         name: Checkout
@@ -428,7 +428,7 @@ jobs:
   build-sandbox-images-arm64:
     if: inputs.run_arm64
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - *checkout
 

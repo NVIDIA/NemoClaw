@@ -392,6 +392,11 @@
       "category": "security"
     },
     {
+      "file": "test/perl-critical-cve-remediation.test.ts",
+      "test": "builds the fixed upstream release from a checksum-pinned source archive (#7338)",
+      "category": "security"
+    },
+    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
       "category": "security"
