@@ -70,7 +70,8 @@ function sleep(seconds: number): void {
 
 // ── Token persistence ────────────────────────────────────────────
 
-function persistProxyToken(token: string): void {
+function persistProxyToken(token: string, backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`): void {
+  writeLocalAdapterSecretFile(path.join(PROXY_STATE_DIR, "ollama-backend"), backendUrl);
   writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
 }
 
@@ -148,13 +149,15 @@ function isOllamaProxyProcess(pid: number | null | undefined): boolean {
   return isLocalAdapterProcess(pid, isOllamaAuthProxyCommandLine, runCapture);
 }
 
-function spawnOllamaAuthProxy(token: string): number | null {
+function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null {
+  const url = backendUrl || readLocalAdapterTextFile(path.join(PROXY_STATE_DIR, "ollama-backend"));
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
     env: {
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+      ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
     },
     buildEnv: buildSubprocessEnv,
   });
@@ -262,7 +265,7 @@ function printProxyPortConflict(owners: { pids: number[]; descriptions: string[]
 // so poll with backoff instead of the previous single 2s probe (issue #4820).
 const PROXY_START_ATTEMPTS = 12;
 
-function startOllamaAuthProxy(): boolean {
+function startOllamaAuthProxy(backendUrl?: string): boolean {
   const crypto = require("crypto");
   killStaleProxy();
 
@@ -283,7 +286,7 @@ function startOllamaAuthProxy(): boolean {
   // Don't persist yet — wait until provider is confirmed in setupInference.
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
-  const pid = spawnOllamaAuthProxy(proxyToken);
+  const pid = spawnOllamaAuthProxy(proxyToken, backendUrl || `http://127.0.0.1:${OLLAMA_PORT}`);
 
   // Poll for readiness with backoff. Three terminal outcomes:
   //   • proxy alive and listening → success
@@ -320,6 +323,26 @@ function startOllamaAuthProxy(): boolean {
   console.error("  Containers will not be able to reach Ollama without the proxy.");
   console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
   return false;
+}
+
+function noAuthProxy(endpointUrl: string) {
+  const endpoint = new URL(endpointUrl);
+  if (!startOllamaAuthProxy(endpoint.origin)) {
+    restorePersistedOllamaAuthProxy();
+    throw new Error("Could not start the protected loopback route.");
+  }
+  return {
+    baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`,
+    credentialValue: getOllamaProxyToken()!,
+    persist: () => persistProxyToken(getOllamaProxyToken()!, endpoint.origin),
+    restore: restorePersistedOllamaAuthProxy,
+  };
+}
+
+function restorePersistedOllamaAuthProxy(): void {
+  killStaleProxy();
+  ollamaProxyToken = null;
+  ensureOllamaAuthProxy();
 }
 
 /**
@@ -369,11 +392,25 @@ function proxyOwnsPortWithToken(token: string): boolean {
  * after a failed re-onboard (see issue #2553).
  */
 function ensureOllamaAuthProxy(): void {
+  const pid = loadPersistedProxyPid();
+  // startOllamaAuthProxy replaces the live proxy before setupInference confirms
+  // the selected provider and calls persistProxyToken. It cannot persist sooner:
+  // the user may still back out, leaving the previous route as the committed one.
+  // Preserve this in-memory proxy across recovery during that transition. This
+  // exception can go away when provider selection commits the replacement token
+  // and backend before any recovery path can call ensureOllamaAuthProxy.
+  if (
+    ollamaProxyToken &&
+    isOllamaProxyProcess(pid) &&
+    probeProxyToken(ollamaProxyToken) === "accepted"
+  ) {
+    return;
+  }
+
   // Try to load persisted token first — if none, this isn't an Ollama setup.
   const token = loadPersistedProxyToken();
   if (!token) return;
 
-  const pid = loadPersistedProxyPid();
   if (isOllamaProxyProcess(pid)) {
     const tokenStatus = probeProxyToken(token);
     if (tokenStatus === "accepted") {
@@ -1011,6 +1048,7 @@ export {
   getOllamaPullTimeoutMs,
   isProxyHealthy,
   killStaleProxy,
+  noAuthProxy,
   persistAndProbeOllamaProxy,
   persistProxyToken,
   prepareOllamaModel,

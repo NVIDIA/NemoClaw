@@ -30,7 +30,13 @@ import {
   RuntimePhaseFixture,
   StateValidationPhaseFixture,
 } from "./phases/index.ts";
-import { type ProgressPhaseOutcome, startTestProgress, type TestProgress } from "./progress.ts";
+import {
+  type ProgressPhaseOutcome,
+  type ProgressResourceSampleKind,
+  startTestProgress,
+  type TestProgress,
+  type TestProgressOptions,
+} from "./progress.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
 
@@ -65,6 +71,43 @@ const SUPPORT_PHASES = [
   "record E2E fixture support outcome",
 ] as const;
 export const E2E_TEARDOWN_PHASE = "release registered E2E resources";
+
+export function runnerComparisonSampleIntervalMs(targetId: string | null): number {
+  switch (targetId) {
+    case "rebuild-hermes":
+    case "rebuild-hermes-stale-base":
+      return 15_000;
+    default:
+      return 60_000;
+  }
+}
+
+type RunnerComparisonProgressOptions = Pick<
+  TestProgressOptions,
+  "recordResourceSample" | "resourceSampleIntervalMs"
+>;
+
+export function runnerComparisonProgressOptions(
+  environment: NodeJS.ProcessEnv = process.env,
+  appendSample: (
+    phase: string,
+    kind: ProgressResourceSampleKind,
+  ) => boolean = appendRunnerComparisonSample,
+): RunnerComparisonProgressOptions {
+  const targetId =
+    environment.NEMOCLAW_RUN_LIVE_E2E === "1" &&
+    environment.E2E_ARTIFACT_DIR &&
+    environment.E2E_TARGET_ID
+      ? environment.E2E_TARGET_ID
+      : null;
+  return targetId
+    ? {
+        resourceSampleIntervalMs: runnerComparisonSampleIntervalMs(targetId),
+        recordResourceSample: (phase, kind) =>
+          appendSample(resourcePhaseLabel(targetId, phase), kind),
+      }
+    : {};
+}
 
 export function resourcePhaseLabel(targetId: string, phase: string): string {
   const slug = (value: string, fallback: string) =>
@@ -112,12 +155,6 @@ export const test = base.extend<E2ETargetFixtures>({
   progress: [
     async ({ artifacts, onTestFinished, secrets, task }, use) => {
       const targetId = process.env.E2E_TARGET_ID || process.env.GITHUB_JOB;
-      const comparisonTargetId =
-        process.env.NEMOCLAW_RUN_LIVE_E2E === "1" &&
-        process.env.E2E_ARTIFACT_DIR &&
-        process.env.E2E_TARGET_ID
-          ? process.env.E2E_TARGET_ID
-          : null;
       const shardId = process.env.NEMOCLAW_E2E_SHARD;
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
       const phasePlan = task.meta.e2ePhases;
@@ -150,15 +187,7 @@ export const test = base.extend<E2ETargetFixtures>({
                 appendResourcePhaseBaseline(baselinePath, resourcePhaseLabel(targetId, phase)),
             }
           : {}),
-        ...(comparisonTargetId
-          ? {
-              recordResourceSample: (
-                phase: string,
-                kind: "periodic" | "scenario-start" | "phase",
-              ) =>
-                appendRunnerComparisonSample(resourcePhaseLabel(comparisonTargetId, phase), kind),
-            }
-          : {}),
+        ...runnerComparisonProgressOptions(),
       });
       const completeSupportPlan = phasePlan
         ? () => undefined

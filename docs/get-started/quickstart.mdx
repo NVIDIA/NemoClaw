@@ -264,7 +264,7 @@ Use these details when your first-run path needs more control.
     | Local Ollama | You want a host-local Ollama model. | None |
     | Model Router | You want NemoClaw to start the host-side model router. | `NVIDIA_INFERENCE_API_KEY` |
 
-    If a compatible endpoint does not require authentication, set its credential variable to any non-empty placeholder.
+    For an OpenAI-compatible endpoint using HTTP on `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`, press Enter at the API key prompt to select no authentication.
 
     After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and builds the sandbox image.
 
