@@ -213,7 +213,23 @@ Follow `.agents/skills/_shared/git-github-hard-stop.md`: if SSH, `gh`, authentic
 
 Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a PR, monitor required CI and automated review comments, address valid CodeRabbit and PR Review Advisor findings, and consult the user when feedback is ambiguous or design-changing.
 
-Reviewer routing is repository-owned. Let trusted base-branch configuration, CODEOWNERS, rulesets, workflows, and NemoClaw skills decide which people, teams, and automated reviewers participate. Do not add, remove, or re-request a human, team, or bot reviewer unless the user explicitly names the reviewer or a trusted NemoClaw workflow requires that exact write. A push may cause GitHub to attribute an automatic review request to the pushing account; report that as repository automation, not as an intentional reviewer request by the contributor or agent.
+Reviewer routing is repository-owned.
+Reviewer selection can come from these sources:
+
+- `CODEOWNERS` loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+- Rulesets configured for `NVIDIA/NemoClaw`.
+- NemoClaw workflow definitions loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+- NemoClaw skills loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+
+Before you use a reviewer-request write, confirm that one of these conditions is true:
+
+- The current user names the exact reviewer.
+- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
+
+Otherwise, do not add, remove, or re-request a human, team, or bot reviewer.
+GitHub can create an automatic review-request event when a contributor or agent pushes.
+GitHub can attribute the event to the pushing account.
+If the command trace contains no reviewer-request write, report the event as an automatic review-request event.
 
 ### Common Patterns
 

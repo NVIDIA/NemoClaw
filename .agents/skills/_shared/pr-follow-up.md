@@ -9,11 +9,38 @@ Use this workflow after you create a PR or push to an open PR.
 
 Treat reviewer selection as repository configuration, not an agent decision.
 
-- Let trusted base-branch CODEOWNERS, rulesets, workflows, and NemoClaw skills request people, teams, and automated reviewers.
-- Do not use `gh pr edit --add-reviewer`, `--remove-reviewer`, the requested-reviewers REST endpoint, GraphQL review-request mutations, or equivalent writes unless the user explicitly names the reviewer or a trusted NemoClaw workflow requires that exact write.
-- Do not manually request or re-request Copilot, CodeRabbit, or another third-party reviewer to compensate for a missing, stale, quota-limited, or failed review unless the user explicitly names that reviewer or a trusted NemoClaw workflow requires that exact write. Otherwise, observe and triage only the review signals the repository produces.
-- Project-owned workflow dispatches documented by a NemoClaw skill, such as refreshing the PR Review Advisor, are workflow operations rather than reviewer selection. Follow the exact skill instructions for those dispatches.
-- GitHub may create an automatic review-request timeline event when a contributor or agent pushes. GitHub can attribute that event to the pushing account. Describe it as an automatic repository review triggered by the push unless the command trace contains an explicit reviewer write.
+Reviewer selection can come from these repository-owned sources:
+
+- `CODEOWNERS` loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+- Rulesets configured for `NVIDIA/NemoClaw`.
+- NemoClaw workflow definitions loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+- NemoClaw skills loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+
+Before you use a reviewer-request write, confirm that one of these conditions is true:
+
+- The current user names the exact reviewer.
+- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
+
+Otherwise, do not use any of these reviewer-request writes:
+
+- `gh pr edit --add-reviewer` or `--remove-reviewer`.
+- The requested-reviewers REST endpoint.
+- A GraphQL review-request mutation.
+- An equivalent reviewer-request write.
+
+Under the same authorization rules, do not manually request or re-request a third-party reviewer.
+This restriction includes Copilot and CodeRabbit.
+Do not compensate for a missing, stale, quota-limited, or failed review.
+Observe only review signals that the repository produces.
+Triage each signal according to this workflow.
+
+If a repository-owned workflow dispatch performs no reviewer-request write, do not treat the dispatch as reviewer selection.
+A documented PR Review Advisor refresh is one such dispatch.
+Follow the exact NemoClaw skill instructions for the dispatch.
+
+GitHub can create an automatic review-request event when a contributor or agent pushes.
+GitHub can attribute the event to the pushing account.
+If the command trace contains no reviewer-request write, report the event as an automatic review-request event.
 
 ## Monitor checks
 
