@@ -70,9 +70,17 @@ require(${CLI_PATH});
 
 describe("policy preset prompt cancellation", () => {
   it.each([
-    { command: "policy-add" as const, menu: "Available presets:" },
-    { command: "policy-remove" as const, menu: "Applied presets:" },
-  ])("$command exits non-zero when the picker prompt hits EOF (#7418)", ({ command, menu }) => {
+    { command: "policy-add" as const, menu: "Available presets:", usage: "policy add <preset>" },
+    {
+      command: "policy-remove" as const,
+      menu: "Applied presets:",
+      usage: "policy remove <preset>",
+    },
+  ])("$command exits non-zero when the picker prompt hits EOF (#7418)", ({
+    command,
+    menu,
+    usage,
+  }) => {
     const result = runPolicyCommandAtStdinEof(command);
 
     // The child exited on its own rather than being killed by the defensive
@@ -84,7 +92,7 @@ describe("policy preset prompt cancellation", () => {
     // NEMOCLAW_NON_INTERACTIVE=1 guard exiting earlier.
     expect(result.stderr).toContain(menu);
     expect(result.stderr).toContain("No input available on stdin");
-    expect(result.stderr).toContain(`${command} <preset>`);
+    expect(result.stderr).toContain(usage);
     expect(result.status).toBe(1);
     // Above the child's 30s cap, so any hang fails on the assertions above
     // rather than as a bare suite timeout.

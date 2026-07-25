@@ -230,7 +230,9 @@ RUN set -eu; \
         echo "Error: Hermes ${HERMES_VERSION} tarball declares version ${tarball_semver}, expected ${HERMES_SEMVER}" >&2; \
         exit 1; \
     fi; \
-    registry_integrity=$(npm view "hermes-agent@${HERMES_SEMVER}" dist.integrity); \
+    npm_integrity_cache=/tmp/hermes-npm-integrity-cache; \
+    registry_integrity=$(npm_config_cache="$npm_integrity_cache" npm view "hermes-agent@${HERMES_SEMVER}" dist.integrity); \
+    rm -rf "$npm_integrity_cache"; \
     if [ "$registry_integrity" != "${HERMES_NPM_INTEGRITY}" ]; then \
         echo "Error: hermes-agent ${HERMES_SEMVER} npm integrity mismatch" >&2; \
         echo "Expected: ${HERMES_NPM_INTEGRITY}" >&2; \
@@ -247,9 +249,13 @@ WORKDIR /opt/hermes
 # the sha256-verified tarball — the workspace branch below additionally
 # requires the UI dir to appear in the pinned root lockfile before building.
 # Re-review the lockfiles on every HERMES_VERSION/HERMES_TARBALL_SHA256 bump.
-# The final `npm ci --omit=dev` drops the UI build toolchain (vite, tsc,
-# eslint) from node_modules again — the dashboard bundle is already in
-# hermes_cli/web_dist and the TUI keeps its runtime (non-dev) deps.
+# A root `npm ci --omit=dev` still installs production dependencies for every
+# workspace. The dashboard and TUI are self-contained build artifacts, so
+# retaining their workspace trees only increases the image exported by every
+# Hermes E2E. Recreate root node_modules from the pinned lockfile with
+# workspaces disabled; this keeps browser tooling without either UI build tree.
+# Root npm, Electron, and node-gyp caches are build-only. Remove them in the
+# same RUN that creates them so Docker cannot retain their bytes in this layer.
 # hadolint ignore=SC2086
 RUN set -eu; \
     set --; \
@@ -276,8 +282,15 @@ RUN set -eu; \
     else \
         echo "Skipping optional Hermes bridge ${bridge_dir}: no package manifest found"; \
     fi \
-    && npm ci --omit=dev --prefer-offline --no-audit --no-fund \
-    && rm -rf ui-tui/node_modules web/node_modules /tmp/camoufox-* \
+    && rm -rf node_modules ui-tui/node_modules web/node_modules \
+    && npm ci --omit=dev --workspaces=false --prefer-offline --no-audit --no-fund \
+    && rm -rf \
+        ui-tui/node_modules \
+        web/node_modules \
+        /root/.npm \
+        /root/.cache/electron \
+        /root/.cache/node-gyp \
+        /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
@@ -309,6 +322,18 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 RUN /usr/local/bin/hermes --version \
+    && test -x /opt/hermes/node_modules/.bin/agent-browser \
+    && /opt/hermes/node_modules/.bin/agent-browser --version \
+    && /opt/hermes/.venv/bin/python -c \
+        'from tools import browser_tool; expected = "/opt/hermes/node_modules/.bin/agent-browser"; assert browser_tool._find_agent_browser() == expected' \
+    && test -s "${HERMES_TUI_DIR}/dist/entry.js" \
+    && test -s "${HERMES_WEB_DIST}/index.html" \
+    && test ! -e /opt/hermes/.node_modules.runtime \
+    && mv /opt/hermes/node_modules /opt/hermes/.node_modules.runtime \
+    && mkdir /opt/hermes/node_modules \
+    && timeout 30s node "${HERMES_TUI_DIR}/dist/entry.js" --help \
+    && rmdir /opt/hermes/node_modules \
+    && mv /opt/hermes/.node_modules.runtime /opt/hermes/node_modules \
     && /opt/hermes/.venv/bin/python -c \
         'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
 
@@ -318,7 +343,14 @@ RUN chmod -R a+rX /opt/hermes/.venv \
 
 # Gate the exact completed base filesystem before it can be published.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
+RUN set -eu; \
+    for build_cache in /root/.npm /root/.cache/electron /root/.cache/node-gyp; do \
+        if [ -e "$build_cache" ] || [ -L "$build_cache" ]; then \
+            echo "ERROR: build-only Hermes cache leaked into the base image: $build_cache" >&2; \
+            exit 1; \
+        fi; \
+    done; \
+    install -d -m 0755 /usr/local/share/nemoclaw \
     && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
         --root / --image build:hermes-base \
         > /usr/local/share/nemoclaw/node-tar-inventory.json \

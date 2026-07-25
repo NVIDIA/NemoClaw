@@ -1467,7 +1467,7 @@ async function updateRunningCheck(
   const childRunUrl = `https://github.com/${context.repository}/actions/runs/${options.childRunId}`;
   const selectionCount = options.jobs.length + options.targets.length;
   const title = `Running ${selectionCount} E2E ${selectionCount === 1 ? "check" : "checks"}`;
-  const summary = `Risk plan ${options.planHash} selected jobs: ${options.jobs.join(", ") || "none"}; targets: ${options.targets.join(", ") || "none"}.`;
+  const summary = `Risk plan ${options.planHash} selected jobs: ${options.jobs.join(", ") || "none"}; targets: ${options.targets.join(", ") || "none"}. Child run: ${childRunUrl}.`;
   const check = await githubApi<unknown>(
     `repos/${context.repository}/check-runs/${context.checkRunId}`,
     token,

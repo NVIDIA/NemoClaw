@@ -18,7 +18,7 @@ const { runOclifArgv, runOclifCommandById } = require("./oclif-runner");
 const {
   canonicalUsageList,
   globalCommandTokens,
-  sandboxActionTokens,
+  sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
 import { migrateLegacyPortState } from "../state/legacy-port-migration";
@@ -145,7 +145,7 @@ function printConnectOrderHint(candidate: string | null): void {
 }
 
 function sandboxActionList(): string[] {
-  return sandboxActionTokens();
+  return sandboxActionTokensForDispatch();
 }
 
 type OpenShellCommandHint = {
@@ -167,7 +167,7 @@ function getOpenShellCommandHint(argv: readonly string[]): OpenShellCommandHint 
     return {
       entered: argv.join(" "),
       command: "openshell policy set --policy <policy-file> --wait <sandbox-name>",
-      note: `For NemoClaw presets, use: ${CLI_NAME} <sandbox-name> policy-add <preset>`,
+      note: `For NemoClaw presets, use: ${CLI_NAME} <sandbox-name> policy add <preset>`,
     };
   }
   if (cmd === "gateway" && subcommand === "stop") {

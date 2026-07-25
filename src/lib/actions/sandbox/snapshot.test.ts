@@ -5,6 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
+import {
+  type DcodeProbeState,
+  dcodeProbeOutput,
+  framedDcodeProbeOutput,
+} from "./dcode-probe-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
@@ -17,15 +23,6 @@ type OpenshellCaptureResult = {
   signal?: NodeJS.Signals | null;
 };
 type SandboxRecord = { name: string; observabilityEnabled?: boolean } & Record<string, unknown>;
-type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
-
-function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
-  return `${SANDBOX_EXEC_STARTED_MARKER}\nNEMOCLAW_DCODE_PROBE=${state}\n${extra}`;
-}
-
-function framedDcodeProbeOutput(state: DcodeProbeState, framePrefix = "stdout: "): string {
-  return `${framePrefix}${SANDBOX_EXEC_STARTED_MARKER}\n${framePrefix}NEMOCLAW_DCODE_PROBE=${state}\n`;
-}
 
 function captureOpenshellStreams(
   args: string[],
@@ -169,13 +166,15 @@ vi.mock("../../inference/nim", () => ({
   stopNimContainerByName: vi.fn(),
 }));
 
-vi.mock("../../policy", () => ({
+vi.mock("../../policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../policy")>()),
   applyPreset: applyPresetMock,
   applyPresetContent: applyPresetContentMock,
   getAppliedPresets: getAppliedPresetsMock,
   getPresetContentGatewayState: getPresetContentGatewayStateMock,
   loadPresetForSandbox: loadPresetForSandboxMock,
   removePreset: removePresetMock,
+  resolveAgentBaselinePolicy: resolveTestAgentBaselinePolicy,
 }));
 
 vi.mock("../../runner", () => ({
@@ -217,6 +216,7 @@ vi.mock("../../state/gateway", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
+  getBaselineExclusions: vi.fn(() => []),
   getCustomPolicies: getCustomPoliciesMock,
   getSandbox: getSandboxMock,
   listSandboxes: () => ({
