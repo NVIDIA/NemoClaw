@@ -150,6 +150,7 @@ jobs:
   generate-matrix:
     needs: base-image-publication
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
@@ -5872,6 +5873,7 @@ jobs:
   # comment.
   report-to-pr:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
     # makes the report wait for and record any requested job without adding
     # skipped checks to the normal pull_request workflow.
@@ -6011,6 +6013,7 @@ jobs:
   # ── Scheduled/manual scorecard ────────────────────────────────────────────
   scorecard:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: *e2e-result-jobs
     if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}
     permissions:

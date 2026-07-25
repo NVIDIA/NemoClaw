@@ -4176,6 +4176,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
     errors.push("generate-matrix job must run on ubuntu-latest");
   }
+  if (generateMatrix["timeout-minutes"] !== 10) {
+    errors.push("generate-matrix job must keep the 10 minute timeout");
+  }
   const generateOutputs = asRecord(generateMatrix.outputs);
   if (
     generateOutputs.matrix !==
@@ -4680,6 +4683,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (Object.keys(reportToPr).length === 0) {
     errors.push("workflow missing report-to-pr job");
   } else {
+    if (reportToPr["timeout-minutes"] !== 15) {
+      errors.push("report-to-pr job must keep the 15 minute timeout");
+    }
     const needs = Array.isArray(reportToPr.needs) ? reportToPr.needs : [];
     for (const required of ["generate-matrix", "live"]) {
       if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
@@ -4797,6 +4803,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         );
       }
     }
+  }
+
+  const scorecard = asRecord(jobs.scorecard);
+  if (scorecard["timeout-minutes"] !== 15) {
+    errors.push("scorecard job must keep the 15 minute timeout");
   }
 
   return errors;
