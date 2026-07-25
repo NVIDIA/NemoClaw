@@ -74,7 +74,11 @@ Required PR workflows must identify the PR number, PR SHA, and base SHA.
 - A closed event must use `E2E / PR Gate (not applicable)` for its skipped observer.
   It must not publish the required check name.
 - GitHub usually associates the run with the PR.
-  If that association is empty, require the controller path, branch, repository, and run time to match the coordination check.
+  For a fork run with an empty association, require the Actions event, workflow path, fork repository, branch, and PR SHA to match the current PR.
+  The PR and installer workflows must also name the exact PR, PR SHA, and base SHA.
+  The E2E controller must still enclose the trusted coordination check.
+- If GitHub omits `headRepository.nameWithOwner`, derive it only from the returned repository name and repository-owner login.
+  Fail closed when those fields are missing, malformed, or contradictory.
 - Treat an all-skipped `gate false` run from an older workflow version as non-evidence.
 - Fail closed when identity, state, or timing evidence is missing, malformed, stale, contradictory, or changed.
 
