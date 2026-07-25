@@ -46,20 +46,38 @@ describe("googlechat tunnel/audience gate hook", () => {
     expect(result).toEqual({});
   });
 
-  it("uses a pre-supplied audience without touching the tunnel", async () => {
+  it("uses a valid pre-supplied app-url audience without touching the tunnel", async () => {
     const startTunnel = vi.fn(async () => {});
     const stopTunnel = vi.fn();
     const hook = createGooglechatTunnelAudienceGateHook(
       baseOptions({ startTunnel, stopTunnel, readTunnelState: () => ({ running: false }) }),
     );
 
-    const result = await hook(gateContext({ audience: "https://named.example.com/googlechat" }));
+    const result = await hook(
+      gateContext({ audience: "https://named.example.com/hooks/googlechat" }),
+    );
 
     expect(result).toEqual({
-      outputs: { audience: { kind: "config", value: "https://named.example.com/googlechat" } },
+      outputs: {
+        audience: { kind: "config", value: "https://named.example.com/hooks/googlechat" },
+      },
     });
     expect(startTunnel).not.toHaveBeenCalled();
     expect(stopTunnel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "https://named.example.com/other",
+    "https://named.example.com/googlechat/",
+    "http://named.example.com/googlechat",
+  ])("rejects an invalid pre-supplied app-url audience: %s", async (audience) => {
+    const startTunnel = vi.fn(async () => {});
+    const hook = createGooglechatTunnelAudienceGateHook(baseOptions({ startTunnel }));
+
+    await expect(hook(gateContext({ audience }))).rejects.toThrow(
+      /valid HTTPS URL ending in \/googlechat/,
+    );
+    expect(startTunnel).not.toHaveBeenCalled();
   });
 
   it("collects a non app-url audience directly, without touching the tunnel", async () => {
@@ -73,6 +91,20 @@ describe("googlechat tunnel/audience gate hook", () => {
       outputs: { audience: { kind: "config", value: "123456789012" } },
     });
     expect(startTunnel).not.toHaveBeenCalled();
+  });
+
+  it("preserves a pre-supplied project-number audience", async () => {
+    const prompt = vi.fn(async () => "unused");
+    const hook = createGooglechatTunnelAudienceGateHook(baseOptions({ prompt }));
+
+    const result = await hook(
+      gateContext({ audienceType: "project-number", audience: "123456789012" }),
+    );
+
+    expect(result).toEqual({
+      outputs: { audience: { kind: "config", value: "123456789012" } },
+    });
+    expect(prompt).not.toHaveBeenCalled();
   });
 
   it("skips googlechat when a non app-url audience is left blank", async () => {

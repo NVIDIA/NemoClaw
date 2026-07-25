@@ -42,6 +42,23 @@ function isAffirmative(value: string): boolean {
   return normalized === "y" || normalized === "yes";
 }
 
+function requireAppUrlAudience(value: string): string {
+  let audience: URL;
+  try {
+    audience = new URL(value);
+  } catch {
+    throw new Error(
+      "Google Chat app-url audience must be a valid HTTPS URL ending in /googlechat.",
+    );
+  }
+  if (audience.protocol !== "https:" || !audience.pathname.endsWith(DEFAULT_WEBHOOK_PATH)) {
+    throw new Error(
+      "Google Chat app-url audience must be a valid HTTPS URL ending in /googlechat.",
+    );
+  }
+  return value;
+}
+
 function audienceOutput(audience: string): { readonly outputs: MessagingHookOutputMap } {
   const outputs: Record<string, MessagingHookOutputMap[string]> = {
     audience: { kind: "config", value: audience },
@@ -101,8 +118,10 @@ export function createGooglechatTunnelAudienceGateHook(
     const existingAudience =
       readString(context.inputs?.audience) || readString(env.GOOGLECHAT_AUDIENCE);
     if (existingAudience) {
-      log(`  ✓ Google Chat webhook audience already set: ${existingAudience}`);
-      return audienceOutput(existingAudience);
+      const audience =
+        audienceType === "app-url" ? requireAppUrlAudience(existingAudience) : existingAudience;
+      log(`  ✓ Google Chat webhook audience already set: ${audience}`);
+      return audienceOutput(audience);
     }
 
     // Only the app-url path derives its audience from a public webhook URL. Any
