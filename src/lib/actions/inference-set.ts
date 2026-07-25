@@ -62,7 +62,7 @@ import {
   type InferenceMutation,
   readPreviousOpenClawInferenceApi,
 } from "./inference-set-gateway-restart";
-import { applyHttpsPinProviderBinding } from "./inference-set-https-pin-provider";
+import { prepareHttpsPinProviderBinding } from "./inference-set-https-pin-provider";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 import {
   applyOpenClawAnthropicReplyBudget,
@@ -843,15 +843,16 @@ async function runInferenceSetWithoutHostLock(
 
   let appliedHttpsPinProvider = false;
   let appliedInferenceSelection = false;
+  let httpsPinProviderMutation: ReturnType<typeof prepareHttpsPinProviderBinding> | null = null;
   try {
     if (httpsPinProviderBinding) {
-      applyHttpsPinProviderBinding({
+      httpsPinProviderMutation = prepareHttpsPinProviderBinding({
         gatewayName: preparedRoute.gatewayName,
         providerName: provider,
         binding: httpsPinProviderBinding,
         captureOpenshell: deps.captureOpenshell,
       });
-      appliedHttpsPinProvider = true;
+      appliedHttpsPinProvider = httpsPinProviderMutation.action === "create";
     }
 
     deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
@@ -873,6 +874,10 @@ async function runInferenceSetWithoutHostLock(
       throw new InferenceSetError(failure.message, failure.exitCode);
     }
     appliedInferenceSelection = true;
+    if (httpsPinProviderMutation) {
+      httpsPinProviderMutation.commit();
+      appliedHttpsPinProvider = true;
+    }
 
     // Write minimal registry state before any sandbox-facing config read so the
     // gateway and registry cannot split if the in-sandbox layer is unavailable.
@@ -1061,12 +1066,29 @@ async function runInferenceSetWithoutHostLock(
       deps,
     );
   } catch (error) {
-    if (!appliedHttpsPinProvider) throw error;
+    if (!httpsPinProviderMutation) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
-    const residual = appliedInferenceSelection
+    if (!appliedInferenceSelection) {
+      try {
+        httpsPinProviderMutation.rollback();
+      } catch (rollbackError) {
+        const rollbackDetail =
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        throw new InferenceSetError(
+          `${detail}\n  ${rollbackDetail} Re-run onboarding before retrying this switch.`,
+          exitCode,
+        );
+      }
+      const unchanged =
+        httpsPinProviderMutation.action === "create"
+          ? "The newly created OpenShell provider was removed; the inference selection was not changed."
+          : "The existing OpenShell provider binding and inference selection were not changed.";
+      throw new InferenceSetError(`${detail}\n  ${unchanged}`, exitCode);
+    }
+    const residual = appliedHttpsPinProvider
       ? "The OpenShell provider and inference selection remain committed to the safer HTTPS-pinned adapter, but NemoClaw state may not have converged. Retry this command; if convergence still fails, rebuild the sandbox."
-      : "The OpenShell provider remains on the safer HTTPS-pinned adapter, but the inference selection was not confirmed. Retry this command to converge the selection.";
+      : "The inference selection changed, but the HTTPS-pinned provider binding did not converge. Retry this command immediately; if convergence still fails, rebuild the sandbox.";
     throw new InferenceSetError(`${detail}\n  ${residual}`, exitCode);
   }
 }

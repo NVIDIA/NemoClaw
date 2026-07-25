@@ -3,11 +3,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InferenceSetDeps } from "./inference-set";
-import { __test, applyHttpsPinProviderBinding } from "./inference-set-https-pin-provider";
+import { __test, prepareHttpsPinProviderBinding } from "./inference-set-https-pin-provider";
 import type { HttpsPinProviderBinding } from "./inference-set-route-containment";
 
 const PROVIDER_ID = "11111111-2222-4333-8444-555555555555";
-
 function binding(overrides: Partial<HttpsPinProviderBinding> = {}): HttpsPinProviderBinding {
   return {
     baseUrl: "http://host.openshell.internal:11438/route/route-a/v1",
@@ -62,12 +61,13 @@ describe("HTTPS-pin provider binding", () => {
       { status: 0, stdout: after, stderr: "", output: after },
     ]);
 
-    applyHttpsPinProviderBinding({
+    const mutation = prepareHttpsPinProviderBinding({
       gatewayName: "nemoclaw",
       providerName: "compatible-endpoint",
       binding: binding(),
       captureOpenshell: capture,
     });
+    mutation.commit();
 
     expect(capture.mock.calls[1]).toEqual([
       [
@@ -97,7 +97,7 @@ describe("HTTPS-pin provider binding", () => {
     ]);
 
     expect(() =>
-      applyHttpsPinProviderBinding({
+      prepareHttpsPinProviderBinding({
         gatewayName: "nemoclaw",
         providerName: "compatible-endpoint",
         binding: binding(),
@@ -105,6 +105,34 @@ describe("HTTPS-pin provider binding", () => {
       }),
     ).not.toThrow();
     expect(capture.mock.calls[1][0]).toContain("create");
+  });
+
+  it("removes a newly created provider when the caller rolls back", () => {
+    const after = providerOutput({ resourceVersion: 1 });
+    const capture = captureSequence([
+      { status: 1, stdout: "", stderr: "Provider 'compatible-endpoint' not found" },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 0, stdout: after, stderr: "" },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 1, stdout: "", stderr: "Provider 'compatible-endpoint' not found" },
+    ]);
+
+    const mutation = prepareHttpsPinProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      captureOpenshell: capture,
+    });
+    mutation.rollback();
+
+    expect(mutation.action).toBe("create");
+    expect(capture.mock.calls[3][0]).toEqual([
+      "provider",
+      "delete",
+      "-g",
+      "nemoclaw",
+      "compatible-endpoint",
+    ]);
   });
 
   it.each([
@@ -118,12 +146,12 @@ describe("HTTPS-pin provider binding", () => {
     ]);
 
     expect(() =>
-      applyHttpsPinProviderBinding({
+      prepareHttpsPinProviderBinding({
         gatewayName: "nemoclaw",
         providerName: "compatible-endpoint",
         binding: binding(),
         captureOpenshell: capture,
-      }),
+      }).commit(),
     ).toThrow("may be partial");
   });
 
@@ -132,7 +160,7 @@ describe("HTTPS-pin provider binding", () => {
     const capture = captureSequence([{ status: 0, stdout: malformed, stderr: "" }]);
 
     expect(() =>
-      applyHttpsPinProviderBinding({
+      prepareHttpsPinProviderBinding({
         gatewayName: "nemoclaw",
         providerName: "compatible-endpoint",
         binding: binding(),
@@ -152,12 +180,12 @@ describe("HTTPS-pin provider binding", () => {
     ]);
 
     expect(() =>
-      applyHttpsPinProviderBinding({
+      prepareHttpsPinProviderBinding({
         gatewayName: "nemoclaw",
         providerName: "compatible-endpoint",
         binding: binding(),
         captureOpenshell: capture,
-      }),
+      }).commit(),
     ).toThrow("may have partially applied");
   });
 
@@ -179,18 +207,18 @@ describe("HTTPS-pin provider binding", () => {
       };
     };
 
-    applyHttpsPinProviderBinding({
+    prepareHttpsPinProviderBinding({
       gatewayName: "gateway-a",
       providerName: "compatible-endpoint",
       binding: binding({ token: "route-token-a" }),
       captureOpenshell: makeCapture("aaaaaaaa-2222-4333-8444-555555555555"),
-    });
-    applyHttpsPinProviderBinding({
+    }).commit();
+    prepareHttpsPinProviderBinding({
       gatewayName: "gateway-b",
       providerName: "compatible-endpoint",
       binding: binding({ token: "route-token-b", routeId: "route-b" }),
       captureOpenshell: makeCapture("bbbbbbbb-2222-4333-8444-555555555555"),
-    });
+    }).commit();
 
     expect(mutations).toEqual([
       { COMPATIBLE_API_KEY: "route-token-a" },

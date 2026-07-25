@@ -149,6 +149,14 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       expect.arrayContaining(["inference", "set", "--no-verify"]),
       expect.any(Object),
     );
+    const inferenceSetIndex = capture.mock.calls.findIndex(
+      ([args]) => args[0] === "inference" && args[1] === "set",
+    );
+    const providerUpdateIndex = capture.mock.calls.findIndex(
+      ([args]) => args[0] === "provider" && args[1] === "update",
+    );
+    expect(inferenceSetIndex).toBeGreaterThanOrEqual(0);
+    expect(providerUpdateIndex).toBeGreaterThan(inferenceSetIndex);
   });
 
   it("uses the OpenAI provider surface for a Hermes compatible-Anthropic route", async () => {
@@ -198,7 +206,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     );
   });
 
-  it("reports the safe provider residual when inference selection fails", async () => {
+  it("leaves a distinct prior provider binding untouched when inference selection fails", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({
       providerName: "compatible-endpoint",
@@ -213,7 +221,15 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     );
     const deps = createDeps({
       config: {},
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "old",
+        endpointUrl: OLD_ADAPTER_BASE_URL,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       ensureHttpsPinRuntimeAdapter: mockAdapter(),
       captureOpenshell: capture,
     });
@@ -229,8 +245,14 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
         },
         deps,
       ),
-    ).rejects.toThrow("provider remains on the safer HTTPS-pinned adapter");
+    ).rejects.toThrow(
+      "The existing OpenShell provider binding and inference selection were not changed.",
+    );
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    const providerUpdates = capture.mock.calls.filter(
+      ([args]) => args[0] === "provider" && args[1] === "update",
+    );
+    expect(providerUpdates).toHaveLength(0);
   });
 
   it("reports committed provider and selection state when registry convergence fails", async () => {

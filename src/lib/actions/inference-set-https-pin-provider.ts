@@ -157,12 +157,12 @@ function mutationArgs(options: {
   return args;
 }
 
-export function applyHttpsPinProviderBinding(options: {
+export function prepareHttpsPinProviderBinding(options: {
   gatewayName: string;
   providerName: string;
   binding: HttpsPinProviderBinding;
   captureOpenshell: CaptureProviderCommand;
-}): void {
+}): { action: "create" | "update"; commit: () => void; rollback: () => void } {
   const { gatewayName, providerName, binding, captureOpenshell } = options;
   const surface = providerSurface(binding);
   const before = inspectProvider(captureOpenshell, gatewayName, providerName);
@@ -172,48 +172,78 @@ export function applyHttpsPinProviderBinding(options: {
     surface,
     binding,
   });
-  const result = captureOpenshell(
-    mutationArgs({
-      action,
-      gatewayName,
-      providerName,
-      surface,
-      credentialEnv: binding.credentialEnv,
-      baseUrl: binding.baseUrl,
-    }),
-    {
-      ignoreError: true,
-      includeStreams: true,
-      maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-      env: { [binding.credentialEnv]: binding.token },
-    },
-  );
-  const after = inspectProvider(captureOpenshell, gatewayName, providerName);
-  if (result.status !== 0) {
-    throw new InferenceSetError(
-      `Failed to ${action} HTTPS-pinned provider '${providerName}' on gateway '${gatewayName}' (status ${result.status ?? "unknown"}). ` +
-        `The inference route was not changed, but the provider command may have partially applied; retry this command or re-run onboarding to converge the safe adapter binding.`,
-      1,
+
+  const apply = (): void => {
+    const result = captureOpenshell(
+      mutationArgs({
+        action,
+        gatewayName,
+        providerName,
+        surface,
+        credentialEnv: binding.credentialEnv,
+        baseUrl: binding.baseUrl,
+      }),
+      {
+        ignoreError: true,
+        includeStreams: true,
+        maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+        env: { [binding.credentialEnv]: binding.token },
+      },
     );
+    const after = inspectProvider(captureOpenshell, gatewayName, providerName);
+    if (result.status !== 0) {
+      throw new InferenceSetError(
+        `Failed to ${action} HTTPS-pinned provider '${providerName}' on gateway '${gatewayName}' (status ${result.status ?? "unknown"}). ` +
+          `The provider command may have partially applied; retry this command or re-run onboarding to converge the safe adapter binding.`,
+        1,
+      );
+    }
+    if (
+      after.kind !== "present" ||
+      (action === "update" &&
+        (before.kind !== "present" ||
+          after.id !== before.id ||
+          after.resourceVersion <= before.resourceVersion)) ||
+      !matchesGatewayProviderBinding(
+        after.metadata,
+        expectedShape(providerName, surface, binding.credentialEnv),
+      )
+    ) {
+      throw new InferenceSetError(
+        `Provider '${providerName}' did not converge to the expected HTTPS-pinned type and binding-key shape after ${action}. ` +
+          `Provider state may be partial; retry this command or re-run onboarding to reconcile it.`,
+        1,
+      );
+    }
+  };
+
+  if (action === "update") {
+    return {
+      action,
+      commit: apply,
+      rollback: () => {},
+    };
   }
 
-  if (
-    after.kind !== "present" ||
-    (action === "update" &&
-      (before.kind !== "present" ||
-        after.id !== before.id ||
-        after.resourceVersion <= before.resourceVersion)) ||
-    !matchesGatewayProviderBinding(
-      after.metadata,
-      expectedShape(providerName, surface, binding.credentialEnv),
-    )
-  ) {
-    throw new InferenceSetError(
-      `Provider '${providerName}' did not converge to the expected HTTPS-pinned type and binding-key shape after ${action}. ` +
-        `The inference route was not changed, but provider state may be partial; retry this command or re-run onboarding to reconcile it.`,
-      1,
-    );
-  }
+  apply();
+  return {
+    action,
+    commit: () => {},
+    rollback: () => {
+      const result = captureOpenshell(["provider", "delete", "-g", gatewayName, providerName], {
+        ignoreError: true,
+        includeStreams: true,
+        maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+      });
+      const restored = inspectProvider(captureOpenshell, gatewayName, providerName);
+      if (result.status !== 0 || restored.kind !== "absent") {
+        throw new InferenceSetError(
+          `Failed to remove newly created provider '${providerName}' after inference selection failed.`,
+          1,
+        );
+      }
+    },
+  };
 }
 
 export const __test = {
