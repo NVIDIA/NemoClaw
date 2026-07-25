@@ -263,8 +263,9 @@ describe("E2E risk signal reporter", () => {
 
       const reporter = new E2eRiskSignalReporter();
       reporter.onInit({
-        config: { testNamePattern: /^mcp-bridge$/u },
+        getGlobalTestNamePattern: () => /^mcp-bridge$/u,
       } as Vitest);
+      reporter.onTestRunStart([{ testNamePattern: undefined } as TestSpecification]);
       reporter.onTestRunEnd(
         [moduleWithNamedStates([{ fullName: "mcp-bridge-hermes", state: "skipped" }])],
         [],
@@ -317,8 +318,9 @@ describe("E2E risk signal reporter", () => {
 
       const reporter = new E2eRiskSignalReporter();
       reporter.onInit({
-        config: { testNamePattern: /^mcp-bridge$/u },
+        getGlobalTestNamePattern: () => /^mcp-bridge$/u,
       } as Vitest);
+      reporter.onTestRunStart([{ testNamePattern: undefined } as TestSpecification]);
       reporter.onTestRunEnd(
         [moduleWithNamedStates([{ fullName: "mcp-bridge", state: "skipped" }])],
         [],
