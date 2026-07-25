@@ -666,6 +666,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(requests.find((request) => request.url.endsWith("/dispatches"))?.body).toMatchObject({
         ref: "main",
         inputs: {
+          controller_check_id: "17",
           pr_number: "42",
           checkout_repository: "contributor/NemoClaw",
           checkout_sha: HEAD_SHA,

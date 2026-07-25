@@ -276,10 +276,13 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  PR E2E dispatches validate the PR SHA and controller metadata before
-  preparation, attach `test/e2e/risk-signal-reporter.ts` to live Vitest
-  invocations, and suppress PR reporting and scorecards. The workflow boundary
-  requires every selected job shard to upload its evidence artifact.
+  PR E2E dispatches authenticate the controller-owned coordination check before
+  checking out the PR revision, then validate the PR SHA and controller
+  metadata before preparation. Direct manual dispatches cannot reuse the PR
+  input shape to run fork code. Selected runs attach
+  `test/e2e/risk-signal-reporter.ts` to live Vitest invocations and suppress PR
+  reporting and scorecards. The workflow boundary requires every selected job
+  shard to upload its evidence artifact.
 - `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
   `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E targets directly
   for their E2E coverage. Individual repository-hosted targets, including

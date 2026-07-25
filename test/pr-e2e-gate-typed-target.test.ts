@@ -83,6 +83,7 @@ describe("PR E2E typed-target gate (#7031)", () => {
         repository: "NVIDIA/NemoClaw",
         checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
+        controllerCheckId: 101,
         jobs: [],
         targets: ["ubuntu-repo-cloud-openclaw"],
         prNumber: 42,

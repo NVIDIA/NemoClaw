@@ -3057,6 +3057,7 @@ export async function dispatchPrGate(options: {
   repository: string;
   checkoutRepository: string;
   token: string;
+  controllerCheckId: number;
   jobs: readonly string[];
   targets?: readonly string[];
   prNumber: number;
@@ -3077,6 +3078,8 @@ export async function dispatchPrGate(options: {
     new Set(targets).size !== targets.length ||
     targets.some((target) => !JOB_PATTERN.test(target) || !isPrE2eTypedTargetId(target)) ||
     options.jobs.some((job) => targets.includes(job)) ||
+    !Number.isSafeInteger(options.controllerCheckId) ||
+    options.controllerCheckId < 1 ||
     !Number.isSafeInteger(options.prNumber) ||
     options.prNumber < 1 ||
     !SHA_PATTERN.test(options.commitSha) ||
@@ -3102,6 +3105,7 @@ export async function dispatchPrGate(options: {
         inputs: {
           jobs: options.jobs.join(","),
           targets: targets.join(","),
+          controller_check_id: String(options.controllerCheckId),
           pr_number: String(options.prNumber),
           checkout_sha: options.commitSha,
           checkout_repository: options.checkoutRepository,
@@ -3296,6 +3300,7 @@ async function dispatchSelectedPrGate(options: {
     repository: options.repository,
     checkoutRepository,
     token: options.token,
+    controllerCheckId: options.checkRunId,
     jobs,
     targets,
     prNumber: options.pull.number,
@@ -3375,6 +3380,7 @@ async function dispatchRunnerLossRetry(options: {
     repository: options.repository,
     checkoutRepository: options.state.checkoutRepository,
     token: options.token,
+    controllerCheckId: options.checkRunId,
     jobs: options.state.expectedJobs,
     targets: options.state.expectedTargets,
     prNumber: options.state.prNumber,

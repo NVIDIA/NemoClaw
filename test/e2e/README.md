@@ -516,7 +516,13 @@ the first attempt of the trusted `workflow_run` controller. It then revalidates
 the internal repository origin, open PR, PR SHA and base SHA, risk plan,
 matching pending coordination state, compatible trusted controller commit, and
 final live revision. It updates coordination to `Running <count> E2E check(s)`
-and dispatches the selected jobs and targets in one workflow run.
+and dispatches the selected jobs and targets in one workflow run. The child
+workflow receives the controller-owned coordination check ID. Before checking
+out the PR revision, it requires a GitHub Actions dispatch and verifies that
+the exact check is owned by the GitHub Actions app, matches the PR head and base
+identity, names the selected plan, and links to the current child run. A direct
+manual dispatch that supplies otherwise-valid PR inputs cannot forge that
+one-run authorization and fails before checkout.
 
 The manual maintainer path remains available as a fallback. A repository
 maintainer or administrator chooses **Run workflow** on `main`, selects
