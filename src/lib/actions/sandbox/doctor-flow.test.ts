@@ -29,6 +29,7 @@ function createDoctorHarness(): {
   recoverNamedGatewayRuntimeSpy: MockInstance;
   repairMutableConfigPermsSpy: MockInstance;
   resolveOpenShellSpy: MockInstance;
+  resolveSandboxGatewayNameSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
 } {
   const provider = "ollama-local";
@@ -77,7 +78,9 @@ function createDoctorHarness(): {
   const resolveOpenShellSpy = vi
     .spyOn(resolve, "resolveOpenshell")
     .mockReturnValue("/usr/bin/openshell");
-  vi.spyOn(gatewayBinding, "resolveSandboxGatewayName").mockReturnValue("nemoclaw-19080");
+  const resolveSandboxGatewayNameSpy = vi
+    .spyOn(gatewayBinding, "resolveSandboxGatewayName")
+    .mockReturnValue("nemoclaw-19080");
   vi.spyOn(gatewayBinding, "resolveGatewayName").mockReturnValue("nemoclaw-19080");
   vi.spyOn(dockerDriverPlatform, "isLinuxDockerDriverGatewayEnabled").mockReturnValue(true);
   const recoverNamedGatewayRuntimeSpy = vi
@@ -212,6 +215,7 @@ function createDoctorHarness(): {
     recoverNamedGatewayRuntimeSpy,
     repairMutableConfigPermsSpy,
     resolveOpenShellSpy,
+    resolveSandboxGatewayNameSpy,
     runSandboxDoctor,
   };
 }
@@ -436,6 +440,48 @@ describe("runSandboxDoctor flow", () => {
     ).toContain("snapshot");
   });
 
+  it("reports an invalid stored gateway binding without running live probes", async () => {
+    const harness = createDoctorHarness();
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      openshellVersion: "0.0.72",
+      nemoclawVersion: "0.0.83",
+      fromDockerfile: null,
+      dashboardPort: 18789,
+      imageTag: "nemoclaw-openclaw:test",
+      gatewayName: "nemoclaw-100000",
+      gatewayPort: 100_000,
+    });
+    harness.resolveSandboxGatewayNameSpy.mockImplementation(() => {
+      throw new Error("Invalid persisted sandbox gateway binding");
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          group: "Gateway",
+          label: "Registered gateway binding",
+          status: "fail",
+        }),
+        expect.objectContaining({
+          group: "Sandbox",
+          label: "Lifecycle registration",
+          status: "warn",
+          detail: expect.stringContaining("invalid gatewayPort"),
+        }),
+      ]),
+    );
+    expect(harness.getNamedGatewayLifecycleStateSpy).not.toHaveBeenCalled();
+    expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps JSON gateway diagnostics read-only", async () => {
     const harness = createDoctorHarness();
 
@@ -548,6 +594,13 @@ describe("runSandboxDoctor flow", () => {
     expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
     expect(report?.checks).not.toContainEqual(
       expect.objectContaining({ group: "Inference", label: "Serving process" }),
+    );
+    expect(report?.checks).not.toContainEqual(
+      expect.objectContaining({
+        group: "Sandbox",
+        label: "Lifecycle registration",
+        detail: expect.stringContaining("dashboardPort"),
+      }),
     );
   });
 

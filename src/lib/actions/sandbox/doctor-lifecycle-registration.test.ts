@@ -114,4 +114,27 @@ describe("doctor lifecycle registration checks", () => {
     expect(check.detail).toContain("invalid dashboardPort, gatewayPort");
     expect(check.detail).not.toContain("100000");
   });
+
+  it("requires a valid dashboard port for dashboard-managed agents", () => {
+    const check = buildLifecycleRegistrationCheck(
+      "alpha",
+      sandbox({ dashboardPort: null }),
+      "nemoclaw",
+    );
+
+    expect(check.status).toBe("warn");
+    expect(check.detail).toContain("invalid dashboardPort");
+  });
+
+  it("does not require dashboard metadata for terminal agents without forwarded ports", () => {
+    const { dashboardPort: _dashboardPort, ...terminal } = sandbox({
+      agent: "langchain-deepagents-code",
+    });
+
+    expect(
+      buildLifecycleRegistrationCheck("alpha", terminal, "nemoclaw", {
+        dashboardPortRequired: false,
+      }),
+    ).toMatchObject({ status: "ok" });
+  });
 });
