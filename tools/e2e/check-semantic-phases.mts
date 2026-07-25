@@ -55,6 +55,7 @@ export interface DirectChildProcessCall {
   observesOutput: boolean;
   outputIgnored: boolean;
   tracksActivity: boolean;
+  tracksLifecycle: boolean;
 }
 
 export interface ScopedPhasePlan {
@@ -894,19 +895,8 @@ function inlineCallback(
   return node && (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) ? node : null;
 }
 
-function callbackProtectedCall(
-  callback: ts.ArrowFunction | ts.FunctionExpression,
-): ts.CallExpression | null {
+function protectedCallFromStatement(statement: ts.Statement): ts.CallExpression | null {
   if (
-    callback.parameters.length !== 0 ||
-    !ts.isBlock(callback.body) ||
-    callback.body.statements.length !== 1
-  ) {
-    return null;
-  }
-  const statement = callback.body.statements[0];
-  if (
-    !statement ||
     !ts.isTryStatement(statement) ||
     statement.finallyBlock ||
     !statement.catchClause ||
@@ -922,17 +912,18 @@ function callbackProtectedCall(
   return ts.isCallExpression(expression) ? expression : null;
 }
 
-function callbackInvokesIdentifier(
+function callbackProtectedCall(
   callback: ts.ArrowFunction | ts.FunctionExpression,
-  identifiers: ReadonlySet<string>,
-): boolean {
-  const call = callbackProtectedCall(callback);
-  return (
-    !!call &&
-    call.arguments.length === 0 &&
-    ts.isIdentifier(call.expression) &&
-    identifiers.has(call.expression.text)
-  );
+): ts.CallExpression | null {
+  if (
+    callback.parameters.length !== 0 ||
+    !ts.isBlock(callback.body) ||
+    callback.body.statements.length !== 1
+  ) {
+    return null;
+  }
+  const statement = callback.body.statements[0];
+  return statement ? protectedCallFromStatement(statement) : null;
 }
 
 function childLifecycleListener(
@@ -946,10 +937,263 @@ function childLifecycleListener(
   if (!["on", "once", "addListener"].includes(expression.name.text)) return null;
   if (expressionPath(expression.expression) !== childBinding) return null;
   const event = call.arguments[0];
-  if (!event || !ts.isStringLiteralLike(event) || !["close", "exit"].includes(event.text)) {
+  if (!event || !ts.isStringLiteralLike(event) || event.text !== "close") {
     return null;
   }
   return inlineCallback(call.arguments[1]);
+}
+
+function childLaunchErrorListener(
+  call: ts.CallExpression,
+  childBinding: string,
+  scope: ts.Node,
+): ts.ArrowFunction | ts.FunctionExpression | null {
+  if (!isUnconditionalBoundaryNode(call, scope)) return null;
+  const expression = call.expression;
+  if (!ts.isPropertyAccessExpression(expression)) return null;
+  if (!["on", "once", "addListener"].includes(expression.name.text)) return null;
+  if (expressionPath(expression.expression) !== childBinding) return null;
+  const event = call.arguments[0];
+  if (!event || !ts.isStringLiteralLike(event) || event.text !== "error") return null;
+  return inlineCallback(call.arguments[1]);
+}
+
+function childSpawnListener(
+  call: ts.CallExpression,
+  childBinding: string,
+  scope: ts.Node,
+): ts.ArrowFunction | ts.FunctionExpression | null {
+  if (!isUnconditionalBoundaryNode(call, scope)) return null;
+  const expression = call.expression;
+  if (!ts.isPropertyAccessExpression(expression)) return null;
+  if (!["on", "once", "addListener"].includes(expression.name.text)) return null;
+  if (expressionPath(expression.expression) !== childBinding) return null;
+  const event = call.arguments[0];
+  if (!event || !ts.isStringLiteralLike(event) || event.text !== "spawn") return null;
+  return inlineCallback(call.arguments[1]);
+}
+
+function callInvokesIdentifier(
+  call: ts.CallExpression | null,
+  identifiers: ReadonlySet<string>,
+  argument?: string,
+): boolean {
+  if (!call || !ts.isIdentifier(call.expression) || !identifiers.has(call.expression.text)) {
+    return false;
+  }
+  if (argument === undefined) return call.arguments.length === 0;
+  return (
+    call.arguments.length === 1 &&
+    ts.isStringLiteralLike(call.arguments[0] as ts.Expression) &&
+    (call.arguments[0] as ts.StringLiteralLike).text === argument
+  );
+}
+
+function closeTerminalOutcome(
+  expression: ts.Expression,
+  codeBinding: string,
+  signalBinding: string,
+  launchFailedBinding: string,
+): boolean {
+  const launchFailed = unwrapExpression(expression);
+  if (
+    !ts.isConditionalExpression(launchFailed) ||
+    expressionPath(launchFailed.condition) !== launchFailedBinding ||
+    !ts.isStringLiteralLike(launchFailed.whenTrue) ||
+    launchFailed.whenTrue.text !== "spawn-failed"
+  ) {
+    return false;
+  }
+
+  const signaled = unwrapExpression(launchFailed.whenFalse);
+  if (!ts.isConditionalExpression(signaled)) return false;
+  if (
+    !ts.isBinaryExpression(signaled.condition) ||
+    signaled.condition.operatorToken.kind !== ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    expressionPath(signaled.condition.left) !== signalBinding ||
+    signaled.condition.right.kind !== ts.SyntaxKind.NullKeyword ||
+    !ts.isStringLiteralLike(signaled.whenTrue) ||
+    signaled.whenTrue.text !== "signaled"
+  ) {
+    return false;
+  }
+
+  const exitedZero = unwrapExpression(signaled.whenFalse);
+  if (
+    !ts.isConditionalExpression(exitedZero) ||
+    !ts.isBinaryExpression(exitedZero.condition) ||
+    exitedZero.condition.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    expressionPath(exitedZero.condition.left) !== codeBinding ||
+    !ts.isNumericLiteral(exitedZero.condition.right) ||
+    exitedZero.condition.right.text !== "0" ||
+    !ts.isStringLiteralLike(exitedZero.whenTrue) ||
+    exitedZero.whenTrue.text !== "exited-zero"
+  ) {
+    return false;
+  }
+
+  const unknown = unwrapExpression(exitedZero.whenFalse);
+  return (
+    ts.isConditionalExpression(unknown) &&
+    ts.isBinaryExpression(unknown.condition) &&
+    unknown.condition.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
+    expressionPath(unknown.condition.left) === codeBinding &&
+    unknown.condition.right.kind === ts.SyntaxKind.NullKeyword &&
+    ts.isStringLiteralLike(unknown.whenTrue) &&
+    unknown.whenTrue.text === "closed-unknown" &&
+    ts.isStringLiteralLike(unknown.whenFalse) &&
+    unknown.whenFalse.text === "exited-nonzero"
+  );
+}
+
+function closeCallbackEvidence(
+  callback: ts.ArrowFunction | ts.FunctionExpression,
+  activityHandles: ReadonlySet<string>,
+  lifecycleHandles: ReadonlySet<string>,
+  launchFailedBinding: string,
+): { finishesActivity: boolean; reportsLifecycle: boolean } {
+  if (
+    callback.parameters.length !== 2 ||
+    !ts.isIdentifier(callback.parameters[0]?.name) ||
+    !ts.isIdentifier(callback.parameters[1]?.name) ||
+    !ts.isBlock(callback.body) ||
+    callback.body.statements.length !== 2
+  ) {
+    return { finishesActivity: false, reportsLifecycle: false };
+  }
+  const activityCall = protectedCallFromStatement(callback.body.statements[0] as ts.Statement);
+  const terminalCall = protectedCallFromStatement(callback.body.statements[1] as ts.Statement);
+  return {
+    finishesActivity: callInvokesIdentifier(activityCall, activityHandles),
+    reportsLifecycle:
+      !!terminalCall &&
+      ts.isIdentifier(terminalCall.expression) &&
+      lifecycleHandles.has(terminalCall.expression.text) &&
+      terminalCall.arguments.length === 1 &&
+      closeTerminalOutcome(
+        terminalCall.arguments[0] as ts.Expression,
+        callback.parameters[0].name.text,
+        callback.parameters[1].name.text,
+        launchFailedBinding,
+      ),
+  };
+}
+
+function spawnConfirmationBinding(
+  callback: ts.ArrowFunction | ts.FunctionExpression,
+): string | null {
+  if (
+    callback.parameters.length !== 0 ||
+    !ts.isBlock(callback.body) ||
+    callback.body.statements.length !== 1
+  ) {
+    return null;
+  }
+  const statement = callback.body.statements[0];
+  if (!statement || !ts.isExpressionStatement(statement)) return null;
+  const assignment = unwrapExpression(statement.expression);
+  return ts.isBinaryExpression(assignment) &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(assignment.left) &&
+    assignment.right.kind === ts.SyntaxKind.TrueKeyword
+    ? assignment.left.text
+    : null;
+}
+
+function launchFailureBindings(
+  callback: ts.ArrowFunction | ts.FunctionExpression,
+): { launchFailed: string; spawned: string } | null {
+  if (
+    callback.parameters.length !== 0 ||
+    !ts.isBlock(callback.body) ||
+    callback.body.statements.length !== 1
+  ) {
+    return null;
+  }
+  const statement = callback.body.statements[0];
+  if (
+    !statement ||
+    !ts.isIfStatement(statement) ||
+    statement.elseStatement ||
+    !ts.isPrefixUnaryExpression(statement.expression) ||
+    statement.expression.operator !== ts.SyntaxKind.ExclamationToken ||
+    !ts.isIdentifier(statement.expression.operand)
+  ) {
+    return null;
+  }
+  const assignmentStatement = ts.isBlock(statement.thenStatement)
+    ? statement.thenStatement.statements.length === 1
+      ? statement.thenStatement.statements[0]
+      : undefined
+    : statement.thenStatement;
+  if (!assignmentStatement || !ts.isExpressionStatement(assignmentStatement)) return null;
+  const assignment = unwrapExpression(assignmentStatement.expression);
+  if (
+    !ts.isBinaryExpression(assignment) ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isIdentifier(assignment.left) ||
+    assignment.right.kind !== ts.SyntaxKind.TrueKeyword
+  ) {
+    return null;
+  }
+  return {
+    launchFailed: assignment.left.text,
+    spawned: statement.expression.operand.text,
+  };
+}
+
+function hasSingleFalseBooleanBinding(scope: ts.Node, binding: string): boolean {
+  let declarations = 0;
+  function inspect(node: ts.Node): void {
+    if (node !== scope && ts.isFunctionLike(node)) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === binding &&
+      node.initializer?.kind === ts.SyntaxKind.FalseKeyword
+    ) {
+      declarations += 1;
+    }
+    ts.forEachChild(node, inspect);
+  }
+  inspect(scope);
+  return declarations === 1;
+}
+
+function syncSpawnFailureEvidence(
+  node: ts.CallExpression,
+  activityHandles: ReadonlySet<string>,
+  lifecycleHandles: ReadonlySet<string>,
+): { finishesActivity: boolean; reportsLifecycle: boolean } {
+  let current: ts.Node | undefined = node;
+  while (current && !ts.isTryStatement(current)) current = current.parent;
+  const catchClause = current && ts.isTryStatement(current) ? current.catchClause : undefined;
+  const catchBinding = catchClause?.variableDeclaration?.name;
+  const statements = catchClause?.block.statements;
+  if (
+    !catchClause ||
+    !catchBinding ||
+    !ts.isIdentifier(catchBinding) ||
+    !statements ||
+    statements.length !== 3
+  ) {
+    return { finishesActivity: false, reportsLifecycle: false };
+  }
+  const activityCall = protectedCallFromStatement(statements[0] as ts.Statement);
+  const lifecycleCall = protectedCallFromStatement(statements[1] as ts.Statement);
+  const thrown = statements[2];
+  if (
+    !thrown ||
+    !ts.isThrowStatement(thrown) ||
+    !thrown.expression ||
+    expressionPath(thrown.expression) !== catchBinding.text
+  ) {
+    return { finishesActivity: false, reportsLifecycle: false };
+  }
+  return {
+    finishesActivity: callInvokesIdentifier(activityCall, activityHandles),
+    reportsLifecycle: callInvokesIdentifier(lifecycleCall, lifecycleHandles, "spawn-failed"),
+  };
 }
 
 function exactTimestampOutputCall(node: ts.CallExpression, stream: "stdout" | "stderr"): boolean {
@@ -1015,18 +1259,27 @@ function childOutputListener(
 function observedChildProcessEvidence(
   node: ts.CallExpression,
   sourceFile: ts.SourceFile,
-): { observesOutput: boolean; tracksActivity: boolean } {
+): { observesOutput: boolean; tracksActivity: boolean; tracksLifecycle: boolean } {
   const scope = childProcessObservationScope(node, sourceFile);
   const childBinding = childBindingForCall(node, scope);
   if (!childBinding || !isUnconditionalBoundaryNode(node, scope)) {
-    return { observesOutput: false, tracksActivity: false };
+    return { observesOutput: false, tracksActivity: false, tracksLifecycle: false };
   }
   const observedChildBinding = childBinding;
   const activityHandles = new Set<string>();
-  let lifecycleListeners = 0;
-  let validLifecycleListeners = 0;
+  const lifecycleHandles = new Set<string>();
+  let closeListeners = 0;
+  let validActivityCloseListeners = 0;
+  let validLifecycleCloseListeners = 0;
+  let spawnListeners = 0;
+  let validSpawnListeners = 0;
+  let errorListeners = 0;
+  let validLaunchFailureListeners = 0;
+  let spawnedBinding: string | null = null;
+  let launchFailedBinding: string | null = null;
   let childBindingReassigned = false;
   let activityHandleReassigned = false;
+  let lifecycleHandleReassigned = false;
   let unsafeChildOperation = false;
   const outputListeners = new Map<"stdout" | "stderr", number>([
     ["stdout", 0],
@@ -1048,6 +1301,7 @@ function observedChildProcessEvidence(
     ) {
       if (candidate.left.text === observedChildBinding) childBindingReassigned = true;
       if (activityHandles.has(candidate.left.text)) activityHandleReassigned = true;
+      if (lifecycleHandles.has(candidate.left.text)) lifecycleHandleReassigned = true;
     }
     if (
       candidate.getStart(sourceFile) > node.getStart(sourceFile) &&
@@ -1072,13 +1326,47 @@ function observedChildProcessEvidence(
         const handle = assignedIdentifierForCall(candidate, scope);
         if (handle) activityHandles.add(handle);
       }
+      if (
+        candidate.getStart(sourceFile) < node.getStart(sourceFile) &&
+        isUnconditionalBoundaryNode(candidate, scope) &&
+        candidate.arguments.length === 0 &&
+        expressionPath(candidate.expression) === "options.progress.beginChildLifecycle"
+      ) {
+        const handle = assignedIdentifierForCall(candidate, scope);
+        if (handle) lifecycleHandles.add(handle);
+      }
       if (candidate.getStart(sourceFile) > node.getStart(sourceFile)) {
-        const lifecycle = childLifecycleListener(candidate, observedChildBinding, scope);
-        if (lifecycle) {
-          lifecycleListeners += 1;
-          if (callbackInvokesIdentifier(lifecycle, activityHandles)) {
-            validLifecycleListeners += 1;
+        const spawnListener = childSpawnListener(candidate, observedChildBinding, scope);
+        if (spawnListener) {
+          spawnListeners += 1;
+          const binding = spawnConfirmationBinding(spawnListener);
+          if (binding) {
+            validSpawnListeners += 1;
+            spawnedBinding = binding;
           }
+        }
+        const errorListener = childLaunchErrorListener(candidate, observedChildBinding, scope);
+        if (errorListener) {
+          errorListeners += 1;
+          const bindings = launchFailureBindings(errorListener);
+          if (bindings && bindings.spawned === spawnedBinding) {
+            validLaunchFailureListeners += 1;
+            launchFailedBinding = bindings.launchFailed;
+          }
+        }
+        const closeListener = childLifecycleListener(candidate, observedChildBinding, scope);
+        if (closeListener) {
+          closeListeners += 1;
+          const evidence = launchFailedBinding
+            ? closeCallbackEvidence(
+                closeListener,
+                activityHandles,
+                lifecycleHandles,
+                launchFailedBinding,
+              )
+            : { finishesActivity: false, reportsLifecycle: false };
+          if (evidence.finishesActivity) validActivityCloseListeners += 1;
+          if (evidence.reportsLifecycle) validLifecycleCloseListeners += 1;
         }
         for (const stream of ["stdout", "stderr"] as const) {
           const callback = childOutputListener(candidate, observedChildBinding, stream, scope);
@@ -1104,7 +1392,9 @@ function observedChildProcessEvidence(
         const callPath = expressionPath(candidate.expression);
         if (
           callPath?.startsWith(`${observedChildBinding}.`) &&
-          !lifecycle &&
+          !closeListener &&
+          !errorListener &&
+          !spawnListener &&
           !(["stdout", "stderr"] as const).some((stream) =>
             childOutputListener(candidate, observedChildBinding, stream, scope),
           )
@@ -1116,6 +1406,7 @@ function observedChildProcessEvidence(
     ts.forEachChild(candidate, inspect);
   }
   inspect(scope);
+  const synchronousFailure = syncSpawnFailureEvidence(node, activityHandles, lifecycleHandles);
   return {
     observesOutput:
       !childBindingReassigned &&
@@ -1129,8 +1420,25 @@ function observedChildProcessEvidence(
       !activityHandleReassigned &&
       !unsafeChildOperation &&
       activityHandles.size === 1 &&
-      lifecycleListeners === 1 &&
-      validLifecycleListeners === 1,
+      closeListeners === 1 &&
+      validActivityCloseListeners === 1 &&
+      synchronousFailure.finishesActivity,
+    tracksLifecycle:
+      !childBindingReassigned &&
+      !lifecycleHandleReassigned &&
+      !unsafeChildOperation &&
+      lifecycleHandles.size === 1 &&
+      spawnListeners === 1 &&
+      validSpawnListeners === 1 &&
+      !!spawnedBinding &&
+      hasSingleFalseBooleanBinding(scope, spawnedBinding) &&
+      closeListeners === 1 &&
+      validLifecycleCloseListeners === 1 &&
+      errorListeners === 1 &&
+      validLaunchFailureListeners === 1 &&
+      !!launchFailedBinding &&
+      hasSingleFalseBooleanBinding(scope, launchFailedBinding) &&
+      synchronousFailure.reportsLifecycle,
   };
 }
 
@@ -1468,12 +1776,86 @@ function auditTestProgressCapabilityContract(
         "TestProgress must retain the private progress capability",
       );
     }
+    const childLifecycleMember = progressInterface?.members.find(
+      (member) => propertyNameText(member.name) === "beginChildLifecycle",
+    );
+    const validChildLifecycleMember =
+      !!childLifecycleMember &&
+      ts.isPropertySignature(childLifecycleMember) &&
+      !childLifecycleMember.questionToken &&
+      !!childLifecycleMember.type &&
+      ts.isFunctionTypeNode(childLifecycleMember.type) &&
+      childLifecycleMember.type.parameters.length === 0 &&
+      ts.isTypeReferenceNode(childLifecycleMember.type.type) &&
+      ts.isIdentifier(childLifecycleMember.type.type.typeName) &&
+      childLifecycleMember.type.type.typeName.text === "ChildLifecycleTerminalReporter";
+    if (!validChildLifecycleMember) {
+      reportUnsupported(
+        childLifecycleMember ?? progressInterface ?? sourceFile,
+        "TestProgress must expose the non-optional zero-argument child lifecycle capability",
+      );
+    }
+
+    const outcomeType = sourceFile.statements.find(
+      (statement): statement is ts.TypeAliasDeclaration =>
+        ts.isTypeAliasDeclaration(statement) && statement.name.text === "ChildLifecycleOutcome",
+    );
+    const lifecycleOutcomes =
+      outcomeType && ts.isUnionTypeNode(outcomeType.type)
+        ? outcomeType.type.types
+            .filter(
+              (type): type is ts.LiteralTypeNode =>
+                ts.isLiteralTypeNode(type) && ts.isStringLiteralLike(type.literal),
+            )
+            .map((type) => (type.literal as ts.StringLiteralLike).text)
+            .sort()
+        : [];
+    const expectedLifecycleOutcomes = [
+      "closed-unknown",
+      "exited-nonzero",
+      "exited-zero",
+      "signaled",
+      "spawn-failed",
+    ];
+    if (
+      !outcomeType ||
+      !ts.isUnionTypeNode(outcomeType.type) ||
+      outcomeType.type.types.length !== expectedLifecycleOutcomes.length ||
+      JSON.stringify(lifecycleOutcomes) !== JSON.stringify(expectedLifecycleOutcomes)
+    ) {
+      reportUnsupported(
+        outcomeType ?? sourceFile,
+        "ChildLifecycleOutcome must remain the fixed content-free terminal vocabulary",
+      );
+    }
+
+    const reporterType = sourceFile.statements.find(
+      (statement): statement is ts.TypeAliasDeclaration =>
+        ts.isTypeAliasDeclaration(statement) &&
+        statement.name.text === "ChildLifecycleTerminalReporter",
+    );
+    const validReporterType =
+      !!reporterType &&
+      ts.isFunctionTypeNode(reporterType.type) &&
+      reporterType.type.parameters.length === 1 &&
+      !!reporterType.type.parameters[0]?.type &&
+      ts.isTypeReferenceNode(reporterType.type.parameters[0].type) &&
+      ts.isIdentifier(reporterType.type.parameters[0].type.typeName) &&
+      reporterType.type.parameters[0].type.typeName.text === "ChildLifecycleOutcome" &&
+      reporterType.type.type.kind === ts.SyntaxKind.VoidKeyword;
+    if (!validReporterType) {
+      reportUnsupported(
+        reporterType ?? sourceFile,
+        "ChildLifecycleTerminalReporter must accept only one fixed lifecycle outcome",
+      );
+    }
 
     const factory = sourceFile.statements.find(
       (statement): statement is ts.FunctionDeclaration =>
         ts.isFunctionDeclaration(statement) && statement.name?.text === "startTestProgress",
     );
     let initializesBrand = false;
+    let childLifecycleImplementation: ts.MethodDeclaration | undefined;
     if (factory) {
       function inspectFactory(node: ts.Node): void {
         if (
@@ -1484,6 +1866,9 @@ function auditTestProgressCapabilityContract(
           node.initializer.kind === ts.SyntaxKind.TrueKeyword
         ) {
           initializesBrand = true;
+        }
+        if (ts.isMethodDeclaration(node) && propertyNameText(node.name) === "beginChildLifecycle") {
+          childLifecycleImplementation = node;
         }
         ts.forEachChild(node, inspectFactory);
       }
@@ -1506,6 +1891,89 @@ function auditTestProgressCapabilityContract(
       reportUnsupported(
         factory ?? sourceFile,
         "startTestProgress must privately brand, register, and freeze the canonical capability",
+      );
+    }
+    let frozenLifecycleReporterReturns = 0;
+    let logsSynchronousLifecycleStart = false;
+    let hasIdempotentLifecycleTerminal = false;
+    if (childLifecycleImplementation) {
+      function inspectChildLifecycle(node: ts.Node): void {
+        if (node !== childLifecycleImplementation && ts.isFunctionLike(node)) return;
+        if (
+          ts.isReturnStatement(node) &&
+          node.expression &&
+          ts.isCallExpression(node.expression) &&
+          expressionPath(node.expression.expression) === "Object.freeze" &&
+          node.expression.arguments.length === 1
+        ) {
+          frozenLifecycleReporterReturns += 1;
+        }
+        if (
+          ts.isCallExpression(node) &&
+          expressionPath(node.expression) === "logChildLifecycleBestEffort" &&
+          node.arguments.length === 2 &&
+          ts.isStringLiteralLike(node.arguments[1] as ts.Expression) &&
+          (node.arguments[1] as ts.StringLiteralLike).text === "started"
+        ) {
+          logsSynchronousLifecycleStart = true;
+        }
+        ts.forEachChild(node, inspectChildLifecycle);
+      }
+      inspectChildLifecycle(childLifecycleImplementation);
+
+      const methodStatements = childLifecycleImplementation.body?.statements ?? [];
+      const methodDeclarations: ts.VariableDeclaration[] = [];
+      for (const statement of methodStatements) {
+        if (ts.isVariableStatement(statement)) {
+          methodDeclarations.push(...statement.declarationList.declarations);
+        }
+      }
+      const terminalFlag = methodDeclarations.find(
+        (declaration) =>
+          ts.isIdentifier(declaration.name) &&
+          declaration.initializer?.kind === ts.SyntaxKind.FalseKeyword,
+      );
+      const terminalReporter = methodDeclarations.find(
+        (declaration) => declaration.initializer && ts.isArrowFunction(declaration.initializer),
+      );
+      const terminalFlagName =
+        terminalFlag && ts.isIdentifier(terminalFlag.name) ? terminalFlag.name.text : null;
+      if (
+        terminalFlagName &&
+        terminalReporter?.initializer &&
+        ts.isArrowFunction(terminalReporter.initializer) &&
+        ts.isBlock(terminalReporter.initializer.body)
+      ) {
+        const reporterStatements: readonly ts.Statement[] =
+          terminalReporter.initializer.body.statements;
+        const guard = reporterStatements[0];
+        const assignments = reporterStatements.filter(
+          (statement) =>
+            ts.isExpressionStatement(statement) &&
+            ts.isBinaryExpression(statement.expression) &&
+            statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            expressionPath(statement.expression.left) === terminalFlagName &&
+            statement.expression.right.kind === ts.SyntaxKind.TrueKeyword,
+        );
+        hasIdempotentLifecycleTerminal =
+          !!guard &&
+          ts.isIfStatement(guard) &&
+          expressionPath(guard.expression) === terminalFlagName &&
+          ts.isReturnStatement(guard.thenStatement) &&
+          !guard.thenStatement.expression &&
+          assignments.length === 1;
+      }
+    }
+    if (
+      !childLifecycleImplementation ||
+      childLifecycleImplementation.parameters.length !== 0 ||
+      frozenLifecycleReporterReturns !== 2 ||
+      !logsSynchronousLifecycleStart ||
+      !hasIdempotentLifecycleTerminal
+    ) {
+      reportUnsupported(
+        childLifecycleImplementation ?? factory ?? sourceFile,
+        "startTestProgress must synchronously start and freeze idempotent child lifecycle reporters",
       );
     }
   }
@@ -1692,7 +2160,7 @@ function collectDirectChildProcessCalls(
         const evidence =
           boundaryId === AUDITED_ASYNC_CHILD_PROCESS_BOUNDARY
             ? observedChildProcessEvidence(node, sourceFile)
-            : { observesOutput: false, tracksActivity: false };
+            : { observesOutput: false, tracksActivity: false, tracksLifecycle: false };
         const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
         calls.push({
           api: apiProvenance.api,
@@ -1704,6 +2172,7 @@ function collectDirectChildProcessCalls(
           observesOutput: evidence.observesOutput,
           outputIgnored: ignoresChildOutput(options),
           tracksActivity: evidence.tracksActivity,
+          tracksLifecycle: evidence.tracksLifecycle,
         });
       }
       const wrapperCreation = isChildProcessWrapperCreation(node, bindings);
@@ -1751,6 +2220,22 @@ function collectDirectChildProcessCalls(
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const receiver = expressionProvenance(node.expression, bindings);
       const name = memberName(node);
+      if (name === "beginChildLifecycle") {
+        const invocation =
+          ts.isCallExpression(node.parent) && node.parent.expression === node ? node.parent : null;
+        const isCanonicalBoundaryUse =
+          file === OBSERVED_CHILD_PROCESS_MODULE &&
+          !!invocation &&
+          invocation.arguments.length === 0 &&
+          childProcessBoundaryName(invocation, sourceFile) === "spawnObservedChild";
+        const isSupportOnlyUse = relativeFile.startsWith("test/e2e/support/");
+        if (!isCanonicalBoundaryUse && !isSupportOnlyUse && file !== TEST_PROGRESS_MODULE) {
+          reportUnsupported(
+            node,
+            "beginChildLifecycle is reserved for the canonical observed-child boundary",
+          );
+        }
+      }
       if (
         receiver?.kind === "namespace" &&
         name !== null &&
@@ -1766,6 +2251,22 @@ function collectDirectChildProcessCalls(
         reportUnsupported(
           node,
           "spawnObservedChild must be invoked directly without member indirection",
+        );
+      }
+    }
+    if (ts.isBindingElement(node)) {
+      const boundName =
+        propertyNameText(node.propertyName) ??
+        (ts.isIdentifier(node.name) ? node.name.text : undefined);
+      if (
+        boundName === "beginChildLifecycle" &&
+        file !== OBSERVED_CHILD_PROCESS_MODULE &&
+        file !== TEST_PROGRESS_MODULE &&
+        !relativeFile.startsWith("test/e2e/support/")
+      ) {
+        reportUnsupported(
+          node,
+          "beginChildLifecycle is reserved for the canonical observed-child boundary",
         );
       }
     }
@@ -2104,6 +2605,11 @@ function validateDirectChildProcessCalls(calls: readonly DirectChildProcessCall[
     if (!call.tracksActivity) {
       failures.push(
         `${call.file}:${call.line}: audited child-process boundary must register a content-free progress activity`,
+      );
+    }
+    if (!call.tracksLifecycle) {
+      failures.push(
+        `${call.file}:${call.line}: audited child-process boundary must emit canonical content-free lifecycle checkpoints`,
       );
     }
     if (!call.outputIgnored && !call.observesOutput) {

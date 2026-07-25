@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../cli/branding";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
+import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
 import { redactFull } from "../security/redact";
 import { getSandboxEntryDisplayInference, type SandboxMessagingState } from "../state/registry";
 import { resolveDefaultSandboxName } from "../tunnel/service-command";
@@ -132,6 +133,8 @@ export interface ShowStatusCommandDeps {
    * detect the degraded state from `$?` (#3386).
    */
   getGatewayHealth?: () => GatewayHealth;
+  /** Last authority durably selected by onboarding, with secret-free identity fields. */
+  getGatewayAuthority?: () => GatewayOwnerDescription | null;
   checkMessagingBridgeHealth?: (
     sandboxName: string,
     channels: string[],
@@ -173,6 +176,7 @@ export interface StatusReport {
     model: string | null;
   } | null;
   gatewayHealth: GatewayHealth | null;
+  gatewayAuthority: GatewayOwnerDescription | null;
   sandboxes: StatusSandboxRow[];
   services: StatusServiceRow[];
 }
@@ -411,6 +415,36 @@ function normalizeGatewayHealth(health: GatewayHealth | null | undefined): Gatew
   };
 }
 
+function normalizeGatewayAuthority(
+  authority: GatewayOwnerDescription | null | undefined,
+): GatewayOwnerDescription | null {
+  if (!authority) return null;
+  const gatewayName = safeStatusString(authority.gatewayName);
+  const source = safeStatusString(authority.source);
+  const endpoint = safeStatusString(authority.endpoint);
+  const supervisor = authority.supervisor
+    ? {
+        kind: authority.supervisor.kind,
+        serviceName: safeStatusString(authority.supervisor.serviceName) ?? "unknown",
+        execPath: safeStatusString(authority.supervisor.execPath) ?? "unknown",
+      }
+    : null;
+  return {
+    gatewayName: gatewayName ?? "unknown",
+    gatewayPort: authority.gatewayPort,
+    mode: authority.mode,
+    source:
+      source === "declared" || source === "packaged-service" || source === "standalone"
+        ? source
+        : "standalone",
+    endpoint,
+    supervisor,
+    requiredCapabilities: authority.requiredCapabilities.map(
+      (capability) => safeStatusString(capability) ?? "unknown",
+    ),
+  };
+}
+
 export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
   const sandboxList = deps.listSandboxes();
   const { sandboxes } = sandboxList;
@@ -433,6 +467,7 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
         }
       : null,
     gatewayHealth: normalizeGatewayHealth(gatewayHealth),
+    gatewayAuthority: normalizeGatewayAuthority(deps.getGatewayAuthority?.()),
     sandboxes: sandboxes.map((sandbox) =>
       buildStatusSandboxRow(sandbox, resolvedDefault, liveInference),
     ),
@@ -490,6 +525,19 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
           );
         }
       }
+    }
+    log("");
+  }
+
+  const gatewayAuthority = normalizeGatewayAuthority(deps.getGatewayAuthority?.());
+  if (gatewayAuthority) {
+    const owner = gatewayAuthority.supervisor
+      ? `${gatewayAuthority.supervisor.kind} ${gatewayAuthority.supervisor.serviceName} (${gatewayAuthority.supervisor.execPath})`
+      : gatewayAuthority.source;
+    log(`  Gateway authority: ${gatewayAuthority.mode}`);
+    log(`    Owner: ${owner}`);
+    if (gatewayAuthority.endpoint) {
+      log(`    Endpoint: ${gatewayAuthority.endpoint}`);
     }
     log("");
   }

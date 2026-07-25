@@ -20,7 +20,7 @@ Use the error location to select the correct setting.
 |---|---|---|
 | `NEMOCLAW_AGENT_TIMEOUT` | OpenClaw per-request inference | `600` seconds |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint validation during onboarding | `180` seconds |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after sandbox creation | `180` seconds |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation; OpenShell command re-registration after policy application or after OpenClaw or Hermes managed recovery recreates the sandbox | `180` seconds |
 
 The readiness timeout does not govern inference requests or provider validation.
 
@@ -64,11 +64,24 @@ This variable does not extend the later sandbox-readiness wait.
 
 Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` when onboarding creates the sandbox but image build, upload, or boot exceeds 180 seconds.
 This can occur during a first run with cold caches or on a remote VM over a slow link.
+Onboarding also uses this budget to confirm that the sandbox can execute commands again after applying policy presets.
+
+<AgentOnly variant="openclaw,hermes">
+
+The same budget applies when `start` or `recover` transactionally recreates a managed sandbox and waits for OpenShell to re-register it.
+
+</AgentOnly>
 
 ```bash
 export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
+
+<AgentOnly variant="openclaw,hermes">
+
+For an existing sandbox, export the variable before the `start` or `recover` command that performs the recreation.
+
+</AgentOnly>
 
 Raise both onboarding budgets when the provider probe and the later sandbox creation phase are slow.
 

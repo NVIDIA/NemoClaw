@@ -61,6 +61,7 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -71,6 +72,7 @@ import {
   selectSandboxGatewayIfRegistered,
   usesGatewayMetadataProbe,
 } from "./sandbox-gateway-routing";
+import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -874,6 +876,7 @@ async function runSnapshotRestoreUnlocked(
     "  Failed to query live sandbox state from OpenShell.",
   );
   const isCrossSandboxRestore = targetSandbox !== sandboxName;
+  let crossSandboxRestoreAgent: string | null = null;
   const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
   const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
 
@@ -992,6 +995,7 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
+      crossSandboxRestoreAgent = lockedSourceEntry.agent || "openclaw";
       if (getSandboxEntryInference(lockedSourceEntry).kind !== "configured") {
         console.error(
           `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' has no complete durable inference route.`,
@@ -1069,6 +1073,12 @@ async function runSnapshotRestoreUnlocked(
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
       );
+      printHermesGatewayRestoreHint(
+        targetSandbox,
+        registry.getSandbox(targetSandbox)?.agent,
+        result.restoredFiles,
+        resolvedSnapshot?.stateFiles ?? [],
+      );
     } else {
       console.error(`  Restore failed.`);
       if (result.restoredDirs.length > 0) {
@@ -1099,6 +1109,18 @@ async function runSnapshotRestoreUnlocked(
     // managed observability binding from current target state.
     reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
   });
+  if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
+    try {
+      establishRestoredSandboxGatewayPairing(targetSandbox);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new SnapshotCommandError([
+        `State restored into '${targetSandbox}', but gateway pairing could not be verified.`,
+        `Run \`${CLI_NAME} ${targetSandbox} connect\` to retry pairing before running an agent.`,
+        `Details: ${detail}`,
+      ]);
+    }
+  }
 }
 
 export async function runSandboxSnapshot(

@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import {
+  parseTemporarySandboxBaseImageId,
   readSandboxBaseImageResolutionMetadata,
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
@@ -56,6 +57,47 @@ export function captureBaseResolution(
   }
 }
 
+function isDisposableLocalRebuildMetadata(
+  agentName: string,
+  metadata: SandboxBaseImageResolutionMetadata,
+): boolean {
+  if (metadata.source !== "local" || metadata.digest !== null) return false;
+  const imageId = metadata.imageId.match(/^sha256:([0-9a-f]{64})$/i)?.[0]?.toLowerCase();
+  return (
+    imageId !== undefined &&
+    parseTemporarySandboxBaseImageId(`nemoclaw-${agentName}-sandbox-base-local`, metadata.ref) ===
+      imageId
+  );
+}
+
+function isStableMetadataForDisposableHandoff(
+  agentName: string,
+  stable: SandboxBaseImageResolutionMetadata | null,
+  staged: SandboxBaseImageResolutionMetadata | null,
+): boolean {
+  if (
+    !stable ||
+    !staged ||
+    stable.source !== "local" ||
+    stable.digest !== null ||
+    isDisposableLocalRebuildMetadata(agentName, stable) ||
+    !isDisposableLocalRebuildMetadata(agentName, staged)
+  ) {
+    return false;
+  }
+  return (
+    stable.schema === staged.schema &&
+    stable.key === staged.key &&
+    stable.imageName === staged.imageName &&
+    stable.imageId === staged.imageId &&
+    stable.os === staged.os &&
+    stable.architecture === staged.architecture &&
+    stable.glibcVersion === staged.glibcVersion &&
+    stable.requireOpenshellSandboxAbi === staged.requireOpenshellSandboxAbi &&
+    stable.minGlibcVersion === staged.minGlibcVersion
+  );
+}
+
 export function createAgentSandboxWithResolution(
   context: BaseImageResolutionContext,
   agent: AgentDefinition,
@@ -65,7 +107,23 @@ export function createAgentSandboxWithResolution(
     resolutionHint: context.resolutionHint,
     forceBaseImageRefresh: context.forceRefresh,
   });
-  context.preResolvedMetadata = staged.baseImageResolutionMetadata ?? context.preResolvedMetadata;
+  if (staged.baseImageResolutionMetadata) {
+    if (isDisposableLocalRebuildMetadata(agent.name, staged.baseImageResolutionMetadata)) {
+      if (
+        !isStableMetadataForDisposableHandoff(
+          agent.name,
+          context.preResolvedMetadata,
+          staged.baseImageResolutionMetadata,
+        )
+      ) {
+        throw new Error(
+          "Temporary rebuild base-image metadata did not match the stable outer resolution",
+        );
+      }
+    } else {
+      context.preResolvedMetadata = staged.baseImageResolutionMetadata;
+    }
+  }
   return staged;
 }
 

@@ -28,6 +28,7 @@ function baseCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardChec
     webSearch: decisionUnset(),
     messaging: decisionUnset(),
     resourceProfile: decisionDeclined(),
+    gatewayAuthority: decisionUnset(),
     effectGroups: { sandbox_create: { completedAt: ISO, fingerprint: "fp-create" } },
     bindings: {
       credentialEnvs: ["OPENAI_API_KEY"],
@@ -92,10 +93,70 @@ describe("checkpoint schema inspection", () => {
     });
   });
 
-  it("loads and round-trips a valid v1 checkpoint", () => {
+  it("loads and round-trips a valid v2 checkpoint", () => {
     const checkpoint = baseCheckpoint();
     const result = inspectCheckpoint(serializeCheckpoint(checkpoint));
     expect(result).toEqual({ status: "loaded", checkpoint });
+  });
+
+  it("migrates a valid v1 checkpoint with an unset gateway authority", () => {
+    const serialized = serializeCheckpoint(baseCheckpoint());
+    serialized.schemaVersion = 1;
+    delete serialized.gatewayAuthority;
+
+    const result = inspectCheckpoint(serialized);
+
+    expect(result).toMatchObject({ status: "migrated", fromVersion: 1 });
+    expect(result.status === "migrated" && result.checkpoint.gatewayAuthority).toEqual(
+      decisionUnset(),
+    );
+  });
+
+  it("round-trips a selected externally supervised gateway authority", () => {
+    const checkpoint = baseCheckpoint({
+      gatewayAuthority: decisionSelected({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        mode: "externally-supervised",
+        source: "declared",
+        endpoint: "https://127.0.0.1:8080",
+        stateDir: "/var/lib/openshell/gateway",
+        supervisor: {
+          kind: "systemd-system",
+          serviceName: "openshell-gateway.service",
+          execPath: "/usr/local/bin/openshell-gateway",
+        },
+        requiredCapabilities: ["gateway.health"],
+      }),
+    });
+
+    expect(inspectCheckpoint(serializeCheckpoint(checkpoint))).toEqual({
+      status: "loaded",
+      checkpoint,
+    });
+  });
+
+  it("rejects a checkpoint whose external authority targets a different port", () => {
+    const serialized = serializeCheckpoint(
+      baseCheckpoint({
+        gatewayAuthority: decisionSelected({
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: "http://127.0.0.1:9443",
+          stateDir: "/var/lib/openshell/gateway",
+          supervisor: {
+            kind: "systemd-system",
+            serviceName: "openshell-gateway.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+          requiredCapabilities: [],
+        }),
+      }),
+    );
+
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
   });
 
   it("rejects a checkpoint whose sandbox identity value is malformed", () => {
