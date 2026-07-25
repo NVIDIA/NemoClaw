@@ -226,7 +226,12 @@ Before you use a reviewer-request write, confirm that one of these conditions is
 - The current user names the exact reviewer.
 - You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
 
-Otherwise, do not add, remove, or re-request a human, team, or bot reviewer.
+Otherwise, do not use any of these reviewer-request writes:
+
+- Add a reviewer.
+- Remove a reviewer.
+- Re-request a review.
+
 GitHub can create an automatic review-request event when a contributor or agent pushes.
 GitHub can attribute the event to the pushing account.
 If the command trace contains no reviewer-request write, report the event as an automatic review-request event.
