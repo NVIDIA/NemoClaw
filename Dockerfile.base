@@ -52,6 +52,86 @@
 # by OpenClaw CLI version bumps or the weekly docker-pin-check.
 # ────────────────────────────────────────────────────────────────────────
 
+ARG PERL_VERSION=5.44.0
+ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
+ARG PERL_PACKAGE_REVISION=1nemoclaw1
+
+# Debian trixie has not published a Perl package containing the upstream
+# fixes for CVE-2026-12087, CVE-2026-13221, and CVE-2026-57433. Build the
+# fixed upstream release as native Debian packages so dpkg dependencies and
+# vulnerability inventory both describe the runtime that is actually used.
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS perl-builder
+
+ARG PERL_VERSION
+ARG PERL_SHA256
+ARG PERL_PACKAGE_REVISION
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential=12.12 \
+        ca-certificates=20250419 \
+        curl=8.14.1-2+deb13u4 \
+        netbase=6.5 \
+        xz-utils=5.8.1-1+deb13u1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/perl-source
+
+# Perl Configure's d_syscallproto probe compiles and runs a target test through
+# Buildx/QEMU. The QEMU-backed build returns a false negative for trixie's libc
+# declaration, so pin the known target result instead of synthesizing a
+# conflicting prototype. Remove this override when the QEMU-backed multi-arch
+# build in .github/workflows/base-image.yaml passes without it.
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o /tmp/perl.tar.xz "https://www.cpan.org/src/5.0/perl-${PERL_VERSION}.tar.xz" \
+    && printf '%s  %s\n' "${PERL_SHA256}" /tmp/perl.tar.xz > /tmp/perl.sha256 \
+    && sha256sum -c /tmp/perl.sha256 \
+    && tar -xJf /tmp/perl.tar.xz -C /tmp/perl-source --strip-components=1 \
+    && ./Configure -des \
+        -Dprefix=/usr \
+        -Dvendorprefix=/usr \
+        -Dsiteprefix=/usr/local \
+        -Dusethreads \
+        -Duse64bitall \
+        -Dd_syscallproto=define \
+        -Dman1dir=none \
+        -Dman3dir=none \
+    && make -j"$(nproc)" \
+    && make test \
+    && make install DESTDIR=/tmp/perl-root
+
+RUN package_version="${PERL_VERSION}-${PERL_PACKAGE_REVISION}" \
+    && architecture="$(dpkg --print-architecture)" \
+    && mkdir -p /tmp/perl-root/DEBIAN /tmp/perl-meta/DEBIAN \
+    && printf '%s\n' \
+        'Package: perl-base' \
+        "Version: ${package_version}" \
+        "Architecture: ${architecture}" \
+        'Essential: yes' \
+        'Priority: required' \
+        'Section: perl' \
+        'Multi-Arch: allowed' \
+        'Maintainer: NVIDIA NemoClaw Maintainers' \
+        "Provides: libperl5.40 (= ${package_version}), perl-modules-5.40 (= ${package_version})" \
+        'Conflicts: libperl5.40, perl-modules-5.40' \
+        "Breaks: perl (<< ${package_version})" \
+        "Replaces: libperl5.40, perl-modules-5.40, perl (<< ${package_version})" \
+        'Description: Perl 5 language interpreter built for the NemoClaw sandbox' \
+        > /tmp/perl-root/DEBIAN/control \
+    && printf '%s\n' \
+        'Package: perl' \
+        "Version: ${package_version}" \
+        "Architecture: ${architecture}" \
+        'Priority: standard' \
+        'Section: perl' \
+        'Multi-Arch: allowed' \
+        "Depends: perl-base (= ${package_version})" \
+        'Maintainer: NVIDIA NemoClaw Maintainers' \
+        'Description: Perl 5 language interpreter metapackage for the NemoClaw sandbox' \
+        > /tmp/perl-meta/DEBIAN/control \
+    && dpkg-deb --build --root-owner-group /tmp/perl-root /tmp/perl-base.deb \
+    && dpkg-deb --build --root-owner-group /tmp/perl-meta /tmp/perl.deb
+
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
@@ -133,6 +213,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
+
+COPY --from=perl-builder /tmp/perl-base.deb /tmp/perl.deb /tmp/
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/perl-base.deb /tmp/perl.deb \
+    && rm -f /tmp/perl-base.deb /tmp/perl.deb \
+    && rm -rf /var/lib/apt/lists/* \
+    && test "$(perl -e 'print $^V')" = "v5.44.0" \
+    && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
+    && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
+    && perl -MSocket=pack_ip_mreq_source -e \
+        'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
+    && perl -e \
+        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+    && git --version \
+    && test -z "$(dpkg --audit)"
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of
