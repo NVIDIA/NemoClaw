@@ -5,6 +5,16 @@
 
 Use this workflow after you create a PR or push to an open PR.
 
+## Preserve repository-owned review routing
+
+Treat reviewer selection as repository configuration, not an agent decision.
+
+- Let trusted base-branch CODEOWNERS, rulesets, workflows, and NemoClaw skills request people, teams, and automated reviewers.
+- Do not use `gh pr edit --add-reviewer`, `--remove-reviewer`, the requested-reviewers REST endpoint, GraphQL review-request mutations, or equivalent writes unless the user explicitly names the reviewer or a trusted NemoClaw workflow requires that exact write.
+- Do not manually request or re-request Copilot, CodeRabbit, or another third-party reviewer to compensate for a missing, stale, quota-limited, or failed review. Observe and triage only the review signals the repository produces.
+- Project-owned workflow dispatches documented by a NemoClaw skill, such as refreshing the PR Review Advisor, are workflow operations rather than reviewer selection. Follow the exact skill instructions for those dispatches.
+- GitHub may create an automatic review-request timeline event when a contributor or agent pushes. GitHub can attribute that event to the pushing account. Describe it as an automatic repository review triggered by the push unless the command trace contains an explicit reviewer write.
+
 ## Monitor checks
 
 ```bash

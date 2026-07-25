@@ -213,6 +213,8 @@ Follow `.agents/skills/_shared/git-github-hard-stop.md`: if SSH, `gh`, authentic
 
 Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a PR, monitor required CI and automated review comments, address valid CodeRabbit and PR Review Advisor findings, and consult the user when feedback is ambiguous or design-changing.
 
+Reviewer routing is repository-owned. Let trusted base-branch configuration, CODEOWNERS, rulesets, workflows, and NemoClaw skills decide which people, teams, and automated reviewers participate. Do not add, remove, or re-request a human, team, or bot reviewer unless the user explicitly names the reviewer or a trusted NemoClaw workflow requires that exact write. A push may cause GitHub to attribute an automatic review request to the pushing account; report that as repository automation, not as an intentional reviewer request by the contributor or agent.
+
 ### Common Patterns
 
 **Adding a CLI command:**

@@ -231,6 +231,7 @@ Follow these rules when filling in the template:
 
 Run `gh pr create` with `--assignee @me` and the completed body file.
 Run this command only after Step 4 passes.
+Do not add `--reviewer` or make a separate reviewer-request write. Reviewer routing belongs to trusted repository configuration and the shared PR follow-up workflow unless the user explicitly names a reviewer.
 
 ```bash
 gh pr create \
