@@ -4,7 +4,8 @@
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
-import { redactFull } from "../../security/redact";
+import { redactFull, redactUrl } from "../../security/redact";
+import { URL_TOKEN_PATTERN } from "../../security/redact-url";
 import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
 import { inspectHermesMcpReconciliationRefusal } from "./mcp-bridge-recovery";
 
@@ -18,6 +19,7 @@ export type GatewayRestartFailureLayer =
   | "unsupported agent"
   | "privileged control unavailable"
   | "supervisor not running"
+  | "supervisor unavailable"
   | "secret-boundary refusal"
   | "unsafe config path"
   | "config hash mismatch"
@@ -104,7 +106,12 @@ const ANSI_CONTROL_RE =
   /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
 
 function sanitizeGatewayRestartFailureLine(line: string): string {
-  return redactFull(line.replace(ANSI_CONTROL_RE, ""));
+  const withoutControls = line.replace(ANSI_CONTROL_RE, "");
+  const withRedactedUrls = withoutControls.replace(
+    URL_TOKEN_PATTERN,
+    (url) => redactUrl(url) ?? "<REDACTED>",
+  );
+  return redactFull(withRedactedUrls);
 }
 
 function sanitizeGatewayRestartFailureDetail(detail: string): string {
@@ -132,6 +139,12 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     return {
       layer: "supervisor not running",
       detail: detail || "the in-sandbox gateway supervisor is not running",
+    };
+  }
+  if (output.includes("SUPERVISOR_UNAVAILABLE") && output.includes("NEMOCLAW_CONTROL_STAGE=")) {
+    return {
+      layer: "supervisor unavailable",
+      detail: detail || "the managed gateway supervisor became unavailable",
     };
   }
   if (

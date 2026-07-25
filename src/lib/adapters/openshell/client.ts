@@ -76,6 +76,8 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const SEMVER_PATTERN = /(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/;
+
 export function parseVersionFromText(value = "", versionCommand?: string): string | null {
   const text = String(value || "");
   const commandToken = versionCommand?.trim().split(/\s+/, 1)[0] ?? "";
@@ -89,13 +91,13 @@ export function parseVersionFromText(value = "", versionCommand?: string): strin
       executableSeen = true;
       const versionMatch = line
         .slice(executableMatch.index + executableMatch[0].length)
-        .match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+        .match(SEMVER_PATTERN);
       if (versionMatch) return versionMatch[1];
     }
     if (executableSeen) return null;
   }
 
-  const match = text.match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+  const match = text.match(SEMVER_PATTERN);
   return match ? match[1] : null;
 }
 

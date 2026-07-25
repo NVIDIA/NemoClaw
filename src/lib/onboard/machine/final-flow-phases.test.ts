@@ -21,7 +21,7 @@ describe("final onboard flow phases", () => {
     const policiesResult = await policiesPhase.run(branchResult.context);
     await finalizationPhase.run(policiesResult.context);
 
-    expect(order).toEqual(["openclaw", "policies", "set-default", "verify"]);
+    expect(order).toEqual(["openclaw", "policies", "set-default", "agent-forward", "verify"]);
   });
 
   it("carries merged policy messaging channels into the final flow context", async () => {
@@ -85,7 +85,14 @@ describe("final onboard flow phases", () => {
       },
     });
 
-    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(order).toEqual([
+      "openclaw",
+      "policies",
+      "disarm",
+      "set-default",
+      "agent-forward",
+      "verify",
+    ]);
     expect(recorded).toEqual(["policies", "finalizing", "complete"]);
   });
 });
