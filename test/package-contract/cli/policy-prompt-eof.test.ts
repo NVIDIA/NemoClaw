@@ -56,8 +56,9 @@ require(${CLI_PATH});
       cwd: REPO_ROOT,
       encoding: "utf-8",
       input: "",
-      // A regression here is a hang, not a wrong value, so cap it rather than
-      // letting the suite block. SIGKILL because the child is mid-prompt.
+      // Keep defensive hang protection around the real stdin boundary. Before
+      // #7418, the unresolved picker promise let Node exit 0 after stdin closed;
+      // the status assertion below catches that original regression.
       timeout: 30_000,
       killSignal: "SIGKILL",
       env: { ...process.env, HOME: tmpDir, NEMOCLAW_NON_INTERACTIVE: undefined },
@@ -74,9 +75,9 @@ describe("policy preset prompt cancellation", () => {
   ])("$command exits non-zero when the picker prompt hits EOF (#7418)", ({ command, menu }) => {
     const result = runPolicyCommandAtStdinEof(command);
 
-    // The child exited on its own rather than being killed by the timeout
-    // above. The pre-#7418 promise never settled, which appears here as a
-    // SIGKILL and a null status instead of an exit status.
+    // The child exited on its own rather than being killed by the defensive
+    // timeout above. A hang would produce SIGKILL and a null status; the
+    // pre-#7418 regression exited 0 and is caught by the final assertion.
     expect(result.error).toBeUndefined();
     expect(result.signal).toBeNull();
     // The picker was reached, so this is prompt EOF rather than the
@@ -85,7 +86,7 @@ describe("policy preset prompt cancellation", () => {
     expect(result.stderr).toContain("No input available on stdin");
     expect(result.stderr).toContain(`${command} <preset>`);
     expect(result.status).toBe(1);
-    // Above the child's 30s cap, so a hung picker fails on the assertions
-    // above rather than as a bare suite timeout.
+    // Above the child's 30s cap, so any hang fails on the assertions above
+    // rather than as a bare suite timeout.
   }, 45_000);
 });

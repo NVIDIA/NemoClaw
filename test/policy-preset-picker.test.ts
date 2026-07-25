@@ -279,7 +279,7 @@ describe("policy preset pickers", () => {
       expect(result.selected).toBe("pypi");
     });
 
-    it("cancels with an EOF code when stdin closes before an answer (#7418)", async () => {
+    it("rejects with code EOF when stdin closes before an answer (#7418)", async () => {
       const result = await runSelectionPromptAtEof("selectFromList");
 
       expect(result.stderr).toContain("Choose preset [1]:");
@@ -339,7 +339,7 @@ describe("policy preset pickers", () => {
       expect(result.selected).toBe("pypi");
     });
 
-    it("cancels with an EOF code when stdin closes before an answer (#7418)", async () => {
+    it("rejects with code EOF when stdin closes before an answer (#7418)", async () => {
       const result = await runSelectionPromptAtEof("selectForRemoval", { applied: ["npm"] });
 
       expect(result.stderr).toContain("Choose preset to remove:");
