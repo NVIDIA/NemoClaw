@@ -305,7 +305,7 @@ function workflowJobCheckRun(job: ReturnType<typeof hostedRunnerLossJob>) {
     details_url: job.html_url,
     status: "completed",
     conclusion: "failure",
-    app: { id: 15368 },
+    app: { id: 15368, slug: "github-actions" },
     output: { annotations_count: 1, annotations_url: annotationsUrl },
   };
 }
