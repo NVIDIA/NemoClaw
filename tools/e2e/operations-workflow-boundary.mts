@@ -298,7 +298,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         name: "Set up Node for publication verification",
         if: PUBLICATION_REQUIRED_CONDITION,
-        uses: "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
         with: {
           "node-version": 22,
         },
