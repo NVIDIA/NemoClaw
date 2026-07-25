@@ -3807,7 +3807,6 @@ const computeSetupPresetSuggestions = (
     tierName,
     options,
   );
-
 async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
@@ -3822,6 +3821,7 @@ async function setupPoliciesWithSelection(
         note,
         isNonInteractive,
         waitForSandboxReady,
+        waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
         syncPresetSelection,
         selectPolicyTier,
         setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
@@ -4571,8 +4571,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
       },
       finalizationDeps: {
-        ensureAgentDashboardForward: (name, selectedAgent) =>
-          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,

@@ -16,7 +16,7 @@ import {
   withOnboardJsonlEventStream,
 } from "./jsonl-events";
 
-const SECRET = "sk-test-1234567890abcdefghijklmnop";
+const SECRET = "sk-aaaaaaaaaaaaaaaaaaaa";
 const CURRENT_SESSION_ID = "1784426400000-123e4567-e89b-42d3-a456-426614174000";
 const LEGACY_SESSION_ID = "1784426400000-ab12cd34";
 
