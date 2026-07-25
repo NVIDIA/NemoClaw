@@ -10,8 +10,7 @@ import {
   type PullRequest,
   parseControllerCommand,
   prGateExternalId,
-  recordApprovedForkE2ESkip,
-  recordManualForkE2ESkip,
+  startApprovedForkPrGate,
   startControlPlanePrGate,
   startPrGate,
 } from "../tools/e2e/pr-e2e-gate.mts";
@@ -219,22 +218,40 @@ function approvalReview(comment: string | null = null, overrides: Record<string,
   return {
     state: "approved",
     comment,
-    environments: [{ name: "approve-credentialed-e2e-skip-for-fork-pr" }],
+    environments: [{ name: "approve-credentialed-e2e-for-fork-pr" }],
     user: { login: "e2e-reviewer" },
     ...overrides,
   };
 }
 
-function approvedForkSkipCommand() {
-  return {
-    mode: "record-approved-fork-e2e-skip" as const,
-    prNumber: 42,
-    headSha: HEAD_SHA,
-    baseSha: BASE_SHA,
-    workflowSha: WORKFLOW_SHA,
-    approvalRunId: APPROVAL_RUN_ID,
-    approvalRunAttempt: 1,
-  };
+function approvedForkCommand(workDir: string) {
+  const command = parseControllerCommand([
+    "--mode",
+    "start-approved-fork",
+    "--pr",
+    "42",
+    "--head",
+    HEAD_SHA,
+    "--base",
+    BASE_SHA,
+    "--workflow-sha",
+    WORKFLOW_SHA,
+    "--approval-run-id",
+    String(APPROVAL_RUN_ID),
+    "--approval-run-attempt",
+    "1",
+    "--gate-run-id",
+    String(APPROVAL_RUN_ID),
+    "--workflow-run-attempt",
+    "1",
+    "--work-dir",
+    workDir,
+  ]);
+  expect(command.mode).toBe("start-approved-fork");
+  return command as Extract<
+    ReturnType<typeof parseControllerCommand>,
+    { mode: "start-approved-fork" }
+  >;
 }
 
 function approvalRunRoute(value: unknown) {
@@ -252,7 +269,7 @@ function approvalHistoryRoute(value: unknown) {
   );
 }
 
-function successfulApprovedForkRoutes(approvals: unknown) {
+function successfulApprovedForkRoutes(approvals: unknown, requests: RecordedGitHubRequest[]) {
   return [
     approvalRunRoute(approvalWorkflowRun()),
     approvalHistoryRoute(approvals),
@@ -265,20 +282,49 @@ function successfulApprovedForkRoutes(approvals: unknown) {
       () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
     ),
     existingPrGateCheckRunsRoute({
-      status: "completed",
-      conclusion: "failure",
-      output: { title: "Maintainer approval required to skip credentialed E2E" },
+      output: { title: "E2E reviewer authorization required to run fork E2E" },
     }),
     mainWorkflowRefRoute(),
     githubFetchRoute(
       ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
       (request) => prGateMutationResponse(request),
     ),
+    githubFetchRoute(
+      ({ url, method }) =>
+        url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+      () =>
+        githubResponse({
+          workflow_run_id: 23,
+          run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+          html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+        }),
+    ),
+    githubFetchRoute(
+      ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+      () => {
+        const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
+        const inputs = (dispatch?.body as { inputs?: Record<string, string> } | undefined)?.inputs;
+        const correlationId = inputs?.correlation_id ?? "missing";
+        return githubResponse({
+          id: 23,
+          name: `E2E PR #42 (${correlationId})`,
+          path: ".github/workflows/e2e.yaml",
+          workflow_id: 7,
+          run_attempt: 1,
+          event: "workflow_dispatch",
+          head_sha: WORKFLOW_SHA,
+          status: "queued",
+          conclusion: null,
+          display_title: `E2E PR #42 (${correlationId})`,
+          html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+        });
+      },
+    ),
   ];
 }
 
-describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
-  it("plans a risky fork without dispatching secret-bearing E2E", async () => {
+describe("PR E2E controller fork credentialed E2E approval safety", () => {
+  it("requires protected approval before a risky fork can run credentialed E2E", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -320,34 +366,37 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         startPrGate({ ...startCommand(workDir), headRepository: "contributor/NemoClaw" }),
       ).resolves.toBeUndefined();
       expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
-      const completion = requests
-        .filter((request) => request.url.endsWith("/check-runs/17"))
-        .at(-1);
-      expect(completion?.body).toMatchObject({
-        status: "completed",
-        conclusion: "failure",
-        details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID}`,
+      const pending = requests.filter((request) => request.url.endsWith("/check-runs/17")).at(-1);
+      expect(pending?.body).toMatchObject({
+        status: "in_progress",
         output: {
-          title: "Maintainer approval required to skip credentialed E2E",
-          summary: expect.stringContaining("The selected jobs and targets were not run"),
+          title: "E2E reviewer authorization required to run fork E2E",
+          summary: expect.stringContaining(
+            "No selected E2E job or target ran. No repository credential was exposed to fork code.",
+          ),
         },
       });
-      expect(JSON.stringify(completion?.body)).toContain("Review deployments");
-      expect(JSON.stringify(completion?.body)).toContain(
+      expect(JSON.stringify(pending?.body)).toContain("Review deployments");
+      expect(JSON.stringify(pending?.body)).toContain(
         `[E2E / PR Gate Controller run ${GATE_RUN_ID}](https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID})`,
       );
-      expect(JSON.stringify(completion?.body)).toContain(
-        "approve-credentialed-e2e-skip-for-fork-pr",
+      expect(JSON.stringify(pending?.body)).toContain("approve-credentialed-e2e-for-fork-pr");
+      expect(JSON.stringify(pending?.body)).toContain(
+        "Approval authorizes the selected fork code to run with E2E credentials.",
       );
-      expect(JSON.stringify(completion?.body)).toContain("If Review deployments is absent");
-      expect(JSON.stringify(completion?.body)).toContain("update the PR to create a new head");
-      expect(JSON.stringify(completion?.body)).toContain("approve-fork-e2e-skip");
+      expect(JSON.stringify(pending?.body)).toContain("Review scope: PR #42");
+      expect(JSON.stringify(pending?.body)).toContain("head repository `contributor/NemoClaw`");
+      expect(JSON.stringify(pending?.body)).toContain(`head SHA \`${HEAD_SHA}\``);
+      expect(JSON.stringify(pending?.body)).toContain(`base SHA \`${BASE_SHA}\``);
+      expect(JSON.stringify(pending?.body)).toContain("jobs:");
+      expect(JSON.stringify(pending?.body)).toContain("deterministic plan");
       expect(fs.readFileSync(outputPath, "utf8")).toContain(
         [
-          "fork_skip_mode=record-fork-e2e-skip",
-          "fork_skip_pr_number=42",
-          `fork_skip_head_sha=${HEAD_SHA}`,
-          `fork_skip_base_sha=${BASE_SHA}`,
+          "approval_mode=start-approved-fork",
+          "approval_environment=approve-credentialed-e2e-for-fork-pr",
+          "approval_pr_number=42",
+          `approval_head_sha=${HEAD_SHA}`,
+          `approval_base_sha=${BASE_SHA}`,
         ].join("\n"),
       );
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
@@ -536,13 +585,13 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       expect(summary).toContain("approve-credentialed-e2e-for-internal-pr");
       expect(fs.readFileSync(outputPath, "utf8")).toContain(
         [
-          "control_plane_approval_mode=start-approved-control-plane",
-          "control_plane_approval_pr_number=42",
-          `control_plane_approval_head_sha=${HEAD_SHA}`,
-          `control_plane_approval_base_sha=${BASE_SHA}`,
+          "approval_mode=start-approved-control-plane",
+          "approval_environment=approve-credentialed-e2e-for-internal-pr",
+          "approval_pr_number=42",
+          `approval_head_sha=${HEAD_SHA}`,
+          `approval_base_sha=${BASE_SHA}`,
         ].join("\n"),
       );
-      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("fork_skip_mode=");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -592,49 +641,59 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     }
   });
 
-  it.each([
-    { name: "without a comment", comment: null, expectedReason: "approval confirmed" },
-    {
-      name: "with an optional comment",
-      comment: "  Independently\nreviewed without secrets.  ",
-      expectedReason: "Reviewer comment: Independently reviewed without secrets.",
-    },
-    {
-      name: "with an overlong optional comment",
-      comment: "x".repeat(1000),
-      expectedReason: `Reviewer comment: ${"x".repeat(100)}`,
-    },
-  ])("records a validated environment approval $name", async ({ comment, expectedReason }) => {
+  it("dispatches the exact fork repository and PR SHA after protected approval", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-fork-approved-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(successfulApprovedForkRoutes([approvalReview(comment)]), requests),
+      createGitHubFetchRouter(
+        successfulApprovedForkRoutes(
+          [approvalReview("Reviewed the exact fork PR and selected E2E plan.")],
+          requests,
+        ),
+        requests,
+      ),
     );
 
-    await expect(recordApprovedForkE2ESkip(approvedForkSkipCommand())).resolves.toBeUndefined();
+    try {
+      await expect(startApprovedForkPrGate(approvedForkCommand(workDir))).resolves.toBeUndefined();
 
-    const completion = requests.filter((request) => request.method === "PATCH").at(-1);
-    expect(completion?.body).toMatchObject({
-      status: "completed",
-      conclusion: "success",
-      details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${APPROVAL_RUN_ID}`,
-      output: {
-        title: "Credentialed E2E skipped for fork PR — approved by @e2e-reviewer",
-        summary: expect.stringContaining(
-          "**Outcome: APPROVED SKIP — credentialed E2E did not run.**",
-        ),
-      },
-    });
-    const summary = JSON.stringify(completion?.body);
-    expect(summary).toContain("Validated environment approval run");
-    expect(summary).toContain(expectedReason);
-    expect(summary).not.toContain("not validated by this controller");
-    expect(summary.length).toBeLessThan(2000);
-    expect(requests.some((request) => request.url.includes("/collaborators/"))).toBe(false);
+      expect(requests.some((request) => request.url.includes("/collaborators/"))).toBe(false);
+      expect(requests.find((request) => request.url.endsWith("/dispatches"))?.body).toMatchObject({
+        ref: "main",
+        inputs: {
+          controller_check_id: "17",
+          pr_number: "42",
+          checkout_repository: "contributor/NemoClaw",
+          checkout_sha: HEAD_SHA,
+          base_sha: BASE_SHA,
+          workflow_sha: WORKFLOW_SHA,
+        },
+      });
+      const authorization = requests.find(
+        (request) =>
+          request.url.endsWith("/check-runs/17") &&
+          (request.body as { output?: { title?: string } } | undefined)?.output?.title ===
+            "E2E execution authorized by @e2e-reviewer",
+      );
+      expect(authorization?.body).toMatchObject({
+        status: "in_progress",
+        output: {
+          summary: expect.stringContaining("Reviewed the exact fork PR and selected E2E plan."),
+        },
+      });
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("dispatched=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
-  it("explains how to recover when the approval environment is not protected", async () => {
+  it("fails closed when the fork approval environment did not record an approval", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-fork-no-review-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -645,187 +704,53 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       ),
     );
 
-    await expect(recordApprovedForkE2ESkip(approvedForkSkipCommand())).rejects.toThrow(
-      /No required-reviewer approval was recorded.*Review deployments was absent.*missing or unprotected.*update the PR to create a new head.*trigger fresh PR CI.*manual maintainer fallback/u,
-    );
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    try {
+      await expect(startApprovedForkPrGate(approvedForkCommand(workDir))).rejects.toThrow(
+        /No required-reviewer approval was recorded for approve-credentialed-e2e-for-fork-pr/u,
+      );
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
-  it.each([
-    { name: "a malformed history object", approvals: {} },
-    {
-      name: "a malformed review",
-      approvals: [approvalReview(null, { comment: 42 })],
-    },
-    {
-      name: "the wrong environment",
-      approvals: [approvalReview(null, { environments: [{ name: "production" }] })],
-    },
-    {
-      name: "a rejected review",
-      approvals: [approvalReview(null, { state: "rejected" })],
-    },
-    {
-      name: "an approval spanning multiple environments",
-      approvals: [
-        approvalReview(null, {
-          environments: [
-            { name: "approve-credentialed-e2e-skip-for-fork-pr" },
-            { name: "production" },
-          ],
-        }),
-      ],
-    },
-    {
-      name: "ambiguous matching approvals",
-      approvals: [approvalReview(), approvalReview("second approval")],
-    },
-  ])("fails closed for $name", async ({ approvals }) => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [approvalRunRoute(approvalWorkflowRun()), approvalHistoryRoute(approvals)],
-        requests,
-      ),
-    );
-
-    await expect(recordApprovedForkE2ESkip(approvedForkSkipCommand())).rejects.toThrow();
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-  });
-
-  it.each([
-    { name: "wrong run id", overrides: { id: APPROVAL_RUN_ID + 1 } },
-    { name: "wrong event", overrides: { event: "workflow_dispatch" } },
-    {
-      name: "untrusted workflow path suffix",
-      overrides: { path: ".github/workflows/pr-e2e-gate.yaml@refs/heads/main" },
-    },
-    { name: "wrong head branch", overrides: { head_branch: "feature" } },
-    { name: "wrong workflow SHA", overrides: { head_sha: ADVANCED_WORKFLOW_SHA } },
-    { name: "completed run", overrides: { status: "completed", conclusion: "success" } },
-    { name: "second run attempt", overrides: { run_attempt: 2 } },
-    {
-      name: "noncanonical URL",
-      overrides: {
-        html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${APPROVAL_RUN_ID}/`,
-      },
-    },
-  ])("rejects approval from a $name", async ({ overrides }) => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter([approvalRunRoute(approvalWorkflowRun(overrides))], requests),
-    );
-
-    await expect(recordApprovedForkE2ESkip(approvedForkSkipCommand())).rejects.toThrow(
-      /trusted first-attempt gate run/u,
-    );
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-  });
-
-  it("parses only first-attempt protected-environment resolutions", () => {
-    const args = [
-      "--mode",
-      "record-approved-fork-e2e-skip",
-      "--pr",
-      "42",
-      "--head",
-      HEAD_SHA,
-      "--base",
-      BASE_SHA,
-      "--workflow-sha",
-      WORKFLOW_SHA,
-      "--approval-run-id",
-      String(APPROVAL_RUN_ID),
-      "--approval-run-attempt",
-      "1",
-    ];
-
-    expect(parseControllerCommand(args)).toEqual(approvedForkSkipCommand());
-    expect(() => parseControllerCommand([...args.slice(0, -1), "2"])).toThrow(/must be exactly 1/u);
-  });
-
-  it("rejects a command for a rerun before reading GitHub approval state", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(createGitHubFetchRouter([], requests));
-
-    await expect(
-      recordApprovedForkE2ESkip({ ...approvedForkSkipCommand(), approvalRunAttempt: 2 }),
-    ).rejects.toThrow(/must be exactly 1/u);
-    expect(requests).toHaveLength(0);
-  });
-
-  it("records an approved credentialed E2E skip for the reviewed head/base after a compatible main advance", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
-            () =>
-              githubResponse({
-                role_name: "maintain",
-                permission: "write",
-                user: { login: "maintainer" },
-              }),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/pulls/42"),
-            () => githubResponse(forkPullRequest()),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
-          ),
-          existingPrGateCheckRunsRoute({
-            status: "completed",
-            conclusion: "failure",
-            output: { title: "Maintainer approval required to skip credentialed E2E" },
-          }),
-          mainWorkflowRefRoute(ADVANCED_WORKFLOW_SHA),
-          compatibleMainComparisonRoute([{ filename: "docs/get-started/quickstart.mdx" }]),
-          githubFetchRoute(
-            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            (request) => prGateMutationResponse(request),
-          ),
-        ],
-        requests,
-      ),
-    );
-
-    await recordManualForkE2ESkip({
-      mode: "record-fork-e2e-skip",
-      prNumber: 42,
-      headSha: HEAD_SHA,
-      baseSha: BASE_SHA,
-      workflowSha: WORKFLOW_SHA,
-      maintainer: "maintainer",
-      reason: "The fork cannot safely receive credential-bearing test secrets.",
-    });
-
-    const completion = requests.at(-1);
-    expect(completion?.body).toMatchObject({
-      status: "completed",
-      conclusion: "success",
-      output: {
-        title: "Credentialed E2E skipped for fork PR — approved by @maintainer",
-        summary: expect.stringContaining(
-          "**Outcome: APPROVED SKIP — credentialed E2E did not run.**",
-        ),
-      },
-    });
-    expect(JSON.stringify(completion?.body)).toContain("Selected jobs and targets not run");
-    expect(JSON.stringify(completion?.body)).toContain(
-      "Approval source: manual fallback; no supporting Actions run was supplied.",
-    );
-    expect(JSON.stringify(completion?.body)).not.toContain("tests passed");
+  it("parses only first-attempt protected fork execution", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-fork-command-"));
+    try {
+      const command = approvedForkCommand(workDir);
+      expect(command).toMatchObject({
+        mode: "start-approved-fork",
+        approvalRunAttempt: 1,
+        workflowRunAttempt: 1,
+      });
+      expect(() =>
+        parseControllerCommand([
+          "--mode",
+          "start-approved-fork",
+          "--pr",
+          "42",
+          "--head",
+          HEAD_SHA,
+          "--base",
+          BASE_SHA,
+          "--workflow-sha",
+          WORKFLOW_SHA,
+          "--approval-run-id",
+          String(APPROVAL_RUN_ID),
+          "--approval-run-attempt",
+          "2",
+          "--gate-run-id",
+          String(APPROVAL_RUN_ID),
+          "--workflow-run-attempt",
+          "1",
+          "--work-dir",
+          workDir,
+        ]),
+      ).toThrow(/must be exactly 1/u);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
   it("dispatches an authorized control-plane run for the PR SHA without clearing the gate", async () => {
@@ -1052,48 +977,13 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         },
       });
       await expect(startControlPlanePrGate(startControlPlaneCommand(workDirs[1]!))).rejects.toThrow(
-        /matching pending control-plane authorization state/u,
+        /matching pending E2E authorization state/u,
       );
       expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       for (const workDir of workDirs) fs.rmSync(workDir, { recursive: true, force: true });
     }
-  });
-
-  it("rejects a credentialed E2E skip from a collaborator below maintainer role", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/collaborators/contributor/permission"),
-            () =>
-              githubResponse({
-                role_name: "write",
-                permission: "write",
-                user: { login: "contributor" },
-              }),
-          ),
-        ],
-        requests,
-      ),
-    );
-
-    await expect(
-      recordManualForkE2ESkip({
-        mode: "record-fork-e2e-skip",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "contributor",
-        reason: "A write-role collaborator tried to record a credentialed E2E skip.",
-      }),
-    ).rejects.toThrow(/maintainer or administrator/u);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
   it("rejects control-plane authorization from a collaborator below maintainer role", async () => {
@@ -1164,40 +1054,6 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     }
   });
 
-  it("rejects a fork credentialed E2E skip for an internal pull request", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
-            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/pulls/42"),
-            () => githubResponse(pullRequest()),
-          ),
-        ],
-        requests,
-      ),
-    );
-
-    const common = {
-      prNumber: 42,
-      headSha: HEAD_SHA,
-      baseSha: BASE_SHA,
-      workflowSha: WORKFLOW_SHA,
-      maintainer: "maintainer",
-      reason: "The resolver operation must match the pull request origin.",
-    };
-    await expect(
-      recordManualForkE2ESkip({ mode: "record-fork-e2e-skip", ...common }),
-    ).rejects.toThrow(/credentialed E2E skips require a fork pull request/u);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-  });
-
   it("rejects control-plane authorization when the gate is already completed", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-title-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
@@ -1230,7 +1086,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
 
     try {
       await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
-        /matching pending control-plane authorization state/u,
+        /matching pending E2E authorization state/u,
       );
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
     } finally {
@@ -1365,82 +1221,6 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
-  });
-
-  it("rejects a stale fork credentialed E2E skip before changing the gate", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
-            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/pulls/42"),
-            () =>
-              githubResponse({
-                ...forkPullRequest(),
-                head: { ...forkPullRequest().head, sha: "c".repeat(40) },
-              }),
-          ),
-        ],
-        requests,
-      ),
-    );
-
-    await expect(
-      recordManualForkE2ESkip({
-        mode: "record-fork-e2e-skip",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "The reviewed revision has since changed upstream.",
-      }),
-    ).rejects.toThrow(/no longer matches/u);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-  });
-
-  it("rejects a fork credentialed E2E skip after the pull request is retargeted", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
-            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/pulls/42"),
-            () =>
-              githubResponse({
-                ...forkPullRequest(),
-                base: { ...forkPullRequest().base, sha: "f".repeat(40) },
-              }),
-          ),
-        ],
-        requests,
-      ),
-    );
-
-    await expect(
-      recordManualForkE2ESkip({
-        mode: "record-fork-e2e-skip",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "The reviewed base revision has since changed upstream.",
-      }),
-    ).rejects.toThrow(/no longer matches the reviewed PR SHA and base SHA/u);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
   it("rejects control-plane authorization when the base changes before dispatch", async () => {

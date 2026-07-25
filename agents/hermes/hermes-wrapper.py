@@ -440,6 +440,113 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
     return translated
 
 
+# Source-of-truth note for the `_merge_provider_into_model` rewrite
+# (NVIDIA/NemoClaw#7361):
+#   - Invalid state: separate --provider and -m/--model flags bypass the
+#     OpenShell proxy rewrite path; the raw .env placeholder is sent as the
+#     bearer token, causing a 401.
+#   - Fix: merge into the combined provider/model form at the wrapper boundary
+#     so the invocation routes through the proxy credential resolution path.
+#   - Removal condition: delete this translation when Hermes natively resolves
+#     openshell: placeholders for separate --provider flag invocations.
+#   - Tracking: NVIDIA/NemoClaw#7361
+
+
+def _merge_provider_into_model(argv: list[str]) -> list[str]:
+    """Merge separate --provider and -m/--model flags into the combined form.
+
+    When both --provider <name> and -m/--model <model> are present as separate
+    flags and the model value does not already contain '/', rewrite to the
+    combined 'provider/model' form so the invocation routes through the
+    OpenShell proxy rewrite path that resolves credential placeholders.
+
+    Returns argv unchanged on ambiguity (missing flag, model already combined,
+    empty values, duplicates). Pure function, no side effects.
+    """
+    provider: str | None = None
+    provider_idx: int = -1
+    provider_val_idx: int = -1
+    model: str | None = None
+    model_idx: int = -1
+    model_val_idx: int = -1
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+
+        if arg == "--":
+            break
+
+        split = _split_flag_value(arg)
+        if split is not None:
+            name, value = split
+            if name == "--provider":
+                if provider is not None:
+                    return argv
+                provider = value
+                provider_idx = i
+                provider_val_idx = -1
+            elif name in ("--model", "-m"):
+                if model is not None:
+                    return argv
+                model = value
+                model_idx = i
+                model_val_idx = -1
+            i += 1
+            continue
+
+        if arg == "--provider":
+            if provider is not None:
+                return argv
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                return argv
+            provider = argv[i + 1]
+            provider_idx = i
+            provider_val_idx = i + 1
+            i += 2
+            continue
+
+        if arg in ("-m", "--model"):
+            if model is not None:
+                return argv
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                return argv
+            model = argv[i + 1]
+            model_idx = i
+            model_val_idx = i + 1
+            i += 2
+            continue
+
+        i += 1
+
+    if provider is None or model is None:
+        return argv
+    if not provider or not model:
+        return argv
+    if "/" in model:
+        return argv
+
+    merged_model = f"{provider}/{model}"
+
+    # Build new argv: remove provider flag+value, replace model value with merged
+    skip = {provider_idx}
+    if provider_val_idx >= 0:
+        skip.add(provider_val_idx)
+
+    result: list[str] = []
+    for idx, val in enumerate(argv):
+        if idx in skip:
+            continue
+        if idx == model_idx and model_val_idx < 0:
+            # Equals form: replace the whole --model=value token
+            result.append(f"--model={merged_model}")
+        elif idx == model_val_idx:
+            result.append(merged_model)
+        else:
+            result.append(val)
+    return result
+
+
 def main(argv: list[str]) -> int:
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
@@ -454,6 +561,7 @@ def main(argv: list[str]) -> int:
         exec_argv = translated
     else:
         exec_argv = argv
+    exec_argv = _merge_provider_into_model(exec_argv)
     try:
         os.execv(real_hermes, [real_hermes, *exec_argv])
     except OSError as exc:
