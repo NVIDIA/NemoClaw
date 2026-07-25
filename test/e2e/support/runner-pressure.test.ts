@@ -33,6 +33,7 @@ import {
   MIN_INODES_FREE,
   parseBaselineLine,
   parseCgroupMemoryEvents,
+  parseCgroupMemoryEventsEvidence,
   parseCgroupScalar,
   parseClassificationLine,
   parseCpuTicks,
@@ -49,6 +50,7 @@ import {
   renderBaselineLine,
   renderClassificationLine,
   renderSnapshotLine,
+  resolveCgroupV2Directory,
   SNAPSHOT_LINE_MAX_LENGTH,
   SNAPSHOT_LINE_PREFIX,
   selectFailureBaseline,
@@ -105,6 +107,10 @@ const MEMINFO_FIXTURE = [
   "SwapTotal:       4194304 kB",
   "SwapFree:        4194304 kB",
 ].join("\n");
+
+const CGROUP_V2_MOUNTINFO =
+  "29 23 0:26 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw\n";
+const EFFECTIVE_CGROUP = "/sys/fs/cgroup/system.slice/actions.runner.test.service";
 
 function baseEvidence(): FailureEvidence {
   return {
@@ -200,6 +206,77 @@ describe("host measurement parsers (#7146)", () => {
     const events = parseCgroupMemoryEvents("low 0\nhigh 44\nmax 12\noom 3\noom_kill 2\n");
     expect(events).toEqual({ oom: 3, oomKill: 2 });
     expect(parseCgroupMemoryEvents("")).toEqual({ oom: 0, oomKill: 0 });
+  });
+
+  it("requires complete OOM counters for comparison evidence (#7146)", () => {
+    expect(parseCgroupMemoryEventsEvidence("low 0\nhigh 44\nmax 12\noom 3\noom_kill 2\n")).toEqual({
+      oom: 3,
+      oomKill: 2,
+    });
+    for (const incomplete of [
+      "",
+      "oom 3\n",
+      "oom_kill 2\n",
+      "oom 3\noom 4\noom_kill 2\n",
+      "oom invalid\noom_kill 2\n",
+    ]) {
+      expect(parseCgroupMemoryEventsEvidence(incomplete)).toBeNull();
+    }
+  });
+
+  it("resolves the effective cgroup v2 directory from procfs (#7146)", () => {
+    expect(
+      resolveCgroupV2Directory(
+        "0::/system.slice/actions.runner.test.service\n",
+        CGROUP_V2_MOUNTINFO,
+      ),
+    ).toBe(EFFECTIVE_CGROUP);
+    expect(
+      resolveCgroupV2Directory(
+        "0::/actions_job/runner.scope\n",
+        "29 23 0:26 /actions_job /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+      ),
+    ).toBe("/sys/fs/cgroup/runner.scope");
+    expect(
+      resolveCgroupV2Directory(
+        "0::/actions_job\n",
+        "29 23 0:26 /actions_job /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+      ),
+    ).toBe("/sys/fs/cgroup");
+    expect(
+      resolveCgroupV2Directory(
+        "0::/actions job/runner.scope\n",
+        "29 23 0:26 /actions\\040job /sys/fs/cgroup\\040view rw - cgroup2 cgroup rw\n",
+      ),
+    ).toBe("/sys/fs/cgroup view/runner.scope");
+  });
+
+  it.each([
+    ["cgroup v1", "2:memory:/actions_job\n1:name=systemd:/actions_job\n", CGROUP_V2_MOUNTINFO],
+    [
+      "duplicate unified entries",
+      "0::/actions_job\n0::/actions_job/runner.scope\n",
+      CGROUP_V2_MOUNTINFO,
+    ],
+    [
+      "duplicate cgroup2 mounts",
+      "0::/actions_job\n",
+      `${CGROUP_V2_MOUNTINFO}30 23 0:27 / /other rw - cgroup2 cgroup rw\n`,
+    ],
+    [
+      "mismatched mount root",
+      "0::/actions_job\n",
+      "29 23 0:26 /other /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+    ],
+    ["cgroup traversal", "0::/actions_job/../secrets\n", CGROUP_V2_MOUNTINFO],
+    [
+      "unknown mountinfo escape",
+      "0::/actions_job\n",
+      "29 23 0:26 / /sys/fs/cgroup\\999 rw - cgroup2 cgroup rw\n",
+    ],
+    ["malformed cgroup2 mount", "0::/actions_job\n", "29 23 0:26 / /sys/fs/cgroup rw - cgroup2\n"],
+  ])("rejects %s during cgroup v2 discovery (#7146)", (_case, cgroup, mountInfo) => {
+    expect(resolveCgroupV2Directory(cgroup, mountInfo)).toBeNull();
   });
 
   it("reads some/full pressure stall averages from PSI files", () => {
@@ -312,20 +389,30 @@ describe("host measurement parsers (#7146)", () => {
 describe("runner pressure collection profiles (#7146)", () => {
   function snapshotSources(
     calls: Array<{ command: string; args: string[]; timeout: number }>,
+    reads: string[] = [],
   ): ResourceSnapshotSources {
     return {
       now: () => new Date("2026-07-23T12:00:00.000Z"),
-      readText: (file) =>
-        new Map([
-          ["/proc/stat", "cpu  10 0 5 20 0 0 0 0\ncpu0 1 0 1 2 0 0 0 0\n"],
-          ["/proc/meminfo", MEMINFO_FIXTURE],
-          ["/sys/fs/cgroup/memory.current", "1000\n"],
-          ["/sys/fs/cgroup/memory.peak", "2000\n"],
-          ["/sys/fs/cgroup/memory.max", "max\n"],
-          ["/sys/fs/cgroup/memory.events", "oom 0\noom_kill 0\n"],
-          ["/sys/fs/cgroup/memory.pressure", "full avg10=1.00 avg60=2.00 avg300=1.00 total=1\n"],
-          ["/sys/fs/cgroup/io.pressure", "full avg10=3.00 avg60=4.00 avg300=1.00 total=1\n"],
-        ]).get(file) ?? null,
+      readText: (file) => {
+        reads.push(file);
+        return (
+          new Map([
+            ["/proc/stat", "cpu  10 0 5 20 0 0 0 0\ncpu0 1 0 1 2 0 0 0 0\n"],
+            ["/proc/meminfo", MEMINFO_FIXTURE],
+            ["/proc/self/cgroup", "0::/system.slice/actions.runner.test.service\n"],
+            ["/proc/self/mountinfo", CGROUP_V2_MOUNTINFO],
+            [`${EFFECTIVE_CGROUP}/memory.current`, "1000\n"],
+            [`${EFFECTIVE_CGROUP}/memory.peak`, "2000\n"],
+            [`${EFFECTIVE_CGROUP}/memory.max`, "max\n"],
+            [`${EFFECTIVE_CGROUP}/memory.events`, "oom 0\noom_kill 0\n"],
+            [
+              `${EFFECTIVE_CGROUP}/memory.pressure`,
+              "full avg10=1.00 avg60=2.00 avg300=1.00 total=1\n",
+            ],
+            [`${EFFECTIVE_CGROUP}/io.pressure`, "full avg10=3.00 avg60=4.00 avg300=1.00 total=1\n"],
+          ]).get(file) ?? null
+        );
+      },
       run: (command, args, timeout) => {
         calls.push({ command, args, timeout });
         const dockerDisk = [
@@ -351,10 +438,11 @@ describe("runner pressure collection profiles (#7146)", () => {
 
   it("preserves endpoint collection without subprocesses", () => {
     const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const reads: string[] = [];
     const snapshot = collectResourceSnapshot(
       "runner-comparison",
       "comparison-endpoint",
-      snapshotSources(calls),
+      snapshotSources(calls, reads),
     );
 
     expect(resourceSnapshotCommandPlan("comparison-endpoint")).toEqual({
@@ -364,9 +452,47 @@ describe("runner pressure collection profiles (#7146)", () => {
     });
     expect(calls).toEqual([]);
     expect(snapshot.cpu).toEqual({ logicalCpuCount: 1, idleTicks: 20, totalTicks: 35 });
+    expect(snapshot.cgroup).toEqual({
+      currentBytes: 1000,
+      peakBytes: 2000,
+      limitBytes: null,
+      events: { oom: 0, oomKill: 0 },
+    });
+    expect(reads).toContain(`${EFFECTIVE_CGROUP}/memory.current`);
+    expect(reads).not.toContain("/sys/fs/cgroup/memory.current");
     expect(snapshot.largestProcess).toBeNull();
     expect(snapshot.containers).toEqual([]);
     expect(snapshot.dockerDisk).toBeNull();
+  });
+
+  it("keeps sampling alive when effective cgroup files are unavailable", () => {
+    const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const sources = snapshotSources(calls);
+    const readText = sources.readText;
+    sources.readText = (file) =>
+      file === "/proc/self/mountinfo" || file.endsWith("/memory.peak") ? null : readText(file);
+
+    const undiscoverable = collectResourceSnapshot(
+      "runner-comparison",
+      "comparison-endpoint",
+      sources,
+    );
+    expect(undiscoverable.cgroup).toBeNull();
+    expect(undiscoverable.memoryPressure).toBeNull();
+    expect(undiscoverable.ioPressure).toBeNull();
+
+    sources.readText = (file) => {
+      if (file.endsWith("/memory.peak")) return null;
+      if (file.endsWith("/memory.events")) return "oom 0\n";
+      return readText(file);
+    };
+    const partial = collectResourceSnapshot("runner-comparison", "comparison-endpoint", sources);
+    expect(partial.cgroup).toEqual({
+      currentBytes: 1000,
+      peakBytes: null,
+      limitBytes: null,
+      events: null,
+    });
   });
 
   it("keeps periodic collection free of Docker probes", () => {

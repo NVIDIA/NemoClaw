@@ -118,6 +118,117 @@ export interface CgroupMemoryEvents {
   oomKill: number;
 }
 
+const CGROUP_PATH_MAX_LENGTH = 4096;
+const PROC_CGROUP_MAX_LENGTH = 64 * 1024;
+const PROC_MOUNTINFO_MAX_LENGTH = 256 * 1024;
+const MOUNTINFO_ESCAPES: Readonly<Record<string, string>> = {
+  "\\040": " ",
+  "\\011": "\t",
+  "\\012": "\n",
+  "\\134": "\\",
+};
+
+function decodeMountInfoField(value: string): string | null {
+  let decoded = "";
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== "\\") {
+      decoded += value[index];
+      continue;
+    }
+    const escape = value.slice(index, index + 4);
+    const replacement = MOUNTINFO_ESCAPES[escape];
+    if (replacement === undefined) return null;
+    decoded += replacement;
+    index += 3;
+  }
+  return decoded;
+}
+
+function canonicalAbsolutePath(value: string): string | null {
+  if (
+    value.length < 1 ||
+    value.length > CGROUP_PATH_MAX_LENGTH ||
+    !value.startsWith("/") ||
+    value.includes("\0") ||
+    (value.length > 1 && value.endsWith("/"))
+  ) {
+    return null;
+  }
+  if (value === "/") return value;
+  const segments = value.split("/");
+  if (
+    segments.some(
+      (segment, index) => index > 0 && (segment === "" || segment === "." || segment === ".."),
+    )
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function pathWithin(root: string, candidate: string): boolean {
+  return root === "/" || candidate === root || candidate.startsWith(`${root}/`);
+}
+
+/**
+ * Resolve the current process's cgroup v2 directory from procfs.
+ *
+ * Both proc files are kernel-owned inputs. The resolver still rejects
+ * malformed, ambiguous, or traversal-shaped paths so a cgroup path cannot
+ * escape the kernel-reported cgroup2 mount.
+ */
+export function resolveCgroupV2Directory(
+  selfCgroupText: string,
+  mountInfoText: string,
+): string | null {
+  if (
+    selfCgroupText.length > PROC_CGROUP_MAX_LENGTH ||
+    mountInfoText.length > PROC_MOUNTINFO_MAX_LENGTH
+  ) {
+    return null;
+  }
+
+  const unifiedPaths: string[] = [];
+  for (const rawLine of selfCgroupText.split("\n")) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (!line.startsWith("0::")) continue;
+    const cgroupPath = canonicalAbsolutePath(line.slice(3));
+    if (cgroupPath === null) return null;
+    unifiedPaths.push(cgroupPath);
+  }
+  if (unifiedPaths.length !== 1) return null;
+
+  const mounts: Array<{ root: string; mountPoint: string }> = [];
+  for (const rawLine of mountInfoText.split("\n")) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (line.length === 0) continue;
+    const fields = line.split(" ");
+    const separator = fields.indexOf("-");
+    if (fields[separator + 1] !== "cgroup2") continue;
+    if (separator < 6 || fields.length < separator + 4) return null;
+    const decodedRoot = decodeMountInfoField(fields[3] ?? "");
+    const decodedMountPoint = decodeMountInfoField(fields[4] ?? "");
+    const root = decodedRoot === null ? null : canonicalAbsolutePath(decodedRoot);
+    const mountPoint = decodedMountPoint === null ? null : canonicalAbsolutePath(decodedMountPoint);
+    if (root === null || mountPoint === null) return null;
+    mounts.push({ root, mountPoint });
+  }
+  if (mounts.length !== 1) return null;
+
+  const cgroupPath = unifiedPaths[0]!;
+  const { root, mountPoint } = mounts[0]!;
+  if (!pathWithin(root, cgroupPath)) return null;
+  const relative =
+    root === "/"
+      ? cgroupPath.slice(1)
+      : cgroupPath === root
+        ? ""
+        : cgroupPath.slice(root.length + 1);
+  const resolved =
+    relative.length === 0 ? mountPoint : `${mountPoint === "/" ? "" : mountPoint}/${relative}`;
+  return canonicalAbsolutePath(resolved);
+}
+
 /** Parse cgroup v2 `memory.events`; missing counters read as zero. */
 export function parseCgroupMemoryEvents(text: string): CgroupMemoryEvents {
   const events: CgroupMemoryEvents = { oom: 0, oomKill: 0 };
@@ -130,6 +241,33 @@ export function parseCgroupMemoryEvents(text: string): CgroupMemoryEvents {
     if (match[1] === "oom_kill") events.oomKill = value;
   }
   return events;
+}
+
+/**
+ * Parse cgroup OOM counters for comparison telemetry.
+ *
+ * Both counters must be present once. An incomplete sample stays unavailable
+ * instead of turning a later valid endpoint into a false positive delta.
+ */
+export function parseCgroupMemoryEventsEvidence(text: string): CgroupMemoryEvents | null {
+  let oom: number | null = null;
+  let oomKill: number | null = null;
+  for (const line of text.split("\n")) {
+    if (line.length === 0) continue;
+    const match = /^([a-z_]+)\s+(\d+)\s*$/u.exec(line.trim());
+    if (!match) return null;
+    const value = Number(match[2]);
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    if (match[1] === "oom") {
+      if (oom !== null) return null;
+      oom = value;
+    }
+    if (match[1] === "oom_kill") {
+      if (oomKill !== null) return null;
+      oomKill = value;
+    }
+  }
+  return oom === null || oomKill === null ? null : { oom, oomKill };
 }
 
 export interface PressureSample {

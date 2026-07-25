@@ -453,6 +453,21 @@ describe("runner comparison v2 schema", () => {
     ).toThrow("CPU counters");
   });
 
+  it("rejects cgroup OOM counter rollback (#7146)", () => {
+    const initialize = currentSample({
+      memory: { rootCgroupOom: 5, rootCgroupOomKill: 2 },
+    });
+    const finalize = currentSample({
+      sequence: 1,
+      kind: "finalize",
+      at: "2026-07-22T10:01:00.000Z",
+      memory: { rootCgroupOom: 4, rootCgroupOomKill: 2 },
+    });
+    expect(() => parseRunnerComparisonLedger(currentLedger(initialize, finalize))).toThrow(
+      "cgroup OOM counter",
+    );
+  });
+
   it("caps ledgers at 256 samples (#7146)", () => {
     const samples = Array.from({ length: RUNNER_COMPARISON_MAX_SAMPLES + 1 }, (_, sequence) =>
       currentSample({
@@ -736,6 +751,20 @@ describe("runner comparison summary", () => {
     });
     const summary = expectCurrentSummary(summarizeRunnerComparison([initialize, phase, finalize]));
     expect(summary.memory.cgroup).toMatchObject({ oomDelta: null, oomKillDelta: null });
+  });
+
+  it("reports positive endpoint OOM counter deltas (#7146)", () => {
+    const initialize = currentSample({
+      memory: { rootCgroupOom: 2, rootCgroupOomKill: 1 },
+    });
+    const finalize = currentSample({
+      sequence: 1,
+      kind: "finalize",
+      at: "2026-07-22T10:01:00.000Z",
+      memory: { rootCgroupOom: 5, rootCgroupOomKill: 2 },
+    });
+    const summary = expectCurrentSummary(summarizeRunnerComparison([initialize, finalize]));
+    expect(summary.memory.cgroup).toMatchObject({ oomDelta: 3, oomKillDelta: 1 });
   });
 
   it("strictly validates historical and current summary shapes and derived fields (#7146)", () => {

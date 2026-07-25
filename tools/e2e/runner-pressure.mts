@@ -51,6 +51,7 @@ import {
   decideRetry,
   parseBaselineLine,
   parseCgroupMemoryEvents,
+  parseCgroupMemoryEventsEvidence,
   parseCgroupScalar,
   parseClassificationLine,
   parseCpuTicks,
@@ -66,6 +67,7 @@ import {
   renderBaselineLine,
   renderClassificationLine,
   renderSnapshotLine,
+  resolveCgroupV2Directory,
   selectFailureBaseline,
   TERMINAL_CLASSIFICATIONS,
   type TerminalClassification,
@@ -197,12 +199,22 @@ export function collectResourceSnapshot(
   const meminfoText = sources.readText("/proc/meminfo");
   const cpuText = sources.readText("/proc/stat");
   const loadText = sources.readText("/proc/loadavg");
-  const current = sources.readText(`${CGROUP_ROOT}/memory.current`);
-  const peak = sources.readText(`${CGROUP_ROOT}/memory.peak`);
-  const limit = sources.readText(`${CGROUP_ROOT}/memory.max`);
-  const events = sources.readText(`${CGROUP_ROOT}/memory.events`);
-  const memoryPressure = sources.readText(`${CGROUP_ROOT}/memory.pressure`);
-  const ioPressure = sources.readText(`${CGROUP_ROOT}/io.pressure`);
+  const selfCgroupText = sources.readText("/proc/self/cgroup");
+  const mountInfoText = sources.readText("/proc/self/mountinfo");
+  const cgroupDirectory =
+    selfCgroupText === null || mountInfoText === null
+      ? null
+      : resolveCgroupV2Directory(selfCgroupText, mountInfoText);
+  const readCgroup = (name: string): string | null =>
+    cgroupDirectory === null
+      ? null
+      : sources.readText(`${cgroupDirectory === "/" ? "" : cgroupDirectory}/${name}`);
+  const current = readCgroup("memory.current");
+  const peak = readCgroup("memory.peak");
+  const limit = readCgroup("memory.max");
+  const events = readCgroup("memory.events");
+  const memoryPressure = readCgroup("memory.pressure");
+  const ioPressure = readCgroup("io.pressure");
   const psText =
     commandPlan.processTimeoutMs === null
       ? null
@@ -240,7 +252,7 @@ export function collectResourceSnapshot(
             currentBytes: current === null ? null : parseCgroupScalar(current),
             peakBytes: peak === null ? null : parseCgroupScalar(peak),
             limitBytes: limit === null ? null : parseCgroupScalar(limit),
-            events: events === null ? null : parseCgroupMemoryEvents(events),
+            events: events === null ? null : parseCgroupMemoryEventsEvidence(events),
           },
     memoryPressure: memoryPressure === null ? null : parsePressure(memoryPressure),
     ioPressure: ioPressure === null ? null : parsePressure(ioPressure),

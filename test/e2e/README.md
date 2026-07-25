@@ -251,7 +251,7 @@ command output.
 The finalizer validates the complete ledger before writing
 `runner-comparison-summary.json`. The v2 summary reports the sampled
 post-prepare window; CPU average and busiest interval; one-minute load;
-available, cached, reclaimable, swap, root-cgroup current/peak/limit, and
+available, cached, reclaimable, swap, effective-cgroup current/peak/limit, and
 endpoint OOM-counter evidence; memory and I/O pressure; workspace bytes and
 inodes; Docker image, container, and build-cache usage; largest container
 memory and CPU; and the largest fixed process class by RSS. Extrema include the
@@ -261,12 +261,24 @@ span two tests, and extrema whose selected observation is `initialize` have a
 `null` phase. OOM deltas are also `null` unless both endpoint counters are
 available. Unsupported or unreadable measurements are `null`.
 
-The root-cgroup peak is a lifetime counter that includes Docker siblings but
-can also include host activity before the measured window. Compare it only
-across runs with the same runner setup. Canonical v2 `memory.availableKb` comes
-only from `/proc/meminfo` `MemAvailable` and is `null` when that field is
-unavailable. Separately, the adjacent progress/stall resource line falls back
-to the portable free-memory value and labels that value as `memory free`.
+The v2 ledger retains the historical `rootCgroup*` field names for schema
+compatibility, but samples read the current process's effective cgroup v2
+directory resolved from `/proc/self/cgroup` and `/proc/self/mountinfo`. This
+scope covers that cgroup and its descendants; it does not imply hierarchy-root
+or Docker-sibling coverage. The peak is a lifetime counter for that scope and
+can include activity before the measured window. Compare it only across runs
+with the same runner setup. A sample uses `null` without failing the test when:
+
+- the host uses cgroup v1;
+- a discovery or controller file is unreadable; or
+- the measurement is unsupported.
+
+Schema v2 also represents the unlimited `memory.max` value `max` as a `null`
+limit. The other effective-cgroup fields remain available. Canonical v2
+`memory.availableKb` comes only from `/proc/meminfo` `MemAvailable` and is
+`null` when that field is unavailable. Separately, the adjacent progress/stall
+resource line falls back to the portable free-memory value and labels that
+value as `memory free`.
 
 The comparison time series is diagnostic-only and is not an input to terminal
 classification or retry policy. Low available or free memory never implies an
