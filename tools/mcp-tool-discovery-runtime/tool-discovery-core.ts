@@ -42,7 +42,7 @@ export function parseMcpToolDiscoveryArguments(args: string[]): McpToolDiscovery
     url.username !== "" ||
     url.password !== "" ||
     url.hash !== "" ||
-    !/^[A-Z][A-Z0-9_]{0,255}$/u.test(credentialEnv)
+    !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(credentialEnv)
   ) {
     throw new Error("invalid arguments");
   }

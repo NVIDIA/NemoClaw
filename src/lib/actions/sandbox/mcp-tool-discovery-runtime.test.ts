@@ -20,9 +20,10 @@ import {
   MCP_TOOL_DISCOVERY_MAX_TOOLS,
   MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
 } from "./mcp-bridge-tool-discovery";
+import { validateMcpCredentialEnvName } from "./mcp-bridge-validation";
 
 describe("shared MCP tool discovery runtime", () => {
-  it("accepts only a credential key name and rejects authorization values", () => {
+  it("accepts canonical credential key names and rejects authorization values", () => {
     expect(() =>
       parseMcpToolDiscoveryArguments([
         "--url",
@@ -31,28 +32,39 @@ describe("shared MCP tool discovery runtime", () => {
         "arbitrary-format-secret-that-the-server-would-echo",
       ]),
     ).toThrow("invalid arguments");
-    expect(
-      parseMcpToolDiscoveryArguments([
-        "--url",
-        "https://example.test/mcp",
-        "--credential-env",
-        "EXAMPLE_MCP_TOKEN",
-      ]),
-    ).toEqual({
-      url: new URL("https://example.test/mcp"),
-      credentialEnv: "EXAMPLE_MCP_TOKEN",
-    });
+    for (const credentialEnv of [
+      "EXAMPLE_MCP_TOKEN",
+      "lowercase_token",
+      "_TOKEN",
+      `A${"a".repeat(127)}`,
+    ]) {
+      expect(() => validateMcpCredentialEnvName(credentialEnv)).not.toThrow();
+      expect(
+        parseMcpToolDiscoveryArguments([
+          "--url",
+          "https://example.test/mcp",
+          "--credential-env",
+          credentialEnv,
+        ]),
+      ).toEqual({
+        url: new URL("https://example.test/mcp"),
+        credentialEnv,
+      });
+    }
     expect(buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN")).toBe(
       "Bearer openshell:resolve:env:EXAMPLE_MCP_TOKEN",
     );
-    expect(() =>
-      parseMcpToolDiscoveryArguments([
-        "--url",
-        "https://example.test/mcp",
-        "--credential-env",
-        "not-valid",
-      ]),
-    ).toThrow("invalid arguments");
+    for (const credentialEnv of ["not-valid", "1TOKEN", `A${"a".repeat(128)}`]) {
+      expect(() => validateMcpCredentialEnvName(credentialEnv)).toThrow();
+      expect(() =>
+        parseMcpToolDiscoveryArguments([
+          "--url",
+          "https://example.test/mcp",
+          "--credential-env",
+          credentialEnv,
+        ]),
+      ).toThrow("invalid arguments");
+    }
   });
 
   it("enumerates every page and returns deterministic names only", async () => {
