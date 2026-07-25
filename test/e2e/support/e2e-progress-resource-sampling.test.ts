@@ -158,6 +158,30 @@ describe("canonical runner comparison progress sampling", () => {
     expect(state.legacySamples).toEqual([]);
   });
 
+  it("schedules rebuild samples at the selected 15-second cadence (#7144)", () => {
+    const records: Array<{ atMs: number; kind: string }> = [];
+    let state: ReturnType<typeof progressHarness>["state"];
+    const harness = progressHarness((_phase, kind) => {
+      records.push({ atMs: state.now(), kind });
+      return true;
+    });
+    state = harness.state;
+    harness.options.resourceSampleIntervalMs = 15_000;
+    const progress = startTestProgress(
+      "rebuild runner comparison",
+      ["build Hermes image", "validate Hermes sandbox"],
+      harness.options,
+    );
+
+    expect(state.nextTimerAt()).toBe(15_000);
+    state.fireNext();
+    expect(records.at(-1)).toEqual({ atMs: 15_000, kind: "periodic" });
+    expect(state.nextTimerAt()).toBe(30_000);
+    state.fireNext();
+    expect(records.at(-1)).toEqual({ atMs: 30_000, kind: "periodic" });
+    progress.stop();
+  });
+
   it("takes one canonical periodic sample and no legacy full sample at the five-minute collision (#7146)", () => {
     const records: string[] = [];
     const harness = progressHarness((phase, kind) => {
