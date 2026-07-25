@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -27,6 +28,11 @@ const DEEPAGENTS_DOCKERFILE_BASE = path.join(
   "langchain-deepagents-code",
   "Dockerfile.base",
 );
+
+function completedDockerStage(dockerfile: string): string {
+  const start = dockerfile.lastIndexOf("\nFROM ");
+  return start >= 0 ? dockerfile.slice(start) : dockerfile;
+}
 
 function dockerRunCommandBetween(
   dockerfile: string,
@@ -1038,19 +1044,18 @@ describe("sandbox provisioning: base runtime tools", () => {
     ["Hermes", HERMES_DOCKERFILE_BASE],
     ["Deep Agents Code", DEEPAGENTS_DOCKERFILE_BASE],
   ])("installs pinned nftables for OpenShell bypass enforcement in %s", (_agent, file) => {
-    const dockerfile = fs.readFileSync(file, "utf-8");
+    const dockerfile = completedDockerStage(fs.readFileSync(file, "utf-8"));
     const aptInstall = dockerfile.match(
       /^RUN apt-get update && apt-get install -y --no-install-recommends \\\n(?:.*\\\n)*.*$/m,
     )?.[0];
-
     expect(aptInstall).toBeDefined();
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });
-
   it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
-    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const dockerfile = completedDockerStage(fs.readFileSync(DOCKERFILE_BASE, "utf-8"));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
+    const securityDebs = path.join(tmp, "security-debs");
     const fakePy3 = path.join(tmp, "usr-bin", "python3");
     const fakePyLink = path.join(tmp, "usr-local-bin", "python");
     fs.mkdirSync(lists);
@@ -1063,12 +1068,13 @@ describe("sandbox provisioning: base runtime tools", () => {
       "# gosu for privilege separation",
     )
       .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
-
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        ...BASE_APT_SECURITY_FUNCTIONS,
       ]);
       expect(result.status).toBe(0);
       expect(calls).toContain("apt-get update");
@@ -1081,28 +1087,29 @@ describe("sandbox provisioning: base runtime tools", () => {
   });
 
   it("symlinks bare `python` to python3 so agent tool calls don't fail with command-not-found (#1452)", () => {
-    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const dockerfile = completedDockerStage(fs.readFileSync(DOCKERFILE_BASE, "utf-8"));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-pysymlink-"));
     const lists = path.join(tmp, "apt-lists");
+    const securityDebs = path.join(tmp, "security-debs");
     const fakePy3 = path.join(tmp, "usr-bin", "python3");
     const fakePyLink = path.join(tmp, "usr-local-bin", "python");
     fs.mkdirSync(lists, { recursive: true });
     fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
     fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
     fs.writeFileSync(fakePy3, "#!/bin/sh\necho 3.13\n", { mode: 0o755 });
-
     const command = dockerRunCommandBetween(
       dockerfile,
       "RUN apt-get update",
       "# gosu for privilege separation",
     )
       .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
-
     try {
       const { result } = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        ...BASE_APT_SECURITY_FUNCTIONS,
       ]);
       expect(result.status).toBe(0);
       expect(fs.lstatSync(fakePyLink).isSymbolicLink()).toBe(true);

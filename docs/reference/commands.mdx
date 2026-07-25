@@ -3164,7 +3164,7 @@ It prints the versioned URL of the matching `uninstall.sh` so you can download, 
 
 When the gateway is externally supervised, uninstall preserves its process, Docker resources, and OpenShell binaries.
 It still deletes the selected sandboxes and attempts to remove the modern local gateway registration.
-When no sibling gateways remain, it also deletes NemoClaw provider registrations.
+When uninstall confirms that no sibling gateways remain, it also deletes NemoClaw provider registrations.
 It does not use the legacy `gateway destroy` command for that gateway.
 <AgentOnly variant="openclaw">
 
@@ -3212,8 +3212,10 @@ The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-When no sibling gateways remain, uninstall also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
+When uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources.
+If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
+When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 
 `--yes` deliberately remains non-destructive for user data.
 It only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed entries.
@@ -3235,7 +3237,7 @@ Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot
 
 The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own.
 Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration.
-When no sibling gateways remain, it also deletes provider registrations.
+After uninstall confirms that no sibling gateways remain, it also deletes provider registrations.
 For a NemoClaw-managed gateway, it also removes the Docker image.
 For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources.
 Uninstall warns about this at preserve time.
