@@ -81,11 +81,10 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       lifecycleGeneration += 1;
     });
     const warmupScopeUpgrade = vi.fn(() => {
-      if (approvedGeneration === null) approvalPending = true;
+      approvalPending = approvedGeneration === null;
     });
     const autoPairScopeApproval = vi.fn(() => {
-      if (!approvalPending) return;
-      approvedGeneration = lifecycleGeneration;
+      approvedGeneration = approvalPending ? lifecycleGeneration : approvedGeneration;
       approvalPending = false;
     });
     const verifyGatewayPairing = vi.fn(
