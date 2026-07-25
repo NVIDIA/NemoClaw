@@ -12,7 +12,8 @@ Do not run the Station preparation helper separately or reproduce Express by pre
 
 The installer provides these Station Express choices:
 
-1. The ordinary installer selects `nemotron-3-ultra-550b-a55b`, served as `nemotron-ultra`, and checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails. A qualified pair uses the vLLM 0.25.1 and Ray 2.56.0 dual-Station recipe; otherwise it retains the single-Station Ultra recipe.
+1. The ordinary installer selects `nemotron-3-ultra-550b-a55b` and checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails.
+   A qualified pair uses the vLLM 0.25.1 and Ray 2.56.0 dual-Station recipe served as `nemotron-ultra`; otherwise it retains the single-Station Ultra recipe served as `nvidia/nemotron-3-ultra-550b-a55b`.
 2. The explicit `--station-deepseek` flag selects `deepseek-v4-flash`, served as `deepseek-ai/DeepSeek-V4-Flash`.
 
 Both choices use the same Station detection, host-preparation, consent, suggested-policy, default-sandbox, and revision resume flow.
@@ -47,7 +48,7 @@ If a Station Express model is selected:
 - Let the installer present its third-party-software notice and complete Express summary. Keep each official confirmation visible, wait for the user's response, and do not pre-answer or suppress it.
 - Do not pass `--force-station-install` unless the installer rejects release metadata on genuine Station GB300 hardware and the user separately chooses the documented temporary override.
 - Follow the command that the installer prints after a required reboot or login transition.
-- Do not describe Ultra as selected until the installer reports that reciprocal Station, GPU, rail, MAC, route, neighbor, and jumbo-frame checks qualified the pair.
+- Describe Ultra as the ordinary Express selection. Describe the distributed two-Station topology as selected only after the installer reports that reciprocal Station, GPU, rail, MAC, route, neighbor, and jumbo-frame checks qualified the pair.
 
 If Station Express is declined, continue with the normal provider selection.
 Offer existing vLLM when a ready server is detected, managed vLLM, supported local Ollama, and every hosted or compatible provider supported by the selected agent.
