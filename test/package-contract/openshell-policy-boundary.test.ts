@@ -214,6 +214,9 @@ describe("OpenShell policy boundary package contract", () => {
       expect(fs.existsSync(path.join(installedRoot, "schemas", "sandbox-policy.schema.json"))).toBe(
         true,
       );
+      expect(fs.existsSync(path.join(installedRoot, "schemas", "network-policy.schema.json"))).toBe(
+        true,
+      );
       expect(
         fs.existsSync(
           path.join(installedRoot, "dist", "lib", "policy", "sandbox-policy-validation.js"),
