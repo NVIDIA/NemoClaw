@@ -27,7 +27,6 @@ const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-required";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const AUTHORIZATION_TITLES = new Set(["Maintainer approval required to skip credentialed E2E"]);
 const MAX_LOG_URLS = 20;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
@@ -321,10 +320,7 @@ export function classifyCoordinationCheck(
   if (check.status !== "completed") {
     return { state: "waiting", description: title, ...links };
   }
-  if (
-    check.conclusion === "failure" &&
-    (AUTHORIZATION_TITLES.has(title) || hasRetryableFailureMarker(check))
-  ) {
+  if (check.conclusion === "failure" && hasRetryableFailureMarker(check)) {
     return { state: "waiting", description: title, ...links };
   }
   if (

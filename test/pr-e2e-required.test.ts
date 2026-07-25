@@ -86,20 +86,23 @@ describe("native PR E2E required job", () => {
     expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
   });
 
-  it("classifies fork-skip approval failures as pending", () => {
+  it("treats completed authorization failures as terminal", () => {
     expect(
       classifyCoordinationCheck(
         check("E2E / PR Gate", {
           conclusion: "failure",
-          output: { title: "Maintainer approval required to skip credentialed E2E" },
+          output: { title: "E2E reviewer authorization failed" },
         }),
         identity.repository,
       ),
     ).toEqual({
-      state: "waiting",
-      description: "Maintainer approval required to skip credentialed E2E",
-      detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/99",
-      logUrls: ["https://github.com/NVIDIA/NemoClaw/actions/runs/99"],
+      state: "complete",
+      result: {
+        conclusion: "failure",
+        title: "E2E reviewer authorization failed",
+        detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/99",
+        logUrls: ["https://github.com/NVIDIA/NemoClaw/actions/runs/99"],
+      },
     });
   });
 
