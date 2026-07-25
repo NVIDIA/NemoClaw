@@ -4,11 +4,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  getSandbox: vi.fn(
+    (_name: string): { name: string; agent: string; nimContainer?: string | null } | null => null,
+  ),
+  listSandboxes: vi.fn(() => ({ sandboxes: [] })),
   prepareMcpForRebuild: vi.fn(),
   reattachMcpAfterDeleteFailure: vi.fn(),
+  removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
+  waitUntil: vi.fn(),
   warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
-    (): {
+    (
+      _args: string[],
+    ): {
       status: number | null;
       stdout: string;
       stderr: string;
@@ -16,28 +24,16 @@ const mocks = vi.hoisted(() => ({
       signal?: NodeJS.Signals | null;
     } => ({ status: 0, stdout: "", stderr: "" }),
   ),
-  getSandbox: vi.fn(
-    (_name: string): { name: string; agent: string; nimContainer?: string | null } | null => null,
-  ),
-  listSandboxes: vi.fn(() => ({ sandboxes: [] })),
-  removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
 }));
 
-vi.mock("./rebuild-flow-helpers", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./rebuild-flow-helpers")>()),
-  warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
-}));
-
-vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
-  prepareMcpForRebuild: mocks.prepareMcpForRebuild,
-  reattachMcpAfterDeleteFailure: mocks.reattachMcpAfterDeleteFailure,
-}));
-
 vi.mock("../../adapters/openshell/runtime", () => ({
   runOpenshell: mocks.runOpenshell,
+}));
+
+vi.mock("../../core/wait", () => ({
+  waitUntil: mocks.waitUntil,
 }));
 
 vi.mock("../../inference/nim", () => ({
@@ -55,18 +51,39 @@ vi.mock("./destroy", () => ({
   removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
 }));
 
+vi.mock("./rebuild-flow-helpers", () => ({
+  warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
+}));
+
+vi.mock("./rebuild-mcp-phase", () => ({
+  prepareMcpForRebuild: mocks.prepareMcpForRebuild,
+  reattachMcpAfterDeleteFailure: mocks.reattachMcpAfterDeleteFailure,
+}));
+
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 
-describe("rebuild destroy validation diagnostics", () => {
+describe("rebuild destroy phase", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.getSandbox.mockReturnValue(null);
+    mocks.listSandboxes.mockReturnValue({ sandboxes: [] });
     mocks.prepareMcpForRebuild.mockResolvedValue({
       entries: [],
       detachedProviderEntries: [],
       scrubbedAdapterEntries: [],
     });
     mocks.reattachMcpAfterDeleteFailure.mockResolvedValue(undefined);
+    mocks.removeSandboxRegistryEntryWithReceipt.mockReturnValue(null);
+    mocks.runOpenshell.mockImplementation((args: string[]) =>
+      args[1] === "get"
+        ? { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    mocks.waitUntil.mockImplementation(
+      (condition: () => boolean) => condition() || condition() || condition(),
+    );
   });
 
   afterEach(() => {
@@ -549,6 +566,89 @@ describe("rebuild destroy validation diagnostics", () => {
     );
     expect(mocks.runOpenshell.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.stopNimContainerByName.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("removes registry state only after the gateway reports the deleted sandbox missing", async () => {
+    const events: string[] = [];
+    let getAttempts = 0;
+    const deleteResult = () => {
+      events.push("delete");
+      return { status: 0, stdout: "deleted", stderr: "" };
+    };
+    const getResult = () => {
+      getAttempts += 1;
+      const isFirstProbe = getAttempts === 1;
+      events.push(isFirstProbe ? "get-live" : "get-missing");
+      return isFirstProbe
+        ? { status: 0, stdout: "Name: alpha\nPhase: Terminating", stderr: "" }
+        : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
+    };
+    mocks.runOpenshell.mockImplementation((args: string[]) =>
+      args[1] === "delete" ? deleteResult() : getResult(),
+    );
+    mocks.removeSandboxRegistryEntryWithReceipt.mockImplementation(() => {
+      events.push("remove-registry");
+      return null;
+    });
+
+    const result = await runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+      staleRecovery: false,
+      backupManifest: null,
+      log: vi.fn(),
+      bail: vi.fn((message: string): never => {
+        throw new Error(message);
+      }),
+      relockShieldsIfNeeded: vi.fn(() => true),
+      onDeleted: vi.fn(() => events.push("on-deleted")),
+    });
+
+    expect(result).not.toBeNull();
+    expect(events).toEqual(["delete", "get-live", "get-missing", "on-deleted", "remove-registry"]);
+    expect(mocks.waitUntil).toHaveBeenCalledOnce();
+    expect(mocks.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ timeout: 15_000 }),
+    );
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).toHaveBeenCalledWith("alpha");
+  });
+
+  it("preserves backup and registry state when transport failures prevent deletion confirmation", async () => {
+    mocks.runOpenshell.mockImplementation((args: string[]) =>
+      args[1] === "delete"
+        ? { status: 0, stdout: "deleted", stderr: "" }
+        : { status: 1, stdout: "", stderr: "tcp connect error: Connection refused" },
+    );
+    const onDeleted = vi.fn();
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        backupManifest: { backupPath: "/tmp/rebuild-backups/alpha/backup" } as never,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        onDeleted,
+      }),
+    ).rejects.toThrow("Sandbox deletion could not be confirmed.");
+
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(mocks.runOpenshell).toHaveBeenCalledTimes(4);
+    expect(mocks.waitUntil).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ deadlineMs: expect.any(Number) }),
+    );
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "  State backup is preserved at: /tmp/rebuild-backups/alpha/backup",
     );
   });
 });

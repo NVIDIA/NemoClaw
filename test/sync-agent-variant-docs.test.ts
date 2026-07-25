@@ -1,10 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
+
+const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const SYNC_SCRIPT = path.join(REPO_ROOT, "scripts/sync-agent-variant-docs.mts");
+const NODE_MODULES = path.join(REPO_ROOT, "node_modules");
 
 const FRONTMATTER = `---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -20,6 +37,152 @@ content:
 `;
 
 describe("sync-agent-variant-docs", () => {
+  it("passes --check when generated docs are already synchronized", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-agent-variant-check-"));
+    try {
+      const fixtureScript = path.join(fixtureRoot, "scripts/sync-agent-variant-docs.mts");
+      mkdirSync(path.dirname(fixtureScript), { recursive: true });
+      writeFileSync(fixtureScript, readFileSync(SYNC_SCRIPT, "utf8"));
+      symlinkSync(NODE_MODULES, path.join(fixtureRoot, "node_modules"), "junction");
+
+      const docsRoot = path.join(fixtureRoot, "docs");
+      mkdirSync(path.join(docsRoot, "reference"), { recursive: true });
+      writeFileSync(
+        path.join(docsRoot, "index.yml"),
+        `
+navigation:
+  - section: User Guide
+    variants:
+      - slug: openclaw
+        layout:
+          - page: Example
+            path: _build/agent-variants/reference/example.openclaw.generated.mdx
+      - slug: hermes
+        layout:
+          - page: Example
+            path: _build/agent-variants/reference/example.hermes.generated.mdx
+      - slug: deepagents
+        layout:
+          - page: Example
+            path: _build/agent-variants/reference/example.deepagents.generated.mdx
+`,
+      );
+      const sourcePath = path.join(docsRoot, "reference/example.mdx");
+      const source = `---
+title: "Example"
+---
+Run $$nemoclaw list.
+`;
+      writeFileSync(sourcePath, source);
+
+      const generatedRoot = path.join(docsRoot, "_build/agent-variants/reference");
+      mkdirSync(generatedRoot, { recursive: true });
+      const generatedFiles = (["openclaw", "hermes", "deepagents"] as const).map((variant) => {
+        const outputPath = path.join(generatedRoot, `example.${variant}.generated.mdx`);
+        const contents = renderAgentVariantPage(source, variant, { outputPath, sourcePath });
+        writeFileSync(outputPath, contents);
+        return { path: outputPath, contents };
+      });
+
+      const result = spawnSync(
+        process.execPath,
+        ["--import", "tsx", realpathSync(fixtureScript), "--check"],
+        {
+          cwd: fixtureRoot,
+          encoding: "utf8",
+          timeout: 10_000,
+        },
+      );
+      const output = `${result.stdout}\n${result.stderr}`;
+
+      expect(result.status).toBe(0);
+      expect(output).not.toContain("Out of sync");
+      expect(output).not.toContain("Missing");
+      expect(output).not.toContain("Stale");
+      expect(output).not.toContain("Generated agent variant docs are out of sync");
+      for (const file of generatedFiles) {
+        expect(readFileSync(file.path, "utf8")).toBe(file.contents);
+      }
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("checks generated docs without rewriting or pruning files", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-agent-variant-check-"));
+    try {
+      const fixtureScript = path.join(fixtureRoot, "scripts/sync-agent-variant-docs.mts");
+      mkdirSync(path.dirname(fixtureScript), { recursive: true });
+      writeFileSync(fixtureScript, readFileSync(SYNC_SCRIPT, "utf8"));
+      symlinkSync(NODE_MODULES, path.join(fixtureRoot, "node_modules"), "junction");
+
+      const docsRoot = path.join(fixtureRoot, "docs");
+      mkdirSync(path.join(docsRoot, "reference"), { recursive: true });
+      writeFileSync(
+        path.join(docsRoot, "index.yml"),
+        `
+navigation:
+  - section: User Guide
+    variants:
+      - slug: openclaw
+        layout:
+          - page: Example
+            path: _build/agent-variants/reference/example.openclaw.generated.mdx
+      - slug: hermes
+        layout:
+          - page: Example
+            path: _build/agent-variants/reference/example.hermes.generated.mdx
+      - slug: deepagents
+        layout:
+          - page: Example
+            path: _build/agent-variants/reference/example.deepagents.generated.mdx
+`,
+      );
+      writeFileSync(
+        path.join(docsRoot, "reference/example.mdx"),
+        `---
+title: "Example"
+---
+Run $$nemoclaw list.
+`,
+      );
+
+      const generatedRoot = path.join(docsRoot, "_build/agent-variants/reference");
+      mkdirSync(generatedRoot, { recursive: true });
+      const outOfSyncPath = path.join(generatedRoot, "example.openclaw.generated.mdx");
+      const stalePath = path.join(generatedRoot, "obsolete.generated.mdx");
+      const missingHermesPath = path.join(generatedRoot, "example.hermes.generated.mdx");
+      const outOfSyncContents = "keep stale expected file\n";
+      const staleContents = "keep obsolete generated file\n";
+      writeFileSync(outOfSyncPath, outOfSyncContents);
+      writeFileSync(stalePath, staleContents);
+
+      const result = spawnSync(
+        process.execPath,
+        ["--import", "tsx", realpathSync(fixtureScript), "--check"],
+        {
+          cwd: fixtureRoot,
+          encoding: "utf8",
+          timeout: 10_000,
+        },
+      );
+      const output = `${result.stdout}\n${result.stderr}`;
+
+      expect(result.status).toBe(1);
+      expect(output).toContain("Out of sync");
+      expect(output).toContain("example.openclaw.generated.mdx");
+      expect(output).toContain("Missing");
+      expect(output).toContain("example.hermes.generated.mdx");
+      expect(output).toContain("Stale");
+      expect(output).toContain("obsolete.generated.mdx");
+      expect(readFileSync(outOfSyncPath, "utf8")).toBe(outOfSyncContents);
+      expect(readFileSync(stalePath, "utf8")).toBe(staleContents);
+      expect(existsSync(missingHermesPath)).toBe(false);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   function renderHermesCommandsVariant(source: string): string {
     return renderAgentVariantPage(source, "hermes", {
       sourcePath: "/repo/docs/reference/commands.mdx",

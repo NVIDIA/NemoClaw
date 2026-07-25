@@ -62,6 +62,11 @@ outcome, the smallest change, and how it was verified. Explore alternatives only
 change behavior, security, data safety, or a supported contract. Once the smallest safe change is
 clear and testable, stop exploring and implement it.
 
+### Writing Guide
+
+Follow the [NemoClaw Writing Guide](WRITING.md) when you add or modify explanatory text.
+The guide defines its scope, terms, rules, examples, and review policy.
+
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
@@ -206,6 +211,8 @@ These are the primary npm scripts for day-to-day development:
 | `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
+| `npm run test:e2e-phases:check` | Validate semantic phase plans for every live E2E test and workflow-selected credential-free integration test without executing test bodies |
+| `npm run test:runtime-audit -- <artifact-dir> [...]` | Rank captured live E2E runs by median, p95, variability, and slowest phase |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
 | `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
@@ -226,6 +233,29 @@ npx vitest run --project e2e-support
 
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
+
+Every `e2e-live` test, plus every credential-free integration test selected by
+the shared E2E workflow planner, must declare its ordered, behavior-specific
+phase plan in `meta.e2ePhases`, call
+`progress.phase("literal phase label")` at those boundaries, and reach the final
+test-declared phase on every passing path. Live tests import the shared
+`e2e-test` fixture, which appends `release registered E2E resources` so cleanup
+duration and failures have their own phase. Workflow-selected integration tests
+import `workflow-e2e-test` and declare their own final release phase. Run
+`npm run test:e2e-phases:check` after changing either coverage set or its
+workflow selection; collection validates the union without running test bodies. See
+[`test/e2e/docs/README.md`](test/e2e/docs/README.md) for the logging and artifact
+contract.
+
+Use the shared `ShellProbe` for E2E child processes. The semantic-phase check
+also follows shared E2E helpers and rejects new direct asynchronous process
+boundaries unless they are explicitly audited for content-free activity and
+timestamp-only output reporting. Synchronous process calls must have a positive
+timeout shorter than the first heartbeat and use `killSignal: "SIGKILL"` so the
+child cannot ignore that bound; write child contents only through the redacted
+artifact sink. Pass the auto fixture's frozen, canonical `progress` capability
+through unchanged; custom, copied, or no-op progress adapters are rejected at
+audited subprocess boundaries.
 
 ### Test Declarative Behavior
 
@@ -298,8 +328,13 @@ existing contract.
 Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test
 titles with behavior or context rather than issue numbers, flags, or scenario labels, and put local
 issue references in a final suffix such as `(#1234)`. Prefer
-`it("reticulates splines correctly (#1234)")` over
+`it("reticulates splines for valid control points (#1234)")` over
 `it("#1234 fixes spline reticulation")`.
+
+Apply the [NemoClaw Writing Guide](WRITING.md) to each added or modified test title.
+The title checker enforces objective title shape only. A language finding can block when ambiguity
+changes the test meaning. Other findings are suggestions. Reviewers must not request unrelated title
+cleanup.
 
 Run `npm run test:spec` to render the suite with Vitest's hierarchical tree reporter. Run
 `npm run test:titles:check` to enforce the objective title-shape conventions without attempting to
@@ -377,6 +412,57 @@ If your change affects user-facing behavior (new commands, changed defaults, new
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.
+
+### Documentation Writer Review Receipt
+
+After you complete a code or documentation change, a documentation writer subagent must review the completed changes.
+For a documentation-only change, the subagent must verify the changed pages against [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) and [WRITING.md](WRITING.md).
+The review must cover terminology, structure, voice, and code-sample presentation.
+Complete the Documentation Writer Review section in the PR description after that review.
+Keep one review completion checkbox and one instance of each visible or hidden field.
+
+Record one result:
+
+- `docs-updated` when the reviewed pull request changes documentation.
+  List the changed documentation paths as evidence.
+  For a documentation-only change, state that the subagent reviewed the writing rules and documentation style.
+- `no-docs-needed` when a code change does not require documentation and the evidence explains why.
+- `blocked` when a named decision, dependency, access problem, or input prevents the review.
+
+Record the product and surface that ran the review, such as `Codex Desktop`, `Codex CLI`, `Claude Code`, or `Cursor`.
+Use the same name for the same surface across PRs so the report groups its data correctly.
+
+Commit all changes from the final review.
+Then run these commands and put their values in the receipt's hidden HTML metadata comments:
+
+```bash
+git rev-parse --short HEAD
+git rev-parse --short HEAD:AGENTS.md
+```
+
+GitHub supplies the pull-request identity to the workflow and report.
+The hidden head SHA identifies the pull-request revision that the review covered.
+Rerun the review after any new commit changes the pull-request head.
+Pushing a new commit runs the receipt check again and reports the review as stale until the hidden metadata is refreshed.
+The Documentation Writer Review check reports an advisory finding when the receipt is missing, incomplete, or stale.
+The check compares the hidden head SHA with the current PR head and the hidden `AGENTS.md` blob SHA with the current PR's file.
+
+Maintainers can export receipt data from PR descriptions:
+
+```bash
+npm run docs-review:report -- --since 2026-06-12 --format csv > /tmp/nemoclaw-docs-review.csv
+```
+
+The report uses the authenticated GitHub CLI session and returns JSON by default.
+It measures receipt coverage, head-revision freshness, review results, and agent-surface counts.
+The `eligiblePrs` JSON metric reports the total eligible pull requests.
+The `eligibleCodePrs` and `eligibleDocsOnlyPrs` metrics report the code and documentation-only counts.
+It records the `AGENTS.md` blob SHA, but only the PR check compares that SHA with the current PR's file.
+It does not prove that an agent loaded `AGENTS.md`; it records observable workflow compliance.
+The retrospective report classifies code and documentation changes from the checked Type of Change field.
+It reports a PR as unclassified when that field is incomplete or contradictory.
+Use `--format summary` to print only aggregate metrics.
+Use `--until YYYY-MM-DD` to set the end of the reporting period.
 
 To build and preview docs locally:
 

@@ -29,9 +29,15 @@ on:
       - "agents/langchain-deepagents-code/requirements.lock"
       - "agents/openclaw/mcporter-runtime/package.json"
       - "agents/openclaw/mcporter-runtime/package-lock.json"
+      - "ci/npm-audit-exceptions.json"
       # Dockerfile.base validates min_openclaw_version from this file at build time.
       - "nemoclaw-blueprint/blueprint.yaml"
+      - "scripts/lib/openclaw-npm-remediation.mts"
+      - "scripts/lib/reviewed-npm-audit.mts"
       - "scripts/lib/reviewed-npm-archive.mts"
+      - "scripts/checks/node-tar-image-scan.mts"
+      - "scripts/patch-bundled-npm-tar.mts"
+      - "scripts/upgrade-bundled-npm.mts"
       - "scripts/lib/sandbox-rlimits.sh"
   workflow_dispatch:
     inputs:
@@ -58,7 +64,7 @@ jobs:
     name: Build and push ${{ matrix.display_name }} base image
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

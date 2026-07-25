@@ -34,7 +34,19 @@ const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
+const GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION =
+  "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+const SCORECARD_RUNTIME_UPLOAD_CONTRACT: WorkflowStep = {
+  name: "Upload E2E runtime summary",
+  if: "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}",
+  uses: UPLOAD_E2E_ARTIFACTS_ACTION,
+  with: {
+    name: "e2e-runtime-summary",
+    path: "${{ runner.temp }}/e2e-runtime-summary.json",
+  },
+};
 
 const SHARED_E2E_JOBS: ReadonlyMap<string, { targetId: string }> = new Map([
   [SHARED_E2E_JOB_ID, { targetId: "${{ matrix.id }}" }],
@@ -55,6 +67,19 @@ type ExplicitUploadContract = {
 
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
+    "staging-brev-launchable",
+    {
+      name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}",
+      path: [
+        "${{ steps.workspace.outputs.work_dir }}/lane.log",
+        "${{ steps.workspace.outputs.work_dir }}/qualification.json",
+        "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
+        "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
+        "",
+      ].join("\n"),
+    },
+  ],
+  [
     "live",
     {
       name: "e2e-${{ matrix.id }}",
@@ -62,6 +87,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
         "e2e-artifacts/live/${{ matrix.id }}/target.json",
         "e2e-artifacts/live/${{ matrix.id }}/target-result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/test-progress.json",
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
@@ -84,6 +110,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json",
         "e2e-artifacts/live/skill-agent/*/target.json",
         "e2e-artifacts/live/skill-agent/*/target-result.json",
+        "e2e-artifacts/live/skill-agent/*/test-progress.json",
         "e2e-artifacts/live/skill-agent/*/shell/*.result.json",
         "e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt",
         "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",
@@ -96,6 +123,20 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-hermes-inference-switch-${{ matrix.mode }}",
       path: "e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/",
+    },
+  ],
+  [
+    "network-policy",
+    {
+      name: "e2e-network-policy-${{ matrix.scenario }}",
+      path: "e2e-artifacts/live/network-policy/${{ matrix.scenario }}/",
+    },
+  ],
+  [
+    "common-egress-agent",
+    {
+      name: "e2e-common-egress-agent-${{ matrix.scenario }}",
+      path: "e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}/",
     },
   ],
   [
@@ -140,6 +181,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "openshell-gateway-auth-contract",
+    {
+      name: "e2e-openshell-gateway-auth-contract",
+      path: "${{ steps.artifact_safety.outputs.approved_path }}",
+    },
+  ],
+  [
     "bedrock-runtime-compatible-anthropic",
     {
       name: "e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}",
@@ -170,8 +218,10 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 ]);
 
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
+  ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  ["openshell-gateway-auth-contract", GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION],
 ]);
 
 const EXPECTED_ACTION_INPUTS = {
@@ -207,6 +257,23 @@ function steps(value: unknown): WorkflowStep[] {
 
 function sortedKeys(value: WorkflowRecord): string[] {
   return Object.keys(value).sort();
+}
+
+function validateUploadPlacement(
+  errors: string[],
+  jobName: string,
+  jobSteps: readonly WorkflowStep[],
+  upload: WorkflowStep,
+): void {
+  const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
+  if (
+    stepsAfterUpload.length > 1 ||
+    stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
+  ) {
+    errors.push(
+      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
+    );
+  }
 }
 
 export function validateUploadE2eArtifactsAction(actionPath = DEFAULT_ACTION_PATH): string[] {
@@ -276,6 +343,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         const jobSteps = steps(job.steps);
         const env = record(job.env);
         return (
+          jobName === "staging-brev-launchable" ||
           jobName === "live" ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
@@ -333,6 +401,22 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     }
 
     const uploadSteps = jobSteps.filter((step) => step.uses === UPLOAD_E2E_ARTIFACTS_ACTION);
+    if (jobName === "scorecard") {
+      if (uploadSteps.length !== 1) {
+        errors.push(
+          "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+        );
+        continue;
+      }
+      const upload = uploadSteps[0];
+      if (!isDeepStrictEqual(upload, SCORECARD_RUNTIME_UPLOAD_CONTRACT)) {
+        errors.push(
+          "scorecard must use upload-e2e-artifacts exactly once with its scheduled runtime summary contract",
+        );
+      }
+      validateUploadPlacement(errors, jobName, jobSteps, upload);
+      continue;
+    }
     if (!expected) {
       if (uploadSteps.length > 0) {
         errors.push(`${jobName} must not use upload-e2e-artifacts`);
@@ -361,15 +445,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           : `${jobName} upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks`,
       );
     }
-    const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
-    if (
-      stepsAfterUpload.length > 1 ||
-      stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
-    ) {
-      errors.push(
-        `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
-      );
-    }
+    validateUploadPlacement(errors, jobName, jobSteps, upload);
 
     if (explicitContract) {
       if (!isDeepStrictEqual(record(upload.with), explicitContract)) {

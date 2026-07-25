@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   dockerRemoveVolumesByPrefix: vi.fn(),
+  resolveGatewayTeardownAuthority: vi.fn(),
   spawnSync: vi.fn(),
   stopStaleDashboardListeners: vi.fn(),
 }));
@@ -18,6 +19,9 @@ vi.mock("node:child_process", () => ({
 }));
 vi.mock("../../adapters/docker/volume", () => ({
   dockerRemoveVolumesByPrefix: mocks.dockerRemoveVolumesByPrefix,
+}));
+vi.mock("../../onboard/gateway-teardown-authority", () => ({
+  resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
 }));
 vi.mock("../../onboard/stale-gateway-cleanup", () => ({
   stopStaleDashboardListeners: mocks.stopStaleDashboardListeners,
@@ -31,6 +35,18 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
   beforeEach(() => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-gateway-evidence-"));
     vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
+    mocks.resolveGatewayTeardownAuthority.mockImplementation(
+      ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+    );
   });
 
   afterEach(() => {

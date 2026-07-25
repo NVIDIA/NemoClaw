@@ -853,6 +853,11 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     registry.addCustomPolicy("alpha", ownedPolicy("github"));
     const before = registry.getSandbox("alpha");
     testState.executeSandboxExecCommand.mockReturnValue(null);
+    testState.runOpenshell.mockImplementation((args: string[]) =>
+      args[1] === "delete"
+        ? { status: 0, stdout: "", stderr: "" }
+        : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+    );
     const onDeleted = vi.fn();
 
     const result = await runRebuildDestroyPhase({
@@ -877,6 +882,10 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":");
     expect(testState.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
+    expect(testState.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
       expect.any(Object),
     );
     expect(testState.stopNimContainer).not.toHaveBeenCalled();

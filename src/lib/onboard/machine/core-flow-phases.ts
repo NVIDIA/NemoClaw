@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type InferenceEndpointSource,
+  normalizeInferenceEndpointSource,
+} from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import type {
@@ -47,6 +51,9 @@ export interface CoreOnboardFlowPhaseOptions<
     requestedObservabilityEnabled?: boolean | null;
     requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
     authoritativePolicyTier?: string | null;
+    endpointSource?: InferenceEndpointSource | null;
+    endpointSourceProvider?: string | null;
+    endpointSourceEndpointUrl?: string | null;
     recreateSandbox: (requested?: boolean) => boolean;
     controlUiPort: number | null;
     rootDir: string;
@@ -61,6 +68,49 @@ export interface CoreOnboardFlowPhaseOptions<
   >["deps"];
 }
 
+interface EndpointProvenance {
+  endpointSource: InferenceEndpointSource | null;
+  onboardEndpointUrl: string | null;
+}
+
+function endpointProvenanceForPhase(
+  context: Pick<OnboardFlowContext, "fresh" | "sandboxName" | "provider" | "endpointUrl">,
+  configuredSource: InferenceEndpointSource | null | undefined,
+  configuredProvider: string | null | undefined,
+  configuredEndpointUrl: string | null | undefined,
+  getSandboxRegistryEntry: (name: string) => {
+    provider?: unknown;
+    endpointUrl?: unknown;
+    endpointSource?: unknown;
+  } | null,
+): EndpointProvenance {
+  if (context.fresh) {
+    return { endpointSource: "onboard", onboardEndpointUrl: context.endpointUrl };
+  }
+  if (configuredSource !== undefined) {
+    const endpointSource = normalizeInferenceEndpointSource(configuredSource);
+    if (
+      endpointSource === "onboard" &&
+      (configuredProvider !== context.provider || configuredEndpointUrl !== context.endpointUrl)
+    ) {
+      return { endpointSource: null, onboardEndpointUrl: null };
+    }
+    return {
+      endpointSource,
+      onboardEndpointUrl: endpointSource === "onboard" ? (configuredEndpointUrl ?? null) : null,
+    };
+  }
+  const entry = context.sandboxName ? getSandboxRegistryEntry(context.sandboxName) : null;
+  const endpointSource = normalizeInferenceEndpointSource(entry?.endpointSource);
+  if (endpointSource !== "onboard") {
+    return { endpointSource, onboardEndpointUrl: null };
+  }
+  if (entry?.provider !== context.provider || entry.endpointUrl !== context.endpointUrl) {
+    return { endpointSource: null, onboardEndpointUrl: null };
+  }
+  return { endpointSource, onboardEndpointUrl: context.endpointUrl };
+}
+
 export function createCoreOnboardFlowPhases<
   Context extends OnboardFlowContext,
   Host = unknown,
@@ -70,6 +120,13 @@ export function createCoreOnboardFlowPhases<
   options: CoreOnboardFlowPhaseOptions<Context, Host, MessagingChannelConfig, ResourceProfile>,
 ): [OnboardSequencePhase<Context>, OnboardSequencePhase<Context>] {
   const providerInferencePhase = createProviderInferencePhase<Context>(async (context) => {
+    const endpointProvenance = endpointProvenanceForPhase(
+      context,
+      options.sandbox.endpointSource,
+      options.sandbox.endpointSourceProvider,
+      options.sandbox.endpointSourceEndpointUrl,
+      options.sandboxDeps.getSandboxRegistryEntry,
+    );
     const providerInferenceResult = await handleProviderInferenceState({
       gatewayName: options.gatewayName,
       resume: context.resume,
@@ -87,6 +144,8 @@ export function createCoreOnboardFlowPhases<
         model: context.model,
         provider: context.provider,
         endpointUrl: context.endpointUrl,
+        endpointSource: endpointProvenance.endpointSource,
+        onboardEndpointUrl: endpointProvenance.onboardEndpointUrl,
         credentialEnv: context.credentialEnv,
         hermesAuthMethod: context.hermesAuthMethod,
         hermesToolGateways: context.hermesToolGateways,
@@ -108,6 +167,8 @@ export function createCoreOnboardFlowPhases<
         model: providerInferenceResult.model,
         provider: providerInferenceResult.provider,
         endpointUrl: providerInferenceResult.endpointUrl,
+        endpointSource: providerInferenceResult.endpointSource,
+        onboardEndpointUrl: providerInferenceResult.onboardEndpointUrl,
         credentialEnv: providerInferenceResult.credentialEnv,
         hermesAuthMethod: providerInferenceResult.hermesAuthMethod,
         hermesToolGateways: providerInferenceResult.hermesToolGateways,
@@ -121,12 +182,26 @@ export function createCoreOnboardFlowPhases<
   });
 
   const sandboxPhase = createSandboxPhase<Context>(async (context) => {
+    const endpointProvenance =
+      context.endpointSource !== undefined
+        ? {
+            endpointSource: context.endpointSource,
+            onboardEndpointUrl: context.onboardEndpointUrl ?? null,
+          }
+        : endpointProvenanceForPhase(
+            context,
+            options.sandbox.endpointSource,
+            options.sandbox.endpointSourceProvider,
+            options.sandbox.endpointSourceEndpointUrl,
+            options.sandboxDeps.getSandboxRegistryEntry,
+          );
     const sandboxStateResult = await handleSandboxState({
       resume: context.resume,
       fresh: context.fresh,
       gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.sandbox.authoritativePolicyTier,
+      endpointSource: endpointProvenance.endpointSource,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       requestedObservabilityEnabled: options.sandbox.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.sandbox.requestedDcodeAutoApprovalMode,

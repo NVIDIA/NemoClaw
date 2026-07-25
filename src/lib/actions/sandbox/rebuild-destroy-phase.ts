@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_HEAVY_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import { G, R } from "../../cli/terminal-style";
+import { waitUntil } from "../../core/wait";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
@@ -48,6 +52,28 @@ type PostDeleteReconciliation =
   | { state: "deleted"; phase: null; status: number | null }
   | { state: "intact"; phase: "Ready" | "Running"; status: 0 }
   | { state: "ambiguous"; phase: string | null; status: number | null };
+
+function waitForSandboxDeletion(
+  sandboxName: string,
+  gatewayName: string,
+  log: RebuildLog,
+): boolean {
+  return waitUntil(
+    () => {
+      const getResult = runOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      });
+      const { alreadyGone, gatewayUnreachable } = getSandboxDeleteOutcome(getResult);
+      log(
+        `Delete convergence probe: exit=${getResult.status}, alreadyGone=${alreadyGone}, gatewayUnreachable=${gatewayUnreachable}`,
+      );
+      return alreadyGone;
+    },
+    { deadlineMs: Date.now() + OPENSHELL_HEAVY_TIMEOUT_MS },
+  );
+}
 
 /**
  * A nonzero delete may be reported after OpenShell has already changed the
@@ -228,10 +254,12 @@ export async function runRebuildDestroyPhase(
   });
   const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
   log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
+  let deletionConfirmed = alreadyGone;
   if (deleteResult.status !== 0) {
     const reconciledDelete = reconcileFailedSandboxDelete(sandboxName, input.sandboxEntry, log);
     if (reconciledDelete.state === "deleted") {
       log("Delete returned nonzero, but exact post-delete state confirms sandbox removal.");
+      deletionConfirmed = true;
     } else if (reconciledDelete.state === "intact") {
       console.error("  Failed to delete sandbox. Aborting rebuild.");
       console.error(
@@ -275,6 +303,18 @@ export async function runRebuildDestroyPhase(
       );
       return null;
     }
+  }
+  deletionConfirmed ||= waitForSandboxDeletion(sandboxName, gatewayName, log);
+  if (!deletionConfirmed) {
+    console.error(
+      "  Sandbox delete was accepted, but OpenShell did not confirm that the sandbox is absent.",
+    );
+    console.error("  Aborting rebuild before registry removal and sandbox recreation.");
+    if (backupManifest) {
+      console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    }
+    bail("Sandbox deletion could not be confirmed.");
+    return null;
   }
   stopNimBestEffort();
   onDeleted();

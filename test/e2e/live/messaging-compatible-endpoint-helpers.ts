@@ -86,6 +86,8 @@ function readProcessSnapshot(pid: number): { cmdline: string; startTime: string 
   if (process.platform === "darwin") {
     const line = execFileSync("ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], {
       encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 5_000,
     }).trim();
     if (line.length <= 24) return null;
     return { cmdline: line.slice(24).trim(), startTime: line.slice(0, 24) };

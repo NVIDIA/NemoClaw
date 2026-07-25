@@ -10,7 +10,10 @@ import {
   dockerRun,
 } from "./run";
 
-export type DockerBuildOptions = DockerRunOptions & { quiet?: boolean };
+export type DockerBuildOptions = DockerRunOptions & {
+  labels?: Record<string, string>;
+  quiet?: boolean;
+};
 
 export function dockerBuild(
   dockerfilePath: string,
@@ -18,7 +21,7 @@ export function dockerBuild(
   contextDir: string = ROOT,
   opts: DockerBuildOptions = {},
 ): DockerRunResult {
-  const { quiet, ...rest } = opts;
+  const { labels, quiet, ...rest } = opts;
   // Dockerfile.base relies on `RUN --mount=type=bind`, which is BuildKit-only.
   // Hosts whose Docker daemon defaults to the legacy builder (e.g. fresh
   // Debian/Ubuntu Docker 29 without /etc/docker/daemon.json) abort the
@@ -30,6 +33,9 @@ export function dockerBuild(
   const args = [
     "build",
     ...(quiet ? ["--quiet"] : []),
+    ...Object.entries(labels ?? {})
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .flatMap(([key, value]) => ["--label", `${key}=${value}`]),
     "-f",
     dockerfilePath,
     "-t",

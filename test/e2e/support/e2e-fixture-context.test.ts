@@ -5,11 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink, createArtifactSink } from "../fixtures/artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 import { test as e2eTest } from "../fixtures/e2e-test.ts";
+import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
   ShellProbe,
@@ -18,6 +19,23 @@ import {
 } from "../fixtures/shell-probe.ts";
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+const supportProgressInstances: TestProgress[] = [];
+
+function supportProgress(): TestProgress {
+  const progress = startTestProgress(
+    "ShellProbe support",
+    ["run support command", "verify support result"],
+    { logLine: () => undefined },
+  );
+  supportProgressInstances.push(progress);
+  return progress;
+}
+
+afterEach(() => {
+  for (const progress of supportProgressInstances) progress.stop();
+  supportProgressInstances.length = 0;
+});
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -61,6 +79,7 @@ describe("E2E fixture primitives", () => {
       "run-plan.json",
       "target.json",
       "target-result.json",
+      "test-progress.json",
       "environment.result.json",
       "onboarding.result.json",
       "state-validation.result.json",
@@ -86,6 +105,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const shellProbe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -132,6 +152,73 @@ describe("E2E fixture primitives", () => {
     const result = await cleanup.runAll();
     expect(order).toEqual(["second", "first"]);
     expect(result).toEqual({ passed: ["second", "first"], failures: [] });
+  });
+
+  it("reports the active redacted cleanup entry and its outcome", async () => {
+    const events: string[] = [];
+    const secret = "cleanup-secret-value";
+    const cleanup = new CleanupRegistry((text) => text.replaceAll(secret, "[REDACTED]"), {
+      activity(label) {
+        events.push(`activity started: ${label}`);
+        return () => events.push(`activity finished: ${label}`);
+      },
+      event(label) {
+        events.push(`event: ${label}`);
+      },
+    });
+    cleanup.add(`release ${secret}\nresource`, () => undefined);
+    cleanup.add("release failing resource", () => {
+      throw new Error("expected cleanup failure");
+    });
+
+    const result = await cleanup.runAll();
+
+    expect(events).toEqual([
+      "activity started: cleanup: release failing resource",
+      "event: cleanup started: release failing resource",
+      "event: cleanup failed: release failing resource",
+      "activity finished: cleanup: release failing resource",
+      "activity started: cleanup: release [REDACTED] resource",
+      "event: cleanup started: release [REDACTED] resource",
+      "event: cleanup passed: release [REDACTED] resource",
+      "activity finished: cleanup: release [REDACTED] resource",
+    ]);
+    expect(events.join("\n")).not.toContain(secret);
+    expect(result).toEqual({
+      passed: ["release [REDACTED]\nresource"],
+      failures: [{ name: "release failing resource", message: "expected cleanup failure" }],
+    });
+  });
+
+  it("still releases every resource when redaction and progress reporting fail", async () => {
+    const released: string[] = [];
+    const cleanup = new CleanupRegistry(
+      () => {
+        throw new Error("redactor unavailable");
+      },
+      {
+        activity() {
+          throw new Error("progress activity unavailable");
+        },
+        event() {
+          throw new Error("progress event unavailable");
+        },
+      },
+    );
+    cleanup.add("first sensitive resource", () => {
+      released.push("first");
+    });
+    cleanup.add("second sensitive resource", () => {
+      released.push("second");
+    });
+
+    const result = await cleanup.runAll();
+
+    expect(released).toEqual(["second", "first"]);
+    expect(result).toEqual({
+      passed: ["[cleanup metadata unavailable]", "[cleanup metadata unavailable]"],
+      failures: [],
+    });
   });
 
   it("cleanup registry redacts failures, continues, and clears callbacks", async () => {
@@ -202,6 +289,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -245,6 +333,42 @@ describe("E2E fixture primitives", () => {
     }
   });
 
+  it("shell probe reports child liveness to the shared observer without duplicating it", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-observer-"));
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      await artifacts.ensureRoot();
+      const controller = new AbortController();
+      const events: Array<{ stream: "stdout" | "stderr"; atMs: number }> = [];
+      const onOutput = (event: (typeof events)[number]) => events.push(event);
+      const progress = supportProgress();
+      const probe = new ShellProbe({
+        artifacts,
+        progress,
+        redact: (text) => text,
+        signal: controller.signal,
+      });
+
+      const result = await probe.run(
+        trustedShellCommand({
+          command: process.execPath,
+          args: ["-e", "console.log('alive')"],
+          reason: "verify shared child-output liveness observation",
+        }),
+        { artifactName: "shared-output-observer", onOutput, timeoutMs: 5_000 },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ stream: "stdout" });
+      expect(events[0]?.atMs).toBeGreaterThan(0);
+      progress.stop();
+      expect(progress.summary().phases[0]?.outputEvents).toBe(1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("shell probe scrubs overlapping redactionValues longest-first when the injected redactor ignores extra values", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-overlap-"));
     try {
@@ -255,6 +379,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -328,8 +453,10 @@ describe("E2E fixture primitives", () => {
         instrumentedAddEventListener as typeof controller.signal.addEventListener;
       controller.signal.removeEventListener =
         instrumentedRemoveEventListener as typeof controller.signal.removeEventListener;
+      const progress = supportProgress();
       const probe = new ShellProbe({
         artifacts,
+        progress,
         redact: (text, extraValues = []) =>
           [secret, ...extraValues].reduce(
             (redacted, value) => redacted.split(value).join("[REDACTED]"),
@@ -362,6 +489,8 @@ describe("E2E fixture primitives", () => {
       expect(message).not.toContain(secret);
       expect(abortAdds).toBe(1);
       expect(abortRemoves).toBe(1);
+      progress.stop("failed");
+      expect(progress.summary().phases[0]).toMatchObject({ outcome: "failed" });
       const spawnArtifact = fs.readFileSync(
         artifacts.pathFor("shell/spawn-error.result.json"),
         "utf8",
@@ -384,6 +513,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -421,6 +551,7 @@ describe("E2E fixture primitives", () => {
       controller.abort();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -456,6 +587,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
