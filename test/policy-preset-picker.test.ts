@@ -292,6 +292,8 @@ describe("policy preset pickers", () => {
 
       expect(result.code).toBe("SIGINT");
       expect(result.reraised).toBe(1);
+      // The signal itself, not just that kill ran: re-raising SIGTERM would
+      // otherwise satisfy this test.
       expect(result.signal).toBe("SIGINT");
     }, 3_000);
   });
@@ -352,6 +354,8 @@ describe("policy preset pickers", () => {
 
       expect(result.code).toBe("SIGINT");
       expect(result.reraised).toBe(1);
+      // The signal itself, not just that kill ran: re-raising SIGTERM would
+      // otherwise satisfy this test.
       expect(result.signal).toBe("SIGINT");
     }, 3_000);
   });
