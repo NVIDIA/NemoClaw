@@ -72,7 +72,9 @@ function writeFixture(root: string, relativePath: string, contents: string) {
 
 function createGitFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-test-"));
-  tmpRoots.push(root);
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-test-remote-"));
+  tmpRoots.push(root, remote);
+  git(remote, ["init", "--bare"]);
   git(root, ["init", "-b", "main"]);
   writeFixture(root, "Dockerfile.base", "FROM node:22\n");
   writeFixture(root, "agents/langchain-deepagents-code/Dockerfile.base", "FROM python:3.13\n");
@@ -81,7 +83,9 @@ function createGitFixture() {
   writeFixture(root, "src/other.ts", "export const value = 1;\n");
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "initial"]);
-  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  git(root, ["remote", "add", "origin", remote]);
+  git(root, ["push", "-u", "origin", "main"]);
+  git(remote, ["symbolic-ref", "HEAD", "refs/heads/main"]);
   return root;
 }
 
@@ -99,6 +103,26 @@ function createGitFixtureWithRemoteOnlyBaseRef() {
   git(root, ["commit", "-m", "initial"]);
   git(root, ["remote", "add", "origin", remote]);
   git(root, ["push", "origin", "main"]);
+  return root;
+}
+
+function createBaseDriftFixture(featureChangesBase = false) {
+  const root = createGitFixtureWithRemoteOnlyBaseRef();
+  git(root, ["switch", "-c", "feature"]);
+  writeFixture(root, "src/other.ts", "export const value = 2;\n");
+  if (featureChangesBase) {
+    writeFixture(root, "Dockerfile.base", "FROM node:22\nRUN echo feature\n");
+  }
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "feature changes"]);
+  git(root, ["push", "-u", "origin", "feature"]);
+
+  git(root, ["switch", "main"]);
+  writeFixture(root, "Dockerfile.base", "FROM node:24\n");
+  git(root, ["add", "Dockerfile.base"]);
+  git(root, ["commit", "-m", "main base change"]);
+  git(root, ["push", "origin", "main"]);
+  git(root, ["switch", "feature"]);
   return root;
 }
 
@@ -226,7 +250,7 @@ describe("sandbox base-image source identity", () => {
     tmpRoots.push(remote);
     const root = createGitFixture();
     git(remote, ["init", "--bare"]);
-    git(root, ["remote", "add", "origin", remote]);
+    git(root, ["remote", "set-url", "origin", remote]);
     git(root, ["tag", "v0.0.41"]);
     writeFixture(root, "docs/release.md", "release 42\n");
     git(root, ["add", "docs/release.md"]);
@@ -271,6 +295,68 @@ describe("sandbox base-image source identity", () => {
     git(root, ["commit", "-m", "change remediation helper"]);
 
     expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("ignores base-image inputs changed only on the base branch (#7140)", () => {
+    const root = createBaseDriftFixture();
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(false);
+  });
+
+  it("refreshes a stale base ref before classifying inherited main changes (#7140)", () => {
+    const root = createGitFixtureWithRemoteOnlyBaseRef();
+    const initialSha = git(root, ["rev-parse", "HEAD"]);
+    writeFixture(root, "Dockerfile.base", "FROM node:24\n");
+    git(root, ["add", "Dockerfile.base"]);
+    git(root, ["commit", "-m", "main base change"]);
+    const currentMainSha = git(root, ["rev-parse", "HEAD"]);
+    git(root, ["push", "origin", "main"]);
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 2;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "feature source change"]);
+    git(root, ["update-ref", "refs/remotes/origin/main", initialSha]);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(false);
+    expect(git(root, ["rev-parse", "origin/main"])).toBe(currentMainSha);
+  });
+
+  it("detects feature-owned base changes when the base branch also changed (#7140)", () => {
+    const root = createBaseDriftFixture(true);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("recovers detached shallow history before comparing base-only drift (#7140)", () => {
+    const source = createBaseDriftFixture();
+    const remote = git(source, ["remote", "get-url", "origin"]);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-shallow-"));
+    tmpRoots.push(root);
+    fs.rmSync(root, { recursive: true });
+    git(os.tmpdir(), ["clone", "--depth=1", "--branch", "feature", `file://${remote}`, root]);
+    git(root, ["checkout", "--detach"]);
+    expect(git(root, ["rev-parse", "--is-shallow-repository"])).toBe("true");
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(false);
+    expect(git(root, ["rev-parse", "--is-shallow-repository"])).toBe("false");
+  });
+
+  it("fails closed when the base branch has no common ancestor (#7140)", () => {
+    const root = createGitFixtureWithRemoteOnlyBaseRef();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 2;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "feature change"]);
+    git(root, ["switch", "--orphan", "replacement"]);
+    git(root, ["rm", "-rf", "--ignore-unmatch", "."]);
+    writeFixture(root, "Dockerfile.base", "FROM node:24\n");
+    writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.7.24\n");
+    git(root, ["add", "."]);
+    git(root, ["commit", "-m", "replace main history"]);
+    git(root, ["push", "--force", "origin", "HEAD:main"]);
+    git(root, ["switch", "feature"]);
+
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
   });
 

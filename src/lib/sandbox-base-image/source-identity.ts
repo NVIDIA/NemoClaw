@@ -280,33 +280,47 @@ function gitRefExists(rootDir: string, ref: string, env: NodeJS.ProcessEnv): boo
   return gitStatus(rootDir, ["rev-parse", "--verify", `${ref}^{commit}`], env) === 0;
 }
 
+function gitOutput(rootDir: string, args: string[], env: NodeJS.ProcessEnv): string | null {
+  const result = spawnSync("git", ["-C", rootDir, ...args], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+    env,
+  });
+  return result.status === 0 ? String(result.stdout).trim() : null;
+}
+
 function gitFetchRemoteBranch(
   rootDir: string,
   remote: string,
   branch: string,
   localRef: string,
   env: NodeJS.ProcessEnv,
-): void {
+): boolean {
   const normalizedBranch = String(branch || "").trim();
-  if (!normalizedBranch) return;
-  spawnSync(
-    "git",
-    [
-      "-C",
-      rootDir,
-      "fetch",
-      "--no-tags",
-      "--depth=1",
-      remote,
-      `+refs/heads/${normalizedBranch}:${localRef}`,
-    ],
-    {
-      encoding: "utf-8",
-      stdio: "ignore",
-      timeout: 30_000,
-      env: { ...env, GIT_TERMINAL_PROMPT: "0" },
-    },
-  );
+  if (!normalizedBranch) return false;
+
+  const shallowState = gitOutput(rootDir, ["rev-parse", "--is-shallow-repository"], env);
+  if (shallowState !== "true" && shallowState !== "false") return false;
+
+  const args = ["-C", rootDir, "fetch", "--no-tags"];
+  if (shallowState === "true") {
+    const headSha = gitOutput(rootDir, ["rev-parse", "--verify", "HEAD^{commit}"], env);
+    if (!headSha) return false;
+    args.push("--unshallow");
+    args.push(remote, headSha);
+  } else {
+    args.push(remote);
+  }
+  args.push(`+refs/heads/${normalizedBranch}:${localRef}`);
+
+  const result = spawnSync("git", args, {
+    encoding: "utf-8",
+    stdio: "ignore",
+    timeout: 30_000,
+    env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+  });
+  return result.status === 0;
 }
 
 function normalizeBaseBranch(value: string | null | undefined): string {
@@ -370,14 +384,21 @@ export function baseImageInputsChangedSinceMain(
 
   const baseBranch = normalizeBaseBranch(env.GITHUB_BASE_REF);
   const baseRemoteRef = `origin/${baseBranch}`;
-  if (!gitRefExists(rootDir, baseRemoteRef, env)) {
-    gitFetchRemoteBranch(rootDir, "origin", baseBranch, `refs/remotes/origin/${baseBranch}`, env);
-  }
+  const fetched = gitFetchRemoteBranch(
+    rootDir,
+    "origin",
+    baseBranch,
+    `refs/remotes/origin/${baseBranch}`,
+    env,
+  );
+  if (!fetched) return true;
 
   const candidates = [baseRemoteRef, "origin/main", "upstream/main", "main"];
   for (const ref of Array.from(new Set(candidates))) {
     if (!gitRefExists(rootDir, ref, env)) continue;
-    const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", ref, "HEAD"], env, inputPaths);
+    const mergeBase = gitOutput(rootDir, ["merge-base", ref, "HEAD"], env);
+    if (!mergeBase) return true;
+    const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", mergeBase, "HEAD"], env, inputPaths);
     return diff ?? true;
   }
   // A repository with no usable comparison ref cannot prove that its base
