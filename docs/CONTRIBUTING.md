@@ -138,7 +138,7 @@ The contributor who changes any platform asset owns the corresponding pin update
 First commit the updated assets, starter-prompt behavior, and related tests without changing the existing URLs, `promptAssetRevision`, or pinned SHA-256 values.
 Then use that commit's SHA in every platform-asset URL, update `promptAssetRevision` and every pinned SHA-256 value in `test/starter-prompt-docs.test.ts`, and commit the repin as one atomic follow-up.
 Never mix asset URLs from different revisions or point an asset URL at a commit that predates its content.
-The exact-revision test compares each local asset byte-for-byte with its Git blob at `promptAssetRevision`, so the intermediate content commit intentionally fails until the atomic repin follow-up points every URL, revision, and digest at that content commit.
+The asset test compares each local file byte-for-byte with its Git blob at `promptAssetRevision`, so the intermediate content commit intentionally fails until the atomic repin follow-up points every URL, revision, and digest at that content commit.
 Updating only a local digest does not prove what the pinned revision contains.
 Downstream consumers can pin the source with a raw URL such as
 `https://raw.githubusercontent.com/NVIDIA/NemoClaw/<commit-sha>/docs/resources/starter-prompt.md`.
@@ -203,6 +203,16 @@ Commit and push normally so the Git hooks run, then run:
 npm run docs
 ```
 
+After the documentation changes and build are complete, run a documentation writer subagent.
+Give it the changed pages, the documentation intent, and the build evidence.
+Ask it to verify the changes against this guide and `WRITING.md`.
+The review must cover terminology, structure, voice, and code-sample presentation.
+Apply any required corrections.
+Rerun the applicable documentation validation.
+Commit the reviewed changes.
+Then complete the pull-request template's Documentation Writer Review receipt with the reviewed head SHA.
+Rerun the review after any later commit because the receipt is tied to the exact pull-request head.
+
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
 If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run check:diff` once to reproduce those checks before opening the PR.
 The command uses `origin/main`, so refresh it with `git fetch origin main` first.
@@ -254,6 +264,9 @@ position: 1
 ## Style Guide
 
 Write like you are explaining something to a colleague. Be direct, specific, and concise.
+Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
+The guide defines shared terms, sentence rules, rewrite examples, and review policy.
+The rules below add documentation-specific voice, formatting, and product-name conventions.
 
 ### Voice and Tone
 

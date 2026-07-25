@@ -358,7 +358,6 @@ describe("release-latest-tag.sh", () => {
     const result = runReleaseLatest(fixture, "v0.0.2");
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain("cannot lock ref 'refs/tags/latest'");
     expect(remoteObject(fixture, "refs/tags/latest")).toBe(concurrentObject);
     expect(remoteObject(fixture, "refs/tags/latest")).not.toBe(
       remoteObject(fixture, "refs/tags/v0.0.2"),

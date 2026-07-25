@@ -133,6 +133,10 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+        "  printf \"\\033[32m✓ Active gateway set to 'nemoclaw'\\033[0m\\n\"",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
         "  echo",
@@ -168,6 +172,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(r.out.trim().endsWith("}")).toBe(true);
     expect(r.out).not.toContain("Sandbox: ");
     expect(r.out).not.toContain("Nonexistent flag: --json");
+    expect(r.out).not.toContain("Active gateway set");
 
     const parsed = JSON.parse(r.out);
     expect(parsed).toMatchObject({

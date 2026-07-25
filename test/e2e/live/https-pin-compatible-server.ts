@@ -64,7 +64,7 @@ function generateEphemeralTlsMaterial(): { dir: string; cert: Buffer; key: Buffe
       "-out",
       certPath,
     ],
-    { stdio: "ignore" },
+    { killSignal: "SIGKILL", stdio: "ignore", timeout: 15_000 },
   );
   return { dir, cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };
 }

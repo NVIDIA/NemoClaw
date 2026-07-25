@@ -439,7 +439,7 @@ export default function register(api: OpenClawPluginApi): void {
 
   process.stderr.write("\n");
   for (const line of renderBox(bannerLines)) {
-    process.stderr.write(`${line}\n`);
+    process.stderr.write(`[gateway] ${line}\n`);
   }
   process.stderr.write("\n");
 }

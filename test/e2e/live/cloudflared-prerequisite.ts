@@ -1,19 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import YAML from "yaml";
-
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
-const execFileAsync = promisify(execFile);
 const CLOUDLFARED_STEP_NAME = "Install and verify cloudflared prerequisite";
 
 interface CloudflaredPin {
@@ -65,17 +62,29 @@ export function readInferenceRoutingCloudflaredPin(
   };
 }
 
-async function commandOutput(command: string, args: string[]): Promise<string> {
-  const result = await execFileAsync(command, args, {
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024,
-    timeout: 120_000,
+async function commandOutput(
+  host: HostCliClient,
+  command: string,
+  args: string[],
+  artifactName: string,
+): Promise<string> {
+  const result = await host.command(command, args, {
+    artifactName: `inference-routing-cloudflared-${artifactName}`,
+    captureLimitBytes: 4 * 1024 * 1024,
+    cwd: REPO_ROOT,
+    timeoutMs: 120_000,
   });
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `${command} failed while preparing cloudflared: ${result.stderr || result.stdout}`,
+    );
+  }
   return result.stdout;
 }
 
 export async function resolveVerifiedCloudflaredBinary(
   cleanup: Pick<CleanupRegistry, "add">,
+  host: HostCliClient,
 ): Promise<string> {
   const existing = executableOnPath("cloudflared");
   if (existing) return existing;
@@ -92,25 +101,26 @@ export async function resolveVerifiedCloudflaredBinary(
   const url =
     `https://github.com/cloudflare/cloudflared/releases/download/${pin.version}/` +
     "cloudflared-linux-amd64.deb";
-  await commandOutput("curl", [
-    "--fail",
-    "--location",
-    "--proto",
-    "=https",
-    "--proto-redir",
-    "=https",
-    url,
-    "--output",
-    deb,
-  ]);
+  await commandOutput(
+    host,
+    "curl",
+    ["--fail", "--location", "--proto", "=https", "--proto-redir", "=https", url, "--output", deb],
+    "download",
+  );
 
   const actualSha256 = createHash("sha256").update(fs.readFileSync(deb)).digest("hex");
   if (actualSha256 !== pin.debSha256) {
     throw new Error(`cloudflared package SHA256 mismatch: expected ${pin.debSha256}`);
   }
-  const packageName = (await commandOutput("dpkg-deb", ["-f", deb, "Package"])).trim();
-  const version = (await commandOutput("dpkg-deb", ["-f", deb, "Version"])).trim();
-  const architecture = (await commandOutput("dpkg-deb", ["-f", deb, "Architecture"])).trim();
+  const packageName = (
+    await commandOutput(host, "dpkg-deb", ["-f", deb, "Package"], "package-name")
+  ).trim();
+  const version = (
+    await commandOutput(host, "dpkg-deb", ["-f", deb, "Version"], "package-version")
+  ).trim();
+  const architecture = (
+    await commandOutput(host, "dpkg-deb", ["-f", deb, "Architecture"], "package-architecture")
+  ).trim();
   if (packageName !== "cloudflared" || version !== pin.version || architecture !== "amd64") {
     throw new Error(
       `unexpected cloudflared package metadata: package=${packageName} version=${version} architecture=${architecture}`,
@@ -118,10 +128,10 @@ export async function resolveVerifiedCloudflaredBinary(
   }
 
   const extracted = path.join(root, "extracted");
-  await commandOutput("dpkg-deb", ["-x", deb, extracted]);
+  await commandOutput(host, "dpkg-deb", ["-x", deb, extracted], "extract");
   const binary = path.join(extracted, "usr", "bin", "cloudflared");
   fs.accessSync(binary, fs.constants.X_OK);
-  const reportedVersion = await commandOutput(binary, ["--version"]);
+  const reportedVersion = await commandOutput(host, binary, ["--version"], "verify-version");
   if (!reportedVersion.includes(`cloudflared version ${pin.version}`)) {
     throw new Error(`unexpected cloudflared version output: ${reportedVersion.trim()}`);
   }

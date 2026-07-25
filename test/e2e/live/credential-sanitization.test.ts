@@ -289,8 +289,18 @@ async function assertSandboxCredentialBoundary(
 
 runCredentialSanitizationTest(
   "credential sanitization strips migration bundles and keeps sandbox secrets out of agent state",
-  { timeout: INSTALL_TIMEOUT_MS + 10 * 60_000 },
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  {
+    timeout: INSTALL_TIMEOUT_MS + 10 * 60_000,
+    meta: {
+      e2ePhases: [
+        "validate local credential sanitization contracts",
+        "check live credential boundary prerequisites",
+        "install credential-isolated OpenClaw sandbox",
+        "inspect sandbox for credential exposure",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -314,6 +324,7 @@ runCredentialSanitizationTest(
     assertCredentialFieldDetectionContract();
     assertBlueprintDigestContract();
 
+    progress.phase("check live credential boundary prerequisites");
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const docker = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info-credential-sanitization",
@@ -354,6 +365,7 @@ runCredentialSanitizationTest(
 
     await cleanupCredentialSanitizationState(host, home);
 
+    progress.phase("install credential-isolated OpenClaw sandbox");
     const install = await host.command(
       "bash",
       ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -371,6 +383,7 @@ runCredentialSanitizationTest(
     );
     expect(install.exitCode, resultText(install)).toBe(0);
 
+    progress.phase("inspect sandbox for credential exposure");
     const status = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
       artifactName: "nemoclaw-status-credential-sanitization",
       env: testEnv(home),

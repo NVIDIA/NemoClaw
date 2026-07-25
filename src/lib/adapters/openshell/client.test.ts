@@ -5,6 +5,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
@@ -75,6 +76,7 @@ describe("openshell helpers", () => {
       parseVersionFromText("built on 2026.7.1, dcode 0.1.12, dcode 0.2.0", "dcode --version"),
     ).toBe("0.1.12");
     expect(parseVersionFromText("dcode 0.1.12", "/opt/venv/bin/dcode --version")).toBe("0.1.12");
+    expect(parseVersionFromText("OpenClaw 2026.5.27.1", "openclaw --version")).toBeNull();
     expect(parseVersionFromText("no version here")).toBeNull();
   });
 
@@ -134,6 +136,21 @@ describe("openshell helpers", () => {
       }),
     });
     expect(result.status).toBe(0);
+  });
+
+  it("redirects inherited stdout while the JSONL stdout guard is active", async () => {
+    const observedStdio: unknown[] = [];
+    const spawnSyncImpl: OpenshellSpawnSync = (_command, _args, options) => {
+      observedStdio.push(options.stdio);
+      return makeSpawnResult({ status: 0, stdout: "", stderr: "" });
+    };
+
+    runOpenshellCommand("openshell", ["status"], { spawnSyncImpl });
+    await withStdoutRedirectedToStderr(async () => {
+      runOpenshellCommand("openshell", ["status"], { spawnSyncImpl });
+    });
+
+    expect(observedStdio).toEqual(["inherit", ["inherit", process.stderr, "inherit"]]);
   });
 
   it("can replace the parent environment for credential-bearing OpenShell commands", () => {

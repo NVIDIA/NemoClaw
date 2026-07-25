@@ -321,6 +321,7 @@ describe("runtime shared gateway route containment", () => {
         provider: customRoute.provider,
         model: customRoute.model,
         canReuseRecordedRoute: false,
+        onboardEndpointUrl: null,
         getSandboxes: () => [alpha, peer],
         rewriteUrlWithDnsPinning,
         ensureHttpsPinRuntimeAdapter,
@@ -367,6 +368,7 @@ describe("runtime shared gateway route containment", () => {
       provider: "compatible-endpoint",
       model: "custom/model",
       canReuseRecordedRoute: false,
+      onboardEndpointUrl: null,
       getSandboxes: () => [alpha, peer],
       rewriteUrlWithDnsPinning: vi.fn(async (value: unknown) => value as string),
       ensureHttpsPinRuntimeAdapter: vi.fn(async () => ({
@@ -454,6 +456,7 @@ describe("runtime shared gateway route containment", () => {
         provider: "compatible-endpoint",
         model: "custom/model",
         canReuseRecordedRoute: false,
+        onboardEndpointUrl: null,
         getSandboxes: () => [alpha, beta],
         rewriteUrlWithDnsPinning,
         ensureHttpsPinRuntimeAdapter,
