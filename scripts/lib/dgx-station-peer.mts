@@ -7,6 +7,7 @@ import { stationKnownHostsDigest } from "../../src/lib/inference/vllm-station-ss
 
 export const DUAL_STATION_RESUME_SCHEMA_VERSION = 1;
 export const STATION_PREP_REBOOT_REQUIRED_EXIT = 10;
+export const STATION_PREP_LOGIN_REQUIRED_EXIT = 11;
 
 const DIRECT_RAIL_PREFIX_LENGTH = 30;
 const SAFE_TARGET_PATTERN =
@@ -843,11 +844,9 @@ export function prepareDualStationPair(
     ...plan.identity,
   };
   deps.writeResumeState(state);
-  if (options.reuseExistingManagedPair || options.migrateLegacySingleStationHead) {
-    deps.log("Binding the local Station controller account without disrupting managed inference");
-    if (deps.runLocalHelper("--bind-controller") !== 0) {
-      throw new Error("Local DGX Station controller UID binding failed");
-    }
+  deps.log("Binding the local Station controller account to the qualified pair");
+  if (deps.runLocalHelper("--bind-controller") !== 0) {
+    throw new Error("Local DGX Station controller UID binding failed");
   }
   if (options.reuseExistingManagedPair) {
     deps.log("Binding the reciprocal peer controller account without disrupting managed inference");
@@ -880,7 +879,13 @@ export function prepareDualStationPair(
     };
   }
   if (applyStatus !== 0) {
-    throw new Error("Peer DGX Station host preparation failed; refusing single-Station fallback");
+    if (applyStatus !== STATION_PREP_LOGIN_REQUIRED_EXIT) {
+      throw new Error("Peer DGX Station host preparation failed; refusing single-Station fallback");
+    }
+    deps.log("Peer Docker access requires a new login; reopening SSH before verification");
+  }
+  if (deps.runRemoteHelper(binding, "--bind-controller") !== 0) {
+    throw new Error("Peer DGX Station controller UID binding failed");
   }
   if (deps.runRemoteHelper(binding, "--verify") !== 0) {
     throw new Error("Peer DGX Station verification failed; refusing single-Station fallback");

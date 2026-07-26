@@ -83,6 +83,27 @@ main --non-interactive --yes-i-accept-third-party-software
 }
 
 describe("DGX Station controller UID binding", () => {
+  it("keeps ordinary Station verification independent of dual-pair binding", () => {
+    const { home, result, output } = runSourced(`
+require_command() { :; }
+common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+station_uses_factory_runtime() { return 0; }
+verify_dgx_os_runtime_user() { printf 'FACTORY_RUNTIME_VERIFIED\\n'; }
+verify_dual_station_controller_uid_binding() {
+  printf 'UNEXPECTED_PAIR_BINDING_CHECK\\n'
+  return 1
+}
+run_verify
+`);
+    try {
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("FACTORY_RUNTIME_VERIFIED");
+      expect(output).not.toContain("UNEXPECTED_PAIR_BINDING_CHECK");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("runs binding-only preparation without workload inspection and retains sudo acquisition", () => {
     const { home, result, output } = runSourced(`
 require_command() { :; }

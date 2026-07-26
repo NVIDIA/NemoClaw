@@ -1152,17 +1152,25 @@ host_docker_sudo() {
 }
 
 query_host_docker() {
-  local output
+  local output allow_sudo=0
   DOCKER_QUERY_OUTPUT=""
   command -v docker >/dev/null 2>&1 || return 2
   if output="$(host_docker "$@" 2>/dev/null)"; then
     DOCKER_QUERY_OUTPUT="$output"
     return 0
   fi
-  if [[ "$MODE" == "--apply" ]] && output="$(host_docker_sudo "$@" 2>/dev/null)"; then
+  if [[ "$MODE" == "--apply" ||
+    ("$MODE" == "--check" && "${NEMOCLAW_STATION_PREP_SUDO_NONINTERACTIVE:-0}" == "1") ]]; then
+    allow_sudo=1
+  fi
+  if ((allow_sudo == 1)) && output="$(host_docker_sudo "$@" 2>/dev/null)"; then
     DOCKER_QUERY_OUTPUT="$output"
     if ((DOCKER_QUERY_USES_SUDO == 0)); then
-      info "docker_access=sudo_until_group_membership_is_active"
+      if [[ "$MODE" == "--check" ]]; then
+        info "docker_access=sudo_for_noninteractive_read_only_check"
+      else
+        info "docker_access=sudo_until_group_membership_is_active"
+      fi
       DOCKER_QUERY_USES_SUDO=1
     fi
     return 0
@@ -2465,7 +2473,6 @@ verify_apply_state() {
   nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all' || fatal "CDI verification failed"
   sudo docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1 || fatal "Digest-pinned acceptance image is missing"
   verify_docker_container_baseline
-  verify_dual_station_controller_uid_binding
   info "STATION_HOST_READY"
 }
 
@@ -2538,7 +2545,6 @@ verify_host() {
   run_cdi_test_user || fatal "CDI verification did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
   run_gpus_test_user || fatal "Docker --gpus verification did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
   verify_docker_container_baseline
-  verify_dual_station_controller_uid_binding
   info "docker=$(docker version --format '{{.Server.Version}}') expected_docker=${DOCKER_VERSION} toolkit=$(nvidia-ctk --version | head -n1) expected_toolkit=${TOOLKIT_VERSION}"
   info "STATION_HOST_READY"
 }
@@ -2653,7 +2659,6 @@ run_verify() {
       verify_cdi_refresh_lifecycle
     fi
     verify_dgx_os_runtime_user
-    verify_dual_station_controller_uid_binding
     return 0
   fi
   warn_retained_package_versions

@@ -340,9 +340,8 @@ describe("deterministic dual-DGX Station peer discovery", () => {
   it("accepts one pretrusted reciprocal peer and runs preparation in order", () => {
     const harness = new PreparationHarness();
     trustFirstRail(harness);
-
+    harness.remoteHelperStatus.set("--apply", 11);
     const result = prepareDualStationPair(preparationOptions(), harness.deps);
-
     expect(result.kind).toBe("ready");
     expect(result.kind === "ready" && result.peerTarget).toBe("10.10.0.2");
     expect(result.kind === "ready" && result.binding).toEqual(sshBinding());
@@ -353,20 +352,23 @@ describe("deterministic dual-DGX Station peer discovery", () => {
     expect(harness.calls.indexOf("state:write:remote-preparation")).toBeLessThan(
       harness.calls.indexOf("remote:10.10.0.2:--check"),
     );
+    expect(harness.calls).toContain("local:--bind-controller");
     expect(harness.calls.filter((call) => call.startsWith("remote:"))).toEqual([
       "remote:10.10.0.2:--check",
       "remote:10.10.0.2:--apply",
+      "remote:10.10.0.2:--bind-controller",
       "remote:10.10.0.2:--verify",
     ]);
+    expect(harness.calls).toContain(
+      "log:Peer Docker access requires a new login; reopening SSH before verification",
+    );
   });
-
   it("accepts two rail aliases only when their exact SSH identity is coherent", () => {
     const coherent = new PreparationHarness();
     coherent.trusted.set("10.10.0.2", sshBinding("10.10.0.2"));
     coherent.trusted.set("10.10.0.6", sshBinding("10.10.0.6"));
     expect(prepareDualStationPair(preparationOptions(), coherent.deps).kind).toBe("ready");
     expect(coherent.calls.filter((call) => call.startsWith("probe:peer:"))).toHaveLength(1);
-
     const ambiguous = new PreparationHarness();
     ambiguous.trusted.set("10.10.0.2", sshBinding("10.10.0.2"));
     ambiguous.trusted.set("10.10.0.6", sshBinding("10.10.0.6", "AAAAC3NzaChangedKey"));
@@ -571,7 +573,6 @@ describe("dual-DGX Station reboot resume and reuse", () => {
     const first = new PreparationHarness();
     trustFirstRail(first);
     first.remoteHelperStatus.set("--apply", 10);
-
     const interrupted = prepareDualStationPair(preparationOptions(), first.deps);
     expect(interrupted.kind).toBe("reboot-required");
     expect(interrupted.kind === "reboot-required" && interrupted.binding).toEqual(sshBinding());
@@ -579,7 +580,6 @@ describe("dual-DGX Station reboot resume and reuse", () => {
     expect(first.resume?.helperSha256).toBe(HELPER_SHA256);
     expect(first.calls.some((call) => call.endsWith(":--verify"))).toBe(true);
     expect(first.calls).not.toContain("remote:10.10.0.2:--verify");
-
     const resumed = new PreparationHarness();
     resumed.resume = structuredClone(first.resume);
     trustFirstRail(resumed);
@@ -588,10 +588,10 @@ describe("dual-DGX Station reboot resume and reuse", () => {
     expect(resumed.calls.filter((call) => call.startsWith("remote:"))).toEqual([
       "remote:10.10.0.2:--check",
       "remote:10.10.0.2:--apply",
+      "remote:10.10.0.2:--bind-controller",
       "remote:10.10.0.2:--verify",
     ]);
   });
-
   it("rejects revision, helper, host-key, GPU, and rail substitution on resume", () => {
     const scenarios: Array<{
       name: string;
@@ -685,7 +685,6 @@ describe("dual-DGX Station reboot resume and reuse", () => {
   it("binds only the active local controller before preparing a peer for legacy migration", () => {
     const harness = new PreparationHarness();
     trustFirstRail(harness);
-
     expect(
       prepareDualStationPair(
         { ...preparationOptions(), migrateLegacySingleStationHead: true },
@@ -698,6 +697,7 @@ describe("dual-DGX Station reboot resume and reuse", () => {
     expect(harness.calls.filter((call) => call.startsWith("remote:"))).toEqual([
       "remote:10.10.0.2:--check",
       "remote:10.10.0.2:--apply",
+      "remote:10.10.0.2:--bind-controller",
       "remote:10.10.0.2:--verify",
     ]);
   });
