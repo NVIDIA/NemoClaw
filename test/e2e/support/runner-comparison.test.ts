@@ -19,6 +19,7 @@ import {
   RUNNER_COMPARISON_LEDGER_FILE,
   RUNNER_COMPARISON_MAX_SAMPLES,
   RUNNER_COMPARISON_SUMMARY_FILE,
+  RUNNER_COMPARISON_SUMMARY_MAX_BYTES,
   type RunnerComparisonSample,
   type RunnerComparisonSampleV1,
   type RunnerComparisonSummary,
@@ -694,7 +695,17 @@ describe("runner comparison summary", () => {
           maximumContainerMemoryBytes: 900,
           maximumContainerCpuPercent: 80,
         },
-        largestProcess: { class: "docker-buildkit", rssKb: 999 },
+        largestProcess: {
+          class: "docker-buildkit",
+          rssKb: 999,
+          breakdown: {
+            vmRssKb: 999,
+            rssAnonKb: 100,
+            rssFileKb: 849,
+            rssShmemKb: 50,
+            vmSwapKb: 10,
+          },
+        },
       }),
       currentSample({
         sequence: 3,
@@ -719,7 +730,17 @@ describe("runner comparison summary", () => {
           maximumContainerMemoryBytes: 500,
           maximumContainerCpuPercent: 10,
         },
-        largestProcess: { class: "openshell", rssKb: 500 },
+        largestProcess: {
+          class: "docker-buildkit",
+          rssKb: 500,
+          breakdown: {
+            vmRssKb: 500,
+            rssAnonKb: 400,
+            rssFileKb: 90,
+            rssShmemKb: 10,
+            vmSwapKb: 200,
+          },
+        },
       }),
       currentSample({
         sequence: 4,
@@ -751,6 +772,13 @@ describe("runner comparison summary", () => {
       class: "docker-buildkit",
       rssKb: 999,
       phase: "build",
+      breakdown: {
+        vmRssKb: 999,
+        rssAnonKb: 100,
+        rssFileKb: 849,
+        rssShmemKb: 50,
+        vmSwapKb: 10,
+      },
     });
   });
 
@@ -914,6 +942,140 @@ describe("runner comparison summary", () => {
     expect(() =>
       parseRunnerComparisonSummary(`${JSON.stringify(poisonedGrowth, null, 2)}\n`),
     ).toThrow("requires both endpoint");
+  });
+
+  it("preserves historical summary shape and carries one co-sampled breakdown", () => {
+    const initialize = currentSample();
+    const historicalPhase = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "build",
+      at: "2026-07-22T10:01:00.000Z",
+      largestProcess: { class: "docker-buildkit", rssKb: 1000 },
+    });
+    const finalize = currentSample({
+      sequence: 2,
+      kind: "finalize",
+      at: "2026-07-22T10:02:00.000Z",
+      cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
+    });
+    const historical = expectCurrentSummary(
+      summarizeRunnerComparison([initialize, historicalPhase, finalize]),
+    );
+    const historicalText = renderRunnerComparisonSummary(historical);
+    expect(historical.largestProcess).not.toHaveProperty("breakdown");
+    expect(renderRunnerComparisonSummary(parseRunnerComparisonSummary(historicalText))).toBe(
+      historicalText,
+    );
+
+    const highTotal = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "export",
+      at: "2026-07-22T10:00:30.000Z",
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: processBreakdown({
+          rssAnonKb: 100,
+          rssFileKb: 850,
+          rssShmemKb: 50,
+        }),
+      },
+    });
+    const lowerTotalWithHigherAnon = currentSample({
+      sequence: 2,
+      kind: "periodic",
+      phase: "export",
+      at: "2026-07-22T10:01:00.000Z",
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 900,
+        breakdown: {
+          vmRssKb: 900,
+          rssAnonKb: 800,
+          rssFileKb: 90,
+          rssShmemKb: 10,
+          vmSwapKb: 20,
+        },
+      },
+    });
+    const enrichedFinalize = currentSample({
+      sequence: 3,
+      kind: "finalize",
+      at: "2026-07-22T10:02:00.000Z",
+      cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
+    });
+    const enriched = expectCurrentSummary(
+      summarizeRunnerComparison([
+        initialize,
+        highTotal,
+        lowerTotalWithHigherAnon,
+        enrichedFinalize,
+      ]),
+    );
+    expect(enriched.largestProcess).toEqual({
+      class: "docker-buildkit",
+      rssKb: 1000,
+      phase: "export",
+      breakdown: {
+        vmRssKb: 1000,
+        rssAnonKb: 100,
+        rssFileKb: 850,
+        rssShmemKb: 50,
+        vmSwapKb: 10,
+      },
+    });
+    const enrichedText = renderRunnerComparisonSummary(enriched);
+    expect(Buffer.byteLength(enrichedText)).toBeLessThanOrEqual(
+      RUNNER_COMPARISON_SUMMARY_MAX_BYTES,
+    );
+    expect(parseRunnerComparisonSummary(enrichedText)).toEqual(enriched);
+
+    const poisoned = structuredClone(enriched) as RunnerComparisonSummary & {
+      largestProcess: RunnerComparisonSummary["largestProcess"] & {
+        breakdown: ProcessMemoryBreakdown & { token: string };
+      };
+    };
+    if (poisoned.largestProcess.breakdown === null) {
+      throw new Error("expected an enriched summary");
+    }
+    poisoned.largestProcess.breakdown.token = "ghp_summary_secret";
+    expect(() => parseRunnerComparisonSummary(`${JSON.stringify(poisoned, null, 2)}\n`)).toThrow(
+      "unsupported shape",
+    );
+  });
+
+  it("preserves a null breakdown when procfs details were unavailable", () => {
+    const summary = expectCurrentSummary(
+      summarizeRunnerComparison([
+        currentSample(),
+        currentSample({
+          sequence: 1,
+          kind: "periodic",
+          phase: "export",
+          at: "2026-07-22T10:01:00.000Z",
+          largestProcess: {
+            class: "docker-buildkit",
+            rssKb: 1000,
+            breakdown: null,
+          },
+        }),
+        currentSample({
+          sequence: 2,
+          kind: "finalize",
+          at: "2026-07-22T10:02:00.000Z",
+          cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
+        }),
+      ]),
+    );
+    expect(summary.largestProcess.breakdown).toBeNull();
+  });
+
+  it("enforces the 8192-byte summary limit before parsing attacker-controlled JSON", () => {
+    expect(() =>
+      parseRunnerComparisonSummary(" ".repeat(RUNNER_COMPARISON_SUMMARY_MAX_BYTES + 1)),
+    ).toThrow("exceeds its size bound");
   });
 });
 
