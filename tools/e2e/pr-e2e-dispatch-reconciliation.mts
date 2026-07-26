@@ -11,6 +11,7 @@ import {
   type DispatchFailureKind,
   type DispatchNotObservedReceipt,
   dispatchNotObservedReceiptMarker,
+  MAX_DISPATCH_RECONCILIATION_WINDOW_MS,
 } from "./pr-e2e-retry-receipt.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
@@ -21,7 +22,6 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_CLOCK_SKEW_MS = 10_000;
 const DEFAULT_DISPATCH_TIMEOUT_MS = 10_000;
 const DEFAULT_API_TIMEOUT_MS = 5_000;
-const MAX_RECONCILIATION_WINDOW_MS = 120_000;
 const MAX_DISPATCH_TIMEOUT_MS = 30_000;
 const MAX_API_TIMEOUT_MS = 10_000;
 const MAX_DISPATCH_AND_RECONCILIATION_BUDGET_MS = 65_000;
@@ -185,7 +185,7 @@ function assertTimingOptions(options: {
   if (
     !positiveSafeInteger(options.sentAtMs) ||
     !positiveSafeInteger(options.reconciliationWindowMs) ||
-    options.reconciliationWindowMs > MAX_RECONCILIATION_WINDOW_MS ||
+    options.reconciliationWindowMs > MAX_DISPATCH_RECONCILIATION_WINDOW_MS ||
     !positiveSafeInteger(options.pollIntervalMs) ||
     options.pollIntervalMs > options.reconciliationWindowMs ||
     !Number.isSafeInteger(options.clockSkewMs) ||

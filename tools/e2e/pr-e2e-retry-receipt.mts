@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isValidGithubRequestId } from "../advisors/github.mts";
+
 const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
 const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
 const DISPATCH_RECEIPT_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-dispatch:v1:";
 const DISPATCH_RECEIPT_MARKER_SUFFIX = " -->";
 const MAX_DISPATCH_RECEIPT_BYTES = 1024;
-const MAX_DISPATCH_RECONCILIATION_WINDOW_MS = 120_000;
+export const MAX_DISPATCH_RECONCILIATION_WINDOW_MS = 120_000;
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const CORRELATION_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
-const GITHUB_REQUEST_ID_PATTERN = /^[A-Za-z0-9:-]{1,128}$/u;
 const RETRYABLE_FAILURE_REASONS = new Set([
   "prerequisite-ci",
   "child-cancelled",
@@ -101,8 +102,7 @@ function validateDispatchReceipt(value: unknown): DispatchNotObservedReceipt {
       (!Number.isSafeInteger(receipt.status) ||
         (receipt.status as number) < 100 ||
         (receipt.status as number) > 599)) ||
-    (receipt.requestId !== undefined &&
-      (typeof receipt.requestId !== "string" || !GITHUB_REQUEST_ID_PATTERN.test(receipt.requestId)))
+    (receipt.requestId !== undefined && !isValidGithubRequestId(receipt.requestId))
   ) {
     throw new Error("dispatch receipt fields are invalid");
   }
