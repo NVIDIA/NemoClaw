@@ -734,6 +734,23 @@ describe("rebuild destroy phase", () => {
     expect(currentMs).toBeLessThanOrEqual(15_000);
   });
 
+  it("recognizes the exact structured OpenShell sandbox-absence response (#7062)", () => {
+    const log = vi.fn();
+
+    expect(
+      waitForRebuildDeleteAbsence("alpha", "nemoclaw", log, {
+        captureSandboxGet: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error:   × code: 'Some requested entity was not found', message: \"sandbox not found\"",
+        })),
+      }),
+    ).toBe(true);
+
+    expect(log).toHaveBeenCalledWith("Delete convergence probe 1: status=1, state=absent");
+  });
+
   it.each([
     ["another sandbox", { status: 1, stderr: "sandbox beta not found" }],
     [
@@ -743,6 +760,22 @@ describe("rebuild destroy phase", () => {
     [
       "a missing provider",
       { status: 1, stderr: 'status: NotFound, message: "provider alpha-mcp-github not found"' },
+    ],
+    [
+      "a structured missing gateway",
+      {
+        status: 1,
+        stderr:
+          "Error:   × code: 'Some requested entity was not found', message: \"gateway not found\"",
+      },
+    ],
+    [
+      "a structured missing provider",
+      {
+        status: 1,
+        stderr:
+          "Error:   × code: 'Some requested entity was not found', message: \"provider not found\"",
+      },
     ],
     [
       "mixed gateway and sandbox diagnostics",
