@@ -807,7 +807,7 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("models completed trust transition by rejecting the legacy installer template (#7555)", () => {
+  it("models completed trust transition by rejecting the legacy installer template (#7451)", () => {
     const legacy = runFixture(
       "installer-homebrew-trust-transition-complete-current",
       undefined,
