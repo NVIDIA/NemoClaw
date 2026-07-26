@@ -71,13 +71,14 @@ describe("assessHost Podman docker-compat detection (#7320)", () => {
     expect(result.isUnsupportedRuntime).toBe(true);
   });
 
-  it("keeps real Docker classified as supported (no Podman false positive)", () => {
+  it("keeps Docker Engine supported when ProductLicense reports Apache-2.0", () => {
     const realDockerInfo = JSON.stringify({
       ServerVersion: "29.6.2",
       OperatingSystem: "Ubuntu 24.04.3 LTS",
       OSType: "linux",
       Architecture: "x86_64",
       DefaultRuntime: "runc",
+      ProductLicense: "Apache-2.0",
       DockerRootDir: "/var/lib/docker",
       DefaultAddressPools: [{ Base: "192.168.240.0/20", Size: 24 }],
       ClientInfo: { Platform: { Name: "Docker Engine - Community" } },

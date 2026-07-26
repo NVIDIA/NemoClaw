@@ -260,11 +260,11 @@ function dockerVersionReportsPodman(versionOutput = ""): boolean {
 }
 
 /**
- * Backstop Podman signal from `docker info --format '{{json .}}'` when the
- * `docker version` probe is unavailable: Podman's docker-compat `/info` reports
- * `ProductLicense: "Apache-2.0"` (Podman is Apache-2.0 licensed), whereas Docker
- * Engine omits `ProductLicense` (Docker CE) or reports a Docker license string.
- * Observed Apache-2.0 on the reporter-equivalent Podman machine (#7320).
+ * Use `ProductLicense: "Apache-2.0"` as a Podman backstop only when the
+ * authoritative `docker version` probe is unavailable. Podman's docker-compat
+ * `/info` reports this value, but Docker Engine can also report it. Without
+ * version evidence, preflight conservatively rejects that ambiguous runtime
+ * before the Docker-driver path (#7320).
  */
 function dockerInfoReportsPodmanCompat(infoOutput = ""): boolean {
   const text = String(infoOutput || "").trim();
@@ -287,10 +287,10 @@ function dockerInfoReportsPodmanCompat(infoOutput = ""): boolean {
  * `EADDRNOTAVAIL` (#7320).
  */
 function isDockerCompatPodman(dockerInfoOutput = "", dockerVersionOutput = ""): boolean {
-  return (
-    dockerVersionReportsPodman(dockerVersionOutput) ||
-    dockerInfoReportsPodmanCompat(dockerInfoOutput)
-  );
+  if (String(dockerVersionOutput || "").trim()) {
+    return dockerVersionReportsPodman(dockerVersionOutput);
+  }
+  return dockerInfoReportsPodmanCompat(dockerInfoOutput);
 }
 
 function parseDockerCgroupVersion(info = ""): "v1" | "v2" | "unknown" {
