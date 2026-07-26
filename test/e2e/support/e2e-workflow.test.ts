@@ -534,6 +534,14 @@ describe("e2e workflow boundary", () => {
         selectedFreeStandingJobs: ["network-policy"],
         registryTargets: ["ubuntu-repo-cloud-openclaw"],
       });
+      for (const selectors of [{ jobs: "hermes-dashboard" }, { targets: "hermes-dashboard" }]) {
+        expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
+          valid: true,
+          liveTargetsRun: false,
+          selectedFreeStandingJobs: ["hermes-e2e"],
+          registryTargets: [],
+        });
+      }
     },
   );
 

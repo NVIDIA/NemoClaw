@@ -44,6 +44,7 @@ import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-wo
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
+import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
@@ -180,14 +181,12 @@ const RUNNER_ROUTING_SCRIPT = [
   "  fi",
   '  larger_runner="${LARGER_RUNNER_LABEL}"',
   "fi",
-  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-dashboard":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}\')"',
+  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}\')"',
   'printf \'runner_routing=%s\\n\' "${runner_routing}" >> "${GITHUB_OUTPUT}"',
 ].join("\n");
 const ROUTED_JOB_RUNNER_EXPRESSIONS = {
   "common-egress-agent":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}",
-  "hermes-dashboard":
-    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-dashboard'] }}",
   "hermes-discord":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}",
   "hermes-e2e": "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}",
@@ -629,7 +628,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
     errors.push("Invalid jobs input");
   }
   if (jobs && SELECTOR_PATTERN.test(jobs)) {
-    for (const job of splitSelector(jobs)) {
+    for (const job of normalizeE2eSelectorIds(splitSelector(jobs))) {
       if (!freeStandingJobIds.includes(job)) {
         errors.push(`Unknown free-standing E2E job: ${job}`);
       }
@@ -658,9 +657,9 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
     };
   }
 
-  const selectedFreeStandingJobs = new Set(splitSelector(jobs));
+  const selectedFreeStandingJobs = new Set(normalizeE2eSelectorIds(splitSelector(jobs)));
   const registryTargets: string[] = [];
-  for (const target of splitSelector(targets)) {
+  for (const target of normalizeE2eSelectorIds(splitSelector(targets))) {
     const job = freeStandingTargetToJob.get(target);
     if (job) selectedFreeStandingJobs.add(target);
     else registryTargets.push(target);
@@ -4843,6 +4842,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/report-e2e-results.mts")
       ) {
         errors.push("report-to-pr report helper checkout must sparse-checkout the report helper");
+      }
+      if (
+        !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/selector-aliases.mts")
+      ) {
+        errors.push("report-to-pr report helper checkout must sparse-checkout selector aliases");
       }
       const reportStepIndex = reportSteps.findIndex(
         (step) => asRecord(step).name === "Post E2E target results to PR",
