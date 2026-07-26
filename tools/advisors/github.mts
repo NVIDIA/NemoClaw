@@ -25,6 +25,10 @@ export type GitHubApiFailureKind = "http" | "decode";
 const MAX_GITHUB_RESPONSE_EXCERPT_CHARS = 512;
 const GITHUB_REQUEST_ID_PATTERN = /^[A-Za-z0-9:-]{1,128}$/u;
 
+export function isValidGithubRequestId(value: unknown): value is string {
+  return typeof value === "string" && GITHUB_REQUEST_ID_PATTERN.test(value);
+}
+
 function responseExcerpt(text: string): string {
   const singleLine = text
     .replace(/[\r\n\t]+/gu, " ")
@@ -41,7 +45,7 @@ function responseRequestId(response: Response): string | undefined {
     headers && typeof headers.get === "function"
       ? headers.get("x-github-request-id")?.trim()
       : undefined;
-  return requestId && GITHUB_REQUEST_ID_PATTERN.test(requestId) ? requestId : undefined;
+  return isValidGithubRequestId(requestId) ? requestId : undefined;
 }
 
 export class GitHubApiError extends Error {

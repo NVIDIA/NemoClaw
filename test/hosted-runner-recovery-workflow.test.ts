@@ -9,7 +9,7 @@ const E2E_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const WSL_WORKFLOW_PATH = ".github/workflows/wsl-e2e.yaml";
 const MACOS_WORKFLOW_PATH = ".github/workflows/macos-e2e.yaml";
 const PLATFORM_WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
-const TRUSTED_CHECKOUT = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
+const TRUSTED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TRUSTED_SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const E2E_RUN_NAME =
   "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
