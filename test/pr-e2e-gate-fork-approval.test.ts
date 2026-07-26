@@ -389,7 +389,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(JSON.stringify(pending?.body)).toContain("head repository `contributor/NemoClaw`");
       expect(JSON.stringify(pending?.body)).toContain(`head SHA \`${HEAD_SHA}\``);
       expect(JSON.stringify(pending?.body)).toContain(`base SHA \`${BASE_SHA}\``);
-      expect(JSON.stringify(pending?.body)).toContain("jobs:");
+      expect(JSON.stringify(pending?.body)).toContain("targets:");
       expect(JSON.stringify(pending?.body)).toContain("deterministic plan");
       expect(fs.readFileSync(outputPath, "utf8")).toContain(
         [
