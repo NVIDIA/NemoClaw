@@ -566,7 +566,7 @@ exit 0`,
     }
   });
 
-  it("installs macOS OpenShell through the Homebrew formula without starting the service", () => {
+  it("trusts and installs the verified macOS Homebrew formula without starting the service", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-macos-formula-"));
     try {
       const fakeBin = path.join(tmp, "bin");
@@ -633,6 +633,12 @@ case "$*" in
     printf '%s\\n' ${JSON.stringify(tapRepo)}
     exit 0
     ;;
+  "help trust")
+    exit 0
+    ;;
+  "trust --formula nvidia/openshell/openshell")
+    exit 0
+    ;;
   "list --formula openshell")
     exit 1
     ;;
@@ -679,6 +685,8 @@ exit 1`,
         "tap-info nvidia/openshell",
         "tap-new --no-git nvidia/openshell",
         "--repository nvidia/openshell",
+        "help trust",
+        "trust --formula nvidia/openshell/openshell",
         "list --formula openshell",
         "install --formula nvidia/openshell/openshell",
         "--prefix",

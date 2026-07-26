@@ -690,6 +690,10 @@ install_macos_homebrew_formula() {
   chmod 0644 "$tap_formula_file"
 
   formula_ref="${HOMEBREW_TAP}/${HOMEBREW_FORMULA_NAME}"
+  if brew help trust >/dev/null 2>&1; then
+    brew trust --formula "$formula_ref" \
+      || fail "Homebrew refused to trust the checksum-verified OpenShell formula ${formula_ref}"
+  fi
   if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then
     info "reinstalling OpenShell with Homebrew..."
     brew reinstall --formula "$formula_ref"
