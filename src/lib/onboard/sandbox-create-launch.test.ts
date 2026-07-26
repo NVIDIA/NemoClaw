@@ -461,6 +461,49 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(openshellShellCommand).not.toHaveBeenCalled();
   });
 
+  it("retries a generated Hermes build cleanly after a required BuildKit failure (#7140)", async () => {
+    const buildCtx = createTrustedBuildContext();
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+    const buildImage = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    const openshellShellCommand = vi.fn((args: string[]) => args.join(" "));
+    const input = {
+      agent: { name: "hermes" } as any,
+      chatUiUrl: "",
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand,
+      sandboxName: "demo",
+      buildEnv: () => ({}),
+      prebuild: {
+        buildCtx,
+        buildId: "build-123",
+        dockerDriverGateway: true,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        buildImage,
+        inspectImageId: () => IMAGE_ID,
+        log: vi.fn(),
+        origin: "generated" as const,
+      },
+    };
+
+    await expect(prepareSandboxCreateLaunchWithPrebuild(input)).rejects.toThrow(
+      /Local BuildKit is required.*local build failed \(exit 1\)/,
+    );
+    expect(openshellShellCommand).not.toHaveBeenCalled();
+
+    const retry = await prepareSandboxCreateLaunchWithPrebuild(input);
+    expect(buildImage).toHaveBeenCalledTimes(2);
+    expect(openshellShellCommand).toHaveBeenCalledOnce();
+    expect(retry.prebuild.imageRef).toBe("nemoclaw-sandbox-local:demo-build-123");
+    expect(retry.createCommand).toContain(
+      "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
+    );
+  });
+
   it.each([
     ["a custom Hermes Dockerfile", "custom", true],
     ["a remote-gateway Hermes image", "generated", false],
