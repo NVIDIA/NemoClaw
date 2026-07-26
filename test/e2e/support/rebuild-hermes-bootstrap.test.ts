@@ -341,6 +341,8 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(liveSource).not.toContain('"--cleanup-gateway"');
     expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 18789 "$SANDBOX_NAME"');
     expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 8642 "$SANDBOX_NAME"');
+    expect(liveSource).not.toMatch(/host\.command\(\s*["']openshell["']/u);
+    expect(liveSource).not.toMatch(/^\s*['"`]openshell\s/mu);
 
     const bootstrap = liveSource.indexOf("const gatewayBootstrap = await");
     const seed = liveSource.indexOf("const sessionSummary = seedRegistryAndSession(");
