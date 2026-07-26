@@ -165,9 +165,13 @@ function blockingSleepMs(ms: number): void {
   });
 }
 
-// A newly registered OpenShell row can briefly report `dead` while its
-// background SSH process settles. Require the exact sandbox+port row to stay
-// dead across several normal polls before reclaiming it.
+// OpenShell's external background-forward registry can briefly report a newly
+// registered row as `dead` while its SSH process settles. NemoClaw cannot fix
+// that producer in this repository, so require the exact sandbox+port row to
+// stay dead across several normal polls before using the existing
+// sandbox-scoped stop/retry boundary. Remove this reconciliation once every
+// supported OpenShell version either stops retaining persistent dead rows or
+// exposes an atomic recovery operation.
 const DEAD_FORWARD_GRACE_MS = 2_000;
 
 /**
