@@ -227,6 +227,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/e2e-semantic-phase-check.test.ts",
+      "test": "builds the policy boundary before semantic collection and CLI compilation",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "derives test selectors from code and workflow jobs from workflow metadata",
       "category": "compatibility"
