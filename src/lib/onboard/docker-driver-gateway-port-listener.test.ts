@@ -68,7 +68,7 @@ describe("Docker-driver gateway port listener discovery", () => {
           isDockerDriverGatewayProcessFn,
         },
       ),
-    ).toEqual({ complete: true, pids: [1234, 2345] });
+    ).toEqual({ complete: true, pids: [1234, 2345], unverifiedPids: [9999] });
     expect(runCaptureEx).toHaveBeenCalledWith(["lsof", "-ti", ":18080", "-sTCP:LISTEN"]);
   });
 
@@ -86,7 +86,7 @@ describe("Docker-driver gateway port listener discovery", () => {
           isDockerDriverGatewayProcessFn: () => true,
         },
       ),
-    ).toEqual({ complete: false, pids: [1234] });
+    ).toEqual({ complete: false, pids: [1234], unverifiedPids: [] });
   });
 
   it("treats empty lsof output as incomplete while the independent port probe is busy", () => {
@@ -98,7 +98,7 @@ describe("Docker-driver gateway port listener discovery", () => {
         pid: null,
         reason: "bind probe reported EADDRINUSE",
       }),
-    ).toEqual({ complete: false, pids: [] });
+    ).toEqual({ complete: false, pids: [], unverifiedPids: [] });
   });
 
   it("marks listener enumeration incomplete when the structured runner throws", () => {
@@ -111,6 +111,7 @@ describe("Docker-driver gateway port listener discovery", () => {
     expect(helpers.getDockerDriverGatewayPortListenerScan({ ok: true })).toEqual({
       complete: false,
       pids: [],
+      unverifiedPids: [],
     });
   });
 
@@ -125,6 +126,51 @@ describe("Docker-driver gateway port listener discovery", () => {
 
     expect(runCaptureEx).toHaveBeenNthCalledWith(1, ["lsof", "-ti", ":18080", "-sTCP:LISTEN"]);
     expect(runCaptureEx).toHaveBeenNthCalledWith(2, ["lsof", "-ti", ":18081", "-sTCP:LISTEN"]);
+  });
+
+  it("prepares and validates every verified service-port listener", () => {
+    const preparePort = vi.fn();
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "1234\n2345\n", exitCode: 0, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: false, process: "openshell-gateway", pid: 1234 },
+      { exitOnFailure: false, preparePort },
+    );
+
+    expect(() => ownership.validatePortOwner()).not.toThrow();
+    ownership.preparePort();
+    expect(preparePort).toHaveBeenCalledWith([1234, 2345]);
+  });
+
+  it("rejects incomplete service-port ownership without preparing the port", () => {
+    const preparePort = vi.fn();
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "", exitCode: 127, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: false, process: "openshell-gateway", pid: 1234 },
+      { exitOnFailure: false, preparePort },
+    );
+
+    expect(() => ownership.validatePortOwner()).toThrow(
+      "the gateway port has an unknown or incompletely observed listener",
+    );
+    expect(preparePort).not.toHaveBeenCalled();
+  });
+
+  it("rejects a listener that appears after the service-port bind probe", () => {
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "1234\n", exitCode: 0, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: true },
+      { exitOnFailure: false, preparePort: vi.fn() },
+    );
+
+    expect(() => ownership.validatePortOwner()).toThrow(
+      "the gateway port listener changed during ownership validation",
+    );
   });
 });
 
@@ -147,6 +193,7 @@ describe("raw gateway port listener enumeration (#6576)", () => {
     });
     expect(helpers.getDockerDriverGatewayPortListenerScan(portCheck)).toEqual({
       pids: [],
+      unverifiedPids: [4242],
       complete: true,
     });
   });

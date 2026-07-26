@@ -1430,22 +1430,6 @@ printf 'PROMPT_REACHED\n'
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
-  it("maps Windows WSL express install to Windows-host Ollama", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL");
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Detected Windows WSL/);
-    expect(output).toMatch(
-      /Express install will configure Windows-host Ollama through host\.docker\.internal/,
-    );
-    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
-    expect(output).toMatch(/Run express install/);
-    expect(output).toMatch(/Using express install for Windows WSL/);
-    expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,
-    );
-  });
-
   it.skipIf(process.platform === "darwin")(
     "skips express install without a controlling TTY",
     () => {

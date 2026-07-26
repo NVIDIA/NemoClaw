@@ -5,13 +5,13 @@ title: "Explain Network Policy to Agents"
 sidebar-title: "Explain Policy to Agents"
 description: "Generate a redacted policy summary that helps an agent classify network failures."
 description-agent: "Explains the active network policy to sandbox agents. Use when generating a redacted policy summary, interpreting verification status, or classifying network failures."
-keywords: ["nemoclaw policy-explain", "agent network policy context", "POLICY.md"]
+keywords: ["nemoclaw policy explain", "agent network policy context", "POLICY.md"]
 content:
   type: "how_to"
 skill:
   priority: 10
 ---
-Use `policy-explain` to give a sandbox agent a compact, redacted view of its active network policy.
+Use `policy explain` to give a sandbox agent a compact, redacted view of its active network policy.
 The summary helps the agent distinguish policy denials, missing credentials, unsupported capabilities, and upstream failures.
 
 ## Print the Policy Context
@@ -19,22 +19,22 @@ The summary helps the agent distinguish policy denials, missing credentials, uns
 Print the redacted summary:
 
 ```bash
-$$nemoclaw my-assistant policy-explain
+$$nemoclaw my-assistant policy explain
 ```
 
 Pass `--json` when a tool needs a structured object:
 
 ```bash
-$$nemoclaw my-assistant policy-explain --json
+$$nemoclaw my-assistant policy explain --json
 ```
 
 <AgentOnly variant="openclaw">
 During OpenClaw onboarding, NemoClaw writes the rendered context to `/sandbox/.openclaw/workspace/POLICY.md`.
-It refreshes that file after `policy-add` or `policy-remove`.
+It refreshes that file after `policy add` or `policy remove`.
 Refresh the file without changing policy:
 
 ```bash
-$$nemoclaw my-assistant policy-explain --write
+$$nemoclaw my-assistant policy explain --write
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -85,7 +85,7 @@ A block code on a host from a verified preset stays `unknown` because the gatewa
 Each verdict includes `confidence` set to `high` or `low`.
 Low confidence means the agent must report multiple possibilities instead of treating one next step as authoritative.
 
-For `blocked-by-policy`, run `$$nemoclaw <name> policy-add <preset>` or follow [Custom Preset Files](customize-network-policy#custom-preset-files).
+For `blocked-by-policy`, run `$$nemoclaw <name> policy add <preset>` or follow [Custom Preset Files](customize-network-policy#custom-preset-files).
 For `missing-approval`, confirm the API token and scopes.
 For `unsupported`, surface the limitation without retrying.
 

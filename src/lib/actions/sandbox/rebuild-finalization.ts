@@ -148,7 +148,7 @@ export function finalizeRebuildPostRestore(
     }
     if (policyPresetRestoreIncomplete) {
       writeLine(
-        `    Policy presets failed to reapply: ${options.failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${options.sandboxName} policy-add\``,
+        `    Policy presets failed to reapply: ${options.failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${options.sandboxName} policy add\``,
       );
     }
   }

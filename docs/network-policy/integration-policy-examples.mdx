@@ -29,7 +29,7 @@ Replace `my-assistant` with your sandbox name in the examples.
 Check the current policy state first:
 
 ```bash
-$$nemoclaw my-assistant policy-list
+$$nemoclaw my-assistant policy list
 ```
 
 For a live view of blocked requests, open the OpenShell TUI in a separate host terminal:
@@ -40,12 +40,12 @@ openshell term
 
 When the agent reaches an endpoint that is not in the policy, the TUI shows the host, port, requesting binary, method, and path when available.
 Approve a request only when you understand why the integration needs it.
-An approval updates the running policy, but it does not create a reviewable NemoClaw preset entry that `policy-add` can replay.
+An approval updates the running policy, but it does not create a reviewable NemoClaw preset entry that `policy add` can replay.
 
 ## Supported Integration Presets
 
 NemoClaw ships maintained policy presets for common services in `nemoclaw-blueprint/policies/presets/`.
-Messaging channel presets are scoped to the sandbox's active agent; if an agent does not have a matching channel policy, that channel preset is omitted from `policy-list` and `policy-add <preset>` reports it as unknown.
+Messaging channel presets are scoped to the sandbox's active agent; if an agent does not have a matching channel policy, that channel preset is omitted from `policy list` and `policy add <preset>` reports it as unknown.
 
 | Workflow | Preset | Agent support |
 |----------|--------|---------------|
@@ -72,22 +72,22 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 Preview the endpoints before applying:
 
 ```bash
-$$nemoclaw my-assistant policy-add outlook --dry-run
+$$nemoclaw my-assistant policy add outlook --dry-run
 ```
 
-NemoClaw generates the preview from the exact preset policy YAML that `policy-add` would apply.
+NemoClaw generates the preview from the exact preset policy YAML that `policy add` would apply.
 It lists hosts, ports, access, protocol, TLS, and enforcement settings, HTTP methods and paths, and the binary allowlist.
 
 Apply the preset:
 
 ```bash
-$$nemoclaw my-assistant policy-add outlook --yes
+$$nemoclaw my-assistant policy add outlook --yes
 ```
 
 Remove it later if the sandbox no longer needs that access:
 
 ```bash
-$$nemoclaw my-assistant policy-remove outlook --yes
+$$nemoclaw my-assistant policy remove outlook --yes
 ```
 
 ## Email and Calendar With Microsoft 365
@@ -96,11 +96,11 @@ Use the `outlook` preset for Microsoft 365 email and calendar workflows that use
 The preset allows access to `graph.microsoft.com`, Microsoft login, and Outlook service endpoints.
 
 ```bash
-$$nemoclaw my-assistant policy-add outlook --dry-run
-$$nemoclaw my-assistant policy-add outlook --yes
+$$nemoclaw my-assistant policy add outlook --dry-run
+$$nemoclaw my-assistant policy add outlook --yes
 ```
 
-When the `outlook` preset is already applied, `policy-add outlook` compares the preset with the live policy.
+When the `outlook` preset is already applied, `policy add outlook` compares the preset with the live policy.
 If they match, the command exits zero without changing the live policy.
 If they differ, the command applies the preset again.
 This includes changes to the preset file.
@@ -119,7 +119,7 @@ Telegram needs channel configuration and egress policy.
 If you already enabled Telegram during onboarding but did not include the preset, add it to the running sandbox:
 
 ```bash
-$$nemoclaw my-assistant policy-add telegram --yes
+$$nemoclaw my-assistant policy add telegram --yes
 ```
 
 To add Telegram after onboarding, set the token on the host, add the channel, rebuild so the image picks up the channel config, and apply the policy preset:
@@ -128,7 +128,7 @@ To add Telegram after onboarding, set the token on the host, add the channel, re
 export TELEGRAM_BOT_TOKEN=<your-bot-token>
 NEMOCLAW_NON_INTERACTIVE=1 $$nemoclaw my-assistant channels add telegram
 $$nemoclaw my-assistant rebuild
-$$nemoclaw my-assistant policy-add telegram --yes
+$$nemoclaw my-assistant policy add telegram --yes
 ```
 
 If delivery fails, open the TUI and send a test message to the bot:
@@ -151,7 +151,7 @@ export SLACK_BOT_TOKEN=<your-slack-bot-token>
 export SLACK_APP_TOKEN=<your-slack-app-token>
 NEMOCLAW_NON_INTERACTIVE=1 $$nemoclaw my-assistant channels add slack
 $$nemoclaw my-assistant rebuild
-$$nemoclaw my-assistant policy-add slack --yes
+$$nemoclaw my-assistant policy add slack --yes
 ```
 
 For Discord:
@@ -161,14 +161,14 @@ export DISCORD_BOT_TOKEN=<your-discord-bot-token>
 export DISCORD_SERVER_ID=<your-discord-server-id>
 NEMOCLAW_NON_INTERACTIVE=1 $$nemoclaw my-assistant channels add discord
 $$nemoclaw my-assistant rebuild
-$$nemoclaw my-assistant policy-add discord --yes
+$$nemoclaw my-assistant policy add discord --yes
 ```
 
 If you enabled Slack or Discord during onboarding, apply only the matching preset:
 
 ```bash
-$$nemoclaw my-assistant policy-add slack --yes
-$$nemoclaw my-assistant policy-add discord --yes
+$$nemoclaw my-assistant policy add slack --yes
+$$nemoclaw my-assistant policy add discord --yes
 ```
 
 ## WeChat or WhatsApp Messaging (Experimental)
@@ -184,7 +184,7 @@ Add the channel interactively and apply the preset:
 ```bash
 $$nemoclaw my-assistant channels add wechat
 $$nemoclaw my-assistant rebuild
-$$nemoclaw my-assistant policy-add wechat --yes
+$$nemoclaw my-assistant policy add wechat --yes
 ```
 
 WhatsApp Web pairs entirely inside the sandbox through QR scan, so `channels add` does not collect a host-side token.
@@ -193,14 +193,14 @@ Apply the preset and complete the in-sandbox pairing after the rebuild:
 ```bash
 NEMOCLAW_NON_INTERACTIVE=1 $$nemoclaw my-assistant channels add whatsapp
 $$nemoclaw my-assistant rebuild
-$$nemoclaw my-assistant policy-add whatsapp --yes
+$$nemoclaw my-assistant policy add whatsapp --yes
 ```
 
 If you enabled WeChat or WhatsApp during onboarding, apply only the matching preset:
 
 ```bash
-$$nemoclaw my-assistant policy-add wechat --yes
-$$nemoclaw my-assistant policy-add whatsapp --yes
+$$nemoclaw my-assistant policy add wechat --yes
+$$nemoclaw my-assistant policy add whatsapp --yes
 ```
 
 ## GitHub and Jira
@@ -211,15 +211,15 @@ Use `jira` when the agent needs Atlassian Jira access.
 Preview first:
 
 ```bash
-$$nemoclaw my-assistant policy-add github --dry-run
-$$nemoclaw my-assistant policy-add jira --dry-run
+$$nemoclaw my-assistant policy add github --dry-run
+$$nemoclaw my-assistant policy add jira --dry-run
 ```
 
 Apply the preset that matches the workflow:
 
 ```bash
-$$nemoclaw my-assistant policy-add github --yes
-$$nemoclaw my-assistant policy-add jira --yes
+$$nemoclaw my-assistant policy add github --yes
+$$nemoclaw my-assistant policy add jira --yes
 ```
 
 The `jira` preset intentionally allows Node.js access to Atlassian Cloud and does not allow `curl`.
@@ -242,8 +242,8 @@ This manual probe proves curl reached Atlassian, but no Jira credentials were su
 Remove access when the task is done:
 
 ```bash
-$$nemoclaw my-assistant policy-remove github --yes
-$$nemoclaw my-assistant policy-remove jira --yes
+$$nemoclaw my-assistant policy remove github --yes
+$$nemoclaw my-assistant policy remove jira --yes
 ```
 
 ## Web Search
@@ -260,15 +260,15 @@ Apply only the preset that matches the provider you selected during onboarding.
 Use these commands for Brave Search.
 
 ```bash
-$$nemoclaw my-assistant policy-add brave --dry-run
-$$nemoclaw my-assistant policy-add brave --yes
+$$nemoclaw my-assistant policy add brave --dry-run
+$$nemoclaw my-assistant policy add brave --yes
 ```
 
 Use these commands for Tavily Search.
 
 ```bash
-$$nemoclaw my-assistant policy-add tavily --dry-run
-$$nemoclaw my-assistant policy-add tavily --yes
+$$nemoclaw my-assistant policy add tavily --dry-run
+$$nemoclaw my-assistant policy add tavily --yes
 ```
 
 Rerun onboarding when you change providers because the OpenClaw plugin configuration and OpenShell credential attachment are part of the sandbox image.
@@ -281,8 +281,8 @@ Hermes supports Tavily Search through NemoClaw onboarding and does not support B
 Apply the `tavily` preset if it is missing.
 
 ```bash
-$$nemoclaw my-assistant policy-add tavily --dry-run
-$$nemoclaw my-assistant policy-add tavily --yes
+$$nemoclaw my-assistant policy add tavily --dry-run
+$$nemoclaw my-assistant policy add tavily --yes
 ```
 
 Rerun onboarding when you enable or disable Tavily because the Hermes backend and OpenShell credential attachment are part of the sandbox image.
@@ -298,20 +298,20 @@ OpenShell replaces that placeholder at egress, so the raw key is not written int
 
 Use the `weather` preset when the agent needs read-only weather or geocoding lookups.
 The Open tier includes it by default.
-Balanced and Restricted sandboxes require the explicit `policy-add weather` step below.
+Balanced and Restricted sandboxes require the explicit `policy add weather` step below.
 The preset covers read-only public weather and geocoding lookups, including current conditions, forecasts, geocoding, and weather alerts, without enabling messaging or productivity APIs.
 
 ```bash
-$$nemoclaw my-assistant policy-add weather --dry-run
-$$nemoclaw my-assistant policy-add weather --yes
+$$nemoclaw my-assistant policy add weather --dry-run
+$$nemoclaw my-assistant policy add weather --yes
 ```
 
 Use the `public-reference` preset when the agent needs read-only public reference APIs, such as Wikipedia, Wikidata, Wikimedia Commons, Nominatim, or country metadata.
 The Open tier includes this preset by default.
 
 ```bash
-$$nemoclaw my-assistant policy-add public-reference --dry-run
-$$nemoclaw my-assistant policy-add public-reference --yes
+$$nemoclaw my-assistant policy add public-reference --dry-run
+$$nemoclaw my-assistant policy add public-reference --yes
 ```
 
 ## Package and Model Tooling
@@ -328,19 +328,19 @@ Use these presets when an agent workflow needs to install packages or download m
 Add only the preset required for the task:
 
 ```bash
-$$nemoclaw my-assistant policy-add npm --yes
-$$nemoclaw my-assistant policy-add pypi --yes
-$$nemoclaw my-assistant policy-add brew --yes
-$$nemoclaw my-assistant policy-add huggingface --yes
+$$nemoclaw my-assistant policy add npm --yes
+$$nemoclaw my-assistant policy add pypi --yes
+$$nemoclaw my-assistant policy add brew --yes
+$$nemoclaw my-assistant policy add huggingface --yes
 ```
 
 Remove package access after a one-time setup task if the sandbox no longer needs it:
 
 ```bash
-$$nemoclaw my-assistant policy-remove npm --yes
-$$nemoclaw my-assistant policy-remove pypi --yes
-$$nemoclaw my-assistant policy-remove brew --yes
-$$nemoclaw my-assistant policy-remove huggingface --yes
+$$nemoclaw my-assistant policy remove npm --yes
+$$nemoclaw my-assistant policy remove pypi --yes
+$$nemoclaw my-assistant policy remove brew --yes
+$$nemoclaw my-assistant policy remove huggingface --yes
 ```
 
 The `pypi` preset allows Python, `pip`, virtual-environment Python and `pip`, and `/usr/local/bin/uv` to reach PyPI endpoints.
@@ -353,7 +353,7 @@ A `/usr/local/bin/brew` wrapper puts the entry point on the sandbox `PATH` while
 Installed formula commands are available from the Linuxbrew bin directory in sandbox shell sessions:
 
 ```bash
-$$nemoclaw my-assistant policy-add brew --yes
+$$nemoclaw my-assistant policy add brew --yes
 $$nemoclaw my-assistant exec -- brew install <formula>
 $$nemoclaw my-assistant exec -- bash -lc '<formula-command>'
 ```
@@ -374,8 +374,8 @@ Apply the `openclaw-pricing` preset to allow both pricing endpoints.
 The preset pins each host to a single read-only path so it does not widen egress beyond the pricing fetch:
 
 ```bash
-$$nemoclaw my-assistant policy-add openclaw-pricing --dry-run
-$$nemoclaw my-assistant policy-add openclaw-pricing --yes
+$$nemoclaw my-assistant policy add openclaw-pricing --dry-run
+$$nemoclaw my-assistant policy add openclaw-pricing --yes
 ```
 
 After the next gateway restart, the WARN entries stop and `usage.cost` populates from the fetched pricing tables.
@@ -394,8 +394,8 @@ Onboarding auto-suggests this preset when you choose a local provider.
 If you need to add it after onboarding:
 
 ```bash
-$$nemoclaw my-assistant policy-add local-inference --dry-run
-$$nemoclaw my-assistant policy-add local-inference --yes
+$$nemoclaw my-assistant policy add local-inference --dry-run
+$$nemoclaw my-assistant policy add local-inference --yes
 ```
 
 Then verify the sandbox status:
@@ -411,7 +411,7 @@ Follow [Set Up Gmail With an App Password](set-up-gmail-with-an-app-password) fo
 
 ## Inspect or Replace the Live Policy
 
-Use `policy-list` for normal preset state.
+Use `policy list` for normal preset state.
 Follow [Replace the Live Network Policy](configure-policies/replace-live-network-policy) only when you need to export, edit, and replace the complete policy.
 Use [Apply Policy Presets](configure-policies/apply-policy-presets) to merge maintained or custom preset entries.
 
@@ -421,4 +421,4 @@ Use [Apply Policy Presets](configure-policies/apply-policy-presets) to merge mai
 - [Customize the Sandbox Network Policy](customize-network-policy) to choose the correct policy workflow.
 - [Set Up Gmail With an App Password](set-up-gmail-with-an-app-password) for the full Gmail IMAP and SMTP workflow.
 - [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams configuration.
-- [Commands](../reference/commands) for the full `policy-get`, `policy-add`, `policy-list`, `policy-remove`, and `channels` command reference.
+- [Commands](../reference/commands) for the full `policy get`, `policy add`, `policy list`, `policy remove`, and `channels` command reference.

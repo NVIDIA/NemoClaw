@@ -42,7 +42,7 @@ describe("policy round-trip documentation examples", () => {
       const text = readDoc(docPath);
       expect(text, docPath).toContain("OpenShell 0.0.72+");
       expect(text, docPath).toMatch(
-        /\$\$nemoclaw (?:my-assistant|<sandbox-name>) policy-get > current-policy\.yaml/,
+        /\$\$nemoclaw (?:my-assistant|<sandbox-name>) policy get > current-policy\.yaml/,
       );
       expect(text, docPath).toMatch(
         /openshell policy set --policy current-policy\.yaml --wait (?:my-assistant|<sandbox-name>)/,
@@ -54,9 +54,9 @@ describe("policy round-trip documentation examples", () => {
 
   it("documents raw output as diagnostic-only", () => {
     const commands = readDoc("docs/reference/commands.mdx");
-    expect(commands).toContain("### `$$nemoclaw <name> policy-get`");
-    expect(commands).toContain("$$nemoclaw my-assistant policy-get > current-policy.yaml");
-    expect(commands).toContain("$$nemoclaw my-assistant policy-get --raw");
+    expect(commands).toContain("### `$$nemoclaw <name> policy get`");
+    expect(commands).toContain("$$nemoclaw my-assistant policy get > current-policy.yaml");
+    expect(commands).toContain("$$nemoclaw my-assistant policy get --raw");
     expect(commands).toContain("Do not pass `--raw` output to `openshell policy set`");
   });
 });

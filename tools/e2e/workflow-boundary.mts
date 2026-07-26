@@ -18,6 +18,11 @@ import {
 } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
 import {
+  HERMES_TIMEOUT_CONTRACTS,
+  HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
+  HERMES_TIMEOUT_HEADROOM_MINUTES,
+} from "./hermes-timeout-contract.mts";
+import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
@@ -2768,6 +2773,27 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
 
+function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): void {
+  for (const {
+    innerTest,
+    innerTimeoutMinutes,
+    jobName,
+    jobTimeoutMinutes,
+  } of HERMES_TIMEOUT_CONTRACTS) {
+    const actualJobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
+    const maximumJobTimeoutMinutes = innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES;
+    if (
+      !Number.isInteger(actualJobTimeoutMinutes) ||
+      (actualJobTimeoutMinutes as number) < jobTimeoutMinutes ||
+      (actualJobTimeoutMinutes as number) > maximumJobTimeoutMinutes
+    ) {
+      errors.push(
+        `${jobName} timeout must be between ${jobTimeoutMinutes} and ${maximumJobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with ${HERMES_TIMEOUT_HEADROOM_MINUTES}-${HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes of job headroom`,
+      );
+    }
+  }
+}
+
 function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "diagnostics";
   const targetName = "diagnostics";
@@ -4176,6 +4202,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
     errors.push("generate-matrix job must run on ubuntu-latest");
   }
+  if (generateMatrix["timeout-minutes"] !== 10) {
+    errors.push("generate-matrix job must keep the 10 minute timeout");
+  }
   const generateOutputs = asRecord(generateMatrix.outputs);
   if (
     generateOutputs.matrix !==
@@ -4619,6 +4648,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateCloudInferenceJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
+  validateHermesTimeoutHeadroom(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "hermes-discord", "hermes-discord");
   validateNetworkPolicyJob(errors, jobs);
   validateCommonEgressAgentJob(errors, jobs);
@@ -4680,6 +4710,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (Object.keys(reportToPr).length === 0) {
     errors.push("workflow missing report-to-pr job");
   } else {
+    if (reportToPr["timeout-minutes"] !== 15) {
+      errors.push("report-to-pr job must keep the 15 minute timeout");
+    }
     const needs = Array.isArray(reportToPr.needs) ? reportToPr.needs : [];
     for (const required of ["generate-matrix", "live"]) {
       if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
@@ -4797,6 +4830,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         );
       }
     }
+  }
+
+  const scorecard = asRecord(jobs.scorecard);
+  if (scorecard["timeout-minutes"] !== 15) {
+    errors.push("scorecard job must keep the 15 minute timeout");
   }
 
   return errors;

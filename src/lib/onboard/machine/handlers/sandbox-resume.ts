@@ -8,7 +8,7 @@ import {
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { Session } from "../../../state/onboard-session";
-import type { SandboxEntry } from "../../../state/registry";
+import type { SandboxEntry, SandboxRemovalReceipt } from "../../../state/registry";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 
 export interface SandboxResumeSignals {
@@ -117,7 +117,7 @@ export function mcpRegistryRemovalBlockReason(
 
 export interface SandboxResumeDeps {
   note(message: string): void;
-  removeSandboxFromRegistry(sandboxName: string): void;
+  removeSandboxFromRegistry(sandboxName: string): SandboxRemovalReceipt | null;
   repairRecordedSandbox(sandboxName: string | null): void;
   recordRepairEvent(
     type: "state.repair.started" | "state.repair.completed" | "state.repair.failed",
@@ -289,16 +289,23 @@ async function repairRecordedSandbox(
   await deps.recordRepairEvent("state.repair.completed", { state: "sandbox", metadata });
 }
 
+/**
+ * Apply a resume decision and return the removal receipt (if any) so the
+ * caller can restore the durable registry row, including its baseline
+ * exclusion records, when replacement creation then fails.
+ */
 export async function applySandboxResumeDecision(
   decision: SandboxResumeDecision,
   sandboxName: string | null,
   deps: SandboxResumeDeps,
-): Promise<void> {
+): Promise<SandboxRemovalReceipt | null> {
   if (decision.kind === "repair-and-recreate") {
     await repairRecordedSandbox(sandboxName, deps);
-    return;
+    return null;
   }
-  if (decision.kind !== "recreate") return;
+  if (decision.kind !== "recreate") return null;
   deps.note(decision.note);
-  if (decision.removeRegistryEntry && sandboxName) deps.removeSandboxFromRegistry(sandboxName);
+  if (decision.removeRegistryEntry && sandboxName)
+    return deps.removeSandboxFromRegistry(sandboxName);
+  return null;
 }

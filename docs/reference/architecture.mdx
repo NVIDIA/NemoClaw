@@ -79,11 +79,20 @@ graph LR
 The logical diagram above shows how components relate.
 This section shows what actually runs where on the host.
 NemoClaw's default Docker-driver topology does not place the sandbox in an embedded k3s cluster.
-On Linux, NemoClaw configures and restarts the package-managed OpenShell gateway user service when it is installed, then creates the sandbox as a Docker container.
-NemoClaw treats that service as authoritative only when `systemctl --user show openshell-gateway` reports a package/vendor unit path and an `openshell-gateway` `ExecStart`.
-Per-user units, partial units, and user-manager or bus outages do not take over gateway ownership; NemoClaw falls back to the standalone gateway process used by earlier installs.
-That compatibility fallback remains until supported upgrade paths no longer include pre-service OpenShell installs and the package-managed handoff has direct nightly coverage.
-On Apple Silicon macOS, NemoClaw starts the OpenShell Docker-driver gateway and creates the sandbox as a Docker container.
+Only the default gateway port `8080` uses a NemoClaw-managed service.
+On Linux, NemoClaw prefers the upstream package-managed `openshell-gateway.service`.
+For tarball installs, the NemoClaw installer stages a marked user-level `nemoclaw-openshell-gateway.service` based on the upstream unit.
+Onboarding validates and reuses a healthy selected service.
+It enables or restarts the service when startup or verified runtime drift requires it, then checks gateway health.
+The marked service generates the local OpenShell mTLS bundle and reads `$XDG_CONFIG_HOME/openshell/gateway.env`, or `~/.config/openshell/gateway.env` when `XDG_CONFIG_HOME` is not absolute.
+NemoClaw preserves unrelated environment entries, accepts `DOCKER_HOST` only for an absolute local `unix://` socket, and refuses foreign or symlinked managed files.
+The standalone Linux process is used only when the systemd user manager is unavailable; after a service is selected, startup or health failure stops onboarding.
+On Apple Silicon macOS, Homebrew makes the official OpenShell formula authoritative.
+The installer stages the formula and onboarding starts its `openshell` service.
+When Homebrew is present, a missing formula, a formula from another tap, a service-start failure, or a health failure stops onboarding.
+Only a host without Homebrew uses the standalone macOS gateway fallback.
+NemoClaw-managed gateways on custom ports remain detached and separate from the default service.
+An externally supervised gateway can use any matching configured port; its declared supervisor retains lifecycle authority.
 In both Docker-driver modes, the sandbox is a Docker container, not a Kubernetes pod.
 Entrypoint supervisors create the in-container `/tmp/nemoclaw-gateway-local` marker only when they actually launch an in-container gateway, and they normally keep it present while that supervisor is active.
 On normal exits, handled `SIGTERM`/`SIGINT`, startup failures, and shell `errexit` termination through the `EXIT` trap, the supervisor removes the marker on a best-effort basis so the Docker health check does not keep trusting a stale gateway PID.
