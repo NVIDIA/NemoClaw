@@ -10,6 +10,7 @@ import {
   DispatchReconciliationError,
   dispatchWorkflowWithReconciliation,
 } from "../tools/e2e/pr-e2e-dispatch-reconciliation.mts";
+import type { DispatchNotObservedReceipt } from "../tools/e2e/pr-e2e-retry-receipt.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const WORKFLOW_SHA = "d".repeat(40);
@@ -62,8 +63,48 @@ function workflowRun(runId = 23, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function unrelatedWorkflowRun(runId: number) {
+  return workflowRun(runId, {
+    name: `E2E unrelated run ${runId}`,
+    display_title: `E2E unrelated run ${runId}`,
+  });
+}
+
 function inventory(runs: unknown[]) {
   return { total_count: runs.length, workflow_runs: runs };
+}
+
+function oldReceipt(
+  overrides: Partial<DispatchNotObservedReceipt> = {},
+): DispatchNotObservedReceipt {
+  return {
+    correlationId: CORRELATION_ID,
+    workflowSha: WORKFLOW_SHA,
+    sentAtMs: SENT_AT_MS,
+    deadlineAtMs: SENT_AT_MS + WINDOW_MS,
+    result: "not-observed",
+    failureKind: "transport",
+    ...overrides,
+  };
+}
+
+function oldReceiptOptions(overrides: Partial<DispatchNotObservedReceipt> = {}) {
+  return {
+    repository: REPOSITORY,
+    token: "token",
+    prNumber: 42,
+    receipt: oldReceipt(overrides),
+  };
+}
+
+function paginatedInventoryApi(runs: unknown[]) {
+  return vi.fn(async (apiPath: string) => {
+    const page = Number(new URL(`https://api.github.com/${apiPath}`).searchParams.get("page"));
+    return {
+      total_count: runs.length,
+      workflow_runs: runs.slice((page - 1) * 100, page * 100),
+    };
+  });
 }
 
 function reconciliationDeps(
@@ -366,24 +407,98 @@ describe("PR E2E workflow dispatch reconciliation", () => {
     const { deps, api } = reconciliationDeps(() => inventory([]));
 
     await expect(
-      assertDispatchStillNotObserved(
-        {
-          repository: REPOSITORY,
-          token: "token",
-          prNumber: 42,
-          receipt: {
-            correlationId: CORRELATION_ID,
-            workflowSha: WORKFLOW_SHA,
-            sentAtMs: SENT_AT_MS,
-            deadlineAtMs: SENT_AT_MS + WINDOW_MS,
-            result: "not-observed",
-            failureKind: "http",
-            status: 500,
-          },
-        },
-        deps,
-      ),
+      assertDispatchStillNotObserved(oldReceiptOptions({ failureKind: "http", status: 500 }), deps),
     ).resolves.toBeUndefined();
+    expect(api).toHaveBeenCalledOnce();
+  });
+
+  it("paginates a stale zero-match receipt before allowing replacement", async () => {
+    const runs = Array.from({ length: 101 }, (_value, index) => unrelatedWorkflowRun(index + 100));
+    const api = paginatedInventoryApi(runs);
+
+    await expect(
+      assertDispatchStillNotObserved(oldReceiptOptions(), {
+        api,
+        now: () => SENT_AT_MS + WINDOW_MS + 2_000,
+        clockSkewMs: 10,
+      }),
+    ).resolves.toBeUndefined();
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks replacement when the old correlation appears after the first inventory page", async () => {
+    const recheckTime = SENT_AT_MS + WINDOW_MS + 2_000;
+    const runs = [
+      ...Array.from({ length: 100 }, (_value, index) => unrelatedWorkflowRun(index + 100)),
+      workflowRun(501, {
+        created_at: new Date(SENT_AT_MS + WINDOW_MS + 1_000).toISOString(),
+      }),
+    ];
+    const api = paginatedInventoryApi(runs);
+
+    await expect(
+      assertDispatchStillNotObserved(oldReceiptOptions(), {
+        api,
+        now: () => recheckTime,
+        clockSkewMs: 10,
+      }),
+    ).rejects.toMatchObject({
+      name: "DispatchReconciliationError",
+      candidateRunIds: [501],
+    });
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      label: "the total count changes",
+      secondPage: {
+        total_count: 102,
+        workflow_runs: [unrelatedWorkflowRun(500)],
+      },
+    },
+    {
+      label: "a run ID is duplicated",
+      secondPage: {
+        total_count: 101,
+        workflow_runs: [unrelatedWorkflowRun(100)],
+      },
+    },
+  ])("fails closed when paginated receipt inventory $label", async ({ secondPage }) => {
+    const firstPageRuns = Array.from({ length: 100 }, (_value, index) =>
+      unrelatedWorkflowRun(index + 100),
+    );
+    const pages = [{ total_count: 101, workflow_runs: firstPageRuns }, secondPage];
+    const api = vi.fn(async (apiPath: string) => {
+      const page = Number(new URL(`https://api.github.com/${apiPath}`).searchParams.get("page"));
+      return pages[page - 1];
+    });
+
+    await expect(
+      assertDispatchStillNotObserved(oldReceiptOptions(), {
+        api,
+        now: () => SENT_AT_MS + WINDOW_MS + 2_000,
+        clockSkewMs: 10,
+      }),
+    ).rejects.toThrow(/could not be rechecked/u);
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed when a stale receipt inventory exceeds GitHub's filtered-result cap", async () => {
+    const api = vi.fn().mockResolvedValue({
+      total_count: 1_001,
+      workflow_runs: Array.from({ length: 100 }, (_value, index) =>
+        unrelatedWorkflowRun(index + 100),
+      ),
+    });
+
+    await expect(
+      assertDispatchStillNotObserved(oldReceiptOptions(), {
+        api,
+        now: () => SENT_AT_MS + WINDOW_MS + 2_000,
+        clockSkewMs: 10,
+      }),
+    ).rejects.toThrow(/could not be rechecked/u);
     expect(api).toHaveBeenCalledOnce();
   });
 
@@ -395,22 +510,7 @@ describe("PR E2E workflow dispatch reconciliation", () => {
     const { deps, api } = reconciliationDeps(() => inventory([lateRun]));
 
     await expect(
-      assertDispatchStillNotObserved(
-        {
-          repository: REPOSITORY,
-          token: "token",
-          prNumber: 42,
-          receipt: {
-            correlationId: CORRELATION_ID,
-            workflowSha: WORKFLOW_SHA,
-            sentAtMs: SENT_AT_MS,
-            deadlineAtMs: SENT_AT_MS + WINDOW_MS,
-            result: "not-observed",
-            failureKind: "transport",
-          },
-        },
-        { ...deps, now: () => recheckTime },
-      ),
+      assertDispatchStillNotObserved(oldReceiptOptions(), { ...deps, now: () => recheckTime }),
     ).rejects.toMatchObject({
       name: "DispatchReconciliationError",
       candidateRunIds: [23],
