@@ -274,7 +274,7 @@ network_policies:
       expect(events).toEqual(["stale-live", "absent", "onboard"]);
       expect(
         harness.captureOpenshellSpy.mock.calls.filter(
-          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get alpha",
+          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get -g nemoclaw alpha",
         ),
       ).toHaveLength(2);
     });
