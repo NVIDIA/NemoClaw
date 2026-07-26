@@ -773,6 +773,37 @@ RUN check_metadata() { \
         > /usr/local/share/nemoclaw/node-tar-inventory.json \
     && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
 
+# Verify the immutable security package inventory in the completed image.
+# hadolint ignore=DL4006
+RUN set -eu; \
+    security_inventory=/usr/local/share/nemoclaw/security-packages.txt; \
+    arch="$(dpkg --print-architecture)"; \
+    test -f "$security_inventory"; \
+    test ! -L "$security_inventory"; \
+    test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"; \
+    printf '%s\n' \
+        "architecture=$arch" \
+        "libexpat1=2.8.2-1" \
+        "libonig5=6.9.9-1+b1" \
+        "libjq1=1.8.2-1" \
+        "jq=1.8.2-1" \
+        "vim-common=2:9.2.0782-1" \
+        "vim-tiny=2:9.2.0782-1" \
+        | cmp -s - "$security_inventory"; \
+    test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1"; \
+    test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
+    test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1"; \
+    test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
+    test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1"; \
+    test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1"; \
+    ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
+    test "$(jq --version)" = "jq-1.8.2"; \
+    printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \
+    python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION"; \
+    vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
+    test -z "$(dpkg --audit)"
+# End completed-image security package verification.
+
 # start.sh handles privilege separation: runs as root initially, then drops
 # to 'gateway' user via gosu for the agent process. See start.sh.
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]

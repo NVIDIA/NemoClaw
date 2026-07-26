@@ -55,6 +55,8 @@ The reviewed npm replacement is:
 Each managed base image downloads the six exact Debian packages from the same immutable snapshot and verifies every package checksum before installation.
 Each image installs the complete jq runtime closure and matching Vim package pair together, verifies every dpkg identity, confirms that jq links to `libonig.so.5`, exercises jq and Python Expat, and verifies that the Vim runtime reports version 9.2.
 The package architecture is selected from `dpkg --print-architecture`, and any architecture other than amd64 or arm64 fails closed.
+The base writes that architecture and the six exact package identities to a root-owned, read-only inventory.
+Each completed OpenClaw, Hermes, and Deep Agents Code image reasserts the inventory metadata and exact content, every installed dpkg identity, jq-to-Oniguruma linkage, jq, Expat, and Vim runtime probes, and an empty `dpkg --audit` result.
 
 `vim-tiny=2:9.2.0782-1` depends on:
 
@@ -167,7 +169,7 @@ The core interpreter version check also remains the binding for core-language fi
 - Failure mode: a managed image can retain an older jq or Expat runtime, or fail to configure jq when its architecture-specific Oniguruma dependency is absent.
 - Disposition: migrate, pin, test, runtime-proof
 - Implementation: use the same snapshot, architecture-specific checksums, dpkg identities, and runtime guards in every managed base image.
-- Verification: exact security-package `RUN`-chain execution and checksum-rejection tests for all three images on amd64 and arm64.
+- Verification: exact base-package and completed-image `RUN`-chain execution, immutable inventory content and metadata checks, checksum-rejection tests, installed dpkg identities, runtime probes, and empty dpkg audit for all three images on amd64 and arm64.
 - Remaining gate: multi-image, multi-architecture CI.
 
 ## Removal conditions

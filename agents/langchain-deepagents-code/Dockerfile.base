@@ -108,6 +108,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
     && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION" \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
+    && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
+    && printf '%s\n' \
+        "architecture=$arch" \
+        "libexpat1=2.8.2-1" \
+        "libonig5=6.9.9-1+b1" \
+        "libjq1=1.8.2-1" \
+        "jq=1.8.2-1" \
+        "vim-common=2:9.2.0782-1" \
+        "vim-tiny=2:9.2.0782-1" \
+        > /usr/local/share/nemoclaw/security-packages.txt \
+    && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
     && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/*
 

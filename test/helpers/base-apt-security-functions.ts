@@ -83,6 +83,8 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       "dpkg() {",
       '  if [[ "$#" -eq 1 && "$1" == "--print-architecture" ]]; then',
       `    printf "${architecture}\\n"`,
+      '  elif [[ "$#" -eq 1 && "$1" == "--audit" ]]; then',
+      "    return 0",
       '  elif [[ "$#" -eq 7 && "$1" == "-i" && "${2##*/}" == "libexpat1.deb" && "${3##*/}" == "libonig5.deb" && "${4##*/}" == "libjq1.deb" && "${5##*/}" == "jq.deb" && "${6##*/}" == "vim-common.deb" && "${7##*/}" == "vim-tiny.deb" ]]; then',
       '    printf "dpkg-install\\n" >> "$call_log"',
       '    [[ -f "$2" && -f "$3" && -f "$4" && -f "$5" && -f "$6" && -f "$7" ]]',
