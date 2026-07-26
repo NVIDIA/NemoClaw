@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -377,10 +377,46 @@ resolver_pull example:test`,
     expect(result.status, result.stderr).toBe(0);
   });
 
+  it.each([
+    ["HTTP server failure", "unexpected HTTP status: 503 Service Unavailable"],
+    ["HTTP throttling", "unexpected HTTP status: 429 Too Many Requests"],
+    ["network failure", "connection reset by peer"],
+  ])("retries a terminal %s after more than 64 KiB of output", (_name, diagnostic) => {
+    const bin = fakeDocker(`
+count="$(cat "$PULL_COUNT" 2>/dev/null || printf 0)"
+count=$((count + 1))
+printf "%s\\n" "$count" > "$PULL_COUNT"
+head -c 100000 /dev/zero | tr '\\0' x >&2
+printf "\\n%s\\n" "$PULL_DIAGNOSTIC" >&2
+exit 1`);
+    const pullCount = path.join(bin, "pull-count");
+
+    const result = run(
+      `
+sleep() { :; }
+resolver_pull example:test`,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+        PULL_COUNT: pullCount,
+        PULL_DIAGNOSTIC: diagnostic,
+        RUNNER_TEMP: bin,
+      },
+    );
+
+    expect(result.status).toBe(75);
+    expect(readFileSync(pullCount, "utf8")).toBe("3\n");
+    expect(result.stderr).toContain(diagnostic);
+    expect(result.stderr.match(/diagnostic truncated to final 65536 bytes/g)).toHaveLength(3);
+    expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
+  });
+
   it("redacts complete credential headers and prevents log-command injection", () => {
+    const ansiSecret = "ansi-registry-secret";
     const basicSecret = "registry-password";
     const cookieSecret = "session-cookie-secret";
     const cookieSecondSecret = "second-cookie-secret";
+    const crAuthorizationSecret = "cr-authorization-secret";
+    const crProxySecret = "cr-proxy-secret";
     const foldedSecret = "folded-registry-secret";
     const negotiateSecret = "negotiate-registry-secret";
     const proxySecret = "proxy-registry-secret";
@@ -388,6 +424,7 @@ resolver_pull example:test`,
     const registryAuthSecret = "registry-auth-secret";
     const registryConfigSecret = "registry-config-secret";
     const setCookieSecret = "set-cookie-secret";
+    const verticalTabSecret = "vertical-tab-secret";
     const bin = fakeDocker(`
 printf "%s\\r\\n" \
   "pull access denied at https://registry-user:$BASIC_SECRET@example.test/v2/image?token=$QUERY_SECRET" \
@@ -400,12 +437,19 @@ printf "%s\\r\\n" \
   "Authorization:" \
   "  Bearer $FOLDED_SECRET" \
   $'\\033[31m\\r::warning::forged-pull-command' >&2
+printf "progress\\rAuthorization: CustomScheme %s\\r" "$CR_AUTHORIZATION_SECRET" >&2
+printf "progress\\rProxy-Authorization: CustomScheme %s\\r" "$CR_PROXY_SECRET" >&2
+printf "\\033[31mAuthorization: CustomScheme %s\\033[0m\\r\\n" "$ANSI_SECRET" >&2
+printf "progress\\vAuthorization: CustomScheme %s\\r\\n" "$VERTICAL_TAB_SECRET" >&2
 exit 1`);
 
     const result = run("resolver_pull example:test", {
+      ANSI_SECRET: ansiSecret,
       BASIC_SECRET: basicSecret,
       COOKIE_SECRET: cookieSecret,
       COOKIE_SECOND_SECRET: cookieSecondSecret,
+      CR_AUTHORIZATION_SECRET: crAuthorizationSecret,
+      CR_PROXY_SECRET: crProxySecret,
       FOLDED_SECRET: foldedSecret,
       NEGOTIATE_SECRET: negotiateSecret,
       PATH: `${bin}:${process.env.PATH}`,
@@ -414,15 +458,19 @@ exit 1`);
       REGISTRY_AUTH_SECRET: registryAuthSecret,
       REGISTRY_CONFIG_SECRET: registryConfigSecret,
       SET_COOKIE_SECRET: setCookieSecret,
+      VERTICAL_TAB_SECRET: verticalTabSecret,
     });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("pull access denied");
     expect(result.stderr).toContain("[redacted]");
     for (const secret of [
+      ansiSecret,
       basicSecret,
       cookieSecret,
       cookieSecondSecret,
+      crAuthorizationSecret,
+      crProxySecret,
       foldedSecret,
       negotiateSecret,
       proxySecret,
@@ -430,6 +478,7 @@ exit 1`);
       registryAuthSecret,
       registryConfigSecret,
       setCookieSecret,
+      verticalTabSecret,
     ]) {
       expect(result.stderr).not.toContain(secret);
     }
@@ -473,31 +522,213 @@ exit 1`);
       "Authorization:\r\n\tNegotiate folded-negotiate-value",
       ["folded-negotiate-value"],
     ],
+    [
+      "folded arbitrary authorization value",
+      "Authorization:\r\n\tCustomScheme folded-custom-value",
+      ["folded-custom-value"],
+    ],
+    [
+      "CR-only authorization after progress output",
+      "progress\rAuthorization: CustomScheme cr-only-authorization\r",
+      ["cr-only-authorization"],
+    ],
+    [
+      "CR-only proxy authorization after progress output",
+      "progress\rProxy-Authorization: CustomScheme cr-only-proxy\r",
+      ["cr-only-proxy"],
+    ],
+    [
+      "ANSI-colored arbitrary authorization value",
+      "\u001b[31mAuthorization: CustomScheme ansi-custom-value\u001b[0m",
+      ["ansi-custom-value"],
+    ],
+    [
+      "control-separated arbitrary authorization value",
+      "progress\u000bAuthorization: CustomScheme control-custom-value",
+      ["control-custom-value"],
+    ],
+    [
+      "control-interrupted authorization name",
+      "Authori\u000bzation: CustomScheme control-name-value",
+      ["control-name-value"],
+    ],
+    [
+      "OSC-title-interrupted authorization name",
+      "Auth\u001b]0;registry\u0007orization: CustomScheme osc-title-value",
+      ["osc-title-value"],
+    ],
+    [
+      "OSC-link-interrupted authorization name",
+      "Auth\u001b]8;;https://registry.example\u001b\\orization: CustomScheme osc-link-value",
+      ["osc-link-value"],
+    ],
   ])("redacts a complete %s", (_name, raw, secrets) => {
-    const result = run('printf "%s" "$RAW_DIAGNOSTIC" | resolver_sanitize_pull_diagnostic', {
-      RAW_DIAGNOSTIC: raw,
-    });
+    const result = run(
+      'set -o pipefail; printf "%s" "$RAW_DIAGNOSTIC" | resolver_sanitize_pull_diagnostic',
+      {
+        RAW_DIAGNOSTIC: raw,
+      },
+    );
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("[redacted]");
     for (const secret of secrets) expect(result.stdout).not.toContain(secret);
   });
 
-  it("bounds captured stderr and preserves a deterministic Docker status", () => {
+  it("redacts a folded credential preceded by an invalid byte", () => {
+    const result = run(
+      `set -o pipefail
+printf 'Authorization:\\r\\n\\377\\tCustomScheme invalid-fold-secret\\r\\n' |
+  resolver_sanitize_pull_diagnostic`,
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("[redacted]");
+    expect(result.stdout).not.toContain("invalid-fold-secret");
+  });
+
+  it.each([81, 4096])("redacts query values with a %i-byte key", (keyLength) => {
+    const secret = `long-query-secret-${keyLength}`;
+    const result = run(
+      'set -o pipefail; printf "%s" "$RAW_DIAGNOSTIC" | resolver_sanitize_pull_diagnostic',
+      {
+        RAW_DIAGNOSTIC: `https://registry.example/v2/image?${"k".repeat(keyLength)}=${secret}`,
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("[redacted]");
+    expect(result.stdout).not.toContain(secret);
+  });
+
+  it("preserves a deterministic status with invalid diagnostic bytes under UTF-8", () => {
     const bin = fakeDocker(`
-printf "%s\\n" "daemon policy rejected this pull" >&2
-head -c 100000 /dev/zero | tr '\\0' x >&2
+printf 'manifest unknown \\377\\n' >&2
 exit 42`);
+    const result = run("resolver_pull example:test", {
+      LC_ALL: "C.UTF-8",
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: bin,
+    });
+
+    expect(result.status, result.stderr).toBe(42);
+    expect(result.stderr).toContain("manifest unknown");
+    expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
+  });
+
+  it("bounds captured stderr and preserves a deterministic Docker status", () => {
+    const tailQuerySecret = "tail-query-secret";
+    const longQueryKey = "k".repeat(4096);
+    const bin = fakeDocker(`
+head -c 100000 /dev/zero | tr '\\0' x >&2
+max_size=0
+for file in "$RUNNER_TEMP"/nemoclaw-docker-pull.*/*; do
+  if [[ -f "$file" ]]; then
+    size="$(wc -c < "$file")"
+    if ((size > max_size)); then max_size="$size"; fi
+  fi
+done
+printf "%s\\n" "$max_size" > "$OBSERVED_MAX"
+printf "\\nhttps://registry.example/v2/image?%s=%s\\n" "$LONG_QUERY_KEY" "$TAIL_QUERY_SECRET" >&2
+printf "\\n%s\\n" "manifest unknown" >&2
+exit 42`);
+    const observedMax = path.join(bin, "observed-max");
+
+    const result = run("resolver_pull example:test", {
+      LONG_QUERY_KEY: longQueryKey,
+      OBSERVED_MAX: observedMax,
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: bin,
+      TAIL_QUERY_SECRET: tailQuerySecret,
+    });
+
+    expect(result.status).toBe(42);
+    expect(result.stderr).toContain("manifest unknown");
+    expect(result.stderr).toContain("diagnostic truncated to final 65536 bytes");
+    expect(result.stderr).not.toContain(tailQuerySecret);
+    expect(result.stderr.length).toBeLessThan(1_000);
+    expect(Number(readFileSync(observedMax, "utf8"))).toBeLessThanOrEqual(65_536);
+    expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
+  });
+
+  it("drops an ANSI-decorated folded credential after a truncated header", () => {
+    const foldedTailSecret = "folded-tail-secret";
+    const bin = fakeDocker(`
+printf "Authorization: " >&2
+head -c 100000 /dev/zero | tr '\\0' x >&2
+printf "\\r\\n\\033[31m\\tCustomScheme %s\\033[0m\\r\\nmanifest unknown\\n" "$FOLDED_TAIL_SECRET" >&2
+exit 42`);
+
+    const result = run("resolver_pull example:test", {
+      FOLDED_TAIL_SECRET: foldedTailSecret,
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: bin,
+    });
+
+    expect(result.status, result.stderr).toBe(42);
+    expect(result.stderr).toContain("manifest unknown");
+    expect(result.stderr).toContain("diagnostic truncated to final 65536 bytes");
+    expect(result.stderr).not.toContain(foldedTailSecret);
+    expect(result.stderr).not.toContain("\u001b");
+    expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
+  });
+
+  it("drops an invalid-byte-prefixed folded credential after a truncated header", () => {
+    const foldedTailSecret = "invalid-folded-tail-secret";
+    const bin = fakeDocker(`
+printf "Authorization: " >&2
+head -c 100000 /dev/zero | tr '\\0' x >&2
+printf "\\r\\n\\377\\tCustomScheme %s\\r\\nmanifest unknown\\n" "$FOLDED_TAIL_SECRET" >&2
+exit 42`);
+
+    const result = run("resolver_pull example:test", {
+      FOLDED_TAIL_SECRET: foldedTailSecret,
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: bin,
+    });
+
+    expect(result.status, result.stderr).toBe(42);
+    expect(result.stderr).toContain("manifest unknown");
+    expect(result.stderr).toContain("diagnostic truncated to final 65536 bytes");
+    expect(result.stderr).not.toContain(foldedTailSecret);
+    expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
+  });
+
+  it("fails closed when a truncated terminal diagnostic is unclassified", () => {
+    const bin = fakeDocker(`
+printf "%s\\n" "$@" >> "$DOCKER_LOG"
+head -c 100000 /dev/zero | tr '\\0' x >&2
+printf "\\n%s\\n" "daemon policy rejected this pull" >&2
+exit 1`);
+    const dockerLog = path.join(bin, "docker.log");
+
+    const result = run("resolver_pull example:test", {
+      DOCKER_LOG: dockerLog,
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: bin,
+    });
+
+    expect(result.status).toBe(75);
+    expect(readFileSync(dockerLog, "utf8")).toBe("pull\nexample:test\n");
+    expect(result.stderr).toContain("Truncated base-image pull diagnostics were not classifiable");
+    expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
+  });
+
+  it("fails closed and cleans up when the bounded collector fails", () => {
+    const bin = fakeDocker(`
+printf "%s\\n" "connection reset by peer" >&2
+exit 1`);
+    writeFileSync(path.join(bin, "tail"), "#!/usr/bin/env bash\ncat >/dev/null\nexit 7\n", {
+      mode: 0o755,
+    });
 
     const result = run("resolver_pull example:test", {
       PATH: `${bin}:${process.env.PATH}`,
       RUNNER_TEMP: bin,
     });
 
-    expect(result.status).toBe(42);
-    expect(result.stderr).toContain("daemon policy rejected this pull");
-    expect(result.stderr).toContain("diagnostic truncated at 65536 bytes");
-    expect(result.stderr.length).toBeLessThan(1_000);
+    expect(result.status).toBe(75);
+    expect(result.stderr).toContain("could not be captured securely");
     expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
   });
 
@@ -506,8 +737,8 @@ exit 42`);
 printf "%s\\0" "$@" >> "$DOCKER_LOG"
 printf "\\0" >> "$DOCKER_LOG"
 if [[ "$1" == pull ]]; then
-  printf "%s\\n" "unexpected status code 503: Service Unavailable" >&2
   head -c 100000 /dev/zero | tr '\\0' x >&2
+  printf "\\n%s\\n" "unexpected status code 503: Service Unavailable" >&2
   exit 1
 fi
 if [[ "$1" == build ]]; then exit 42; fi
@@ -539,7 +770,7 @@ exit 1`);
     expect(result.status).toBe(75);
     expect(readFileSync(githubEnv, "utf8")).toBe("");
     expect(readFileSync(sleepLog, "utf8")).toBe("1\n2\n");
-    expect(result.stderr.match(/diagnostic truncated at 65536 bytes/g)).toHaveLength(3);
+    expect(result.stderr.match(/diagnostic truncated to final 65536 bytes/g)).toHaveLength(3);
     const calls = readFileSync(dockerLog, "utf8")
       .split("\0\0")
       .filter(Boolean)
