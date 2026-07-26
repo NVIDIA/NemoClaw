@@ -23,8 +23,8 @@ export const SANDBOX_MCP_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLa
       group: "MCP Servers",
       order: 25.3,
       usage: "nemoclaw <name> mcp status",
-      description: "Inspect MCP server health",
-      flags: "[server] [--json]",
+      description: "Inspect MCP server health and advertised tools",
+      flags: "[server] [--json] [--probe|--no-probe] [--tools]",
     },
     {
       group: "MCP Servers",
