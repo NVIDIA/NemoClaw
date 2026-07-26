@@ -388,7 +388,7 @@ describe("PR E2E controller lifecycle", () => {
     }
   });
 
-  it("cancels the child and closes the check when startup fails after dispatch", async () => {
+  it("revokes and cancels when a lost PATCH publishes a foreign check URL", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-start-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -397,6 +397,7 @@ describe("PR E2E controller lifecycle", () => {
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
     let checkPatches = 0;
+    let failedRunningUpdate: Record<string, unknown> | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -436,8 +437,16 @@ describe("PR E2E controller lifecycle", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
-            () =>
-              githubResponse(
+            () => {
+              if (failedRunningUpdate) {
+                return githubResponse(
+                  exactPrGateCheck({
+                    ...failedRunningUpdate,
+                    details_url: "https://github.com/NVIDIA/NemoClaw/runs/999",
+                  }),
+                );
+              }
+              return githubResponse(
                 exactPrGateCheck({
                   output: {
                     title: "Evaluating PR commit",
@@ -445,7 +454,8 @@ describe("PR E2E controller lifecycle", () => {
                       "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
                   },
                 }),
-              ),
+              );
+            },
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
@@ -455,9 +465,11 @@ describe("PR E2E controller lifecycle", () => {
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => {
               checkPatches += 1;
-              return checkPatches === 2
-                ? githubResponse({ message: "simulated update failure" }, 500)
-                : prGateMutationResponse(request);
+              if (checkPatches === 2) {
+                failedRunningUpdate = (request.body ?? {}) as Record<string, unknown>;
+                return githubResponse({ message: "simulated update failure" }, 500);
+              }
+              return prGateMutationResponse(request);
             },
           ),
         ],
