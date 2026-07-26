@@ -2651,7 +2651,8 @@ NemoClaw does not retry that Dockerfile with the OpenShell gateway builder.
 Use the detail in the error to choose the next step:
 
 - If the local build is disabled, unavailable, or could not start, start Docker and keep BuildKit and the local prebuild enabled.
-- If the local build exits nonzero, the preceding BuildKit output contains the root cause. Fix the reported base-image, package, network, or Dockerfile error rather than treating it as a builder-selection failure.
+- If the local build exits nonzero, the preceding BuildKit output contains the root cause.
+  Fix the reported base-image, package, network, or Dockerfile error rather than treating it as a builder-selection failure.
 - If staged-context inspection or trust validation fails, resume onboarding to restage the managed context.
 
 Then resume onboarding:

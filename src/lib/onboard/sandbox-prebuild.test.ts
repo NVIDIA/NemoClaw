@@ -26,6 +26,7 @@ import {
 
 const BUILD_ID = "1234567890";
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
+const BUILD_START_ERROR = new Error("daemon unavailable");
 const temporaryDirectories: string[] = [];
 
 function createBuildContext(
@@ -488,37 +489,42 @@ describe("sandbox BuildKit prebuild", () => {
   it.each([
     [
       "exits nonzero",
-      async () => 1,
+      async (): Promise<number> => 1,
       /local build failed \(exit 1\).*Inspect the preceding BuildKit output/,
+      null,
     ],
     [
       "returns no exit status",
-      async () => null,
+      async (): Promise<null> => null,
       /local build failed without an exit status.*Inspect the preceding BuildKit output/,
+      null,
     ],
     [
       "cannot start",
-      async () => {
-        throw new Error("daemon unavailable");
+      async (): Promise<never> => {
+        throw BUILD_START_ERROR;
       },
       /local build could not start \(daemon unavailable\).*Start Docker.*BuildKit is enabled/,
+      BUILD_START_ERROR,
     ],
-  ])("fails closed when a required local BuildKit build %s (#7140)", async (_label, buildImage, message) => {
+  ] as const)("fails closed when a required local BuildKit build %s (#7140)", async (_label, buildImage, message, expectedCause) => {
     const { buildCtx, createArgs } = createBuildContext();
+    const failure = prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      gatewayFallback: "forbidden",
+      env: {},
+      buildImage,
+      log: () => {},
+    });
 
-    await expect(
-      prebuildSandboxImageIfEligible({
-        buildCtx,
-        buildId: BUILD_ID,
-        origin: "generated",
-        createArgs,
-        sandboxName: "alpha",
-        dockerDriverGateway: true,
-        gatewayFallback: "forbidden",
-        env: {},
-        buildImage,
-        log: () => {},
-      }),
-    ).rejects.toThrow(message);
+    await expect(failure).rejects.toThrow(message);
+    if (expectedCause) {
+      await expect(failure).rejects.toMatchObject({ cause: expectedCause });
+    }
   });
 });
