@@ -164,7 +164,8 @@ describe("gateway recovery", () => {
     // Sleeps happen after every probe except the last one (deadline check
     // after the final probe short-circuits before an extra sleep).
     expect(clock.sleeper).toHaveBeenCalled();
-    expect(clock.sleeper.mock.calls.every(([s]) => s === 1)).toBe(true);
+    expect(clock.sleeper).toHaveBeenNthCalledWith(1, 0.25);
+    expect(clock.sleeper.mock.calls.every(([s]) => s <= 1)).toBe(true);
   });
 
   it("succeeds on the first healthy probe without sleeping and sets OPENSHELL_GATEWAY (#3768)", async () => {
@@ -214,7 +215,7 @@ describe("gateway recovery", () => {
     // Exactly one inter-attempt sleep between the unhealthy first probe
     // and the healthy second probe.
     expect(deps.sleepSeconds).toHaveBeenCalledTimes(1);
-    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(1, 2);
+    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(1, 0.25);
     expect(deps.runCaptureOpenshell).toHaveBeenCalledTimes(6);
   });
 
@@ -234,6 +235,21 @@ describe("gateway recovery", () => {
 
     expect(deps.runCaptureOpenshell).not.toHaveBeenCalled();
     expect(deps.sleepSeconds).not.toHaveBeenCalled();
+  });
+
+  it("reports legacy zero-interval recovery as immediate probes", async () => {
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "3");
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "0");
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayPort: 8091 }, deps)).rejects.toThrow(
+      "did not become ready within the configured 3 immediate health probes",
+    );
+
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledTimes(9);
+    expect(deps.sleepSeconds).toHaveBeenCalledTimes(2);
+    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(1, 0);
+    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(2, 0);
   });
 
   it("rejects non-canonical gateway recovery names before invoking OpenShell", async () => {

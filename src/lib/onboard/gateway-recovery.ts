@@ -25,8 +25,14 @@ import { isGatewayHealthy } from "../state/gateway";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import { envInt } from "./env";
 import { resolveGatewayName, resolveGatewayPortFromName } from "./gateway-binding";
+import { formatGatewayHealthWaitLimit } from "./gateway-health-wait";
 import { isGatewayHttpReady } from "./gateway-http-readiness";
 import { getContainerRuntime } from "./local-inference-topology";
+import {
+  createReadinessWaitOptions,
+  formatReadinessDeadline,
+  getLegacyPollDeadlineBudgetMs,
+} from "./readiness-wait";
 
 export type StartGatewayForRecoveryOptions = {
   gatewayName?: string;
@@ -159,18 +165,7 @@ function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
 }
 
 function getGatewayRecoveryWaitBudgetMs(pollCount: number, pollIntervalSeconds: number): number {
-  const normalizedCount = Number.isFinite(pollCount) ? Math.max(0, pollCount) : 0;
-  const normalizedIntervalSeconds = Number.isFinite(pollIntervalSeconds)
-    ? Math.max(0, pollIntervalSeconds)
-    : 0;
-  return Math.max(1, normalizedCount * normalizedIntervalSeconds * 1000);
-}
-
-function formatGatewayRecoveryWaitBudget(budgetMs: number): string {
-  if (!Number.isFinite(budgetMs) || budgetMs <= 0) return "0s";
-  if (budgetMs < 1000) return `${Math.ceil(budgetMs)}ms`;
-  const seconds = budgetMs / 1000;
-  return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
+  return getLegacyPollDeadlineBudgetMs(pollCount, pollIntervalSeconds);
 }
 
 async function startTargetGatewayForRecovery(
@@ -204,41 +199,27 @@ async function startTargetGatewayForRecovery(
   const gatewayHealthyImpl = deps.isGatewayHealthy ?? isGatewayHealthy;
   const gatewayHttpReadyImpl = deps.isGatewayHttpReady ?? isGatewayHttpReady;
   const nowImpl = deps.now ?? Date.now;
+  const waitOptions = createReadinessWaitOptions({
+    budgetMs: waitBudgetMs,
+    maxIntervalMs: Math.max(0, recoveryPollInterval * 1000),
+    zeroBudgetAttempts: recoveryPollCount,
+    now: nowImpl,
+    sleep: (ms) => sleeper(ms / 1000),
+  });
   const healthy =
-    recoveryPollCount > 0 &&
-    (await waitUntilAsync(
-      async () => {
-        const status = deps.runCaptureOpenshell(["status"], { ignoreError: true });
-        const namedInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-          ignoreError: true,
-        });
-        const currentInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-        return (
-          status.includes("Connected") &&
-          gatewayHealthyImpl(status, namedInfo, currentInfo, gatewayName) &&
-          (await gatewayHttpReadyImpl(undefined, targetGatewayUrl))
-        );
-      },
-      {
-        // #3768 wants a SINGLE clear deadline budget rather than the legacy
-        // fixed attempt cap. Do NOT pass `maxAttempts` here: with maxAttempts
-        // set, a fast-failing probe sequence would exit after `count`
-        // attempts even though the deadline still permits more polling, and
-        // the operator would see a timeout that under-reports the wait the
-        // system was willing to spend. Let waitUntilAsync run until the
-        // deadline; the interval and probe cost naturally bound the total
-        // attempt count.
-        deadlineMs: nowImpl() + waitBudgetMs,
-        initialIntervalMs: Math.max(0, recoveryPollInterval * 1000),
-        maxIntervalMs: Math.max(0, recoveryPollInterval * 1000),
-        backoffFactor: 1,
-        now: nowImpl,
-        // waitUntilAsync passes durations in milliseconds to `sleep`, while
-        // the injected sleeper (sleepSeconds) expects a second-granular
-        // number. Adapt at this boundary only.
-        sleep: (ms) => sleeper(ms / 1000),
-      },
-    ));
+    waitOptions !== null &&
+    (await waitUntilAsync(async () => {
+      const status = deps.runCaptureOpenshell(["status"], { ignoreError: true });
+      const namedInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+        ignoreError: true,
+      });
+      const currentInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+      return (
+        status.includes("Connected") &&
+        gatewayHealthyImpl(status, namedInfo, currentInfo, gatewayName) &&
+        (await gatewayHttpReadyImpl(undefined, targetGatewayUrl))
+      );
+    }, waitOptions));
 
   if (healthy) {
     process.env.OPENSHELL_GATEWAY = gatewayName;
@@ -255,13 +236,12 @@ async function startTargetGatewayForRecovery(
     return;
   }
 
-  // Pure deadline-based semantics per #3768: report the actual budget the
-  // loop was allowed to spend. Include the interval only as diagnostic
-  // context so an operator scanning the message understands the poll cadence.
+  const waitLimit =
+    recoveryPollInterval === 0 && recoveryPollCount > 0
+      ? formatGatewayHealthWaitLimit(recoveryPollCount, recoveryPollInterval)
+      : `${formatReadinessDeadline(waitBudgetMs)} recovery deadline (${recoveryPollInterval}s poll interval)`;
   throw new Error(
-    `Gateway '${gatewayName}' did not become ready within the configured ${formatGatewayRecoveryWaitBudget(
-      waitBudgetMs,
-    )} recovery deadline (${recoveryPollInterval}s poll interval)`,
+    `Gateway '${gatewayName}' did not become ready within the configured ${waitLimit}`,
   );
 }
 
