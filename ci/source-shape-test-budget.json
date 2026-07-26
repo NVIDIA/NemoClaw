@@ -302,6 +302,11 @@
       "category": "security"
     },
     {
+      "file": "test/hosted-runner-recovery-workflow.test.ts",
+      "test": "locks recovery identities to the source workflows' runtime names (#7140)",
+      "category": "security"
+    },
+    {
       "file": "test/inference-options-docs.test.ts",
       "test": "keeps a per-model task-fit comparison table for curated onboarding models",
       "category": "compatibility"

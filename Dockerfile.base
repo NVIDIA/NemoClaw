@@ -81,8 +81,15 @@ WORKDIR /tmp/perl-source
 # Configure probe that previously returned a false negative under QEMU.
 # Remove this override only after the pinned base image and Perl release report
 # d_syscallproto=define from native Configure probes on amd64 and arm64.
-# Perl's test_harness schedules independent upstream tests through TEST_JOBS.
-# This preserves the full suite while using each native runner efficiently.
+# Perl's test_harness runs the same upstream suite while TEST_JOBS lets its TAP
+# scheduler use each native runner efficiently instead of serializing every
+# script in QEMU.
+# ExtUtils::Constant's test recursively invokes make and produced an incomplete
+# TAP plan when it overlapped another test locally, so run it alone first and
+# exclude exactly that already-passed file from the parallel pass.
+# Remove this split only after the unsplit parallel harness passes in two
+# consecutive amd64 and arm64 base-image builds; keep the selection-equivalence
+# check below until that removal condition is met.
 RUN curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o /tmp/perl.tar.xz "https://www.cpan.org/src/5.0/perl-${PERL_VERSION}.tar.xz" \
@@ -99,7 +106,25 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL \
         -Dman1dir=none \
         -Dman3dir=none \
     && make -j"$(nproc)" \
+    && make test_prep \
+    && env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
+        > /tmp/perl-tests-full \
+    && env -C t ./perl harness -dumptests \
+        ../cpan/ExtUtils-Constant/t/Constant.t \
+        > /tmp/perl-tests-serial \
+    && env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
+        '--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
+        > /tmp/perl-tests-parallel \
+    && sort /tmp/perl-tests-full > /tmp/perl-tests-full.sorted \
+    && sort /tmp/perl-tests-serial /tmp/perl-tests-parallel \
+        > /tmp/perl-tests-combined.sorted \
+    && cmp /tmp/perl-tests-full.sorted /tmp/perl-tests-combined.sorted \
+    && test "$(grep -Fxc \
+        'cpan/ExtUtils-Constant/t/Constant.t' \
+        /tmp/perl-tests-combined.sorted)" -eq 1 \
+    && TEST_JOBS=1 TEST_ARGS='../cpan/ExtUtils-Constant/t/Constant.t' make test_harness \
     && TEST_JOBS="$(nproc)" PERL_TEST_HARNESS_ASAP=1 \
+        TEST_ARGS='--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
         make -j"$(nproc)" test_harness \
     && make install DESTDIR=/tmp/perl-root
 

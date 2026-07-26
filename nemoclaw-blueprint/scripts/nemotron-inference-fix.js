@@ -539,17 +539,23 @@
     var origRequest = mod.request;
 
     mod.request = function (options, callback) {
-      if (typeof options === 'string' || !options) {
+      var isUrlForm =
+        typeof options === 'string' ||
+        (typeof URL !== 'undefined' && options instanceof URL);
+      var requestOptions =
+        isUrlForm && callback && typeof callback === 'object' ? callback : options;
+      if (!requestOptions || typeof requestOptions !== 'object') {
         return origRequest.apply(mod, arguments);
       }
 
-      var upstreamProvider = upstreamProviderFromHeaders(options.headers);
+      var upstreamProvider = upstreamProviderFromHeaders(requestOptions.headers);
       var req = origRequest.apply(mod, arguments);
       if (upstreamProvider !== undefined && req.removeHeader) {
         req.removeHeader(UPSTREAM_PROVIDER_HEADER);
       }
 
       // Only intercept object-form calls with a recognisable path.
+      if (isUrlForm) return req;
       var path = options.path || '';
       if (!isChatCompletionsPost(options.method, path)) {
         return req;

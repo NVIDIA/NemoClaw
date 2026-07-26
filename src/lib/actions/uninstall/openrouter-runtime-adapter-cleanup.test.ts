@@ -40,6 +40,8 @@ function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) 
 
 const OPENROUTER_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/openrouter-runtime-adapter-entry.js\n";
+const HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE =
+  "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/https-pin-runtime-adapter.js\n";
 
 type RunStub = (args: readonly string[]) => RunResult | null;
 
@@ -210,5 +212,82 @@ describe("OpenRouter Runtime adapter uninstall cleanup", () => {
     expect(result.exitCode).toBe(0);
     expect(killed).not.toContain(99998);
     expect(logs).toContain("No OpenRouter Runtime adapter processes found");
+  });
+});
+
+describe("HTTPS Pin Runtime adapter uninstall cleanup", () => {
+  it("kills the credential-bearing adapter via its verified persisted PID", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-https-pin-"));
+    const pidFile = path.join(tmpHome, ".nemoclaw", "https-pin-runtime-adapter.pid");
+    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+    fs.writeFileSync(pidFile, "44324\n");
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target === pidFile,
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            exited.add(pid);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          rmSync: vi.fn(),
+          run: runStub({
+            ps: psStub("44324", { exited, cmdline: HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE }),
+          }),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(killed).toContain(44324);
+      expect(logs).toContain("Stopped HTTPS Pin Runtime adapter 44324");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("scans its configured port but never kills a foreign process", () => {
+    const killed: number[] = [];
+    const lsofPorts: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-https-pin-foreign",
+          LOGNAME: "testuser",
+          NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT: "12038",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: vi.fn(),
+        rmSync: vi.fn(),
+        run: runStub({
+          lsof: lsofPortStub(lsofPorts, new Map([[":12038", ok("99997\n")]])),
+          ps: psStub("99997", {
+            exited: new Set(),
+            cmdline: "/usr/sbin/nginx -g daemon off;\n",
+          }),
+        }),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(lsofPorts).toContain(":12038");
+    expect(killed).not.toContain(99997);
   });
 });

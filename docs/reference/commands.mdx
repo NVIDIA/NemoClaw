@@ -2616,7 +2616,7 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Skip the confirmation prompt. |
-| `--force` | Skip the confirmation prompt and continue when no state directory was preserved or a manifest-declared state file failed. NemoClaw restores any captured entries; after a total failure, it recreates from registry metadata only. |
+| `--force` | Skip the confirmation prompt and continue when no state directory was preserved or a manifest-declared state file failed. NemoClaw restores any captured entries; after a total failure, it recreates from registry metadata only. If a pre-mutation no-op cannot execute in a sandbox with managed MCP servers, it may preserve the exact registered MCP intent through host-side recovery. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
@@ -2632,6 +2632,19 @@ If every state directory fails, `rebuild` exits before destroying the original s
 With `--force`, NemoClaw preserves any captured loose files in the partial manifest and restores them after recreation.
 If the backup produced nothing usable, it continues from recorded registry metadata without restoring prior sandbox state.
 Use this recovery path only when losing the state that could not be backed up is acceptable.
+For a sandbox with managed MCP servers, `--force` probes sandbox execution before MCP teardown.
+If that no-op cannot run, NemoClaw requires complete bridge entries and exact live policy and provider identities, without trying an in-sandbox adapter scrub or changing MCP ownership state.
+Each bridge must carry an explicit adapter matching the sandbox's recorded agent, and the registered policy must equal the canonical generated policy for that adapter, server name, URL endpoint, and current resolved-address pins.
+It rechecks the registry, recorded gateway, resolved targets, live generated policies, and provider identities immediately before deletion; incomplete adds, drift, or ambiguous ownership stop before deletion.
+NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
+Across every rebuild path, NemoClaw does not attempt to stop local NIM until sandbox deletion is positively confirmed, then attempts NIM cleanup on a best-effort basis.
+When `openshell sandbox delete` exits nonzero, an exact recorded-gateway lookup distinguishes explicit absence from a confirmed `Ready` or `Running` sandbox.
+Any other phase or probe failure is ambiguous.
+Explicit absence continues the rebuild.
+Confirmed intact state triggers an attempt to restore prepared MCP state and any shields lockdown that rebuild temporarily opened.
+NemoClaw reports any MCP or shields restoration failure and does not present the operation as a successful rollback.
+Ambiguous state preserves MCP ownership and recovery metadata without attempting to stop NIM or claiming the original sandbox remains intact, and the rebuild process skips its immediate shields relock.
+Failures after a successful exec probe do not switch to the host-side path.
 Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction.
 It also refuses a pending baseline exclusion transaction before opening a shields-down window, starting backup, or deleting the sandbox, and prints the exact `policy exclude` or `policy restore` command to rerun.
 For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
@@ -3091,7 +3104,8 @@ NemoClaw rejects loopback, link-local, private, and internal endpoint addresses,
 For a same-provider model change, pass `--endpoint-url` with the exact canonical endpoint URL that the target sandbox registry identifies as onboarding-established.
 Missing or `inference set` provenance and every different URL remain subject to the full address validation above.
 For public HTTP URLs, NemoClaw stores the validated IP address to prevent DNS rebinding.
-DNS-backed HTTPS URLs are rejected because NemoClaw cannot pin the downstream peer address while preserving TLS SNI and host validation across the OpenShell runtime boundary; HTTPS IP-literal URLs remain supported.
+For a DNS-backed HTTPS URL, NemoClaw routes the endpoint through a local HTTPS Pin Runtime adapter that terminates a pinned, SNI-correct outbound connection to the real upstream hostname; the sandbox and the persisted registry only ever see a local `host.openshell.internal` route, never the real hostname.
+HTTPS IP-literal URLs remain supported and do not need the adapter.
 NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
 `--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 
@@ -3402,8 +3416,8 @@ Passthrough commands do not consume flags intended for the downstream command as
 </AgentOnly>
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
-`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, or OpenRouter runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `11434`, `11435`, and `11437`.
-When you select OpenRouter, `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` must also be distinct from the gateway, vLLM, Ollama, and Ollama proxy ports.
+`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `11434`, `11435`, `11437`, and `11438`.
+When you select OpenRouter, `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` must also be distinct from the gateway, vLLM, Ollama, Ollama proxy, and HTTPS Pin Runtime adapter ports.
 When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another.
 Only port `8080` uses a NemoClaw-managed Linux systemd user service or macOS Homebrew service.
 NemoClaw-managed gateways on custom ports run as detached processes and do not change the default gateway service.
@@ -3788,7 +3802,7 @@ Set them before running `$$nemoclaw onboard` if a slow connection or large model
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness and OpenShell command re-registration after policy application, in seconds. Raise when the sandbox image build, gateway upload, in-sandbox boot, or post-policy re-registration exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the post-create deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
-| `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls (2s apart, so ~60s by default) the post-create readiness wait tolerates before treating `Error` as terminal. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
+| `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 
 <AgentOnly variant="openclaw,hermes">
 

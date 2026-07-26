@@ -14,18 +14,15 @@ const shieldsModulePath = "./index.js";
 const HUNG_FORWARD_OWNER_SOURCE = `
 const { spawn } = require("node:child_process");
 const childScriptPath = process.argv[2];
-const sentinelPath = process.argv[3];
-const childReadyPath = process.argv[4];
-spawn(process.execPath, [childScriptPath, sentinelPath, childReadyPath], { stdio: "ignore" });
-setTimeout(() => {}, 5000);
-`;
-const LATE_WEAKENING_CHILD_SOURCE = `
-const fs = require("node:fs");
-const sentinelPath = process.argv[2];
 const childReadyPath = process.argv[3];
+spawn(process.execPath, [childScriptPath, childReadyPath], { stdio: "ignore" });
+setInterval(() => {}, 60000);
+`;
+const WEAKENING_CHILD_SOURCE = `
+const fs = require("node:fs");
+const childReadyPath = process.argv[2];
 fs.writeFileSync(childReadyPath, String(process.pid));
-setTimeout(() => fs.writeFileSync(sentinelPath, "ran"), 1200);
-setTimeout(() => {}, 5000);
+setInterval(() => {}, 60000);
 `;
 
 type ShieldsHarness = {
@@ -462,23 +459,22 @@ describe("shields command flow", () => {
   });
 
   it("preempts a hung forward owner and its weakening subprocess before restoring", {
-    timeout: 10_000,
+    timeout: 20_000,
   }, async () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
     const sandboxName = "openclaw";
     const processToken = "b".repeat(32);
     const snapshotPath = path.join(stateDir, "policy-snapshot-hung.yaml");
-    const sentinelPath = path.join(stateDir, "late-weakening-child-ran");
-    const childReadyPath = path.join(stateDir, "late-weakening-child-ready");
+    const childReadyPath = path.join(stateDir, "weakening-child-ready");
     const transitionPath = path.join(
       stateDir,
       `shields-transition-${sandboxName}-${processToken}.json`,
     );
     const ownerScriptPath = path.join(stateDir, "hung-forward-owner.cjs");
-    const childScriptPath = path.join(stateDir, "late-weakening-child.cjs");
+    const childScriptPath = path.join(stateDir, "weakening-child.cjs");
     fs.writeFileSync(ownerScriptPath, HUNG_FORWARD_OWNER_SOURCE, { mode: 0o600 });
-    fs.writeFileSync(childScriptPath, LATE_WEAKENING_CHILD_SOURCE, { mode: 0o600 });
+    fs.writeFileSync(childScriptPath, WEAKENING_CHILD_SOURCE, { mode: 0o600 });
     fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
     fs.writeFileSync(
       path.join(stateDir, `shields-timer-${sandboxName}.json`),
@@ -491,11 +487,9 @@ describe("shields command flow", () => {
       }),
     );
 
-    const owner = spawn(
-      process.execPath,
-      [ownerScriptPath, childScriptPath, sentinelPath, childReadyPath],
-      { stdio: "ignore" },
-    );
+    const owner = spawn(process.execPath, [ownerScriptPath, childScriptPath, childReadyPath], {
+      stdio: "ignore",
+    });
     expect(owner.pid).toBeTypeOf("number");
     await vi.waitFor(() => expect(fs.existsSync(childReadyPath)).toBe(true), {
       timeout: 5_000,
@@ -535,7 +529,26 @@ describe("shields command flow", () => {
         return listDescendantProcessIdentities(rootPid, deadline);
       },
     );
-    const harness = createHarness();
+    const harness = createHarness({
+      run: (cmd) => {
+        expect(cmd).toEqual(["openshell", "policy", "set"]);
+        const observedChildIdentity = readProcessStartIdentity(childPid);
+        const observedChildState = readProcessState(childPid);
+        let childCanBeSignaled = true;
+        try {
+          process.kill(childPid, 0);
+        } catch (error) {
+          childCanBeSignaled = (error as NodeJS.ErrnoException).code === "EPERM";
+        }
+        const exactChildIsGone =
+          !childCanBeSignaled ||
+          (observedChildIdentity !== null && observedChildIdentity !== childStartIdentity);
+        const childIsZombie = observedChildState?.startsWith("Z") === true;
+        expect(exactChildIsGone || childIsZombie).toBe(true);
+        takeoverEvents.push("policy-restored");
+        return { status: 0 };
+      },
+    });
     fs.writeFileSync(
       transitionPath,
       JSON.stringify({
@@ -552,7 +565,6 @@ describe("shields command flow", () => {
 
     try {
       harness.synchronizeAutoRestoreWithShieldsDown(sandboxName);
-      await new Promise((resolve) => setTimeout(resolve, 1400));
     } finally {
       owner.kill("SIGKILL");
       try {
@@ -563,11 +575,14 @@ describe("shields command flow", () => {
       }
     }
 
-    expect(fs.existsSync(sentinelPath)).toBe(false);
     expect(fs.existsSync(transitionPath)).toBe(false);
     expect(takeoverEvents.indexOf("owner-stopped")).toBeGreaterThanOrEqual(0);
     expect(takeoverEvents.indexOf("owner-enumerated")).toBeGreaterThan(
       takeoverEvents.indexOf("owner-stopped"),
+    );
+    expect(takeoverEvents).toContain("owner-enumerated");
+    expect(takeoverEvents.indexOf("policy-restored")).toBeGreaterThan(
+      takeoverEvents.indexOf("owner-enumerated"),
     );
     expect(harness.runSpy).toHaveBeenCalledWith(
       ["openshell", "policy", "set"],

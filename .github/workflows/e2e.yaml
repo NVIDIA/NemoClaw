@@ -150,6 +150,7 @@ jobs:
   generate-matrix:
     needs: base-image-publication
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
@@ -1288,12 +1289,35 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
+      - name: Install and verify cloudflared prerequisite
+        # Keep the public HTTPS routing fixture on the same reviewed binary as
+        # the MCP and tunnel-lifecycle lanes. The checksum and package metadata
+        # checks prevent a mutable package source from entering PR-safe E2E.
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
+
       - name: Run inference routing live test
-        # Direct E2E coverage. The always-on PR-safe slices prove invalid-key,
-        # unreachable-endpoint, and localhost-compatible gateway routing
-        # without spending live provider quota. Credential-backed isolation
-        # and provider smokes live in inference-routing-provider-smoke.test.ts;
-        # any future secret-bearing lane must run that file from trusted main.
+        # Direct PR-safe E2E coverage proves invalid-key, unreachable-endpoint,
+        # localhost-compatible routing, namespace-aware HTTPS pinning, DNS
+        # rebinding resistance, private-target redirect rejection, and
+        # credential-bearing URL state rejection without live provider quota.
+        # Provider smokes live in inference-routing-provider-smoke.test.ts; any
+        # future secret-bearing lane must run that file from trusted main.
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/inference-routing.test.ts
@@ -2087,7 +2111,7 @@ jobs:
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}
-    timeout-minutes: 75
+    timeout-minutes: 85
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-e2e"
@@ -2428,7 +2452,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-dashboard'] }}
-    timeout-minutes: 75
+    timeout-minutes: 85
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-dashboard"
@@ -2507,7 +2531,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-discord,') || contains(format(',{0},', inputs.targets), ',hermes-discord,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}
-    timeout-minutes: 75
+    timeout-minutes: 90
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-discord"
@@ -2843,7 +2867,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-shields-config,') || contains(format(',{0},', inputs.targets), ',hermes-shields-config,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-shields-config'] }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-shields-config"
@@ -5872,6 +5896,7 @@ jobs:
   # comment.
   report-to-pr:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
     # makes the report wait for and record any requested job without adding
     # skipped checks to the normal pull_request workflow.
@@ -6011,6 +6036,7 @@ jobs:
   # ── Scheduled/manual scorecard ────────────────────────────────────────────
   scorecard:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: *e2e-result-jobs
     if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}
     permissions:

@@ -8,6 +8,7 @@ import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import type { InferenceSetDeps } from "./inference-set";
+import type { EnsureHttpsPinRuntimeAdapterFn } from "./inference-set-route-containment";
 
 export const OPENCLAW_TARGET: AgentConfigTarget = {
   agentName: "openclaw",
@@ -79,12 +80,16 @@ export function createDeps(options: {
   target?: AgentConfigTarget;
   session?: Session | null;
   openshellStatus?: number;
+  captureOpenshell?: InferenceSetDeps["captureOpenshell"];
   localValidation?: ValidationResult;
   localReachable?: boolean;
   contextWindow?: number | null;
   shieldsMutable?: boolean;
   prepareRunOpenshell?: () => void;
   rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
+  ensureHttpsPinRuntimeAdapter?: EnsureHttpsPinRuntimeAdapterFn;
+  revokeHttpsPinRuntimeAdapterRoute?: InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"];
+  updateSandbox?: InferenceSetDeps["updateSandbox"];
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
   seedHermesDashboardConfigResult?: "converged" | "absent" | "failed";
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
@@ -104,6 +109,8 @@ export function createDeps(options: {
     resolveContextWindowForModel: ReturnType<typeof vi.fn>;
     prepareRunOpenshell: ReturnType<typeof vi.fn>;
     rewriteConfigUrlsWithDnsPinning: ReturnType<typeof vi.fn>;
+    ensureHttpsPinRuntimeAdapter: ReturnType<typeof vi.fn>;
+    revokeHttpsPinRuntimeAdapterRoute: ReturnType<typeof vi.fn>;
     restartSandboxGateway: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
   };
@@ -118,16 +125,19 @@ export function createDeps(options: {
   const defaultSandbox =
     options.defaultSandbox === undefined ? (entries[0]?.name ?? null) : options.defaultSandbox;
   const calls = {
-    captureOpenshell: vi.fn(() => ({
-      status: options.openshellStatus ?? 0,
-      output: "",
-      stdout: "",
-      stderr: "",
-    })),
+    captureOpenshell: vi.fn(
+      options.captureOpenshell ??
+        (() => ({
+          status: options.openshellStatus ?? 0,
+          output: "",
+          stdout: "",
+          stderr: "",
+        })),
+    ),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     seedHermesDashboardConfig: vi.fn(() => options.seedHermesDashboardConfigResult ?? "converged"),
-    updateSandbox: vi.fn(() => true),
+    updateSandbox: vi.fn(options.updateSandbox ?? (() => true)),
     readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       const current = session ?? baseSession();
@@ -144,6 +154,18 @@ export function createDeps(options: {
     prepareRunOpenshell: vi.fn(options.prepareRunOpenshell ?? (() => undefined)),
     rewriteConfigUrlsWithDnsPinning: vi.fn(
       options.rewriteConfigUrlsWithDnsPinning ?? (async (value: ConfigValue) => value),
+    ),
+    ensureHttpsPinRuntimeAdapter: vi.fn(
+      options.ensureHttpsPinRuntimeAdapter ??
+        (async () => ({
+          baseUrl: "http://host.openshell.internal:11438/route/test-route",
+          credentialEnv: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_TOKEN",
+          token: "test-adapter-token",
+          routeId: "test-route",
+        })),
+    ),
+    revokeHttpsPinRuntimeAdapterRoute: vi.fn(
+      options.revokeHttpsPinRuntimeAdapterRoute ?? (async () => true),
     ),
     restartSandboxGateway: vi.fn(
       options.restartSandboxGateway ??
@@ -184,6 +206,10 @@ export function createDeps(options: {
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
     isSandboxConfigMutable: () => options.shieldsMutable ?? true,
     rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
+    ensureHttpsPinRuntimeAdapter:
+      calls.ensureHttpsPinRuntimeAdapter as unknown as EnsureHttpsPinRuntimeAdapterFn,
+    revokeHttpsPinRuntimeAdapterRoute:
+      calls.revokeHttpsPinRuntimeAdapterRoute as InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"],
     withGatewayRouteMutationLock:
       calls.withGatewayRouteMutationLock as InferenceSetDeps["withGatewayRouteMutationLock"],
     restartSandboxGateway: calls.restartSandboxGateway,

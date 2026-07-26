@@ -16,13 +16,39 @@ before those targets run; local runners must provide it themselves.
   GitHub Actions check suite.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
+- `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
+  failures from approved `main` workflows and requests one full rerun only when
+  every non-passing job has authenticated GitHub-hosted runner-loss evidence.
 - Platform workflows such as macOS, WSL, sandbox image, and regression E2E
   call their target E2E tests directly. The Ollama auth proxy target is
   selected through `.github/workflows/e2e.yaml`.
 
+## CI execution shape
+
+The sandbox image workflow builds the Hermes production image in the dedicated
+30-minute `build-hermes-sandbox-image` job. It uses full-SHA-pinned Buildx
+actions and a GitHub Actions cache scoped to the runner OS and architecture.
+The producer adds a bounded 32 GiB swap file and validates the guarded
+production build arguments before the build. It loads the image locally with
+registry writes disabled. After the build, it scans the completed image for
+node-tar and verifies the sandbox-readable installed files. It then uploads the
+compressed image as the one-day `hermes-isolation-image` artifact.
+
+The 90-minute `test-hermes-sandbox-image` job and the
+`state-dir-guard-metadata` job download and load that artifact instead of
+rebuilding the image. Within the Hermes test job, the secret-boundary and
+root-entrypoint steps have 45- and 30-minute budgets respectively.
+
 The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
 E2E tests when those boundaries are the behavior under test.
+
+## Platform Vitest main watch
+
+`.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
+four independent shards on each of macOS and WSL, with `fail-fast` disabled.
+Each macOS shard has a 30-minute budget and each WSL shard has a 90-minute
+budget. The additional root-required WSL contracts run only on shard 1.
 
 ## Credential-free tests
 
@@ -177,6 +203,52 @@ graph as the live targets:
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
+
+### Hosted-runner recovery
+
+The trusted recovery workflow can request one full rerun of the latest eligible
+first attempt for these source workflows:
+
+- scheduled or manually dispatched `E2E main`;
+- `E2E / WSL` pushes to `main`;
+- `E2E / macOS` pushes to `main`; and
+- `CI / Platform Vitest Main Watch` pushes to `main`.
+
+The controller authenticates the active workflow name and path, repository,
+head repository, branch, run name, event, run URL, and first-attempt failure.
+It ignores E2E PR child runs and an eligible source run that has a newer
+eligible run for the same workflow.
+
+The complete non-passing job listing must contain only exact hosted-runner-loss
+markers for that workflow's approved runner labels.
+The E2E policy accepts only `ubuntu-latest`.
+The WSL and macOS policies accept only `cancelled` jobs with their exact
+platform label and exact GitHub internal-error annotation.
+The platform-watch policy applies those platform contracts to Windows and
+macOS jobs and the authenticated hosted-runner-loss contract to Ubuntu jobs.
+An ordinary assertion failure, mixed failure set, incomplete listing, custom or
+self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
+
+The controller collects and fingerprints the complete source, workflow,
+latest-run, job, check, annotation, and optional log evidence twice.
+It requests the full GitHub Actions rerun only when both snapshots match.
+The rerun executes every job in attempt two, not only the failed jobs.
+Neither a source attempt two nor a recovery-controller rerun can request
+another source rerun.
+
+The recovery job checks out only the trusted default-branch controller and does
+not check out source-run code.
+It receives no repository secrets and holds `actions: write` only for the
+bounded rerun request.
+
+The runner-allocation and internal-error failures originate in the
+GitHub-hosted Actions service, outside repository-controlled workflow code, so
+this controller contains the failure without claiming to repair its source.
+Remove the recovery workflow and controller after the supported source
+workflows record 30 consecutive days with no first-attempt failure accepted by
+the exact recovery classifier, or when those workflows stop using
+GitHub-hosted runners. Any accepted recovery request resets that observation
+window.
 
 ### Runner comparison telemetry
 
@@ -680,8 +752,8 @@ exactly one failure annotation. Its message must be
 `The operation was canceled.` for one completed `cancelled` workload step or
 `Process completed with exit code 143.` for one completed `failure` workload
 step. The annotation must use `.github`, equal start and end lines, null
-columns, and empty title and detail fields. Every annotation must use a blob URL
-bound to the same workflow commit. The controller accepts at most 20
+columns, and null or empty title and detail fields. Every annotation must use a
+blob URL bound to the same workflow commit. The controller accepts at most 20
 annotations, bounds each text field, and limits the normalized annotation
 evidence to 64 KiB. This permits trusted bounded non-failure notices beside the
 sole failure annotation without allowing annotation output to exhaust the

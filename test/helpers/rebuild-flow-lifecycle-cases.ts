@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -26,11 +27,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).not.toHaveBeenCalled();
       expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-      expect(
-        harness.runOpenshellSpy.mock.calls.some(
-          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
-        ),
-      ).toBe(false);
+      expectNoSandboxDelete(harness.runOpenshellSpy);
     });
 
     it("backs up once, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async ({
@@ -73,7 +70,7 @@ export function registerRebuildFlowLifecycleTests(): void {
         harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
       );
       expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
         expect.objectContaining({ ignoreError: true }),
       );
       expect(harness.onboardSpy).toHaveBeenCalledWith(
@@ -98,7 +95,8 @@ export function registerRebuildFlowLifecycleTests(): void {
         }),
       );
       const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
-        (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
+        (call) =>
+          Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete -g nemoclaw alpha",
       );
       expect(harness.registryUpdateSpy.mock.invocationCallOrder[0]).toBeLessThan(
         harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall],
@@ -254,7 +252,7 @@ network_policies:
         },
         {
           event: "absent",
-          result: { status: 1, output: "", stderr: "Not Found: sandbox not found" },
+          result: { status: 1, output: "", stderr: "Error: sandbox alpha not found" },
         },
       ];
       const harness = createRebuildFlowHarness({
@@ -276,7 +274,7 @@ network_policies:
       expect(events).toEqual(["stale-live", "absent", "onboard"]);
       expect(
         harness.captureOpenshellSpy.mock.calls.filter(
-          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get alpha",
+          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get -g nemoclaw alpha",
         ),
       ).toHaveLength(2);
     });
