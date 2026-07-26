@@ -152,7 +152,7 @@ describe("rebuild local-provider recreation", () => {
       status: 1,
       output: "",
       stdout: "",
-      stderr: "Not Found: sandbox not found",
+      stderr: "Error: sandbox alpha not found",
     });
     let harness!: RebuildFlowHarness;
     let setupResult: SetupResult | undefined;
@@ -193,7 +193,7 @@ describe("rebuild local-provider recreation", () => {
 
     const calls = harness.runOpenshellSpy.mock.calls.map((call) => call[0] as string[]);
     const deleteCall = calls.findIndex(
-      (args) => args[0] === "sandbox" && args[1] === "delete" && args[2] === "alpha",
+      (args) => args.join(" ") === "sandbox delete -g nemoclaw alpha",
     );
     const providerLookup = calls.findIndex(
       (args) => args[0] === "provider" && args[1] === "get" && args[2] === provider,

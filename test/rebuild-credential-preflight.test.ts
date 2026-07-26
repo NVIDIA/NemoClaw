@@ -173,7 +173,7 @@ if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "get") {
   if (fs.existsSync(${JSON.stringify(deleteMarker)})) {
-    process.stderr.write("Not Found: sandbox not found\\n");
+    process.stderr.write("sandbox ${sandboxName} not found\\n");
     process.exit(1);
   }
   process.stdout.write("Sandbox: ${sandboxName}\\nPhase: Ready\\n");

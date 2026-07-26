@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { AgentMcpAdapter } from "../src/lib/agent/defs";
 import type { McpBridgeEntry } from "../src/lib/state/registry";
 
 const testState = vi.hoisted(() => {
@@ -24,6 +25,7 @@ const testState = vi.hoisted(() => {
     adapterRegistered: true,
     applyPresetContent: vi.fn(),
     calls: [] as string[],
+    captureOpenshell: vi.fn(),
     executeGatewaySupervisorAction: vi.fn(),
     executeSandboxCommand: vi.fn(),
     executeSandboxExecCommand: vi.fn(),
@@ -33,16 +35,31 @@ const testState = vi.hoisted(() => {
     home,
     originalEnv,
     policyApplyCalls: 0,
-    providers: new Map<string, { credential: string; id: string }>(),
+    providers: new Map<string, { credential: string; id: string; resourceVersion?: number }>(),
+    resolveHostAddresses: vi.fn(),
     attachedProviders: new Set<string>(),
     recoverNamedGatewayRuntime: vi.fn(),
     removePreset: vi.fn(),
+    runOpenshell: vi.fn(),
     runOpenshellProviderCommand: vi.fn(),
+    stopNimContainer: vi.fn(),
+    stopNimContainerByName: vi.fn(),
+    warnUnpreservedUserManagedFiles: vi.fn(),
   };
 });
 
 vi.mock("../src/lib/actions/global", () => ({
   runOpenshellProviderCommand: testState.runOpenshellProviderCommand,
+}));
+
+vi.mock("../src/lib/adapters/dns/resolve", () => ({
+  resolveHostAddresses: testState.resolveHostAddresses,
+}));
+
+vi.mock("../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/adapters/openshell/runtime")>()),
+  captureOpenshell: testState.captureOpenshell,
+  runOpenshell: testState.runOpenshell,
 }));
 
 vi.mock("../src/lib/gateway-runtime-action", () => ({
@@ -61,7 +78,19 @@ vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
   executeSandboxExecCommand: testState.executeSandboxExecCommand,
 }));
 
+vi.mock("../src/lib/actions/sandbox/rebuild-flow-helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/actions/sandbox/rebuild-flow-helpers")>()),
+  warnUnpreservedUserManagedFiles: testState.warnUnpreservedUserManagedFiles,
+}));
+
+vi.mock("../src/lib/inference/nim", () => ({
+  stopNimContainer: testState.stopNimContainer,
+  stopNimContainerByName: testState.stopNimContainerByName,
+}));
+
 import * as bridge from "../src/lib/actions/sandbox/mcp-bridge";
+import { isAgentMcpAdapter } from "../src/lib/actions/sandbox/mcp-bridge-contracts";
+import { runRebuildDestroyPhase } from "../src/lib/actions/sandbox/rebuild-destroy-phase";
 import * as registry from "../src/lib/state/registry";
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
@@ -91,10 +120,26 @@ const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
   },
 };
 
-function ownedPolicy(server: "github" | "slack") {
+function ownedPolicy(
+  server: "github" | "slack",
+  options: {
+    adapter?: AgentMcpAdapter;
+    entry?: McpBridgeEntry;
+    resolvedAddresses?: readonly string[];
+  } = {},
+) {
+  const entry = options.entry ?? bridgeEntries[server];
+  const adapter = options.adapter ?? entry.adapter;
+  expect(isAgentMcpAdapter(adapter), "MCP policy fixture requires an explicit adapter").toBe(true);
+  const resolvedAddresses = options.resolvedAddresses ?? [new URL(entry.url).hostname];
   return {
-    name: `mcp-bridge-${server}`,
-    content: "network_policies: {}\n",
+    name: entry.policyName,
+    content: bridge.buildMcpBridgePolicyYaml(
+      entry.server,
+      entry.url,
+      adapter as AgentMcpAdapter,
+      resolvedAddresses,
+    ),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   };
 }
@@ -158,6 +203,10 @@ beforeEach(() => {
   });
   testState.getPresetContentGatewayState.mockReturnValue("match");
   testState.removePreset.mockReturnValue(true);
+  testState.runOpenshell.mockReturnValue({ status: 0, stdout: "", stderr: "" });
+  testState.resolveHostAddresses.mockImplementation(async (hostname: string) => [
+    { address: hostname },
+  ]);
 
   testState.runOpenshellProviderCommand.mockImplementation((args: string[]) => {
     testState.calls.push(args.join(" "));
@@ -171,7 +220,7 @@ beforeEach(() => {
         return provider
           ? {
               status: 0,
-              stdout: `Id: ${provider.id}\nType: generic\nResource version: 1\nCredential keys: ${provider.credential}\n`,
+              stdout: `Id: ${provider.id}\nType: generic\nResource version: ${provider.resourceVersion ?? 1}\nCredential keys: ${provider.credential}\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
@@ -249,6 +298,7 @@ beforeEach(() => {
   });
 
   testState.executeSandboxExecCommand.mockImplementation((_sandbox: string, command: string) => {
+    const isNoopProbe = command === ":";
     const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] ?? "";
     const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
     const isRevisionObservation = proof.includes("printf '%s\\n' absent");
@@ -264,6 +314,7 @@ beforeEach(() => {
       );
     return {
       status:
+        isNoopProbe ||
         proof.includes("allow_all_known_mcp_methods") ||
         proof.includes('[ -z "${') ||
         proof.includes("openshell:resolve:env:GITHUB_TOKEN") ||
@@ -365,6 +416,559 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.calls).toEqual(["provider get alpha-mcp-github"]);
     expect(testState.adapterCalls).toEqual([]);
     expect([...testState.providers.keys()]).toContain("alpha-mcp-github");
+  });
+
+  it("retains a providerless preflighted add when exec-unavailable recovery refuses it (#7062)", async () => {
+    testState.providers.delete("alpha-mcp-github");
+    testState.attachedProviders.delete("alpha-mcp-github");
+    const pending: McpBridgeEntry = { ...bridgeEntries.github, addState: "preflighted" };
+    delete pending.providerId;
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: pending } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const before = registry.getSandbox("alpha");
+
+    const message = await captureMessage(() =>
+      bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha"),
+    );
+
+    expect(message).toMatch(/incomplete add transaction.*cannot discard or adopt/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.getPresetContentGatewayState).not.toHaveBeenCalled();
+    expect(testState.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing adapter before exec-unavailable recovery can mutate state (#7062)", async () => {
+    const missingAdapter: McpBridgeEntry = { ...bridgeEntries.github };
+    delete missingAdapter.adapter;
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: missingAdapter } },
+    });
+    registry.addCustomPolicy(
+      "alpha",
+      ownedPolicy("github", { adapter: "mcporter", entry: missingAdapter }),
+    );
+    const before = registry.getSandbox("alpha");
+
+    const message = await captureMessage(() =>
+      bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha"),
+    );
+
+    expect(message).toMatch(/adapter identity is missing or incompatible/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.resolveHostAddresses).not.toHaveBeenCalled();
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.getPresetContentGatewayState).not.toHaveBeenCalled();
+    expect(testState.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cross-agent adapter before exec-unavailable recovery can mutate state (#7062)", async () => {
+    const crossAgentEntry: McpBridgeEntry = {
+      ...bridgeEntries.github,
+      agent: "hermes",
+      adapter: "hermes-config",
+    };
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: crossAgentEntry } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github", { entry: crossAgentEntry }));
+    const before = registry.getSandbox("alpha");
+
+    const message = await captureMessage(() =>
+      bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha"),
+    );
+
+    expect(message).toMatch(/adapter identity is missing or incompatible/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.resolveHostAddresses).not.toHaveBeenCalled();
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.getPresetContentGatewayState).not.toHaveBeenCalled();
+    expect(testState.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "credential key",
+      /reuse the same credential key/i,
+      (entry: McpBridgeEntry): McpBridgeEntry => ({
+        ...entry,
+        env: [...bridgeEntries.github.env],
+      }),
+    ],
+    [
+      "provider name",
+      /reuse the same provider name/i,
+      (entry: McpBridgeEntry): McpBridgeEntry => ({
+        ...entry,
+        providerName: bridgeEntries.github.providerName,
+      }),
+    ],
+    [
+      "provider ID",
+      /reuse the same provider ID/i,
+      (entry: McpBridgeEntry): McpBridgeEntry => ({
+        ...entry,
+        providerId: bridgeEntries.github.providerId,
+      }),
+    ],
+    [
+      "generated policy name",
+      /reuse the same generated policy name/i,
+      (entry: McpBridgeEntry): McpBridgeEntry => ({
+        ...entry,
+        policyName: bridgeEntries.github.policyName,
+      }),
+    ],
+  ] satisfies ReadonlyArray<
+    readonly [string, RegExp, (entry: McpBridgeEntry) => McpBridgeEntry]
+  >)("rejects a cross-entry %s collision before exec-unavailable recovery can inspect or mutate state (#7062)", async (_label, expected, collide) => {
+    const collidingSlack = collide(bridgeEntries.slack);
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: {
+        bridges: {
+          github: bridgeEntries.github,
+          slack: collidingSlack,
+        },
+      },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    registry.addCustomPolicy("alpha", ownedPolicy("slack", { entry: collidingSlack }));
+    const before = registry.getSandbox("alpha");
+
+    const message = await captureMessage(() =>
+      bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha"),
+    );
+
+    expect(message).toMatch(expected);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.resolveHostAddresses).not.toHaveBeenCalled();
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.runOpenshell).not.toHaveBeenCalled();
+    expect(testState.getPresetContentGatewayState).not.toHaveBeenCalled();
+    expect(testState.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it("rejects live policy drift during exec-unavailable recovery without MCP mutations (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const before = registry.getSandbox("alpha");
+    testState.getPresetContentGatewayState.mockReturnValue("drift");
+
+    const message = await captureMessage(() =>
+      bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha"),
+    );
+
+    expect(message).toMatch(/policy.*drifted.*host-side rebuild recovery/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile an incomplete policy registration during read-only recovery (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", {
+      ...ownedPolicy("github"),
+      pendingContent: "network_policies: {}\n",
+    });
+    const before = registry.getSandbox("alpha");
+
+    const message = await captureMessage(() =>
+      bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha"),
+    );
+
+    expect(message).toMatch(/incomplete registry transition.*read-only/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it("permits read-only host recovery only while complete MCP state stays exact (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const before = registry.getSandbox("alpha");
+
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    await preparation.revalidateBeforeDelete?.();
+    preparation.assertDeleteEdgeUnchanged?.();
+
+    expect(preparation.entries).toEqual([bridgeEntries.github]);
+    expect(preparation.detachedProviderEntries).toEqual([]);
+    expect(preparation.scrubbedAdapterEntries).toEqual([]);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.calls).toEqual([
+      "provider get alpha-mcp-github",
+      "provider get alpha-mcp-github",
+    ]);
+    expect(testState.recoverNamedGatewayRuntime).toHaveBeenCalledTimes(2);
+    expect(testState.getPresetContentGatewayState).toHaveBeenCalledTimes(2);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it("fails the delete-edge proof when live MCP policy drifts after host preflight (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    const before = registry.getSandbox("alpha");
+    testState.getPresetContentGatewayState.mockReturnValue("drift");
+
+    const message = await captureMessage(async () => preparation.revalidateBeforeDelete?.());
+
+    expect(message).toMatch(/policy.*drifted.*host-side rebuild recovery/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.calls).toEqual(["provider get alpha-mcp-github"]);
+  });
+
+  it("fails the delete-edge proof when the exact provider identity changes (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    const before = registry.getSandbox("alpha");
+    testState.providers.set("alpha-mcp-github", {
+      credential: "GITHUB_TOKEN",
+      id: "99999999-2222-4333-8444-555555555555",
+    });
+
+    const message = await captureMessage(async () => preparation.revalidateBeforeDelete?.());
+
+    expect(message).toMatch(/no longer exactly matches.*stable provider ID/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.calls).toEqual([
+      "provider get alpha-mcp-github",
+      "provider get alpha-mcp-github",
+    ]);
+  });
+
+  it("rejects valid provider resource-version drift through the exact snapshot comparator (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    const before = registry.getSandbox("alpha");
+    testState.providers.set("alpha-mcp-github", {
+      credential: "GITHUB_TOKEN",
+      id: "11111111-2222-4333-8444-555555555555",
+      resourceVersion: 2,
+    });
+
+    const message = await captureMessage(async () => preparation.revalidateBeforeDelete?.());
+
+    expect(message).toMatch(/changed after host-side rebuild preflight/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.calls).toEqual([
+      "provider get alpha-mcp-github",
+      "provider get alpha-mcp-github",
+    ]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it("rejects valid-to-valid DNS drift from the canonical policy pins (#7062)", async () => {
+    const dnsEntry = {
+      ...bridgeEntries.github,
+      url: "https://mcp.example.com/github",
+    };
+    testState.resolveHostAddresses
+      .mockResolvedValueOnce([{ address: "8.8.8.8" }])
+      .mockResolvedValueOnce([{ address: "1.1.1.1" }]);
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: dnsEntry } },
+    });
+    registry.addCustomPolicy(
+      "alpha",
+      ownedPolicy("github", { entry: dnsEntry, resolvedAddresses: ["8.8.8.8"] }),
+    );
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    const before = registry.getSandbox("alpha");
+
+    const message = await captureMessage(async () => preparation.revalidateBeforeDelete?.());
+
+    expect(message).toMatch(/not canonical for its recorded bridge definition/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.resolveHostAddresses).toHaveBeenNthCalledWith(1, "mcp.example.com");
+    expect(testState.resolveHostAddresses).toHaveBeenNthCalledWith(2, "mcp.example.com");
+    expect(testState.adapterCalls).toEqual([]);
+  });
+
+  it("rejects bridge-definition drift at the final no-await delete edge (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    const before = registry.getSandbox("alpha");
+    registry.updateSandbox("alpha", {
+      mcp: {
+        ...before?.mcp,
+        bridges: {
+          github: { ...bridgeEntries.github, url: "https://1.1.1.1/github" },
+        },
+      },
+    });
+
+    expect(() => preparation.assertDeleteEdgeUnchanged?.()).toThrow(
+      /MCP bridge definitions changed/i,
+    );
+    expect(testState.adapterCalls).toEqual([]);
+  });
+
+  it("rejects a new destroy marker at the final no-await delete edge (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    const before = registry.getSandbox("alpha");
+    registry.updateSandbox("alpha", {
+      mcp: {
+        ...before?.mcp,
+        bridges: { github: bridgeEntries.github },
+        destroyPreparedAt: "2026-07-19T00:00:00.000Z",
+      },
+    });
+
+    expect(() => preparation.assertDeleteEdgeUnchanged?.()).toThrow(
+      /incomplete MCP destroy transaction/i,
+    );
+    expect(registry.getSandbox("alpha")?.mcp?.destroyPreparedAt).toBe("2026-07-19T00:00:00.000Z");
+    expect(testState.adapterCalls).toEqual([]);
+  });
+
+  it("rejects recorded-gateway drift at the final no-await delete edge (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    registry.updateSandbox("alpha", { gatewayPort: 19080 });
+
+    expect(() => preparation.assertDeleteEdgeUnchanged?.()).toThrow(
+      /changed its recorded gateway/i,
+    );
+    expect(registry.getSandbox("alpha")?.gatewayPort).toBe(19080);
+    expect(testState.adapterCalls).toEqual([]);
+  });
+
+  it("rejects recorded-agent adapter drift at the final no-await delete edge (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    registry.updateSandbox("alpha", { agent: "hermes" });
+
+    expect(() => preparation.assertDeleteEdgeUnchanged?.()).toThrow(
+      /changed its recorded agent or MCP adapter/i,
+    );
+    expect(registry.getSandbox("alpha")?.agent).toBe("hermes");
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
+  it("runs failed exec through real read-only preparation and deletes before stopping NIM (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      nimContainer: "nim-alpha",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const before = registry.getSandbox("alpha");
+    testState.executeSandboxExecCommand.mockReturnValue(null);
+    testState.runOpenshell.mockImplementation((args: string[]) =>
+      args[1] === "delete"
+        ? { status: 0, stdout: "", stderr: "" }
+        : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+    );
+    testState.captureOpenshell.mockReturnValue({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "Error: sandbox alpha not found",
+    });
+    const onDeleted = vi.fn();
+
+    const result = await runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: before ?? { name: "alpha", agent: "openclaw" },
+      staleRecovery: false,
+      backupManifest: null,
+      force: true,
+      log: vi.fn(),
+      bail: vi.fn((message: string): never => {
+        throw new Error(message);
+      }),
+      relockShieldsIfNeeded: vi.fn(() => true),
+      onDeleted,
+    });
+
+    expect(result?.entries).toEqual([bridgeEntries.github]);
+    expect(testState.executeSandboxExecCommand).toHaveBeenCalledOnce();
+    expect(testState.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
+      allowLocalDockerFallback: false,
+    });
+    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":");
+    expect(testState.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
+    expect(testState.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
+    expect(testState.stopNimContainer).not.toHaveBeenCalled();
+    expect(testState.stopNimContainerByName).toHaveBeenCalledWith("nim-alpha");
+    expect(testState.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+    expect(testState.getPresetContentGatewayState).toHaveBeenCalledTimes(2);
+    expect(testState.recoverNamedGatewayRuntime).toHaveBeenCalledTimes(2);
+    expect(testState.executeSandboxExecCommand.mock.invocationCallOrder[0]).toBeLessThan(
+      testState.runOpenshellProviderCommand.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(testState.runOpenshellProviderCommand.mock.invocationCallOrder[1]).toBeLessThan(
+      testState.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(testState.runOpenshell.mock.invocationCallOrder[0]).toBeLessThan(
+      testState.stopNimContainerByName.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect([...testState.providers.keys()]).toContain("alpha-mcp-github");
+    expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
+    expect(testState.adapterRegistered).toBe(true);
+    expect(testState.adapterCalls).toEqual([":"]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+    expect(onDeleted).toHaveBeenCalledOnce();
+  });
+
+  it("preserves real MCP ownership and running NIM when sandbox deletion fails (#7062)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      nimContainer: "nim-alpha",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const beforeRegistry = registry.getSandbox("alpha");
+    const beforeProviders = [...testState.providers.entries()];
+    const beforeAttachments = [...testState.attachedProviders];
+    const beforeAdapterRegistered = testState.adapterRegistered;
+    testState.executeSandboxExecCommand.mockReturnValue(null);
+    testState.runOpenshell
+      .mockReturnValueOnce({
+        status: 9,
+        stdout: "",
+        stderr: "delete failed",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: "Phase: Ready\n", stderr: "" });
+    const onDeleted = vi.fn();
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: beforeRegistry ?? { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        backupManifest: null,
+        force: true,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        onDeleted,
+      }),
+    ).rejects.toThrow("Failed to delete sandbox.");
+
+    expect(registry.getSandbox("alpha")).toEqual(beforeRegistry);
+    expect([...testState.providers.entries()]).toEqual(beforeProviders);
+    expect([...testState.attachedProviders]).toEqual(beforeAttachments);
+    expect(testState.adapterRegistered).toBe(beforeAdapterRegistered);
+    expect(testState.adapterCalls).toEqual([":"]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+    expect(testState.stopNimContainer).not.toHaveBeenCalled();
+    expect(testState.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
   });
 
   it("rejects policy drift before prepareMcpBridgesForRebuild mutates adapter or provider state", async () => {
