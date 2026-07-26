@@ -4,11 +4,10 @@
 //
 // Process-level driver for the Local Ollama strict Chat Completions
 // tool-call probe. Loaded by test/strict-tool-call-probe.test.ts via
-// `tsx <driver>`; not picked up by Vitest's discovery (lives under
+// `node --import tsx <driver>`; not picked up by Vitest's discovery (lives under
 // test/fixtures/, which is excluded from the test glob).
 //
 // Mirrors the inline `node -e` block from the retired
-// test/e2e/test-strict-tool-call-probe.sh, retained here so the
 // caller-level behavior under test stays identical to production
 // runtime conditions (subprocess curl probes, real env propagation,
 // no Vitest worker shims). Refs #4537, #4349, #5098, #5119.
@@ -94,7 +93,8 @@ const http = require("node:http");
 
 const mode = process.env.MOCK_MODE;
 const requestsFile = process.env.REQUESTS_FILE;
-let count = 0;
+let requestCount = 0;
+let chatCount = 0;
 
 function toolCallResponse() {
   return {
@@ -122,10 +122,10 @@ function plainTextResponse() {
   return { choices: [{ message: { role: "assistant", content: "OK" } }] };
 }
 
-function responseForRequest() {
+function responseForChatRequest() {
   if (mode === "success") return { status: 200, body: toolCallResponse() };
   if (mode === "transient-502") {
-    return count === 1
+    return chatCount === 1
       ? { status: 502, body: { error: { message: "transient upstream failure" } } }
       : { status: 200, body: toolCallResponse() };
   }
@@ -137,7 +137,7 @@ const server = http.createServer((req, res) => {
   const chunks = [];
   req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
   req.on("end", () => {
-    count += 1;
+    requestCount += 1;
     const rawBody = Buffer.concat(chunks).toString("utf8");
     let parsedBody = null;
     try {
@@ -147,9 +147,15 @@ const server = http.createServer((req, res) => {
     }
     fs.appendFileSync(
       requestsFile,
-      JSON.stringify({ count, method: req.method, url: req.url, body: parsedBody }) + "\n",
+      JSON.stringify({ count: requestCount, method: req.method, url: req.url, body: parsedBody }) + "\n",
     );
-    const response = responseForRequest();
+    if (req.method === "GET" && req.url === "/v1/models") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "mock-tool-model" }] }));
+      return;
+    }
+    chatCount += 1;
+    const response = responseForChatRequest();
     res.writeHead(response.status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(response.body));
   });
@@ -309,25 +315,38 @@ console.error = (...args) => lines.push(args.join(" "));
   assert.equal(payload.result.preferredInferenceApi, "openai-completions");
 }
 
+function assertCalibrationRequest(request) {
+  assert.equal(request.method, "GET");
+  assert.equal(request.url, "/v1/models");
+  assert.equal(request.body, null);
+}
+
+function assertChatCompletionRequests(requests, expectedCount) {
+  assertCalibrationRequest(requests[0]);
+  const chatRequests = requests.filter((request) => request.url === "/v1/chat/completions");
+  assert.equal(chatRequests.length, expectedCount);
+  for (const request of chatRequests) {
+    assert.equal(request.method, "POST");
+    assertStrictPayload(request.body);
+  }
+  return chatRequests;
+}
+
 (async () => {
   await withMockEndpoint("success", async (endpoint, readRequests) => {
     const result = await validate(endpoint);
     assert.deepEqual(result, { ok: true, api: "openai-completions" });
     const requests = readRequests();
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0].method, "POST");
-    assert.equal(requests[0].url, "/v1/chat/completions");
-    assertStrictPayload(requests[0].body);
+    assert.equal(requests.length, 2);
+    assertChatCompletionRequests(requests, 1);
     console.log("[PASS] strict validation succeeds with structured tool_calls");
   });
 
   await withMockEndpoint("success", async (endpoint, readRequests) => {
     runOnboardingCallerAgainstMock(endpoint);
     const requests = readRequests();
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0].method, "POST");
-    assert.equal(requests[0].url, "/v1/chat/completions");
-    assertStrictPayload(requests[0].body);
+    assert.equal(requests.length, 2);
+    assertChatCompletionRequests(requests, 1);
     console.log(
       "[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation",
     );
@@ -337,9 +356,8 @@ console.error = (...args) => lines.push(args.join(" "));
     const result = await validate(endpoint);
     assert.deepEqual(result, { ok: true, api: "openai-completions" });
     const requests = readRequests();
-    assert.equal(requests.length, 2);
-    assertStrictPayload(requests[0].body);
-    assertStrictPayload(requests[1].body);
+    assert.equal(requests.length, 3);
+    assertChatCompletionRequests(requests, 2);
     console.log("[PASS] strict validation retries a transient 502 and keeps bounded payloads");
   });
 
@@ -348,8 +366,8 @@ console.error = (...args) => lines.push(args.join(" "));
     const result = await validate(endpoint, recoveryCalls);
     assert.deepEqual(result, { ok: false, retry: "retry" });
     const requests = readRequests();
-    assert.equal(requests.length, 1);
-    assertStrictPayload(requests[0].body);
+    assert.equal(requests.length, 2);
+    assertChatCompletionRequests(requests, 1);
     assert.equal(recoveryCalls.length, 1);
     console.log("[PASS] strict validation fails closed when no structured tool_call is returned");
   });

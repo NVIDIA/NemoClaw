@@ -51,6 +51,17 @@ describe("buildManifestUrl", () => {
   it("rejects empty model references", () => {
     expect(buildManifestUrl("")).toBeNull();
   });
+
+  it("rejects namespaces that attempt path traversal", () => {
+    expect(buildManifestUrl("../../secrets/foo")).toBeNull();
+    expect(buildManifestUrl("acme/../foo:7b")).toBeNull();
+    expect(buildManifestUrl("acme/foo/../..")).toBeNull();
+  });
+
+  it("rejects references with path separators or empty segments in the tag", () => {
+    expect(buildManifestUrl("foo:../bar")).toBeNull();
+    expect(buildManifestUrl("acme//foo")).toBeNull();
+  });
 });
 
 describe("probeRegistrySize", () => {

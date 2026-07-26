@@ -7,18 +7,30 @@ import {
   defaultOpenclawBaseDockerfile,
   resolveSandboxBaseImage,
   OPENCLAW_SANDBOX_BASE_IMAGE as SANDBOX_BASE_IMAGE,
+  type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import { getInstalledOpenshellVersion } from "./openshell-version";
 
 /**
  * Resolve a compatible sandbox-base image and pin it to a repo digest when
- * possible. PR-branch validation first tries a source-SHA tag, then latest,
- * and finally a local Dockerfile.base build when the OpenShell Docker driver
- * requires a newer glibc than the published image provides.
+ * possible. PR-branch validation tries the nearest release tag before
+ * source-SHA or latest; an unavailable or incompatible nearest release tag
+ * requires a local Dockerfile.base build instead of falling through to a
+ * mutable tag.
  */
 export function pullAndResolveBaseImageDigest(
-  options: { requireOpenshellSandboxAbi?: boolean } = {},
-): { digest: string | null; ref: string; source?: string; glibcVersion?: string | null } | null {
+  options: {
+    requireOpenshellSandboxAbi?: boolean;
+    resolutionHint?: SandboxBaseImageResolutionMetadata | null;
+    forceRefresh?: boolean;
+  } = {},
+): {
+  digest: string | null;
+  ref: string;
+  source?: string;
+  glibcVersion?: string | null;
+  metadata?: SandboxBaseImageResolutionMetadata;
+} | null {
   return resolveSandboxBaseImage({
     imageName: SANDBOX_BASE_IMAGE,
     dockerfilePath: defaultOpenclawBaseDockerfile(ROOT),
@@ -26,6 +38,8 @@ export function pullAndResolveBaseImageDigest(
     envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
     label: "OpenClaw sandbox base image",
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
+    resolutionHint: options.resolutionHint,
+    forceRefresh: options.forceRefresh,
     rootDir: ROOT,
   });
 }

@@ -110,19 +110,28 @@ export const whatsappManifest = {
       manager: "openclaw-plugin",
       spec: "npm:@openclaw/whatsapp@{{openclaw.version}}",
       pin: true,
+      integrityByVersion: {
+        "2026.7.1":
+          "sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==",
+      },
+      tarballUrlByVersion: {
+        "2026.7.1": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz",
+      },
       required: true,
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedIds"],
+  hooks: [
+    {
+      id: "whatsapp-status-health",
+      phase: "status",
+      handler: "whatsapp.statusHealth",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "channelHealth",
+          kind: "status",
+        },
+      ],
     },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.whatsapp",
-        env: "WHATSAPP_ALLOWED_IDS",
-      },
-    ],
-  },
-  hooks: [],
+  ],
 } as const satisfies ChannelManifest;

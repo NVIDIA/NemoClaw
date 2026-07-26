@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const MIN_NODE_VERSION = "22.16.0";
+export const MIN_NODE_VERSION = "22.19.0";
 export const MIN_NPM_MAJOR = 10;
 
 export type RuntimeCheckResult =

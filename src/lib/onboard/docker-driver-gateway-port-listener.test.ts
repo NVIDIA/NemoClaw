@@ -1,0 +1,224 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  createDockerDriverGatewayPortListenerHelpers,
+  type DockerDriverGatewayPortListenerDeps,
+} from "./docker-driver-gateway-port-listener";
+
+function makeHelpers(overrides: Partial<DockerDriverGatewayPortListenerDeps> = {}) {
+  const runCaptureEx = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+  const deps: DockerDriverGatewayPortListenerDeps = {
+    gatewayPort: 18080,
+    runCaptureEx,
+    isPidAlive: () => true,
+    isDockerDriverGatewayProcess: () => true,
+    ...overrides,
+  };
+  return {
+    helpers: createDockerDriverGatewayPortListenerHelpers(deps),
+    runCaptureEx: deps.runCaptureEx,
+  };
+}
+
+describe("Docker-driver gateway port listener discovery", () => {
+  it("rejects a primary listener when the injected gateway identity check fails", () => {
+    const { helpers } = makeHelpers();
+    const isDockerDriverGatewayProcessFn = vi.fn(() => false);
+
+    expect(
+      helpers.getDockerDriverGatewayPortListenerPid(
+        { ok: false, process: "openshell-gateway", pid: 1234 },
+        {
+          platform: "linux",
+          gatewayBin: "/opt/openshell/openshell-gateway",
+          isPidAliveFn: () => true,
+          isDockerDriverGatewayProcessFn,
+        },
+      ),
+    ).toBeNull();
+    expect(isDockerDriverGatewayProcessFn).toHaveBeenCalledWith(
+      1234,
+      "/opt/openshell/openshell-gateway",
+    );
+  });
+
+  it("collects every verified gateway listener on the configured port", () => {
+    const gatewayBin = "/opt/openshell/openshell-gateway";
+    const runCaptureEx = vi.fn(() => ({
+      stdout: "1234\n2345\n9999\n",
+      exitCode: 0,
+      timedOut: false,
+    }));
+    const { helpers } = makeHelpers({ runCaptureEx });
+    const isDockerDriverGatewayProcessFn = vi.fn(
+      (pid: number, candidateBin?: string | null) =>
+        (pid === 1234 || pid === 2345) && candidateBin === gatewayBin,
+    );
+
+    expect(
+      helpers.getDockerDriverGatewayPortListenerScan(
+        { ok: false, process: "openshell-gateway", pid: 1234 },
+        {
+          platform: "linux",
+          gatewayBin,
+          isPidAliveFn: () => true,
+          isDockerDriverGatewayProcessFn,
+        },
+      ),
+    ).toEqual({ complete: true, pids: [1234, 2345], unverifiedPids: [9999] });
+    expect(runCaptureEx).toHaveBeenCalledWith(["lsof", "-ti", ":18080", "-sTCP:LISTEN"]);
+  });
+
+  it("retains a verified primary PID when complete enumeration fails", () => {
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "", exitCode: 127, timedOut: false })),
+    });
+
+    expect(
+      helpers.getDockerDriverGatewayPortListenerScan(
+        { ok: false, process: "openshell-gateway", pid: 1234 },
+        {
+          platform: "linux",
+          isPidAliveFn: () => true,
+          isDockerDriverGatewayProcessFn: () => true,
+        },
+      ),
+    ).toEqual({ complete: false, pids: [1234], unverifiedPids: [] });
+  });
+
+  it("treats empty lsof output as incomplete while the independent port probe is busy", () => {
+    const { helpers } = makeHelpers();
+
+    expect(
+      helpers.getDockerDriverGatewayPortListenerScan({
+        ok: false,
+        pid: null,
+        reason: "bind probe reported EADDRINUSE",
+      }),
+    ).toEqual({ complete: false, pids: [], unverifiedPids: [] });
+  });
+
+  it("marks listener enumeration incomplete when the structured runner throws", () => {
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => {
+        throw new Error("lsof unavailable");
+      }),
+    });
+
+    expect(helpers.getDockerDriverGatewayPortListenerScan({ ok: true })).toEqual({
+      complete: false,
+      pids: [],
+      unverifiedPids: [],
+    });
+  });
+
+  it("resolves a dynamic gateway port for every listener scan", () => {
+    let gatewayPort = 18080;
+    const runCaptureEx = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+    const { helpers } = makeHelpers({ gatewayPort: () => gatewayPort, runCaptureEx });
+
+    helpers.getDockerDriverGatewayPortListenerScan({ ok: true });
+    gatewayPort = 18081;
+    helpers.getDockerDriverGatewayPortListenerScan({ ok: true });
+
+    expect(runCaptureEx).toHaveBeenNthCalledWith(1, ["lsof", "-ti", ":18080", "-sTCP:LISTEN"]);
+    expect(runCaptureEx).toHaveBeenNthCalledWith(2, ["lsof", "-ti", ":18081", "-sTCP:LISTEN"]);
+  });
+
+  it("prepares and validates every verified service-port listener", () => {
+    const preparePort = vi.fn();
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "1234\n2345\n", exitCode: 0, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: false, process: "openshell-gateway", pid: 1234 },
+      { exitOnFailure: false, preparePort },
+    );
+
+    expect(() => ownership.validatePortOwner()).not.toThrow();
+    ownership.preparePort();
+    expect(preparePort).toHaveBeenCalledWith([1234, 2345]);
+  });
+
+  it("rejects incomplete service-port ownership without preparing the port", () => {
+    const preparePort = vi.fn();
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "", exitCode: 127, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: false, process: "openshell-gateway", pid: 1234 },
+      { exitOnFailure: false, preparePort },
+    );
+
+    expect(() => ownership.validatePortOwner()).toThrow(
+      "the gateway port has an unknown or incompletely observed listener",
+    );
+    expect(preparePort).not.toHaveBeenCalled();
+  });
+
+  it("rejects a listener that appears after the service-port bind probe", () => {
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "1234\n", exitCode: 0, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: true },
+      { exitOnFailure: false, preparePort: vi.fn() },
+    );
+
+    expect(() => ownership.validatePortOwner()).toThrow(
+      "the gateway port listener changed during ownership validation",
+    );
+  });
+});
+
+describe("raw gateway port listener enumeration (#6576)", () => {
+  it("returns a live listener the Docker-driver filter would discard", () => {
+    // An externally supervised gateway is an ordinary systemd process with no
+    // Docker-driver markers, so isDockerDriverGatewayProcess returns false for
+    // it. The raw scan must still report it; the filtered scan must not.
+    const runCaptureEx = vi.fn(() => ({ stdout: "4242\n", exitCode: 0, timedOut: false }));
+    const { helpers } = makeHelpers({
+      runCaptureEx,
+      isPidAlive: () => true,
+      isDockerDriverGatewayProcess: () => false,
+    });
+    const portCheck = { ok: false, process: "openshell-gateway", pid: 4242 } as const;
+
+    expect(helpers.getGatewayPortListenerRawScan(portCheck)).toEqual({
+      pids: [4242],
+      complete: true,
+    });
+    expect(helpers.getDockerDriverGatewayPortListenerScan(portCheck)).toEqual({
+      pids: [],
+      unverifiedPids: [4242],
+      complete: true,
+    });
+  });
+
+  it("drops a dead PID from the raw enumeration", () => {
+    const runCaptureEx = vi.fn(() => ({ stdout: "4242\n5353\n", exitCode: 0, timedOut: false }));
+    const { helpers } = makeHelpers({
+      runCaptureEx,
+      isPidAlive: (pid: number) => pid === 4242,
+    });
+
+    expect(
+      helpers.getGatewayPortListenerRawScan({ ok: false, process: "x", pid: 4242 }).pids,
+    ).toEqual([4242]);
+  });
+
+  it("reports an incomplete scan when lsof cannot enumerate against a held port", () => {
+    const runCaptureEx = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+    const { helpers } = makeHelpers({ runCaptureEx });
+
+    // Port held (ok:false) but lsof saw nothing: a visibility contradiction, so
+    // the single-owner claim cannot be proven.
+    expect(helpers.getGatewayPortListenerRawScan({ ok: false, process: "x", pid: 0 })).toEqual({
+      pids: [],
+      complete: false,
+    });
+  });
+});

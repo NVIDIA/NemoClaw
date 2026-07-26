@@ -1,31 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../${p}`);
+import * as store from "../../credentials/store";
+import * as policies from "../../policy";
+import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
+import { addSandboxPolicy, removeSandboxPolicy } from "./policy-channel";
 
-type PresetInfo = {
-  name: string;
-  description?: string;
-};
-
-type PolicyAddOptions = {
-  preset?: string;
-  dryRun?: boolean;
-  yes?: boolean;
-  force?: boolean;
-};
-
-type PolicyRemoveOptions = {
-  preset?: string;
-  dryRun?: boolean;
-  yes?: boolean;
-  force?: boolean;
-};
+type PresetInfo = ReturnType<typeof policies.listPresets>[number];
 
 class ExitError extends Error {
   constructor(public readonly code: number | undefined) {
@@ -33,24 +17,27 @@ class ExitError extends Error {
   }
 }
 
-const store = D("credentials/store.js");
-const registry = D("state/registry.js");
-const onboardSession = D("state/onboard-session.js");
-const policies = D("policy/index.js");
-const { addSandboxPolicy, removeSandboxPolicy } = D("actions/sandbox/policy-channel.js") as {
-  addSandboxPolicy: (sandboxName: string, options?: PolicyAddOptions) => Promise<void>;
-  removeSandboxPolicy: (sandboxName: string, options?: PolicyRemoveOptions) => Promise<void>;
-};
-
 const POLICY_PRESETS: PresetInfo[] = [
-  { name: "npm", description: "npm and Yarn registry access" },
-  { name: "pypi", description: "Python Package Index access" },
-  { name: "discord", description: "Discord API access" },
-  { name: "openclaw-pricing", description: "OpenClaw pricing lookup" },
-  { name: "nous-web", description: "Nous Portal managed web search gateway" },
-  { name: "nous-code", description: "Nous Portal managed sandboxed code gateway" },
-  { name: "telegram", description: "Telegram API access" },
-  { name: "wechat", description: "WeChat API access" },
+  { file: "npm.yaml", name: "npm", description: "npm and Yarn registry access" },
+  { file: "pypi.yaml", name: "pypi", description: "Python Package Index access" },
+  { file: "discord.yaml", name: "discord", description: "Discord API access" },
+  {
+    file: "openclaw-pricing.yaml",
+    name: "openclaw-pricing",
+    description: "OpenClaw pricing lookup",
+  },
+  {
+    file: "nous-web.yaml",
+    name: "nous-web",
+    description: "Nous Portal managed web search gateway",
+  },
+  {
+    file: "nous-code.yaml",
+    name: "nous-code",
+    description: "Nous Portal managed sandboxed code gateway",
+  },
+  { file: "telegram.yaml", name: "telegram", description: "Telegram API access" },
+  { file: "wechat.yaml", name: "wechat", description: "WeChat API access" },
 ];
 
 let logSpy: MockInstance;
@@ -61,6 +48,7 @@ let getSandboxMock: MockInstance;
 let getAppliedPresetsMock: MockInstance;
 let selectFromListMock: MockInstance;
 let selectForRemovalMock: MockInstance;
+let loadPresetForSandboxMock: MockInstance;
 let applyPresetMock: MockInstance;
 let removePresetMock: MockInstance;
 
@@ -102,7 +90,9 @@ beforeEach(() => {
   vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
-  vi.spyOn(onboardSession, "updateSession").mockImplementation(() => undefined);
+  vi.spyOn(onboardSession, "updateSession").mockReturnValue(
+    undefined as unknown as onboardSession.Session,
+  );
 
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
   vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
@@ -111,8 +101,14 @@ beforeEach(() => {
   selectForRemovalMock = vi.spyOn(policies, "selectForRemoval").mockResolvedValue("pypi");
   vi.spyOn(policies, "loadPreset").mockImplementation((name: unknown) => {
     const presetName = String(name);
-    return `network_policies:\n  ${presetName}:\n    host: ${presetName}.example.com\n`;
+    return `network_policies:\n  ${presetName}:\n    name: ${presetName}\n    endpoints:\n      - host: ${presetName}.example.com\n        port: 443\n        protocol: rest\n        rules:\n          - allow: { method: GET, path: "/**" }\n`;
   });
+  loadPresetForSandboxMock = vi
+    .spyOn(policies, "loadPresetForSandbox")
+    .mockImplementation((_sandboxName: unknown, name: unknown) => {
+      const presetName = String(name);
+      return `network_policies:\n  ${presetName}:\n    name: ${presetName}\n    endpoints:\n      - host: ${presetName}.example.com\n        port: 443\n        protocol: rest\n        rules:\n          - allow: { method: GET, path: "/**" }\n`;
+    });
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 });
@@ -127,7 +123,9 @@ describe("addSandboxPolicy", () => {
     await addSandboxPolicy("test-sandbox");
 
     expect(promptMock).toHaveBeenCalledWith("  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ");
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi", {
+      suppressDisclosure: true,
+    });
   });
 
   it("skips applying an interactively selected preset when confirmation is declined", async () => {
@@ -144,7 +142,8 @@ describe("addSandboxPolicy", () => {
 
     expect(promptMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
-    expect(printedText()).toContain("Endpoints that would be opened: pypi.example.com");
+    expect(printedText()).toContain("Effective egress that would be opened:");
+    expect(printedText()).toContain("- pypi.example.com:443");
     expect(printedText()).toContain("--dry-run: no changes applied.");
   });
 
@@ -152,7 +151,9 @@ describe("addSandboxPolicy", () => {
     await addSandboxPolicy("test-sandbox", { preset: "pypi", yes: true });
 
     expect(promptMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi", {
+      suppressDisclosure: true,
+    });
   });
 
   it("honors non-interactive mode when an explicit preset is provided", async () => {
@@ -161,7 +162,9 @@ describe("addSandboxPolicy", () => {
     await addSandboxPolicy("test-sandbox", { preset: "pypi" });
 
     expect(promptMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi", {
+      suppressDisclosure: true,
+    });
   });
 
   it("fails fast in non-interactive mode without an explicit preset", async () => {
@@ -170,6 +173,28 @@ describe("addSandboxPolicy", () => {
     await expect(captureExit(() => addSandboxPolicy("test-sandbox"))).resolves.toBe(1);
 
     expect(printedText()).toContain("Non-interactive mode requires a preset name.");
+    expect(applyPresetMock).not.toHaveBeenCalled();
+  });
+
+  it("exits non-zero when the add picker reaches stdin EOF (#7418)", async () => {
+    selectFromListMock.mockRejectedValueOnce(
+      Object.assign(new Error("Prompt closed before input"), { code: "EOF" }),
+    );
+
+    await expect(captureExit(() => addSandboxPolicy("test-sandbox"))).resolves.toBe(1);
+
+    // Names the real condition rather than reporting non-interactive mode,
+    // which is not what happened here.
+    expect(printedText()).toContain("No input available on stdin");
+    expect(applyPresetMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates a non-EOF picker failure instead of exiting (#7418)", async () => {
+    const failure = Object.assign(new Error("stdin read failed"), { code: "EIO" });
+    selectFromListMock.mockRejectedValueOnce(failure);
+
+    await expect(addSandboxPolicy("test-sandbox")).rejects.toBe(failure);
+
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 
@@ -228,6 +253,30 @@ describe("addSandboxPolicy", () => {
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 
+  it("treats messaging channel policy presets unavailable to terminal-runtime agents as unknown before preview or prompt", async () => {
+    arrangeSandbox("langchain-deepagents-code");
+    vi.spyOn(policies, "listPresets").mockReturnValue([
+      { file: "npm.yaml", name: "npm", description: "npm and Yarn registry access" },
+      { file: "pypi.yaml", name: "pypi", description: "Python Package Index access" },
+      { file: "tavily.yaml", name: "tavily", description: "Tavily Search API access" },
+    ]);
+
+    await expect(
+      captureExit(() => addSandboxPolicy("test-sandbox", { preset: "telegram", yes: true })),
+    ).resolves.toBe(1);
+
+    const output = printedText();
+    expect(output).toContain("Unknown preset 'telegram'.");
+    expect(output).toContain("Valid presets: npm, pypi, tavily");
+    expect(output).not.toContain("not supported for agent");
+    expect(output).not.toContain("Channels supported by agent");
+    expect(output).not.toContain("Preset not found");
+    expect(output).not.toContain("Effective egress that would be opened");
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       preset: "telegram",
@@ -255,7 +304,9 @@ describe("addSandboxPolicy", () => {
 
     expect(printedText()).toContain(expected);
     expect(printedText()).toContain(detail);
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", preset);
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", preset, {
+      suppressDisclosure: true,
+    });
   });
 
   it("prints Discord validation guidance when the preset name is provided", async () => {
@@ -264,7 +315,9 @@ describe("addSandboxPolicy", () => {
     expect(printedText()).toContain("curl is not in the preset binary allowlist");
     expect(printedText()).toContain("Node HTTPS");
     expect(promptMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "discord");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "discord", {
+      suppressDisclosure: true,
+    });
   });
 
   it("does not print messaging guidance when a non-messaging preset is selected", async () => {
@@ -272,7 +325,9 @@ describe("addSandboxPolicy", () => {
 
     expect(printedText()).not.toContain("only opens network egress to the");
     expect(printedText()).not.toContain("re-run 'nemoclaw onboard' and select");
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi", {
+      suppressDisclosure: true,
+    });
   });
 });
 
@@ -328,6 +383,17 @@ describe("removeSandboxPolicy", () => {
     await expect(captureExit(() => removeSandboxPolicy("test-sandbox"))).resolves.toBe(1);
 
     expect(printedText()).toContain("Non-interactive mode requires a preset name.");
+    expect(removePresetMock).not.toHaveBeenCalled();
+  });
+
+  it("exits non-zero when the remove picker reaches stdin EOF (#7418)", async () => {
+    selectForRemovalMock.mockRejectedValueOnce(
+      Object.assign(new Error("Prompt closed before input"), { code: "EOF" }),
+    );
+
+    await expect(captureExit(() => removeSandboxPolicy("test-sandbox"))).resolves.toBe(1);
+
+    expect(printedText()).toContain("No input available on stdin");
     expect(removePresetMock).not.toHaveBeenCalled();
   });
 });

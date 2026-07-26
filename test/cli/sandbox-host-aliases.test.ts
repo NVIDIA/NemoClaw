@@ -4,319 +4,314 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  runWithEnv,
-  testTimeoutOptions,
-  writeHostAliasDockerStub,
-  writeSandboxRegistry,
-} from "./helpers";
+  addSandboxHostAlias,
+  addSandboxHostAliasWithDeps,
+  HostAliasesCommandError,
+  listSandboxHostAliasesWithDeps,
+  removeSandboxHostAliasWithDeps,
+  type SandboxHostAliasesDeps,
+} from "../../src/lib/actions/sandbox/host-aliases";
+import * as registry from "../../src/lib/state/registry";
 
-function makeCliFixture(prefix: string) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const localBin = path.join(home, "bin");
-  const dockerLog = path.join(home, "docker.log");
-  fs.mkdirSync(localBin, { recursive: true });
-  writeSandboxRegistry(home);
+type HostAlias = { ip: string; hostnames: string[] };
+type KubectlRunner = (args: string[]) => string;
+
+const tempDirs = new Set<string>();
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  for (const tempDir of tempDirs) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+  tempDirs.clear();
+});
+
+function sandboxResource(resourceVersion: string, hostAliases: HostAlias[]): string {
+  return JSON.stringify({
+    metadata: { resourceVersion },
+    spec: { podTemplate: { spec: { hostAliases } } },
+  });
+}
+
+function actionDeps(runKubectlInClusterRaw: KubectlRunner): SandboxHostAliasesDeps {
   return {
-    dockerLog,
-    home,
-    localBin,
-    env: { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+    getSandbox: () => ({}),
+    probeLegacyGatewayContainer: () => ({ state: "present" }),
+    runKubectlInClusterRaw,
   };
 }
 
-function writeDockerStub(localBin: string, lines: string[]): void {
-  fs.writeFileSync(path.join(localBin, "docker"), lines.join("\n"), { mode: 0o755 });
+function patchFromCall(args: string[]): Array<{ op: string; path: string; value: unknown }> {
+  const patchIndex = args.indexOf("-p");
+  expect(patchIndex).toBeGreaterThanOrEqual(0);
+  return JSON.parse(args[patchIndex + 1] ?? "[]") as Array<{
+    op: string;
+    path: string;
+    value: unknown;
+  }>;
 }
 
-function expectDockerProbeFailure(out: string): void {
-  expect(out).toContain(
-    "Could not verify the legacy OpenShell gateway container 'openshell-cluster-nemoclaw'.",
-  );
-  expect(out).toContain("Docker probe failed:");
-  expect(out).not.toContain(
-    "Host aliases require the legacy OpenShell gateway container 'openshell-cluster-nemoclaw' to be running.",
-  );
-}
-
-function expectNoLegacyGatewayExec(log: string[]): void {
-  expect(log[0]).toBe("ps");
-  expect(log).not.toContain("exec");
-  expect(log).not.toContain("kubectl");
-  expect(log).not.toContain("patch");
-}
-
-describe("CLI dispatch", () => {
+describe("sandbox host alias actions", () => {
   it("adds host aliases with a sandbox json patch", () => {
-    const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-add-");
-    writeDockerStub(localBin, [
-      "#!/usr/bin/env bash",
-      `log_file=${JSON.stringify(dockerLog)}`,
-      'printf "%s\\n" "$@" >> "$log_file"',
-      'if [ "$1" = "ps" ]; then',
-      '  printf "%s\\n" "openshell-cluster-nemoclaw"',
-      "  exit 0",
-      "fi",
-      'if printf "%s\\n" "$@" | grep -q "^get$"; then',
-      '  printf "%s\\n" \'{"metadata":{"resourceVersion":"123"},"spec":{"podTemplate":{"spec":{"hostAliases":[{"ip":"10.0.0.5","hostnames":["old.local"]}]}}}}\'',
-      "fi",
-      "exit 0",
+    const runKubectl = vi
+      .fn<KubectlRunner>()
+      .mockReturnValueOnce(sandboxResource("123", [{ ip: "10.0.0.5", hostnames: ["old.local"] }]))
+      .mockReturnValueOnce("");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    addSandboxHostAliasWithDeps(
+      "alpha",
+      { hostname: "searxng.local", ip: "192.168.1.105" },
+      actionDeps(runKubectl),
+    );
+
+    expect(runKubectl).toHaveBeenNthCalledWith(1, ["get", "sandbox", "alpha", "-o", "json"]);
+    expect(runKubectl.mock.calls[1]?.[0]?.slice(0, 5)).toEqual([
+      "patch",
+      "sandbox",
+      "alpha",
+      "--type=json",
+      "-p",
     ]);
-
-    const r = runWithEnv("alpha hosts-add searxng.local 192.168.1.105", env);
-
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Added host alias searxng.local -> 192.168.1.105");
-    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    const psIndex = log.indexOf("ps");
-    expect(psIndex).toBe(0);
-    expect(log[psIndex + 1]).toBe("--format");
-    expect(log[psIndex + 2]).toBe("{{.Names}}");
-    expect(log).not.toContain("--filter");
-    const kubectlIndex = log.indexOf("kubectl");
-    expect(kubectlIndex).toBeGreaterThan(psIndex);
-    expect(log[kubectlIndex - 1]).toBe("openshell-cluster-nemoclaw");
-    expect(log[kubectlIndex - 2]).toBe("exec");
-    expect(log).toContain("patch");
-    expect(log).toContain("--type=json");
-    const patch = JSON.parse(log[log.indexOf("-p") + 1]);
-    expect(patch[0]).toEqual({
-      op: "test",
-      path: "/metadata/resourceVersion",
-      value: "123",
-    });
-    expect(patch[1]).toEqual({
-      op: "replace",
-      path: "/spec/podTemplate/spec/hostAliases",
-      value: [
-        { ip: "10.0.0.5", hostnames: ["old.local"] },
-        { ip: "192.168.1.105", hostnames: ["searxng.local"] },
-      ],
-    });
+    expect(patchFromCall(runKubectl.mock.calls[1]?.[0] ?? [])).toEqual([
+      { op: "test", path: "/metadata/resourceVersion", value: "123" },
+      {
+        op: "replace",
+        path: "/spec/podTemplate/spec/hostAliases",
+        value: [
+          { ip: "10.0.0.5", hostnames: ["old.local"] },
+          { ip: "192.168.1.105", hostnames: ["searxng.local"] },
+        ],
+      },
+    ]);
+    expect(log).toHaveBeenCalledWith("  Added host alias searxng.local -> 192.168.1.105");
   });
 
   it("lists host aliases from the sandbox resource", () => {
-    const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-list-");
-    writeDockerStub(localBin, [
-      "#!/usr/bin/env bash",
-      `log_file=${JSON.stringify(dockerLog)}`,
-      'printf "%s\\n" "$@" >> "$log_file"',
-      'if [ "$1" = "ps" ]; then',
-      '  printf "%s\\n" "openshell-cluster-nemoclaw"',
-      "  exit 0",
-      "fi",
-      'printf "%s\\n" \'{"metadata":{"resourceVersion":"123"},"spec":{"podTemplate":{"spec":{"hostAliases":[{"ip":"192.168.1.105","hostnames":["searxng.local","search.lan"]}]}}}}\'',
-    ]);
+    const runKubectl = vi
+      .fn<KubectlRunner>()
+      .mockReturnValueOnce(
+        sandboxResource("123", [
+          { ip: "192.168.1.105", hostnames: ["searxng.local", "search.lan"] },
+        ]),
+      );
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    const r = runWithEnv("alpha hosts-list", env);
+    listSandboxHostAliasesWithDeps("alpha", actionDeps(runKubectl));
 
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Host aliases for 'alpha'");
-    expect(r.out).toContain("192.168.1.105  searxng.local, search.lan");
-    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    const kubectlIndex = log.indexOf("kubectl");
-    expect(kubectlIndex).toBeGreaterThan(1);
-    expect(log[kubectlIndex - 1]).toBe("openshell-cluster-nemoclaw");
-    expect(log[kubectlIndex - 2]).toBe("exec");
-    expect(log).toContain("get");
+    expect(runKubectl).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenNthCalledWith(1, "  Host aliases for 'alpha':");
+    expect(log).toHaveBeenNthCalledWith(2, "    192.168.1.105  searxng.local, search.lan");
   });
 
   it("removes host aliases with a sandbox json patch", () => {
-    const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-remove-");
-    writeHostAliasDockerStub(localBin, dockerLog, [
-      { ip: "10.0.0.5", hostnames: ["searxng.local", "old.local"] },
-      { ip: "192.168.1.10", hostnames: ["keep.local"] },
+    const runKubectl = vi
+      .fn<KubectlRunner>()
+      .mockReturnValueOnce(
+        sandboxResource("123", [
+          { ip: "10.0.0.5", hostnames: ["searxng.local", "old.local"] },
+          { ip: "192.168.1.10", hostnames: ["keep.local"] },
+        ]),
+      )
+      .mockReturnValueOnce("");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    removeSandboxHostAliasWithDeps("alpha", { hostname: "searxng.local" }, actionDeps(runKubectl));
+
+    expect(patchFromCall(runKubectl.mock.calls[1]?.[0] ?? [])).toEqual([
+      { op: "test", path: "/metadata/resourceVersion", value: "123" },
+      {
+        op: "replace",
+        path: "/spec/podTemplate/spec/hostAliases",
+        value: [
+          { ip: "10.0.0.5", hostnames: ["old.local"] },
+          { ip: "192.168.1.10", hostnames: ["keep.local"] },
+        ],
+      },
     ]);
-
-    const r = runWithEnv("alpha hosts-remove searxng.local", env);
-
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Removed host alias searxng.local");
-    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    const kubectlIndex = log.indexOf("kubectl");
-    expect(kubectlIndex).toBeGreaterThan(1);
-    expect(log[kubectlIndex - 1]).toBe("openshell-cluster-nemoclaw");
-    expect(log[kubectlIndex - 2]).toBe("exec");
-    expect(log).toContain("patch");
-    const patch = JSON.parse(log[log.lastIndexOf("-p") + 1]);
-    expect(patch[0]).toEqual({
-      op: "test",
-      path: "/metadata/resourceVersion",
-      value: "123",
-    });
-    expect(patch[1]).toEqual({
-      op: "replace",
-      path: "/spec/podTemplate/spec/hostAliases",
-      value: [
-        { ip: "10.0.0.5", hostnames: ["old.local"] },
-        { ip: "192.168.1.10", hostnames: ["keep.local"] },
-      ],
-    });
+    expect(log).toHaveBeenCalledWith("  Removed host alias searxng.local");
   });
 
   it("rejects duplicate host aliases case-insensitively", () => {
-    const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-duplicate-");
-    writeHostAliasDockerStub(localBin, dockerLog, [
-      { ip: "10.0.0.5", hostnames: ["SearXNG.local"] },
-    ]);
+    const runKubectl = vi
+      .fn<KubectlRunner>()
+      .mockReturnValueOnce(
+        sandboxResource("123", [{ ip: "10.0.0.5", hostnames: ["SearXNG.local"] }]),
+      );
 
-    const r = runWithEnv("alpha hosts-add searxng.local 192.168.1.105", env);
-
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("Host alias 'searxng.local' already exists");
-    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    expect(log).not.toContain("patch");
+    expect(() =>
+      addSandboxHostAliasWithDeps(
+        "alpha",
+        { hostname: "searxng.local", ip: "192.168.1.105" },
+        actionDeps(runKubectl),
+      ),
+    ).toThrow("Host alias 'searxng.local' already exists");
+    expect(runKubectl).toHaveBeenCalledOnce();
   });
 
   it("previews host alias changes with dry-run without patching", () => {
-    const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-dry-run-");
-    writeHostAliasDockerStub(localBin, dockerLog, [
+    const initial = sandboxResource("123", [
       { ip: "10.0.0.5", hostnames: ["searxng.local", "old.local"] },
     ]);
+    const addKubectl = vi.fn<KubectlRunner>().mockReturnValueOnce(initial);
+    const removeKubectl = vi.fn<KubectlRunner>().mockReturnValueOnce(initial);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    const add = runWithEnv("alpha hosts-add dry.local 192.168.1.105 --dry-run", env);
-    const remove = runWithEnv("alpha hosts-remove searxng.local --dry-run", env);
+    addSandboxHostAliasWithDeps(
+      "alpha",
+      { hostname: "dry.local", ip: "192.168.1.105", dryRun: true },
+      actionDeps(addKubectl),
+    );
+    removeSandboxHostAliasWithDeps(
+      "alpha",
+      { hostname: "searxng.local", dryRun: true },
+      actionDeps(removeKubectl),
+    );
 
-    expect(add.code).toBe(0);
-    expect(add.out).toContain('"/metadata/resourceVersion"');
-    expect(add.out).toContain('"/spec/podTemplate/spec/hostAliases"');
-    expect(add.out).toContain('"dry.local"');
-    expect(add.out).toContain('"192.168.1.105"');
-    expect(remove.code).toBe(0);
-    expect(remove.out).toContain('"/metadata/resourceVersion"');
-    expect(remove.out).toContain('"/spec/podTemplate/spec/hostAliases"');
-    expect(remove.out).toContain('"old.local"');
-    expect(remove.out).not.toContain('"searxng.local"');
-    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    expect(log).not.toContain("patch");
-  });
-
-  it("rejects unknown host alias flags without patching", () => {
-    const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-unknown-flag-");
-    writeHostAliasDockerStub(localBin, dockerLog, [
-      { ip: "10.0.0.5", hostnames: ["searxng.local"] },
-    ]);
-
-    const add = runWithEnv("alpha hosts-add searxng.local 192.168.1.105 --dry-rnu", env);
-    const remove = runWithEnv("alpha hosts-remove searxng.local --force", env);
-
-    expect(add.code).not.toBe(0);
-    expect(add.out).toContain("Nonexistent flag: --dry-rnu");
-    expect(remove.code).not.toBe(0);
-    expect(remove.out).toContain("Nonexistent flag: --force");
-    expect(fs.existsSync(dockerLog)).toBe(false);
+    const addPatch = JSON.parse(String(log.mock.calls[0]?.[0])) as Array<Record<string, unknown>>;
+    const removePatch = JSON.parse(String(log.mock.calls[1]?.[0])) as Array<
+      Record<string, unknown>
+    >;
+    expect(addPatch).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "/metadata/resourceVersion", value: "123" }),
+        expect.objectContaining({
+          path: "/spec/podTemplate/spec/hostAliases",
+          value: expect.arrayContaining([{ ip: "192.168.1.105", hostnames: ["dry.local"] }]),
+        }),
+      ]),
+    );
+    expect(JSON.stringify(removePatch)).toContain("old.local");
+    expect(JSON.stringify(removePatch)).not.toContain("searxng.local");
+    expect(addKubectl).toHaveBeenCalledOnce();
+    expect(removeKubectl).toHaveBeenCalledOnce();
   });
 
   it("retries host alias patches when the resource version changes", () => {
-    const { dockerLog, env, home, localBin } = makeCliFixture("nemoclaw-cli-hosts-retry-");
-    const getCount = path.join(home, "get-count");
-    const patchCount = path.join(home, "patch-count");
-    writeDockerStub(localBin, [
-      "#!/usr/bin/env bash",
-      `log_file=${JSON.stringify(dockerLog)}`,
-      `get_count=${JSON.stringify(getCount)}`,
-      `patch_count=${JSON.stringify(patchCount)}`,
-      'printf "%s\\n" "$@" >> "$log_file"',
-      'if [ "$1" = "ps" ]; then',
-      '  printf "%s\\n" "openshell-cluster-nemoclaw"',
-      "  exit 0",
-      "fi",
-      'if printf "%s\\n" "$@" | grep -q "^get$"; then',
-      '  count=$(cat "$get_count" 2>/dev/null || echo 0)',
-      "  count=$((count + 1))",
-      '  printf "%s" "$count" > "$get_count"',
-      '  if [ "$count" = "1" ]; then version=123; else version=124; fi',
-      '  printf \'{"metadata":{"resourceVersion":"%s"},"spec":{"podTemplate":{"spec":{"hostAliases":[{"ip":"10.0.0.5","hostnames":["old.local"]}]}}}}\\n\' "$version"',
-      "  exit 0",
-      "fi",
-      'if printf "%s\\n" "$@" | grep -q "^patch$"; then',
-      '  count=$(cat "$patch_count" 2>/dev/null || echo 0)',
-      "  count=$((count + 1))",
-      '  printf "%s" "$count" > "$patch_count"',
-      '  if [ "$count" = "1" ]; then',
-      '    echo "Operation cannot be fulfilled: the object has been modified" >&2',
-      "    exit 1",
-      "  fi",
-      "fi",
-      "exit 0",
+    const conflict = Object.assign(new Error("patch conflict"), {
+      status: 1,
+      stderr: "Operation cannot be fulfilled: the object has been modified",
+    });
+    const runKubectl = vi
+      .fn<KubectlRunner>()
+      .mockReturnValueOnce(sandboxResource("123", [{ ip: "10.0.0.5", hostnames: ["old.local"] }]))
+      .mockImplementationOnce(() => {
+        throw conflict;
+      })
+      .mockReturnValueOnce(sandboxResource("124", [{ ip: "10.0.0.5", hostnames: ["old.local"] }]))
+      .mockReturnValueOnce("");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    addSandboxHostAliasWithDeps(
+      "alpha",
+      { hostname: "retry.local", ip: "192.168.1.105" },
+      actionDeps(runKubectl),
+    );
+
+    expect(runKubectl).toHaveBeenCalledTimes(4);
+    expect(runKubectl.mock.calls.map(([args]) => args[0])).toEqual([
+      "get",
+      "patch",
+      "get",
+      "patch",
     ]);
-
-    const r = runWithEnv("alpha hosts-add retry.local 192.168.1.105", env);
-
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Added host alias retry.local -> 192.168.1.105");
-    expect(fs.readFileSync(getCount, "utf8")).toBe("2");
-    expect(fs.readFileSync(patchCount, "utf8")).toBe("2");
-    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    const patchArgs = log.filter((line) => line.startsWith("["));
-    const finalPatch = patchArgs.at(-1);
-    expect(finalPatch).toBeDefined();
-    expect(JSON.parse(finalPatch!)[0]).toEqual({
+    expect(patchFromCall(runKubectl.mock.calls[3]?.[0] ?? [])[0]).toEqual({
       op: "test",
       path: "/metadata/resourceVersion",
       value: "124",
     });
   });
 
-  it("classifies docker spawn ENOENT distinctly from a missing gateway", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-hosts-docker-enoent-"));
-    const emptyBin = path.join(home, "nodocker");
-    fs.mkdirSync(emptyBin, { recursive: true });
-    writeSandboxRegistry(home);
+  it("stops before kubectl when the legacy gateway probe is unknown", () => {
+    const runKubectl = vi.fn<KubectlRunner>();
+    const deps: SandboxHostAliasesDeps = {
+      getSandbox: () => ({}),
+      probeLegacyGatewayContainer: () => ({
+        state: "unknown",
+        reason: "docker ps timed out",
+      }),
+      runKubectlInClusterRaw: runKubectl,
+    };
 
-    const list = runWithEnv("alpha hosts-list", { HOME: home, PATH: emptyBin });
-
-    expect(list.code).toBe(1);
-    expectDockerProbeFailure(list.out);
-    expect(list.out).toContain("could not launch");
+    expect(() => listSandboxHostAliasesWithDeps("alpha", deps)).toThrow(
+      new HostAliasesCommandError([
+        "  Could not verify the legacy OpenShell gateway container 'openshell-cluster-nemoclaw'.",
+        "  Docker probe failed: docker ps timed out",
+        "  Check whether the Docker daemon is reachable with `docker info`.",
+      ]),
+    );
+    expect(runKubectl).not.toHaveBeenCalled();
   });
+});
 
-  it(
-    "classifies docker probe timeouts distinctly from a missing gateway",
-    testTimeoutOptions(60_000),
-    () => {
-      const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-docker-timeout-");
-      writeDockerStub(localBin, [
-        "#!/usr/bin/env bash",
-        `log_file=${JSON.stringify(dockerLog)}`,
-        'printf "%s\\n" "$@" >> "$log_file"',
-        'if [ "$1" = "ps" ]; then',
-        "  sleep 20",
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ]);
+describe("production host alias process adapters", () => {
+  it("probes Docker and patches through the legacy gateway container", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-alias-process-"));
+    tempDirs.add(tempDir);
+    const binDir = path.join(tempDir, "bin");
+    const dockerLog = path.join(tempDir, "docker.jsonl");
+    const dockerPath = path.join(binDir, "docker");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(
+      dockerPath,
+      [
+        `#!${process.execPath}`,
+        'const fs = require("node:fs");',
+        "const args = process.argv.slice(2);",
+        `fs.appendFileSync(${JSON.stringify(dockerLog)}, JSON.stringify(args) + "\\n");`,
+        'if (args[0] === "ps") { process.stdout.write("openshell-cluster-nemoclaw\\n"); process.exit(0); }',
+        'if (args.includes("get")) { process.stdout.write(JSON.stringify({ metadata: { resourceVersion: "123" }, spec: { podTemplate: { spec: { hostAliases: [{ ip: "10.0.0.5", hostnames: ["old.local"] }] } } } })); }',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" } as never);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-      const list = runWithEnv("alpha hosts-list", env, 45_000);
+    addSandboxHostAlias("alpha", {
+      hostname: "searxng.local",
+      ip: "192.168.1.105",
+    });
 
-      expect(list.code).toBe(1);
-      expectDockerProbeFailure(list.out);
-      const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-      expectNoLegacyGatewayExec(log);
-    },
-  );
-
-  it("classifies docker probe failures distinctly from a missing gateway", () => {
-    const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-docker-down-");
-    writeDockerStub(localBin, [
-      "#!/usr/bin/env bash",
-      `log_file=${JSON.stringify(dockerLog)}`,
-      'printf "%s\\n" "$@" >> "$log_file"',
-      'if [ "$1" = "ps" ]; then',
-      '  printf "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\\n" >&2',
-      "  exit 1",
-      "fi",
-      "exit 0",
+    const calls = fs
+      .readFileSync(dockerLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    expect(calls[0]).toEqual(["ps", "--format", "{{.Names}}"]);
+    expect(calls[1]).toEqual([
+      "exec",
+      "openshell-cluster-nemoclaw",
+      "kubectl",
+      "-n",
+      "openshell",
+      "get",
+      "sandbox",
+      "alpha",
+      "-o",
+      "json",
     ]);
-
-    const list = runWithEnv("alpha hosts-list", env);
-
-    expect(list.code).toBe(1);
-    expectDockerProbeFailure(list.out);
-    expect(list.out).toContain("docker info");
-    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    expectNoLegacyGatewayExec(log);
+    expect(calls[2]?.slice(0, 10)).toEqual([
+      "exec",
+      "openshell-cluster-nemoclaw",
+      "kubectl",
+      "-n",
+      "openshell",
+      "patch",
+      "sandbox",
+      "alpha",
+      "--type=json",
+      "-p",
+    ]);
+    expect(patchFromCall(calls[2]?.slice(5) ?? [])[0]).toEqual({
+      op: "test",
+      path: "/metadata/resourceVersion",
+      value: "123",
+    });
+    expect(log).toHaveBeenCalledWith("  Added host alias searxng.local -> 192.168.1.105");
   });
 });

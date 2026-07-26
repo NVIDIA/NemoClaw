@@ -3,6 +3,10 @@
 
 import path from "node:path";
 
+import { GATEWAY_PORT } from "../../core/ports";
+import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
+import { nemoclawStateRoot } from "../../state/state-root";
+
 export const DEFAULT_GATEWAY_NAME = "nemoclaw";
 export const NEMOCLAW_PROVIDERS = [
   "nvidia-nim",
@@ -26,13 +30,19 @@ export interface UninstallPathOptions {
   xdgBinHome?: string;
 }
 
+/** Agent-alias CLI shims installed alongside `nemoclaw` (e.g. nemohermes). */
+export const AGENT_ALIAS_CLI_BINARIES = ["nemohermes", "nemo-deepagents"] as const;
+
 export interface UninstallPaths {
   helperServiceGlob: string;
   managedSwapMarkerPath: string;
   nemoclawConfigDir: string;
   nemoclawShimPath: string;
+  /** Sibling agent-alias shims (nemohermes, nemo-deepagents) in the same bin dir. */
+  agentAliasShimPaths: Array<{ binName: string; path: string }>;
   nemoclawStateDir: string;
   gatewayLocalStateDir: string;
+  selectedGatewayLocalStateDir: string;
   openshellConfigDir: string;
   openshellInstallPaths: string[];
   repoRoot: string;
@@ -54,13 +64,22 @@ function openshellInstallPathsForBinDirs(binDirs: string[]): string[] {
 export function defaultUninstallPaths(options: UninstallPathOptions): UninstallPaths {
   const xdgBinHome = options.xdgBinHome || path.join(options.home, ".local", "bin");
   const tmpDir = options.tmpDir || "/tmp";
+  const gatewayLocalStateDir = path.join(options.home, ".local", "state", "nemoclaw");
   return {
     helperServiceGlob: path.join(tmpDir, "nemoclaw-services-*"),
     managedSwapMarkerPath: path.join(options.home, ".nemoclaw", "managed_swap"),
     nemoclawConfigDir: path.join(options.home, ".config", "nemoclaw"),
     nemoclawShimPath: path.join(options.home, ".local", "bin", "nemoclaw"),
-    nemoclawStateDir: path.join(options.home, ".nemoclaw"),
-    gatewayLocalStateDir: path.join(options.home, ".local", "state", "nemoclaw"),
+    agentAliasShimPaths: AGENT_ALIAS_CLI_BINARIES.map((binName) => ({
+      binName,
+      path: path.join(options.home, ".local", "bin", binName),
+    })),
+    nemoclawStateDir: nemoclawStateRoot(options.home, GATEWAY_PORT),
+    gatewayLocalStateDir,
+    selectedGatewayLocalStateDir: path.join(
+      gatewayLocalStateDir,
+      resolveGatewayStateDirName(GATEWAY_PORT),
+    ),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
     openshellInstallPaths: openshellInstallPathsForBinDirs(["/usr/local/bin", xdgBinHome]),
     repoRoot: options.repoRoot || path.resolve(__dirname, "..", "..", "..", ".."),

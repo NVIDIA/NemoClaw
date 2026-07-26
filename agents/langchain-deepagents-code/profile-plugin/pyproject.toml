@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools==82.0.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nemoclaw-deepagents-profile"
+version = "0.1.0"
+description = "NemoClaw-managed Deep Agents harness profile aliases"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "deepagents-code==0.1.34",
+    "deepagents==0.7.0a6",
+]
+
+[project.entry-points."deepagents.harness_profiles"]
+nemoclaw-managed-aliases = "nemoclaw_deepagents_profile:register"
+
+[tool.setuptools.packages.find]
+where = ["src"]

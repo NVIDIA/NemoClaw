@@ -196,7 +196,7 @@ Adapt the axes to the bug class. For filesystem bugs: `find`, `lsattr`, `stat`. 
 
 - Run the multi-axis pattern after Step 8d's reproducer.
 - The verdict requires **every relevant axis to be clean** — not just the reproducer's surface — before claiming `fixed-on-latest`.
-- Quote the multi-axis evidence in the Step 10 comment as a table; this is exactly what makes "fixed" defensible when the original tooling no longer reflects the underlying behavior.
+- Quote the multi-axis evidence in the Step 10 comment as a table; this makes "fixed" defensible when the original tooling no longer reflects the underlying behavior.
 - If any axis still shows the buggy state, the bug is NOT fixed even if the reproducer's surface is clean. Escalate to "still reproduces" (Step 9 special case).
 
 **When drift is NOT suspected** (the reproducer's tool is unchanged in the version range): the reproducer's expected output is sufficient, no multi-axis verification needed.
@@ -251,7 +251,7 @@ Rebuild-cycle bugs (#2701 "Pod recreate wipes `/tmp/nemoclaw-proxy-env.sh`," iss
    brev exec "$INSTANCE_NAME" "sg docker -c 'cat <files-mentioned-in-issue> 2>&1'" | tee ./pre-rebuild.log
    ```
 
-2. **Trigger the rebuild.** Use `nemoclaw destroy --all --force` followed by `nemoclaw onboard` with the same env vars. Do NOT comprehensive-reset between (the point is to test the destroy/recreate, not start from scratch).
+2. **Trigger the rebuild.** Use `nemoclaw destroy --all --force` followed by `nemoclaw onboard` with the same env vars. Do not run the reset between them; the point is to test destroy/recreate, not start from scratch.
 
 3. **Re-capture the same artifacts** post-rebuild:
 

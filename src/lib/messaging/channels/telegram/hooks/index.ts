@@ -5,3 +5,5 @@ export * from "./allowlist-aliases";
 export * from "./gateway-conflict-status";
 export * from "./get-me-reachability";
 export * from "./openclaw-bridge-health";
+export * from "./status-health";
+export * from "./status-health-eval";

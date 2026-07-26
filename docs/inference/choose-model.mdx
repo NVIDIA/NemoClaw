@@ -1,0 +1,72 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Choose a Model"
+sidebar-title: "Choose a Model"
+description: "Compare curated cloud models by task fit, latency, tool use, context, and relative cost."
+description-agent: "Provides task-fit guidance for curated NemoClaw cloud models. Use when selecting a model during onboarding."
+keywords: ["choose inference model", "nemoclaw model guide", "model task fit"]
+content:
+  type: "concept"
+---
+Use the curated model choices as starter guidance when selecting a cloud model during onboarding.
+The provider catalog remains authoritative for exact context-window limits and current pricing.
+Runtime route validation determines current availability because catalog entries can outlive their backing endpoints.
+
+## Catalog Selection
+
+During interactive NVIDIA Endpoints onboarding, NemoClaw loads NVIDIA's public featured model catalog once per onboarding session and reports progress before displaying the model picker.
+OpenRouter uses the same catalog-backed picker flow and featured model list with its own provider route and credential check.
+NVIDIA Endpoints excludes NVIDIA-retired or unsafe choices and corrects known catalog lag before displaying the result.
+
+If the catalog is unavailable, malformed, or contains no safe model IDs, the wizard warns you and uses its bundled fallback list.
+Nemotron 3 Super remains the shared default for OpenClaw and Hermes when it is present.
+LangChain Deep Agents Code uses Nemotron 3 Ultra as its NVIDIA Endpoints default.
+If an agent's default is unavailable, the first live featured model becomes the interactive default.
+
+If `NEMOCLAW_MODEL` contains a safe custom model ID that is absent from the live catalog, it does not replace the live menu default.
+Choose **Other** to use that value as the pre-filled manual entry.
+NemoClaw validates the manual entry against the selected provider before continuing.
+NemoClaw does not display or accept an unsafe value as the manual-entry prefill.
+
+## Model Task Fit
+
+The relative labels compare models within the curated onboarding choices rather than across every model that a provider offers.
+
+| Model | Best for | Relative latency | Tool use | Context fit | Relative cost |
+|---|---|---|---|---|---|
+| `nvidia/nemotron-3-ultra-550b-a55b` | Quality-sensitive reasoning, careful synthesis, and complex reviews | Higher | Strong for complex tool plans | Large agent context | Higher |
+| `nvidia/nemotron-3-super-120b-a12b` | Hosted agent work, multi-step planning, and tool-heavy shell workflows | Medium | Strong default for OpenClaw tool loops | Large agent context | Medium |
+| `minimaxai/minimax-m3` | Long-form writing, multi-turn assistant work, and broad instruction following | Medium | Good for structured assistant turns | Large agent context | Medium |
+| `gpt-5.4` | General OpenAI-backed agent work and high-quality reasoning | Medium | Strong | Large agent context | Medium to high |
+| `gpt-5.4-mini` | Latency-sensitive routine automation and repeated helper calls | Low | Good | Medium to large context | Low |
+| `gpt-5.4-nano` | Classification, routing, extraction, and small helper tasks | Very low | Basic to good for simple tool loops | Medium context | Very low |
+| `gpt-5.4-pro-2026-03-05` | Quality-first complex reasoning where latency and cost are secondary | Highest | Validate Responses API support before long tool loops | Large agent context | Highest |
+| `claude-sonnet-4-6` | Balanced coding, writing, analysis, and multi-step tool work | Medium | Strong | Large agent context | Medium to high |
+| `claude-haiku-4-5` | Fast summarization, routing, extraction, and lightweight assistant turns | Low | Good for simple tool loops | Medium to large context | Low |
+| `claude-opus-4-6` | Deep analysis, careful writing, and quality-first planning | Higher | Strong | Large agent context | Higher |
+| `gemini-3.1-pro-preview` | Large-context analysis, synthesis, and preview-feature evaluation | Medium to high | Good, with tool continuation validation for the selected route | Extensive context | Medium to high |
+| `gemini-3.1-flash-lite-preview` | Low-cost extraction, classification, and simple helper calls | Low | Basic to good for simple tool loops | Medium to large context | Low |
+| `gemini-3-flash-preview` | Fast general assistant tasks and preview-feature evaluation | Low | Good for simple tool loops | Large context | Low |
+| `gemini-2.5-pro` | Large-context analysis, long-document synthesis, and complex reasoning | Medium to high | Good | Extensive context | Medium to high |
+| `gemini-2.5-flash` | Latency-sensitive general assistant and multimodal tasks | Low | Good for simple tool loops | Large context | Low |
+| `gemini-2.5-flash-lite` | Lowest-cost helper calls, extraction, and classification | Very low | Basic to good for simple tool loops | Medium to large context | Very low |
+
+## Nemotron Deployment Choice
+
+Nemotron models expose OpenAI-compatible APIs across the supported deployment surfaces.
+Choose the onboarding option that matches the host.
+
+| Nemotron host | Onboarding option |
+|---|---|
+| NVIDIA-hosted on `build.nvidia.com` | NVIDIA Endpoints |
+| Self-hosted NIM container | Other OpenAI-compatible endpoint |
+| Enterprise NVIDIA AI Enterprise gateway | Other OpenAI-compatible endpoint |
+| vLLM, SGLang, or TRT-LLM serving Nemotron weights | Other OpenAI-compatible endpoint |
+| Local NIM started by the wizard | Local NVIDIA NIM |
+
+## Related Topics
+
+- [Choose an Inference Provider](choose-inference-provider) compares the deployment routes.
+- [Use NVIDIA Endpoints](../hosted-inference/use-nvidia-endpoints) explains the hosted NVIDIA catalog flow.
+- [Understand Provider Validation](../validate-inference/understand-provider-validation) explains how NemoClaw checks a selected model.

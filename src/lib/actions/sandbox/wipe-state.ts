@@ -219,7 +219,10 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     // pins the gateway-select-then-exec-then-delete order.
     warn(
       `  ${YW}⚠${R} Could not wipe workspace state for '${sandboxName}' (sandbox not live?); ` +
-        "re-onboarding with the same name may resurface old files.",
+        "re-onboarding with the same name may resurface old files. " +
+        "To start clean, re-onboard with a different sandbox name, or — when this " +
+        "is your last sandbox — re-run destroy with --cleanup-gateway to purge the " +
+        "retained cluster volume.",
     );
   }
 }

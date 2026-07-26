@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   createBuiltInChannelManifestRegistry,
@@ -28,7 +29,34 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   WECHAT_BOT_TOKEN: "test-wechat-token",
   SLACK_BOT_TOKEN: "xoxb-test-slack-token",
   SLACK_APP_TOKEN: "xapp-test-slack-token",
+  MSTEAMS_APP_PASSWORD: "test-teams-client-secret",
 };
+
+const ALL_CHANNEL_ENV = {
+  TELEGRAM_BOT_TOKEN: "123456:telegram-token",
+  TELEGRAM_ALLOWED_IDS: "1001,1002",
+  DISCORD_BOT_TOKEN: "discord-token",
+  DISCORD_SERVER_ID: "guild-1",
+  DISCORD_USER_ID: "discord-user-1",
+  WECHAT_BOT_TOKEN: "wechat-token",
+  WECHAT_ACCOUNT_ID: "wechat-account",
+  WECHAT_BASE_URL: "https://ilinkai.wechat.com",
+  WECHAT_ALLOWED_IDS: "wechat-user-1,wechat-user-2",
+  SLACK_BOT_TOKEN: "xoxb-slack-token",
+  SLACK_APP_TOKEN: "xapp-slack-token",
+  SLACK_ALLOWED_USERS: "U100,U200",
+  SLACK_ALLOWED_CHANNELS: "C100,C200",
+  WHATSAPP_ALLOWED_IDS: "+15550000001,+15550000002",
+  MSTEAMS_APP_PASSWORD: "teams-secret",
+  MSTEAMS_APP_ID: "teams-app-id",
+  MSTEAMS_TENANT_ID: "teams-tenant-id",
+  TEAMS_ALLOWED_USERS: "00000000-0000-0000-0000-000000000001",
+  MSTEAMS_PORT: "3978",
+} as const;
+
+const ALL_CHANNELS = createBuiltInChannelManifestRegistry()
+  .listAvailable({ agent: "hermes" })
+  .map((manifest) => manifest.id);
 
 async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
@@ -156,7 +184,7 @@ describe("MessagingSetupApplier", () => {
 
     const cyclic = { ...plan } as Record<string, unknown>;
     cyclic.self = cyclic;
-    expect(() => MessagingSetupApplier.encodePlan(cyclic as never)).toThrow(/cycle/);
+    expect(() => MessagingSetupApplier.encodePlan(cyclic as never)).toThrow(/circular/i);
   });
 
   it("lists hook requests by phase without executing hook implementations", async () => {
@@ -223,6 +251,38 @@ describe("MessagingSetupApplier", () => {
         handler: "slack.openclawBridgeHealth",
       }),
     ]);
+  });
+
+  it("keeps shipping gateway conflicts aborting before channel enablement", async () => {
+    const plans = [
+      await buildOnboardPlan(
+        {
+          SLACK_BOT_TOKEN: "xoxb-slack-token",
+          SLACK_APP_TOKEN: "xapp-slack-token",
+        },
+        ["slack"],
+      ),
+      await buildOnboardPlan(
+        {
+          MSTEAMS_APP_PASSWORD: "teams-secret",
+          MSTEAMS_APP_ID: "teams-app-id",
+          MSTEAMS_TENANT_ID: "teams-tenant-id",
+        },
+        ["teams"],
+      ),
+    ];
+
+    for (const plan of plans) {
+      const request = MessagingSetupApplier.listPreEnableChecks(plan)[0];
+      expect(request?.onFailure).toBe("abort");
+      await expect(
+        MessagingSetupApplier.applyPreEnableChecks(plan, {
+          runHook: () => {
+            throw new Error(`blocked ${request?.channelId ?? "channel"}`);
+          },
+        }),
+      ).rejects.toThrow(`blocked ${request?.channelId ?? "channel"}`);
+    }
   });
 
   it("upserts OpenShell generic providers from plan credential bindings", async () => {
@@ -420,6 +480,94 @@ describe("MessagingSetupApplier", () => {
       botToken: scoped,
       enabled: true,
       groupPolicy: "open",
+    });
+  });
+
+  it("renders every built-in Hermes credential and allowlist through the sandbox applier", async () => {
+    const plan = await buildOnboardPlan(ALL_CHANNEL_ENV, ALL_CHANNELS, "hermes");
+    const files: Record<string, string> = {};
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      const reading = args.includes("cat") && options?.input === undefined;
+      const written = options?.input;
+      Object.assign(files, written === undefined ? {} : { [target]: written });
+      return reading
+        ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
+        : { status: written === undefined ? 1 : 0 };
+    };
+
+    const credentialResult = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+      env: ALL_CHANNEL_ENV,
+      runOpenshell: (args) =>
+        args[0] === "provider" && args[1] === "get" ? { status: 1 } : { status: 0 },
+    });
+    const policyResult = MessagingSetupApplier.applyPolicyAtOpenShell(plan, {
+      applyPresets: (_sandboxName, presetNames, context) => {
+        expect(presetNames).toEqual(ALL_CHANNELS);
+        expect(context.entries.map((entry) => entry.channelId)).toEqual(ALL_CHANNELS);
+        return true;
+      },
+    });
+    const renderResult = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
+      runOpenshell,
+    });
+
+    expect(credentialResult.providerNames).toEqual([
+      "demo-telegram-bridge",
+      "demo-discord-bridge",
+      "demo-wechat-bridge",
+      "demo-slack-bridge",
+      "demo-slack-app",
+      "demo-teams-bridge",
+    ]);
+    expect(policyResult.appliedPresets).toEqual(ALL_CHANNELS);
+    expect(policyResult.appliedPolicyKeys).toEqual([
+      "telegram",
+      "discord",
+      "wechat_bridge",
+      "slack",
+      "whatsapp",
+      "teams",
+    ]);
+    expect(renderResult.appliedTargets).toEqual([
+      "/sandbox/.hermes/.env",
+      "/sandbox/.hermes/config.yaml",
+    ]);
+
+    const renderedEnv = files["/sandbox/.hermes/.env"] ?? "";
+    expect(renderedEnv.split("\n")).toEqual(
+      expect.arrayContaining([
+        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_ALLOWED_USERS=1001,1002",
+        "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+        "NEMOCLAW_DISCORD_GUILD_IDS=guild-1",
+        "DISCORD_ALLOWED_USERS=discord-user-1",
+        "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
+        "WEIXIN_ALLOWED_USERS=wechat-user-1,wechat-user-2",
+        "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+        "SLACK_ALLOWED_USERS=U100,U200",
+        "SLACK_ALLOWED_CHANNELS=C100,C200",
+        "WHATSAPP_ALLOWED_USERS=+15550000001,+15550000002",
+        "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+        "TEAMS_ALLOWED_USERS=00000000-0000-0000-0000-000000000001",
+      ]),
+    );
+    expect(renderedEnv).not.toContain("telegram-token");
+    expect(renderedEnv).not.toContain("discord-token");
+    expect(renderedEnv).not.toContain("wechat-token");
+    expect(renderedEnv).not.toContain("teams-secret");
+
+    const renderedConfig = YAML.parse(files["/sandbox/.hermes/config.yaml"] ?? "{}") as {
+      platforms?: Record<string, { enabled?: boolean }>;
+    };
+    expect(renderedConfig.platforms).toMatchObject({
+      telegram: { enabled: true },
+      discord: { enabled: true },
+      weixin: { enabled: true },
+      slack: { enabled: true },
+      whatsapp: { enabled: true },
+      teams: { enabled: true },
     });
   });
 
@@ -807,13 +955,14 @@ describe("MessagingSetupApplier", () => {
   it("passes concrete policy keys for agent-aware preset application", async () => {
     const plan = await buildOnboardPlan(
       {
+        TELEGRAM_BOT_TOKEN: "123456:telegram-token",
         DISCORD_BOT_TOKEN: "test-discord-token",
         WECHAT_BOT_TOKEN: "test-wechat-token",
         WECHAT_ACCOUNT_ID: "wechat-account",
         SLACK_BOT_TOKEN: "xoxb-slack-token",
         SLACK_APP_TOKEN: "xapp-slack-token",
       },
-      ["discord", "wechat", "slack"],
+      ["telegram", "discord", "wechat", "slack"],
       "hermes",
     );
     const policyCalls: string[][] = [];
@@ -827,15 +976,15 @@ describe("MessagingSetupApplier", () => {
       },
     });
 
-    expect(policyCalls).toEqual([["demo", "discord", "wechat", "slack"]]);
+    expect(policyCalls).toEqual([["demo", "telegram", "discord", "wechat", "slack"]]);
     expect(applyContext).toEqual({
       agent: "hermes",
       entries: plan.networkPolicy.entries,
-      policyKeys: ["discord", "wechat_bridge", "slack"],
+      policyKeys: ["telegram", "discord", "wechat_bridge", "slack"],
     });
     expect(result).toEqual({
-      appliedPresets: ["discord", "wechat", "slack"],
-      appliedPolicyKeys: ["discord", "wechat_bridge", "slack"],
+      appliedPresets: ["telegram", "discord", "wechat", "slack"],
+      appliedPolicyKeys: ["telegram", "discord", "wechat_bridge", "slack"],
     });
   });
 });

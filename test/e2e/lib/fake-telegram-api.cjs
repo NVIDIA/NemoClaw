@@ -34,6 +34,15 @@ function tokenLooksPlaceholder(value) {
   return typeof value === "string" && value.includes("openshell:resolve:env:");
 }
 
+function redactRequestPath(value) {
+  try {
+    const pathname = new URL(value || "/", "http://fake-telegram.local").pathname;
+    return pathname.replace(/^\/bot[^/]+(?=\/|$)/, "/bot[redacted]");
+  } catch {
+    return "[invalid-path]";
+  }
+}
+
 function readFields(req, body) {
   const contentType = String(req.headers["content-type"] || "");
   if (contentType.includes("application/json")) {
@@ -61,7 +70,12 @@ const server = http.createServer((req, res) => {
     bodyBytes += chunk.length;
     if (bodyBytes > MAX_BODY_BYTES) {
       bodyTooLarge = true;
-      record({ event: "request-too-large", method: req.method, path: req.url || "/", bodyBytes });
+      record({
+        event: "request-too-large",
+        method: req.method,
+        path: redactRequestPath(req.url),
+        bodyBytes,
+      });
       writeJson(res, 413, { ok: false, error_code: 413, description: "payload too large" });
       req.destroy();
       return;
@@ -82,7 +96,7 @@ const server = http.createServer((req, res) => {
     record({
       event: "request",
       method: req.method,
-      path: url.pathname,
+      path: redactRequestPath(url.pathname),
       endpoint,
       tokenMatchesExpected,
       tokenLooksPlaceholder: tokenLooksPlaceholder(token),

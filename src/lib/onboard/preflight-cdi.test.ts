@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
-import { assessHost, planHostRemediation, shouldEnforceCdiNvidiaGpuSpec } from "./preflight";
+import {
+  assertCdiNvidiaGpuSpecPresent,
+  assessHost,
+  planHostRemediation,
+  shouldEnforceCdiNvidiaGpuSpec,
+} from "./preflight";
 
 type HostAssessment = Parameters<typeof planHostRemediation>[0];
 
@@ -35,6 +40,21 @@ function baseAssessment(overrides: Partial<HostAssessment> = {}): HostAssessment
     notes: [],
     ...overrides,
   };
+}
+
+function withStderrColorDepth<T>(colorDepth: number, noColor: string, callback: () => T): T {
+  const stderr = Object.assign(Object.create(process.stderr), {
+    getColorDepth: () => colorDepth,
+    isTTY: true,
+  }) as typeof process.stderr;
+  const getStderr = vi.spyOn(process, "stderr", "get").mockReturnValue(stderr);
+  vi.stubEnv("NO_COLOR", noColor);
+  try {
+    return callback();
+  } finally {
+    getStderr.mockRestore();
+    vi.unstubAllEnvs();
+  }
 }
 
 function runCaptureWithLspci(lspciOutput: string): (command: readonly string[]) => string {
@@ -472,5 +492,50 @@ describe("shouldEnforceCdiNvidiaGpuSpec enforcement gate (#5489)", () => {
         explicitlyOptedOutGpuPassthrough: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("assertCdiNvidiaGpuSpecPresent severity (#6004)", () => {
+  it("colors the fatal missing-CDI line red before exiting", () => {
+    withStderrColorDepth(24, "", () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const exitProcess = vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      });
+
+      expect(() =>
+        assertCdiNvidiaGpuSpecPresent(
+          baseAssessment({ cdiNvidiaGpuSpecMissing: true }),
+          false,
+          null,
+          exitProcess,
+        ),
+      ).toThrow("exit 1");
+      expect(error.mock.calls[0]?.[0]).toBe(
+        "  \x1b[31m✗ Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.\x1b[39m",
+      );
+      expect(exitProcess).toHaveBeenCalledWith(1);
+      error.mockRestore();
+    });
+  });
+
+  it("keeps the fatal missing-CDI line plain under NO_COLOR", () => {
+    withStderrColorDepth(24, "1", () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      expect(() =>
+        assertCdiNvidiaGpuSpecPresent(
+          baseAssessment({ cdiNvidiaGpuSpecNeedsRepair: true }),
+          false,
+          null,
+          (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        ),
+      ).toThrow("exit 1");
+      expect(String(error.mock.calls[0]?.[0])).toContain("  ✗ Docker is configured for CDI");
+      expect(String(error.mock.calls[0]?.[0])).not.toContain("\x1b[");
+      error.mockRestore();
+    });
   });
 });

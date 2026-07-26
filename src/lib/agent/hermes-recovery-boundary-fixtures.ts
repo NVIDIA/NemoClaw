@@ -25,7 +25,12 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
       format: "yaml",
     },
     inferenceProviderOptions: [],
+    mcpCapability: {
+      support: "disabled",
+      reason: "test fixture",
+    },
     stateDirs: [],
+    runtimeAuthStateDirs: [],
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "test-agent --version",

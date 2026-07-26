@@ -39,12 +39,16 @@ function clearTrackedEnv() {
   }
 }
 
-async function importCredentialsModule(home: string): Promise<CredentialsModule> {
+async function importCredentialsModule(
+  home: string,
+  gatewayPort?: number,
+): Promise<CredentialsModule> {
   vi.resetModules();
   vi.doUnmock("fs");
   vi.doUnmock("child_process");
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
+  vi.stubEnv("NEMOCLAW_GATEWAY_PORT", gatewayPort === undefined ? "" : String(gatewayPort));
   const module = await import("../src/lib/credentials/store.js");
   const loaded = "default" in module ? module.default : module;
   const moduleObject = typeof loaded === "object" && loaded !== null ? loaded : null;
@@ -85,6 +89,10 @@ describe("messaging legacy bridge credentials", () => {
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("TELEGRAM_BOT_TOKEN");
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("DISCORD_BOT_TOKEN");
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("SLACK_BOT_TOKEN");
+  });
+
+  it("registers TAVILY_API_KEY so the Tavily provider can be sanitized and rotated", () => {
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("TAVILY_API_KEY");
   });
 });
 
@@ -175,6 +183,29 @@ describe("host-side credential staging", () => {
 });
 
 describe("legacy credentials.json migration (two-phase: stage then remove)", () => {
+  it("stages credentials only from the selected nondefault gateway root", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-port-"));
+    const defaultDir = path.join(home, ".nemoclaw");
+    const selectedDir = path.join(defaultDir, "gateways", "9123");
+    fs.mkdirSync(selectedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(defaultDir, "credentials.json"),
+      JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-default-root" }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(selectedDir, "credentials.json"),
+      JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-selected-port" }),
+      { mode: 0o600 },
+    );
+
+    const credentials = await importCredentialsModule(home, 9123);
+
+    expect(credentials.stageLegacyCredentialsToEnv()).toEqual(["NVIDIA_INFERENCE_API_KEY"]);
+    expect(process.env.NVIDIA_INFERENCE_API_KEY).toBe("nvapi-selected-port");
+    expect(fs.existsSync(path.join(defaultDir, "credentials.json"))).toBe(true);
+  });
+
   it("stages allowlisted keys into env without touching the file", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");
@@ -669,6 +700,7 @@ describe("prompt machinery (unchanged)", () => {
   it("settles the outer prompt promise on secret prompt errors", () => {
     const script = `
 const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "core", "prompt-activity.ts"))});
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
@@ -677,7 +709,10 @@ process.stdin.unref = () => process.stdin;
 process.stdin.setRawMode = () => { throw new Error('raw mode unavailable'); };
 prompt('secret: ', { secret: true })
   .then(() => { console.error('unexpected resolve'); process.exit(1); })
-  .catch((err) => { console.log('REJECTED=' + err.message); });
+  .catch((err) => {
+    console.log('REJECTED=' + err.message);
+    console.log('PROMPT_ACTIVE=' + String(isAnyPromptActive()));
+  });
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       encoding: "utf-8",
@@ -685,6 +720,36 @@ prompt('secret: ', { secret: true })
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("REJECTED=raw mode unavailable");
+    expect(result.stdout).toContain("PROMPT_ACTIVE=false");
+  });
+
+  it("releases secret prompt activity when stdin closes before an answer (#6651)", () => {
+    const script = `
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "core", "prompt-activity.ts"))});
+process.stdin.isTTY = true;
+process.stderr.isTTY = true;
+process.stdin.ref = () => process.stdin;
+process.stdin.resume = () => process.stdin;
+process.stdin.pause = () => process.stdin;
+process.stdin.unref = () => process.stdin;
+process.stdin.setRawMode = () => process.stdin;
+const pending = prompt('secret: ', { secret: true });
+setImmediate(() => process.stdin.emit('close'));
+pending
+  .then(() => { console.error('unexpected resolve'); process.exit(1); })
+  .catch((err) => {
+    console.log('REJECTED_CODE=' + String(err.code));
+    console.log('PROMPT_ACTIVE=' + String(isAnyPromptActive()));
+  });
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("REJECTED_CODE=EOF");
+    expect(result.stdout).toContain("PROMPT_ACTIVE=false");
   });
 
   it("classifies secret credential prompts as navigation or credential intent", async () => {
@@ -768,6 +833,80 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     } finally {
       createInterfaceSpy.mockRestore();
       killSpy.mockRestore();
+      stdinRef.mockRestore();
+      stdinPause.mockRestore();
+      stdinUnref.mockRestore();
+    }
+  });
+
+  it("rejects standard readline prompts as cancellation when stdin closes before an answer (#5976)", async () => {
+    const readline = require("node:readline") as typeof import("node:readline");
+    const rl = new EventEmitter() as EventEmitter & {
+      close: ReturnType<typeof vi.fn>;
+      question: ReturnType<typeof vi.fn>;
+    };
+    rl.close = vi.fn();
+    rl.question = vi.fn();
+
+    const createInterfaceSpy = vi.spyOn(readline, "createInterface").mockReturnValue(rl as any);
+    const stdinRef = vi.spyOn(process.stdin, "ref").mockImplementation(() => process.stdin);
+    const stdinPause = vi.spyOn(process.stdin, "pause").mockImplementation(() => process.stdin);
+    const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
+
+    try {
+      const credentials = await import("../src/lib/credentials/store.js");
+      const pending = credentials.prompt("question: ");
+      // Simulate stdin EOF (e.g. `< /dev/null`): readline closes without ever
+      // invoking the question callback.
+      rl.emit("close");
+      await expect(pending).rejects.toMatchObject({ code: "EOF" });
+      expect(rl.close).toHaveBeenCalled();
+    } finally {
+      createInterfaceSpy.mockRestore();
+      stdinRef.mockRestore();
+      stdinPause.mockRestore();
+      stdinUnref.mockRestore();
+    }
+  });
+
+  it("registers prompt activity while a readline prompt awaits input so heartbeats hold (#6651)", async () => {
+    const readline = require("node:readline") as typeof import("node:readline");
+    const rl = new EventEmitter() as EventEmitter & {
+      close: ReturnType<typeof vi.fn>;
+      question: ReturnType<typeof vi.fn>;
+    };
+    rl.close = vi.fn();
+    const questionCallbacks: Array<(answer: string) => void> = [];
+    rl.question = vi.fn((_question: string, callback: (answer: string) => void) => {
+      questionCallbacks.push(callback);
+    });
+
+    const createInterfaceSpy = vi.spyOn(readline, "createInterface").mockReturnValue(rl as any);
+    const stdinRef = vi.spyOn(process.stdin, "ref").mockImplementation(() => process.stdin);
+    const stdinPause = vi.spyOn(process.stdin, "pause").mockImplementation(() => process.stdin);
+    const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
+
+    try {
+      const credentials = await import("../src/lib/credentials/store.js");
+      const promptActivity = await import("../src/lib/core/prompt-activity.js");
+      expect(promptActivity.isAnyPromptActive()).toBe(false);
+
+      const pending = credentials.prompt("question: ");
+      expect(promptActivity.isAnyPromptActive()).toBe(true);
+
+      questionCallbacks[0]?.("answer");
+      await expect(pending).resolves.toBe("answer");
+      expect(promptActivity.isAnyPromptActive()).toBe(false);
+
+      // The cancellation path must release the registry too, or one aborted
+      // prompt would silence heartbeats for the rest of onboarding.
+      const cancelled = credentials.prompt("question: ");
+      expect(promptActivity.isAnyPromptActive()).toBe(true);
+      rl.emit("close");
+      await expect(cancelled).rejects.toMatchObject({ code: "EOF" });
+      expect(promptActivity.isAnyPromptActive()).toBe(false);
+    } finally {
+      createInterfaceSpy.mockRestore();
       stdinRef.mockRestore();
       stdinPause.mockRestore();
       stdinUnref.mockRestore();

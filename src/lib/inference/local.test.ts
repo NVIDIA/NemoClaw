@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
@@ -36,6 +36,7 @@ import {
   parseOllamaList,
   parseOllamaTags,
   probeLocalProviderHealth,
+  probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
   resetOllamaContainerPortCache,
   validateLocalProvider,
@@ -323,6 +324,143 @@ describe("local inference helpers", () => {
     });
   });
 
+  it("requires the configured Ollama model while accepting the implicit latest tag", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      model: "nemotron-mini",
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: '{"models":[{"name":"nemotron-mini:latest"}]}',
+        stderr: "",
+        message: "HTTP 200",
+      }),
+      loadOllamaProxyTokenImpl: () => null,
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(result?.detail).toContain("reachable");
+  });
+
+  it("reports an unavailable configured Ollama model instead of daemon health", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      model: "missing-model:latest",
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: '{"models":[{"name":"available-model:latest"}]}',
+        stderr: "",
+        message: "HTTP 200",
+      }),
+      loadOllamaProxyTokenImpl: () => null,
+    });
+
+    expect(result?.ok).toBe(false);
+    expect(result?.failureLabel).toBe("unhealthy");
+    expect(result?.detail).toContain("missing-model:latest");
+    expect(result?.detail).toContain("available-model:latest");
+  });
+
+  it.each([
+    {
+      provider: "ollama-local",
+      body: JSON.stringify({ models: [{ name: "available\u001b]52;c;payload\u0007\nmodel" }] }),
+    },
+    {
+      provider: "vllm-local",
+      body: JSON.stringify({ data: [{ id: `available\u001b[31m${"x".repeat(180)}` }] }),
+    },
+  ])("sanitizes $provider inventory names in unavailable-model diagnostics", ({
+    provider,
+    body,
+  }) => {
+    const result = probeLocalProviderHealth(provider, {
+      model: "missing\u001b[2J\nmodel",
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body,
+        stderr: "",
+        message: "HTTP 200",
+      }),
+      loadOllamaProxyTokenImpl: () => null,
+    });
+
+    expect(result?.ok).toBe(false);
+    expect(result?.detail).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(result?.detail.length).toBeLessThan(400);
+  });
+
+  it.each([
+    {
+      provider: "ollama-local",
+      body: "not-json",
+      expectedDetail: "not a valid /api/tags response",
+    },
+    {
+      provider: "ollama-local",
+      body: '{"data":[]}',
+      expectedDetail: "not a valid /api/tags response",
+    },
+    {
+      provider: "vllm-local",
+      body: "not-json",
+      expectedDetail: "could not verify configured model",
+    },
+    {
+      provider: "vllm-local",
+      body: "{}",
+      expectedDetail: "could not verify configured model",
+    },
+    {
+      provider: "vllm-local",
+      body: '{"models":[]}',
+      expectedDetail: "could not verify configured model",
+    },
+  ])("fails closed for an invalid $provider configured-model inventory", ({
+    provider,
+    body,
+    expectedDetail,
+  }) => {
+    const result = probeLocalProviderHealth(provider, {
+      model: "configured-model",
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body,
+        stderr: "",
+        message: "HTTP 200",
+      }),
+      loadOllamaProxyTokenImpl: () => null,
+    });
+
+    expect(result?.ok).toBe(false);
+    expect(result?.failureLabel).toBe("unhealthy");
+    expect(result?.detail).toContain(expectedDetail);
+  });
+
+  it.each([
+    { body: '{"data":[{"id":"served-model"}]}', expected: true },
+    { body: '{"data":[{"id":"different-model"}]}', expected: false },
+  ])("matches the configured vLLM model against its model inventory", ({ body, expected }) => {
+    const result = probeLocalProviderHealth("vllm-local", {
+      model: "served-model",
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body,
+        stderr: "",
+        message: "HTTP 200",
+      }),
+    });
+
+    expect(result?.ok).toBe(expected);
+  });
+
   it("reports a clear local provider outage when the host probe cannot connect", () => {
     const result = probeLocalProviderHealth("ollama-local", {
       runCurlProbeImpl: () => ({
@@ -347,11 +485,15 @@ describe("local inference helpers", () => {
   // probe to :11434 that ignored the auth proxy at :11435 entirely, so a
   // broken proxy hid behind a "healthy" backend.
   it("attaches a healthy auth-proxy subprobe when ollama backend is up", () => {
-    const responses: Array<{ args: string[]; status: number }> = [];
+    const responses: Array<{
+      args: string[];
+      opts?: { trustedConfigFiles?: readonly string[] };
+      status: number;
+    }> = [];
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "test-token",
-      runCurlProbeImpl: (argv: string[]) => {
-        responses.push({ args: argv, status: 200 });
+      runCurlProbeImpl: (argv: string[], opts?: { trustedConfigFiles?: readonly string[] }) => {
+        responses.push({ args: argv, opts, status: 200 });
         return {
           ok: true,
           httpStatus: 200,
@@ -365,7 +507,10 @@ describe("local inference helpers", () => {
     const proxyCall = responses.find((r) =>
       r.args.some((a) => typeof a === "string" && a.includes("11435")),
     );
-    expect(proxyCall?.args).toContain("Authorization: Bearer test-token");
+    expect(proxyCall?.args).toContain("--config");
+    expect(proxyCall?.args.join(" ")).not.toContain("test-token");
+    expect(proxyCall?.args).not.toContain("Authorization: Bearer test-token");
+    expect(proxyCall?.opts?.trustedConfigFiles ?? []).not.toHaveLength(0);
     expect(result?.ok).toBe(true);
     expect(result?.subprobes).toHaveLength(1);
     expect(result?.subprobes?.[0]).toMatchObject({
@@ -373,6 +518,45 @@ describe("local inference helpers", () => {
       probeLabel: "auth proxy",
       endpoint: "http://127.0.0.1:11435/api/tags",
     });
+  });
+
+  it("loads the Ollama proxy token only from the selected nondefault gateway root", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-port-token-"));
+    const defaultRoot = path.join(home, ".nemoclaw");
+    const selectedRoot = path.join(defaultRoot, "gateways", "9123");
+    fs.mkdirSync(selectedRoot, { recursive: true });
+    fs.writeFileSync(path.join(defaultRoot, "ollama-proxy-token"), "default-root-token\n");
+    fs.writeFileSync(path.join(selectedRoot, "ollama-proxy-token"), "selected-port-token\n");
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+    vi.resetModules();
+
+    try {
+      const freshLocal = await import("./local");
+      let authConfig = "";
+      const result = freshLocal.probeOllamaAuthProxyHealth({
+        runCurlProbeImpl: (_argv, options) => {
+          const configPath = options?.trustedConfigFiles?.[0] ?? "";
+          authConfig = fs.readFileSync(configPath, "utf8");
+          return {
+            ok: true,
+            httpStatus: 200,
+            curlStatus: 0,
+            body: '{"models":[]}',
+            stderr: "",
+            message: "HTTP 200",
+          };
+        },
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(authConfig).toContain("selected-port-token");
+      expect(authConfig).not.toContain("default-root-token");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("surfaces 401 on the auth-proxy subprobe even when backend is healthy", () => {
@@ -496,6 +680,25 @@ describe("local inference helpers", () => {
     });
     expect(result?.ok).toBe(true);
     expect(result?.detail).toContain("reachable");
+  });
+
+  it("reports the auth proxy as unhealthy when the auth config cannot be prepared", () => {
+    const spy = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+      throw new Error("mkdtemp failed");
+    });
+    try {
+      const result = probeOllamaAuthProxyHealth({
+        loadOllamaProxyTokenImpl: () => "token",
+        runCurlProbeImpl: () => {
+          throw new Error("curl should not be spawned when auth config setup fails");
+        },
+      });
+      expect(result?.ok).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("mkdtemp failed");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("returns null when provider health probing is not supported", () => {
@@ -842,8 +1045,8 @@ describe("local inference helpers", () => {
       models: [{ name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" }],
     });
     const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const rendered = cmd.join(" ");
       if (rendered.includes("/api/ps")) return psOutput;
       return payload;
     };
@@ -861,8 +1064,8 @@ describe("local inference helpers", () => {
       models: [{ name: "qwen3.6:35b", size_vram: 24_000_000_000, processor: "100% GPU" }],
     });
     const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const rendered = cmd.join(" ");
       if (rendered.includes("/api/ps")) return psOutput;
       return payload;
     };
@@ -880,8 +1083,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -896,8 +1099,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -913,8 +1116,8 @@ describe("local inference helpers", () => {
       error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)",
     });
     const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return oomPayload;
     };
@@ -1050,8 +1253,8 @@ describe("local inference helpers", () => {
       if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
       return { stdout: oomPayload, exitCode: 0, timedOut: false };
     };
-    const capture = (cmd: string | string[]) => {
-      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+    const capture = (cmd: readonly string[]) => {
+      const c = cmd.join(" ");
       if (c.includes("free")) return freeOutput;
       return "";
     };

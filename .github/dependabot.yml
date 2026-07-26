@@ -9,3 +9,8 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      # CodeQL steps exchange state and reject mixed action versions.
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"

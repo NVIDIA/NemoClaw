@@ -1,0 +1,215 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Recover and Rebuild Sandboxes"
+sidebar-title: "Recover and Rebuild Sandboxes"
+description: "Recover a stopped agent runtime or rebuild a sandbox while preserving supported state."
+description-agent: "Explains the supported recovery and rebuild paths for OpenClaw, Hermes, and Deep Agents sandboxes. Use when a gateway or terminal runtime is degraded or when a sandbox image must be recreated."
+keywords: ["nemoclaw recover", "nemoclaw rebuild", "gateway restart", "sandbox recovery"]
+content:
+  type: "how_to"
+skill:
+  priority: 30
+---
+Use the lightest recovery operation that repairs the sandbox while preserving its supported state.
+
+## Restart a Stopped Sandbox Container
+
+If status reports `Phase: Error` and confirms that the sandbox container exists but is stopped, restart the existing container:
+
+```bash
+$$nemoclaw <sandbox-name> start
+```
+
+This path preserves the sandbox workspace and repairs the agent runtime and host-side forwards after the container starts.
+If the container is paused, follow the printed `docker unpause` guidance instead.
+If the container is missing or OpenShell reports another terminal phase such as `Failed`, follow the printed `rebuild --yes` guidance so NemoClaw can recreate the sandbox from its recorded metadata.
+
+## Recover the Agent Runtime
+
+<AgentOnly variant="openclaw">
+If `$$nemoclaw <name> status` reports the sandbox is alive but the gateway is not running, run the recover command instead of opening a shell.
+
+```bash
+$$nemoclaw <sandbox-name> recover
+```
+
+The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
+It is idempotent and safe to script.
+If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.
+
+Use `gateway restart` when you intentionally need a supported OpenClaw gateway to reload runtime configuration or plugins.
+
+```bash
+$$nemoclaw <sandbox-name> gateway restart
+```
+
+The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health.
+The host then checks or recovers host-side dashboard, messaging, and agent forwards.
+Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+If `$$nemoclaw <name> status` reports the sandbox is alive but the Hermes gateway is not running, run the recover command instead of opening a shell.
+
+```bash
+$$nemoclaw <sandbox-name> recover
+```
+
+The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
+It is idempotent and safe to script.
+If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.
+
+Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
+
+```bash
+$$nemoclaw <sandbox-name> gateway restart
+```
+
+The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health.
+The host then checks or recovers host-side dashboard, messaging, and agent forwards.
+
+For Hermes, the entrypoint supervisor owns the gateway, dashboard process, internal API relay, dashboard relay, and gateway log stream.
+The nonroot managed supervisor repairs those processes continuously, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five exits within 60 seconds until sandbox recreation.
+
+The host does not start the in-sandbox processes independently.
+Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+Recovery uses registry-scoped privileged direct-container control and does not fall back to ordinary `openshell sandbox exec` or a manual in-sandbox relaunch.
+For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can transactionally recreate the registered container with a credential-free managed startup command.
+
+NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check, and attempts to restore it if that proof fails.
+The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
+After a transactional recreation, NemoClaw uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) for OpenShell to re-register the sandbox before starting the primary dashboard or API host forward.
+A definitive managed-health failure still stops immediately; if re-registration does not complete within the budget, the forward stays stopped.
+
+For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
+If recovery cannot repair a sandbox that needs credentials or a current controller contract, rebuild it.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents sandboxes are terminal runtimes and do not expose an OpenClaw or Hermes in-sandbox gateway.
+Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` for recovery.
+If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+### Host OpenShell Gateway Versus In-Sandbox Agent Recovery
+
+`recover` and `start` repair the in-sandbox agent gateway and the host-side port forwards for one named sandbox.
+`connect --probe-only` waits for that sandbox to become ready, rechecks it on its recorded gateway, and then verifies or repairs the same sandbox-scoped processes and forwards.
+These commands do not restart, replace, or reap the shared host OpenShell gateway process.
+If the host gateway RPC returns an error while these sandbox-scoped commands run, they surface the error with explicit next-step guidance and exit rather than swapping the shared gateway out from under other sandboxes.
+
+To repair the host gateway itself, use `openshell status`, `openshell gateway start --name <gateway>`, or run `$$nemoclaw onboard` again.
+Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicitly recover the named host gateway when their operation requires it.
+`$$nemoclaw <name> gateway restart` instead restarts only the supported agent gateway inside the named sandbox.
+</AgentOnly>
+
+## Rebuild While Preserving State
+
+<AgentOnly variant="openclaw">
+If you changed the underlying Dockerfile, upgraded OpenClaw, or want to pick up a new base image without losing your sandbox's workspace files, use `rebuild` instead of destroying and recreating.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a new base image without losing your sandbox's state files, use `rebuild` instead of destroying and recreating.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+If you changed the underlying Dockerfile, upgraded Deep Agents Code, enabled Tavily Search, or want to pick up a new base image without losing manifest-defined Deep Agents state, use `rebuild` instead of destroying and recreating.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+<Warning title="Legacy Upgrade Recovery Scope">
+When the installer offers prepared backup recovery for a legacy sandbox, the recreate restores only the managed state directory recorded in the validated backup manifest, such as `/sandbox/.openclaw` or `/sandbox/.hermes`.
+It does not preserve files outside that recorded path, including `/sandbox/user-data`.
+Back up those paths outside the sandbox before you approve legacy recovery.
+</Warning>
+</AgentOnly>
+
+```bash
+$$nemoclaw <sandbox-name> rebuild
+```
+
+<AgentOnly variant="openclaw">
+The rebuild command preserves the mounted workspace and registered policies while recreating the container.
+When no host web-search key is staged, rebuild preflight reuses an existing Brave or Tavily credential only when the provider name, type, and credential key match the sandbox's binding on its recorded OpenShell gateway.
+A missing or mismatched binding stops before recreation and requires the matching host environment variable before you retry.
+After state restoration, NemoClaw clears a session's stale model and provider pin when it still targets the managed `inference` provider but no longer matches the configured default model.
+The session then follows the current default selected through `inference set`, while sessions pinned to another provider remain unchanged.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+The rebuild command preserves Hermes state, registered policies, and managed MCP configuration while recreating the container.
+A rebuild creates a new sandbox home and a new Hermes API bearer token.
+After the rebuild succeeds, retrieve the replacement token before reconnecting API clients:
+
+```bash
+$$nemoclaw <sandbox-name> gateway-token --quiet
+```
+
+Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
+After state restore, NemoClaw restores managed MCP configuration through the normal lifecycle, then re-proves or recovers gateway health and performs final MCP reconciliation.
+`rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.
+Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> recover` for gateway health and `$$nemoclaw <sandbox-name> mcp restart` for incomplete managed MCP restoration.
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+The rebuild command preserves manifest-defined Deep Agents state, regenerates `config.toml`, reconstructs managed MCP projection state, and reapplies registered policies while recreating the container.
+</AgentOnly>
+
+If an archive command preserves at least one state directory, NemoClaw keeps the usable entries and reports the manifest-defined paths that could not be archived.
+If a manifest-declared state file fails, NemoClaw stops before deleting the original sandbox even when it preserved state directories, unless you explicitly pass `--force`.
+If every state directory fails, NemoClaw stops before deleting the original sandbox even when it captured loose files, unless you explicitly pass `--force`.
+
+<Warning>
+`rebuild --force` can continue when no state directory was preserved or a manifest-declared state file failed.
+NemoClaw restores any entries captured in the partial backup; if nothing usable was captured, it recreates the sandbox from recorded registry metadata without restoring prior sandbox state.
+Use this recovery path only when losing the state that could not be backed up is acceptable.
+When a sandbox with managed MCP servers cannot run a pre-mutation no-op, explicit `--force` uses its complete registry entries plus the exact live generated policies and provider identities to preserve MCP intent without scrubbing the unreachable in-sandbox adapter.
+Every bridge entry must record an explicit adapter that matches the sandbox's recorded agent, and the registered policy must be the canonical generated policy for that adapter, server name, URL endpoint, and current resolved-address pins.
+NemoClaw rechecks that read-only snapshot immediately before deletion and stops if the target, registry, policy, provider, or recorded gateway changed.
+NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
+Across every rebuild path, NemoClaw does not attempt to stop the local NIM through the delete attempt, and cleanup is attempted on a best-effort basis only after deletion is positively confirmed.
+After a nonzero delete, an explicit missing result converges as deleted.
+A `Ready` or `Running` result triggers an attempt to restore prepared MCP state and any shields lockdown that rebuild temporarily opened.
+NemoClaw reports any MCP or shields restoration failure and does not present the operation as a successful rollback.
+Any partial or unreachable result remains ambiguous.
+NemoClaw preserves the MCP ownership and rebuild-recovery records, does not attempt to stop NIM, skips the rebuild process's immediate shields relock, and does not claim that the original sandbox is intact.
+Inspect the live sandbox and gateway state before retrying recovery.
+This recovery also stops for incomplete MCP adds or ambiguous ownership; an error after a successful no-op does not fall back to the host-side path.
+</Warning>
+
+When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
+A detached auto-lock timer remains the recovery authority until NemoClaw commits a successful shields-up state, including when the host rebuild process exits unexpectedly.
+
+<AgentOnly variant="openclaw">
+If a failed shields transition on a sandbox from an older NemoClaw release quarantined the OpenClaw config, the bytes are preserved as `/sandbox/.openclaw/.nemoclaw-rejected-openclaw.json-<random>` rather than deleted.
+Upgrade the NemoClaw CLI before rebuilding because an older CLI restages the older in-container guard.
+To preserve settings, copy the quarantine file out of the container before `rebuild --yes`.
+After the rebuild, inspect that copy and reapply required settings with the host-side `config set` command.
+To discard the quarantined settings, upgrade the CLI and run `rebuild --yes` to create a known-good baseline.
+Sandboxes with the updated guard report quarantine filenames and synthesize a missing `.config-hash` only during `shields up` from the default mutable posture.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+For an older Hermes image that predates sealed shields transitions, only the rebuild workflow may use the descriptor-safe compatibility transition needed to archive and replace the sandbox.
+That transition verifies the strict and compatibility hashes and publishes fresh config inodes before changing their lock posture, while ordinary `shields up` and `shields down` commands continue to refuse the older protocol.
+</AgentOnly>
+
+Refer to [`$$nemoclaw <name> rebuild`](../../reference/commands#$$nemoclaw-name-rebuild) for flag details.
+
+## Use the Canonical Configuration Workflows
+
+- Use [Switch Inference Providers](../../inference/manage-inference/switch-providers) to change a model or provider.
+<AgentOnly variant="openclaw,hermes">
+- Use [Credential Rotation](../../security/credential-rotation) to reset or replace a stored provider credential.
+- Use [Customize the Network Policy](../../network-policy/customize-network-policy) to add or remove policy presets.
+</AgentOnly>
+
+## Related Topics
+
+- [Create and Restore Snapshots](../state-and-backups/create-and-restore-snapshots) for the state-preservation contract.
+- [Troubleshooting](../../reference/troubleshooting) for `privileged control unavailable`, stopped sandboxes, and failed rebuilds.

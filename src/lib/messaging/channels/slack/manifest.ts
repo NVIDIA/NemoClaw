@@ -168,6 +168,9 @@ export const slackManifest = {
         path: "platforms.slack",
         value: {
           enabled: true,
+          extra: {
+            rich_blocks: true,
+          },
         },
       },
     },
@@ -210,25 +213,16 @@ export const slackManifest = {
       manager: "openclaw-plugin",
       spec: "npm:@openclaw/slack@{{openclaw.version}}",
       pin: true,
+      integrityByVersion: {
+        "2026.7.1":
+          "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==",
+      },
+      tarballUrlByVersion: {
+        "2026.7.1": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz",
+      },
       required: true,
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedUsers"],
-      slackConfig: ["allowedChannels"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.slack",
-        env: "SLACK_ALLOWED_USERS",
-      },
-      {
-        statePath: "slackConfig.allowedChannels",
-        env: "SLACK_ALLOWED_CHANNELS",
-      },
-    ],
-  },
   hooks: [
     {
       id: "slack-socket-mode-gateway-conflict",

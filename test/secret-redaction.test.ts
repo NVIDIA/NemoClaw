@@ -24,6 +24,15 @@ describe("secret redaction consistency (#1736)", () => {
       name: "GitHub PAT (fine-grained)",
       token: "github_pat_" + "d".repeat(50),
     },
+    { name: "Tavily API key", token: "tvly-" + "e".repeat(30) },
+    {
+      name: "LangSmith personal access token",
+      token: `lsv2_pt_${"f".repeat(36)}_${"g".repeat(10)}`,
+    },
+    {
+      name: "LangSmith service key",
+      token: `lsv2_sk_${"h".repeat(36)}_${"i".repeat(10)}`,
+    },
   ];
 
   // Tokens added for messaging integrations (#2336). They are covered by
@@ -63,6 +72,15 @@ describe("secret redaction consistency (#1736)", () => {
       const text = "provider failed with NVIDIA_INFERENCE_API_KEY=nvapi-" + "a".repeat(30);
       expect(runnerRedact(text)).not.toContain("nvapi-");
       expect(debugRedact(text)).not.toContain("nvapi-");
+    });
+
+    it("redacts complete multi-segment LangSmith keys without exposing their tails", () => {
+      const token = `lsv2_pt_${"a".repeat(36)}_${"tail".repeat(3)}`;
+      for (const redactor of [runnerRedact, debugRedact, redactSensitiveText]) {
+        const redacted = redactor(`provider failed with ${token}`);
+        expect(redacted).not.toContain(token);
+        expect(redacted).not.toContain("_tailtailtail");
+      }
     });
   });
 
@@ -183,6 +201,12 @@ describe("secret redaction consistency (#1736)", () => {
       const text = redactSensitiveText("NEMOCLAW_PROVIDER_KEY=sk-test-inference-hub-key");
       expect(text).not.toContain("sk-test-inference-hub-key");
       expect(text).toBe("NEMOCLAW_PROVIDER_KEY=<REDACTED>");
+    });
+
+    it("redacts TAVILY_API_KEY env-var assignments", () => {
+      const text = redactSensitiveText("TAVILY_API_KEY=tvly-redaction-regression-12345");
+      expect(text).not.toContain("tvly-redaction-regression-12345");
+      expect(text).toBe("TAVILY_API_KEY=<REDACTED>");
     });
   });
 });

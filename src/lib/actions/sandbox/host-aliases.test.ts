@@ -96,11 +96,17 @@ describe("host alias legacy gateway support checks", () => {
 
 describe("legacy gateway Docker probe classification", () => {
   it("classifies exact gateway container matches as present", () => {
-    const result = probeLegacyGatewayContainerWithDeps(() =>
+    const dockerPs = vi.fn(() =>
       dockerPsResult({ stdout: "openshell-cluster-nemoclaw\nother-container\n" }),
     );
+    const result = probeLegacyGatewayContainerWithDeps(dockerPs);
 
     expect(result).toEqual({ state: "present" });
+    expect(dockerPs).toHaveBeenCalledWith(["ps", "--format", "{{.Names}}"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+      timeout: 5_000,
+    });
   });
 
   it("classifies missing exact gateway container matches as absent", () => {

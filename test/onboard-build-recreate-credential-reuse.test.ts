@@ -100,9 +100,10 @@ const { setupNim, setupInference } = require(${onboardPath});
     {
       allowToolsIncompatible: result.allowToolsIncompatible,
       skipHostInferenceSmoke: result.skipHostInferenceSmoke,
+      reuseGatewayCredentialWithoutLocalKey: result.reuseGatewayCredentialWithoutLocalKey,
     },
   );
-  console.log(JSON.stringify({ outcome: "resolved", provider: result.provider, skipHostInferenceSmoke: result.skipHostInferenceSmoke }));
+  console.log(JSON.stringify({ outcome: "resolved", provider: result.provider, skipHostInferenceSmoke: result.skipHostInferenceSmoke, reuseGatewayCredentialWithoutLocalKey: result.reuseGatewayCredentialWithoutLocalKey }));
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : error);
   console.log(JSON.stringify({ outcome: "rejected" }));
@@ -158,6 +159,11 @@ const { setupNim, setupInference } = require(${onboardPath});
           output,
           /"skipHostInferenceSmoke":true/,
           `setupNim did not mark the recovered gateway credential for host-smoke bypass; output:\n${output}`,
+        );
+        assert.match(
+          output,
+          /"reuseGatewayCredentialWithoutLocalKey":true/,
+          `setupNim did not carry explicit gateway-credential reuse authorization; output:\n${output}`,
         );
 
         const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";

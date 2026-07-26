@@ -15,8 +15,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
@@ -33,6 +33,7 @@ const PY_YAML_AVAILABLE =
 const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
+const TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY";
 
 const GATEWAY_CONFIG = {
   _config_version: 12,
@@ -121,6 +122,33 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(dash._nemoclaw_upstream).toEqual(GATEWAY_CONFIG._nemoclaw_upstream);
   });
 
+  it("mirrors only the exact native Tavily backend into dashboard config", () => {
+    const src = writeYaml("gw.yaml", {
+      ...GATEWAY_CONFIG,
+      web: { backend: "tavily", use_gateway: true, api_key: "do-not-copy" },
+    });
+    const dst = writeYaml("dash.yaml", { web: { max_results: 3 } });
+
+    const res = runSeed(src, dst);
+
+    expect(res.status).toBe(0);
+    expect(readYaml(dst).web).toEqual({ max_results: 3, backend: "tavily" });
+  });
+
+  it("removes the managed Tavily backend after the gateway disables it", () => {
+    const enabledSrc = writeYaml("gw-enabled.yaml", {
+      ...GATEWAY_CONFIG,
+      web: { backend: "tavily" },
+    });
+    const disabledSrc = writeYaml("gw-disabled.yaml", GATEWAY_CONFIG);
+    const dst = writeYaml("dash.yaml", { web: { max_results: 3 } });
+
+    expect(runSeed(enabledSrc, dst).status).toBe(0);
+    expect(readYaml(dst).web).toEqual({ max_results: 3, backend: "tavily" });
+    expect(runSeed(disabledSrc, dst).status).toBe(0);
+    expect(readYaml(dst).web).toEqual({ max_results: 3 });
+  });
+
   it("synthesizes Hermes v16 providers from legacy gateway routing", () => {
     const legacy = {
       _config_version: 12,
@@ -175,6 +203,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
         "API_SERVER_HOST=127.0.0.1",
         "API_SERVER_PORT=18642",
         `API_SERVER_KEY=${GENERATED_HEX_TOKEN}`,
+        `TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`,
         "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
         "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
         "MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal",
@@ -193,6 +222,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
         "API_SERVER_HOST=127.0.0.1",
         "API_SERVER_PORT=18642",
         `API_SERVER_KEY=${GENERATED_HEX_TOKEN}`,
+        `TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`,
         "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
         "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
         "MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal",
@@ -246,6 +276,21 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
       expect(res.stderr, weakLine).not.toContain("server-key");
       expect(fs.existsSync(envDst), weakLine).toBe(false);
     }
+  });
+
+  it("rejects a literal Tavily key instead of mirroring it into the dashboard .env", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const dst = path.join(tmpDir, "dash.yaml");
+    const envSrc = path.join(tmpDir, "gw.env");
+    const envDst = path.join(tmpDir, "dash.env");
+    fs.writeFileSync(envSrc, "TAVILY_API_KEY=tvly-test-literal\nAPI_SERVER_HOST=127.0.0.1\n");
+
+    const res = runSeed(src, dst, envSrc, envDst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("TAVILY_API_KEY");
+    expect(res.stderr).not.toContain("tvly-test-literal");
+    expect(fs.existsSync(envDst)).toBe(false);
   });
 
   it("applies requested dashboard seed owner and mode before the atomic rename", () => {

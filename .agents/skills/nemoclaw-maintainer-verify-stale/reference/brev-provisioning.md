@@ -9,7 +9,7 @@ Use when the local-first path does not settle the issue and a Brev run is approv
 
 - [Step 7: Reuse or Provision a Brev Box](#step-7-reuse-or-provision-a-brev-box)
 - [Step 8: Validate on Baseline, Verify on Latest](#step-8-validate-on-baseline-verify-on-latest)
-- [Comprehensive reset](#comprehensive-reset-run-before-each-install)
+- [Reset](#reset-run-before-each-install)
 - [Step 8a: Install reported version](#step-8a-install-reported-version)
 - [Step 8a.5: Bootstrap reproducer dependencies](#step-8a5-bootstrap-reproducer-dependencies)
 - [Step 8a.5b: Brev exec environment quirks](#step-8a5b-brev-exec-environment-quirks)
@@ -90,7 +90,7 @@ echo ">>> Brev instance: $INSTANCE_NAME (provisioned_new=$PROVISIONED_NEW; manua
 trap '[ "$PROVISIONED_NEW" = "1" ] && brev delete "$INSTANCE_NAME" >/dev/null 2>&1 || true' EXIT
 ```
 
-Wallclock cap per verification: **60 minutes** default. The cap accommodates two full install passes (baseline + latest), comprehensive resets between them, and any reproducer dependency bootstrapping (Step 8a.5) — most of which run sequentially against a single Brev box. Bugs that genuinely require more than an hour to manifest fall out of v1 scope; if a provisioned box isn't ready in time, abort and treat as an infra failure (Step 11).
+Wallclock cap per verification: **60 minutes** default. The cap accommodates two install passes (baseline + latest), resets between them, and any reproducer dependency bootstrapping (Step 8a.5) — most of which run sequentially against a single Brev box. Bugs that require more than an hour to manifest fall out of v1 scope; if a provisioned box isn't ready in time, abort and treat as an infra failure (Step 11).
 
 The previous design had a 25-min default with a 60-min extension for time-sensitive bugs (`memory leak`, `over time`, etc.). That split optimised for the wrong constraint — most issues fit comfortably under 60 min, and the keyword-based extension forced re-runs whenever a real install or bootstrap took longer than the optimistic 25-min budget. Single 60-min cap removes that paper cut.
 
@@ -105,7 +105,7 @@ Two-pass design.
 
 Without the baseline gate, a clean run on latest is ambiguous: maybe the bug really got fixed, maybe the script was never capable of triggering it. The baseline disambiguates.
 
-### Comprehensive reset (run before each install)
+### Reset (run before each install)
 
 NemoClaw spawns OpenShell sandboxes (containers), runtime services, and listening processes. A naive `rm -rf ~/.nemoclaw` doesn't clean those — the latest install would inherit baseline state and contaminate the result. Use this fuller reset between installs:
 
@@ -223,7 +223,7 @@ brev exec "$INSTANCE_NAME" "nohup python -m vllm.entrypoints.openai.api_server -
 brev exec "$INSTANCE_NAME" "sleep 30 && curl -fsS http://127.0.0.1:8000/v1/models"
 ```
 
-Bootstrap **once before Step 8b's baseline run** and reuse for Step 8d's latest run. Don't reset Ollama/vLLM state between baseline and latest in the comprehensive reset — model downloads are expensive and unrelated to the NemoClaw install. Adjust the reset script to skip these external services explicitly if needed.
+Bootstrap **once before Step 8b's baseline run** and reuse for Step 8d's latest run. Don't reset Ollama/vLLM state between baseline and latest — model downloads are expensive and unrelated to the NemoClaw install. Adjust the reset script to skip these external services if needed.
 
 **If bootstrap fails** (network issue pulling the model, service won't start, etc.), this is an infra failure — abort to Step 11. Do not silently substitute; the user opted into faithfulness for a reason.
 

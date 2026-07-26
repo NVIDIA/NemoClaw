@@ -32,4 +32,23 @@ describe("maintenance image helpers", () => {
       ),
     ).toEqual([{ tag: "openshell/sandbox-from:two", size: "2GB" }]);
   });
+
+  it("orphans a local image while keeping a registered local image (#6301)", () => {
+    // A locally prebuilt sandbox left an orphan under nemoclaw-sandbox-local;
+    // the matcher must flag it by tag regardless of repo, and preserve the
+    // still-registered local image of another sandbox.
+    expect(
+      findOrphanedSandboxImages(
+        [
+          { tag: "openshell/sandbox-from:one", size: "1GB" },
+          { tag: "nemoclaw-sandbox-local:live-222", size: "2GB" },
+          { tag: "nemoclaw-sandbox-local:gc-test-111", size: "3GB" },
+        ],
+        [
+          { imageTag: "openshell/sandbox-from:one" },
+          { imageTag: "nemoclaw-sandbox-local:live-222" },
+        ],
+      ),
+    ).toEqual([{ tag: "nemoclaw-sandbox-local:gc-test-111", size: "3GB" }]);
+  });
 });

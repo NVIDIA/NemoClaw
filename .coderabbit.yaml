@@ -20,10 +20,34 @@ reviews:
     enabled: true
     drafts: false
 
-  # E2E recommendations intentionally do not live here. The E2E Advisor derives
-  # them from each PR diff and the current workflows instead of a duplicated,
-  # manually synchronized path-to-job catalog.
+  # E2E recommendations intentionally do not live here. The unified PR Review
+  # Advisor derives them from each PR diff and the current workflows instead of
+  # a duplicated, manually synchronized path-to-job catalog.
   path_instructions:
+    - path: "docs/**"
+      instructions: &fern-doc-links |
+        Review internal documentation links as Fern published routes, not as
+        source-file-relative paths.
+
+        - Resolve a link with the enclosing section slugs and page slug declared
+          in `docs/index.yml`. A valid route can differ from the target MDX file's
+          directory, and shared pages can be published from generated
+          `_build/agent-variants/*.generated.mdx` navigation entries.
+        - Account for the OpenClaw, Hermes, and Deep Agents navigation variants and
+          `<AgentOnly>` filtering. A route only needs to exist for every variant in
+          which the link is rendered.
+        - Treat extensionless route-style links as intentional. Do not suggest an
+          `.mdx` path or a source-directory-relative replacement merely because no
+          matching source file exists at that relative path.
+        - Before reporting a broken internal route or redirect, resolve it the same
+          way as `scripts/check-docs-published-routes.mts` and check the redirects in
+          `fern/docs.yml`. Flag a missing published route, missing generated-page
+          source, invalid relevant-variant route, or invalid anchor, but do not
+          report a route as broken solely because its filesystem path is absent.
+
+    - path: "fern/docs.yml"
+      instructions: *fern-doc-links
+
     - path: "src/**"
       instructions: |
         Apply a migration-completion review whenever a PR introduces a
@@ -159,26 +183,21 @@ reviews:
     - path: "nemoclaw-blueprint/policies/**"
       instructions: *security-boundary
 
-    - path: "test/{e2e,e2e-scenario}/**"
+    - path: "test/e2e/**"
       instructions: &e2e-migration |
-        Review against the active migration guide in the matching E2E tree. Vitest
-        is the one E2E execution path, and fixtures are support code rather than
-        another runner.
+        Review against the E2E guide in `test/e2e/`. Vitest is the one E2E
+        execution path, and fixtures are support code rather than another runner.
 
         - Preserve real shell, process, installer, platform, and full-journey
           boundaries by invoking them from Vitest when they are the contract.
-        - A bounded dual-run confidence window is allowed when the Vitest path is
-          authoritative and dispatchable, the legacy lane is frozen, and a linked
-          GitHub retirement issue or PR names the exact deletions and evidence-based
-          exit criteria. Do not describe the overall migration as complete yet.
-        - Once those exit criteria are met, require the retirement PR to delete the
-          legacy scripts, workflow references, and obsolete helpers together.
+        - Flag any new top-level `test/e2e/test-*.sh` entry point, parallel E2E
+          workflow, or wrapper that recreates a second execution lane.
         - Keep migration status and ownership in GitHub issues and PRs. Do not add a
           repository-local inventory, checklist, or parallel status model.
         - Flag new runners, compilers, fixture frameworks, or generalized registries
           when a focused Vitest test and local helper would express the behavior.
 
-    - path: ".github/workflows/{e2e,nightly-e2e,e2e-vitest-scenarios}.yaml"
+    - path: ".github/workflows/e2e.yaml"
       instructions: *e2e-migration
 
     - path: "**/*.test.{ts,js,mts,mjs,cts,cjs}"
@@ -219,7 +238,7 @@ reviews:
         - Do not duplicate GitHub issue tracking, CI status, or another advisor's
           responsibility.
 
-    - path: "tools/{pr-review-advisor,e2e-advisor}/**"
+    - path: "tools/{advisors,pr-review-advisor}/**"
       instructions: *guardrail
 
 knowledge_base:

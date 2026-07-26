@@ -39,6 +39,23 @@ afterEach(() => {
 });
 
 describe("Hermes provider OpenShell credential handoff", () => {
+  it("inspects exact OpenShell credential key bindings without exposing values", () => {
+    const auth = loadAuth();
+    const binding = auth.inspectHermesProviderBinding(() => ({
+      status: 0,
+      stdout: "Provider:\n\n  Name: hermes-provider\n  Credential keys: NOUS_API_KEY\n",
+      stderr: "",
+    }));
+    expect(binding).toEqual({ exists: true, credentialKeys: ["NOUS_API_KEY"] });
+  });
+
+  it("fails closed when OpenShell provider details omit credential metadata", () => {
+    const auth = loadAuth();
+    expect(
+      auth.inspectHermesProviderBinding(() => ({ status: 0, stdout: "Provider: exists" })),
+    ).toEqual({ exists: true, credentialKeys: null });
+  });
+
   it("registers Nous API-key inference in OpenShell without host-side persistence", async () => {
     const originalHome = process.env.HOME;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-api-key-"));

@@ -17,18 +17,22 @@
  *     OpenClaw tool-scope approvals without ever opening an SSH `connect`.
  *
  * Both surfaces apply the SAME narrow allowlist as the startup watcher
- * (`scripts/lib/openclaw_device_approval_policy.py`): `openclaw-control-ui`
- * clients plus `webchat`/`cli` modes, restricted to operator.pairing/read/write
- * scopes. Unknown clients are ignored, never approved.
+ * (`scripts/lib/openclaw_device_approval_policy.py`): the explicit `cli`,
+ * `openclaw-cli`, and `openclaw-control-ui` client identities, restricted to
+ * operator.pairing/read/write scopes. A known mode alone is never sufficient;
+ * unknown clients are ignored, never approved.
  *
  * Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
- * semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
- * scope-upgrade can request the upgraded scopes for its own connection and
- * return the pending-scope failure it is trying to resolve. The approval call
- * therefore strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env to use
- * OpenClaw's local pairing fallback; the list call stays gateway-pinned so it
- * inspects the live gateway. Remove this local fallback path when OpenClaw
- * approve can complete scope upgrades through the gateway using only
+ * semantics. In the reviewed OpenClaw 2026.6.10, a gateway-pinned
+ * `devices approve` for a scope-upgrade can request the upgraded scopes for
+ * its own connection and return the pending-scope failure it is trying to
+ * resolve. The sourced runtime environment makes the list call inspect the
+ * same live gateway through local loopback, while the approval call also
+ * strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env. The reviewed dist
+ * patch then forces OpenClaw's existing local-only stored-device-auth path for
+ * the exact bounded self-repair shape so a shared token reloaded from config
+ * cannot take precedence. Remove this compatibility path when OpenClaw can
+ * complete scope upgrades natively through device-token auth using
  * operator.pairing.
  */
 
@@ -78,27 +82,6 @@ export type AutoPairApprovalResult = {
   approved: number;
 };
 
-/**
- * Wrap a multi-line shell payload so it survives `openshell sandbox exec`.
- *
- * OpenShell's exec RPC rejects any argument containing a newline or carriage
- * return ("command argument N contains newline or carriage return characters"),
- * so a multi-line `sh -c <script>` is refused outright. We base64-encode the
- * payload onto a single line, decode it to a temp file inside the sandbox, and
- * run that file — preserving heredocs and the original exit status. `base64`
- * from Node is unwrapped (no embedded newlines) and uses only shell-safe
- * characters, so it is safe inside single quotes. This mirrors the
- * base64-then-decode pattern the E2E harness uses for the same reason.
- */
-export function wrapSandboxShellScript(script: string): string {
-  const encoded = Buffer.from(script, "utf-8").toString("base64");
-  return (
-    `__nemoclaw_s="$(mktemp)" && ` +
-    `printf %s '${encoded}' | base64 -d > "$__nemoclaw_s" && ` +
-    `sh "$__nemoclaw_s"; __nemoclaw_rc=$?; rm -f "$__nemoclaw_s"; exit "$__nemoclaw_rc"`
-  );
-}
-
 export function readAutoPairApprovalPolicyModule(): string | null {
   try {
     return readFileSync(AUTO_PAIR_POLICY_PATH, "utf-8");
@@ -147,7 +130,6 @@ try:
     exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
     approval_request_decision = policy_globals['approval_request_decision']
     gateway_approval_env = policy_globals['gateway_approval_env']
-    recover_failed_scope_approval = policy_globals.get('recover_failed_scope_approval')
 except Exception:
     sys.exit(0)
 
@@ -196,15 +178,6 @@ for device in pending:
         )
         if approve_proc.returncode == 0:
             approved_count += 1
-        elif callable(recover_failed_scope_approval):
-            recovered = recover_failed_scope_approval(
-                request_id,
-                os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
-                approve_proc.stderr or approve_proc.stdout or '',
-                device,
-            )
-            if recovered:
-                approved_count += 1
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         continue
 ${summaryLine}PYAPPROVE
@@ -245,7 +218,7 @@ export function runSandboxAutoPairApprovalPass(
   try {
     const result = spawnSync(
       getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", wrapSandboxShellScript(script)],
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
       {
         cwd: ROOT,
         env: process.env,

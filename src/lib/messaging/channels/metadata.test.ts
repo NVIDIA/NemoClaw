@@ -13,11 +13,13 @@ import {
   getMessagingPolicyPresetValidationWarnings,
   getMessagingProviderSuffixesByChannel,
   listAvailableMessagingChannelIds,
+  listBuiltInMessagingChannelManifests,
   listMessagingChannelsWithoutCredentials,
   listMessagingConfigEnvKeys,
   listMessagingPackageInstallSpecs,
   listMessagingProviderNamesForChannel,
   listOpenClawManagedChannelNames,
+  listOpenClawPluginExtensionIds,
   listOpenClawRuntimeChannelMetadata,
   listRequiredCreateTimeMessagingPolicyPresetNames,
 } from "./metadata";
@@ -67,7 +69,7 @@ describe("built-in messaging channel metadata", () => {
     expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp"]);
   });
 
-  it("resolves config env keys and aliases from manifest inputs", () => {
+  it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",
       "TELEGRAM_REQUIRE_MENTION",
@@ -127,6 +129,13 @@ describe("built-in messaging channel metadata", () => {
       "whatsapp",
       "msteams",
     ]);
+    expect(listOpenClawPluginExtensionIds()).toEqual([
+      "discord",
+      "openclaw-weixin",
+      "slack",
+      "whatsapp",
+      "msteams",
+    ]);
     expect(
       Object.fromEntries(
         listOpenClawRuntimeChannelMetadata().map((entry) => [entry.channelId, entry.configKeys]),
@@ -167,6 +176,52 @@ describe("built-in messaging channel metadata", () => {
         agents: ["hermes"],
         manager: "hermes-uv-pip",
         spec: "aiohttp==3.14.1",
+      },
+    ]);
+  });
+
+  it("requires committed npm integrity pins for built-in OpenClaw plugin installs", () => {
+    const npmPluginInstalls = listBuiltInMessagingChannelManifests({ agent: "openclaw" }).flatMap(
+      (manifest) =>
+        (manifest.agentPackages ?? [])
+          .filter(
+            (agentPackage) =>
+              agentPackage.agent === "openclaw" &&
+              agentPackage.manager === "openclaw-plugin" &&
+              agentPackage.spec.startsWith("npm:"),
+          )
+          .map((agentPackage) => ({
+            packageKey: `${manifest.id}/${agentPackage.id}`,
+            committedIntegrity:
+              agentPackage.integrity ?? agentPackage.integrityByVersion?.["2026.7.1"],
+          })),
+    );
+
+    expect(npmPluginInstalls).toEqual([
+      {
+        packageKey: "discord/openclawPluginPackage",
+        committedIntegrity:
+          "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==",
+      },
+      {
+        packageKey: "wechat/openclawPluginPackage",
+        committedIntegrity:
+          "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+      },
+      {
+        packageKey: "slack/openclawPluginPackage",
+        committedIntegrity:
+          "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==",
+      },
+      {
+        packageKey: "whatsapp/openclawPluginPackage",
+        committedIntegrity:
+          "sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==",
+      },
+      {
+        packageKey: "teams/openclawPluginPackage",
+        committedIntegrity:
+          "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
       },
     ]);
   });
@@ -296,7 +351,6 @@ function manifestWithPreset(id: string, preset: ChannelPolicyPresetReference): C
     credentials: [],
     policyPresets: [preset],
     render: [],
-    state: {},
     hooks: [],
   };
 }

@@ -9,7 +9,25 @@ import {
   sessionAt,
 } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
+import type { VerifyDeploymentResult } from "../../verify-deployment";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
+
+function deploymentResult(healthy: boolean): VerifyDeploymentResult {
+  return {
+    healthy,
+    verification: {
+      gatewayReachable: true,
+      gatewayVersion: "test",
+      inferenceRouteWorking: healthy,
+      dashboardReachable: true,
+      messagingBridgesHealthy: true,
+      messagingRuntimeChannelsMissing: null,
+      messagingConfigChannelsMissing: null,
+      accessMethod: "localhost",
+    },
+    diagnostics: [],
+  };
+}
 
 describe("final onboard flow runtime boundary", () => {
   it("uses the strict final runner for fresh OpenClaw sessions with a real runtime boundary", async () => {
@@ -24,8 +42,11 @@ describe("final onboard flow runtime boundary", () => {
       recordStepComplete: recorders.recordStepComplete,
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
-    const compatibilityRecorder = vi.fn(
-      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
+    const recordStateResult = vi.fn(
+      harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
+    );
+    const recordInvalidatedStateResult = vi.fn(
+      harness.boundary.recordInvalidatedStateResult.bind(harness.boundary),
     );
 
     await runFinalOnboardFlowSlice({
@@ -33,14 +54,23 @@ describe("final onboard flow runtime boundary", () => {
       runtime: harness.boundary.getRuntime(),
       phases,
       resume: false,
-      recordStateResult: compatibilityRecorder,
+      recordStateResult,
+      recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {
         order.push("disarm");
       },
     });
 
-    expect(compatibilityRecorder).not.toHaveBeenCalled();
-    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(recordStateResult).not.toHaveBeenCalled();
+    expect(recordInvalidatedStateResult).not.toHaveBeenCalled();
+    expect(order).toEqual([
+      "openclaw",
+      "policies",
+      "disarm",
+      "set-default",
+      "agent-forward",
+      "verify",
+    ]);
     expect(harness.getSession()).toMatchObject({
       status: "complete",
       sandboxName: "my-sandbox",
@@ -54,7 +84,7 @@ describe("final onboard flow runtime boundary", () => {
     "policies",
     "finalizing",
     "post_verify",
-  ] as const)("keeps persisted %s sessions on the compatibility path with the real runtime boundary", async (initialState) => {
+  ] as const)("keeps persisted %s sessions on the recompute path with the real runtime boundary", async (initialState) => {
     const order: string[] = [];
     const harness = createRuntimeHarness(sessionAt(initialState));
     const recorders = harness.boundary.recorders();
@@ -66,8 +96,11 @@ describe("final onboard flow runtime boundary", () => {
       recordStepComplete: recorders.recordStepComplete,
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
-    const compatibilityRecorder = vi.fn(
-      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
+    const recordStateResult = vi.fn(
+      harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
+    );
+    const recordInvalidatedStateResult = vi.fn(
+      harness.boundary.recordInvalidatedStateResult.bind(harness.boundary),
     );
 
     await runFinalOnboardFlowSlice({
@@ -75,14 +108,23 @@ describe("final onboard flow runtime boundary", () => {
       runtime: harness.boundary.getRuntime(),
       phases,
       resume: false,
-      recordStateResult: compatibilityRecorder,
+      recordStateResult,
+      recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {
         order.push("disarm");
       },
     });
 
-    expect(compatibilityRecorder).toHaveBeenCalled();
-    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(recordStateResult).toHaveBeenCalled();
+    expect(recordInvalidatedStateResult).toHaveBeenCalled();
+    expect(order).toEqual([
+      "openclaw",
+      "policies",
+      "disarm",
+      "set-default",
+      "agent-forward",
+      "verify",
+    ]);
     expect(harness.getSession()).toMatchObject({
       status: "complete",
       sandboxName: "my-sandbox",
@@ -91,12 +133,12 @@ describe("final onboard flow runtime boundary", () => {
       machine: { state: "complete" },
     });
 
-    const skippedTargets = harness.events
-      .filter((event) => event.type === "state.result.skipped")
+    const invalidatedTargets = harness.events
+      .filter((event) => event.type === "state.result.invalidated")
       .map((event) => event.metadata.targetState);
-    expect(skippedTargets).toContain("policies");
+    expect(invalidatedTargets).toContain("policies");
     if (initialState !== "policies") {
-      expect(skippedTargets).toContain("finalizing");
+      expect(invalidatedTargets).toContain("finalizing");
     }
   });
 
@@ -112,8 +154,11 @@ describe("final onboard flow runtime boundary", () => {
       recordStepComplete: recorders.recordStepComplete,
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
-    const compatibilityRecorder = vi.fn(
-      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
+    const recordStateResult = vi.fn(
+      harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
+    );
+    const recordInvalidatedStateResult = vi.fn(
+      harness.boundary.recordInvalidatedStateResult.bind(harness.boundary),
     );
 
     await runFinalOnboardFlowSlice({
@@ -121,13 +166,15 @@ describe("final onboard flow runtime boundary", () => {
       runtime: harness.boundary.getRuntime(),
       phases,
       resume: false,
-      recordStateResult: compatibilityRecorder,
+      recordStateResult,
+      recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {
         order.push("disarm");
       },
     });
 
-    expect(compatibilityRecorder).not.toHaveBeenCalled();
+    expect(recordStateResult).not.toHaveBeenCalled();
+    expect(recordInvalidatedStateResult).not.toHaveBeenCalled();
     expect(order).toEqual([
       "agent-setup",
       "agent-forward",
@@ -184,6 +231,7 @@ describe("final onboard flow runtime boundary", () => {
       phases,
       resume: false,
       recordStateResult: vi.fn(),
+      recordInvalidatedStateResult: vi.fn(),
       afterPoliciesResultApplied: () => {
         order.push("disarm");
       },
@@ -197,6 +245,7 @@ describe("final onboard flow runtime boundary", () => {
       "policies",
       "disarm",
       "set-default",
+      "agent-forward",
       "verify:slack,discord",
     ]);
   });
@@ -219,6 +268,7 @@ describe("final onboard flow runtime boundary", () => {
             throw new Error("recording failed");
           }
         },
+        recordInvalidatedStateResult: vi.fn(),
         afterPoliciesResultApplied: () => {
           order.push("disarm");
         },
@@ -254,17 +304,83 @@ describe("final onboard flow runtime boundary", () => {
         phases,
         resume: false,
         recordStateResult: vi.fn(),
+        recordInvalidatedStateResult: vi.fn(),
         afterPoliciesResultApplied: () => {
           order.push("disarm");
         },
       }),
     ).rejects.toThrow("verification failed");
 
-    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(order).toEqual([
+      "openclaw",
+      "policies",
+      "disarm",
+      "set-default",
+      "agent-forward",
+      "verify",
+    ]);
     expect(printDashboard).not.toHaveBeenCalled();
     expect(harness.getSession()).toMatchObject({
       status: "in_progress",
       machine: { state: "post_verify" },
+    });
+  });
+
+  it("keeps an unhealthy final verification retryable and completes after a later resume (#6849)", async () => {
+    const order: string[] = [];
+    const harness = createRuntimeHarness(sessionAt("openclaw"));
+    const recorders = harness.boundary.recorders();
+    const verifyDeployment = vi
+      .fn()
+      .mockResolvedValueOnce(deploymentResult(false))
+      .mockResolvedValueOnce(deploymentResult(true));
+    const phases = createPhases("openclaw", order, {
+      loadSession: harness.getSession,
+      recordStepSkipped: recorders.recordStepSkipped,
+      recordStateSkipped: recorders.recordStateSkipped,
+      startRecordedStep: recorders.startRecordedStep,
+      recordStepComplete: recorders.recordStepComplete,
+      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
+      verifyDeployment,
+    });
+
+    const first = await runFinalOnboardFlowSlice({
+      context: context({ session: harness.getSession() }),
+      runtime: harness.boundary.getRuntime(),
+      phases,
+      resume: false,
+      recordStateResult: harness.boundary.recordStateResultWithStepCompatibility.bind(
+        harness.boundary,
+      ),
+      recordInvalidatedStateResult: harness.boundary.recordInvalidatedStateResult.bind(
+        harness.boundary,
+      ),
+    });
+
+    expect(first.session).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      machine: { state: "post_verify" },
+    });
+
+    const resumed = await runFinalOnboardFlowSlice({
+      context: context({ resume: true, session: harness.getSession() }),
+      runtime: harness.boundary.getRuntime(),
+      phases,
+      resume: true,
+      recordStateResult: harness.boundary.recordStateResultWithStepCompatibility.bind(
+        harness.boundary,
+      ),
+      recordInvalidatedStateResult: harness.boundary.recordInvalidatedStateResult.bind(
+        harness.boundary,
+      ),
+    });
+
+    expect(verifyDeployment).toHaveBeenCalledTimes(2);
+    expect(resumed.session).toMatchObject({
+      status: "complete",
+      resumable: false,
+      machine: { state: "complete" },
     });
   });
 });

@@ -12,6 +12,7 @@ const {
   HOSTED_INFERENCE_MODEL,
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
+  REMOTE_PROVIDER_CONFIG,
   buildProviderArgs,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -25,6 +26,14 @@ const {
   HOSTED_INFERENCE_MODEL: string;
   NON_INTERACTIVE_PROVIDER_ALIASES: Record<string, string>;
   NON_INTERACTIVE_PROVIDER_KEYS: Set<string>;
+  REMOTE_PROVIDER_CONFIG: Record<
+    string,
+    {
+      providerName: string;
+      providerType: string;
+      credentialEnv: string;
+    }
+  >;
   buildProviderArgs: (
     action: "create" | "update",
     name: string,
@@ -32,8 +41,14 @@ const {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
-  getRequestedModelHint: (nonInteractive: boolean) => string | null;
-  getRequestedProviderHint: (nonInteractive: boolean) => string | null;
+  getRequestedModelHint: (
+    nonInteractive: boolean,
+    allowHostedInferenceStaging?: boolean,
+  ) => string | null;
+  getRequestedProviderHint: (
+    nonInteractive: boolean,
+    allowHostedInferenceStaging?: boolean,
+  ) => string | null;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
   stageHostedInferenceSourceSecretEnv: () => boolean;
@@ -66,6 +81,7 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
     "NEMOCLAW_PROVIDER",
     "NEMOCLAW_ENDPOINT_URL",
     "NEMOCLAW_MODEL",
+    "NEMOCLAW_PROVIDER_MODEL",
     "NEMOCLAW_COMPAT_MODEL",
     "NEMOCLAW_PREFERRED_API",
     "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
@@ -99,6 +115,49 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
+  it("registers OpenRouter with an OpenAI-compatible provider profile and aliases (#5826)", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.openrouter;
+
+    expect(provider).toMatchObject({
+      providerName: "openrouter-api",
+      providerType: "openai",
+      credentialEnv: "OPENROUTER_API_KEY",
+    });
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("openrouter")).toBe(true);
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES["open-router"]).toBe("openrouter");
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES.openrouterai).toBe("openrouter");
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://openrouter.ai/api/v1",
+      ),
+    ).toContain("OPENAI_BASE_URL=https://openrouter.ai/api/v1");
+  });
+
+  it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
+
+    // Remote provider setup can replace this registration with type=openai
+    // after an agent selects and verifies the endpoint's OpenAI surface.
+    expect(provider).toMatchObject({
+      providerName: "compatible-anthropic-endpoint",
+      providerType: "anthropic",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+    });
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://inference-api.nvidia.com",
+      ),
+    ).toContain("ANTHROPIC_BASE_URL=https://inference-api.nvidia.com");
+  });
+
   it("builds create arguments for generic providers", () => {
     const args = buildProviderArgs(
       "create",
@@ -314,6 +373,46 @@ describe("onboard provider helpers", () => {
         expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
         expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("does not synthesize hosted selection when authoritative resume disables staging", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+      },
+      () => {
+        expect(getRequestedProviderHint(true, false)).toBeNull();
+        expect(getRequestedModelHint(true, false)).toBeNull();
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.NEMOCLAW_MODEL).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
+  it("supports the NVIDIA QA non-interactive provider-model contract (#6869)", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_PROVIDER_MODEL: "qwen3.6:35b",
+      },
+      () => {
+        expect(getRequestedModelHint(true)).toBe("qwen3.6:35b");
+      },
+    );
+  });
+
+  it("keeps NEMOCLAW_MODEL ahead of NEMOCLAW_PROVIDER_MODEL", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen2.5:0.5b",
+        NEMOCLAW_PROVIDER_MODEL: "qwen3.6:35b",
+      },
+      () => {
+        expect(getRequestedModelHint(true)).toBe("qwen2.5:0.5b");
       },
     );
   });

@@ -173,7 +173,6 @@ JSON
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
   log '[cli] phase 2/2: extract ### `nemoclaw …` / `$$nemoclaw …` headings from commands reference'
-  # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}.
   # Preserve placeholders that are part of the canonical help signature, but
   # keep accepting docs-only suffixes such as `snapshot restore [selector]`.
   grep -E '^### `(\$\$)?nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
@@ -186,7 +185,7 @@ JSON
       }
       close $help_fh;
     }
-    if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) {
+    if (/^### `([^`]+)`\s*$/) {
       my $c = $1;
       $c =~ s/^\$\$nemoclaw\b/nemoclaw/;
       $c =~ s/\s+$//;
@@ -240,7 +239,7 @@ JSON
   # Awk extractor: print lines belonging to the section whose heading
   # canonicalizes to <cmd> after the same trailing-placeholder strip phase 2
   # applies (`### \`nemoclaw foo <ARG>\`` → `nemoclaw foo`). Stops at the
-  # next ### heading. MyST anchors after the closing backtick are tolerated.
+  # next ### heading.
   extract_md_section() {
     local cmd="$1"
     local md="$2"
@@ -724,7 +723,8 @@ load_fern_route_index() {
   # Build a lightweight route index from Fern navigation without requiring npm
   # dependencies. Each emitted row is: <docs source path> TAB <canonical route>.
   # The parser intentionally handles the subset used by docs/index.yml:
-  # variants, nested sections with slugs, and pages/sections with path+slug.
+  # variants, native changelogs, nested sections with slugs, and pages/sections
+  # with path+slug.
   local _fern_route_index_err
   _fern_route_index_err="$(mktemp)"
   if ! FERN_ROUTE_INDEX="$(
@@ -749,8 +749,15 @@ function clean(value) {
 }
 
 function maybeEmit(item) {
-  if (!item || item.emitted || !variant || !item.path || !item.slug || item.indent <= 6) return;
+  if (!item || item.emitted || !variant || !item.slug || item.indent <= 6) return;
   const route = ["user-guide", variant, ...item.parent, item.slug].join("/");
+  if (item.type === "changelog") {
+    const changelogPath = item.path.replace(/^\.\//, "").replace(/\/$/, "");
+    rows.push(`${changelogPath}/overview.mdx\t${route}`);
+    item.emitted = true;
+    return;
+  }
+  if (!item.path) return;
   rows.push(`${item.path}\t${route}`);
   const sourcePath = agentVariantSourcePath(item.path);
   if (sourcePath && sourcePath !== item.path) {
@@ -760,7 +767,7 @@ function maybeEmit(item) {
 }
 
 function agentVariantSourcePath(navPath) {
-  const match = navPath.match(/^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/);
+  const match = navPath.match(/^_build\/agent-variants\/(.+)\.(?:openclaw|hermes|deepagents)\.generated\.mdx$/);
   return match ? `${match[1]}.mdx` : null;
 }
 
@@ -771,7 +778,7 @@ function maybePushSection(item) {
 }
 
 for (const line of lines) {
-  const itemMatch = line.match(/^(\s*)-\s+(page|section|link|title):/);
+  const itemMatch = line.match(/^(\s*)-\s+(page|section|link|title|changelog):(?:\s*(.*?))?\s*$/);
   if (itemMatch) {
     const indent = itemMatch[1].length;
     const type = itemMatch[2];
@@ -784,7 +791,7 @@ for (const line of lines) {
       indent,
       type,
       parent: stack.map((part) => part.slug),
-      path: "",
+      path: type === "changelog" ? clean(itemMatch[3] || "") : "",
       slug: "",
       emitted: false,
       pushed: false,

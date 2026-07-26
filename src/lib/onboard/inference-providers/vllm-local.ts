@@ -19,6 +19,8 @@ export async function setupVllmLocalInference(
     applyLocalInferenceRoute,
     run,
     VLLM_LOCAL_CREDENTIAL_ENV,
+    exitProcess,
+    error,
   } = deps;
 
   const validation = validateLocalProvider(provider);
@@ -40,11 +42,11 @@ export async function setupVllmLocalInference(
           "The sandbox uses a different network path and may work correctly.",
       );
     } else {
-      console.error(`  ${validation.message}`);
+      error(`  ${validation.message}`);
       if (validation.diagnostic) {
-        console.error(`  Diagnostic: ${validation.diagnostic}`);
+        error(`  Diagnostic: ${validation.diagnostic}`);
       }
-      process.exit(1);
+      return exitProcess(1);
     }
   }
   const baseUrl = getLocalProviderBaseUrl(provider);
@@ -60,8 +62,8 @@ export async function setupVllmLocalInference(
     { [VLLM_LOCAL_CREDENTIAL_ENV]: "dummy" },
   );
   if (!providerResult.ok) {
-    console.error(`  ${providerResult.message}`);
-    process.exit(providerResult.status || 1);
+    error(`  ${providerResult.message}`);
+    return exitProcess(providerResult.status || 1);
   }
   if (await applyLocalInferenceRoute("vllm-local", model)) {
     return { done: true, result: { retry: "selection" } };

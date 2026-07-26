@@ -8,16 +8,16 @@ export const SANDBOX_SESSIONS_DISPLAY_LAYOUT: Record<string, readonly PublicDisp
     {
       group: "Sandbox Management",
       order: 17,
-      flags: "[openclaw-sessions-flags...]",
-      description: "List OpenClaw conversation sessions in the sandbox",
+      flags: "[sessions-flags...]",
+      description: "List conversation sessions in the sandbox",
     },
   ],
   "sandbox:sessions:list": [
     {
       group: "Sandbox Management",
       order: 17.1,
-      flags: "[openclaw-sessions-list-flags...]",
-      description: "List OpenClaw conversation sessions",
+      flags: "[sessions-list-flags...]",
+      description: "List conversation sessions",
     },
   ],
   "sandbox:sessions:reset": [

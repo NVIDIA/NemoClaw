@@ -8,7 +8,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveAgentNameAlias } from "../src/lib/agent/defs";
+import {
+  buildPublishedRouteIndex,
+  resolvePageLinksByText,
+} from "../scripts/check-docs-published-routes.mts";
+import { loadAgent, resolveAgentNameAlias } from "../src/lib/agent/defs";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");
 
@@ -155,6 +159,36 @@ print("OK")
     expect(output.trim()).toBe("OK");
   });
 
+  it("rejects unmatched backticks in prerequisite-specific platform notes", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+def matrix_with(note):
+    return {
+      "statuses": {"deferred": "Roadmap-only."},
+      "owners": {"engineering": "@NVIDIA/nemoclaw-maintainer"},
+      "project_status": {"stage":"a","label":"b","since":"c","notes":"d"},
+      "platforms": [{
+        "name": "Station", "runtimes": ["Docker"], "status": "deferred",
+        "notes": "full notes", "prerequisites_notes": note
+      }],
+      "providers": [], "agents": [], "integrations": [],
+      "deployment_paths": [], "capabilities": [], "out_of_scope": []
+    }
+
+for label, note in [("unmatched", "unclosed \`code"), ("balanced", "closed \`code\`")]:
+    try:
+        module._validate_matrix(matrix_with(note))
+        print(f"{label}:OK")
+    except ValueError as exc:
+        print(f"{label}:{exc}")
+`);
+    expect(output).toContain(
+      "unmatched:ci/platform-matrix.json: platforms[0].prerequisites_notes has an odd number of backticks",
+    );
+    expect(output).toContain("balanced:OK");
+  });
+
   // PRA-2 on #5712: matrix.get(section, []) used to silently accept a missing
   // top-level section and render an empty table. _validate_matrix now requires
   // each generator-backed section to be present and list-typed before render.
@@ -251,13 +285,14 @@ print(module.generate_provider_table(providers))
     expect(output).not.toContain("Deferred\\|Provider");
   });
 
-  it("full platform table includes deferred rows; partial table excludes them", () => {
+  it("prerequisites table includes deferred rows only when they have setup guidance", () => {
     const output = runPython(`
 ${loadGeneratorAs("g")}
 
 platforms = [
+  {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "prerequisites_notes": "evaluation setup", "notes": "full Station notes"},
   {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "ci_tested": True, "notes": "n"},
-  {"name": "WSL", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "notes": "later"}
+  {"name": "RTX", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "notes": "later"}
 ]
 print("PARTIAL:")
 print(module.generate_platform_table(platforms))
@@ -266,9 +301,37 @@ print(module.generate_platform_table_full(platforms))
 `);
     const [partial, full] = output.split("FULL:");
     expect(partial).toContain("Linux");
-    expect(partial).not.toContain("WSL");
+    expect(partial).toContain("Station");
+    expect(partial).toContain("evaluation setup");
+    expect(partial).not.toContain("full Station notes");
+    expect(partial).not.toContain("RTX");
+    expect(partial.indexOf("Linux")).toBeLessThan(partial.indexOf("Station"));
     expect(full).toContain("Linux");
-    expect(full).toContain("WSL");
+    expect(full).toContain("Station");
+    expect(full).toContain("full Station notes");
+    expect(full).toContain("RTX");
+    expect(full.indexOf("Linux")).toBeLessThan(full.indexOf("RTX"));
+    expect(full.indexOf("RTX")).toBeLessThan(full.indexOf("Station"));
+  });
+
+  it("prerequisites platform block includes documented deferred setup and links to the complete matrix", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+platforms = [
+  {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "notes": "ready"},
+  {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "prerequisites_notes": "evaluation setup", "notes": "later"},
+  {"name": "RTX", "runtimes": ["Docker"], "status": "deferred", "notes": "later"}
+]
+print(module.generate_platform_prerequisites_block(platforms))
+`);
+    expect(output).toContain("Linux");
+    expect(output).toContain("Station");
+    expect(output).toContain("evaluation setup");
+    expect(output).not.toContain("RTX");
+    expect(output).toContain(
+      "For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).",
+    );
   });
 
   it("exits non-zero for --check on a placeholder owner in the real matrix", () => {
@@ -330,7 +393,7 @@ print(block)
   // credential-boundary invariants. Each test reads the actual matrix and
   // docs at the PR head, not a fixture, so a future edit that breaks the
   // invariant fails this suite before the change ships.
-  it("every `--agent <id>` example across matrix, docs, and generated skills resolves to a manifest whose name field agrees", () => {
+  it("every documented `--agent <id>` selector resolves through production agent selection", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const matrix = JSON.parse(
       readFileSync(path.join(repoRoot, "ci", "platform-matrix.json"), "utf-8"),
@@ -352,25 +415,13 @@ print(block)
       for (const match of body.matchAll(onboardExample)) agentIds.add(match[1]);
     }
     expect(agentIds.size).toBeGreaterThan(0);
-    const agentsRoot = path.join(repoRoot, "agents");
-    const availableAgents = ["openclaw", "hermes", "langchain-deepagents-code"];
     for (const id of agentIds) {
-      const canonicalId = resolveAgentNameAlias(id, availableAgents) ?? id;
-      const manifest = path.join(agentsRoot, canonicalId, "manifest.yaml");
+      const canonicalId = resolveAgentNameAlias(id);
       expect(
-        existsSync(manifest),
-        `\`--agent ${id}\` advertised somewhere in matrix/docs/skills but neither aliases nor agents/${id}/manifest.yaml resolve it`,
-      ).toBe(true);
-      const manifestBody = readFileSync(manifest, "utf-8");
-      const nameMatch = manifestBody.match(/^name:\s*([a-z0-9-]+)\s*$/m);
-      expect(
-        nameMatch?.[1],
-        `agents/${canonicalId}/manifest.yaml lacks a name field`,
-      ).toBeDefined();
-      expect(
-        nameMatch?.[1],
-        `agents/${canonicalId}/manifest.yaml declares name ${nameMatch?.[1]}, breaking the loader contract for documented \`--agent ${id}\``,
-      ).toBe(canonicalId);
+        canonicalId,
+        `documented \`--agent ${id}\` must resolve through the production agent loader`,
+      ).not.toBeNull();
+      expect(loadAgent(canonicalId ?? id).name).toBe(canonicalId);
     }
   });
 
@@ -428,13 +479,19 @@ print(block)
     }
   });
 
-  it("Option 3 docs expose reasoning mode for scripted compatible endpoints (#3279)", () => {
+  it("compatible endpoint docs expose reasoning mode for scripted setup (#3279)", () => {
     const body = readFileSync(
-      path.join(import.meta.dirname, "..", "docs", "inference", "inference-options.mdx"),
+      path.join(
+        import.meta.dirname,
+        "..",
+        "docs",
+        "inference",
+        "set-up-openai-compatible-endpoint.mdx",
+      ),
       "utf-8",
     );
     expect(body).toContain("| `NEMOCLAW_REASONING` |");
-    expect(body).toContain("Set `NEMOCLAW_REASONING=true` when the compatible endpoint");
+    expect(body).toContain("Set `NEMOCLAW_REASONING=true` when the endpoint");
   });
 
   // PRA-2 on #5712 follow-up: a canonical launch-claims page that lives in the
@@ -458,5 +515,38 @@ print(block)
         "Reference section in docs/index.yml does not register reference/platform-support.mdx",
       ).toMatch(/path:\s*reference\/platform-support\.mdx/);
     }
+  });
+
+  it("Deep Agents Platform Support quickstart link resolves through the published quickstart slug", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const matrix = JSON.parse(
+      readFileSync(path.join(repoRoot, "ci", "platform-matrix.json"), "utf-8"),
+    );
+    const deepAgentsRow = (matrix.agents ?? []).find(
+      (row: { name: string }) => row.name === "LangChain Deep Agents Code",
+    );
+    expect(deepAgentsRow?.notes).toContain(
+      "[the quickstart](/user-guide/deepagents/get-started/quickstart)",
+    );
+
+    const platformSupport = readFileSync(
+      path.join(repoRoot, "docs", "reference", "platform-support.mdx"),
+      "utf-8",
+    );
+    expect(platformSupport).toContain(
+      "[the quickstart](/user-guide/deepagents/get-started/quickstart)",
+    );
+
+    const links = resolvePageLinksByText(
+      "reference/platform-support.mdx",
+      "the quickstart",
+      buildPublishedRouteIndex(),
+    );
+    expect(links).toContainEqual({
+      target: "/user-guide/deepagents/get-started/quickstart",
+      fromRoute: "/user-guide/deepagents/reference/platform-support",
+      resolved: "/user-guide/deepagents/get-started/quickstart",
+      published: true,
+    });
   });
 });

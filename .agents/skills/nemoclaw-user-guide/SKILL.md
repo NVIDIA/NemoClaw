@@ -16,7 +16,7 @@ Do not answer from stale copied docs or generated skill references when the live
 3. If MCP is not available, fetch the AI documentation index first: `https://docs.nvidia.com/nemoclaw/llms.txt`.
 4. Fetch the specific `.md` page listed in the index or returned by docs search for the user's task.
 5. If you only find an HTML documentation URL, replace the `.html` suffix with `.md`, or append `.md` to the route when the URL has no suffix.
-6. Prefer the user's selected agent variant, either OpenClaw or Hermes, and do not mix variant-specific instructions unless you explain why.
+6. Prefer the user's selected agent variant. Do not mix variant-specific instructions unless you explain why.
 
 ## Configure the MCP Server
 
@@ -39,10 +39,13 @@ Use these pages first for common onboarding flows:
 - Hermes home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/home.md`.
 - Hermes prerequisites: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/prerequisites.md`.
 - Hermes quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md`.
+- Deep Agents home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/home.md`.
+- Deep Agents prerequisites: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/prerequisites.md`.
+- Deep Agents quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md`.
 
 ## How to Help the User
 
-- Ask which agent variant they want to use before giving setup instructions: OpenClaw or Hermes.
+- Ask which agent variant they want to use before giving setup instructions: OpenClaw, Hermes, or Deep Agents.
 - Ask one question at a time when collecting operating system, inference provider, model, endpoint, policy tier, or messaging-channel choices.
 - Run commands for non-technical users when your environment allows it, after explaining what the command does and getting permission.
 - Summarize important command output instead of asking the user to paste terminal output into chat.
@@ -62,7 +65,7 @@ Use these pages first for common onboarding flows:
 
 ## Response Requirements
 
-- Cite the Markdown documentation pages you used.
+- Cite the Markdown documentation pages you used. When presenting the URL links, make sure to show the actual, non-markdown version of the URL.
 - Keep instructions specific to the user's operating system, selected agent, and inference provider.
-- Explain assumptions when the docs do not cover the exact environment.
+- Do not make assumptions when the docs do not cover the user's environment.
 - Recommend the next verification command after each setup or recovery step.

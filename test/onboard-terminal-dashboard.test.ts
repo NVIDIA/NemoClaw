@@ -38,6 +38,9 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
   const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
   const agentOnboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "onboard.ts"));
+  const dockerGpuSandboxCreatePath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
+  );
 
   fs.mkdirSync(fakeBin, { recursive: true });
   writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
@@ -50,6 +53,7 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
+const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const scenario = ${JSON.stringify(scenario)};
@@ -60,10 +64,24 @@ const updateCalls = [];
 const keepAlive = setInterval(() => {}, 1000);
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 
+dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
+  maybeApplyDuringCreate: () => {},
+  createFailureMessage: () => null,
+  exitOnPatchError: () => {},
+  ensureApplied: () => {},
+  waitForSupervisorReconnectIfNeeded: () => {},
+  selectedMode: () => null,
+  printReadinessFailureIfEnabled: () => {},
+  verifyGpuOrExit: (verify) => verify(sandboxName),
+});
+
 agentOnboard.createAgentSandbox = () => {
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-terminal-agent-"));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.writeFileSync(stagedDockerfile, "FROM scratch\nCMD [\"/bin/sh\"]\n");
+  fs.writeFileSync(
+    stagedDockerfile,
+    "FROM scratch\nARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled\nCMD [\"/bin/sh\"]\n",
+  );
   return { buildCtx, stagedDockerfile };
 };
 
@@ -78,6 +96,14 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: null });
+  if (normalized.includes("sandbox exec -n " + sandboxName + " -- dcode identity")) {
+    return [
+      "Route:    inference",
+      "Provider: nvidia-prod",
+      "Model:    openai:gpt-5.4",
+      "Endpoint: https://inference.local/v1",
+    ].join("\n");
+  }
   if (normalized.includes("sandbox get " + sandboxName)) {
     return scenario === "reuse" ? sandboxName : "";
   }
@@ -88,7 +114,14 @@ runner.runCapture = (command) => {
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? { name: sandboxName, gpuEnabled: false, agent: "langchain-deepagents-code", dashboardPort: 18789 }
+    ? {
+        name: sandboxName,
+        gpuEnabled: false,
+        agent: "langchain-deepagents-code",
+        dashboardPort: 18789,
+        observabilityEnabled: false,
+        toolDisclosure: "progressive",
+      }
     : null;
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);

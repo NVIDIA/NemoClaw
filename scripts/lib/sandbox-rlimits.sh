@@ -64,9 +64,18 @@ _nemoclaw_verify_resource_limit() {
   _nemoclaw_limit_value="$2"
   _nemoclaw_limit_label="$3"
   _nemoclaw_limit_quiet="${4:-}"
+  _nemoclaw_limit_requirement="${5:-maximum}"
   _nemoclaw_limit_status=0
 
   if ! _nemoclaw_supports_resource_limit "$_nemoclaw_limit_flag"; then
+    if [ "$_nemoclaw_limit_requirement" = "exact" ]; then
+      if [ "$_nemoclaw_limit_quiet" != "--quiet" ]; then
+        echo "[SECURITY] Cannot verify exact ${_nemoclaw_limit_label} limit in this shell" >&2
+      fi
+      unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label
+      unset _nemoclaw_limit_quiet _nemoclaw_limit_requirement _nemoclaw_limit_status
+      return 1
+    fi
     # POSIX profile hooks can be sourced by /bin/sh (dash on Ubuntu), which
     # supports nofile (-n) but not nproc (-u). Treat an unsupported flag as
     # not enforceable in this shell rather than as drift; otherwise ordinary
@@ -76,7 +85,8 @@ _nemoclaw_verify_resource_limit() {
     # compatibility path if OpenShell guarantees profile hooks run under a shell
     # with nproc support, or if a currently supported flag such as nofile
     # becomes unsupported.
-    unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet
+    unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label
+    unset _nemoclaw_limit_quiet _nemoclaw_limit_requirement
     return 0
   fi
 
@@ -91,18 +101,33 @@ _nemoclaw_verify_resource_limit() {
     esac
     _nemoclaw_effective_limit="$(_nemoclaw_ulimit "-${_nemoclaw_limit_mode}${_nemoclaw_limit_flag}" 2>/dev/null || printf '%s' unknown)"
 
-    if ! _nemoclaw_is_decimal_limit "$_nemoclaw_effective_limit" \
-      || [ "$_nemoclaw_effective_limit" -gt "$_nemoclaw_limit_value" ]; then
+    _nemoclaw_limit_mismatch=0
+    if ! _nemoclaw_is_decimal_limit "$_nemoclaw_effective_limit"; then
+      _nemoclaw_limit_mismatch=1
+    elif [ "$_nemoclaw_limit_requirement" = "exact" ]; then
+      [ "$_nemoclaw_effective_limit" -eq "$_nemoclaw_limit_value" ] \
+        || _nemoclaw_limit_mismatch=1
+    elif [ "$_nemoclaw_effective_limit" -gt "$_nemoclaw_limit_value" ]; then
+      _nemoclaw_limit_mismatch=1
+    fi
+
+    if [ "$_nemoclaw_limit_mismatch" -ne 0 ]; then
       if [ "$_nemoclaw_limit_quiet" != "--quiet" ]; then
-        echo "[SECURITY] Effective ${_nemoclaw_limit_bound} ${_nemoclaw_limit_label} limit is ${_nemoclaw_effective_limit}; expected <= ${_nemoclaw_limit_value} (container runtime may restrict ulimit)" >&2
+        _nemoclaw_limit_expected="<= ${_nemoclaw_limit_value}"
+        if [ "$_nemoclaw_limit_requirement" = "exact" ]; then
+          _nemoclaw_limit_expected="exactly ${_nemoclaw_limit_value}"
+        fi
+        echo "[SECURITY] Effective ${_nemoclaw_limit_bound} ${_nemoclaw_limit_label} limit is ${_nemoclaw_effective_limit}; expected ${_nemoclaw_limit_expected} (container runtime may restrict ulimit)" >&2
       fi
       _nemoclaw_limit_status=1
     fi
   done
 
   _nemoclaw_limit_return="$_nemoclaw_limit_status"
-  unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet
+  unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label
+  unset _nemoclaw_limit_quiet _nemoclaw_limit_requirement
   unset _nemoclaw_limit_status _nemoclaw_limit_bound _nemoclaw_limit_mode _nemoclaw_effective_limit
+  unset _nemoclaw_limit_mismatch _nemoclaw_limit_expected
   return "$_nemoclaw_limit_return"
 }
 
@@ -124,6 +149,24 @@ verify_resource_limits() {
   _nemoclaw_verify_resource_limit u "$NEMOCLAW_SANDBOX_NPROC_LIMIT" nproc "$_nemoclaw_rlimit_quiet" \
     || _nemoclaw_rlimit_status=1
   _nemoclaw_verify_resource_limit n "$NEMOCLAW_SANDBOX_NOFILE_LIMIT" nofile "$_nemoclaw_rlimit_quiet" \
+    || _nemoclaw_rlimit_status=1
+
+  _nemoclaw_rlimit_return="$_nemoclaw_rlimit_status"
+  unset _nemoclaw_rlimit_quiet _nemoclaw_rlimit_status
+  return "$_nemoclaw_rlimit_return"
+}
+
+# DCode's managed contract requires the documented defaults, not merely upper
+# bounds. This distinguishes a successfully applied 65536 nofile default from
+# the reproduced 1024 runtime default in #6545. OpenClaw and Hermes retain the
+# maximum-cap verifier above for compatibility with deliberate lower overrides.
+verify_resource_limits_exact() {
+  _nemoclaw_rlimit_quiet="${1:-}"
+  _nemoclaw_rlimit_status=0
+
+  _nemoclaw_verify_resource_limit u "$NEMOCLAW_SANDBOX_NPROC_LIMIT" nproc "$_nemoclaw_rlimit_quiet" exact \
+    || _nemoclaw_rlimit_status=1
+  _nemoclaw_verify_resource_limit n "$NEMOCLAW_SANDBOX_NOFILE_LIMIT" nofile "$_nemoclaw_rlimit_quiet" exact \
     || _nemoclaw_rlimit_status=1
 
   _nemoclaw_rlimit_return="$_nemoclaw_rlimit_status"

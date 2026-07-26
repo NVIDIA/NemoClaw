@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-reviewed-npm-audit
+description: Audit a target tree's reviewed production npm graphs from trusted CI code.
+
+inputs:
+  target-root:
+    description: Absolute path to the checked-out target tree whose graph inputs are audited.
+    required: true
+  report-dir:
+    description: Report directory relative to target-root.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup production-compatible Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "22.23.1"
+
+    - name: Pin production npm
+      shell: bash
+      run: >-
+        cd "$RUNNER_TEMP" &&
+        npm install --global npm@10.9.4
+        --userconfig /dev/null
+        --registry https://registry.npmjs.org/
+        --ignore-scripts --no-audit --no-fund
+
+    - name: Materialize and audit reviewed npm graphs
+      shell: bash
+      env:
+        NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
+        NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: ${{ inputs.report-dir }}
+        NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+        NPM_CONFIG_USERCONFIG: /dev/null
+      run: node --experimental-strip-types "$GITHUB_ACTION_PATH/../../../scripts/audit-reviewed-npm-graph.mts"
+
+    - name: Upload reviewed npm audit reports
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: reviewed-npm-audit
+        path: ${{ inputs.target-root }}/${{ inputs.report-dir }}/*.json
+        if-no-files-found: error

@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { applyVllmRuntimeContextWindow } from "./vllm-runtime-context";
+import {
+  applyVllmRuntimeContextWindow,
+  resolveVllmContextWindowFromModels,
+} from "./vllm-runtime-context";
 
 function applyContextWindow(
   modelsResponse: unknown,
@@ -72,6 +75,51 @@ describe("vLLM runtime context helpers", () => {
     expect(applyContextWindow(response, "model-b").env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
     expect(applyContextWindow(response, "missing").env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
     expect(applyContextWindow(response, "").env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
+  });
+
+  it("ignores non-object /v1/models entries without throwing (#6177)", () => {
+    // Arbitrary compatible endpoints can return valid JSON that is not the vLLM
+    // shape; null/primitive entries must not crash the resolver.
+    expect(() => resolveVllmContextWindowFromModels({ data: [null] }, "model-a")).not.toThrow();
+    expect(resolveVllmContextWindowFromModels({ data: [null] }, "model-a")).toBeNull();
+    expect(
+      resolveVllmContextWindowFromModels(
+        { data: [null, "nope", { id: "model-a", max_model_len: 65_536 }] },
+        "model-a",
+      ),
+    ).toBe(65_536);
+  });
+
+  it("under strictModelMatch, refuses to guess a window for multi-model gateways (#6177)", () => {
+    const warnings: string[] = [];
+    const logger = { warn: (message: string) => warnings.push(message) };
+    const response = {
+      data: [
+        { id: "model-a", max_model_len: 32_768 },
+        { id: "model-b", max_model_len: 65_536 },
+      ],
+    };
+
+    // Exact id still resolves.
+    expect(
+      resolveVllmContextWindowFromModels(response, "model-b", logger, { strictModelMatch: true }),
+    ).toBe(65_536);
+    // No exact match across multiple models → null (no first-entry guess).
+    expect(
+      resolveVllmContextWindowFromModels(response, "missing", logger, { strictModelMatch: true }),
+    ).toBeNull();
+    expect(warnings.at(-1)).toContain("none match 'missing'");
+    // A single served model is unambiguous even under strict matching.
+    expect(
+      resolveVllmContextWindowFromModels(
+        { data: [{ id: "solo", max_model_len: 16_384 }] },
+        "x",
+        logger,
+        {
+          strictModelMatch: true,
+        },
+      ),
+    ).toBe(16_384);
   });
 
   it("applies detected max_model_len only when no explicit override is set", () => {

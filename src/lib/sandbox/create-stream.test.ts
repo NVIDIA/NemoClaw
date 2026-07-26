@@ -1,29 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { EventEmitter } from "node:events";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { streamSandboxCreate } from "./create-stream";
 import {
-  type StreamableChildProcess,
-  type StreamableReadable,
-  streamSandboxCreate,
-} from "./create-stream";
-
-class FakeReadable extends EventEmitter implements StreamableReadable {
-  destroy(): void {}
-}
-
-class FakeChild extends EventEmitter implements StreamableChildProcess {
-  stdout = new FakeReadable();
-  stderr = new FakeReadable();
-  kill = vi.fn();
-  unref = vi.fn();
-}
-
-const dockerEnv = { ...process.env, OPENSHELL_DRIVERS: "docker" };
-const vmEnv = { ...process.env, OPENSHELL_DRIVERS: "vm" };
+  dockerEnv,
+  FakeChild,
+  makeDefaultStreamOptions,
+  vmEnv,
+} from "./create-stream-test-fixtures";
 
 describe("sandbox-create-stream", () => {
   afterEach(() => {
@@ -185,41 +171,38 @@ describe("sandbox-create-stream", () => {
     expect(child.unref).toHaveBeenCalled();
   });
 
-  it("does not detach on Ready until required startup output appears", async () => {
+  it("traces ready-check errors and keeps polling without forcing ready", async () => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
-    const logLine = vi.fn();
-    let resolved = false;
-    const promise = streamSandboxCreate("echo create", vmEnv, {
+    const traceEvent = vi.fn();
+    const readyCheck = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("Authorization: Bearer secret-token");
+      })
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       spawnImpl: () => child,
-      readyCheck: () => true,
+      readyCheck,
       pollIntervalMs: 5,
       heartbeatIntervalMs: 1_000,
       silentPhaseMs: 10_000,
-      logLine,
-    }).then((result) => {
-      resolved = true;
-      return result;
+      traceEvent,
+      logLine: vi.fn(),
     });
 
-    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    child.stdout.emit("data", Buffer.from("  Building image sandbox\n"));
+    await vi.advanceTimersByTimeAsync(6);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(traceEvent).toHaveBeenCalledWith("sandbox_create_ready_check_error", {
+      message: "Authorization: Bearer secr********",
+    });
+
     await vi.advanceTimersByTimeAsync(12);
 
-    expect(resolved).toBe(false);
-    expect(child.kill).not.toHaveBeenCalled();
-    expect(logLine).toHaveBeenCalledWith(
-      "  Sandbox reported Ready; waiting for startup command output before detaching.",
-    );
-
-    child.stderr.emit("data", Buffer.from("Setting up NemoClaw (Hermes)...\n"));
-    await vi.advanceTimersByTimeAsync(6);
-
-    await expect(promise).resolves.toMatchObject({
-      status: 0,
-      forcedReady: true,
-      output: expect.stringContaining("Setting up NemoClaw (Hermes)..."),
-    });
+    await expect(promise).resolves.toMatchObject({ status: 0, forcedReady: true });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
@@ -273,10 +256,11 @@ describe("sandbox-create-stream", () => {
 
   it("flushes the final partial line before resolving", async () => {
     const child = new FakeChild();
-    const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child,
-      logLine: vi.fn(),
-    });
+    const promise = streamSandboxCreate(
+      "echo create",
+      process.env,
+      makeDefaultStreamOptions(child),
+    );
 
     child.stdout.emit("data", Buffer.from("Created sandbox: demo"));
     child.emit("close", 0);
@@ -285,6 +269,25 @@ describe("sandbox-create-stream", () => {
       status: 0,
       output: "Created sandbox: demo",
       sawProgress: true,
+    });
+  });
+
+  it("keeps interleaved stdout and stderr fragments on separate lines", async () => {
+    const child = new FakeChild();
+    const promise = streamSandboxCreate(
+      "echo create",
+      process.env,
+      makeDefaultStreamOptions(child),
+    );
+
+    child.stdout.emit("data", Buffer.from("stdout-partial"));
+    child.stderr.emit("data", Buffer.from("stderr-line\n"));
+    child.stdout.emit("data", Buffer.from("-complete\n"));
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      output: "stderr-line\nstdout-partial-complete",
     });
   });
 
@@ -488,10 +491,11 @@ describe("sandbox-create-stream", () => {
 
   it("reports spawn errors cleanly", async () => {
     const child = new FakeChild();
-    const promise = streamSandboxCreate("echo create", process.env, {
-      spawnImpl: () => child,
-      logLine: vi.fn(),
-    });
+    const promise = streamSandboxCreate(
+      "echo create",
+      process.env,
+      makeDefaultStreamOptions(child),
+    );
 
     child.emit("error", Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
 

@@ -54,7 +54,7 @@ Start with `channels/<channel>/manifest.ts`.
 3. Add hook implementations under `channels/<channel>/hooks/` only for side effects or checks that cannot be represented as static manifest data.
 4. Register hook handlers in the channel `hooks/index.ts` and in `hooks/builtins.ts`.
 5. Add runtime preload assets under `channels/<channel>/runtime/` only when the agent runtime needs boot/connect-time shims or diagnostics.
-6. Add or update `nemoclaw-blueprint/policies/presets/<channel>.yaml` when the manifest declares a channel policy preset.
+6. Add or update `src/lib/messaging/channels/<channel>/policy/<agent>.yaml` when the manifest declares a channel policy preset.
 7. Cover the behavior with manifest/compiler tests plus applier/onboard/channel CLI tests when host effects change.
 
 ## Where Changes Belong

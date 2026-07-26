@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   class GatewayTokenCommandError extends Error {
@@ -87,6 +87,7 @@ vi.mock("../lib/uninstall-command", () => ({
 }));
 vi.mock("../lib/core/version", () => ({ getVersion: mocks.getVersion }));
 
+import { log } from "../lib/cli/logger";
 import DebugCliCommand from "./debug";
 import DeployCliCommand from "./deploy";
 import RootHelpCommand from "./root/help";
@@ -110,6 +111,10 @@ describe("simple global oclif adapters", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("maps debug and deploy parser output to actions", async () => {
     await DebugCliCommand.run(
       ["--quick", "--output", "/tmp/debug.tar.gz", "--sandbox", "alpha"],
@@ -125,6 +130,19 @@ describe("simple global oclif adapters", () => {
       }),
     );
     expect(mocks.runDeployAction).toHaveBeenCalledWith("gpu-alpha");
+  });
+
+  it("keeps debug -q scoped to quick diagnostics instead of global quiet mode", async () => {
+    const configure = vi.spyOn(log, "configure").mockImplementation(() => undefined);
+
+    await DebugCliCommand.run(["-q"], rootDir);
+
+    expect(mocks.runDebugCommandWithOptions).toHaveBeenCalledWith(
+      { quick: true },
+      expect.objectContaining({ runDebug: expect.any(Function) }),
+    );
+    expect(configure).toHaveBeenCalledWith({ debug: false, quiet: false });
+    expect(configure).not.toHaveBeenCalledWith({ debug: false, quiet: true });
   });
 
   it("builds debug defaults from the sandbox registry and OpenShell liveness", async () => {
@@ -283,6 +301,12 @@ describe("simple global oclif adapters", () => {
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), stopAll: mocks.stopAll }),
     );
+    expect(mocks.runStopCommand.mock.calls).toEqual(
+      expect.arrayContaining([
+        [expect.not.objectContaining({ releaseGatewayPort: true })],
+        [expect.objectContaining({ releaseGatewayPort: true })],
+      ]),
+    );
   });
 
   it("passes uninstall runtime dependencies to the uninstall action", async () => {
@@ -302,5 +326,17 @@ describe("simple global oclif adapters", () => {
         exit: expect.any(Function),
       }),
     );
+  });
+
+  it("forwards uninstall flags without assigning host logging semantics", async () => {
+    const configure = vi.spyOn(log, "configure").mockImplementation(() => undefined);
+
+    await UninstallCliCommand.run(["--yes", "--debug"], rootDir);
+
+    expect(mocks.runUninstallCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["--yes", "--debug"] }),
+    );
+    expect(configure).toHaveBeenCalledWith({ debug: false, quiet: false });
+    expect(configure).not.toHaveBeenCalledWith({ debug: true, quiet: false });
   });
 });

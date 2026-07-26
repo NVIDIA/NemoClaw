@@ -14,7 +14,7 @@ import path from "node:path";
 // yaml is a production dependency (used by policies.ts, onboard.ts)
 import YAML from "yaml";
 
-import { isRecord } from "./core/json-types";
+import { isObjectRecord } from "./core/json-types";
 import { validateSkillName } from "./skill-name";
 import type { SshContext, SshResult } from "./skill-remote";
 import { shellQuote, sshExec } from "./skill-remote";
@@ -73,7 +73,7 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     throw new Error(`SKILL.md frontmatter is not valid YAML: ${msg}`);
   }
 
-  if (!isRecord(parsed)) {
+  if (!isObjectRecord(parsed)) {
     throw new Error("SKILL.md frontmatter must be a YAML mapping (key: value pairs)");
   }
 

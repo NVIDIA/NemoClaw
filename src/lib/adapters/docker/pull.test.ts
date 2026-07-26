@@ -107,6 +107,65 @@ describe("docker pull progress watchdog", () => {
     });
   });
 
+  it("allows quiet pull finalization within the 15 minute stall timeout", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const pull = dockerPullWithProgressWatchdog("example/image:latest", {
+      suppressOutput: true,
+      spawnImpl: () => child,
+    });
+
+    child.stderr.emit("data", Buffer.from("abc123def: Pull complete\n"));
+    await vi.advanceTimersByTimeAsync(15 * 60_000 - 10_000);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    child.emit("close", 0, null);
+    await expect(pull).resolves.toMatchObject({
+      status: 0,
+      timedOut: false,
+      timeoutKind: null,
+    });
+  });
+
+  it("kills a quiet pull after the default 15 minute stall timeout", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const pull = dockerPullWithProgressWatchdog("example/image:latest", {
+      suppressOutput: true,
+      spawnImpl: () => child,
+    });
+
+    child.stderr.emit("data", Buffer.from("abc123def: Pull complete\n"));
+    await vi.advanceTimersByTimeAsync(16 * 60_000);
+
+    await expect(pull).resolves.toMatchObject({
+      status: 124,
+      timedOut: true,
+      timeoutKind: "stall",
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("respects a custom stall timeout", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const pull = dockerPullWithProgressWatchdog("example/image:latest", {
+      suppressOutput: true,
+      stallTimeoutMs: 5 * 60_000,
+      spawnImpl: () => child,
+    });
+
+    child.stderr.emit("data", Buffer.from("abc123def: Pull complete\n"));
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    await expect(pull).resolves.toMatchObject({
+      status: 124,
+      timedOut: true,
+      timeoutKind: "stall",
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("kills a pull when output repeats without forward progress", async () => {
     vi.useFakeTimers();
     const child = new FakeChild();

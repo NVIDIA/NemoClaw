@@ -52,7 +52,19 @@ export function requiredMessagingChannelPolicyPresets(
   return required;
 }
 
-export function mergeRequiredMessagingChannelPolicyPresets(
+// Merge the policy presets every enabled messaging channel needs into a
+// selection. An enabled channel cannot function without its network-egress
+// preset, so that preset must survive policy finalization regardless of how the
+// operator arrived at the selection (interactive tier, env-driven custom list,
+// or a recorded resume set). We intentionally merge *all* of a channel's
+// presets, not just the create-time `requiredAtCreate` ones: `requiredAtCreate`
+// governs whether a preset is injected into the boot policy at sandbox-create
+// time (only Slack today), while finalization applies any newly-merged preset
+// to the live gateway itself. Using only the create-time-required set here drops
+// every other channel's preset (Discord, Telegram, WhatsApp, Teams, WeChat) from
+// the persisted selection, so `policy-list` shows them unapplied even though the
+// channel was configured during onboard. See #5967.
+export function mergeEnabledMessagingChannelPolicyPresets(
   selectedPresets: string[],
   channels: string[] | null | undefined,
   knownPresetNames?: Iterable<string> | null,
@@ -61,7 +73,7 @@ export function mergeRequiredMessagingChannelPolicyPresets(
   const selected = new Set(merged);
   const known = knownPresetNames ? new Set(knownPresetNames) : null;
 
-  for (const preset of requiredMessagingChannelPolicyPresets(channels)) {
+  for (const preset of allMessagingChannelPolicyPresets(channels)) {
     if (known && !known.has(preset)) continue;
     if (selected.has(preset)) continue;
     merged.push(preset);
@@ -90,6 +102,36 @@ export function pruneDisabledMessagingPolicyPresets(
   return selectedPresets.filter(
     (preset) => !disabledChannelPresets.has(preset.trim().toLowerCase()),
   );
+}
+
+/**
+ * Recover the desired preset set after stop+rebuild pruned disabled-channel
+ * egress from persisted policies and a later start+rebuild re-enabled those
+ * channels. The backup manifest is authoritative when present, with the
+ * registry as the stale-sandbox fallback; the current messaging plan owns
+ * enabled/disabled state, and channel manifests own channel-to-preset mapping.
+ * The helper and caller boundaries are covered in messaging-policy-presets.test.ts
+ * and rebuild-flow.test.ts, respectively.
+ *
+ * Remove this recovery merge when the registry or planner durably persists one
+ * canonical desired preset set across stop/start rebuilds.
+ */
+export function mergeRebuildMessagingPolicyPresets(
+  backupPresets: string[] | null | undefined,
+  registryPresets: string[],
+  enabledChannels: string[] | null | undefined,
+  disabledChannels: string[] | null | undefined,
+): string[] {
+  const persistedPresets = backupPresets ?? registryPresets;
+  return [
+    ...new Set([
+      ...pruneDisabledMessagingPolicyPresets(persistedPresets, disabledChannels),
+      ...pruneDisabledMessagingPolicyPresets(
+        allMessagingChannelPolicyPresets(enabledChannels),
+        disabledChannels,
+      ),
+    ]),
+  ];
 }
 
 export function hasDisabledMessagingPolicyPreset(

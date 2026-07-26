@@ -6,9 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../trace";
 import {
   getCurlTimingArgs,
+  runAnthropicStreamingEventProbe,
   runChatCompletionsStreamingProbe,
   runCurlProbe,
   runStreamingEventProbe,
@@ -23,6 +25,17 @@ function withTraceFile<T>(fn: (traceFile: string) => T): T {
   process.env[TRACE_FILE_ENV] = traceFile;
   resetTraceForTests();
   return fn(traceFile);
+}
+
+// Curl probe fixtures repeatedly need to drop a JSON body into the -o output
+// path that curl would normally write. Centralising the "resolve args[-o + 1]
+// and write when defined" branch keeps the changed-test-file if-count budget
+// steady when new fixtures are added.
+function writeCurlOutputBody(args: readonly string[], body: string): void {
+  const outputPath = args[args.indexOf("-o") + 1];
+  if (typeof outputPath === "string") {
+    fs.writeFileSync(outputPath, body);
+  }
 }
 
 afterEach(() => {
@@ -96,10 +109,7 @@ describe("http-probe helpers", () => {
     const result = runCurlProbe(["-sS", "--max-time", "60", "https://example.test/models"], {
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -120,10 +130,7 @@ describe("http-probe helpers", () => {
     runCurlProbe(["-sS", "--max-time", "15", "--max-time", "120", "https://example.test/models"], {
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -144,10 +151,7 @@ describe("http-probe helpers", () => {
       timeoutMs: 12_345,
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -343,10 +347,7 @@ describe("http-probe helpers", () => {
       trustedConfigFiles: [configPath],
       spawnSyncImpl: (_command, args) => {
         spawnedArgs = args;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -360,6 +361,225 @@ describe("http-probe helpers", () => {
 
     expect(result.ok).toBe(true);
     expect(spawnedArgs).toContain(configPath);
+  });
+
+  it("scrubs credential env vars when trustedConfigFiles is supplied", () => {
+    const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
+    const original = {
+      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      MY_SECRET_TOKEN: process.env.MY_SECRET_TOKEN,
+      MY_BENIGN_VAR: process.env.MY_BENIGN_VAR,
+      PATH: process.env.PATH,
+    };
+    process.env.NVIDIA_API_KEY = "nvapi-should-not-leak";
+    process.env.OPENAI_API_KEY = "sk-should-not-leak";
+    process.env.MY_SECRET_TOKEN = "should-not-leak";
+    process.env.MY_BENIGN_VAR = "should-survive";
+
+    try {
+      let spawnedEnv: NodeJS.ProcessEnv | undefined;
+      runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
+        trustedConfigFiles: [configPath],
+        spawnSyncImpl: (_command, _args, options) => {
+          spawnedEnv = options.env as NodeJS.ProcessEnv;
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      });
+
+      expect(spawnedEnv).toBeDefined();
+      expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
+      expect(spawnedEnv?.OPENAI_API_KEY).toBeUndefined();
+      expect(spawnedEnv?.MY_SECRET_TOKEN).toBeUndefined();
+      expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
+      expect(spawnedEnv?.PATH).toBe(process.env.PATH);
+    } finally {
+      restoreEnvBulk(original);
+    }
+  });
+
+  it("strips expanded credential-shaped opts.env entries with trusted config (#5048)", () => {
+    const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
+      trustedConfigFiles: [configPath],
+      env: {
+        CONNECTIONSTRING: "should-not-leak",
+        NVIDIA_API_KEY: "nvapi-should-not-leak",
+        MY_BENIGN_VAR: "should-survive",
+      },
+      spawnSyncImpl: (_command, _args, options) => {
+        spawnedEnv = options.env as NodeJS.ProcessEnv;
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(spawnedEnv?.CONNECTIONSTRING).toBeUndefined();
+    expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
+    expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
+  });
+
+  it("strips credential-shaped opts.env while preserving PATH and NO_PROXY when replaceEnv is true", () => {
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(["-sS", "https://example.test/models"], {
+      replaceEnv: true,
+      env: {
+        PATH: "/usr/bin",
+        NO_PROXY: "localhost",
+        HTTP_PROXY: "http://proxy.internal:3128",
+        NVIDIA_API_KEY: "nvapi-should-not-leak",
+        MY_SECRET_TOKEN: "should-not-leak",
+      },
+      spawnSyncImpl: (_command, _args, options) => {
+        spawnedEnv = options.env as NodeJS.ProcessEnv;
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(spawnedEnv?.PATH).toBe("/usr/bin");
+    expect(spawnedEnv?.NO_PROXY).toBe("localhost");
+    expect(spawnedEnv?.HTTP_PROXY).toBe("http://proxy.internal:3128");
+    expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
+    expect(spawnedEnv?.MY_SECRET_TOKEN).toBeUndefined();
+  });
+
+  it("bypasses ambient proxies when --resolve pins the validated origin (#6293)", () => {
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(
+      ["-sS", "--resolve", "example.test:443:93.184.216.34", "https://example.test/models"],
+      {
+        pinnedAddresses: ["93.184.216.34"],
+        replaceEnv: true,
+        env: {
+          PATH: "/usr/bin",
+          HTTP_PROXY: "http://proxy.internal:3128",
+          HTTPS_PROXY: "http://proxy.internal:3128",
+          ALL_PROXY: "socks5://proxy.internal:1080",
+          http_proxy: "http://proxy.internal:3128",
+          https_proxy: "http://proxy.internal:3128",
+          all_proxy: "socks5://proxy.internal:1080",
+        },
+        spawnSyncImpl: (_command, _args, options) => {
+          spawnedEnv = options.env as NodeJS.ProcessEnv;
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      },
+    );
+
+    for (const name of [
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "ALL_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "all_proxy",
+    ]) {
+      expect(spawnedEnv?.[name]).toBeUndefined();
+    }
+    expect(spawnedEnv?.NO_PROXY).toBe("*");
+    expect(spawnedEnv?.no_proxy).toBe("*");
+  });
+
+  it.each([
+    "http://127.0.0.1:8000/v1/models",
+    "https://inference.local/v1/models",
+    "https://93.184.216.34/v1/models",
+  ])("bypasses ambient proxies for approved no-pin origin %s (#6293)", (url) => {
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(["-sS", url], {
+      pinnedAddresses: [],
+      replaceEnv: true,
+      env: {
+        HTTP_PROXY: "http://proxy.internal:3128",
+        HTTPS_PROXY: "http://proxy.internal:3128",
+        ALL_PROXY: "socks5://proxy.internal:1080",
+        http_proxy: "http://proxy.internal:3128",
+        https_proxy: "http://proxy.internal:3128",
+        all_proxy: "socks5://proxy.internal:1080",
+      },
+      spawnSyncImpl: (_command, _args, options) => {
+        spawnedEnv = options.env as NodeJS.ProcessEnv;
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    for (const name of [
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "ALL_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "all_proxy",
+    ]) {
+      expect(spawnedEnv?.[name]).toBeUndefined();
+    }
+    expect(spawnedEnv?.NO_PROXY).toBe("*");
+    expect(spawnedEnv?.no_proxy).toBe("*");
+  });
+
+  it("scrubs credential-shaped env even when trustedConfigFiles is not supplied", () => {
+    const original = {
+      MY_PROBE_SECRET_TOKEN: process.env.MY_PROBE_SECRET_TOKEN,
+      MY_PROBE_PARITY_VAR: process.env.MY_PROBE_PARITY_VAR,
+    };
+    process.env.MY_PROBE_SECRET_TOKEN = "should-not-leak";
+    process.env.MY_PROBE_PARITY_VAR = "stays";
+    try {
+      let spawnedEnv: NodeJS.ProcessEnv | undefined;
+      runCurlProbe(["-sS", "https://example.test/models"], {
+        spawnSyncImpl: (_command, _args, options) => {
+          spawnedEnv = options.env as NodeJS.ProcessEnv;
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      });
+
+      expect(spawnedEnv?.MY_PROBE_SECRET_TOKEN).toBeUndefined();
+      expect(spawnedEnv?.MY_PROBE_PARITY_VAR).toBe("stays");
+    } finally {
+      restoreEnvBulk(original);
+    }
   });
 });
 
@@ -672,5 +892,348 @@ describe("runStreamingEventProbe", () => {
         curl_status: 0,
       });
     });
+  });
+});
+
+describe("runAnthropicStreamingEventProbe", () => {
+  /** Helper to build a spawnSyncImpl that writes SSE content to the -o file. */
+  function mockStreaming(sseBody: string, exitCode = 0, httpStatus = "200") {
+    return (_command: string, args: readonly string[]) => {
+      writeCurlOutputBody(args, sseBody);
+      return {
+        pid: 1,
+        output: [],
+        stdout: httpStatus,
+        stderr: "",
+        status: exitCode,
+        signal: null,
+      };
+    };
+  }
+
+  const healthyStream = [
+    "event: message_start",
+    'data: {"type":"message_start","message":{"id":"msg_1"}}',
+    "",
+    "event: content_block_start",
+    'data: {"type":"content_block_start","index":0}',
+    "",
+    "event: content_block_delta",
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+    "",
+    "event: content_block_stop",
+    'data: {"type":"content_block_stop","index":0}',
+    "",
+    "event: message_delta",
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+    "",
+    "event: message_stop",
+    'data: {"type":"message_stop"}',
+    "",
+  ].join("\n");
+
+  it("passes when the Anthropic Messages event sequence is well formed", () => {
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(healthyStream) },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.curlStatus).toBe(0);
+    expect(result.missingEvents).toEqual([]);
+    expect(result.duplicateEvents).toEqual([]);
+    expect(result.sequenceErrors).toEqual([]);
+  });
+
+  it("rejects a non-2xx response even when its body looks like valid SSE", () => {
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(healthyStream, 0, "503") },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(503);
+    expect(result.message).toContain("HTTP 503");
+  });
+
+  it("fails when message_stop is emitted twice for one request", () => {
+    const duplicatedStop = [
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: content_block_delta",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(duplicatedStop) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.duplicateEvents).toEqual(["message_stop"]);
+  });
+
+  it("fails when content deltas arrive before message_start", () => {
+    const startAfterDelta = [
+      "event: content_block_delta",
+      "data: {}",
+      "",
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(startAfterDelta) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.sequenceErrors).toEqual(["content events before message_start"]);
+    expect(result.message).toContain("out of order");
+  });
+
+  it("fails when content deltas continue after message_stop", () => {
+    const deltaAfterStop = [
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+      "event: content_block_delta",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(deltaAfterStop) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.sequenceErrors).toEqual(["content events after message_stop"]);
+  });
+
+  it("fails when non-delta content events trail message_stop", () => {
+    const stopNotTerminal = [
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: content_block_delta",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+      "event: content_block_stop",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(stopNotTerminal) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.sequenceErrors).toEqual(["content events after message_stop"]);
+  });
+
+  it("tolerates interleaved unknown events like ping in a well-formed stream", () => {
+    const withPing = [
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: ping",
+      "data: {}",
+      "",
+      "event: content_block_delta",
+      "data: {}",
+      "",
+      "event: ping",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(withPing) },
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails when message_start is emitted twice for one request (#6289)", () => {
+    const duplicatedStart = [
+      "event: message_start",
+      'data: {"type":"message_start","message":{"id":"msg_4963f1e3"}}',
+      "",
+      "event: message_start",
+      'data: {"type":"message_start","message":{"id":"msg_4963f1e3"}}',
+      "",
+      "event: content_block_delta",
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}',
+      "",
+      "event: message_stop",
+      'data: {"type":"message_stop"}',
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(duplicatedStart) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.duplicateEvents).toEqual(["message_start"]);
+    expect(result.missingEvents).toEqual([]);
+    expect(result.message).toContain("duplicate message_start (2 events for one request)");
+  });
+
+  it("fails when the stream carries no content deltas", () => {
+    const emptyStream = [
+      "event: message_start",
+      'data: {"type":"message_start","message":{"id":"msg_1"}}',
+      "",
+      "event: message_stop",
+      'data: {"type":"message_stop"}',
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(emptyStream) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.missingEvents).toEqual(["content_block_delta"]);
+    expect(result.message).toContain("missing required events: content_block_delta");
+  });
+
+  it("fails when the stream never terminates with message_stop", () => {
+    const unterminatedStream = [
+      "event: message_start",
+      'data: {"type":"message_start","message":{"id":"msg_1"}}',
+      "",
+      "event: content_block_delta",
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(unterminatedStream, 28) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.curlStatus).toBe(28);
+    expect(result.missingEvents).toEqual(["message_stop"]);
+  });
+
+  it("still passes if curl exits with 28 (timeout) but the full sequence was captured", () => {
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(healthyStream, 28) },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.curlStatus).toBe(28);
+  });
+
+  it("fails on spawn error", () => {
+    const result = runAnthropicStreamingEventProbe(["-sS", "https://example.test/v1/messages"], {
+      spawnSyncImpl: () => {
+        const error = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+        return {
+          pid: 1,
+          output: [],
+          stdout: "",
+          stderr: "",
+          status: null,
+          signal: null,
+          error,
+        };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Streaming probe failed");
+  });
+
+  it("records curl_result metadata including duplicate counts", () => {
+    withTraceFile((traceFile) => {
+      const duplicatedStart = [
+        "event: message_start",
+        "data: {}",
+        "",
+        "event: message_start",
+        "data: {}",
+        "",
+        "event: content_block_delta",
+        "data: {}",
+        "",
+        "event: message_stop",
+        "data: {}",
+        "",
+      ].join("\n");
+
+      const result = runAnthropicStreamingEventProbe(
+        ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+        { spawnSyncImpl: mockStreaming(duplicatedStart) },
+      );
+
+      expect(result.ok).toBe(false);
+      flushTrace();
+      const artifact = JSON.parse(fs.readFileSync(traceFile, "utf8")) as TraceArtifact;
+      const span = artifact.resource_spans[0].scope_spans[0].spans.find(
+        (entry) => entry.name === "nemoclaw.inference.curl_anthropic_streaming_probe",
+      );
+      expect(span?.events[0].attributes).toMatchObject({
+        ok: false,
+        missing_events_count: 0,
+        duplicate_events_count: 1,
+        curl_status: 0,
+      });
+    });
+  });
+
+  it("cleans up temp files after probe", () => {
+    let outputPath = "";
+    runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      {
+        spawnSyncImpl: (_command, args) => {
+          outputPath = String(args[args.indexOf("-o") + 1]);
+          writeCurlOutputBody(args, healthyStream);
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      },
+    );
+
+    expect(outputPath).not.toBe("");
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(fs.existsSync(path.dirname(outputPath))).toBe(false);
   });
 });

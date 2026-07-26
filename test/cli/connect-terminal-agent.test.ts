@@ -25,7 +25,11 @@ describe("CLI dispatch for terminal agents", () => {
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        "  echo 'alpha  Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -37,8 +41,9 @@ describe("CLI dispatch for terminal agents", () => {
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "-n" ] && [ "$4" = "alpha" ]; then',
         '  cmd="${10}"',
         '  case "$cmd" in',
-        '    *"dcode --version"*) echo "dcode 0.1.12"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"dcode --version"*) echo "dcode 0.1.34"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"config.toml"*) echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"NEMOCLAW_DCODE_EMPTY_PROMPT_OK"*) echo "NEMOCLAW_DCODE_EMPTY_PROMPT_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         "  esac",
         "fi",
         "exit 0",
@@ -54,12 +59,18 @@ describe("CLI dispatch for terminal agents", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("terminal smoke checks passed");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
-    expect(calls).toContain("sandbox get alpha");
+    expect(calls).toContain("sandbox get -g nemoclaw alpha");
     expect(calls.some((call) => call.includes("NEMOCLAW_AGENT_SMOKE_EXIT"))).toBe(true);
     expect(calls.some((call) => call.includes("nemoclaw-agent-smoke dcode --version"))).toBe(true);
     expect(
       calls.some((call) =>
         call.includes("nemoclaw-agent-smoke test -s /sandbox/.deepagents/config.toml"),
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.includes("nemoclaw-agent-smoke") && call.includes("NEMOCLAW_DCODE_EMPTY_PROMPT_OK"),
       ),
     ).toBe(true);
     expect(calls.some((call) => call.includes("OPENCLAW="))).toBe(false);

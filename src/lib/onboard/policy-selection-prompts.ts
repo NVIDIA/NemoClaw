@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxCancelRollback } from "./cancel-rollback";
 import type { TierDefinition } from "../policy/tiers";
+import type { SandboxCancelRollback } from "./cancel-rollback";
 
 type PresetWithDescription = { name: string; description?: string };
 type PresetWithAccess = { name: string; access: string };
@@ -54,7 +54,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
   selectTierPresetsAndAccess(
     tierName: string,
     allPresets: PresetWithDescription[],
-    extraSelected?: string[],
+    initialSelected?: string[],
   ): Promise<PresetWithAccess[]>;
   presetsCheckboxSelector(
     allPresets: Array<{ name: string; description: string }>,
@@ -207,12 +207,13 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
    * per-preset access (read vs read-write).
    *
    * Tier presets are listed first (in tier order), then remaining presets
-   * alphabetically. Tier presets are pre-checked; others start unchecked.
+   * alphabetically. Callers can supply the exact initial checked set after
+   * filtering tier defaults for the selected agent and integrations.
    */
   async function selectTierPresetsAndAccess(
     tierName: string,
     allPresets: PresetWithDescription[],
-    extraSelected: string[] = [],
+    initialSelected?: string[],
   ): Promise<PresetWithAccess[]> {
     const tierDef = tiers.getTier(tierName);
     const tierPresetMap: Record<string, string> = {};
@@ -232,11 +233,14 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
       ...allPresets.filter((preset) => !tierSet.has(preset.name)),
     ];
 
-    // Initial inclusion: tier presets + any already-applied extras.
-    const included = new Set([
-      ...tierNames,
-      ...extraSelected.filter((name) => ordered.find((preset) => preset.name === name)),
-    ]);
+    // When the caller has already reconciled tier defaults with the selected
+    // agent and integrations, preserve that exact initial choice. Direct
+    // callers that omit it retain the tier defaults.
+    const included = new Set(
+      (initialSelected ?? tierNames).filter((name) =>
+        ordered.some((preset) => preset.name === name),
+      ),
+    );
 
     // Access levels: tier defaults for tier presets, read-write default for others.
     const accessModes: Record<string, string> = {};

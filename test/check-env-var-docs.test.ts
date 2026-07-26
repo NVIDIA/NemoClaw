@@ -19,7 +19,7 @@ import {
   findEnvVarReads,
   loadAllowlist,
   walkSourceFiles,
-} from "../scripts/check-env-var-docs";
+} from "../scripts/check-env-var-docs.mts";
 
 describe("findEnvVarReads", () => {
   it.each([

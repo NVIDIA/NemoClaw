@@ -1,0 +1,77 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Enable Channels During Onboarding"
+sidebar-title: "Enable Channels During Onboarding"
+description: "Select messaging channels and supply their credentials or pairing inputs during NemoClaw onboarding."
+description-agent: "Explains the interactive and scripted onboarding flows for selecting messaging channels and creating OpenShell bridge providers. Use when enabling channels on a new sandbox."
+keywords: ["nemoclaw onboard messaging", "messaging channel picker", "channel environment variables"]
+content:
+  type: "how_to"
+---
+Enable channels during onboarding when you are creating or recreating a sandbox.
+
+## Use the Interactive Picker
+
+When the wizard reaches **Messaging channels**, it lists Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams when the selected agent supports them.
+Press a channel number to toggle it on or off, then press **Enter** when done.
+
+If you select no channels, pressing **Enter** skips messaging setup.
+If a token-based channel token is not already in the environment or credential store, the wizard prompts for it and saves it.
+
+If you enable WeChat, the wizard renders a QR code, polls Tencent's iLink gateway, and captures the bot token after you scan the QR with WeChat on your phone.
+The login has an eight-minute deadline, refreshes the QR up to three times on expiry, and follows iLink's IDC redirects automatically.
+
+Keep the terminal in the foreground until you see `✓ WeChat login confirmed`.
+
+WhatsApp uses QR pairing instead of a host-side token, so the wizard does not prompt for one.
+It prints pairing instructions, and you complete the pairing inside the sandbox after rebuild.
+NemoClaw selects the matching network policy preset during policy setup so the channel can reach its provider API.
+
+## Prepare Scripted Inputs
+
+Export the credentials and optional settings for the channels you want to enable:
+
+```bash
+export TELEGRAM_BOT_TOKEN="<your-bot-token>"
+export TELEGRAM_REQUIRE_MENTION=1
+export DISCORD_BOT_TOKEN="<your-discord-bot-token>"
+export DISCORD_SERVER_ID="<your-discord-server-id>"
+export SLACK_BOT_TOKEN="<your-slack-bot-token>"
+export SLACK_APP_TOKEN="<your-slack-app-token>"
+export SLACK_ALLOWED_USERS="<your-slack-member-id>"
+export SLACK_ALLOWED_CHANNELS="<your-slack-channel-id>"
+export WHATSAPP_ALLOWED_IDS="<your-whatsapp-sender-id>"
+export MSTEAMS_APP_ID="<your-teams-app-id>"
+export MSTEAMS_APP_PASSWORD="<your-teams-client-secret>"
+export MSTEAMS_TENANT_ID="<your-teams-tenant-id>"
+export TEAMS_ALLOWED_USERS="<your-entra-object-id>"
+export MSTEAMS_PORT=3978
+```
+
+The placeholder values are quoted because angle brackets are shell metacharacters.
+The quotes keep the export from triggering a redirection or syntax error when you replace the placeholder with a real value.
+
+This release does not support non-interactive WeChat configuration because the iLink QR handshake requires a human to scan the QR on a paired phone.
+Run `$$nemoclaw onboard` interactively when you want to enable WeChat.
+For non-interactive WhatsApp selection, set `WHATSAPP_ALLOWED_IDS` to a nonempty comma-separated sender list.
+
+## Run Onboarding
+
+```bash
+$$nemoclaw onboard
+```
+
+Complete the wizard so the blueprint can create OpenShell providers where needed, such as `<sandbox>-telegram-bridge`, `<sandbox>-teams-bridge`, or `<sandbox>-wechat-bridge`.
+The wizard writes channel configuration into the image through `NEMOCLAW_MESSAGING_CHANNELS_B64` and starts the sandbox.
+
+## Verify the Result
+
+After the sandbox is running, send a message to the configured bot or app.
+If delivery fails, inspect sandbox logs and confirm that the matching network policy preset is active.
+Refer to [Messaging bridge appears running but no messages arrive](../../reference/troubleshooting#messaging-bridge-appears-running-but-no-messages-arrive) for remediation.
+
+## Related Topics
+
+- [Choose Messaging Channels](choose-messaging-channels) for provider requirements.
+- [Manage Messaging Channels](manage-messaging-channels) to pause, rotate, or remove a configured channel.

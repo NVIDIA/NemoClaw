@@ -3,7 +3,12 @@
 
 import type { Session } from "../../../state/onboard-session";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
-import { completeOnboardMachine, type OnboardStateCompleteResult } from "../result";
+import {
+  completeOnboardMachine,
+  type OnboardStateCompleteResult,
+  type OnboardStatePauseResult,
+  pauseOnboardMachine,
+} from "../result";
 
 export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult> {
   sandboxName: string;
@@ -17,7 +22,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
   deps: {
-    ensureAgentDashboardForward(sandboxName: string, agent: NonNullable<Agent>): number;
+    ensureAgentDashboardForward(sandboxName: string, agent: Agent): number;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
@@ -55,6 +60,8 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     buildVerifyChain(chatUiUrl: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
     formatVerificationDiagnostics(result: VerificationResult): string[];
+    isDeploymentHealthy(result: VerificationResult): boolean;
+    reportDeploymentReadiness(healthy: boolean): void;
     /**
      * Best-effort probe that confirms the agent runtime actually accepted the
      * web-search config and (for Brave) that the L7 proxy rewrites the
@@ -68,6 +75,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       provider: string,
       nimContainer: string | null,
       agent: Agent,
+      ready: boolean,
     ): void;
     error(message?: string): void;
     log(message?: string): void;
@@ -75,9 +83,10 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
 }
 
 export interface FinalizationStateResult {
-  stateResult: OnboardStateCompleteResult;
+  stateResult: OnboardStateCompleteResult | OnboardStatePauseResult;
   unmigratedLegacyKeys: string[];
   verificationDiagnostics: string[];
+  deploymentHealthy: boolean;
 }
 
 type TerminalReadyAgent = {
@@ -134,10 +143,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
 
-  if (agent && manageDashboard) {
-    deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
-  }
-
   const allStagedMigrated =
     stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((key) => migratedLegacyKeys.has(key));
   const unmigratedLegacyKeys = stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key));
@@ -175,24 +180,45 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.verifyWebSearchInsideSandbox(sandboxName, agent);
   }
 
+  if (manageDashboard) {
+    // Scope warm-up can outlive a forward that was healthy after policy recovery.
+    // Recheck the gateway and forward before verification, restarting only when needed.
+    deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    // Reconcile after the final recovery because any restart above can
+    // invalidate the forward created earlier in onboarding.
+    deps.ensureAgentDashboardForward(sandboxName, agent);
+  }
+
   await deps.recordPostVerifyStarted();
 
   let verificationDiagnostics: string[] = [];
+  let deploymentHealthy = true;
   if (manageDashboard) {
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
+    deploymentHealthy = deps.isDeploymentHealthy(verificationResult);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
-    deps.printDashboard(sandboxName, model, provider, nimContainer, agent);
+    deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
+    deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
     logTerminalReadyBlock(sandboxName, agent, deps.log);
   }
 
-  const stateResult = completeOnboardMachine(
-    deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-    { state: "finalizing" },
-  );
+  const sessionUpdates = deps.toSessionUpdates({
+    sandboxName,
+    provider,
+    model,
+    hermesAuthMethod,
+    hermesToolGateways,
+  });
+  const stateResult = deploymentHealthy
+    ? completeOnboardMachine(sessionUpdates, { state: "finalizing" })
+    : pauseOnboardMachine(sessionUpdates, {
+        state: "finalizing",
+        reason: "deployment_not_ready",
+      });
 
-  return { stateResult, unmigratedLegacyKeys, verificationDiagnostics };
+  return { stateResult, unmigratedLegacyKeys, verificationDiagnostics, deploymentHealthy };
 }

@@ -9,10 +9,12 @@ export default class CredentialsCommand extends NemoClawCommand {
   static id = "credentials";
   static strict = true;
   static summary = "Manage provider credentials";
-  static description = "List or reset provider credentials registered with the OpenShell gateway.";
-  static usage = ["credentials <list|reset>"];
+  static description =
+    "List, add, or reset provider credentials registered with the OpenShell gateway.";
+  static usage = ["credentials <list|add|reset>"];
   static examples = [
     "<%= config.bin %> credentials list",
+    "<%= config.bin %> credentials add tavily-search --type tavily --credential TAVILY_API_KEY",
     "<%= config.bin %> credentials reset nvidia-prod --yes",
   ];
   static flags = {};

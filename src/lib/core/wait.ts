@@ -279,6 +279,33 @@ const TCP_PROBE_SCRIPT =
   "s.on('error',()=>process.exit(1));" +
   "s.setTimeout(1000,()=>{s.destroy();process.exit(1);});";
 
+// Native Node HTTP clients do not consult HTTP_PROXY. Prefer this direct path
+// for loopback readiness probes so user proxy settings and curl configuration
+// cannot route a localhost request away from the service being checked.
+const LOOPBACK_HTTP_PROBE_SCRIPT =
+  "const u=new URL(process.argv[1]);" +
+  "const m=u.protocol==='https:'?require('node:https'):require('node:http');" +
+  "const r=m.get(u,{timeout:1000},res=>{" +
+  "res.resume();process.exit(res.statusCode>=200&&res.statusCode<400?0:1);});" +
+  "r.on('timeout',()=>{r.destroy();process.exit(1);});" +
+  "r.on('error',()=>process.exit(1));";
+
+function isLoopbackHttpUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    const hostname = url.hostname
+      .replace(/^\[(.*)\]$/u, "$1")
+      .replace(/\.$/u, "")
+      .toLowerCase();
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1")
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Synchronously wait for a TCP port to become reachable on localhost.
  *
@@ -323,6 +350,14 @@ export function waitForHttp(url: string, timeoutSeconds = 5): boolean {
   return waitUntil(
     () => {
       try {
+        if (isLoopbackHttpUrl(url)) {
+          const probe = spawnSync(process.execPath, ["-e", LOOPBACK_HTTP_PROBE_SCRIPT, url], {
+            stdio: "ignore",
+            timeout: 2000,
+            env,
+          });
+          return probe.status === 0;
+        }
         const result = spawnSync(
           "curl",
           buildValidatedCurlCommandArgs(["-sf", "--connect-timeout", "1", "--max-time", "1", url]),

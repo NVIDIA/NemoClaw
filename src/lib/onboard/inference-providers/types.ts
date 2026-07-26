@@ -15,7 +15,9 @@
 // so they accept whatever the orchestrator hands in without needing to
 // duplicate every helper's exact signature.
 
+import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
 import type { HermesAuthMethod } from "../hermes-auth";
+import type { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
 
 export type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
@@ -65,19 +67,22 @@ export type VerifyOnboardInferenceSmoke = (input: {
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   forceOpenAiLike?: boolean;
-}) => void;
+  pinnedAddresses?: readonly string[];
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability;
+  capabilityCache?: OnboardInferenceCapabilityCache;
+}) => void | Promise<void>;
 
 export type PromptValidationRecovery = (
   label: string,
   classification: any,
   credentialEnv: any,
   helpUrl: any,
-) => Promise<string>;
+) => Promise<"credential" | "selection" | "retry" | "model">;
 
 export type ClassifyApplyFailure = (message: string) => any;
 
 export type Registry = {
-  updateSandbox(sandboxName: string, patch: { model: string; provider: string }): void;
+  updateSandbox: typeof import("../../state/registry").updateSandbox;
 };
 
 export type CommonDeps = {
@@ -87,6 +92,9 @@ export type CommonDeps = {
   verifyOnboardInferenceSmoke: VerifyOnboardInferenceSmoke;
   isNonInteractive: () => boolean;
   registry: Registry;
+  exitProcess: (code: number) => never;
+  error: (message: string) => void;
+  log: (message: string) => void;
 };
 
 export type RemoteProviderDeps = CommonDeps & {
@@ -97,6 +105,23 @@ export type RemoteProviderDeps = CommonDeps & {
   LOCAL_INFERENCE_TIMEOUT_SECS: number;
   redact: (input: string) => string;
   compactText: (input: string) => string;
+  // #6294 OpenAI-surface registration for openai_compatible agents onboarded
+  // on compatible-anthropic-endpoint. Optional: production falls back to the
+  // real implementations inside remote.ts; tests inject fakes.
+  probeOpenAiLikeEndpoint?: (
+    endpointUrl: string,
+    model: string,
+    apiKey: string,
+    options?: Record<string, unknown>,
+  ) => { ok: boolean; message?: string } | Promise<{ ok: boolean; message?: string }>;
+  readGatewayProviderMetadata?: (
+    name: string,
+    runOpenshell: RunOpenshell,
+  ) => { name: string; type: string; credentialKeys: string[]; configKeys: string[] } | null;
+  deleteGatewayProvider?: (
+    name: string,
+    deps: { runOpenshell: RunOpenshell; allowedSandboxes?: readonly string[] },
+  ) => { ok: boolean; status?: number | null; stderr?: string; stdout?: string };
   bedrockRuntimeOnboard: {
     setupBedrockRuntimeInference(input: {
       sandboxName: string | null;
@@ -109,11 +134,45 @@ export type RemoteProviderDeps = CommonDeps & {
       upsertProvider: UpsertProvider;
       verifyInferenceRoute: VerifyInferenceRoute;
       verifyOnboardInferenceSmoke: any;
+      updateSandbox: Registry["updateSandbox"];
+      exitProcess: CommonDeps["exitProcess"];
+      error: (message: string) => void;
+      log: (message: string) => void;
+    }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
+  };
+  openrouterRuntimeOnboard: {
+    setupOpenRouterRuntimeInference(input: {
+      sandboxName: string | null;
+      provider: string;
+      model: string;
+      credentialEnv: string | null;
+      credentialValue: string | null;
+      reuseGatewayCredentialWithoutLocalKey?: boolean;
+      skipHostInferenceSmoke?: boolean;
+      isNonInteractive: () => boolean;
+      runOpenshell: RunOpenshell;
+      upsertProvider: UpsertProvider;
+      verifyInferenceRoute: VerifyInferenceRoute;
+      verifyOnboardInferenceSmoke: any;
+      updateSandbox: Registry["updateSandbox"];
+      exitProcess: CommonDeps["exitProcess"];
+      error: (message: string) => void;
+      log: (message: string) => void;
     }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
   };
 };
 
+// DNS lookup signature compatible with `dnsPromises.lookup(host, { all: true })`
+// and with the injectable `lookup` accepted by
+// `rewriteConfigUrlsWithDnsPinning` in `../../sandbox/config`. Real callers omit
+// it (defaulting to real DNS); tests inject a mock.
+export type LookupFn = (
+  hostname: string,
+  options: { all: true },
+) => Promise<Array<{ address: string; family?: number }>>;
+
 export type HermesDeps = CommonDeps & {
+  lookup?: LookupFn;
   hermesProviderAuth: {
     HERMES_PROVIDER_NAME: string;
     isHermesProviderRegistered(runOpenshell: any): boolean;
@@ -207,12 +266,15 @@ export type RoutedDeps = CommonDeps & {
     ): { ok: boolean; result: { message?: string; status?: number } };
   };
   hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
+  redact: (input: string) => string;
+  compactText: (input: string) => string;
 };
 
 export const REMOTE_PROVIDER_NAMES = [
   "nvidia-prod",
   "nvidia-nim",
   "openai-api",
+  "openrouter-api",
   "anthropic-prod",
   "compatible-anthropic-endpoint",
   "gemini-api",

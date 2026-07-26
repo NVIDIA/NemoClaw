@@ -6,13 +6,15 @@ import type {
   SpawnSyncOptionsWithStringEncoding,
   SpawnSyncReturns,
 } from "node:child_process";
-import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "./name-validation";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 
-const { spawnSync } = require("child_process");
-const path = require("path");
-const { detectDockerHost } = require("./platform");
-const { shellQuote } = require("./core/shell-quote") as typeof import("./core/shell-quote");
-const { buildSubprocessEnv } = require("./subprocess-env") as typeof import("./subprocess-env");
+import { redirectInheritedChildStdoutToStderr } from "./cli/stdout-guard";
+import { shellQuote } from "./core/shell-quote";
+import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "./name-validation";
+import { detectDockerHost } from "./platform";
+import { redact, redactError, writeRedactedResult } from "./security/redact";
+import { buildSubprocessEnv } from "./subprocess-env";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
@@ -24,6 +26,11 @@ type RunnerOptions = SpawnSyncOptions & {
 
 type CaptureOptions = Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> & {
   ignoreError?: boolean;
+  /**
+   * Append captured stderr to the returned stdout. This opt-in output is raw
+   * and unredacted; callers must not log it without applying redaction first.
+   */
+  includeStderr?: boolean;
 };
 
 type SpawnResult = SpawnSyncReturns<string | Buffer>;
@@ -94,6 +101,7 @@ function spawnAndHandle(
 ): SpawnResult {
   const safeFile = normalizeSpawnFile(file, "spawnAndHandle");
   const safeArgs = normalizeSpawnArgs(args, "spawnAndHandle");
+  const effectiveStdio = redirectInheritedChildStdoutToStderr(stdio);
   // All non-shell runner paths pass argv arrays and force shell=false; runShell
   // and runInteractiveShell enter here with a literal `bash -c` executable and
   // an explicitly named shell boundary. Extra environment values are filtered by
@@ -103,12 +111,12 @@ function spawnAndHandle(
   const result = spawnSync(safeFile, safeArgs, {
     ...opts,
     shell: false,
-    stdio,
+    stdio: effectiveStdio,
     cwd: ROOT,
     env: buildRunnerEnv(opts.env),
   });
   if (!opts.suppressOutput) {
-    writeRedactedResult(result, stdio);
+    writeRedactedResult(result, effectiveStdio);
   }
   if (result.error && !opts.ignoreError) {
     console.error(
@@ -168,7 +176,7 @@ function runArrayCmd(
     throw new Error(`${callerName}: shell option is forbidden when passing an argv array`);
   }
 
-  const stdio = stdioCfg ?? defaultStdio;
+  const stdio = redirectInheritedChildStdoutToStderr(stdioCfg ?? defaultStdio);
 
   // run() always uses argv arrays, rejects `shell: true` above, and validates
   // the executable/argv for process-spawn metacharacters such as NUL bytes.
@@ -241,17 +249,29 @@ function runFile(
 /**
  * Run a program directly with argv-style arguments and capture trimmed stdout.
  * Throws a redacted error on failure, or returns '' when opts.ignoreError is true.
+ * When opts.includeStderr is true, ignored failures instead return combined
+ * stdout and raw, unredacted stderr; callers must redact before logging it.
  *
  * Shell-string capture is intentionally unsupported. If you truly need shell
  * parsing, spell it out explicitly at the call site (for example
  * ["sh", "-c", script]) so reviews and static checks can see the boundary.
  */
+function capturedRunCaptureOutput(
+  result: SpawnSyncReturns<string>,
+  includeStderr: boolean,
+): string {
+  const stdout = (result.stdout || "").trim();
+  if (!includeStderr) return stdout;
+  const stderr = (result.stderr || "").trim();
+  return [stdout, stderr].filter(Boolean).join("\n").trim();
+}
+
 function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
   if (!Array.isArray(cmd)) {
     throw new Error("runCapture no longer accepts shell strings; pass an argv array instead");
   }
   const [exe, args] = normalizeArgv(cmd, "runCapture");
-  const { ignoreError, env: extraEnv, stdio: _stdio, ...spawnOpts } = opts;
+  const { ignoreError, includeStderr, env: extraEnv, stdio: _stdio, ...spawnOpts } = opts;
 
   // Guard: re-enabling shell interpretation defeats the purpose of argv arrays.
   if (spawnOpts.shell) {
@@ -275,25 +295,22 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
 
     // Check result.error first — spawnSync sets this (with status === null) when
     // the executable is missing (ENOENT), the call times out, or the spawn fails.
+    const output = capturedRunCaptureOutput(result, includeStderr === true);
     if (result.error) {
-      if (ignoreError) return "";
+      if (ignoreError) return includeStderr === true ? output : "";
       throw result.error;
     }
     if (result.status !== 0) {
-      if (ignoreError) return "";
+      if (ignoreError) return includeStderr === true ? output : "";
       throw new Error(`Command failed with status ${result.status}`);
     }
 
-    const stdout = result.stdout || "";
-    return (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim();
+    return output;
   } catch (err) {
     if (ignoreError) return "";
     throw redactError(err);
   }
 }
-
-// Unified redaction — see redact.ts (#2381).
-const { redact, redactError, writeRedactedResult } = require("./security/redact");
 
 /** Structured result returned by runCaptureEx. */
 export interface CaptureResult {
@@ -342,11 +359,9 @@ function runCaptureEx(
     const timedOut =
       (result.error != null && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") ||
       result.status === 28;
-    const stdout = result.stdout || "";
-    const stderr = result.stderr || "";
     return {
-      stdout: (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim(),
-      stderr: (typeof stderr === "string" ? stderr : stderr.toString("utf-8")).trim(),
+      stdout: (result.stdout || "").trim(),
+      stderr: (result.stderr || "").trim(),
       exitCode: result.status,
       timedOut,
     };

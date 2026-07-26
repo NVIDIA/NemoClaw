@@ -1,0 +1,188 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { ExpectedState, StateProbeId } from "./types.ts";
+
+// Source of truth for expected state in the live E2E target path.
+// Inference and credentials remain declared in metadata, but the
+// state-validation phase fixture only emits probes for dimensions with typed
+// helpers today.
+
+const cloudOpenclawReady: ExpectedState = {
+  id: "cloud-openclaw-ready",
+  cli: { installed: true },
+  gateway: { expected: "present", health: "healthy" },
+  sandbox: { expected: "present", status: "running", agent: "openclaw" },
+  inference: { expected: "available", provider: "nvidia" },
+  credentials: { expected: "present" },
+};
+
+const cloudOpenclawCustomPoliciesReady: ExpectedState = {
+  ...cloudOpenclawReady,
+  id: "cloud-openclaw-custom-policies-ready",
+};
+
+const cloudHermesReady: ExpectedState = {
+  id: "cloud-hermes-ready",
+  cli: { installed: true },
+  gateway: { expected: "present", health: "healthy" },
+  sandbox: { expected: "present", status: "running", agent: "hermes" },
+  inference: { expected: "available", provider: "nvidia" },
+  credentials: { expected: "present" },
+};
+
+// Deep Agents Code is a terminal-agent runtime, not an OpenClaw dashboard
+// runtime. The P0-E parity target is sandbox policy/egress behavior, so the
+// live typed target must not require a host dashboard forward on 18789 before
+// running the in-sandbox cloud-experimental checks.
+const cloudDeepAgentsCodeReady: ExpectedState = {
+  id: "cloud-deepagents-code-ready",
+  cli: { installed: true },
+  gateway: { expected: "optional", health: "optional" },
+  sandbox: { expected: "present", status: "running", agent: "langchain-deepagents-code" },
+  inference: { expected: "available", provider: "nvidia" },
+  credentials: { expected: "present" },
+};
+
+const localOllamaOpenclawReady: ExpectedState = {
+  id: "local-ollama-openclaw-ready",
+  cli: { installed: true },
+  gateway: { expected: "present", health: "healthy" },
+  sandbox: { expected: "present", status: "running", agent: "openclaw" },
+  inference: { expected: "available", provider: "ollama" },
+  credentials: { expected: "present" },
+};
+
+const macosCliReadyDockerOptional: ExpectedState = {
+  id: "macos-cli-ready-docker-optional",
+  cli: { installed: true },
+  gateway: { expected: "optional", health: "optional" },
+  sandbox: { expected: "optional", status: "optional", agent: "openclaw" },
+  inference: { expected: "optional", provider: "nvidia" },
+  credentials: { expected: "optional" },
+};
+
+const preflightFailureNoSandbox: ExpectedState = {
+  id: "preflight-failure-no-sandbox",
+  cli: { installed: true },
+  gateway: { expected: "absent" },
+  sandbox: { expected: "absent" },
+};
+
+const onboardingFailureInvalidNvidiaKey: ExpectedState = {
+  id: "onboarding-failure-invalid-nvidia-key",
+  cli: { installed: true },
+  gateway: { expected: "absent" },
+  sandbox: { expected: "absent" },
+};
+
+const onboardingFailureGatewayPortConflict: ExpectedState = {
+  id: "onboarding-failure-gateway-port-conflict",
+  cli: { installed: true },
+  gateway: { expected: "absent" },
+  sandbox: { expected: "absent" },
+};
+
+const onboardingFailurePolicyPresetsRequired: ExpectedState = {
+  id: "onboarding-failure-policy-presets-required",
+  cli: { installed: true },
+};
+
+// Post-reboot recovery contract. After the lifecycle phase restarts
+// the OpenShell gateway through the required user service, then
+// runs `nemoclaw <sandbox> status`, this target locks down:
+//
+//   * `cli` still installed.
+//   * `localRegistry` entry preserved: this is the user-visible
+//     regression target. The destructive `missing` branch wipes the
+//     entry; preservation here proves #4578's mitigation and the
+//     Docker-corroboration path hold together.
+//   * `dockerSandboxContainer` still present: any recovery path must
+//     not delete the labeled container or its `*-nemoclaw-gpu-backup-*`
+//     sibling as a side effect.
+//
+//   * `gateway` healthy: the user-service path must restore the
+//     named OpenShell gateway without `nemoclaw onboard --resume`.
+const postRebootRecoveryReady: ExpectedState = {
+  id: "post-reboot-recovery-ready",
+  cli: { installed: true },
+  gateway: { expected: "present", health: "healthy" },
+  localRegistry: { expected: "present" },
+  dockerSandboxContainer: { expected: "present" },
+};
+
+const REGISTRY: readonly ExpectedState[] = [
+  cloudOpenclawReady,
+  cloudOpenclawCustomPoliciesReady,
+  cloudHermesReady,
+  cloudDeepAgentsCodeReady,
+  localOllamaOpenclawReady,
+  macosCliReadyDockerOptional,
+  preflightFailureNoSandbox,
+  onboardingFailureInvalidNvidiaKey,
+  onboardingFailureGatewayPortConflict,
+  onboardingFailurePolicyPresetsRequired,
+  postRebootRecoveryReady,
+];
+
+const BY_ID: ReadonlyMap<string, ExpectedState> = new Map(
+  REGISTRY.map((state) => [state.id, state]),
+);
+
+export function listExpectedStates(): readonly ExpectedState[] {
+  return REGISTRY;
+}
+
+export function getExpectedState(id: string): ExpectedState | undefined {
+  return BY_ID.get(id);
+}
+
+export function requireExpectedState(id: string): ExpectedState {
+  const state = BY_ID.get(id);
+  if (!state) {
+    const available = Array.from(BY_ID.keys()).join(", ");
+    throw new Error(`Unknown expected_state id '${id}' (available: ${available})`);
+  }
+  return state;
+}
+
+// Translate the typed expected-state contract into the concrete probe
+// ids the state-validation orchestrator emits. Inference and
+// credentials probes are intentionally omitted today (probe scripts
+// not yet implemented); their declarations remain in ExpectedState so
+// the contract is visible in plan output and a future change can
+// switch on emission without touching target data. "optional"
+// dimensions emit no probe actions.
+export function probesForState(state: ExpectedState): readonly StateProbeId[] {
+  const probes: StateProbeId[] = [];
+  if (state.cli?.installed === true) {
+    probes.push("cli-installed");
+  }
+  // Host-side aspects run BEFORE runtime-derived gateway/sandbox
+  // probes. The state-validation orchestrator short-circuits on the
+  // first probe failure, so host-side preservation invariants —
+  // which are the user-visible regression targets for #4423-class
+  // bugs — must be observed first. A regression that destroys the
+  // registry while leaving the gateway in a transient state would
+  // otherwise be masked by a noisy gateway-healthy failure.
+  // "absent" deliberately emits no probe today: it would require
+  // asserting the registry/container does NOT exist, which has no
+  // target in flight. Add when a negative target needs it.
+  if (state.localRegistry?.expected === "present") {
+    probes.push("local-registry-entry-present");
+  }
+  if (state.dockerSandboxContainer?.expected === "present") {
+    probes.push("docker-sandbox-container-present");
+  }
+  if (state.gateway?.expected === "present" && state.gateway.health === "healthy") {
+    probes.push("gateway-healthy");
+  } else if (state.gateway?.expected === "absent") {
+    probes.push("gateway-absent");
+  }
+  if (state.sandbox?.expected === "present" && state.sandbox.status === "running") {
+    probes.push("sandbox-running");
+  } else if (state.sandbox?.expected === "absent") {
+    probes.push("sandbox-absent");
+  }
+  return probes;
+}

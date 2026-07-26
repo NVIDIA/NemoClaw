@@ -23,83 +23,18 @@
 // and delete this module along with its callers in docker-gpu-patch.ts and
 // docker-gpu-sandbox-create.ts.
 
+import { hasZeroDockerExitStatus } from "./docker-command-result";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import {
-  dockerRename as defaultDockerRename,
-  dockerRm as defaultDockerRm,
-  dockerStart as defaultDockerStart,
-  dockerStop as defaultDockerStop,
-} from "../adapters/docker";
-import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch";
+  resolveDockerGpuPatchRollbackDeps,
+  rollbackToBackupContainer,
+} from "./docker-gpu-patch-rollback";
+import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch-types";
 
-const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
-
-type DockerRunResult = {
-  status?: number | null;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
-};
-
-type DockerRunOptions = Record<string, unknown>;
-
-type DockerContainerFn = (containerName: string, opts?: DockerRunOptions) => DockerRunResult;
-type DockerRenameFn = (
-  oldContainerName: string,
-  newContainerName: string,
-  opts?: DockerRunOptions,
-) => DockerRunResult;
-
-type ResolvedRollbackDeps = {
-  dockerStop: DockerContainerFn;
-  dockerRm: DockerContainerFn;
-  dockerRename: DockerRenameFn;
-  dockerStart: DockerContainerFn;
-};
-
-function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  return Number(result?.status ?? 0) === 0;
-}
-
-function resolveRollbackDeps(deps: DockerGpuPatchDeps): ResolvedRollbackDeps {
-  return {
-    dockerStop: deps.dockerStop ?? defaultDockerStop,
-    dockerRm: deps.dockerRm ?? defaultDockerRm,
-    dockerRename: deps.dockerRename ?? defaultDockerRename,
-    dockerStart: deps.dockerStart ?? defaultDockerStart,
-  };
-}
-
-export function rollbackToBackupContainer(
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
-  deps: ResolvedRollbackDeps,
-): boolean {
-  const containerOpts = {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-  };
-  deps.dockerStop(refs.newContainerId, containerOpts);
-  deps.dockerRm(refs.newContainerId, containerOpts);
-  const restored = deps.dockerRename(refs.backupContainerName, refs.originalName, containerOpts);
-  if (!isZeroStatus(restored)) return false;
-  const started = deps.dockerStart(refs.originalName, containerOpts);
-  return isZeroStatus(started);
-}
-
-/**
- * Roll back a Docker GPU patch that failed *before* the supervisor wait — e.g.
- * the recreate `docker run` itself failed after the original sandbox was already
- * renamed to the backup. Restores the pre-patch sandbox so onboarding never
- * leaves an orphaned `*-nemoclaw-gpu-backup-*` container (which otherwise
- * collides on the next retry) (#5512). Accepts raw deps so the real
- * `docker start`/`docker rename` defaults are resolved even when the caller's
- * deps only carry the recreate subset.
- */
-export function rollbackDockerGpuPatchOnRecreateFailure(
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
-  deps: DockerGpuPatchDeps = {},
-): boolean {
-  return rollbackToBackupContainer(refs, resolveRollbackDeps(deps));
-}
+export {
+  restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
+  rollbackToBackupContainer,
+} from "./docker-gpu-patch-rollback";
 
 export type DockerGpuPatchFinalizeOptions = {
   result: DockerGpuPatchResult;
@@ -115,7 +50,7 @@ export function finalizeDockerGpuPatchBackup(
   options: DockerGpuPatchFinalizeOptions,
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchFinalizeOutcome {
-  const resolved = resolveRollbackDeps(deps);
+  const resolved = resolveDockerGpuPatchRollbackDeps(deps);
   const containerOpts = {
     ignoreError: true,
     suppressOutput: true,
@@ -131,7 +66,7 @@ export function finalizeDockerGpuPatchBackup(
     // daemon timeout). Reflect the actual rm status in the outcome so
     // diagnostics can flag a leaked backup container.
     const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
-    return { backupRemoved: isZeroStatus(rmResult), rolledBack: false };
+    return { backupRemoved: hasZeroDockerExitStatus(rmResult), rolledBack: false };
   }
   const rolledBack = rollbackToBackupContainer(
     {
@@ -153,7 +88,7 @@ export function reconcileSupervisorReconnect(
   refs: { newContainerId: string; backupContainerName: string; originalName: string },
   deps: DockerGpuPatchDeps,
 ): SupervisorReconnectOutcome {
-  const resolved = resolveRollbackDeps(deps);
+  const resolved = resolveDockerGpuPatchRollbackDeps(deps);
   const containerOpts = {
     ignoreError: true,
     suppressOutput: true,
@@ -166,7 +101,7 @@ export function reconcileSupervisorReconnect(
     // Surface the actual rm status so callers can fold it into diagnostics
     // alongside the deferred-finalize path in `finalizeDockerGpuPatchBackup`.
     const rmResult = resolved.dockerRm(refs.backupContainerName, containerOpts);
-    return { execReady: true, backupRemoved: isZeroStatus(rmResult) };
+    return { execReady: true, backupRemoved: hasZeroDockerExitStatus(rmResult) };
   }
   const rolledBack = rollbackToBackupContainer(refs, resolved);
   return {

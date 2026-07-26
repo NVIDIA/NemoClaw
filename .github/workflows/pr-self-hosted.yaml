@@ -38,7 +38,7 @@ jobs:
 
   build-sandbox-images:
     runs-on: linux-amd64-cpu4
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -47,7 +47,13 @@ jobs:
         uses: ./.github/actions/resolve-sandbox-base-image
 
       - name: Build production image
-        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
+        env:
+          BASE_IMAGE: ${{ env.BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-production .
 
       - name: Build sandbox test image (fixtures layered on production)
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
@@ -73,7 +79,7 @@ jobs:
 
   build-sandbox-images-arm64:
     runs-on: linux-arm64-cpu4
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -82,7 +88,13 @@ jobs:
         uses: ./.github/actions/resolve-sandbox-base-image
 
       - name: Build production image on arm64
-        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .
+        env:
+          BASE_IMAGE: ${{ env.BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
 
       - name: Build sandbox test image on arm64
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .

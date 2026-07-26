@@ -22,7 +22,7 @@ describe("installer plan actions", () => {
         NEMOCLAW_PROVIDER: "cloud",
         PATH: "/usr/bin",
       },
-      nodeVersion: "v22.16.0",
+      nodeVersion: "v22.19.0",
       npmPrefix: "/tmp/npm-prefix",
       npmTargetState: writableState,
       npmVersion: "10.1.0",
@@ -31,7 +31,7 @@ describe("installer plan actions", () => {
     expect(plan.installRef).toBe("feature/refactor");
     expect(plan.installerVersion).toBe("feature/refactor");
     expect(plan.provider).toMatchObject({ normalized: "build", raw: "cloud", valid: true });
-    expect(plan.runtime).toEqual({ ok: true, nodeVersion: "v22.16.0", npmVersion: "10.1.0" });
+    expect(plan.runtime).toEqual({ ok: true, nodeVersion: "v22.19.0", npmVersion: "10.1.0" });
     expect(plan.npm?.globalBin).toBe(path.join("/tmp/npm-prefix", "bin"));
     expect(plan.npm?.pathWithGlobalBin).toBe(
       `${path.join("/tmp/npm-prefix", "bin")}${path.delimiter}/usr/bin`,

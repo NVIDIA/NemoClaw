@@ -7,6 +7,14 @@
 // avoid an import cycle: connect.ts and process-recovery.ts both pull in
 // onboard helpers, so they must not be statically imported here.
 export const finalizationHandlerDeps = {
+  waitForSandboxControlPlaneReady(name: string): boolean {
+    const processRecovery: typeof import("../actions/sandbox/process-recovery") =
+      require("../actions/sandbox/process-recovery");
+    const { SANDBOX_READY_TIMEOUT_SECS }: typeof import("./env") = require("./env");
+    return processRecovery.waitForRecreatedSandboxOpenShellReady(name, {
+      timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
+    });
+  },
   checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): void {
     const processRecovery: typeof import("../actions/sandbox/process-recovery") =
       require("../actions/sandbox/process-recovery");
@@ -28,5 +36,11 @@ export const finalizationHandlerDeps = {
     const warmup: typeof import("../actions/sandbox/auto-pair-warmup") =
       require("../actions/sandbox/auto-pair-warmup");
     warmup.runSandboxScopeWarmupRun(name);
+  },
+  isDeploymentHealthy(result: import("../verify-deployment").VerifyDeploymentResult): boolean {
+    return result.healthy;
+  },
+  reportDeploymentReadiness(healthy: boolean): void {
+    if (!healthy) process.exitCode = 1;
   },
 };

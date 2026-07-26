@@ -93,6 +93,7 @@ const policies = require(${d("policy/index.js")});
 const policyCalls = { loadPreset: [], applyPreset: [] };
 policies.listPresets = () => [];
 policies.loadPreset = (name) => { policyCalls.loadPreset.push(name); return "network_policies:\n  stub: {}\n"; };
+policies.loadPresetForSandbox = (_sandboxName, name) => policies.loadPreset(name);
 policies.parsePresetPolicyKeys = () => ["stub"];
 policies.applyPreset = (name, preset) => { policyCalls.applyPreset.push({ name, preset }); return true; };
 policies.getAppliedPresets = () => [];

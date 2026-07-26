@@ -12,11 +12,22 @@ const repoRoot = path.join(import.meta.dirname, "..");
 const probeTimeoutMs = 10_000;
 
 type SliceName = "initial" | "core" | "final";
-type ProbeMode = "fresh" | "resume-initial" | "ahead-core";
+type ProbeMode =
+  | "fresh"
+  | "endpoint-override"
+  | "resume-initial"
+  | "resume-core-gateway"
+  | "resume-incomplete-core-gateway"
+  | "resume-core-gateway-provenance-resolver"
+  | "authoritative-core-gateway"
+  | "authoritative-core-gateway-policy-tier"
+  | "ordinary-policy-tier"
+  | "ahead-core";
 
 interface ProbeOptions {
   slice: SliceName;
   mode?: ProbeMode;
+  policyTier?: "balanced" | "restricted";
 }
 
 interface DistArtifact {
@@ -72,6 +83,11 @@ const requiredDistArtifacts: readonly DistArtifact[] = [
       "provider-inference.ts",
     ),
   },
+  {
+    label: "gateway handler",
+    sourcePath: path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "gateway.ts"),
+    distPath: path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "gateway.ts"),
+  },
 ];
 
 function distArtifactStatus(): { ok: true } | { ok: false; reason: string } {
@@ -103,11 +119,18 @@ function assertFreshDistArtifacts(): void {
   );
 }
 
+function writeSuccessfulOpenShell(tmpDir: string): string {
+  const openshellPath = path.join(tmpDir, "openshell");
+  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  return openshellPath;
+}
+
 function probeEnvironment(tmpDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: tmpDir,
     TMPDIR: tmpDir,
     PATH: process.env.PATH || "/usr/bin:/bin",
+    NEMOCLAW_OPENSHELL_BIN: writeSuccessfulOpenShell(tmpDir),
     NODE_ENV: "test",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_SANDBOX_NAME: "fsm-sandbox",
@@ -161,6 +184,13 @@ function runSliceProbe(options: ProbeOptions) {
   const providerHandlerPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "provider-inference.ts"),
   );
+  const gatewayHandlerPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "gateway.ts"),
+  );
+  const coreFlowPhasesPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
+  );
+  const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
   fs.writeFileSync(
     scriptPath,
@@ -171,20 +201,46 @@ const { advanceTo, branchTo } = require(${resultPath});
 const onboardSession = require(${sessionPath});
 const preflightHandlers = require(${preflightHandlerPath});
 const providerHandlers = require(${providerHandlerPath});
+const gatewayHandlers = require(${gatewayHandlerPath});
+const coreFlowPhases = require(${coreFlowPhasesPath});
+const registry = require(${registryPath});
 const called = [];
 const sentinel = new Error("slice-called");
+
+if (scenario.mode.endsWith("policy-tier") || scenario.mode.endsWith("provenance-resolver")) {
+  coreFlowPhases.createCoreOnboardFlowPhases = (options) => {
+    const detail = scenario.mode.endsWith("provenance-resolver")
+      ? (() => {
+          const entry = options.sandboxDeps.getSandboxRegistryEntry("fsm-sandbox");
+          return ["registry-provenance", entry?.provider, entry?.endpointUrl, entry?.endpointSource].join(":");
+        })()
+      : "authoritative-policy-tier:" +
+        (options.sandbox.authoritativePolicyTier === undefined
+          ? "undefined"
+          : String(options.sandbox.authoritativePolicyTier));
+    called.push(detail);
+    throw sentinel;
+  };
+}
 
 function machine(state, revision = 1) {
   return { version: 1, state, stateEnteredAt: null, revision };
 }
 
-function seedResumeSession(state) {
-  onboardSession.saveSession(onboardSession.createSession({
+function seedResumeSession(state, sandboxComplete = true) {
+  const session = onboardSession.createSession({
     mode: "non-interactive",
     sandboxName: "fsm-sandbox",
+    provider: "openai-api",
+    model: "gpt-test",
     machine: machine(state),
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-  }));
+  });
+  for (const step of ["preflight", "gateway", "provider_selection"]) {
+    session.steps[step].status = "complete";
+  }
+  if (sandboxComplete) session.steps.sandbox.status = "complete";
+  onboardSession.saveSession(session);
 }
 
 function baseContext(context, overrides = {}) {
@@ -211,7 +267,21 @@ function baseContext(context, overrides = {}) {
   };
 }
 
-preflightHandlers.handlePreflightState = async () => {
+preflightHandlers.handlePreflightState = async (options) => {
+  if (scenario.mode.includes("core-gateway")) {
+    return {
+      gpu: null,
+      sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
+      resumePreflight: true,
+      resumeHasResolvedGpuIntent: true,
+      requestedGpuPassthrough: false,
+      gpuPassthrough: false,
+      effectiveSandboxGpuFlag: "disable",
+      effectiveSandboxGpuDevice: null,
+      session: options.session,
+      stateResult: advanceTo("gateway", { metadata: { state: "preflight" } }),
+    };
+  }
   if (scenario.mode !== "resume-initial") {
     throw new Error("unexpected preflight compatibility handler");
   }
@@ -219,11 +289,25 @@ preflightHandlers.handlePreflightState = async () => {
   throw sentinel;
 };
 
-providerHandlers.handleProviderInferenceState = async () => {
-  if (scenario.mode !== "ahead-core") {
+gatewayHandlers.handleGatewayState = async (options) => {
+  if (!scenario.mode.includes("core-gateway")) {
+    throw new Error("unexpected gateway compatibility handler");
+  }
+  called.push("gateway:" + options.gatewayName + ":" + process.env.OPENSHELL_GATEWAY);
+  return {
+    gatewayReuseState: "healthy",
+    session: options.session,
+    stateResult: advanceTo("provider_selection", { metadata: { state: "gateway" } }),
+  };
+};
+
+providerHandlers.handleProviderInferenceState = async (options) => {
+  if (scenario.mode !== "ahead-core" && !scenario.mode.includes("core-gateway")) {
     throw new Error("unexpected provider compatibility handler");
   }
-  called.push("provider-compat");
+  called.push(
+    scenario.mode === "ahead-core" ? "provider-compat" : "provider-compat:" + options.gatewayName,
+  );
   throw sentinel;
 };
 
@@ -268,6 +352,24 @@ flowSlices.runFinalOnboardFlowSequence = async ({ context }) => {
 if (scenario.mode === "resume-initial") {
   seedResumeSession("preflight");
 }
+if (scenario.mode.includes("core-gateway")) {
+  seedResumeSession("inference", scenario.mode !== "resume-incomplete-core-gateway");
+}
+if (
+  scenario.mode === "resume-core-gateway" ||
+  scenario.mode === "resume-incomplete-core-gateway" ||
+  scenario.mode === "resume-core-gateway-provenance-resolver"
+) {
+  registry.registerSandbox({
+    name: "fsm-sandbox",
+    provider: "openai-api",
+    model: "gpt-test",
+    endpointUrl: "https://persisted.example.test/v1",
+    endpointSource: "onboard",
+    gatewayName: "nemoclaw-9090",
+    gatewayPort: 9090,
+  });
+}
 
 const { onboard } = require(${onboardPath});
 
@@ -279,11 +381,25 @@ const { onboard } = require(${onboardPath});
       acceptThirdPartySoftware: true,
       noGpu: true,
       sandboxName: "fsm-sandbox",
-      resume: scenario.mode === "resume-initial",
+      resume: scenario.mode === "resume-initial" || scenario.mode.includes("core-gateway"),
+      ...(scenario.mode.startsWith("authoritative-")
+        ? {
+            authoritativeResumeConfig: true,
+            recreateSandbox: true,
+            onboardLockAlreadyHeld: true,
+            targetGatewayName: "nemoclaw-9090",
+            targetGatewayPort: 9090,
+          }
+        : {}),
     });
     throw new Error("expected slice sentinel");
   } catch (error) {
-    if (error === sentinel || error?.message === sentinel.message) {
+    if (
+      error === sentinel ||
+      error?.message === sentinel.message ||
+      (scenario.mode === "endpoint-override" &&
+        error?.name === "OpenShellGatewayEndpointOverrideError")
+    ) {
       console.log(JSON.stringify({ called }));
       return;
     }
@@ -300,7 +416,13 @@ const { onboard } = require(${onboardPath});
     {
       cwd: repoRoot,
       encoding: "utf-8",
-      env: probeEnvironment(tmpDir),
+      env: {
+        ...probeEnvironment(tmpDir),
+        ...(scenario.mode === "endpoint-override"
+          ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
+          : {}),
+        ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
+      },
       timeout: probeTimeoutMs,
     },
   );
@@ -335,6 +457,10 @@ describe("live onboard FSM slice boundaries", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial" }), ["initial"]);
   });
 
+  it("rejects an ambient gateway endpoint before entering the initial slice", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "endpoint-override" }), []);
+  });
+
   it("enters the core slice after the initial slice reaches provider selection", () => {
     assert.deepEqual(runSliceProbe({ slice: "core" }), ["initial", "core"]);
   });
@@ -354,5 +480,53 @@ describe("live onboard FSM slice boundaries", () => {
       "initial",
       "provider-compat",
     ]);
+  });
+
+  it("routes ordinary resume through the sandbox's recorded gateway", () => {
+    assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-core-gateway" }), [
+      "gateway:nemoclaw-9090:nemoclaw-9090",
+      "provider-compat:nemoclaw-9090",
+    ]);
+  });
+
+  it("routes an incomplete registered resume through its requested sandbox gateway", () => {
+    assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-incomplete-core-gateway" }), [
+      "gateway:nemoclaw-9090:nemoclaw-9090",
+      "provider-compat:nemoclaw-9090",
+    ]);
+  });
+
+  it("wires the live sandbox registry resolver into core provenance", () => {
+    assert.deepEqual(
+      runSliceProbe({ slice: "core", mode: "resume-core-gateway-provenance-resolver" }),
+      [
+        "gateway:nemoclaw-9090:nemoclaw-9090",
+        "registry-provenance:openai-api:https://persisted.example.test/v1:onboard",
+      ],
+    );
+  });
+
+  it("keeps an authoritative rebuild gateway after the registry row is removed", () => {
+    assert.deepEqual(runSliceProbe({ slice: "core", mode: "authoritative-core-gateway" }), [
+      "gateway:nemoclaw-9090:nemoclaw-9090",
+      "provider-compat:nemoclaw-9090",
+    ]);
+  });
+
+  it("leaves ordinary policy tiers non-authoritative in the runOnboard machine", () => {
+    for (const policyTier of ["balanced", "restricted"] as const) {
+      assert.deepEqual(runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }), [
+        "initial",
+        "authoritative-policy-tier:undefined",
+      ]);
+    }
+  });
+
+  it("preserves an explicit null policy tier for authoritative rebuilds", () => {
+    const called = runSliceProbe({
+      slice: "core",
+      mode: "authoritative-core-gateway-policy-tier",
+    });
+    assert.equal(called.at(-1), "authoritative-policy-tier:null");
   });
 });

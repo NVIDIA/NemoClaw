@@ -7,6 +7,7 @@ import type { Session } from "../state/onboard-session";
 import {
   hermesApiMode,
   normalizeInferenceApi,
+  readOpenClawPrimaryRouteApi,
   resolveRuntimeInferenceApi,
 } from "./inference-route-api";
 
@@ -79,6 +80,17 @@ describe("normalizeInferenceApi", () => {
     expect(normalizeInferenceApi("openai-responses")).toBe("openai-responses");
     expect(normalizeInferenceApi("openai")).toBeNull();
     expect(normalizeInferenceApi(null)).toBeNull();
+  });
+});
+
+describe("readOpenClawPrimaryRouteApi", () => {
+  it("defaults an active legacy openai provider without api to OpenAI Completions", () => {
+    expect(
+      readOpenClawPrimaryRouteApi({
+        agents: { defaults: { model: { primary: "openai/gpt-4.1" } } },
+        models: { providers: { openai: { models: [{ id: "gpt-4.1" }] } } },
+      }),
+    ).toBe("openai-completions");
   });
 });
 
@@ -188,11 +200,56 @@ describe("resolveRuntimeInferenceApi", () => {
     ).toBe("openai-responses");
   });
 
-  it("reads Hermes api_mode for same-provider Hermes switches", () => {
+  it("reads Hermes api_mode for other same-provider Hermes switches", () => {
     expect(
       resolve(
         { model: { api_mode: "anthropic_messages" } },
-        { agentName: "hermes", session: null },
+        {
+          agentName: "hermes",
+          currentProvider: "compatible-endpoint",
+          provider: "compatible-endpoint",
+          session: null,
+        },
+      ),
+    ).toBe("anthropic-messages");
+  });
+
+  it("keeps Hermes custom Anthropic routes off the managed Anthropic SSE frontend (#6289)", () => {
+    expect(
+      resolve(
+        { model: { api_mode: "anthropic_messages" } },
+        {
+          agentName: "hermes",
+          session: session({ preferredInferenceApi: "anthropic-messages" }),
+        },
+      ),
+    ).toBe("openai-completions");
+  });
+
+  it("uses the Hermes override when switching into a custom Anthropic route (#6289)", () => {
+    expect(
+      resolve(
+        {},
+        {
+          agentName: "hermes",
+          currentProvider: "nvidia-prod",
+          session: session({
+            provider: "nvidia-prod",
+            preferredInferenceApi: "openai-completions",
+          }),
+        },
+      ),
+    ).toBe("openai-completions");
+  });
+
+  it("preserves native Anthropic routing for OpenClaw custom endpoints (#6289)", () => {
+    expect(
+      resolve(
+        { models: { providers: { anthropic: { api: "anthropic-messages" } } } },
+        {
+          agentName: "openclaw",
+          session: session({ preferredInferenceApi: "anthropic-messages" }),
+        },
       ),
     ).toBe("anthropic-messages");
   });

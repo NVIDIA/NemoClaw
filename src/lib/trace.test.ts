@@ -100,13 +100,16 @@ describe("onboard trace artifacts", () => {
 
   it("sanitizes curl probe URLs and records status metadata", () => {
     withTraceFile((traceFile) => {
+      // Use a URL with a benign query parameter (`model`) that the curl-arg
+      // validator allows through but the trace sanitizer still redacts as
+      // part of its blanket query-string redaction. Inline `Authorization:
+      // Bearer ...` was removed because validateCurlProbeArgs rejects inline
+      // credential headers — credentials must go via the trusted --config
+      // tmpfile. The credential-shaped query-name rejection in
+      // CURL_SECRET_QUERY_PARAM_PATTERN now also refuses `session_token`,
+      // `api_key`, etc. See PR #5975.
       const result = runCurlProbe(
-        [
-          "-sS",
-          "-H",
-          "Authorization: Bearer should-not-appear",
-          "https://example.test/v1/chat/completions?key=secret",
-        ],
+        ["-sS", "https://example.test/v1/chat/completions?model=should-not-appear"],
         {
           spawnSyncImpl: () =>
             ({
@@ -127,9 +130,8 @@ describe("onboard trace artifacts", () => {
       );
 
       expect(text).not.toContain("should-not-appear");
-      expect(text).not.toContain("key=secret");
       expect(span?.attributes["http.url"]).toBe(
-        "https://example.test/v1/chat/completions?key=%3CREDACTED%3E",
+        "https://example.test/v1/chat/completions?model=%3CREDACTED%3E",
       );
       expect(span?.events[0].attributes).toMatchObject({ ok: true, http_status: 200 });
     });

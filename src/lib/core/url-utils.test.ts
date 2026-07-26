@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
 import {
+  canonicalEndpoint,
   compactText,
   formatEnvAssignment,
   isLoopbackHostname,
@@ -68,6 +69,48 @@ describe("normalizeProviderBaseUrl", () => {
     ["invalid URL", "not-a-url", "openai", "not-a-url"],
   ] as const)("normalizes %s", (_label, input, provider, expected) => {
     expect(normalizeProviderBaseUrl(input, provider)).toBe(expected);
+  });
+});
+
+describe("canonicalEndpoint", () => {
+  it.each([null, undefined] as const)("rejects missing endpoint %s", (input) => {
+    expect(canonicalEndpoint(input, "openai")).toBeNull();
+  });
+
+  it("rejects non-HTTP(S) protocols", () => {
+    expect(canonicalEndpoint("ftp://proxy.example.com/v1", "openai")).toBeNull();
+  });
+
+  it.each([
+    "https://user@proxy.example.com/v1",
+    "https://user:password@proxy.example.com/v1",
+  ])("rejects URL credentials in %s", (input) => {
+    expect(canonicalEndpoint(input, "openai")).toBeNull();
+  });
+
+  it("accepts the 2048-character bound and rejects longer endpoints", () => {
+    const prefix = "https://example.com/";
+    const atLimit = `${prefix}${"a".repeat(2048 - prefix.length)}`;
+    expect(atLimit).toHaveLength(2048);
+    expect(canonicalEndpoint(atLimit, "openai")).toBe(atLimit);
+    expect(canonicalEndpoint(`${atLimit}a`, "openai")).toBeNull();
+  });
+
+  it.each([
+    [
+      "OpenAI path",
+      "https://proxy.example.com/v1/chat/completions?region=west#fragment",
+      "openai",
+      "https://proxy.example.com/v1",
+    ],
+    [
+      "Anthropic path",
+      "https://proxy.example.com/v1/messages?region=west#fragment",
+      "anthropic",
+      "https://proxy.example.com",
+    ],
+  ] as const)("normalizes %s", (_label, input, flavor, expected) => {
+    expect(canonicalEndpoint(input, flavor)).toBe(expected);
   });
 });
 

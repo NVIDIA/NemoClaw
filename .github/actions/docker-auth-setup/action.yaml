@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: docker-auth-setup
+description: Authenticate to Docker Hub from an isolated per-job Docker config, fail closed.
+
+inputs:
+  auth-required:
+    description: Whether trusted Docker Hub credentials are present for this run.
+    required: true
+  username:
+    description: Docker Hub username; only populated for trusted runs.
+    required: false
+    default: ""
+  token:
+    description: Docker Hub token; only populated for trusted runs.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Authenticate to Docker Hub
+      shell: bash
+      env:
+        DOCKERHUB_AUTH_REQUIRED: ${{ inputs.auth-required }}
+        DOCKERHUB_USERNAME: ${{ inputs.username }}
+        DOCKERHUB_TOKEN: ${{ inputs.token }}
+      run: bash "${{ github.action_path }}/../../scripts/docker-auth-setup.sh"

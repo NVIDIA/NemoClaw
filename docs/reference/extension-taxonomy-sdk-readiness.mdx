@@ -1,0 +1,116 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Extension Taxonomy and SDK Readiness"
+sidebar-title: "Extension Taxonomy and SDK Readiness"
+description: "Defines NemoClaw extension terminology, stability levels, security boundaries, and measurable readiness gates for any future public SDK."
+description-agent: "Defines lifecycle contribution, managed agent package, and agent-native plugin terminology and the gates for any future NemoClaw extension SDK. Use when classifying extension proposals, choosing CLI or documentation wording, or evaluating SDK readiness."
+keywords: ["nemoclaw extensibility taxonomy", "nemoclaw plugin sdk", "lifecycle contribution", "managed agent package", "agent-native plugin", "sdk readiness"]
+content:
+  type: "reference"
+---
+
+This decision record defines the terms and readiness bar for NemoClaw extension discussions.
+It does not introduce a public SDK, package registry, marketplace, extension command, or compatibility promise.
+
+## Decision
+
+NemoClaw reserves `NemoClaw plugin SDK` for a possible future public extension interface.
+NemoClaw does not offer that SDK today, and no proposed NemoClaw extension seam has a public compatibility commitment.
+
+Use the following terms for current work.
+
+| Term | Meaning | Compatibility boundary |
+|---|---|---|
+| Lifecycle contribution | A repository-owned change that participates in NemoClaw onboarding, rebuild, reconcile, removal, recovery, policy, credential attachment, or blueprint application. | It is an internal implementation detail unless a later decision promotes a versioned public contract. |
+| Managed agent package | A package, tool, wrapper, provider, or integration that NemoClaw installs, configures, or attaches for a documented agent runtime. | NemoClaw manages only the documented workflow. The package does not become an arbitrary NemoClaw extension API. |
+| Agent-native plugin | Executable code loaded by OpenClaw, Hermes, Deep Agents Code, or another supported agent through that agent's own plugin or package mechanism. | The agent runtime owns the plugin API and compatibility contract. NemoClaw can provide a sandbox-safe managed installation path. |
+| Candidate public seam | An internal interface being evaluated for possible external use. | It has no public compatibility promise until it passes every readiness gate and a later decision publishes it. |
+| Reserved future NemoClaw plugin SDK | A future, intentionally unimplemented public contract for NemoClaw extension code. | The name is reserved only. There is no SDK, semantic-version promise, registry, CLI contract, or support commitment today. |
+
+Use `plugin` in user-facing documentation for agent-native plugins.
+The scoped issues #5998 and #6097 can retain their established internal wording, but user-facing NemoClaw operations should use `managed agent package`, `lifecycle contribution`, or a more specific term such as `policy preset`, `agent manifest`, or `messaging channel manifest`.
+
+## Execution and Trust Boundaries
+
+The execution class determines where logic runs and which controls apply.
+
+| Execution class | Allowed today | Execution and trust boundary |
+|---|---|---|
+| Data-only contribution | Yes, for reviewed schemas and managed workflows. | Manifests, policy presets, configuration, and metadata are validated before use. They must not contain secrets or introduce executable hooks. |
+| Repository-owned executable contribution | Yes, after normal repository review and testing. | NemoClaw can run shipped host or sandbox code only in its documented component boundary. Security-sensitive host paths require explicit review and tests. |
+| Managed agent package | Yes, for a constrained and documented package path. | Third-party package code runs through the selected agent inside the OpenShell sandbox. NemoClaw must pin package identity, keep credentials outside package metadata, and make policy changes explicit. It does not load package code into the host CLI or OpenShell control path. |
+| Agent-native plugin | Yes, when the selected agent supports it. | The agent loads the code inside its sandbox boundary. The agent runtime owns the plugin API, and NemoClaw owns only its documented install, persistence, policy, and recovery behavior. |
+| Arbitrary NemoClaw executable extension | No. | NemoClaw does not accept third-party code through a host-side or control-path extension point. A later decision would need to define isolation, least privilege, provenance, failure containment, and recovery before enabling this class. |
+
+An operator must be able to identify the source, exact version, and immutable digest or checksum of an installed executable artifact.
+Mutable or unverifiable package references cannot satisfy a future public SDK gate.
+
+## Stability and Security Matrix
+
+Each candidate surface has a current stability level and a security boundary.
+The table describes current commitments, not a roadmap promise.
+
+| Candidate surface | Stability today | Execution class and location | Current contract | Gate before broader use |
+|---|---|---|---|---|
+| Built-in agent lifecycle integration | Internal. | Repository-owned code in the host orchestration path and selected sandbox. | It can change with a NemoClaw release. | Two substantially different built-in consumers must exercise the same seam, including lifecycle and recovery tests. |
+| Agent-scoped compatibility manifest | Managed feature. | Data-only input consumed by host-side setup. | The repository owns the schema, and manifests do not carry secrets. | A versioned schema, compatibility fixtures, deprecation rules, validation errors, and named ownership are required. |
+| Network policy preset | Managed feature. | Data-only policy contribution enforced by OpenShell. | Presets are repository-reviewed, explicit, and deny by default. | Schema validation, safe removal semantics, endpoint provenance, and policy compatibility tests are required. |
+| Messaging channel manifest and module | Internal and managed feature. | Data with repository-owned hooks and managed runtime effects. | Built-in channels are reviewed with NemoClaw and do not form an external plugin API. | Multi-agent lifecycle fixtures, migration tests, credential-redaction tests, and support ownership are required before external use. |
+| Managed agent package workflow | Managed feature candidate. | Exact package code loaded by the agent inside the OpenShell sandbox. | A narrow workflow can manage known agent packages without accepting arbitrary NemoClaw extensions. | Versioned package metadata, provenance checks, explicit policy, secret isolation, deterministic removal, and recovery tests are required. |
+| Agent-native plugin or package | External agent-native surface. | Agent-defined executable code inside the sandbox. | OpenClaw, Hermes, Deep Agents Code, or another agent owns compatibility. | NemoClaw can stabilize only its separate managed lifecycle, not the agent's plugin API. |
+| Observability adapter subscription seam | Candidate public seam that is not implemented. | No executable extension is allowed for this seam today. A later decision must choose an isolated process or sandbox boundary. | No external telemetry plugin API is offered today. | Stable event contracts, failure isolation, two built-in adapters, and every public SDK readiness gate are required. |
+| Arbitrary third-party NemoClaw executable extension | Reserved and unavailable. | Arbitrary executable code in a NemoClaw-defined extension point. | No public versioning, registry, execution, or support contract exists. | Every readiness gate and a later explicit security decision must pass before this class can be allowed. |
+
+## Public SDK Readiness Gates
+
+A candidate seam cannot become a public SDK until every category has reviewable evidence.
+Passing one gate does not imply acceptance of the surface.
+
+| Category | Required decision and evidence | Required verification |
+|---|---|---|
+| Versioning | Publish an explicit schema or API version and a semantic-versioning policy that identifies breaking, feature, and patch changes. | Tests reject unknown versions and pin the version emitted by every built-in consumer. |
+| Compatibility | Declare every supported version and keep fixtures for each one. | CI exercises every supported fixture with at least two substantially different built-in consumers. |
+| Migration | Define upgrade, downgrade, deprecation, and unsupported-version behavior for every supported version. | Tests cover migration to the current version, rollback to each still-supported version, idempotent reruns, and clear rejection of unsupported versions. |
+| Failure isolation | Define the process, privilege, resource, and state boundary for extension failures. | Fault-injection tests prove a failed extension cannot corrupt lifecycle state, expose host privileges, or prevent removal and recovery. |
+| Provenance and trust | Record reviewable source, immutable package identity, version, and digest or checksum for installed artifacts. | Tests reject mutable or mismatched artifacts and preserve provenance across rebuild and restore. |
+| Secrets | Keep raw secrets out of manifests, package metadata, generated configuration, logs, and errors. | Redaction and negative tests cover persistence, rendering, failure messages, backup, and restore. |
+| Policy | Make every network, filesystem, device, and capability contribution explicit, deny by default, reviewable, and reversible. | Tests prove the exact allowed scope, reject undeclared access, and restore the prior policy after removal or rollback. |
+| Rollback and removal | Define deterministic install, reconcile, remove, rebuild, backup, restore, and failed-upgrade behavior for each supported agent. | Lifecycle tests cover every operation, including interruption and recovery, without leaving packages, credentials, policy, or state behind. |
+| Documentation | Publish user and contributor documentation, supported versions, naming rules, troubleshooting, security boundaries, and migration guidance. | Documentation validation and link checks run in CI, and examples use only supported contracts. |
+| Support ownership | Name maintainers, a support window, security response path, issue labels, and escalation criteria. | Ownership checks and release review confirm that every supported version still has an accountable owner. |
+
+The two built-in consumers must be substantially different enough to test the abstraction rather than duplicate one code path.
+For example, consumers should differ in agent runtime, lifecycle behavior, policy needs, or executable versus data-only handling.
+
+## Issue Ownership
+
+These classifications separate current ownership and prevent one proposal from implying a broader public contract.
+
+| Issue | Classification | Ownership boundary |
+|---|---|---|
+| #5998 | Managed agent package workflow with supporting lifecycle contributions. | It can add a narrow NemoClaw-managed add, list, status, remove, and rebuild path for an exact agent package. The package runs through the agent inside the sandbox. It does not create a NemoClaw plugin SDK, registry, marketplace, host extension point, or agent-native plugin API. |
+| #6097 | Internal lifecycle contribution for built-in messaging channel modules. | It organizes built-in manifests, hooks, templates, policies, and runtime assets behind an internal catalog. Its future external discovery notes are not implementation scope and do not establish a public plugin contract. |
+| #3915 | Proposed candidate public seam for observability adapters. | It owns the proposal for stable telemetry events and external adapter subscription. Core instrumentation or built-in adapters can gather evidence internally, but an external API remains unavailable until the seam has two built-in consumers and passes every readiness gate. It does not own messaging modules or managed package lifecycle. |
+| #6201 | Agent-native OpenClaw voice plugin and NVIDIA provider work. | OpenClaw owns provider contracts, the official `voice-call` plugin path, gateway and event APIs, and provider registration. NemoClaw-managed installation remains in #5998. |
+| #6207 | OpenShell sandbox contract validation and networking follow-up. | OpenShell owns sandbox-to-host traffic, WebSocket relay, ingress, proxy, and injected-environment contracts. It does not define a NemoClaw extension seam, and optional future platform work does not block #5998 unless validation finds a regression. |
+
+## Naming Guidance
+
+Use `install OpenClaw plugin`, `install Hermes plugin`, or the equivalent agent name only when that agent runtime owns the plugin mechanism.
+Use `managed agent package`, `managed provider`, `managed tool`, `policy preset`, `messaging channel manifest`, or `lifecycle contribution` for NemoClaw-owned installation and orchestration paths.
+Do not name a CLI command, manifest, package, or documentation page `NemoClaw plugin` unless a later accepted SDK decision creates that public contract.
+
+A managed package command should say that NemoClaw manages an agent package.
+Documentation for code loaded through an agent plugin system should name the owning agent runtime.
+
+## Non-Commitments
+
+This decision makes no SDK, package registry, marketplace, semantic-versioning, migration, support-window, or CLI compatibility commitment.
+It does not implement a user-facing SDK or command.
+It does not accept arbitrary external modules or change the support boundary for agent-native plugin APIs.
+
+## Related Topics
+
+- [Architecture Details](architecture) explains the current NemoClaw runtime and sandbox layers.
+- [Network Policies](network-policies) explains the policy boundary for sandbox egress.

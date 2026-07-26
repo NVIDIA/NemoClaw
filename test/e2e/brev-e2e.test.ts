@@ -10,9 +10,8 @@
  * install.sh from source, onboards a sandbox, then executes the selected test
  * suite against the live environment. Tears down the instance when done.
  *
- * NOTE: This does NOT test the community Launchable install path
- * (launch-plugin.sh). For that, see test-launchable-smoke.sh wired into
- * nightly-e2e.yaml.
+ * NOTE: This does NOT test a published Brev Launchable image. It bootstraps a
+ * generic Brev VM, overlays the selected source revision, and rebuilds NemoClaw.
  *
  * Intended to be run from CI via:
  *   npx vitest run --project e2e-branch-validation
@@ -29,7 +28,6 @@
  *   TEST_SUITE             — which test to run: full (default), deploy-cli, gpu,
  *                             credential-sanitization, telegram-injection, messaging-providers,
  *                             messaging-compatible-endpoint, dashboard-remote-bind, all
- *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp for CPU, any for GPU)
@@ -53,6 +51,17 @@
 import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child_process";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { shellQuote } from "../../src/lib/core/shell-quote";
+import {
+  BREV_MESSAGING_COMPAT_TIMEOUT_MS,
+  BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
+  BREV_REMOTE_WRAPPER_GRACE_MS,
+  BREV_SECURITY_SUITE_TIMEOUT_MS,
+  brevSuiteHarnessSandboxName,
+  brevSuiteNeedsHarnessSandbox,
+  brevWorkflowOwnsInstance,
+  buildBrevRemoteVitestCommand,
+} from "../../tools/e2e/brev-remote-vitest.mts";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
@@ -98,17 +107,15 @@ function requireInstanceName(): string {
   return INSTANCE_NAME;
 }
 
-// Launchable configuration
-// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
+// Brev E2E bootstrap configuration
+// The CPU bootstrap script installs Docker, Node.js, OpenShell CLI, and npm deps.
 // The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
-// Default: use the repo-local script (hermetic — always matches the checked-out branch).
-// Override via LAUNCHABLE_SETUP_SCRIPT env var to test a remote URL instead.
-const DEFAULT_SETUP_SCRIPT_PATH =
-  process.env.LAUNCHABLE_SETUP_SCRIPT ||
-  path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
+// Use the repo-local script so secret-bearing branch validation cannot execute
+// mutable setup code selected outside the reviewed checkout.
+const BOOTSTRAP_SCRIPT_PATH = path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
 // More reliable than grepping log files.
-const LAUNCHABLE_SENTINEL = "/var/run/nemoclaw-launchable-ready";
+const BOOTSTRAP_SENTINEL = "/var/run/nemoclaw-launchable-ready";
 
 let remoteDir = "";
 let instanceCreated = false;
@@ -263,12 +270,15 @@ function sshEnv(
   { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
   const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen3.5:9b";
+  const harnessSandboxName = brevSuiteHarnessSandboxName(TEST_SUITE);
   const envParts = [
     `export NVIDIA_INFERENCE_API_KEY='${shellEscape(process.env.NVIDIA_INFERENCE_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
-    `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    ...(harnessSandboxName
+      ? [`export NEMOCLAW_SANDBOX_NAME='${shellEscape(harnessSandboxName)}'`]
+      : []),
     `export NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces`,
   ];
   if (GPU_TEST_SUITE) {
@@ -341,22 +351,22 @@ function waitForSsh(maxWaitMs = BREV_SSH_READY_TIMEOUT_MS, intervalMs = 5_000): 
 }
 
 /**
- * Wait for the launchable setup script to finish by checking a sentinel file.
+ * Wait for the Brev E2E bootstrap script to finish by checking a sentinel file.
  * Much more reliable than grepping log files.
  */
-function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000): void {
+function waitForBootstrapReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000): void {
   const start = Date.now();
   const elapsed = () => `${Math.round((Date.now() - start) / 1000)}s`;
   let consecutiveSshFailures = 0;
 
   while (Date.now() - start < maxWaitMs) {
     try {
-      const result = ssh(`test -f ${LAUNCHABLE_SENTINEL} && echo READY || echo PENDING`, {
+      const result = ssh(`test -f ${BOOTSTRAP_SENTINEL} && echo READY || echo PENDING`, {
         timeout: 15_000,
       });
       consecutiveSshFailures = 0; // reset on success
       if (result.includes("READY")) {
-        console.log(`[${elapsed()}] Launchable setup complete (sentinel file found)`);
+        console.log(`[${elapsed()}] Brev E2E bootstrap complete (sentinel file found)`);
         return;
       }
       // Show progress from the setup log
@@ -391,8 +401,8 @@ function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000):
   }
 
   throw new Error(
-    `Launchable setup did not complete within ${maxWaitMs / 60_000} minutes. ` +
-      `Sentinel file ${LAUNCHABLE_SENTINEL} not found.`,
+    `Brev E2E bootstrap did not complete within ${maxWaitMs / 60_000} minutes. ` +
+      `Sentinel file ${BOOTSTRAP_SENTINEL} not found.`,
   );
 }
 
@@ -400,14 +410,17 @@ function runRemoteCommand(
   command: string,
   timeoutMs = GPU_TEST_SUITE ? 1_800_000 : 900_000,
 ): string {
+  const dockerGroupCommand = shellQuote(`${command} 2>&1 | tee /tmp/test-output.log`);
   const cmd = [
     `set -o pipefail`,
     `source ~/.nvm/nvm.sh 2>/dev/null || true`,
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
-    // Docker socket is chmod 666 by setup script, no sg docker needed.
-    `${command} 2>&1 | tee /tmp/test-output.log`,
+    // The setup adds this user to the docker group without weakening the
+    // host-root-equivalent socket. `sg` also handles a session created before
+    // that group membership became visible.
+    `sg docker -c ${dockerGroupCommand}`,
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
@@ -421,8 +434,14 @@ function runRemoteCommand(
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
 
-function runRemoteTest(scriptPath: string): string {
-  return runRemoteCommand(`bash ${scriptPath}`);
+function runRemoteVitest(project: "cli" | "e2e-live", target: string, timeoutMs?: number): string {
+  return runRemoteCommand(buildBrevRemoteVitestCommand(project, target), timeoutMs);
+}
+
+function expectVitestPassed(output: string): void {
+  expect(output).toContain("Test Files");
+  expect(output).toMatch(/\bpassed\b/);
+  expect(output).not.toMatch(/\bfailed\b/i);
 }
 
 function printRemoteFailureDiagnostics(): void {
@@ -434,7 +453,7 @@ function printRemoteFailureDiagnostics(): void {
         `echo "--- openshell sandbox list ---"`,
         `PATH=$HOME/.local/bin:$PATH openshell sandbox list 2>&1 || true`,
         `echo "--- docker ps ---"`,
-        `docker ps -a --filter label=openshell.ai/managed-by=openshell 2>&1 || true`,
+        `sg docker -c 'docker ps -a --filter label=openshell.ai/managed-by=openshell' 2>&1 || true`,
         `echo "--- openshell gateway log ---"`,
         `tail -200 "$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log" 2>&1 || true`,
         `latest="$(find "$HOME/.nemoclaw/onboard-failures" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)"`,
@@ -502,7 +521,7 @@ function cleanupLeftoverInstance(elapsed: () => string): void {
 
 /**
  * Refresh brev SSH config and wait for SSH connectivity.
- * Shared by both the deploy-cli and launchable paths.
+ * Shared by both the deploy-cli and source-bootstrap paths.
  */
 function refreshAndWaitForSsh(elapsed: () => string): void {
   try {
@@ -569,7 +588,7 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
 }
 
 /**
- * Create a Brev launchable instance with a startup script.
+ * Create a generic Brev instance with the reviewed E2E bootstrap script.
  *
  * The Brev API sometimes returns "unexpected EOF" after the instance is actually
  * created server-side. The CLI then falls back to the next instance type, which
@@ -578,8 +597,8 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
  */
 function createBrevInstance(elapsed: () => string): void {
   const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
-  console.log(`[${elapsed()}] Creating ${instanceKind} instance via launchable...`);
-  console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
+  console.log(`[${elapsed()}] Creating generic Brev ${instanceKind} instance...`);
+  console.log(`[${elapsed()}]   bootstrap-script: ${BOOTSTRAP_SCRIPT_PATH}`);
   console.log(`[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`);
   if (GPU_TEST_SUITE) {
     if (BREV_GPU_TYPE) {
@@ -595,21 +614,8 @@ function createBrevInstance(elapsed: () => string): void {
     );
   }
 
-  // Resolve the setup script to a local file path.
-  // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
-  // Override: set LAUNCHABLE_SETUP_SCRIPT to a URL and it gets downloaded.
-  let setupScriptPath: string;
-  if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
-    setupScriptPath = "/tmp/brev-ci-setup.sh";
-    execFileSync("curl", ["-fsSL", "-o", setupScriptPath, DEFAULT_SETUP_SCRIPT_PATH], {
-      encoding: "utf-8",
-      timeout: 30_000,
-    });
-    console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
-  } else {
-    setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
-    console.log(`[${elapsed()}] Using repo-local setup script`);
-  }
+  const setupScriptPath = BOOTSTRAP_SCRIPT_PATH;
+  console.log(`[${elapsed()}] Using repo-local Brev E2E bootstrap script`);
 
   try {
     if (GPU_TEST_SUITE) {
@@ -741,7 +747,6 @@ function gpuDockerRuntimeSetupCommands(): string[] {
     `sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null`,
     `sudo nvidia-ctk runtime configure --runtime=docker`,
     `sudo systemctl restart docker`,
-    `sudo chmod 666 /var/run/docker.sock`,
     // Brev GPU branch-validation VMs are single-use CI hosts. The
     // openshell-docker network is created later by gateway startup, so this
     // setup cannot know the exact future bridge subnet. Allow Docker's default
@@ -750,7 +755,7 @@ function gpuDockerRuntimeSetupCommands(): string[] {
     // route is actually broken (#3959).
     `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW OpenShell gateway allow rule" >&2; fi`,
     `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
-    `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`,
+    `sg docker -c 'docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi'`,
   ];
 }
 
@@ -761,19 +766,19 @@ function prepareGpuDockerRuntime(elapsed: () => string): void {
 }
 
 /**
- * Bootstrap the launchable environment on the remote VM:
+ * Overlay and build the selected source revision on the bootstrapped Brev VM:
  * rsync branch code, install deps, build plugin, and npm link the CLI.
  *
  * Returns { remoteDir, needsOnboard } so the caller can see what was
  * resolved without relying on hidden side-effects.
  */
-function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsOnboard: boolean } {
-  // The launchable clones NemoClaw to ~/NemoClaw
+function prepareBrevE2EHost(elapsed: () => string): { remoteDir: string; needsOnboard: boolean } {
+  // The bootstrap script clones NemoClaw to ~/NemoClaw.
   const remoteHome = ssh("echo $HOME");
   const resolvedRemoteDir = `${remoteHome}/NemoClaw`;
 
-  // Rsync PR branch code over the launchable's clone
-  console.log(`[${elapsed()}] Syncing PR branch code over launchable's clone...`);
+  // Rsync PR branch code over the bootstrap script's clone.
+  console.log(`[${elapsed()}] Syncing PR branch code over bootstrap clone...`);
   execFileSync(
     "rsync",
     [
@@ -794,11 +799,11 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] Code synced`);
 
-  // Re-install deps for our branch (most already cached by launchable).
+  // Re-install deps for our branch (most already cached by the bootstrap).
   // Use `npm install` instead of `npm ci` because the rsync'd branch code
   // may have a package.json/package-lock.json that are slightly out of sync
   // (e.g. new transitive deps). npm install is more forgiving and still
-  // benefits from the launchable's pre-cached node_modules.
+  // benefits from the bootstrap's pre-cached node_modules.
   // Always run this even for TEST_SUITE=full — it primes the cache so
   // install.sh's npm install is a fast no-op.
   console.log(`[${elapsed()}] Running npm install to sync dependencies...`);
@@ -825,7 +830,7 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
 
   // Rebuild CLI dist/ for our branch. The rsync above excludes dist/, so
   // without this step bin/nemoclaw.js would `require("../dist/nemoclaw")`
-  // against the launchable's main-branch build and crash with
+  // against the bootstrap's main-branch build and crash with
   // MODULE_NOT_FOUND if main differs from the PR branch. `npm install
   // --ignore-scripts` skipped the `prepare` lifecycle that normally runs
   // `build:cli`, so do it explicitly.
@@ -847,10 +852,10 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] Plugin built`);
 
-  // Expose the nemoclaw CLI on PATH. The launchable setup script already
+  // Expose the nemoclaw CLI on PATH. The bootstrap script already
   // creates /usr/local/bin/nemoclaw → $NEMOCLAW_CLONE_DIR/bin/nemoclaw.js
   // as a direct symlink, and rsync above preserves that path, so this is
-  // an idempotent re-link to make local dev runs (that skip the launchable)
+  // an idempotent re-link to make local dev runs (that skip the bootstrap)
   // still work. Avoid `sudo npm link` on cold CPU Brev — it routinely
   // hangs inside npm's global-prefix housekeeping.
   console.log(`[${elapsed()}] Linking nemoclaw CLI (direct symlink)...`);
@@ -863,7 +868,13 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] nemoclaw CLI linked`);
 
-  return { remoteDir: resolvedRemoteDir, needsOnboard: true };
+  return {
+    remoteDir: resolvedRemoteDir,
+    // The composite security suite provisions and tears down its own sandbox
+    // in each live target. Seeding a second harness-owned registry here leaves
+    // stale state after the first target destroys the shared gateway.
+    needsOnboard: brevSuiteNeedsHarnessSandbox(TEST_SUITE),
+  };
 }
 
 /**
@@ -876,12 +887,12 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
  * hand off to writeManualRegistry() to kill the hung process.
  */
 function pollForSandboxReady(elapsed: () => string): void {
-  // Launch onboard fully detached. We chmod the docker socket so we don't
-  // need sg docker (which complicates backgrounding). nohup + </dev/null +
-  // disown ensures the SSH session can exit cleanly without waiting for
-  // the background process.
+  // Launch onboard fully detached inside a docker-group shell. nohup plus
+  // redirected descriptors lets the SSH session exit cleanly while retaining
+  // least-privilege Docker socket ownership.
   console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
-  ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
+  const remoteBindEnv =
+    TEST_SUITE === "dashboard-remote-bind" ? "NEMOCLAW_DASHBOARD_BIND=0.0.0.0 " : "";
   // Launch onboard in background. The SSH command may exit with code 255
   // (SSH error) because background processes keep file descriptors open.
   // That's fine — we just need the process to start; we'll poll for
@@ -891,7 +902,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+        `sg docker -c ${shellQuote(`${remoteBindEnv}nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 &`)}`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),
@@ -976,6 +987,43 @@ function pollForSandboxReady(elapsed: () => string): void {
   }
 }
 
+function readProductDashboardRemoteBindPrepared(): boolean {
+  const script = [
+    `const fs = require("fs");`,
+    `const os = require("os");`,
+    `const path = require("path");`,
+    `const file = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");`,
+    `const data = JSON.parse(fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "{}");`,
+    `process.stdout.write(String(data?.sandboxes?.["e2e-test"]?.dashboardRemoteBindPrepared === true));`,
+  ].join("");
+  return ssh(`node -e ${shellQuote(script)}`, { timeout: 10_000 }).trim() === "true";
+}
+
+const DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS = 180_000;
+const DASHBOARD_REMOTE_BIND_PROOF_POLL_MS = 5_000;
+
+function waitForProductDashboardRemoteBindPrepared(elapsed: () => string): true {
+  console.log(`[${elapsed()}] Waiting for product-written dashboard remote-bind registry proof...`);
+  const deadline = Date.now() + DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS;
+  let prepared = readProductDashboardRemoteBindPrepared();
+  while (!prepared && Date.now() < deadline) {
+    execSync(`sleep ${DASHBOARD_REMOTE_BIND_PROOF_POLL_MS / 1000}`);
+    prepared = readProductDashboardRemoteBindPrepared();
+  }
+
+  const failLog = prepared
+    ? ""
+    : ssh("tail -120 /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+        timeout: 10_000,
+      });
+  expect(
+    prepared,
+    "dashboard-remote-bind E2E did not observe product-written remote bind proof before " +
+      `manual registry handoff.\n${failLog}`,
+  ).toBe(true);
+  return true;
+}
+
 /**
  * Kill the hung onboard process tree and write the sandbox registry manually.
  *
@@ -987,6 +1035,12 @@ function pollForSandboxReady(elapsed: () => string): void {
  */
 function writeManualRegistry(elapsed: () => string): void {
   console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
+  const dashboardRemoteBindPrepared =
+    TEST_SUITE === "dashboard-remote-bind" && waitForProductDashboardRemoteBindPrepared(elapsed);
+  expect(
+    dashboardRemoteBindPrepared || TEST_SUITE !== "dashboard-remote-bind",
+    "dashboard-remote-bind E2E must preserve the product-written remote bind proof",
+  ).toBe(true);
   // Kill hung onboard processes. pkill may kill the SSH connection itself
   // if the pattern matches too broadly, so wrap in try/catch.
   try {
@@ -1013,6 +1067,7 @@ function writeManualRegistry(elapsed: () => string): void {
           provider: null,
           gpuEnabled: false,
           policies: ["pypi", "npm"],
+          ...(dashboardRemoteBindPrepared ? { dashboardRemoteBindPrepared: true } : {}),
         },
       },
     },
@@ -1052,7 +1107,7 @@ describe("Brev deploy input validation", () => {
         NEMOCLAW_DEPLOY_NO_CONNECT: "1",
         NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
       },
-      timeout: 30_000,
+      timeout: 60_000,
     });
 
     const output = `${result.stdout}${result.stderr}`;
@@ -1067,7 +1122,7 @@ describe("Brev deploy input validation", () => {
     expect(output).not.toContain("Waiting for Brev instance readiness");
     expect(output).not.toContain("Waiting for SSH");
     expect(output).not.toContain("bash scripts/install.sh");
-  });
+  }, 65_000);
 });
 
 describe("Brev GPU runtime setup", () => {
@@ -1098,22 +1153,21 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       const remoteHome = ssh("echo $HOME");
       remoteDir = `${remoteHome}/nemoclaw`;
     } else {
-      // ── Launchable path: pre-baked CI environment ──────────────────
+      // ── Source-bootstrap path: generic Brev environment ─────────────
       // Uses brev create with --startup-script.
-      // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
-      // and pre-pulls Docker images. We just need to rsync branch code and
-      // run onboard.
+      // The script pre-installs Docker, Node.js, OpenShell CLI, and npm deps.
+      // We just need to rsync branch code and run onboard.
       createBrevInstanceAndWaitForSsh(elapsed);
 
-      // Wait for launchable setup to finish (sentinel file)
-      console.log(`[${elapsed()}] Waiting for launchable setup to complete...`);
-      waitForLaunchableReady();
+      // Wait for the Brev E2E bootstrap script to finish (sentinel file).
+      console.log(`[${elapsed()}] Waiting for Brev E2E bootstrap to complete...`);
+      waitForBootstrapReady();
 
       if (GPU_TEST_SUITE) {
         prepareGpuDockerRuntime(elapsed);
       }
 
-      const result = bootstrapLaunchable(elapsed);
+      const result = prepareBrevE2EHost(elapsed);
       remoteDir = result.remoteDir;
 
       if (result.needsOnboard) {
@@ -1123,7 +1177,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox)
-    if (TEST_SUITE !== "full" && !GPU_TEST_SUITE) {
+    if (brevSuiteNeedsHarnessSandbox(TEST_SUITE) && !GPU_TEST_SUITE) {
       console.log(`[${elapsed()}] Verifying sandbox registry...`);
       const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
       expect(registry.defaultSandbox).toBe("e2e-test");
@@ -1142,25 +1196,30 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
 
   afterAll(() => {
     if (!instanceCreated) return;
-    if (process.env.KEEP_ALIVE === "true") {
-      console.log(`\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`);
-      console.log(`  To connect: brev refresh && ssh ${INSTANCE_NAME}`);
-      console.log(`  To delete:  brev delete ${INSTANCE_NAME}\n`);
+    const keepAlive = process.env.KEEP_ALIVE === "true";
+    const workflowOwnsInstance = brevWorkflowOwnsInstance();
+    if (keepAlive || workflowOwnsInstance) {
+      const lines = keepAlive
+        ? [
+            `\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`,
+            `  To connect: brev refresh && ssh ${INSTANCE_NAME}`,
+            `  To delete:  brev delete ${INSTANCE_NAME}\n`,
+          ]
+        : [`Instance "${INSTANCE_NAME}" deletion deferred to workflow-owned cleanup.`];
+      console.log(lines.join("\n"));
       return;
     }
     deleteBrevInstance(requireInstanceName());
   }, 120_000); // 2 min for cleanup
 
-  // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
-  // rebuilds the sandbox from scratch. It cannot run alongside the security tests
-  // (credential-sanitization, telegram-injection) which depend on the sandbox
-  // that beforeAll already created. Run it only when TEST_SUITE=full.
+  // NOTE: The full E2E test runs install.sh --non-interactive and owns the
+  // complete sandbox lifecycle. The composite security suite also lets each
+  // remote target own that lifecycle, without a shared harness registry.
   it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-full-e2e.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/full-e2e.test.ts");
+      expectVitestPassed(output);
     },
     900_000,
   );
@@ -1168,9 +1227,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(GPU_TEST_SUITE)(
     "GPU E2E suite passes on Brev GPU VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-gpu-e2e.sh");
-      expect(output).toContain("GPU E2E PASSED");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/gpu-e2e.test.ts");
+      expectVitestPassed(output);
     },
     1_800_000,
   );
@@ -1178,21 +1236,27 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(
     "credential sanitization suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-credential-sanitization.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/credential-sanitization.test.ts",
+        BREV_SECURITY_SUITE_TIMEOUT_MS,
+      );
+      expectVitestPassed(output);
     },
-    600_000,
+    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
     "telegram bridge injection suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-telegram-injection.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/telegram-injection.test.ts",
+        BREV_SECURITY_SUITE_TIMEOUT_MS,
+      );
+      expectVitestPassed(output);
     },
-    600_000,
+    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "deploy-cli")(
@@ -1212,47 +1276,52 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     120_000,
   );
 
-  // NOTE: The messaging-providers test creates its own sandbox (e2e-msg-provider)
-  // with messaging tokens attached. It does not conflict with the e2e-test sandbox
-  // used by other tests, but it may recreate the gateway.
-  it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
+  // This stateful target owns its sandbox and gateway lifecycle. Brev runs it
+  // single-shot on a dedicated instance; a retry means a new workflow run and
+  // therefore a new VM, never a second installer behind a live onboard lock.
+  it.runIf(TEST_SUITE === "messaging-providers")(
     "messaging credential provider suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-messaging-providers.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/messaging-providers.test.ts",
+        BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
+      );
+      expectVitestPassed(output);
     },
-    900_000, // 15 min — creates a new sandbox with messaging providers
+    BREV_MESSAGING_PROVIDER_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
-  // NOTE: The compatible-endpoint messaging test creates its own sandbox
-  // (e2e-msg-compat) with Telegram attached and a local OpenAI-compatible
-  // mock endpoint. It covers the inference.local path used by Telegram turns.
-  it.runIf(TEST_SUITE === "messaging-compatible-endpoint" || TEST_SUITE === "all")(
+  // The compatible-endpoint target also owns its sandbox lifecycle and runs
+  // on a separate Brev instance so provider cleanup cannot leak across it.
+  it.runIf(TEST_SUITE === "messaging-compatible-endpoint")(
     "messaging compatible endpoint suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-messaging-compatible-endpoint.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/messaging-compatible-endpoint.test.ts",
+        BREV_MESSAGING_COMPAT_TIMEOUT_MS,
+      );
+      expectVitestPassed(output);
     },
-    900_000, // 15 min — creates a new sandbox with Telegram + compatible endpoint
+    BREV_MESSAGING_COMPAT_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "dashboard-remote-bind")(
-    "dashboard forward binds to all interfaces for remote browser origins",
+    "clean-host remote bind reaches Ready with active audit findings and wildcard forwarding",
     () => {
       const output = runRemoteCommand(
         [
-          `NEMOCLAW_RUN_E2E_SCENARIOS=1`,
+          `NEMOCLAW_RUN_LIVE_E2E=1`,
           `NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1`,
           `NEMOCLAW_SANDBOX_NAME=e2e-test`,
-          `npx vitest run --project e2e-scenarios-live`,
-          `test/e2e-scenario/live/dashboard-remote-bind.test.ts`,
+          `npx vitest run --project e2e-live`,
+          `test/e2e/live/dashboard-remote-bind.test.ts`,
           `--silent=false --reporter=default`,
         ].join(" "),
         300_000,
       );
-      expect(output).toContain("dashboard forward binds all interfaces");
+      expect(output).toContain("clean-host remote bind keeps audit risks active");
       expect(output).not.toMatch(/FAIL|Failed/i);
     },
     300_000,

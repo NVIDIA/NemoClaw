@@ -12,7 +12,7 @@
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
 # Stage 1: Build TypeScript plugin from source
-FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS builder
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
@@ -21,9 +21,14 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
-COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
-RUN npm ci && npm run build
+RUN npm ci
+COPY nemoclaw/src/ /opt/nemoclaw/src/
+COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
+RUN npm run build \
+    && node --experimental-strip-types \
+        /opt/nemoclaw-build-checks/verify-openshell-policy-boundary-dependencies.mts \
+        /opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs
 
 # Stage 2: Build TypeScript messaging runtime preloads.
 FROM builder AS runtime-preload-builder
@@ -33,16 +38,160 @@ COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
 RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
     && /opt/nemoclaw/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
 
+# Group repository-owned files outside the final image so BuildKit can collapse
+# related payloads without invalidating earlier final-image work.
+FROM scratch AS openclaw-dependency-payload
+
+COPY agents/openclaw/openclaw-runtime/package.json /usr/local/lib/nemoclaw/openclaw-runtime/package.json
+COPY agents/openclaw/openclaw-runtime/package-lock.json /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json
+COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
+COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
+COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
+COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
+COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
+COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+FROM scratch AS openclaw-plugin-payload
+
+COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
+COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
+COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+
+FROM scratch AS openclaw-patch-payload
+
+COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
+COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
+COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
+COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
+COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
+COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
+COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
+COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
+
+FROM scratch AS openclaw-runtime-payload
+
+COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
+COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
+COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
+COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
+COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
+COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
+COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
+COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
+COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
+COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
+COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
+COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
+COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
+COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
+COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/messaging/ /src/lib/messaging/
+COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
+
 # Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
-ARG OPENCLAW_VERSION=2026.5.27
-ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+ARG BASE_IMAGE
+# Upgrade the final runtime even when an install or rebuild starts from a
+# published sandbox base with Node 22.22.2. OpenClaw 2026.7.1 requires the
+# SQLite WAL fix in Node 22.22.3 or newer. The trusted managed-image staging
+# path removes this one instruction when it has just built Dockerfile.base from
+# the same Node image, avoiding a redundant 125 MB layer in that local-only case.
+COPY --from=builder /usr/local/bin/node /usr/local/bin/node
+# Dependency review evidence for this runtime pin lives in
+# docs/security/openclaw-2026.7.1-dependency-review.md.
+ARG OPENCLAW_VERSION=2026.7.1
+ARG OPENCLAW_2026_7_1_INTEGRITY=sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==
+ARG OPENCLAW_2026_7_1_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz
+ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_7_1_INTEGRITY=sha512-XXhMifYWTgoR6yFN4T3JkHxdPvQCe8k1cNZjVIgXNmk1svCdBWuALfQQicmpemlmWwauIQuHYgBURY6k63e+rw==
+ARG OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY=sha512-7Z+GZ/6K6a8LlkTsWVnAZ1hv8EarORzHQvFHD7ekcg033FGJOXYPEZSbvvE3qR9vM+vnoZplNjMZ7vFMRcvQgw==
+# E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
+# intentionally build an older OpenClaw base image before proving upgrade
+# behavior. Production workflows reject the fixture flag, both legacy version
+# values, and these four pin overrides before docker build. Only explicit
+# fixture paths may select them; retirement is tracked in #5896 section 9.
+ARG NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0
+ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==
+ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
+ARG OPENCLAW_2026_4_24_INTEGRITY=sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==
+ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz
+ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==
+# Keep the mcporter version, integrity, runtime lock, license, and advisory baseline
+# synchronized with agents/openclaw/dependency-review.md.
+ARG MCPORTER_VERSION=0.7.3
+ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
+ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
 
-# OpenClaw 2026.5.27 loads some generated source through jiti. Disable its
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
+# credential chains from attempting an impossible metadata discovery path.
+ENV AWS_EC2_METADATA_DISABLED=true
+
+RUN --mount=type=bind,from=openclaw-dependency-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib)"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib)"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: dependency payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
+# The final image owns the shipped dependency boundary independently of base
+# freshness. Reassert the npm-private node-tar fix here; the helper is
+# idempotent for a remediated base and fails closed on unexpected npm layouts.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# Reassert the npm-private brace-expansion fix for the exact final filesystem.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# OpenClaw 2026.7.1 loads some generated source through jiti. Disable its
 # filesystem transform cache so source fragments that mention provider marker
 # names do not persist under /tmp/jiti inside the sandbox.
 ENV JITI_FS_CACHE=false
+
+# Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
+# onboard detects an operator-supplied corporate CA on the host it bakes it
+# here; the RUN below decodes it to a root-owned file that the entrypoint
+# appends to the OpenShell trust bundle at runtime. The CA is a public
+# certificate, not a secret, so baking it into an image layer is acceptable.
+ARG NEMOCLAW_CORPORATE_CA_B64=
+
+# Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
+# when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
+# ARG is expanded by the shell (not interpolated into source), and its value is
+# base64 sanitized host-side, so this is not an injection vector.
+# hadolint ignore=DL3059,DL4006
+RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
+      command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
+      command -v openssl >/dev/null 2>&1 || { echo "[nemoclaw] openssl is required to validate NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image (#6210)" >&2; exit 1; }; \
+      mkdir -p /usr/local/share/nemoclaw \
+      && { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.decoded 2>/dev/null \
+           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; } \
+      && awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}' /tmp/nemoclaw-corporate-ca.decoded > /usr/local/share/nemoclaw/corporate-ca.pem \
+      && rm -f /tmp/nemoclaw-corporate-ca.decoded \
+      && { grep -qF -- "-----BEGIN CERTIFICATE-----" /usr/local/share/nemoclaw/corporate-ca.pem || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
+      && { openssl crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null 2>&1 || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
+      && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
+      && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
+      && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \
+    fi
+
+# Anchor the corporate CA for build-time TLS too, not just runtime. The
+# OpenClaw/mcporter reinstall path runs npm audit signatures, which fetches the
+# sigstore TUF root over TLS; behind a TLS-intercepting corporate proxy that
+# fetch needs the operator CA or it fails with SELF_SIGNED_CERT_IN_CHAIN. Node
+# ignores a missing file, so this is a no-op when no CA was baked; at runtime
+# nemoclaw-start overrides it with the merged OpenShell + corporate bundle.
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
@@ -81,14 +230,9 @@ RUN set -eu; \
     command -v tmux >/dev/null
 
 
-# Copy built plugin and blueprint into the sandbox
-COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
-COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
+# Install runtime dependencies before copying mutable build outputs so source
+# and blueprint changes keep the production dependency layer cached.
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
-COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
-
-# Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -98,22 +242,126 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 RUN npm ci --omit=dev
-COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
-COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
-RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+
+# Materialize the built plugin and blueprint as one repository payload layer.
+RUN --mount=type=bind,from=openclaw-plugin-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /opt /opt/nemoclaw)"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /opt /opt/nemoclaw)"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: plugin payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
+# Copy built plugin and blueprint into the sandbox
+RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
+
+# The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
+# the primary security gate: it enforces the generated boundary's strict module
+# dependency allowlist before this stage copies it. The node check below is
+# defense in depth only and proves the copied runtime still exports the complete
+# audited interface; function availability does not replace dependency lockdown.
+RUN test -f /usr/local/bin/node \
+    && test -d /opt/nemoclaw/node_modules/json5 \
+    && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); for (const name of ["parseOpenShellPolicy", "stripProviderComposedPolicies", "withoutProviderComposedPolicies"]) { if (typeof boundary[name] !== "function") throw new Error("OpenShell policy boundary export is unavailable: " + name); }' \
+    && node_unsafe="$(find -L /usr/local/bin/node -maxdepth 0 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$node_unsafe" \
+    && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$json5_unsafe"
+# Reviewed-archive invariants (#5896): after npm materializes the exact lock and
+# seeds resolver metadata, the shared helper re-packs every locked archive
+# offline from the final cache and verifies its registry origin, committed SRI,
+# and contained filename before the cache becomes immutable.
+RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime \
+        --ignore-scripts --omit=dev --legacy-peer-deps \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+    && npm cache add @tencent-weixin/openclaw-weixin@2.4.3 \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+    && npm cache add qrcode-terminal@0.12.0 \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+    && npm cache add zod@4.4.3 \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+    && NPM_CONFIG_OFFLINE=true \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+        --lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+        --registry-origin https://registry.npmjs.org/ \
+    && rm -rf /usr/local/lib/nemoclaw/wechat-runtime/node_modules \
+    && chown -R root:root /usr/local/lib/nemoclaw/wechat-runtime \
+        /usr/local/share/nemoclaw/wechat-npm-cache \
+    && chmod -R a+rX,go-w /usr/local/lib/nemoclaw/wechat-runtime \
+        /usr/local/share/nemoclaw/wechat-npm-cache
+RUN --mount=type=bind,from=openclaw-patch-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
+        )"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
+        )"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: patch payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
+RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
+        /usr/local/lib/nemoclaw/extract-semver \
+        /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
+        /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
+
+# Pre-install the codex-acp package so the embedded ACPx runtime can
+# call the local binary instead of `npx @zed-industries/codex-acp`.
+#
+# The sandbox's L7 proxy denies @zed-industries/* package URLs
+# (403 policy_denied), and npm still refreshes registry metadata for
+# versioned npx package specs even when the package is globally installed.
+# Installing the binary at build time and configuring ACPx to use it
+# directly keeps TC-SBX-02 off the runtime npm path.
+# Pack the already-reviewed tarball URL after verifying current registry
+# metadata. Re-resolving package@version here would introduce another mutable
+# registry selection between the reviewed identity check and installation.
+# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
+# basename in a fresh directory, local-archive-only install, and cleanup.
+#
+# hadolint ignore=DL3059,DL4006,DL3016
+RUN set -eu; \
+    CODEX_ACP_SPEC='@zed-industries/codex-acp@0.11.1'; \
+    CODEX_ACP_TARBALL='https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz'; \
+    CODEX_ACP_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+        --package-spec "$CODEX_ACP_SPEC" --integrity "$CODEX_ACP_0_11_1_INTEGRITY" \
+        --tarball-url "$CODEX_ACP_TARBALL" --label "$CODEX_ACP_SPEC")"; \
+    CODEX_ACP_PACK_DIR="$(dirname "$CODEX_ACP_PACK_PATH")"; \
+    npm install -g --no-audit --no-fund --no-progress --ignore-scripts \
+        "$CODEX_ACP_PACK_PATH"; \
+    rm -rf "$CODEX_ACP_PACK_DIR"; \
+    command -v codex-acp >/dev/null
 
 # Upgrade OpenClaw if the base image is stale.
+# Reuse exact OpenClaw and locked-mcporter base installs only when the protected
+# provenance marker matches this build target; otherwise reinstall both.
 #
-# The GHCR base image (sandbox-base:latest) may lag behind the version pinned
-# in Dockerfile.base. When that happens the fetch-guard patches below fail
-# because the target functions don't exist in the older OpenClaw. Rather than
-# silently skipping patches (leaving the sandbox unpatched), upgrade OpenClaw
-# in-place so every build gets the version the patches expect.
+# The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
+# Dockerfile.base, and legacy/custom bases may report the target version without
+# proving which archive and lifecycle produced it. Current official/local bases
+# emit the marker only after installing and auditing both dependencies. The
+# final image consumes it before applying NemoClaw patches so it cannot
+# masquerade as a pristine base when reused as a custom BASE_IMAGE.
 #
 # OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
 # blueprint minimum, which also supports the legacy direct-blueprint image path.
-# hadolint ignore=DL3059,DL4006
+# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
+# basename in a fresh directory, local-archive-only install, and cleanup.
+# hadolint ignore=DL3059,DL4006,DL3016
 RUN set -eu; \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
         || { echo "ERROR: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)" >&2; exit 1; }; \
@@ -122,39 +370,161 @@ RUN set -eu; \
     if [ "$(printf '%s\n%s' "$MIN_VER" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$MIN_VER" ]; then \
         echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
     fi; \
-    EXPECTED_INTEGRITY=""; \
-    if [ "$OPENCLAW_VERSION" = "2026.5.27" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_27_INTEGRITY"; fi; \
-    if [ -n "$EXPECTED_INTEGRITY" ]; then \
-        REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
-        if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
-            echo "ERROR: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch" >&2; \
-            echo "Expected: ${EXPECTED_INTEGRITY}" >&2; \
-            echo "Actual:   ${REGISTRY_INTEGRITY}" >&2; exit 1; \
+    if [ "$OPENCLAW_VERSION" = "2026.3.11" ] || [ "$OPENCLAW_VERSION" = "2026.4.24" ]; then \
+        if [ "$NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW" != "1" ]; then \
+            echo "ERROR: OpenClaw ${OPENCLAW_VERSION} is a legacy E2E fixture pin; set NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1 for stale-upgrade fixture builds" >&2; exit 1; \
         fi; \
     fi; \
-    CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || echo "0.0.0"); \
-    if [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ]; then \
-        echo "INFO: OpenClaw $CUR_VER is current (>= $OPENCLAW_VERSION), no upgrade needed"; \
-    else \
-        echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $OPENCLAW_VERSION"; \
-        # npm 10's atomic-move install can hit EROFS on overlayfs when the
-        # prior install spans multiple image layers (e.g. openclaw was
-        # baked into sandbox-base, then we upgrade on top here). Clearing
-        # at the shell level first gives npm a clean slate and avoids the
-        # rmdir failure inside npm's own install path.
-        rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
-        npm install -g --no-audit --no-fund --no-progress "openclaw@${OPENCLAW_VERSION}"; \
+    EXPECTED_INTEGRITY=""; \
+    EXPECTED_TARBALL=""; \
+    if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_7_1_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_7_1_TARBALL"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_3_11_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_3_11_TARBALL"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.4.24" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_4_24_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_4_24_TARBALL"; fi; \
+    if [ -z "$EXPECTED_INTEGRITY" ]; then \
+        echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin" >&2; exit 1; \
     fi; \
-    # Pre-install the codex-acp package so the embedded ACPx runtime can
-    # call the local binary instead of `npx @zed-industries/codex-acp`.
-    # The sandbox's L7 proxy denies @zed-industries/* package URLs
-    # (403 policy_denied), and npm still refreshes registry metadata for
-    # versioned npx package specs even when the package is globally installed.
-    # Installing the binary at build time and configuring ACPx to use it
-    # directly keeps TC-SBX-02 off the runtime npm path.
-    npm install -g --no-audit --no-fund --no-progress \
-        '@zed-industries/codex-acp@0.11.1'; \
-    command -v codex-acp >/dev/null
+    OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
+    OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
+    if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
+        OPENCLAW_LOCK_SHA256=82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88; \
+        ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
+        [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
+            || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
+        OPENCLAW_RECIPE='locked-ci+reviewed-lifecycle-v2'; \
+    elif [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
+        OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; \
+    fi; \
+    MCPORTER_EXPECTED_INTEGRITY=""; \
+    MCPORTER_EXPECTED_TARBALL=""; \
+    if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL"; fi; \
+    if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
+    fi; \
+    MCPORTER_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json | awk '{print $1}')"; \
+    [ -n "$MCPORTER_LOCK_SHA256" ] \
+        || { echo "ERROR: Could not hash the committed mcporter lockfile" >&2; exit 1; }; \
+    MCPORTER_AUDIT_POLICY_SHA256="$(sha256sum /scripts/npm-audit-exceptions.json | awk '{print $1}')"; \
+    MCPORTER_EXPECTED_AUDIT_EXCEPTIONS="$(node --experimental-strip-types --input-type=module -e \
+        'import fs from "node:fs"; import { parseAuditExceptionRegistry } from "/scripts/lib/reviewed-npm-audit.mts"; const policy=parseAuditExceptionRegistry(fs.readFileSync("/scripts/npm-audit-exceptions.json", "utf-8")); const ids=policy.exceptions.filter((entry)=>entry.graph==="mcporter-runtime").map((entry)=>entry.advisory).sort(); process.stdout.write(ids.join(",") || "none");')"; \
+    MCPORTER_EXPECTED_AUDIT_STATUS=clean; \
+    if [ "$MCPORTER_EXPECTED_AUDIT_EXCEPTIONS" != "none" ]; then MCPORTER_EXPECTED_AUDIT_STATUS=accepted-exceptions; fi; \
+    CUR_VER_OUTPUT="$(openclaw --version 2>/dev/null)" \
+        || { echo "ERROR: Could not execute openclaw --version" >&2; exit 1; }; \
+    CUR_VER="$(printf '%s\n' "$CUR_VER_OUTPUT" | /usr/local/lib/nemoclaw/extract-semver openclaw)" \
+        || { echo "ERROR: Could not parse OpenClaw version output" >&2; exit 1; }; \
+    CUR_MCPORTER_VER=$(mcporter --version 2>/dev/null || true); \
+    CUR_MCPORTER_VER="${CUR_MCPORTER_VER:-0.0.0}"; \
+    OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1; \
+    OPENCLAW_EXPECTED_PROVENANCE="$(mktemp)"; \
+    printf '%s\n' \
+        'schema=3' \
+        "package=openclaw@${OPENCLAW_VERSION}" \
+        "integrity=${EXPECTED_INTEGRITY}" \
+        "tarball=${EXPECTED_TARBALL}" \
+        "lock-sha256=${OPENCLAW_LOCK_SHA256}" \
+        "recipe=${OPENCLAW_RECIPE}" \
+        "mcporter-package=mcporter@${MCPORTER_VERSION}" \
+        "mcporter-integrity=${MCPORTER_EXPECTED_INTEGRITY}" \
+        "mcporter-tarball=${MCPORTER_EXPECTED_TARBALL}" \
+        "mcporter-lock-sha256=${MCPORTER_LOCK_SHA256}" \
+        "mcporter-audit-policy-sha256=${MCPORTER_AUDIT_POLICY_SHA256}" \
+        "mcporter-audit-status=${MCPORTER_EXPECTED_AUDIT_STATUS}" \
+        "mcporter-audit-exceptions=${MCPORTER_EXPECTED_AUDIT_EXCEPTIONS}" \
+        'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' \
+        > "$OPENCLAW_EXPECTED_PROVENANCE"; \
+    TRUSTED_BASE_IMAGE=0; \
+    case "$BASE_IMAGE" in \
+        ghcr.io/nvidia/nemoclaw/sandbox-base:*|ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:*|nemoclaw-sandbox-base-local|nemoclaw-sandbox-base-local:*) TRUSTED_BASE_IMAGE=1 ;; \
+    esac; \
+    USE_REVIEWED_BASE_RUNTIME=0; \
+    if [ "$TRUSTED_BASE_IMAGE" = "1" ] \
+        && [ -f "$OPENCLAW_PROVENANCE_PATH" ] \
+        && [ ! -L "$OPENCLAW_PROVENANCE_PATH" ] \
+        && [ "$(stat -c '%u:%g:%a' "$OPENCLAW_PROVENANCE_PATH" 2>/dev/null || true)" = "0:0:444" ] \
+        && cmp -s "$OPENCLAW_EXPECTED_PROVENANCE" "$OPENCLAW_PROVENANCE_PATH" \
+        && [ "$CUR_VER" = "$OPENCLAW_VERSION" ] \
+        && [ "$CUR_MCPORTER_VER" = "$MCPORTER_VERSION" ]; then \
+        USE_REVIEWED_BASE_RUNTIME=1; \
+    fi; \
+    rm -f "$OPENCLAW_EXPECTED_PROVENANCE"; \
+    rm -rf "$OPENCLAW_PROVENANCE_PATH"; \
+    if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
+        echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with exact provenance"; \
+    elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ] \
+        && [ "$CUR_VER" != "$OPENCLAW_VERSION" ]; then \
+        echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
+    else \
+        echo "INFO: Base image OpenClaw $CUR_VER lacks exact reviewed provenance; installing $OPENCLAW_VERSION"; \
+        # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
+        # install spans image layers. Removing it first also prevents unreviewed
+        # files from surviving a same-version reinstall.
+        rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
+        if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
+            node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
+                --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
+                --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
+                --registry-origin https://registry.npmjs.org/ \
+                --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
+                --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}"; \
+            npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci \
+                --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
+                --userconfig /dev/null --registry https://registry.npmjs.org/; \
+            node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+                --verify-installed-lock --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
+                --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
+                --install-root /usr/local/lib/nemoclaw/openclaw-runtime \
+                --label "OpenClaw ${OPENCLAW_VERSION}"; \
+            node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs; \
+            mkdir -p /usr/local/lib/node_modules; \
+            ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw /usr/local/lib/node_modules/openclaw; \
+            ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw /usr/local/bin/openclaw; \
+        else \
+            OPENCLAW_SOURCE_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+                --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
+                --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
+            OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
+            OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
+            if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
+                OPENCLAW_REMEDIATION_JSON="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+                    --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
+                    --working-directory "$OPENCLAW_PACK_DIR")"; \
+                OPENCLAW_PACK_PATH="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$OPENCLAW_REMEDIATION_JSON")"; \
+            fi; \
+            npm install -g --no-audit --no-fund --no-progress --ignore-scripts "$OPENCLAW_PACK_PATH"; \
+            case "$OPENCLAW_VERSION" in \
+                2026.4.24) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
+                2026.3.11) ;; \
+                *) echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy" >&2; exit 1 ;; \
+            esac; \
+            rm -rf "$OPENCLAW_PACK_DIR"; \
+        fi; \
+    fi; \
+    case "$OPENCLAW_VERSION" in \
+        2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
+    esac; \
+    if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
+        echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with exact lock provenance"; \
+    else \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
+            --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
+            --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}"; \
+        # Reinstall from the committed lock when exact protected base provenance
+        # is unavailable; matching top-level versions can hide transitive drift.
+        echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
+        rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
+        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
+            --ignore-scripts --omit=dev --no-audit --no-fund --no-progress; \
+        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ls \
+            --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter >/dev/null; \
+        node --input-type=module -e \
+            'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
+        ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
+        test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
+            --directory /usr/local/lib/nemoclaw/mcporter-runtime \
+            --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
+        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures; \
+    fi
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
@@ -246,8 +616,10 @@ RUN set -eu; \
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
-    OC_VERSION="$(openclaw --version 2>/dev/null | awk '{print $2}' || true)"; \
-    OC_VERSION="${OC_VERSION:-unknown}"; \
+    OC_VERSION_OUTPUT="$(openclaw --version 2>/dev/null)" \
+        || { echo "ERROR: Could not execute openclaw --version" >&2; exit 1; }; \
+    OC_VERSION="$(printf '%s\n' "$OC_VERSION_OUTPUT" | /usr/local/lib/nemoclaw/extract-semver openclaw)" \
+        || { echo "ERROR: Could not parse OpenClaw version output" >&2; exit 1; }; \
     patch_fail() { \
         echo "ERROR: OpenClaw ${OC_VERSION} fetch-guard patch cannot classify this dist shape: $*" >&2; \
         echo "       Inspect ${OC_DIST} and update the Dockerfile patch rules for this OpenClaw layout." >&2; \
@@ -321,11 +693,13 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 2b: allow OpenShell host gateway only through web_fetch trusted env proxy --- \
-    # Reviewed against openclaw@2026.5.27 dist: fetchWithWebToolsNetworkGuard \
+    # Reviewed against openclaw@2026.7.1 dist: fetchWithWebToolsNetworkGuard \
     # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
     # checks for an exact normalized hostname. hostnameAllowlist only gates \
     # hostname pattern matching and does not bypass .internal/private blocking. \
+    # Executable fixture proof lives in test/fetch-guard-patch-regression.test.ts; \
+    # the live network-policy E2E exercises this path in the assembled image. \
     web_guard_files="$(grep -RIlE --include='*.js' 'function fetchWithWebToolsNetworkGuard\(params\)' "$OC_DIST" || true)"; \
     if [ -n "$web_guard_files" ]; then \
         patched_host_gateway=0; \
@@ -355,22 +729,22 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 4: route unconfigured strict fetches through the sandbox egress proxy (#4687) --- \
-    # Reviewed against openclaw@2026.5.27 dist fetch-guard: the STRICT-mode \
+    # Reviewed against openclaw@2026.7.1 dist fetch-guard: the STRICT-mode \
     # managed-proxy gate is `mode === GUARDED_FETCH_MODE.STRICT && \
-    # isManagedProxyActive() && hasProxyEnvConfigured()`. Extend activation to \
-    # OPENSHELL_SANDBOX=1 only for fetches with no explicit dispatcherPolicy so \
+    # isManagedProxyActive()`. Extend activation to OPENSHELL_SANDBOX=1 only \
+    # for fetches with no explicit dispatcherPolicy so \
     # the per-request direct dispatcher reuses the env proxy (EnvHttpProxyAgent) \
     # like the managed-proxy path already does; explicit-proxy / direct dispatcher \
     # policies and out-of-sandbox behavior are unchanged. \
-    mp_files="$(grep -RIlF --include='*.js' 'const canUseManagedProxy = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive() && hasProxyEnvConfigured();' "$OC_DIST" || true)"; \
+    mp_files="$(grep -RIlF --include='*.js' 'const isStrictManagedProxyActive = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive();' "$OC_DIST" || true)"; \
     if [ -n "$mp_files" ]; then \
         patched_managed_proxy=0; \
         for f in $mp_files; do \
             if grep -q 'nemoclaw: route unconfigured strict fetch' "$f"; then \
                 echo "INFO: Patch 4 already present in $f"; \
             else \
-                sed -i -E 's#const canUseManagedProxy = mode === GUARDED_FETCH_MODE\.STRICT \&\& isManagedProxyActive\(\) \&\& hasProxyEnvConfigured\(\);#const canUseManagedProxy = mode === GUARDED_FETCH_MODE.STRICT \&\& (isManagedProxyActive() || (process.env.OPENSHELL_SANDBOX === "1" \&\& !params.dispatcherPolicy)) \&\& hasProxyEnvConfigured(); /* nemoclaw: route unconfigured strict fetch through sandbox egress proxy, see Dockerfile */#' "$f"; \
-                grep -Fq 'process.env.OPENSHELL_SANDBOX === "1" && !params.dispatcherPolicy' "$f" \
+                sed -i -E 's#const isStrictManagedProxyActive = mode === GUARDED_FETCH_MODE\.STRICT \&\& isManagedProxyActive\(\);#const isStrictManagedProxyActive = mode === GUARDED_FETCH_MODE.STRICT \&\& (isManagedProxyActive() || (process.env.OPENSHELL_SANDBOX === "1" \&\& !dispatcherPolicy)); /* nemoclaw: route unconfigured strict fetch through sandbox egress proxy, see Dockerfile */#' "$f"; \
+                grep -Fq 'process.env.OPENSHELL_SANDBOX === "1" && !dispatcherPolicy' "$f" \
                     || patch_fail "Patch 4 verification failed for $f"; \
                 patched_managed_proxy=1; \
             fi; \
@@ -379,7 +753,7 @@ RUN set -eu; \
             echo "INFO: Patch 4 applied to OpenClaw ${OC_VERSION} managed-proxy strict-fetch activation"; \
         fi; \
     else \
-        managed_proxy_refs="$(grep -RIlE --include='*.js' 'canUseManagedProxy|isManagedProxyActive' "$OC_DIST" || true)"; \
+        managed_proxy_refs="$(grep -RIlE --include='*.js' 'canUseManagedProxy|isStrictManagedProxyActive' "$OC_DIST" || true)"; \
         if [ -z "$managed_proxy_refs" ]; then \
             echo "INFO: OpenClaw ${OC_VERSION} has no managed-proxy strict-fetch gate; Patch 4 not needed"; \
         else \
@@ -389,7 +763,7 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 6: cron model-provider preflight opts into trusted env-proxy mode --- \
-    # Reviewed against openclaw@2026.5.27 dist: the cron isolated-agent preflight \
+    # Reviewed against openclaw@2026.7.1 dist: the cron isolated-agent preflight \
     # (`probeLocalProviderEndpoint`) calls `fetchWithSsrFGuard` with \
     # `auditContext: "cron-model-provider-preflight"` and a narrow hostname-allowlist \
     # SsrFPolicy from `buildLocalProviderSsrFPolicy`, but does not pass a `mode`. \
@@ -404,7 +778,8 @@ RUN set -eu; \
     # The patch keys on the co-located shape of the reviewed preflight call: in \
     # any file that mentions the audit context literal, both the \
     # `fetchWithSsrFGuard(` helper and the `buildLocalProviderSsrFPolicy` policy \
-    # builder must appear; the audit literal itself must appear exactly once; and \
+    # builder must appear. The audit-property matcher tolerates quote and same-line \
+    # whitespace changes; the audit literal itself must appear exactly once; and \
     # after patching exactly one patched literal must remain. Any ambiguous \
     # multi-callsite or mixed patched/unpatched layout fails the image build \
     # rather than silently widening the rewrite. \
@@ -417,8 +792,10 @@ RUN set -eu; \
     preflight_files="$(grep -RIlF --include='*.js' 'cron-model-provider-preflight' "$OC_DIST" || true)"; \
     if [ -n "$preflight_files" ]; then \
         patched_preflight=0; \
+        audit_pattern="auditContext[[:space:]]*:[[:space:]]*(\"cron-model-provider-preflight\"|'cron-model-provider-preflight')"; \
+        patched_pattern="mode[[:space:]]*:[[:space:]]*(\"trusted_env_proxy\"|'trusted_env_proxy')[[:space:]]*,[[:space:]]*${audit_pattern}"; \
         for f in $preflight_files; do \
-            audit_count="$(grep -Fc 'auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            audit_count="$( { grep -Eo "$audit_pattern" "$f" || true; } | awk 'END { print NR }')"; \
             [ "${audit_count:-0}" -ge 1 ] \
                 || patch_fail "Patch 6 shape gate: $f mentions cron-model-provider-preflight but has no auditContext literal"; \
             [ "${audit_count:-0}" -eq 1 ] \
@@ -427,12 +804,12 @@ RUN set -eu; \
                 || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no fetchWithSsrFGuard call"; \
             grep -Fq 'buildLocalProviderSsrFPolicy' "$f" \
                 || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no buildLocalProviderSsrFPolicy"; \
-            patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            patched_count="$( { grep -Eo "$patched_pattern" "$f" || true; } | awk 'END { print NR }')"; \
             if [ "${patched_count:-0}" -eq 1 ]; then \
                 echo "INFO: Patch 6 already present in $f"; \
             elif [ "${patched_count:-0}" -eq 0 ]; then \
-                sed -i -E 's|auditContext: "cron-model-provider-preflight"|mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"|g' "$f"; \
-                new_patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+                sed -i -E "s#${audit_pattern}#mode: \"trusted_env_proxy\", &#g" "$f"; \
+                new_patched_count="$( { grep -Eo "$patched_pattern" "$f" || true; } | awk 'END { print NR }')"; \
                 [ "${new_patched_count:-0}" -eq 1 ] \
                     || patch_fail "Patch 6 verification: expected exactly one patched literal in $f, found ${new_patched_count}"; \
                 patched_preflight=1; \
@@ -496,7 +873,7 @@ RUN set -eu; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
-# Patch OpenClaw chat.send gateway behavior for OpenClaw 2026.5.x.
+# Patch OpenClaw chat.send gateway behavior for OpenClaw 2026.7.1.
 #
 # OpenClaw can accept rapid TUI/WebChat chat.send requests and then emit a
 # terminal chat event with state="final" but no assistant message for the later
@@ -507,18 +884,74 @@ RUN set -eu; \
 # adds the submitted run ID as the transcript idempotency key.
 #
 # Removal criteria: drop when upstream OpenClaw fixes openclaw/openclaw#70164
-# and openclaw/openclaw#50298, or when NemoClaw no longer ships OpenClaw 2026.5.x.
+# and openclaw/openclaw#50298, or when NemoClaw no longer ships an affected OpenClaw.
 # hadolint ignore=DL3059
-RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Patch OpenClaw's pinned 2026.5.27 compiled selection runtime to expose a
-# compact searchable tool catalog to the model while preserving the full
-# effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
-# wrapper if an emergency rollback is needed. The script fails closed if the
-# pinned selection-*.js shape changes.
+# Keep OpenClaw 2026.7.1 scope-upgrade approvals inside the gateway's
+# canonical locked pairing writer (#4462). The upstream devices CLI otherwise
+# asks for the very scopes it is trying to approve, so the handshake fails
+# before device.pair.approve runs and its operator.admin retry fails likewise.
+# This exact-dist patch allows only a signed, device-token-authenticated CLI to
+# approve its own complete operator-only request while it already holds
+# operator.pairing; the canonical pairing function repeats identity, role, and
+# bounded-scope validation after acquiring its state lock.
+#
+# Removal criteria: drop when upstream OpenClaw can approve the same bounded
+# self-upgrade through the gateway using only operator.pairing.
 # hadolint ignore=DL3059
-RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Patch OpenClaw TUI unreachable-inference diagnostics for #4434.
+#
+# OpenClaw 2026.7.1 formats sandbox inference egress failures as either generic
+# `TypeError: fetch failed` or `LLM request timed out.` messages, which leave the
+# TUI without the required HTTP/cause, gateway/upstream reporting layer, and
+# recovery hint fields. This version-scoped shim enriches only those reviewed
+# formatter paths, and only inside OpenShell sandboxes where
+# OPENSHELL_SANDBOX=1 is supplied at runtime.
+#
+# Removal criteria: drop when upstream OpenClaw emits these structured fields
+# from its assistant error formatter for unreachable inference failures.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Patch OpenClaw's MCP stdio launcher so npx-backed MCP servers run with -y.
+# Without this, npx can prompt on cold package resolution and consume the MCP
+# JSON-RPC stdin pipe, causing the initialize handshake to time out.
+#
+# Removal criteria: drop when upstream OpenClaw normalizes npx MCP server args
+# and emits actionable MCP startup timeout diagnostics.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Run the compact tool catalog shim for OpenClaw selection runtimes that still
+# need it. OpenClaw 2026.7.1 ships a built-in catalog surface, so the script
+# skips cleanly after classifying the compiled selection-*.js shape.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# OpenClaw 2026.7.1 moved gateway startup work into shared and per-agent SQLite
+# databases, but hardens them to owner-only modes on every open. NemoClaw's
+# root entrypoint runs the CLI and gateway as separate users in the sandbox
+# group, so use group-shared modes only when that split-user runtime marker is
+# present. Same-UID OpenShell sandboxes retain OpenClaw's private modes. The
+# patch leaves generic credential and identity store enforcement unchanged,
+# avoids a non-owner chmod when a reviewed shared database mode is already
+# safe, keeps generated models files readable by the shared group, and ignores
+# the obsolete update-check cache migration that cannot archive across a
+# shields-protected parent.
+#
+# Removal criteria: drop when upstream OpenClaw supports a split-user,
+# group-shared state databases and split-user cache migrations without
+# startup warnings.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Set up blueprint for local resolution.
@@ -527,31 +960,48 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy startup script and shared sandbox initialisation library
-COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
-COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
-COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
-COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
-COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-# Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
+# Materialize the startup scripts and shared sandbox runtime files together.
+# NODE_OPTIONS preload modules use a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
 # needs to read these files to install Node runtime preloads under /tmp.
 # Channel runtime preloads are authored as TypeScript and compiled in the
 # runtime-preload-builder stage before being flattened by filename for --require.
-COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
-COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
-COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
-COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
-COPY src/lib/messaging/ /src/lib/messaging/
-COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
+RUN --mount=type=bind,from=openclaw-runtime-payload,source=/,target=/run/nemoclaw-payload \
+    /bin/bash -euo pipefail -c ' \
+        payload_metadata_before="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts \
+        )"; \
+        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
+            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
+        payload_metadata_after="$( \
+            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts \
+        )"; \
+        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
+            || { echo "ERROR: runtime payload changed parent directory ownership or mode" >&2; exit 1; } \
+    '
+
+# Copy startup script and shared sandbox initialisation library
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
+        /scripts/validate-openclaw-tool-search.mts \
         /src/lib/messaging/applier/build/messaging-build-applier.mts \
+    && chmod 444 /src/lib/tool-disclosure.ts \
     && chmod -R a+rX /src/lib/messaging \
-    && chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control \
+        /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+        /usr/local/lib/nemoclaw/state-dir-guard.py \
+        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/managed-gateway-control.py \
+    && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
+    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
+        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/managed-gateway-control.py \
+    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+        /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
+    && chmod 555 /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
         find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
             -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
@@ -566,21 +1016,27 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
-ARG NEMOCLAW_PROVIDER_KEY=inference
+ARG NEMOCLAW_INFERENCE_PROVIDER_ID=inference
 # User-selected upstream provider (e.g. ollama-local, nim-local, nvidia-prod),
-# carried separately from NEMOCLAW_PROVIDER_KEY which collapses managed routes to
-# "inference". generate-openclaw-config.mts reads this to apply provider-specific
-# config such as the Local Ollama small-context compaction policy (#5468). Empty
-# default keeps prior behavior when onboard does not supply a value.
+# carried separately from NEMOCLAW_INFERENCE_PROVIDER_ID, which identifies the
+# managed route as "inference". generate-openclaw-config.mts reads this to apply
+# provider-specific config such as the Local Ollama small-context compaction
+# policy (#5468). Empty default keeps prior behavior when onboard does not supply
+# a value.
 ARG NEMOCLAW_UPSTREAM_PROVIDER=
 ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
+ARG NEMOCLAW_DASHBOARD_BIND=
+# Internal audit provenance for WSL's default all-interface dashboard forward.
+# Onboarding rewrites this for managed OpenClaw images built on WSL.
+ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=0
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_CONTEXT_WINDOW=131072
 ARG NEMOCLAW_MAX_TOKENS=4096
 ARG NEMOCLAW_REASONING=false
+ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 # Comma-separated list of input modalities accepted by the primary model
 # (e.g. "text" or "text,image" for vision-capable models). OpenClaw's
 # model schema currently accepts "text" and "image". See #2421.
@@ -613,9 +1069,12 @@ ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
 # since terminal-based pairing is impossible in those contexts.
 # Default: "0" (device auth enabled for local deployments — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
-# Unique per build — busts the Docker cache for the token-injection layer
-# so each image gets a fresh gateway auth token.
-# Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
+# Internal audit provenance for the opt-out above. Standard onboarding rewrites
+# this to managed-onboard; direct image builders retain operator provenance.
+ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=operator
+# Compatibility build arg for older custom Dockerfiles and rebuild tooling.
+# NemoClaw-managed images intentionally do not consume it; gateway auth tokens
+# are generated at container startup and are never baked into image layers.
 ARG NEMOCLAW_BUILD_ID=default
 # macOS OpenShell VM backend imports the Docker image into a virtiofs rootfs
 # where image uid/gid ownership is presented as the host user. The VM also
@@ -628,21 +1087,26 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
-# Non-secret flag: set to "1" when the user configured Brave Search during
-# onboard. Controls whether the web search block is written to openclaw.json.
-# The actual API key is injected at runtime via openshell:resolve:env, never
-# baked into the image.
+# Non-secret web-search selection from onboard. The actual API key is injected
+# at runtime via openshell:resolve:env, never baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave
 ARG NEMOCLAW_OPENCLAW_OTEL=0
+# The default local OTEL endpoint is intentionally the single host-gateway
+# collector path covered by the openclaw-diagnostics-otel-local policy preset.
+# @openclaw/diagnostics-otel@2026.7.1 exports through OpenTelemetry's OTLP
+# trace exporter path, not OpenClaw web_fetch, so Patch 2b's host gateway
+# exception remains scoped to user-requested web_fetch proxy calls.
 ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
 ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=openclaw-gateway
 ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
-
-# SECURITY: Promote build-args to env vars so the TypeScript script reads them
+# SECURITY: Promote persistent image config to env vars so TypeScript reads it
 # via process.env, never via string interpolation into executable source code.
+# NEMOCLAW_MESSAGING_PLAN_B64 intentionally remains ARG-only: Docker exposes it
+# to build RUN processes without retaining the full plan in the final image env.
 # Direct ARG interpolation into inline source is a code injection vector (C-2).
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
-    NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_INFERENCE_PROVIDER_ID=${NEMOCLAW_INFERENCE_PROVIDER_ID} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
     CHAT_UI_URL=${CHAT_UI_URL} \
@@ -651,17 +1115,21 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
     NEMOCLAW_MAX_TOKENS=${NEMOCLAW_MAX_TOKENS} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
+    NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     NEMOCLAW_INFERENCE_INPUTS=${NEMOCLAW_INFERENCE_INPUTS} \
     NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
     NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
-    NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \
     NEMOCLAW_EXTRA_AGENTS_JSON_B64=${NEMOCLAW_EXTRA_AGENTS_JSON_B64} \
     NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
+    NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND} \
+    NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${NEMOCLAW_WSL_DASHBOARD_EXPOSURE} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
+    NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=${NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER} \
     NEMOCLAW_OPENCLAW_OTEL=${NEMOCLAW_OPENCLAW_OTEL} \
     NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
@@ -672,7 +1140,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
 # forwards explicit runtime env, so nemoclaw-start reads this generic artifact
 # when the env plan is absent.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
+RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 
 WORKDIR /sandbox
 USER sandbox
@@ -698,24 +1166,119 @@ USER sandbox
 # block until after build-time OpenClaw doctor/plugin commands complete.
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts
 
+# Validate the patched OpenClaw tool-search contract against real generated
+# configs for both supported disclosure modes. This runs at image build time so
+# OpenClaw dist drift or a generator/schema mismatch fails the build closed.
+# hadolint ignore=DL3059
+RUN set -eu; \
+    validation_root="$(mktemp -d /tmp/nemoclaw-openclaw-tool-search.XXXXXX)"; \
+    trap 'rm -rf "$validation_root"' EXIT; \
+    for mode in progressive direct; do \
+        validation_home="$validation_root/$mode"; \
+        mkdir -p "$validation_home"; \
+        HOME="$validation_home" \
+            NEMOCLAW_MODEL=test-model \
+            NEMOCLAW_PRIMARY_MODEL_REF=inference/test-model \
+            NEMOCLAW_TOOL_DISCLOSURE="$mode" \
+            NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
+            node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
+        node --experimental-strip-types /scripts/validate-openclaw-tool-search.mts \
+            /usr/local/lib/node_modules/openclaw/dist \
+            "$validation_home/.openclaw/openclaw.json" \
+            "$mode" \
+            "$OPENCLAW_VERSION"; \
+    done; \
+    rm -rf "$validation_root"; \
+    trap - EXIT
+
 # Install non-messaging OpenClaw plugins that need to match the runtime.
+# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
+# basename in a fresh directory, local-archive-only install, and cleanup.
+# The verified tarball installs through the `npm-pack:` spec so OpenClaw
+# records npm provenance; bare archive-path installs record archive
+# provenance, which fails the trusted-official-install check gating
+# openKeyedStore on OpenClaw >= 2026.6.10.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
+    verify_openclaw_plugin_integrity() { \
+        plugin_spec="$1"; \
+        expected_integrity=""; \
+        expected_tarball=""; \
+        case "$plugin_spec" in \
+            "@openclaw/diagnostics-otel@2026.7.1") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_7_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz" ;; \
+            "@openclaw/brave-plugin@2026.7.1") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz" ;; \
+        esac; \
+        if [ -z "$expected_integrity" ]; then \
+            echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1; \
+        fi; \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+            --package-spec "$plugin_spec" --integrity "$expected_integrity" \
+            --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}"; \
+    }; \
+    install_reviewed_openclaw_plugin() { \
+        plugin_spec="${1}@${OPENCLAW_VERSION}"; \
+        plugin_archive="$(verify_openclaw_plugin_integrity "$plugin_spec")"; \
+        plugin_root="$(dirname "$plugin_archive")"; \
+        plugin_install_archive="$plugin_archive"; \
+        case "$plugin_spec" in \
+            "@openclaw/diagnostics-otel@2026.7.1") \
+                remediation_json="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+                    --archive "$plugin_archive" --package-spec "$plugin_spec" \
+                    --working-directory "$plugin_root")"; \
+                plugin_install_archive="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$remediation_json")" \
+                ;; \
+        esac; \
+        NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
+            openclaw plugins install "npm-pack:${plugin_install_archive}"; \
+        rm -rf "$plugin_root"; \
+    }; \
     if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         test -n "$OPENCLAW_VERSION"; \
     fi; \
     if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
-        openclaw plugins install "npm:@openclaw/diagnostics-otel@${OPENCLAW_VERSION}" --pin; \
+        install_reviewed_openclaw_plugin "@openclaw/diagnostics-otel"; \
     fi; \
     if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
-        openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
-        BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive; \
+        case "${NEMOCLAW_WEB_SEARCH_PROVIDER:-brave}" in \
+            brave) \
+                install_reviewed_openclaw_plugin "@openclaw/brave-plugin"; \
+                BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            tavily) \
+                openclaw plugins inspect tavily --json > /dev/null; \
+                TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            *) \
+                echo "ERROR: unsupported web-search provider: $NEMOCLAW_WEB_SEARCH_PROVIDER" >&2; \
+                exit 1 \
+                ;; \
+        esac; \
     elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         openclaw doctor --fix --non-interactive; \
-    fi
+    fi; \
+    :
 
+# The reviewed cache stays root-owned and immutable to the sandbox user. npm
+# still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
+# so materialize a sandbox-owned throwaway copy for this RUN and remove it before
+# committing the layer. Never point npm directly at the trusted source cache.
 # hadolint ignore=DL3059,DL4006
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install
+RUN set -eu; \
+    trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
+    unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
+    test -z "$unsafe_cache_entry"; \
+    install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"; \
+    trap 'rm -rf "$install_cache"' EXIT; \
+    cp -R "$trusted_cache"/. "$install_cache"/; \
+    chmod -R u+rwX,go-w "$install_cache"; \
+    NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
+        OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
+        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install; \
+    rm -rf "$install_cache"; \
+    trap - EXIT; \
+    test ! -e "$install_cache"; \
+    unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
+    test -z "$unsafe_cache_entry"
 
 # Lock down npm for the next RUN: the local OpenClaw plugin install must
 # resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without
@@ -736,8 +1299,8 @@ ENV NPM_CONFIG_OFFLINE=true \
 # this layer is committed; deleting it in a later layer would not reduce the
 # OCI image imported by k3s.
 # hadolint ignore=DL3059,DL4006
-RUN openclaw plugins install /opt/nemoclaw \
-    && openclaw plugins enable nemoclaw \
+RUN NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
+    openclaw plugins install /opt/nemoclaw \
     && openclaw plugins inspect nemoclaw --json > /dev/null \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \
@@ -752,7 +1315,7 @@ RUN openclaw plugins install /opt/nemoclaw \
 
 # Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
 # hadolint ignore=DL3059,DL4006
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase post-agent-install
+RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase post-agent-install
 
 # Release the offline lock so the runtime sandbox can install MCP servers,
 # skills, and ad-hoc packages via the OpenShell L7 proxy.
@@ -894,27 +1457,61 @@ RUN set -eu; \
         "$config_dir/credentials" \
         "$config_dir/flows" \
         "$config_dir/sandbox" \
+        "$config_dir/state" \
         "$config_dir/telegram" \
         "$config_dir/wechat" \
         "$config_dir/media" \
         "$config_dir/plugin-runtime-deps"; do \
         install -d -o sandbox -g sandbox -m 2770 "$dir"; \
     done; \
-    for file in "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; do \
-        touch "$file"; \
+    update_check="$config_dir/update-check.json"; \
+    [ ! -L "$update_check" ] \
+        || { echo "ERROR: refusing symlinked OpenClaw update-check state" >&2; exit 1; }; \
+    [ ! -e "$update_check" ] || [ -f "$update_check" ] \
+        || { echo "ERROR: refusing non-regular OpenClaw update-check state" >&2; exit 1; }; \
+    rm -f "$update_check"; \
+    exec_approvals="$config_dir/exec-approvals.json"; \
+    [ ! -L "$exec_approvals" ] \
+        || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
+    [ ! -e "$exec_approvals" ] || [ -f "$exec_approvals" ] \
+        || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
+    [ ! -e "$exec_approvals" ] || [ "$(stat -c '%h' "$exec_approvals")" = "1" ] \
+        || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
+    touch "$exec_approvals"; \
+    chown sandbox:sandbox "$exec_approvals"; \
+    chmod 660 "$exec_approvals"; \
+    for file in \
+        "$config_dir/state/openclaw.sqlite" \
+        "$config_dir/state/openclaw.sqlite-wal" \
+        "$config_dir/state/openclaw.sqlite-shm" \
+        "$config_dir/state/openclaw.sqlite-journal"; do \
+        [ -e "$file" ] || [ -L "$file" ] || continue; \
+        [ -f "$file" ] && [ ! -L "$file" ] \
+            || { echo "ERROR: refusing unsafe OpenClaw state file: $file" >&2; exit 1; }; \
+        [ "$(stat -c '%h' "$file")" = "1" ] \
+            || { echo "ERROR: refusing unsafe OpenClaw state file: $file" >&2; exit 1; }; \
         chown sandbox:sandbox "$file"; \
         chmod 660 "$file"; \
     done; \
     rm -rf /root/.npm /sandbox/.npm
 
-# Stale-base fallback for the gateway-in-sandbox-group setup (#2681).
-# Newer base images already add the gateway user to the sandbox group, but
-# the derived image must remain build-clean against older sandbox-base:latest
-# tags too. The `id -nG` check makes this idempotent.
+# Stale-base fallback for the gateway/root-in-sandbox-group setup (#2681).
+# Newer base images already add both users to the sandbox group, but the
+# derived image must remain build-clean against older sandbox-base:latest
+# tags too. Root membership preserves PID 1 access when CAP_DAC_OVERRIDE is
+# dropped. The `id -nG` checks make this idempotent. Remove this block after
+# the minimum supported OpenClaw sandbox base tag is v0.0.71 or newer and
+# Dockerfile.base guarantees both memberships; keep that base contract covered
+# by test/sandbox-provisioning.test.ts.
 # hadolint ignore=DL4006
 RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         if ! id -nG gateway | tr ' ' '\n' | grep -qx sandbox; then \
             usermod -aG sandbox gateway; \
+        fi; \
+    fi \
+    && if id root >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
+        if ! id -nG root | tr ' ' '\n' | grep -qx sandbox; then \
+            usermod -aG sandbox root; \
         fi; \
     fi
 
@@ -1048,6 +1645,32 @@ RUN set -eu; \
         fi; \
     fi
 
+# Gate the completed local filesystem too; CI repeats this scan in an isolated
+# container and retains evidence keyed to the final image ID.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN check_metadata() { \
+      metadata_path="$1"; \
+      expected_metadata="$2"; \
+      actual_metadata="$(stat -c '%U:%G:%a' "$metadata_path")"; \
+      if [ "$actual_metadata" != "$expected_metadata" ]; then \
+        echo "ERROR: payload metadata mismatch at $metadata_path: expected $expected_metadata, got $actual_metadata" >&2; \
+        exit 1; \
+      fi; \
+    } \
+    && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755' \
+    && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root:755' \
+    && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
+    && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \
+    && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
+    && check_metadata /usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500' \
+    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644' \
+    && check_metadata /scripts/checks/node-tar-image-scan.mts 'root:root:755' \
+    && install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:openclaw \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
+
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)
 # can detect and restart unhealthy containers in standalone deployments.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1430
@@ -1087,32 +1710,12 @@ RUN set -eu; \
 #           host-side delivery-chain monitoring (verify-deployment.ts, host
 #           port forward, sandbox status).
 #
-# The pgrep pattern matches both `openclaw gateway run` (the launcher
-# command nemoclaw-start runs) and `openclaw-gateway` (the older re-execed
-# binary form). Recent OpenClaw (v0.0.44 / 2026.5.18+) re-execs the
-# long-running gateway into a process whose argv is plain `openclaw` with
-# no `gateway` token at all (#4952), which that pattern cannot see — so on a
-# marker-present container whose in-container curl probe failed, the stale
-# pattern reported a live gateway as permanently unhealthy.
-#
-# When the pattern misses, fall back to the gateway PID that nemoclaw-start
-# recorded in /tmp/nemoclaw-gateway.pid (record_gateway_pid, written for both
-# the root and non-root launch paths and refreshed on every respawn) and
-# confirm THAT pid is still a live `openclaw` process. This deliberately does
-# not match any process merely named `openclaw`: a bare `pgrep -x openclaw`
-# would keep Docker healthy when the real gateway has died but an unrelated
-# `openclaw` one-shot (e.g. `openclaw agent ...`) happens to be running,
-# defeating restart/self-healing. The recorded-pid check is gateway-specific
-# and survives PID reuse via the comm prefix guard. `ps -o comm=` reads the
-# (15-char) process name, which is `openclaw` for the re-execed gateway and
-# `openclaw-gatewa(y)` for the legacy form — both match `openclaw*`.
-#
-# pgrep uses --ignore-ancestors so it cannot self-match the healthcheck
-# shell that Docker spawns to run this CMD — that shell's argv contains
-# the literal 'openclaw gateway' string we're searching for, and
-# without --ignore-ancestors `pgrep -f` would happily report it as the
-# live gateway even after the real process exited (procps 4.0+ supports
-# this flag; the base image pins procps to 2:4.0.4-9).
+# nemoclaw-start records `pid starttime` for the exact gateway process in
+# /tmp/nemoclaw-gateway.pid on every launch.  When curl sees connection
+# refused, validate both values against `/proc/<pid>/stat` field 22 before
+# accepting the exact OpenClaw gateway cmdline fallback.  A numeric PID or
+# OpenClaw-looking argv alone is insufficient because either can belong to a
+# recycled process.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \
@@ -1123,12 +1726,44 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
         if [ "$rc" = 0 ]; then exit 0; fi; \
         if [ "$rc" != 7 ]; then exit 1; fi; \
         [ -f /tmp/nemoclaw-gateway-local ] || exit 0; \
-        if ! pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1; then \
-            gwpid="$(cat /tmp/nemoclaw-gateway.pid 2>/dev/null)"; \
-            case "${gwpid:-x}" in *[!0-9]*) exit 1 ;; esac; \
-            case "$(ps -p "$gwpid" -o comm= 2>/dev/null)" in openclaw*) ;; *) exit 1 ;; esac; \
-        fi; \
+        gwpid=; gwstart=; gwextra=; \
+        IFS=' ' read -r gwpid gwstart gwextra </tmp/nemoclaw-gateway.pid 2>/dev/null || exit 1; \
+        case "${gwpid:-x}" in *[!0-9]*) exit 1 ;; esac; \
+        case "${gwstart:-x}" in *[!0-9]*) exit 1 ;; esac; \
+        [ -z "$gwextra" ] || exit 1; \
+        python3 -c 'import pathlib, sys; proc = pathlib.Path(sys.argv[1]); expected = sys.argv[2].encode("ascii"); port = sys.argv[3].encode(); parse = lambda data: (lambda fields: (fields[0], fields[19]))(data.rsplit(b") ", 1)[1].split()); before = parse((proc / "stat").read_bytes()); raw = (proc / "cmdline").read_bytes(); after = parse((proc / "stat").read_bytes()); trimmed = raw.rstrip(b"\0"); padding = len(raw) - len(trimmed); title = padding >= 1 and trimmed in (b"openclaw", b"openclaw-gateway"); argv = raw[:-1].split(b"\0") if padding == 1 else []; interpreters = (b"node", b"nodejs", b"/usr/local/bin/node", b"/usr/local/bin/nodejs", b"/usr/bin/node", b"/usr/bin/nodejs"); launchers = (b"/usr/local/bin/openclaw", b"/usr/local/lib/node_modules/openclaw/openclaw.mjs"); index = 1 if argv and argv[0] in interpreters else 0; command = index < len(argv) and argv[index] in launchers and argv[index + 1:] in ([b"gateway", b"run", b"--port", port], [b"gateway", b"run", b"--port=" + port]); identity = before[1] == expected == after[1] and before[0] != b"Z" and after[0] != b"Z"; raise SystemExit(not (identity and (title or command)))' "/proc/$gwpid" "$gwstart" "$port" 2>/dev/null || exit 1; \
         [ -s /tmp/gateway.log ]
+
+# Verify the immutable security package inventory in the completed image.
+# hadolint ignore=DL4006
+RUN set -eu; \
+    security_inventory=/usr/local/share/nemoclaw/security-packages.txt; \
+    arch="$(dpkg --print-architecture)"; \
+    test -f "$security_inventory"; \
+    test ! -L "$security_inventory"; \
+    test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"; \
+    printf '%s\n' \
+        "architecture=$arch" \
+        "libexpat1=2.8.2-1" \
+        "libonig5=6.9.9-1+b1" \
+        "libjq1=1.8.2-1" \
+        "jq=1.8.2-1" \
+        "vim-common=2:9.2.0782-1" \
+        "vim-tiny=2:9.2.0782-1" \
+        | cmp -s - "$security_inventory"; \
+    test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1"; \
+    test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
+    test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1"; \
+    test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
+    test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1"; \
+    test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1"; \
+    ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
+    test "$(jq --version)" = "jq-1.8.2"; \
+    printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \
+    python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION"; \
+    vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
+    test -z "$(dpkg --audit)"
+# End completed-image security package verification.
 
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.

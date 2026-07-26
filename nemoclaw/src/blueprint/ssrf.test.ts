@@ -12,7 +12,9 @@ vi.mock("node:dns", () => ({
   promises: { lookup: (...args: unknown[]) => mockLookup(...(args as [string, { all: true }])) },
 }));
 
-const { isPrivateIp, validateEndpointUrl } = await import("./ssrf.js");
+const { isPrivateIp, safeEndpointUrlForDownstream, validateEndpointUrl } = await import(
+  "./ssrf.js"
+);
 
 // ── isPrivateIp ─────────────────────────────────────────────────
 
@@ -340,10 +342,29 @@ describe("validateEndpointUrl – DNS pinning", () => {
     expect(result.url).toBe("http://attacker.com:8080/v1");
   });
 
-  it("pins HTTPS URL to resolved IP", async () => {
+  it("pins HTTPS URL to resolved IP metadata without marking it downstream-safe", async () => {
     mockPublicDns();
     const result = await validateEndpointUrl("https://api.example.com/v1");
     expect(result.pinnedUrl).toBe("https://93.184.216.34/v1");
+    expect(result).toMatchObject({
+      protocol: "https:",
+      hostname: "api.example.com",
+      resolvedAddress: "93.184.216.34",
+      resolvedFamily: 4,
+      dnsResolved: true,
+    });
+    expect(() => safeEndpointUrlForDownstream(result)).toThrow(/DNS-backed HTTPS endpoint/);
+  });
+
+  it("keeps HTTPS IP-literal endpoints downstream-safe", async () => {
+    const result = await validateEndpointUrl("https://93.184.216.34/v1");
+    expect(safeEndpointUrlForDownstream(result)).toBe("https://93.184.216.34/v1");
+  });
+
+  it("returns pinned HTTP endpoints for downstream use", async () => {
+    mockPublicDns();
+    const result = await validateEndpointUrl("http://api.example.com/v1");
+    expect(safeEndpointUrlForDownstream(result)).toBe("http://93.184.216.34/v1");
   });
 
   it("pins IPv6 address with brackets", async () => {
@@ -369,25 +390,28 @@ describe("validateEndpointUrl – URL parsing edge cases", () => {
     );
   });
 
-  it("allows URL with query parameters", async () => {
+  it("parses URL with query parameters but does not mark DNS-backed HTTPS downstream-safe", async () => {
     mockPublicDns();
     const url = "https://api.example.com/v1?key=abc&model=gpt";
     const result = await validateEndpointUrl(url);
     expect(result.url).toBe(url);
+    expect(() => safeEndpointUrlForDownstream(result)).toThrow(/DNS-backed HTTPS endpoint/);
   });
 
-  it("allows URL with fragment", async () => {
+  it("parses URL with fragment but does not mark DNS-backed HTTPS downstream-safe", async () => {
     mockPublicDns();
     const url = "https://api.example.com/v1#section";
     const result = await validateEndpointUrl(url);
     expect(result.url).toBe(url);
+    expect(() => safeEndpointUrlForDownstream(result)).toThrow(/DNS-backed HTTPS endpoint/);
   });
 
-  it("allows URL with userinfo/basic auth", async () => {
+  it("parses URL with userinfo/basic auth but does not mark DNS-backed HTTPS downstream-safe", async () => {
     mockPublicDns();
-    // URL parser extracts hostname correctly even with userinfo
+    // URL parser extracts hostname correctly even with userinfo.
     const url = "https://user:pass@api.example.com/v1";
     const result = await validateEndpointUrl(url);
     expect(result.url).toBe(url);
+    expect(() => safeEndpointUrlForDownstream(result)).toThrow(/DNS-backed HTTPS endpoint/);
   });
 });

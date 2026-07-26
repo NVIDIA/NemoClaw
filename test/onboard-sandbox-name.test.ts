@@ -28,6 +28,15 @@ const {
   normalizeSandboxAgentName: (agentName?: string | null) => string;
 };
 
+function envWithoutNemoClawOverrides(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("NEMOCLAW_")),
+    ),
+    ...overrides,
+  };
+}
+
 describe("onboard sandbox naming helpers", () => {
   it("uses Hermes-oriented sandbox defaults when NemoHermes selects Hermes", () => {
     const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
@@ -172,7 +181,7 @@ const onboardModule = require(${onboardPath});
   } catch (error) {
     exitCode = error.exitCode ?? null;
     process.stdout.write(
-      JSON.stringify({ completed: false, exitCode, lines, message: error.message }),
+      JSON.stringify({ completed: false, exitCode, lines, message: error.message, nonInteractiveEnv: process.env.NEMOCLAW_NON_INTERACTIVE }),
     );
   } finally {
     console.error = originalError;
@@ -188,12 +197,13 @@ const onboardModule = require(${onboardPath});
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
-      env: { ...process.env, HOME: tmpDir },
+      env: { ...process.env, HOME: tmpDir, NEMOCLAW_NON_INTERACTIVE: "preserve-me" },
     });
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.completed, false);
     assert.equal(payload.exitCode, 1);
+    assert.equal(payload.nonInteractiveEnv, "preserve-me");
     assert.ok(
       payload.lines.some((line: string) => line.includes("Invalid sandbox name: 'MyAssistant'.")),
       `expected 'Invalid sandbox name' line, got ${JSON.stringify(payload.lines)}`,
@@ -203,4 +213,59 @@ const onboardModule = require(${onboardPath});
       `expected standalone 'Try: myassistant' line, got ${JSON.stringify(payload.lines)}`,
     );
   });
+
+  it("exits nonzero for non-interactive resume when the session has no sandbox name", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-null-name-"));
+
+    try {
+      const sessionDir = path.join(tmpDir, ".nemoclaw");
+      fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(
+        path.join(sessionDir, "onboard-session.json"),
+        JSON.stringify(
+          {
+            version: 1,
+            sessionId: "null-sandbox-name",
+            status: "in_progress",
+            resumable: true,
+            mode: "interactive",
+            agent: "langchain-deepagents-code",
+            sandboxName: null,
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = spawnSync(
+        process.execPath,
+        [path.join(repoRoot, "bin", "nemoclaw.js"), "onboard", "--resume", "--non-interactive"],
+        {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: envWithoutNemoClawOverrides({
+            HOME: tmpDir,
+            NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          }),
+          timeout: 10_000,
+          killSignal: "SIGKILL",
+        },
+      );
+
+      assert.ifError(result.error);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(
+        result.stderr,
+        /Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,/,
+      );
+      assert.match(
+        result.stderr,
+        /so no sandbox name was recorded\. Re-run with --name <sandbox> \(or set NEMOCLAW_SANDBOX_NAME\)\./,
+      );
+      assert.doesNotMatch(result.stderr, /Resume requires --name flag/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 15_000);
 });

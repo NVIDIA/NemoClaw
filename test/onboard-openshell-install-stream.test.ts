@@ -1,15 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }));
 
 vi.mock("node:child_process", () => ({ spawnSync: spawnSyncMock }));
 
+import { withStdoutRedirectedToStderr } from "../src/lib/cli/stdout-guard";
 import {
-  runOpenshellInstall,
   type RunOpenshellInstallDeps,
+  runOpenshellInstall,
 } from "../src/lib/onboard/openshell-pin";
 
 function makeDeps(overrides: Partial<RunOpenshellInstallDeps> = {}): RunOpenshellInstallDeps {
@@ -30,6 +32,10 @@ describe("runOpenshellInstall progress streaming (#4431)", () => {
     spawnSyncMock.mockReset();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("inherits stdio so install-openshell.sh output streams live", () => {
     spawnSyncMock.mockReturnValue({ status: 0 });
     runOpenshellInstall(makeDeps());
@@ -43,6 +49,45 @@ describe("runOpenshellInstall progress streaming (#4431)", () => {
     runOpenshellInstall(makeDeps());
     const options = spawnSyncMock.mock.calls[0][2];
     expect(options.stdio).not.toContain("pipe");
+  });
+
+  it("keeps installer progress off machine-readable stdout", async () => {
+    spawnSyncMock.mockReturnValue({ status: 0 });
+
+    await withStdoutRedirectedToStderr(async () => {
+      runOpenshellInstall(makeDeps());
+    });
+
+    const options = spawnSyncMock.mock.calls[0][2];
+    expect(options.stdio).toEqual(["ignore", process.stderr, "inherit"]);
+  });
+
+  it("normalizes relative component overrides before changing the installer cwd", () => {
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_BIN", "components/openshell-gateway");
+    vi.stubEnv("NEMOCLAW_OPENSHELL_SANDBOX_BIN", "components/openshell-sandbox");
+    spawnSyncMock.mockReturnValue({ status: 0 });
+
+    runOpenshellInstall(makeDeps());
+
+    const options = spawnSyncMock.mock.calls[0][2];
+    expect(options.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN).toBe(
+      path.resolve("components/openshell-gateway"),
+    );
+    expect(options.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN).toBe(
+      path.resolve("components/openshell-sandbox"),
+    );
+  });
+
+  it("removes whitespace-only component overrides before invoking the installer", () => {
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_BIN", "   ");
+    vi.stubEnv("NEMOCLAW_OPENSHELL_SANDBOX_BIN", "\t");
+    spawnSyncMock.mockReturnValue({ status: 0 });
+
+    runOpenshellInstall(makeDeps());
+
+    const options = spawnSyncMock.mock.calls[0][2];
+    expect(options.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN).toBeUndefined();
+    expect(options.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN).toBeUndefined();
   });
 
   it("returns a not-installed result without throwing on non-zero exit", () => {

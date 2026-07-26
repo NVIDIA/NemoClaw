@@ -3,10 +3,12 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+const requireForTest = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const CREDENTIALS_PATH = JSON.stringify(
@@ -14,6 +16,7 @@ const CREDENTIALS_PATH = JSON.stringify(
 );
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const YAML_PATH = JSON.stringify(requireForTest.resolve("yaml"));
 
 type PolicyCall = {
   type: string;
@@ -24,6 +27,33 @@ type PolicyCall = {
 };
 
 describe("compiled CLI policy contracts", () => {
+  it("loads channel-owned messaging YAML from the packaged source layout", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-packaged-channel-"));
+    const scriptPath = path.join(tmpDir, "packaged-channel-policy-check.js");
+    const script = String.raw`
+const YAML = require(${YAML_PATH});
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "hermes-contract", agent: "hermes", policies: [] });
+const openclaw = YAML.parse(policies.loadPreset("telegram"));
+const hermes = YAML.parse(policies.loadPresetForSandbox("hermes-contract", "telegram"));
+process.stdout.write("__RESULT__" + JSON.stringify({
+  openclawKeys: Object.keys(openclaw.network_policies || {}),
+  hermesKeys: Object.keys(hermes.network_policies || {}),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
+    expect(payload.openclawKeys).toEqual(["telegram_bot"]);
+    expect(payload.hermesKeys).toEqual(["telegram"]);
+  });
+
   describe("policy-remove custom presets", () => {
     function runPolicyRemoveCustom(
       presetName: string,
@@ -44,6 +74,7 @@ policies.listCustomPresets = () => [
 ];
 policies.getAppliedPresets = () => ["my-api"];
 policies.loadPreset = () => null; // built-in lookup misses
+policies.loadPresetForSandbox = () => null; // built-in lookup misses
 policies.getPresetEndpoints = () => ["api.example.internal"];
 policies.removePreset = (sandboxName, presetName) => {
   calls.push({ type: "remove", sandboxName, presetName });
@@ -109,7 +140,8 @@ policies.loadPresetFromFile = (p) => {
   if (String(p).includes("bad")) return null;
   const m = String(p).match(/([a-z0-9-]+)\.yaml$/);
   const name = m ? m[1] : "unknown";
-  return { presetName: name, content: "network_policies:\n  " + name + ":\n    host: " + name + ".example.com\n" };
+  const content = require("fs").readFileSync(p, "utf-8");
+  return { presetName: name, content };
 };
 policies.applyPresetContent = (sandboxName, presetName) => {
   calls.push({ type: "apply", sandboxName, presetName });
@@ -177,6 +209,30 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       expect(result.stdout).toMatch(/--dry-run: 'custom-rule' not applied\./);
     });
 
+    it("renders hostile custom-preset terminal controls visibly during dry-run (#7179)", () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-control-"));
+      const file = path.join(tmp, "custom-control.yaml");
+      fs.writeFileSync(
+        file,
+        String.raw`preset:
+  name: custom-control
+network_policies:
+  hostile:
+    name: "safe\u001b[2JFAKE"
+    endpoints:
+      - host: "api.example\u000aAPPROVED"
+        port: 443
+`,
+      );
+
+      const result = runPolicyAddExternal(["--from-file", file, "--dry-run", "--yes"]);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toMatch(/[\u001b\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u);
+      expect(result.stdout).toContain("safe\\u{001b}[2JFAKE");
+      expect(result.stdout).toContain("api.example\\u{000a}APPROVED:443");
+    });
+
     it("skips the confirmation prompt when NEMOCLAW_NON_INTERACTIVE=1", () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-env-"));
       const file = path.join(tmp, "custom-rule.yaml");
@@ -218,10 +274,19 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
 
     it("applies every preset in --from-dir in sorted order and aborts on the first failure", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-"));
-      fs.writeFileSync(
-        path.join(dir, "a-good.yaml"),
-        "preset:\n  name: a-good\nnetwork_policies: {}\n",
-      );
+      const endpointBlock = [
+        "network_policies:",
+        "  a-good:",
+        "    name: a-good",
+        "    endpoints:",
+        "      - host: a-good.example.com",
+        "        port: 443",
+        "        protocol: rest",
+        "        rules:",
+        '          - allow: { method: GET, path: "/**" }',
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "a-good.yaml"), `preset:\n  name: a-good\n${endpointBlock}`);
       fs.writeFileSync(
         path.join(dir, "b-bad.yaml"),
         "preset:\n  name: b-bad\nnetwork_policies: {}\n",
@@ -232,9 +297,11 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       );
       const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
       expect(result.status).not.toBe(0);
-      // a-good succeeded (visible as the [a-good] endpoints log), b-bad triggered abort,
+      // a-good succeeded (visible as the [a-good] scope log), b-bad triggered abort,
       // c-skipped was never loaded because the loop stopped at b-bad.
-      expect(result.stdout).toMatch(/\[a-good\] Endpoints that would be opened/);
+      expect(result.stdout).toMatch(/\[a-good\]/);
+      expect(result.stdout).toMatch(/Effective egress that would be opened/);
+      expect(result.stdout).toMatch(/- a-good\.example\.com:443/);
       expect(result.stdout).not.toMatch(/\[c-skipped\]/);
       expect(result.stderr).toMatch(/Aborting --from-dir/);
     });

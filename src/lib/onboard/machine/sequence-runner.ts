@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createPhaseProgressReporter, type PhaseProgressReporter } from "./phase-progress";
 import type { OnboardMachineRunnerOptions, OnboardStateHandlerResult } from "./runner";
 import {
-  runOnboardMachine,
   type OnboardMachineRunnerRuntime,
   type OnboardStateHandlers,
+  runOnboardMachine,
 } from "./runner";
 import type { OnboardNonTerminalMachineState } from "./types";
 
@@ -28,6 +29,11 @@ export interface OnboardSequenceRunnerOptions<Context> {
   maxTransitions?: OnboardMachineRunnerOptions<Context>["maxTransitions"];
   sequenceOwnership?: OnboardMachineRunnerOptions<Context>["sequenceOwnership"];
   stopStates?: OnboardMachineRunnerOptions<Context>["stopStates"];
+  /**
+   * Phase-level progress reporter. Defaults to bounded heartbeats and is
+   * injectable for focused tests.
+   */
+  phaseProgress?: PhaseProgressReporter;
 }
 
 export class DuplicateOnboardSequencePhaseError extends Error {
@@ -43,9 +49,11 @@ export class DuplicateOnboardSequencePhaseError extends Error {
 export function buildOnboardSequenceHandlers<Context>(
   phases: readonly OnboardSequencePhase<Context>[],
   setPendingContext: (context: Context) => void,
+  phaseProgress: PhaseProgressReporter = createPhaseProgressReporter(),
 ): OnboardStateHandlers<Context> {
   const handlers: OnboardStateHandlers<Context> = {};
-  for (const phase of phases) {
+  for (const rawPhase of phases) {
+    const phase = phaseProgress.wrap(rawPhase);
     if (handlers[phase.state]) throw new DuplicateOnboardSequencePhaseError(phase.state);
     handlers[phase.state] = async (context) => {
       const phaseResult = await phase.run(context);
@@ -71,6 +79,7 @@ export async function runOnboardSequenceWithRunner<Context>({
   maxTransitions,
   sequenceOwnership,
   stopStates,
+  phaseProgress,
 }: OnboardSequenceRunnerOptions<Context>) {
   let pendingContext = initialContext;
   return runOnboardMachine({
@@ -79,9 +88,13 @@ export async function runOnboardSequenceWithRunner<Context>({
     maxTransitions,
     sequenceOwnership,
     stopStates,
-    handlers: buildOnboardSequenceHandlers(phases, (context) => {
-      pendingContext = context;
-    }),
+    handlers: buildOnboardSequenceHandlers(
+      phases,
+      (context) => {
+        pendingContext = context;
+      },
+      phaseProgress,
+    ),
     updateContext: () => pendingContext,
   });
 }

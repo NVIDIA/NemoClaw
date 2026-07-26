@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { buildChain, buildControlUiUrls } from "./contract.js";
+import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "./contract.js";
 
 describe("buildChain", () => {
   it("returns default loopback chain with no arguments", () => {
     const c = buildChain();
     expect(c).toMatchObject({
       accessUrl: "http://127.0.0.1:18789",
+      fallbackUrls: [],
       forwardTarget: "18789",
       healthEndpoint: "/health",
       port: 18789,
@@ -36,12 +37,31 @@ describe("buildChain", () => {
     expect(c.shouldDisableDeviceAuth).toBe(true);
   });
 
-  it("uses WSL host address and binds to 0.0.0.0", () => {
+  it("keeps loopback primary on WSL and offers the host IP as a fallback", () => {
     const c = buildChain({ isWsl: true, wslHostAddress: "172.24.240.1" });
+    expect(c.accessUrl).toBe("http://127.0.0.1:18789");
+    expect(c.fallbackUrls).toEqual(["http://172.24.240.1:18789"]);
     expect(c.forwardTarget).toBe("0.0.0.0:18789");
-    expect(c.accessUrl).toBe("http://172.24.240.1:18789");
-    expect(c.corsOrigins).toContain("http://172.24.240.1:18789");
+    expect(c.bindAddress).toBe("0.0.0.0");
+    expect(c.corsOrigins).toEqual(["http://127.0.0.1:18789", "http://172.24.240.1:18789"]);
     expect(c.shouldDisableDeviceAuth).toBe(true);
+  });
+
+  it("offers no fallback when WSL host address is unavailable", () => {
+    const c = buildChain({ isWsl: true, wslHostAddress: null });
+    expect(c.accessUrl).toBe("http://127.0.0.1:18789");
+    expect(c.fallbackUrls).toEqual([]);
+    expect(c.forwardTarget).toBe("0.0.0.0:18789");
+  });
+
+  it("prefers an explicit non-loopback chatUiUrl over the WSL fallback", () => {
+    const c = buildChain({
+      isWsl: true,
+      wslHostAddress: "172.24.240.1",
+      chatUiUrl: "https://example.com:18789",
+    });
+    expect(c.accessUrl).toBe("https://example.com:18789");
+    expect(c.fallbackUrls).toEqual([]);
   });
 
   it("respects explicit port override", () => {
@@ -153,5 +173,31 @@ describe("buildControlUiUrls", () => {
   it("encodes special characters in tokens", () => {
     const urls = buildControlUiUrls("a=b&c");
     expect(urls[0]).toContain("#token=a%3Db%26c");
+  });
+});
+
+describe("buildFallbackControlUiUrls", () => {
+  it("rewrites the fallback host's port to the requested port", () => {
+    const urls = buildFallbackControlUiUrls("tok", 8642, ["http://172.24.240.1:18789"]);
+    expect(urls).toEqual(["http://172.24.240.1:8642/#token=tok"]);
+  });
+
+  it("returns an empty array when there are no fallback URLs", () => {
+    expect(buildFallbackControlUiUrls(null, 8642, [])).toEqual([]);
+  });
+
+  it("drops an unparseable fallback URL", () => {
+    const urls = buildFallbackControlUiUrls(null, 8642, ["http://[invalid"]);
+    expect(urls).toEqual([]);
+  });
+
+  it("drops fallback URLs that are not http/https", () => {
+    const urls = buildFallbackControlUiUrls(null, 8642, [
+      "ftp://x.com",
+      "javascript:alert(1)",
+      "data:text/html,hi",
+      "http://valid.example.com:18789",
+    ]);
+    expect(urls).toEqual(["http://valid.example.com:8642/"]);
   });
 });

@@ -3,6 +3,7 @@
 
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -21,7 +22,7 @@ function runHermes(
       timeout: execTimeout(),
       env: {
         ...process.env,
-        HOME: "/tmp/nemohermes-test-" + Date.now(),
+        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-test-")),
         // Clear inherited markers so the launcher under test sets them itself.
         NEMOCLAW_AGENT: undefined,
         NEMOCLAW_INVOKED_AS: undefined,
@@ -49,7 +50,7 @@ function runNemoClaw(
       timeout: execTimeout(),
       env: {
         ...process.env,
-        HOME: "/tmp/nemohermes-test-" + Date.now(),
+        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-test-")),
         // Clear inherited markers so the base nemoclaw bin has a clean slate.
         // The base launcher does not set NEMOCLAW_INVOKED_AS, so leaving an
         // inherited value would silently re-brand the CLI as the alias.

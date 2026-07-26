@@ -36,9 +36,9 @@ network_policies:
         port: 443
         access: full
         tls: skip
+    # System git is intentionally excluded; git-based Homebrew operations require the github preset.
     binaries:
       - { path: /usr/bin/curl }
-      - { path: /usr/bin/git }
       - { path: /usr/local/bin/brew }
       - { path: /home/linuxbrew/.linuxbrew/bin/brew }
       - { path: /home/linuxbrew/.linuxbrew/bin/* }

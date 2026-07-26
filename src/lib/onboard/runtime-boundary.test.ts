@@ -12,10 +12,18 @@ import {
 } from "../state/onboard-session";
 import type { StepMutationOptions } from "../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./machine/events";
-import { advanceTo, branchTo, completeOnboardMachine, retryTo } from "./machine/result";
+import {
+  advanceTo,
+  branchTo,
+  completeOnboardMachine,
+  failOnboardMachine,
+  pauseOnboardMachine,
+  retryTo,
+} from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import type { OnboardMachineState } from "./machine/types";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
+import { applySessionRecovery } from "./session-recovery";
 
 function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
@@ -176,6 +184,56 @@ describe("OnboardRuntimeBoundary", () => {
     expect(harness.events[1]).toMatchObject({ state: "init" });
   });
 
+  it("dispatches a durable recovery receipt after resume and clears it on transition (#6227)", async () => {
+    const recovered = createSession({
+      resumable: true,
+      status: "in_progress",
+      lastCompletedStep: "gateway",
+      machine: {
+        version: 1,
+        state: "complete",
+        stateEnteredAt: "2026-05-27T00:00:00.000Z",
+        revision: 9,
+      },
+    });
+    recovered.steps.preflight.status = "complete";
+    recovered.steps.gateway.status = "complete";
+    applySessionRecovery(recovered, "2026-05-27T00:01:00.000Z");
+    const receiptId = recovered.machine.recoveryReceipt?.id;
+    const harness = createRuntimeHarness(recovered);
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordOnboardStarted(true);
+
+    expect(harness.events.map((event) => event.type)).toEqual([
+      "onboard.resumed",
+      "state.repair.completed",
+    ]);
+    expect(harness.events[1]).toMatchObject({
+      state: "provider_selection",
+      metadata: {
+        reason: "reopened_complete_snapshot",
+        entry: "provider_selection",
+        receiptId,
+        revision: 10,
+      },
+    });
+
+    await boundary.recordStateResult(
+      advanceTo("inference", { metadata: { state: "provider_selection" } }),
+    );
+    expect(harness.getSession().machine.recoveryReceipt).toBeUndefined();
+
+    await boundary.recordOnboardStarted(true);
+    expect(harness.events.filter((event) => event.type === "state.repair.completed")).toHaveLength(
+      1,
+    );
+  });
+
   it("defaults boundary step recorders to record-only machine mutations", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
@@ -262,20 +320,23 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
-  it("emits diagnostics for explicit repaired resume compatibility results", async () => {
+  it("emits diagnostics for explicit repaired resume invalidated results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
     });
+    const result = advanceTo("gateway", { metadata: { state: "preflight" } });
 
-    await boundary.recordCompatibleStateResult(
-      advanceTo("gateway", { metadata: { state: "preflight" } }),
-    );
+    await boundary.recordInvalidatedStateResult(result, {
+      reason: "source_state_mismatch",
+      currentState: "init",
+      sourceState: "preflight",
+    });
 
     expect(harness.events[0]).toMatchObject({
-      type: "state.result.skipped",
+      type: "state.result.invalidated",
       metadata: {
         reason: "source_state_mismatch",
         currentState: "init",
@@ -285,7 +346,32 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
-  it("emits diagnostics for explicit compatible replay of stale default results", async () => {
+  it.each([
+    { label: "pause", result: () => pauseOnboardMachine() },
+    { label: "complete", result: () => completeOnboardMachine() },
+    { label: "failed", result: () => failOnboardMachine("boom") },
+  ] as const)("rejects non-transition $label results before emitting invalidation (#6227)", async ({
+    result,
+  }) => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await expect(
+      boundary.recordInvalidatedStateResult(result(), {
+        reason: "already_at_target",
+        currentState: "init",
+        sourceState: "init",
+      }),
+    ).rejects.toThrow(/Cannot invalidate non-transition/);
+
+    expect(harness.events).toHaveLength(0);
+  });
+
+  it("emits diagnostics for explicit invalidated replay of stale default results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
@@ -294,8 +380,86 @@ describe("OnboardRuntimeBoundary", () => {
     });
 
     const result = advanceTo("preflight", { metadata: { state: "missing" } });
-    await expect(boundary.recordCompatibleStateResult(result)).resolves.toMatchObject({
+    await expect(
+      boundary.recordInvalidatedStateResult(result, {
+        reason: "source_state_mismatch",
+        currentState: "init",
+        sourceState: "missing",
+      }),
+    ).resolves.toMatchObject({
       machine: { state: "init" },
+    });
+  });
+
+  it("applies the initial preflight transition on fresh onboarding", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordInitialPreflightTransition(false);
+
+    expect(harness.events.map((event) => event.type)).toEqual(["state.exited", "state.entered"]);
+    expect(harness.events.at(-1)).toMatchObject({ state: "preflight" });
+  });
+
+  it("invalidates the initial preflight transition when resume already stands at preflight (#6227)", async () => {
+    const harness = createRuntimeHarness({
+      machine: {
+        version: 1,
+        state: "preflight",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 3,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordInitialPreflightTransition(true);
+
+    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
+    expect(harness.events[0]).toMatchObject({
+      type: "state.result.invalidated",
+      metadata: {
+        reason: "already_at_target",
+        currentState: "preflight",
+        sourceState: "init",
+        targetState: "preflight",
+      },
+    });
+  });
+
+  it("invalidates the initial preflight transition when resume already advanced past init (#6227)", async () => {
+    const harness = createRuntimeHarness({
+      machine: {
+        version: 1,
+        state: "gateway",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 5,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordInitialPreflightTransition(true);
+
+    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
+    expect(harness.events[0]).toMatchObject({
+      type: "state.result.invalidated",
+      metadata: {
+        reason: "source_state_mismatch",
+        currentState: "gateway",
+        sourceState: "init",
+        targetState: "preflight",
+      },
     });
   });
 

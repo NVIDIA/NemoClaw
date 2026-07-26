@@ -12,6 +12,7 @@ import {
   buildOpenclawAgentAddArgs,
   buildOpenclawAgentDeleteArgs,
   computeAgentsApplyDiff,
+  parseOpenClawAgentsList,
   runAgentsApply,
   validateAgentsManifestForApply,
 } from "./apply";
@@ -98,6 +99,34 @@ describe("buildAgentsApplyDiff", () => {
     expect(diff.rebuildOnlyFields.sort()).toEqual(
       ["agents[alpha].tools", "agents[beta].tools"].sort(),
     );
+  });
+});
+
+describe("parseOpenClawAgentsList", () => {
+  it("parses the bare array returned by current OpenClaw", () => {
+    expect(
+      parseOpenClawAgentsList(
+        JSON.stringify([{ id: "main" }, { id: "alpha" }, { name: "missing-id" }]),
+      ),
+    ).toEqual([{ id: "main" }, { id: "alpha" }]);
+  });
+
+  it("accepts an object wrapper with an agents array", () => {
+    expect(parseOpenClawAgentsList(JSON.stringify({ agents: [{ id: "main" }] }))).toEqual([
+      { id: "main" },
+    ]);
+  });
+
+  it("strips leading warning text before the JSON payload", () => {
+    expect(
+      parseOpenClawAgentsList(
+        [
+          "[plugins] warning: deprecated config key ignored",
+          "OpenClaw warning: falling back to default workspace",
+          JSON.stringify([{ id: "main" }, { id: "logs-reader" }]),
+        ].join("\n"),
+      ),
+    ).toEqual([{ id: "main" }, { id: "logs-reader" }]);
   });
 });
 

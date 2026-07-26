@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
-const INVENTORY_SCRIPT = path.join(REPO_ROOT, "scripts", "list-command-helper-uses.ts");
+const INVENTORY_SCRIPT = path.join(REPO_ROOT, "scripts", "list-command-helper-uses.mts");
 const DOCKER_ABSTRACTION_PREFIX = "src/lib/adapters/docker/";
 
 type CommandUse = {

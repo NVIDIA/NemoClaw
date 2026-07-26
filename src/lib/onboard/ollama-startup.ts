@@ -4,6 +4,7 @@
 const runner: typeof import("../runner") = require("../runner");
 const wait: typeof import("../core/wait") = require("../core/wait");
 const localInference: typeof import("../inference/local") = require("../inference/local");
+const runtimeContext: typeof import("../inference/ollama-runtime-context") = require("../inference/ollama-runtime-context");
 
 let NO_OLLAMA_AUTOSTART = false;
 
@@ -56,10 +57,22 @@ export function runOllamaStartupOrGate(args: {
   ollamaPort: number;
   getLocalProviderBaseUrl: (provider: "ollama-local") => string | null;
   isNonInteractive: () => boolean;
+  contextWindowFloor?: number;
 }): OllamaStartupOutcome {
-  const { ollamaReady, ollamaPort, getLocalProviderBaseUrl, isNonInteractive } = args;
+  const { ollamaReady, ollamaPort, getLocalProviderBaseUrl, isNonInteractive, contextWindowFloor } =
+    args;
   if (ollamaReady) return { kind: "ready" };
+  const resolvedContextFloor = runtimeContext.resolveOllamaContextWindowFloor(contextWindowFloor);
   if (isOllamaAutostartDisabled()) {
+    if (resolvedContextFloor > runtimeContext.MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) {
+      console.error(
+        "  Ollama is not running on localhost:" +
+          `${ollamaPort} and --no-ollama-autostart is set; ` +
+          `cannot verify the required ${resolvedContextFloor}-token context window.`,
+      );
+      if (isNonInteractive() || isOllamaProviderPinned()) process.exit(1);
+      return { kind: "continue" };
+    }
     console.log(
       "  ⚠ Ollama is not running on localhost:" +
         `${ollamaPort} and --no-ollama-autostart is set; ` +
@@ -82,9 +95,16 @@ export function runOllamaStartupOrGate(args: {
     };
   }
   console.log("  Starting Ollama...");
-  runner.runShell(`OLLAMA_HOST=127.0.0.1:${ollamaPort} ollama serve > /dev/null 2>&1 &`, {
-    ignoreError: true,
-  });
+  const contextLengthPrefix =
+    resolvedContextFloor > runtimeContext.MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW
+      ? `OLLAMA_CONTEXT_LENGTH=${resolvedContextFloor} `
+      : "";
+  runner.runShell(
+    `${contextLengthPrefix}OLLAMA_HOST=127.0.0.1:${ollamaPort} ollama serve > /dev/null 2>&1 &`,
+    {
+      ignoreError: true,
+    },
+  );
   if (!wait.waitForHttp(`http://127.0.0.1:${ollamaPort}/`, 10)) {
     console.error(`  Ollama did not become ready on :${ollamaPort} within timeout.`);
     const providerPinned = isOllamaProviderPinned();

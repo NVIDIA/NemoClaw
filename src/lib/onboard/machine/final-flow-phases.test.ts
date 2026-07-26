@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { context, createPhases } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
+import { pushIfTransition } from "../__test-helpers__/machine-recorders";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
 
 describe("final onboard flow phases", () => {
@@ -20,7 +21,7 @@ describe("final onboard flow phases", () => {
     const policiesResult = await policiesPhase.run(branchResult.context);
     await finalizationPhase.run(policiesResult.context);
 
-    expect(order).toEqual(["openclaw", "policies", "set-default", "verify"]);
+    expect(order).toEqual(["openclaw", "policies", "set-default", "agent-forward", "verify"]);
   });
 
   it("carries merged policy messaging channels into the final flow context", async () => {
@@ -70,18 +71,28 @@ describe("final onboard flow phases", () => {
       phases,
       resume: true,
       recordStateResult: async (result) => {
-        if (result.type === "complete" || result.type === "failed") {
-          recorded.push(result.type);
-        } else {
+        if (result.type === "transition") {
           recorded.push(result.next);
+        } else {
+          recorded.push(result.type);
         }
+      },
+      recordInvalidatedStateResult: async (result) => {
+        pushIfTransition(recorded, result);
       },
       afterPoliciesResultApplied: () => {
         order.push("disarm");
       },
     });
 
-    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(order).toEqual([
+      "openclaw",
+      "policies",
+      "disarm",
+      "set-default",
+      "agent-forward",
+      "verify",
+    ]);
     expect(recorded).toEqual(["policies", "finalizing", "complete"]);
   });
 });

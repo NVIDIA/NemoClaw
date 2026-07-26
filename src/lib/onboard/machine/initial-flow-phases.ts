@@ -13,7 +13,10 @@ import {
   type PreflightSandboxGpuFlag,
   type PreflightStateOptions,
 } from "./handlers/preflight";
-import { runLiveOnboardFlowSlice } from "./live-flow-slice";
+import {
+  type InvalidatedOnboardStateResultRecorder,
+  runLiveOnboardFlowSlice,
+} from "./live-flow-slice";
 import type { OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
@@ -189,12 +192,16 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   phases: readonly OnboardSequencePhase<Context>[];
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
+  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // Compatibility bridge for live resume repair when durable machine snapshots
+  // Recompute plan for live resume repair when durable machine snapshots
   // are already downstream of this slice even though preflight/gateway host
   // backstops must still re-run. Those ahead-state snapshots can come from
   // legacy/test step mutation that explicitly opts into `updateMachine === true`
-  // or from repaired-resume replay of persisted sessions. This slice cannot
+  // or from repaired-resume replay of persisted sessions. Recomputed transition
+  // results are explicitly applied or invalidated by runLiveOnboardFlowSlice,
+  // so stale phase output cannot update context or silently advance state.
+  // This slice cannot
   // eliminate that source locally because the host backstop checks are still
   // modeled as imperative resume work rather than strict FSM recovery states.
   // The tolerated downstream family is every nonterminal state after the initial
@@ -224,6 +231,7 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
         ]
       : ["gateway", "provider_selection"],
     runSlice: runInitialOnboardFlowSequence,
-    applyCompatibleResult: options.recordStateResult,
+    recordStateResult: options.recordStateResult,
+    recordInvalidatedStateResult: options.recordInvalidatedStateResult,
   });
 }

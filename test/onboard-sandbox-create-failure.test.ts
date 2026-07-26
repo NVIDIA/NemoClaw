@@ -7,7 +7,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { collectSandboxCreateFailureDiagnostics } from "../src/lib/onboard/sandbox-create-failure.js";
+import {
+  collectSandboxCreateFailureDiagnostics,
+  printSandboxCreateFailureDiagnostics,
+} from "../src/lib/onboard/sandbox-create-failure.js";
 
 describe("sandbox create failure diagnostics", () => {
   it("preserves gateway failure lines and VM console output before cleanup", () => {
@@ -54,6 +57,63 @@ describe("sandbox create failure diagnostics", () => {
     expect(relevant).toContain("sandbox_name=my-assistant");
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "backup_path=/tmp/pre-upgrade-backup",
+    );
+  });
+
+  it("prints saved diagnostics and retained backup details", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-print-"));
+    const homeDir = path.join(tmp, "home");
+    const messages: string[] = [];
+    const originalError = console.error;
+    console.error = (message?: unknown) => {
+      messages.push(String(message ?? ""));
+    };
+
+    try {
+      const diagnostics = printSandboxCreateFailureDiagnostics("my-assistant", {
+        homeDir,
+        backupPath: "/tmp/pre-upgrade-backup",
+        now: new Date("2026-05-12T20:35:00.000Z"),
+      });
+
+      expect(diagnostics?.dir).toContain(path.join(homeDir, ".nemoclaw", "onboard-failures"));
+      expect(messages).toContain(`  Diagnostics saved: ${diagnostics!.dir}`);
+      expect(messages).toContain("  State backup retained: /tmp/pre-upgrade-backup");
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  it("preserves a bounded gateway tail when sandbox-specific lines are absent", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-tail-"));
+    const homeDir = path.join(tmp, "home");
+    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+    const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.writeFileSync(
+      gatewayLogPath,
+      [
+        "2026-05-12T20:30:00Z INFO gateway starting",
+        "2026-05-12T20:30:01Z WARN gateway exited before request dispatch",
+      ].join("\n"),
+    );
+
+    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
+      homeDir,
+      now: new Date("2026-05-12T20:35:00.000Z"),
+    });
+
+    expect(diagnostics?.gatewayTailPath).toBe(
+      path.join(diagnostics!.dir, "openshell-gateway-tail.log"),
+    );
+    expect(fs.readFileSync(diagnostics!.gatewayTailPath!, "utf-8")).toContain(
+      "gateway exited before request dispatch",
+    );
+    expect(diagnostics?.summaryLines).toContain(
+      "2026-05-12T20:30:01Z WARN gateway exited before request dispatch",
+    );
+    expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
+      "gateway_tail=",
     );
   });
 });

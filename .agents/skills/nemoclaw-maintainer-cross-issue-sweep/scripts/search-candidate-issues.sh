@@ -67,7 +67,7 @@ printf '%s' "$fingerprint" | jq -r '.files // [] | .[]' | while read -r path; do
   search_term "\"$path\" in:body,comments" "$PER_FILE_TOP" >>"$candidates_file" || true
 done
 
-# Per-error-string search. Quote the whole string for exact match.
+# Per-error-string search. Quote the whole string for a phrase match.
 printf '%s' "$fingerprint" | jq -r '.error_strings // [] | .[]' | while read -r str; do
   [ -z "$str" ] && continue
   search_term "\"$str\" in:body,comments" "$PER_ERROR_TOP" >>"$candidates_file" || true

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
-
+import { Command, Flags, type Interfaces } from "@oclif/core";
 import { redactForLog } from "../security/redact";
+import { isDeferredShieldsExit } from "../shields/deferred-exit";
+import { log } from "./logger";
 
 export type CommandExitResult = {
   exitCode?: number | null;
@@ -20,7 +21,67 @@ export type CommandExitResult = {
 export abstract class NemoClawCommand extends Command {
   static baseFlags = {
     help: Flags.help({ char: "h" }),
+    // Hidden logging flags. Universal visible flags would have to be
+    // documented in every command section of docs/reference/commands.mdx
+    // (cli-parity gate), so the documented interface is
+    // NEMOCLAW_LOG_LEVEL/NEMOCLAW_DEBUG; the flags remain as a convenience.
+    debug: Flags.boolean({
+      description: "Enable debug output (equivalent to NEMOCLAW_LOG_LEVEL=debug)",
+      default: false,
+      hidden: true,
+      exclusive: ["quiet"],
+    }),
+    quiet: Flags.boolean({
+      description: "Suppress informational output; show only warnings and errors",
+      default: false,
+      hidden: true,
+      exclusive: ["debug"],
+    }),
   };
+
+  protected override async init(): Promise<void> {
+    await super.init();
+    // Every invocation starts from the current environment. Raw-argv
+    // passthrough commands intentionally stop here: only environment-based
+    // logging configuration applies to them.
+    log.configure({ debug: false, quiet: false });
+  }
+
+  protected override async parse<
+    F extends Interfaces.OutputFlags<Interfaces.FlagInput>,
+    B extends Interfaces.OutputFlags<Interfaces.FlagInput>,
+    A extends Interfaces.OutputArgs<Interfaces.ArgInput>,
+  >(
+    options?: Interfaces.Input<F, B, A>,
+    argv?: string[],
+  ): Promise<Interfaces.ParserOutput<F, B, A>> {
+    const parsed = await super.parse(options, argv);
+
+    // Logging flags belong to the host only when a command invokes oclif's
+    // parser. Commands that deliberately consume raw argv (for example
+    // `sandbox agent` and `uninstall`) must forward similarly named flags
+    // without changing host logging. Using parser output also honors `--`:
+    // downstream flags after the boundary never acquire host meaning.
+    log.configure({
+      debug: parsed.flags.debug === true,
+      quiet: parsed.flags.quiet === true,
+    });
+
+    return parsed;
+  }
+
+  protected override async catch(error: unknown): Promise<unknown> {
+    // Shields transitions defer process.exit through a sentinel so an exit
+    // cannot strand the transition lock (see failShieldsCommand). By the time
+    // oclif routes the rejection here every lock has been released, and the
+    // failure lines were already printed at the throw site, so only the exit
+    // code remains to record. Everything else keeps oclif's default handling.
+    if (isDeferredShieldsExit(error)) {
+      this.setExitCode(error.exitCode);
+      return;
+    }
+    return super.catch(error as Error & { exitCode?: number });
+  }
 
   protected logJson(json: unknown): void {
     console.log(JSON.stringify(redactForLog(json), null, 2));

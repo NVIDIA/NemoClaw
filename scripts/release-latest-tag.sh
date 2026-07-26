@@ -6,6 +6,7 @@ set -euo pipefail
 
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 RELEASE_TAG="${RELEASE_TAG:?RELEASE_TAG is required}"
+EXPECTED_RELEASE_TAG_OBJECT="${EXPECTED_RELEASE_TAG_OBJECT:-}"
 PUSH_LATEST="${PUSH_LATEST:-1}"
 PUSH_REMOTE_URL="${PUSH_REMOTE_URL:-$REMOTE_NAME}"
 
@@ -14,21 +15,11 @@ fail() {
   exit 1
 }
 
-ensure_tag_identity() {
-  if git var GIT_COMMITTER_IDENT >/dev/null 2>&1; then
-    return
-  fi
-
-  git config user.name "${RELEASE_TAGGER_NAME:-github-actions[bot]}"
-  git config user.email "${RELEASE_TAGGER_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
-
-  if ! git var GIT_COMMITTER_IDENT >/dev/null 2>&1; then
-    fail "Unable to configure a git committer identity for latest tag promotion"
-  fi
-}
-
 if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   fail "Refusing to promote non-semver tag: $RELEASE_TAG"
+fi
+if [[ ! "$EXPECTED_RELEASE_TAG_OBJECT" =~ ^[0-9a-f]{40}$ ]]; then
+  fail "EXPECTED_RELEASE_TAG_OBJECT must be the GitHub-verified tag object SHA"
 fi
 
 # Force-refresh remote main and tags so local stale tags cannot influence the
@@ -39,6 +30,11 @@ git fetch --force "$REMOTE_NAME" \
 
 if [[ "$(git cat-file -t "refs/tags/$RELEASE_TAG" 2>/dev/null || true)" != "tag" ]]; then
   fail "Refusing to promote $RELEASE_TAG: release tags must be annotated"
+fi
+
+release_tag_object="$(git rev-parse "refs/tags/$RELEASE_TAG")"
+if [[ "$release_tag_object" != "$EXPECTED_RELEASE_TAG_OBJECT" ]]; then
+  fail "Refusing to promote $RELEASE_TAG: local tag object $release_tag_object does not match GitHub-verified object $EXPECTED_RELEASE_TAG_OBJECT"
 fi
 
 release_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
@@ -67,6 +63,7 @@ if [[ "$RELEASE_TAG" != "$latest_remote_semver" ]]; then
   fail "Refusing to promote $RELEASE_TAG: latest remote semver tag is $latest_remote_semver"
 fi
 
+latest_object="$(git rev-parse --verify --quiet "refs/tags/latest" || true)"
 latest_commit="$(git rev-parse --verify --quiet "refs/tags/latest^{commit}" || true)"
 if [[ -n "$latest_commit" ]] && ! git merge-base --is-ancestor "$latest_commit" "$release_commit"; then
   fail "Refusing to move latest backward: current latest $latest_commit is not an ancestor of $RELEASE_TAG ($release_commit)"
@@ -87,20 +84,31 @@ if [[ -n "$previous_remote_semver" ]]; then
   fi
 fi
 
-ensure_tag_identity
-git tag -fa latest "$release_commit" -m "latest -> $RELEASE_TAG"
+# Point latest at the already signed and GitHub-verified semver tag object.
+# Do not mint a second unsigned annotated tag in CI.
+git update-ref refs/tags/latest "$release_tag_object"
 
 if [[ "$PUSH_LATEST" != "0" ]]; then
-  git push "$PUSH_REMOTE_URL" refs/tags/latest --force
+  git push \
+    --force-with-lease="refs/tags/latest:${latest_object}" \
+    "$PUSH_REMOTE_URL" \
+    refs/tags/latest
+
+  remote_latest_object="$(git ls-remote --tags "$REMOTE_NAME" refs/tags/latest | awk '{print $1}')"
+  if [[ "$remote_latest_object" != "$release_tag_object" ]]; then
+    fail "Remote latest object $remote_latest_object does not match release tag object $release_tag_object"
+  fi
 fi
 
 {
   echo "## Release latest tag"
   echo
   echo "- Release tag: \`$RELEASE_TAG\`"
+  echo "- Release tag object: \`$release_tag_object\`"
   echo "- Release commit: \`$release_commit\`"
   echo "- Remote main: \`$main_commit\`"
   echo "- Latest remote semver: \`$latest_remote_semver\`"
+  echo "- Previous latest object: \`${latest_object:-none}\`"
   echo "- Previous latest commit: \`${latest_commit:-none}\`"
   echo "- Previous semver tag: \`${previous_remote_semver:-none}\`"
   echo "- Previous semver commit: \`${previous_semver_commit:-none}\`"

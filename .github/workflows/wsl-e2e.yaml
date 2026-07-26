@@ -239,7 +239,8 @@ jobs:
           export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE='$env:NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE'
           export NEMOCLAW_RECREATE_SANDBOX='$env:NEMOCLAW_RECREATE_SANDBOX'
           export NEMOCLAW_SANDBOX_NAME='$env:NEMOCLAW_SANDBOX_NAME'
-          bash test/e2e/test-full-e2e.sh
+          export NEMOCLAW_RUN_LIVE_E2E=1
+          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
           "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))

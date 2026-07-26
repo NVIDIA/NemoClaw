@@ -4,12 +4,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
+import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
+import { resolveGatewayOwner } from "../gateway-ownership";
 import {
   createInitialOnboardFlowPhases,
   type InitialOnboardFlowContext,
   runInitialOnboardFlowSlice,
 } from "./initial-flow-phases";
-import { advanceTo } from "./result";
+import { advanceTo, type OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
@@ -117,6 +119,25 @@ describe("initial onboard flow phases", () => {
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
+        resolveGatewayOwner: () =>
+          resolveGatewayOwner({
+            gatewayName: "nemoclaw",
+            gatewayPort: 31818,
+            declaration: null,
+            hasPackagedService: false,
+          }),
+        attachGateway: vi.fn(),
+        probeGatewayAttachment: async () => ({
+          gatewayPort: 31818,
+          httpReady: true,
+          portOccupied: true,
+          listenerPids: [4242],
+          listenerScanComplete: true,
+          listenerStartTime: null,
+          supervisorActive: null,
+          listenerExecPath: null,
+          listenerSupervisorMatch: null,
+        }),
         refreshDockerDriverGatewayReuseState: async (state) => state,
         gatewayCliSupportsLifecycleCommands: () => false,
         verifyGatewayContainerRunning: () => "running",
@@ -153,7 +174,19 @@ describe("initial onboard flow phases", () => {
     expect(preflight.context.gpuPassthrough).toBe(true);
     expect(gateway.result).toEqual(
       advanceTo("provider_selection", {
-        metadata: { state: "gateway", gatewayReuseState: "healthy" },
+        metadata: {
+          state: "gateway",
+          gatewayReuseState: "healthy",
+          gatewayOwner: {
+            gatewayName: "nemoclaw",
+            gatewayPort: 31818,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          },
+        },
       }),
     );
     expect(notes).toContain(
@@ -182,6 +215,7 @@ describe("initial onboard flow phases", () => {
       recordStateResult: async (result) => {
         if (result.type === "transition") recorded.push(result.next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(recorded).toEqual(["gateway", "provider_selection"]);
@@ -236,6 +270,7 @@ describe("initial onboard flow phases", () => {
           });
         }
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets([]),
     });
 
     expect(result.context.session).toBe(phaseSession);
@@ -327,6 +362,25 @@ describe("initial onboard flow phases", () => {
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
+        resolveGatewayOwner: () =>
+          resolveGatewayOwner({
+            gatewayName: "nemoclaw",
+            gatewayPort: 31818,
+            declaration: null,
+            hasPackagedService: false,
+          }),
+        attachGateway: vi.fn(),
+        probeGatewayAttachment: async () => ({
+          gatewayPort: 31818,
+          httpReady: true,
+          portOccupied: true,
+          listenerPids: [4242],
+          listenerScanComplete: true,
+          listenerStartTime: null,
+          supervisorActive: null,
+          listenerExecPath: null,
+          listenerSupervisorMatch: null,
+        }),
         refreshDockerDriverGatewayReuseState: vi.fn(async (state) => {
           calls.push("refresh-gateway-reuse");
           return state;
@@ -392,6 +446,7 @@ describe("initial onboard flow phases", () => {
       recordStateResult: async (stateResult) => {
         if (stateResult.type === "transition") recorded.push(stateResult.next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(result.session.machine.state).toBe("provider_selection");
@@ -419,6 +474,15 @@ describe("initial onboard flow phases", () => {
       "record-gateway-complete",
     ]);
     expect(recorded).toEqual(["gateway", "provider_selection"]);
+    // Ahead-state resume invalidates the preflight/gateway transitions but the
+    // recomputed context (sandboxGpuConfig, gpu, gpuPassthrough) must still
+    // survive so runOnboard's assertion at src/lib/onboard.ts:4397
+    // ("Preflight did not produce a sandbox GPU configuration") stays
+    // satisfied on resume, and downstream sandbox setup can consume the
+    // freshly detected GPU rather than a stale saved value (#6227).
+    expect(result.context.sandboxGpuConfig).toEqual(config(gpu));
+    expect(result.context.gpu).toEqual(gpu);
+    expect(result.context.gpuPassthrough).toBe(true);
   });
 
   it.each([
@@ -459,6 +523,7 @@ describe("initial onboard flow phases", () => {
       recordStateResult: async (stateResult) => {
         recorded.push((stateResult as ReturnType<typeof advanceTo>).next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(recorded).toEqual(["gateway", "provider_selection"]);
@@ -489,6 +554,7 @@ describe("initial onboard flow phases", () => {
         phases: [phase],
         resume: true,
         recordStateResult: async () => undefined,
+        recordInvalidatedStateResult: recordInvalidatedTargets([]),
       }),
     ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
     expect(phase.run).not.toHaveBeenCalled();
@@ -542,6 +608,9 @@ describe("initial onboard flow phases", () => {
       recordStateResult: async () => {
         throw new Error("compatibility recorder should not run");
       },
+      recordInvalidatedStateResult: async () => {
+        throw new Error("invalidation recorder should not run on fresh strict runner path");
+      },
     });
 
     expect(order).toEqual(["preflight", "gateway"]);
@@ -588,6 +657,9 @@ describe("initial onboard flow phases", () => {
       resume: false,
       recordStateResult: async () => {
         throw new Error("compatibility recorder should not run");
+      },
+      recordInvalidatedStateResult: async () => {
+        throw new Error("invalidation recorder should not run on fresh strict runner path");
       },
     });
 

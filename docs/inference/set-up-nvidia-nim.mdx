@@ -1,0 +1,83 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up NVIDIA NIM"
+sidebar-title: "Set Up NVIDIA NIM"
+description: "Pull, start, and configure a local NVIDIA NIM container for NemoClaw inference."
+description-agent: "Shows how to set up experimental local NVIDIA NIM inference, including NGC authentication, architecture caveats, and non-interactive onboarding."
+keywords: ["nemoclaw nvidia nim", "local nim inference", "nim container onboarding"]
+content:
+  type: "how_to"
+---
+
+NemoClaw can pull, start, and manage a local NVIDIA NIM container on hosts with a NIM-capable NVIDIA GPU.
+This provider is experimental and requires an explicit opt-in.
+
+## Prerequisites
+
+- Use a host with a NIM-capable NVIDIA GPU.
+- Install the NVIDIA Container Toolkit and provide a CDI specification for the GPU.
+- Authenticate Docker to `nvcr.io`, or run interactive onboarding with an NGC API key available.
+
+<Warning>
+Some NIM images do not publish a `linux/arm64` manifest for DGX Spark and DGX Station.
+NemoClaw warns and still attempts the selected image.
+If the registry has no matching platform manifest, choose NVIDIA Endpoints, managed vLLM, or another provider with an image for the host architecture.
+</Warning>
+
+## Run Onboarding
+
+Enable experimental providers and start the wizard.
+
+```bash
+NEMOCLAW_EXPERIMENTAL=1 $$nemoclaw onboard
+```
+
+Select **Local NVIDIA NIM [experimental]**.
+NemoClaw filters the available models by GPU VRAM, pulls the selected image, starts the container, and waits for it to become healthy.
+On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and the total VRAM used for model selection.
+
+On Docker 29.x and hosts that use the containerd image store, NemoClaw resolves the host-platform manifest digest before pulling a multi-architecture image when the registry publishes an index.
+It pulls `repo@digest` and retags the image locally so attestation metadata for other architectures does not block the selected platform.
+When no matching index is available, NemoClaw falls back to pulling the tag.
+
+## Authenticate with NGC
+
+NVIDIA hosts NIM images on `nvcr.io`, and Docker requires NGC registry authentication to pull them.
+When Docker is not already logged in, interactive onboarding prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key).
+NemoClaw masks the input and passes the key to `docker login nvcr.io` through `--password-stdin` so it is not written to disk or shell history.
+It retries once after an invalid key.
+
+Non-interactive onboarding cannot prompt for registry credentials.
+Run `docker login nvcr.io` before starting non-interactive onboarding.
+
+When `NGC_API_KEY` or `NVIDIA_INFERENCE_API_KEY` is already exported, NemoClaw passes it into the managed NIM container through the process environment instead of command-line arguments.
+
+## Understand Model Detection
+
+If the NIM container exits before its health endpoint becomes ready, onboarding stops and prints the last container log lines.
+After NIM becomes healthy, NemoClaw reads `/v1/models` and uses the served model ID for validation when it differs from the catalog name.
+NemoClaw rejects unsafe served IDs instead of writing them into sandbox configuration.
+
+<Note>
+NIM uses vLLM internally.
+NemoClaw uses the Chat Completions API path and does not probe the Responses API for this provider.
+</Note>
+
+## Run Non-Interactive Onboarding
+
+Authenticate Docker to `nvcr.io`, then run onboarding with the experimental flag and NIM provider selection.
+
+```bash
+NEMOCLAW_EXPERIMENTAL=1 \
+  NEMOCLAW_PROVIDER=nim \
+  $$nemoclaw onboard --non-interactive
+```
+
+Set `NEMOCLAW_MODEL` to select a specific model.
+
+## Related Topics
+
+- [Choose a Local Inference Server](choose-local-inference-server) to compare NVIDIA NIM with Ollama and vLLM.
+- [Configure Inference Timeouts](../manage-inference/configure-inference-timeouts) when container startup or validation needs more time.
+- [Verify the Inference Route](../validate-inference/verify-inference-route) after setup.

@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { loadAgent } from "../src/lib/agent/defs";
+import { printDashboardUi } from "../src/lib/agent/onboard";
 import type { OnboardDashboardDeps, OnboardDashboardHelpers } from "../src/lib/onboard/dashboard";
 
 const { getPortConflictServiceHints } = require("../src/lib/onboard") as {
@@ -12,6 +14,67 @@ const { getPortConflictServiceHints } = require("../src/lib/onboard") as {
 const { createOnboardDashboardHelpers } = require("../src/lib/onboard/dashboard") as {
   createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
 };
+
+function createTokenDownloadRunOpenshell() {
+  return vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+    if (args.join(" ").startsWith("sandbox download ")) {
+      const destDir = args[4];
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(destDir, "openclaw.json"),
+        JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
+      );
+    }
+    return { status: 0 };
+  });
+}
+
+function createListenerFailureRecoveryHarness(targetPort: number) {
+  const sandboxName = "my-sandbox";
+  const foreignPort = targetPort === 18789 ? 19000 : 18789;
+  let targetStopCount = 0;
+  let forwardListCallsAfterStop = 0;
+  const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+    const stoppedTarget = args.join(" ") === `forward stop ${targetPort} ${sandboxName}`;
+    targetStopCount += Number(stoppedTarget);
+    forwardListCallsAfterStop = stoppedTarget ? 0 : forwardListCallsAfterStop;
+    return { status: 0 };
+  });
+  const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+    const isForwardList = args.join(" ") === "forward list";
+    forwardListCallsAfterStop += Number(isForwardList && targetStopCount > 0);
+    const output = [
+      "SANDBOX BIND PORT PID STATUS",
+      `other-sandbox 127.0.0.1 ${foreignPort} 42000 running`,
+      ...(forwardListCallsAfterStop >= 2
+        ? [`${sandboxName} 127.0.0.1 ${targetPort} 42001 running`]
+        : []),
+    ].join("\n");
+    return isForwardList ? output : "";
+  });
+  const sleep = vi.fn();
+  const diagnostic = `local forward listener did not open on 127.0.0.1:${targetPort} within 10000ms\n`;
+  const helpers = createOnboardDashboardHelpers({
+    runOpenshell,
+    runCaptureOpenshell,
+    openshellArgv: () => [
+      process.execPath,
+      "-e",
+      `require("node:fs").writeSync(2, ${JSON.stringify(diagnostic)})`,
+    ],
+    cliName: () => "nemoclaw",
+    agentProductName: () => "NemoClaw",
+    getProviderLabel: (provider: string) => provider,
+    note: vi.fn(),
+    isWsl: () => false,
+    redact: (value: unknown) => String(value),
+    sleep,
+    printAgentDashboardUi: vi.fn(),
+    listSandboxes: () => ({ sandboxes: [] }),
+  });
+
+  return { helpers, runOpenshell, sleep, sandboxName, foreignPort };
+}
 
 describe("onboard dashboard helpers", () => {
   it("prints platform-appropriate service hints for port conflicts", () => {
@@ -100,6 +163,34 @@ describe("onboard dashboard helpers", () => {
     });
   });
 
+  it("retries a terminated dashboard listener without repeat cleanup (#7266)", () => {
+    const { helpers, runOpenshell, sleep, sandboxName, foreignPort } =
+      createListenerFailureRecoveryHarness(18789);
+
+    expect(helpers.ensureDashboardForward(sandboxName, "http://127.0.0.1:18789")).toBe(18789);
+
+    const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
+    expect(
+      stopArgs.filter((args) => args.join(" ") === `forward stop 18789 ${sandboxName}`),
+    ).toHaveLength(1);
+    expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("retries a terminated fixed-agent listener without repeat cleanup (#7266)", () => {
+    const { helpers, runOpenshell, sleep, sandboxName, foreignPort } =
+      createListenerFailureRecoveryHarness(8642);
+
+    expect(helpers.ensureAgentFixedForward(sandboxName, 8642, "agent UI")).toBe(true);
+
+    const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
+    expect(
+      stopArgs.filter((args) => args.join(" ") === `forward stop 8642 ${sandboxName}`),
+    ).toHaveLength(1);
+    expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" +
@@ -173,17 +264,7 @@ describe("onboard dashboard helpers", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));
     const shouldShowNimLine = vi.fn(() => false);
-    const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-      if (args.join(" ").startsWith("sandbox download ")) {
-        const destDir = args[4];
-        fs.mkdirSync(destDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(destDir, "openclaw.json"),
-          JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
-        );
-      }
-      return { status: 0 };
-    });
+    const runOpenshell = createTokenDownloadRunOpenshell();
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
@@ -220,6 +301,135 @@ describe("onboard dashboard helpers", () => {
     expect(output).not.toContain("append  #token=<token>");
     expect(output).not.toMatch(/secret[-_]?token/);
     expect(nimStatus).toHaveBeenCalledWith("my-gpt-claw");
+  });
+
+  it("shows the loopback dashboard URL with a WSL host-IP fallback under WSL", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runOpenshell = createTokenDownloadRunOpenshell();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture: vi.fn(() => "172.22.1.1 10.0.0.2\n"),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+      shouldShowNimLine: vi.fn(() => false),
+      note: vi.fn(),
+      isWsl: () => true,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    let output = "";
+    try {
+      helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
+      output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(output).toContain("http://127.0.0.1:");
+    expect(output).toContain("WSL fallback");
+    expect(output).toContain("http://172.22.1.1:");
+    // Loopback stays the primary browser URL; the WSL host IP follows it.
+    expect(output.indexOf("http://127.0.0.1:")).toBeLessThan(output.indexOf("http://172.22.1.1:"));
+    expect(output).not.toMatch(/secret[-_]?token/);
+  });
+
+  it("gives the agent dashboard both primary and port-rewritten WSL fallback URLs", () => {
+    const runOpenshell = createTokenDownloadRunOpenshell();
+    const printAgentDashboardUi = vi.fn();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture: vi.fn(() => "172.22.1.1 10.0.0.2\n"),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+      shouldShowNimLine: vi.fn(() => false),
+      note: vi.fn(),
+      isWsl: () => true,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi,
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+    const agent = { dashboard: { auth: "url_token" } } as never;
+
+    helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, agent);
+
+    const [, , , agentDeps] = printAgentDashboardUi.mock.calls[0];
+    const urls: string[] = agentDeps.buildControlUiUrls("secret-token", 8642);
+
+    expect(urls).toContain("http://127.0.0.1:8642/#token=secret-token");
+    expect(urls.some((url) => url.startsWith("http://172.22.1.1:8642/"))).toBe(true);
+    expect(urls.some((url) => url.includes(":18789"))).toBe(false);
+  });
+
+  it.each<[string, number, () => void]>([
+    [
+      "NEMOCLAW_DASHBOARD_PORT",
+      9120,
+      () => {
+        process.env.NEMOCLAW_DASHBOARD_PORT = "9120";
+      },
+    ],
+    [
+      "--control-ui-port",
+      9121,
+      () => {
+        delete process.env.NEMOCLAW_DASHBOARD_PORT;
+      },
+    ],
+  ])("prints the effective Hermes dashboard URL selected by %s (#6277)", (_source, port, configurePort) => {
+    const previousChatUiUrl = process.env.CHAT_UI_URL;
+    const previousDashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 1 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture: vi.fn(() => ""),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemohermes",
+      agentProductName: () => "NemoHermes",
+      getProviderLabel: (provider: string) => provider,
+      nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+      shouldShowNimLine: vi.fn(() => false),
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: printDashboardUi,
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    let output = "";
+    try {
+      process.env.CHAT_UI_URL = `http://127.0.0.1:${String(port)}`;
+      configurePort();
+      helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, loadAgent("hermes"));
+      output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    } finally {
+      previousChatUiUrl === undefined
+        ? delete process.env.CHAT_UI_URL
+        : (process.env.CHAT_UI_URL = previousChatUiUrl);
+      previousDashboardPort === undefined
+        ? delete process.env.NEMOCLAW_DASHBOARD_PORT
+        : (process.env.NEMOCLAW_DASHBOARD_PORT = previousDashboardPort);
+      logSpy.mockRestore();
+    }
+
+    expect(output).toContain("Hermes Agent Dashboard");
+    expect(output).toContain(`Port ${String(port)} must be forwarded before opening this URL.`);
+    expect(output).toContain(`http://127.0.0.1:${String(port)}/`);
+    expect(output).not.toContain("http://127.0.0.1:9119/");
+    expect(output).not.toContain("http://127.0.0.1:18789/");
   });
 
   it("prints a token-free browser URL when the dashboard token is unavailable", () => {

@@ -23,6 +23,18 @@ describe("root help", () => {
     expect(output).not.toContain("Landlock enforced");
   });
 
+  it("explains global commands versus sandbox-scoped commands", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    renderRootHelp();
+
+    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("Global commands run without a sandbox-name prefix");
+    expect(output).toContain("sandbox commands start with a sandbox name");
+    expect(output).toContain("nemoclaw status");
+    expect(output).toContain("nemoclaw <name> status");
+  });
+
   it("describes onboard agent selection and the global agent runtime list", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -49,5 +61,16 @@ describe("root help", () => {
         new RegExp(`nemoclaw <name> channels ${action}\\\\s{2,}[^\\n]*<channel>`),
       );
     }
+  });
+
+  it("lists --destroy-user-data under uninstall flags without unsupported --keep flags", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    renderRootHelp();
+
+    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toMatch(/Uninstall flags:[\s\S]*--destroy-user-data/);
+    expect(output).not.toMatch(/--keep-user-data/);
+    expect(output).not.toMatch(/--keep-backups/);
   });
 });

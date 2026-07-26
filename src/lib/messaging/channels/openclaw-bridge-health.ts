@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../../core/json-types";
 import type { MessagingHookHandler, MessagingHookRegistration } from "../hooks/types";
 
 const OPENCLAW_CONFIG_FILE = "/sandbox/.openclaw/openclaw.json";
@@ -148,8 +149,4 @@ function getObjectPath(value: unknown, dottedPath: string): unknown {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

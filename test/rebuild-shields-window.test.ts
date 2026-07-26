@@ -24,7 +24,7 @@ describe("rebuild shields window", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("temporarily unlocks locked shields without starting an auto-restore timer", () => {
+  it("temporarily unlocks locked shields with a bounded auto-restore timer", () => {
     shieldsMock.isShieldsDown.mockReturnValue(false);
 
     const window = openRebuildShieldsWindow("locked-sandbox", "nemoclaw");
@@ -33,8 +33,10 @@ describe("rebuild shields window", () => {
     expect(window!.wasLocked).toBe(true);
     expect(shieldsMock.shieldsDown).toHaveBeenCalledWith("locked-sandbox", {
       reason: "auto-unlock for rebuild",
-      skipTimer: true,
+      timeout: "30m",
       throwOnError: true,
+      deferAutoRestoreWhileOwnerAlive: true,
+      allowLegacyHermesProtocol: true,
     });
   });
 
@@ -47,6 +49,7 @@ describe("rebuild shields window", () => {
     expect(window.relocked).toBe(true);
     expect(shieldsMock.shieldsUp).toHaveBeenCalledWith("locked-sandbox", {
       throwOnError: true,
+      allowLegacyHermesProtocol: true,
     });
 
     expect(relockRebuildShieldsWindow("locked-sandbox", window, true, "nemoclaw")).toBe(true);

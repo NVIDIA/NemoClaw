@@ -32,6 +32,11 @@ interface VllmProfileShape {
 
 const MANAGED_VLLM_DEFAULT_PLATFORMS = new Set<NvidiaPlatform>(["spark", "station"]);
 
+/** DGX platforms where the provider menu exposes managed vLLM without `experimental`. */
+export function isManagedVllmDefaultPlatform(platform: NvidiaPlatform | null | undefined): boolean {
+  return platform != null && MANAGED_VLLM_DEFAULT_PLATFORMS.has(platform);
+}
+
 export interface VllmMenuEntry {
   key: "vllm" | "install-vllm";
   label: string;
@@ -62,17 +67,17 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
         `  Note: NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:${VLLM_PORT} — selecting the running instance.`,
       );
     }
+    const experimentalLabel = isManagedVllmDefaultPlatform(opts.platform) ? "" : " [experimental]";
     return [
       {
         key: "vllm",
-        label: `Local vLLM [experimental] (localhost:${VLLM_PORT}) — running (suggested)`,
+        label: `Local vLLM${experimentalLabel} (localhost:${VLLM_PORT}) — running (suggested)`,
       },
     ];
   }
   if (
     userChoseManagedVllm ||
-    (opts.vllmProfile &&
-      (opts.experimental || (opts.platform && MANAGED_VLLM_DEFAULT_PLATFORMS.has(opts.platform))))
+    (opts.vllmProfile && (opts.experimental || isManagedVllmDefaultPlatform(opts.platform)))
   ) {
     const verb = opts.hasVllmImage ? "Start" : "Install";
     const profileLabel = opts.vllmProfile?.name ?? "no profile detected";

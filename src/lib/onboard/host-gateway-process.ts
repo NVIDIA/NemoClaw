@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncOptions } from "node:child_process";
+import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { waitUntil } from "../core/wait";
 import { clearDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
-import { hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches } from "./gateway-process-identity";
+import {
+  hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches,
+  type OpenShellGatewayProcessTarget,
+} from "./gateway-process-identity";
 
 export interface RunResult {
   status: number | null;
@@ -26,14 +29,22 @@ export interface HostGatewayProcessDeps {
 }
 
 export interface StopHostGatewayOptions {
+  /** Whether successful stops may clear the pid file/runtime marker. */
+  clearRuntimeFiles?: boolean;
   gatewayBin?: string | null;
   killWaitMs?: number;
   logNoProcesses?: boolean;
+  openShellGatewayName?: string;
+  openShellGatewayPort?: number | string;
   pids?: Iterable<number>;
   pidFile?: string;
   pollIntervalMs?: number;
+  /** Keep PID/runtime evidence when a PID-file process does not match the cleanup target. */
+  preserveRuntimeFilesOnNonMatching?: boolean;
   stateDir?: string;
   termWaitMs?: number;
+  /** Whether to read and act on the resolved pid file. */
+  usePidFile?: boolean;
   usePgrepFallback?: boolean;
 }
 
@@ -51,7 +62,8 @@ export interface StopHostGatewayResult {
 // path could match unrelated commands. The compat parent is rediscovered via
 // the PID file written at launch time.
 /** Anchored pgrep pattern for direct host openshell-gateway processes. */
-export const HOST_GATEWAY_PGREP_PATTERN = "^(/[^ ]*/)?openshell-gateway( |$)";
+export const HOST_GATEWAY_PGREP_PATTERN =
+  "^(/[^ ]*/)?openshell-gateway(\\[nemoclaw=nemoclaw(-[0-9]+)?;port=[0-9]+\\]| |$)";
 const DEFAULT_TERM_WAIT_MS = 1000;
 const DEFAULT_KILL_WAIT_MS = 1000;
 const DEFAULT_POLL_INTERVAL_MS = 50;
@@ -78,6 +90,9 @@ function defaultKill(pid: number, signal?: NodeJS.Signals | number): boolean {
 }
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
+  // `command` is always an internal, trusted literal ("pgrep"); it is never
+  // user-supplied. It is also JSON.stringify-quoted, so the `sh -c` here carries
+  // no shell-injection surface.
   return (
     defaultRun("sh", ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], {
       env,
@@ -154,7 +169,13 @@ function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
   return result.stdout.trim() || null;
 }
 
-export const hostGatewayCmdlineMatches = sharedHostGatewayCmdlineMatches;
+export function hostGatewayCmdlineMatches(
+  cmdline: string,
+  gatewayBin: string | null | undefined,
+  expectedOpenShellGateway?: OpenShellGatewayProcessTarget,
+): boolean {
+  return sharedHostGatewayCmdlineMatches(cmdline, gatewayBin, expectedOpenShellGateway);
+}
 
 function waitForExit(
   pid: number,
@@ -207,7 +228,7 @@ function warnSudoRemediation(pid: number, deps: HostGatewayProcessDeps): void {
   const ownerLabel = owner ? `${owner}-owned` : "privileged";
   warn(
     `Cannot stop ${ownerLabel} host openshell-gateway process ${pid}. ` +
-      "Run: sudo pkill -f openshell-gateway",
+      `Run: sudo kill -9 ${pid}`,
   );
 }
 
@@ -238,6 +259,7 @@ export function stopHostGatewayProcesses(
   const deps = defaultDeps(depsOverrides);
   const stateDir = options.stateDir ?? resolveDockerDriverGatewayStateDir(deps.env);
   const pidFile = options.pidFile ?? path.join(stateDir, "openshell-gateway.pid");
+  const clearRuntimeState = options.clearRuntimeFiles ?? true;
   const candidates = new Map<number, Set<string>>();
   const result: StopHostGatewayResult = {
     failed: [],
@@ -247,11 +269,13 @@ export function stopHostGatewayProcesses(
     sudoRemediationPids: [],
   };
 
-  const pidFromFile = readPidFile(pidFile);
-  if (pidFromFile !== null) {
-    addPid(candidates, pidFromFile, "pid-file");
-  } else if (fs.existsSync(pidFile)) {
-    clearRuntimeFiles(pidFile, stateDir);
+  if (options.usePidFile ?? true) {
+    const pidFromFile = readPidFile(pidFile);
+    if (pidFromFile !== null) {
+      addPid(candidates, pidFromFile, "pid-file");
+    } else if (clearRuntimeState && fs.existsSync(pidFile)) {
+      clearRuntimeFiles(pidFile, stateDir);
+    }
   }
 
   const explicitPids = Array.from(options.pids ?? []).filter(
@@ -277,19 +301,37 @@ export function stopHostGatewayProcesses(
     pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     termWaitMs: options.termWaitMs ?? DEFAULT_TERM_WAIT_MS,
   };
+  const expectedOpenShellGateway =
+    options.openShellGatewayName || options.openShellGatewayPort !== undefined
+      ? {
+          name: options.openShellGatewayName,
+          port: options.openShellGatewayPort,
+        }
+      : undefined;
   let clearedRuntimeFiles = false;
   for (const [pid, sources] of candidates) {
     if (!pidExists(pid, deps)) {
       result.skippedDeadPids.push(pid);
-      if (sources.has("pid-file") && !clearedRuntimeFiles) {
+      if (clearRuntimeState && sources.has("pid-file") && !clearedRuntimeFiles) {
         clearRuntimeFiles(pidFile, stateDir);
         clearedRuntimeFiles = true;
       }
       continue;
     }
-    if (!hostGatewayCmdlineMatches(processArgs(pid, deps), options.gatewayBin)) {
+    if (
+      !hostGatewayCmdlineMatches(
+        processArgs(pid, deps),
+        options.gatewayBin,
+        expectedOpenShellGateway,
+      )
+    ) {
       result.skippedNonMatchingPids.push(pid);
-      if (sources.has("pid-file") && !clearedRuntimeFiles) {
+      if (
+        clearRuntimeState &&
+        !options.preserveRuntimeFilesOnNonMatching &&
+        sources.has("pid-file") &&
+        !clearedRuntimeFiles
+      ) {
         clearRuntimeFiles(pidFile, stateDir);
         clearedRuntimeFiles = true;
       }
@@ -298,7 +340,7 @@ export function stopHostGatewayProcesses(
 
     if (tryStopPid(pid, deps, waitOptions) === "stopped") {
       result.stopped.push(pid);
-      if (!clearedRuntimeFiles) {
+      if (clearRuntimeState && !clearedRuntimeFiles) {
         clearRuntimeFiles(pidFile, stateDir);
         clearedRuntimeFiles = true;
       }
@@ -317,7 +359,7 @@ export function stopHostGatewayProcesses(
       const warn = deps.warn ?? ((message: string) => console.warn(message));
       warn(
         "pgrep not found; could not scan for orphan host openshell-gateway processes. " +
-          "If port 8080 is still bound, run: sudo pkill -f openshell-gateway",
+          "Inspect any remaining listener and stop only the matching gateway process.",
       );
     } else {
       const log = deps.log ?? ((message: string) => console.log(message));

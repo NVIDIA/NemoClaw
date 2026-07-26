@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
+import type { OwnedTestResources } from "../helpers/owned-test-resources";
 import { execTimeout, testTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 export { execTimeout, testTimeout, testTimeoutOptions };
@@ -180,32 +181,39 @@ function runWithEnvInternal(
   const parsedArgs = splitCliArgs(args);
   const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
   const cliArgs = parsedArgs.filter((token) => token !== "2>&1");
-  const result = spawnSync(process.execPath, [CLI, ...cliArgs], {
-    encoding: "utf-8",
-    input,
-    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-    timeout,
-    env: {
-      ...process.env,
-      HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
-      NEMOCLAW_HEALTH_POLL_COUNT: "1",
-      NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
-      // #4710: the post-recovery settle-confirm waits 25s by default; CLI
-      // tests disable it to stay fast. Settle behavior has dedicated
-      // coverage in process-recovery.test.ts and a targeted CLI test in
-      // connect-recovery-settle.test.ts that overrides this with a short window.
-      NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
-      ...env,
-    },
-  });
-  const stdout = result.stdout || "";
-  const stderr = result.stderr || "";
-  const errorOutput = result.error ? String(result.error) : "";
-  const code = typeof result.status === "number" ? result.status : 1;
-  if (code === 0) {
-    return { code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout };
+  const implicitHome = Object.hasOwn(env, "HOME")
+    ? null
+    : fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-"));
+  try {
+    const result = spawnSync(process.execPath, [CLI, ...cliArgs], {
+      encoding: "utf-8",
+      input,
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      timeout,
+      env: {
+        ...process.env,
+        ...(implicitHome ? { HOME: implicitHome } : {}),
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+        // #4710: the post-recovery settle-confirm waits 25s by default; CLI
+        // tests disable it to stay fast. Settle behavior has dedicated
+        // coverage in process-recovery.test.ts and a targeted CLI test in
+        // connect-recovery-settle.test.ts that overrides this with a short window.
+        NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
+        ...env,
+      },
+    });
+    const stdout = result.stdout || "";
+    const stderr = result.stderr || "";
+    const errorOutput = result.error ? String(result.error) : "";
+    const code = typeof result.status === "number" ? result.status : 1;
+    if (code === 0) {
+      return { code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout };
+    }
+    return { code, out: `${stdout}${stderr}${errorOutput}` };
+  } finally {
+    if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });
   }
-  return { code, out: `${stdout}${stderr}${errorOutput}` };
 }
 
 export function readRecordedArgs(markerFile: string): string[] {
@@ -271,6 +279,25 @@ export function writeSandboxRegistry(
   );
 }
 
+export function writeDoctorSandboxRegistry(
+  home: string,
+  sandboxName = "alpha",
+  overrides: SandboxOverrides = {},
+): void {
+  writeSandboxRegistry(home, sandboxName, {
+    agent: "openclaw",
+    openshellDriver: "docker",
+    openshellVersion: "0.0.72",
+    nemoclawVersion: "0.0.95",
+    fromDockerfile: null,
+    dashboardPort: 18_789,
+    imageTag: "nemoclaw-openclaw:test",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8_080,
+    ...overrides,
+  });
+}
+
 // Several sandbox commands (status, connect, logs, policy-list) now preflight
 // `docker info` to classify a Docker daemon outage (#4428). Tests that should
 // exercise the normal (Docker-up) path must stub a healthy `docker info` so
@@ -286,6 +313,15 @@ export function writeHealthyDockerStub(localBin: string): void {
   );
 }
 
+export function healthyInferenceRouteStubLines(): string[] {
+  return [
+    'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+    "  echo 'OK 200'",
+    "  exit 0",
+    "fi",
+  ];
+}
+
 export const FAKE_OPENCLAW_LOG_LINE = "openclaw gateway log: policy checker ready";
 export const FAKE_OPENSHELL_LOG_LINE = "openshell audit log: DENIED example.com:443";
 
@@ -294,12 +330,12 @@ type LogsTestSetupOptions = {
 };
 
 export function createLogsTestSetup(
+  resources: OwnedTestResources,
   prefix: string,
   openshellLines: string[] = [],
   options: LogsTestSetupOptions = {},
 ) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const localBin = path.join(home, "bin");
+  const { home, bin: localBin } = resources.home(prefix);
   const markerFile = path.join(home, "logs-calls");
   const gatewayStartedLines = options.gatewayStartedMarker
     ? [`  printf '%s\\n' ${JSON.stringify(options.gatewayStartedMarker)} >> "$marker_file"`]
@@ -348,15 +384,15 @@ export function createLogsTestSetup(
 }
 
 export function createDoctorTestSetup(
+  resources: OwnedTestResources,
   prefix: string,
   openshellLines: string[],
   sandboxName = "alpha",
 ) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const localBin = path.join(home, "bin");
+  const { home, bin: localBin } = resources.home(prefix);
   const markerFile = path.join(home, "doctor-calls");
   fs.mkdirSync(localBin, { recursive: true });
-  writeSandboxRegistry(home, sandboxName);
+  writeDoctorSandboxRegistry(home, sandboxName);
 
   fs.writeFileSync(
     path.join(localBin, "openshell"),
@@ -365,6 +401,10 @@ export function createDoctorTestSetup(
       `marker_file=${JSON.stringify(markerFile)}`,
       'printf \'%s\\n\' "$*" >> "$marker_file"',
       ...openshellLines,
+      'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+      "  echo 'OK 200'",
+      "  exit 0",
+      "fi",
       "exit 0",
     ].join("\n"),
     { mode: 0o755 },
@@ -418,11 +458,11 @@ export function createCloudflaredServiceDir(prefix: string): {
 }
 
 export function createDebugCommandTestEnv(
+  resources: OwnedTestResources,
   prefix: string,
   options: { extraSandboxNames?: string[] } = {},
 ): Record<string, string> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const localBin = path.join(home, "bin");
+  const { home, bin: localBin } = resources.home(prefix);
   const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the

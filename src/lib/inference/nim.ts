@@ -3,9 +3,9 @@
 //
 // NIM container management — pull, start, stop, health-check NIM images.
 
-const fs = require("fs");
-const { runCapture } = require("../runner");
-const {
+import fs from "node:fs";
+import nimImages from "../../../bin/lib/nim-images.json";
+import {
   dockerContainerInspectFormat,
   dockerForceRm,
   dockerLoginPasswordStdin,
@@ -17,12 +17,11 @@ const {
   dockerRunDetached,
   dockerStop,
   dockerTag,
-} = require("../adapters/docker");
-const { sleepSeconds } = require("../core/wait");
-const nimImages = require("../../../bin/lib/nim-images.json");
-
+} from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
+import { sleepSeconds } from "../core/wait";
+import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
 import {
   type Arm64WslDockerDesktopGpuProver,
@@ -39,6 +38,7 @@ export interface NimModel {
   name: string;
   image: string;
   minGpuMemoryMB: number;
+  servedModel?: string;
 }
 
 export type NvidiaPlatform = "spark" | "station" | "jetson" | "linux";
@@ -349,6 +349,11 @@ export function getImageForModel(modelName: string): string | null {
   return entry ? entry.image : null;
 }
 
+export function expectedServedModelId(modelName: string): string {
+  const entry = nimImages.models.find((model: NimModel) => model.name === modelName);
+  return entry?.servedModel || modelName;
+}
+
 export function listModels(): NimModel[] {
   return nimImages.models.map((m: NimModel) => ({
     name: m.name,
@@ -510,7 +515,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
-          ...(platform === "jetson" ? { computeConstrained: true } : {}),
+          // The proof-passed Windows-ARM N1X iGPU is memory-shared like Jetson
+          // and cannot serve a computeIntensive model in-loop, so tag it
+          // computeConstrained to exclude those Ollama bootstrap models (#3707).
+          ...(platform === "jetson" || wslDockerDesktopGpuProofPassed
+            ? { computeConstrained: true }
+            : {}),
           ...(wslDockerDesktopGpuProofPassed ? { wslDockerDesktopGpuProofPassed: true } : {}),
         };
       }
@@ -708,7 +718,7 @@ export function dockerLoginNgc(apiKey: string): boolean {
     return false;
   }
   if (result.status !== 0 && result.stderr) {
-    console.error(`  Docker login error: ${result.stderr.trim()}`);
+    console.error(`  Docker login error: ${String(result.stderr).trim()}`);
   }
   return result.status === 0;
 }
@@ -943,7 +953,9 @@ export function stopNimContainerByName(
   { silent = false }: { silent?: boolean } = {},
 ): void {
   if (!silent) console.log(`  Stopping NIM container: ${name}`);
-  const stdio = silent ? ["ignore", "ignore", "ignore"] : undefined;
+  const stdio: ["ignore", "ignore", "ignore"] | undefined = silent
+    ? ["ignore", "ignore", "ignore"]
+    : undefined;
   dockerStop(name, { ignoreError: true, ...(stdio && { stdio }) });
   dockerRm(name, { ignoreError: true, ...(stdio && { stdio }) });
 }

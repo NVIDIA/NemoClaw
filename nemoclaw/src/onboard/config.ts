@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { isObjectRecord } from "../shared/object-record.js";
 
 let configDir = join(homedir(), ".nemoclaw");
 
@@ -37,23 +38,7 @@ export interface NemoClawOnboardConfig {
   onboardedAt: string;
 }
 
-type OnboardConfigSource = {
-  endpointType?: string | null;
-  endpointUrl?: string;
-  ncpPartner?: string | null;
-  model?: string;
-  profile?: string;
-  credentialEnv?: string;
-  provider?: string;
-  providerLabel?: string;
-  onboardedAt?: string;
-};
-
-function isRecord(value: object | null): value is OnboardConfigSource {
-  return value !== null && !Array.isArray(value);
-}
-
-function isEndpointType(value: string | null | undefined): value is EndpointType {
+function isEndpointType(value: unknown): value is EndpointType {
   return (
     value === "build" ||
     value === "openai" ||
@@ -67,13 +52,13 @@ function isEndpointType(value: string | null | undefined): value is EndpointType
   );
 }
 
-function isOptionalString(value: string | null | undefined): boolean {
+function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
 }
 
-function isOnboardConfig(value: OnboardConfigSource | null): value is NemoClawOnboardConfig {
+function isOnboardConfig(value: unknown): value is NemoClawOnboardConfig {
   return (
-    isRecord(value) &&
+    isObjectRecord(value) &&
     isEndpointType(value.endpointType) &&
     typeof value.endpointUrl === "string" &&
     (value.ncpPartner === null || typeof value.ncpPartner === "string") &&
@@ -164,8 +149,7 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
   // Treat unreadable config as "no config" so plugin register doesn't abort.
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
-    const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
-    return isOnboardConfig(parsedObject) ? parsedObject : null;
+    return isOnboardConfig(parsed) ? parsed : null;
   } catch {
     return null;
   }

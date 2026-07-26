@@ -1,0 +1,39 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.76
+
+NemoClaw v0.0.76 adds opt-in OTLP observability and a dedicated documentation guide for LangChain Deep Agents Code, makes Nemotron 3 Ultra the managed NVIDIA Endpoints default for Deep Agents Code, contains shared-gateway inference-route conflicts, and improves upgrade recovery, MCP diagnostics, local inference, messaging, and day-two commands.
+
+- LangChain Deep Agents Code now defaults to `nvidia/nemotron-3-ultra-550b-a55b` for NVIDIA Endpoints and uses the native Nemotron 3 Ultra profile from hash-locked Deep Agents Code `0.1.34`.
+  Managed interactive sessions preserve the optional first-run name prompt while skipping dependency and model selection, and existing sandboxes should be rebuilt after upgrading.
+  The docs site now publishes a dedicated Deep Agents guide.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart) and [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider).
+- Deep Agents sandboxes can opt into backend-neutral OTLP/HTTP tracing during onboarding or rebuild with `--observability`.
+  The managed exporter sends bounded model and tool content only to a fixed host-local receiver, while an operator-managed collector holds remote backend credentials and controls forwarding.
+  Treat exported trace content as sensitive application data.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), [Credential Storage](/user-guide/openclaw/security/credential-storage), and [Network Policies](/user-guide/openclaw/reference/network-policies).
+- Shared OpenShell gateways now reject inference-route changes that conflict with another registered sandbox, including stopped sandboxes.
+  Compatibility checks cover provider, model, normalized custom endpoint, API family, legacy metadata, and gateway binding before onboarding, `inference set`, or connect-time repair changes state.
+  `inference set` also accepts onboarding provider aliases and gives actionable model-only and Deep Agents re-onboarding guidance, while OpenClaw onboarding validates Anthropic-compatible streaming event sequences by default.
+  For more information, refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers), [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Installer upgrades require a fresh backup of every registered sandbox before replacing the gateway.
+  Pre-fingerprint OpenClaw and Hermes sandboxes can recover only after exact-name managed-image confirmation, recorded custom-image cases remain blocked, and successful recovery restores the recorded provider and route without starting generic onboarding.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Credential Storage](/user-guide/openclaw/security/credential-storage).
+- Startup and onboarding recover more bounded local drift.
+  OpenClaw can bootstrap the same-device CLI pairing request when device listing is itself pairing-gated, startup safely reclaims an exact root-owned mutable-config posture while rejecting ambiguous states, and interrupted resumable onboarding points to `onboard --resume`.
+  For more information, refer to [Security Best Practices](/user-guide/openclaw/security/best-practices), [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Managed MCP diagnostics can now verify OpenShell credential replacement at the wire boundary.
+  `mcp add` and single-server `mcp status` run a gated differential probe and report verified or inconclusive credential resolution without capturing endpoint response bodies; `--probe` and `--no-probe` control the check.
+  For more information, refer to [About Managed MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/about-managed-mcp-servers) and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Managed local inference enables automatic tool choice with the `qwen3_coder` parser for the generic-Linux Nemotron 3 Nano vLLM default.
+  Linux arm64 DGX Spark and DGX Station onboarding warns that some NIM images may lack an arm64 manifest, and troubleshooting now distinguishes direct sandbox DNS limitations from policy-covered inference, messaging, and search health.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server), [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Messaging setup handles more runtime and installation edge cases.
+  OpenClaw WhatsApp pairing renders a terminal QR code with a four-module quiet zone, Teams plugin installation tolerates verbose npm metadata, and newly generated OpenClaw config no longer references the uninstalled `qqbot` plugin.
+  For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels).
+- Day-two commands behave more predictably in automation and across agents.
+  Non-terminal `exec` closes stdin unless `--stdin` explicitly forwards a pipe, session passthrough selects the sandbox's native agent binary, resumed Hermes one-shot turns append to the selected session, and `gc` finds orphaned gateway-built and locally prebuilt sandbox images.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).

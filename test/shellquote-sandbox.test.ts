@@ -8,6 +8,8 @@ import os from "os";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
+
 describe("sandboxName command hardening in onboard.js", () => {
   it("re-validates sandboxName at the createSandbox boundary", async () => {
     const onboardModule = await import("../src/lib/onboard.js");
@@ -41,9 +43,7 @@ describe("sandboxName command hardening in onboard.js", () => {
     const streamPath = sourceModule("sandbox", "create-stream.ts");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
     fs.writeFileSync(
       scriptPath,
       String.raw`
@@ -57,6 +57,7 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
 }
+process.env.NEMOCLAW_OPENSHELL_BIN = ${JSON.stringify(path.join(fakeBin, "openshell"))};
 const commands = [];
 const asText = (command) => Array.isArray(command) ? command.join(" ") : String(command);
 runner.run = (command, opts = {}) => {

@@ -43,12 +43,13 @@ function buildDeps(
 function detectWithDeps(
   deps: DetectInferenceProviderHostStateDeps,
   gpu: InferenceProviderHostGpu | null = null,
+  env: NodeJS.ProcessEnv = {},
 ) {
   return detectInferenceProviderHostState({
     gpu,
     experimental: true,
     platform: "linux",
-    env: {},
+    env,
     log: () => {},
     installedOllamaVersion: "0.24.0",
     runningOllamaVersion: "0.24.0",
@@ -57,18 +58,56 @@ function detectWithDeps(
 }
 
 describe("detectInferenceProviderHostState", () => {
+  it("suppresses local endpoint probes when route preflight disallows them (#6315)", () => {
+    const runCapture = vi.fn<DetectInferenceProviderHostStateDeps["runCapture"]>(() => "{}");
+    const findReachableOllamaHost = vi.fn(() => "127.0.0.1");
+    const deps = buildDeps({
+      runCapture,
+      findReachableOllamaHost,
+      isWsl: vi.fn(() => true),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+    });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      probeOllama: false,
+      probeVllm: false,
+      platform: "linux",
+      env: {},
+      log: () => {},
+      deps,
+    });
+
+    expect(findReachableOllamaHost).not.toHaveBeenCalled();
+    expect(state.ollamaRunning).toBe(false);
+    expect(state.vllmRunning).toBe(false);
+    expect(state.windowsOllamaReachable).toBe(false);
+    expect(
+      runCapture.mock.calls.some(([command]) =>
+        command.join(" ").match(/\/v1\/models|\/api\/tags/),
+      ),
+    ).toBe(false);
+  });
+
   it("collects local Ollama and vLLM state into one provider host snapshot", () => {
+    const dockerCapture = vi.fn(() => "sha256:cached-image\n");
     const deps = buildDeps({
       hostCommandExists: vi.fn((command) => command === "ollama"),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
       runCapture: vi.fn((command) =>
         command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? "{}" : "",
       ),
-      dockerCapture: vi.fn(() => "sha256:cached-image\n"),
+      dockerCapture,
       detectVllmProfile: vi.fn<DetectInferenceProviderHostStateDeps["detectVllmProfile"]>(() => ({
         name: "Linux + NVIDIA GPU",
         platform: "linux" as const,
         image: "nvcr.io/nvidia/vllm:test",
+        imageDownloadSizeBytes: 1,
         defaultModel: {} as never,
         containerName: "nemoclaw-vllm",
         dockerRunFlags: [],
@@ -77,7 +116,14 @@ describe("detectInferenceProviderHostState", () => {
       })),
     });
 
-    const state = detectWithDeps(deps, { nimCapable: true, type: "nvidia", platform: "linux" });
+    const state = detectWithDeps(
+      deps,
+      { nimCapable: true, type: "nvidia", platform: "linux" },
+      {
+        DOCKER_CONTEXT: "remote-builder",
+        DOCKER_HOST: "ssh://fallback.example.test",
+      },
+    );
 
     expect(state.hasOllama).toBe(true);
     expect(state.ollamaRunning).toBe(true);
@@ -89,6 +135,17 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.gpuNimCapable).toBe(true);
     expect(state.ollamaInstallMenu.entry).toBeNull();
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith(null);
+    expect(dockerCapture).toHaveBeenCalledWith(
+      ["image", "inspect", "--format", "{{.Id}}", "nvcr.io/nvidia/vllm:test"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          DOCKER_CONTEXT: "remote-builder",
+          DOCKER_HOST: "ssh://fallback.example.test",
+        }),
+        ignoreError: true,
+        timeout: 10_000,
+      }),
+    );
   });
 
   it("detects a reachable Windows-host Ollama beside WSL-local Ollama and warns outside mirrored networking", () => {

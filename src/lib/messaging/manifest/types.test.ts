@@ -92,22 +92,6 @@ const telegramManifest = {
       ],
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedIds"],
-      telegramConfig: ["requireMention"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.telegram",
-        env: "TELEGRAM_ALLOWED_IDS",
-      },
-      {
-        statePath: "telegramConfig.requireMention",
-        env: "TELEGRAM_REQUIRE_MENTION",
-      },
-    ],
-  },
   hooks: [],
 } as const satisfies ChannelManifest;
 
@@ -145,17 +129,6 @@ const wechatHookManifest = {
   ],
   policyPresets: ["wechat"],
   render: [],
-  state: {
-    persist: {
-      wechatConfig: ["accountId"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "wechatConfig.accountId",
-        env: "WECHAT_ACCOUNT_ID",
-      },
-    ],
-  },
   hooks: [
     {
       id: "wechat-host-qr",
@@ -319,6 +292,6 @@ describe("messaging manifest type contracts", () => {
   });
 
   // Import-layer isolation for the production manifest modules is enforced by
-  // scripts/checks/layer-import-boundaries.ts. Keep this unit test focused on
+  // scripts/checks/layer-import-boundaries.mts. Keep this unit test focused on
   // manifest serialization and type contracts rather than walking source files.
 });

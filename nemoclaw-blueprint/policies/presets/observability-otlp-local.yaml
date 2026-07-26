@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Local OpenTelemetry trace export for managed agent observability.
+# The sandbox never receives a remote endpoint, exporter header, or backend credential.
+preset:
+  name: observability-otlp-local
+  description: "OTLP/HTTP trace export to a local host collector"
+
+network_policies:
+  observability-otlp-local:
+    name: observability-otlp-local
+    endpoints:
+      - host: host.openshell.internal
+        port: 4318
+        protocol: rest
+        enforcement: enforce
+        # Docker/Podman bridge gateway addresses vary by host and network.
+        # OpenShell's SSRF guard rejects their private resolutions unless the
+        # policy allowlists them. The exact hostname, port, method, path, and
+        # managed-Python binary remain independently enforced below.
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        rules:
+          - allow: { method: POST, path: "/v1/traces" }
+    binaries:
+      - { path: /opt/venv/bin/python3* }

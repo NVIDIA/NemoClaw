@@ -1,9 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { redactProxyCredentials, warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
+
+function withStderrColorDepth<T>(colorDepth: number, callback: () => T): T {
+  const stderr = Object.assign(Object.create(process.stderr), {
+    getColorDepth: () => colorDepth,
+    isTTY: true,
+  }) as typeof process.stderr;
+  const getStderr = vi.spyOn(process, "stderr", "get").mockReturnValue(stderr);
+  vi.stubEnv("NO_COLOR", "");
+  try {
+    return callback();
+  } finally {
+    getStderr.mockRestore();
+    vi.unstubAllEnvs();
+  }
+}
 
 describe("redactProxyCredentials", () => {
   it("returns plain proxy URLs unchanged", () => {
@@ -108,6 +123,25 @@ describe("warnIfHostProxyMissesLoopback", () => {
     expect(joined).not.toContain("s3cret");
     expect(joined).toContain("****");
     expect(joined).toContain("proxy.example.com:3128");
+  });
+
+  it("colors only the warning line on color-capable stderr and keeps proxy credentials redacted", () => {
+    withStderrColorDepth(24, () => {
+      const lines: string[] = [];
+      warnIfHostProxyMissesLoopback(
+        { http_proxy: "http://alice:s3cret@proxy.example.com:3128" },
+        (line) => lines.push(line),
+      );
+
+      expect(lines[0]).toBe(
+        "  \x1b[33m⚠ HTTP_PROXY/http_proxy is set without " +
+          "NO_PROXY=localhost,127.0.0.1,inference.local.\x1b[39m",
+      );
+      expect(lines.slice(1).join("\n")).not.toContain("\x1b[");
+      expect(lines.join("\n")).not.toContain("alice");
+      expect(lines.join("\n")).not.toContain("s3cret");
+      expect(lines.join("\n")).toContain("****@proxy.example.com:3128");
+    });
   });
 
   it("respects uppercase HTTP_PROXY too", () => {

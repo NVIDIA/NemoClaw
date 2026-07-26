@@ -5,6 +5,8 @@
 
 `src/lib/onboard` is the transitional home for onboarding support modules while the large legacy `src/lib/onboard.ts` flow is split over time.
 
+The lifecycle contract map for the onboarding and runtime-mutation journeys (desired-state sources, destructive boundaries, checkpoints, divergences) lives in [`lifecycle-contracts.md`](lifecycle-contracts.md) (#6225).
+
 Good candidates:
 
 ```text

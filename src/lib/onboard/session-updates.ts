@@ -4,6 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { HermesAuthMethod, SessionUpdates } from "../state/onboard-session";
+import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 
 export interface OnboardSessionUpdateInput {
   sandboxName?: string | null;
@@ -16,9 +17,13 @@ export interface OnboardSessionUpdateInput {
   compatibleEndpointReasoning?: string | null;
   nimContainer?: string | null;
   webSearchConfig?: WebSearchConfig | null;
+  toolDisclosure?: ToolDisclosure | string;
+  observabilityEnabled?: boolean;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
+  /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
+  stationExpressModelIdentity?: string;
 }
 
 // Preserve the nullable contract end-to-end: `null` means "clear this
@@ -54,9 +59,19 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   if (updates.nimContainer !== undefined)
     normalized.nimContainer = toNullableString(updates.nimContainer);
   if (updates.webSearchConfig !== undefined) normalized.webSearchConfig = updates.webSearchConfig;
+  if (updates.toolDisclosure !== undefined) {
+    const toolDisclosure = normalizeToolDisclosure(updates.toolDisclosure);
+    if (toolDisclosure) normalized.toolDisclosure = toolDisclosure;
+  }
+  if (typeof updates.observabilityEnabled === "boolean") {
+    normalized.observabilityEnabled = updates.observabilityEnabled;
+  }
   if (updates.policyPresets !== undefined) normalized.policyPresets = updates.policyPresets;
   if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;
   if (updates.hermesToolGateways !== undefined)
     normalized.hermesToolGateways = updates.hermesToolGateways;
+  if (updates.stationExpressModelIdentity !== undefined) {
+    normalized.stationExpressModelIdentity = updates.stationExpressModelIdentity;
+  }
   return normalized;
 }

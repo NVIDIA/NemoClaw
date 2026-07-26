@@ -4,6 +4,14 @@
 import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 
+export {
+  applyExtraProviderReconciliation,
+  type ExtraProviderReconciliationPlan,
+  planRegisteredExtraProviders,
+  type ReconcileExtraProvidersDeps,
+  reconcileRegisteredExtraProviders,
+} from "./extra-provider-reconciliation";
+
 export type SandboxProviderRunOpenshell = (
   args: string[],
   opts?: Record<string, unknown>,
@@ -24,6 +32,21 @@ export type DetachSandboxProvidersDeps = {
   tolerateMissingSandbox?: boolean;
 };
 
+export type DeleteProviderWithRecoveryDeps = DetachSandboxProvidersDeps & {
+  /**
+   * Security containment for the force-detach recovery path. When provided,
+   * `deleteProviderWithRecovery` may only force-detach sandboxes whose names
+   * appear in this set — the authorized set for the onboarding operation
+   * (normally exactly the sandbox being onboarded). If the gateway's
+   * FailedPrecondition diagnostic lists ANY sandbox outside this set, the
+   * recovery fails closed (no detach is issued) so a mis-parsed, racing, or
+   * otherwise unexpected attachment can never silently detach an unrelated
+   * sandbox. When omitted, recovery is unconstrained — callers that own the
+   * whole gateway (resume-after-prune / credential-reset) opt out explicitly.
+   */
+  allowedSandboxes?: readonly string[];
+};
+
 export type DetachSandboxProvidersResult = {
   detached: string[];
   failures: Array<{ name: string; output: string }>;
@@ -37,6 +60,7 @@ export type SandboxRecreateCleanupDeps = DetachSandboxProvidersDeps & {
 export const SANDBOX_PROVIDER_SUFFIXES = [
   ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
   "brave-search",
+  "tavily-search",
 ] as readonly string[];
 
 export type SandboxProviderSuffix = string;
@@ -46,7 +70,7 @@ const TOLERATED_DETACH_OUTPUT_RE =
 
 const MISSING_SANDBOX_OUTPUT_RE = /sandbox[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
 
-const ATTACHED_TO_SANDBOX_RE = /attached\s+to\s+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
+const ATTACHED_TO_SANDBOX_RE = /attached\s+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
 
 const MAX_WARNING_OUTPUT_CHARS = 500;
 
@@ -251,13 +275,21 @@ export type ProviderDeleteWithRecoveryResult = {
  * a detach), and retries the delete once. Removable in the same future
  * OpenShell version that lets `runSandboxProviderPreDeleteCleanup` go away.
  *
+ * Security containment: when `deps.allowedSandboxes` is supplied, the parsed
+ * attachment list is revalidated against that authorized set BEFORE any
+ * detach is issued. If any listed sandbox falls outside the set, the recovery
+ * fails closed — no detach runs and the original delete failure is returned —
+ * so a stale, racing, or mis-parsed diagnostic can never force-detach a
+ * sandbox the caller did not authorize. Callers that omit `allowedSandboxes`
+ * (they own the whole gateway) keep the unconstrained behaviour.
+ *
  * Returns the final `provider delete` outcome plus the list of per-sandbox
  * detach failures, so the caller can fold those into the user-facing error
  * if the retry still doesn't land.
  */
 export function deleteProviderWithRecovery(
   providerName: string,
-  deps: DetachSandboxProvidersDeps = {},
+  deps: DeleteProviderWithRecoveryDeps = {},
 ): ProviderDeleteWithRecoveryResult {
   const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
   let result = runOpenshell(["provider", "delete", providerName], {
@@ -269,7 +301,12 @@ export function deleteProviderWithRecovery(
   if (result.status !== 0) {
     const raw = `${bufferOrStringToText(result.stderr)}${bufferOrStringToText(result.stdout)}`;
     const attached = parseAttachedSandboxes(raw);
-    if (attached.length > 0) {
+    // Fail closed when the diagnostic names any sandbox outside the caller's
+    // authorized set: force-detaching it could break an unrelated sandbox.
+    const allowed = deps.allowedSandboxes;
+    const outsideAuthorizedSet =
+      allowed !== undefined && attached.some((name) => !allowed.includes(name));
+    if (attached.length > 0 && !outsideAuthorizedSet) {
       const recovery = recoverAttachedProvider(providerName, attached, { runOpenshell });
       recoveryFailures = recovery.failures;
       result = runOpenshell(["provider", "delete", providerName], {

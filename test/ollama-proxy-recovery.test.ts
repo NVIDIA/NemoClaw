@@ -19,7 +19,7 @@ function parseStdoutJson<T>(stdout: string): T {
 }
 
 describe("ollama auth proxy recovery", () => {
-  it("restarts the proxy from the persisted token when the recorded pid is stale", () => {
+  it("restarts with the persisted token and compatible backend when the pid is stale (#7424)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-restart-"));
     const scriptPath = path.join(tmpDir, "restart-proxy-check.js");
@@ -43,6 +43,7 @@ childProcess.spawn = (cmd, args, opts = {}) => {
       OLLAMA_PROXY_TOKEN: opts.env && opts.env.OLLAMA_PROXY_TOKEN,
       OLLAMA_PROXY_PORT: opts.env && opts.env.OLLAMA_PROXY_PORT,
       OLLAMA_BACKEND_PORT: opts.env && opts.env.OLLAMA_BACKEND_PORT,
+      OLLAMA_BACKEND_URL: opts.env && opts.env.OLLAMA_BACKEND_URL,
     },
   });
   return { pid: 4242, unref() {} };
@@ -66,6 +67,7 @@ childProcess.spawnSync = (...args) => {
 const stateDir = path.join(process.env.HOME, ".nemoclaw");
 fs.mkdirSync(stateDir, { recursive: true });
 fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "persisted-token\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:8000\n", { mode: 0o600 });
 fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "99999\n", { mode: 0o600 });
 
 const onboard = require(${onboardPath});
@@ -98,6 +100,7 @@ console.log(JSON.stringify({
           OLLAMA_PROXY_TOKEN: string;
           OLLAMA_PROXY_PORT: string;
           OLLAMA_BACKEND_PORT: string;
+          OLLAMA_BACKEND_URL: string;
         };
       }>;
       pid: string;
@@ -105,12 +108,13 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns.length, 1);
     assert.equal(payload.pid, "4242");
     assert.equal(payload.proxySpawns[0].cmd, process.execPath);
-    assert.ok(payload.proxySpawns[0].args[0].endsWith("scripts/ollama-auth-proxy.js"));
+    assert.ok(payload.proxySpawns[0].args[0].endsWith("scripts/ollama-auth-proxy.mts"));
     assert.equal(payload.proxySpawns[0].detached, true);
     assert.equal(payload.proxySpawns[0].stdio, "ignore");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_TOKEN, "persisted-token");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_PORT, "11435");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_PORT, "11434");
+    assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_URL, "http://127.0.0.1:8000");
   });
 
   it("keeps the existing proxy when the recorded pid still points to the auth proxy", () => {
@@ -378,9 +382,355 @@ console.log(JSON.stringify({
     assert.equal(payload.pid, "5000");
     assert.deepEqual(payload.runCommands[0], ["kill", "4242"]);
     assert.equal(payload.proxySpawns[0].cmd, process.execPath);
-    assert.ok(payload.proxySpawns[0].args[0].endsWith("scripts/ollama-auth-proxy.js"));
+    assert.ok(payload.proxySpawns[0].args[0].endsWith("scripts/ollama-auth-proxy.mts"));
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_TOKEN, "persisted-token");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_PORT, "11435");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_PORT, "11434");
+  });
+
+  it("keeps a newly started Ollama backend instead of restoring a compatible backend (#7424)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-switch-"));
+    const scriptPath = path.join(tmpDir, "provider-switch-check.js");
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("child_process");
+const runner = require(${runnerPath});
+
+const proxySpawns = [];
+const runCommands = [];
+childProcess.spawn = (cmd, args, opts = {}) => {
+  proxySpawns.push({
+    token: opts.env && opts.env.OLLAMA_PROXY_TOKEN,
+    backendUrl: opts.env && opts.env.OLLAMA_BACKEND_URL,
+  });
+  return { pid: proxySpawns.length === 1 ? 5000 : 6000, unref() {} };
+};
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  if (text.includes("ps -p 4242")) return "node /tmp/ollama-auth-proxy.js";
+  if (text.includes("ps -p 5000")) return "node /tmp/ollama-auth-proxy.js";
+  if (text.includes("ps -p 6000")) return "node /tmp/ollama-auth-proxy.js";
+  if (text.includes("lsof") && text.includes("11435")) return "";
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(command);
+  return { status: 0, stdout: "", stderr: "" };
+};
+
+const origSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  if (args[0] === "nc") return { error: null, status: 0, stdout: "", stderr: "" };
+  if (args[0] === "curl") {
+    const argv = Array.isArray(args[1]) ? args[1] : [];
+    return { status: 0, stdout: argv.includes("--config") ? "200" : "401", stderr: "" };
+  }
+  return origSpawnSync(...args);
+};
+
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "compatible-token\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:8000\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242\n", { mode: 0o600 });
+
+const proxy = require(${proxyPath});
+const started = proxy.startOllamaAuthProxy();
+proxy.ensureOllamaAuthProxy();
+const runningToken = proxy.getOllamaProxyToken();
+proxy.persistProxyToken(runningToken);
+
+// Simulate a host restart after provider setup commits the selected route.
+fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "99999\n", { mode: 0o600 });
+delete require.cache[require.resolve(${proxyPath})];
+const recoveredProxy = require(${proxyPath});
+recoveredProxy.ensureOllamaAuthProxy();
+
+console.log(JSON.stringify({
+  started,
+  proxySpawns,
+  runCommands,
+  runningToken,
+  persistedBackend: fs.readFileSync(path.join(stateDir, "ollama-backend"), "utf8").trim(),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{
+      started: boolean;
+      proxySpawns: Array<{ token: string; backendUrl: string }>;
+      runCommands: string[][];
+      runningToken: string;
+      persistedBackend: string;
+    }>(result.stdout);
+    assert.equal(payload.started, true);
+    assert.equal(payload.proxySpawns.length, 2);
+    assert.equal(payload.proxySpawns[0].backendUrl, "http://127.0.0.1:11434");
+    assert.equal(payload.proxySpawns[0].token, payload.runningToken);
+    assert.equal(payload.proxySpawns[1].backendUrl, "http://127.0.0.1:11434");
+    assert.equal(payload.proxySpawns[1].token, payload.runningToken);
+    assert.notEqual(payload.runningToken, "compatible-token");
+    assert.deepEqual(payload.runCommands, [["kill", "4242"]]);
+    assert.equal(payload.persistedBackend, "http://127.0.0.1:11434");
+  });
+
+  it("persists compatible backend and token state for restart recovery (#7424)", () => {
+    // The compatible no-auth flow persists both restart inputs after startup.
+    // Assert that the backend round-trips and that the token file remains 0600
+    // with contents matching the running proxy.
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-persist-"));
+    const scriptPath = path.join(tmpDir, "persist-token-check.js");
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("child_process");
+const runner = require(${runnerPath});
+
+childProcess.spawn = () => ({ pid: 7777, unref() {} });
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  if (text.includes("lsof") && text.includes("11435")) return "";
+  if (text.includes("ps -p 7777")) return "node /repo/scripts/ollama-auth-proxy.js";
+  return "";
+};
+runner.run = () => ({ status: 0, stdout: "", stderr: "" });
+
+const origSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  if (args[0] === "nc") return { error: null, status: 0, stdout: "", stderr: "" };
+  if (args[0] === "curl") {
+    const argv = Array.isArray(args[1]) ? args[1] : [];
+    // authed probe → 200 (accepted); unauth probe → 401 (rejected).
+    return { status: 0, stdout: argv.includes("--config") ? "200" : "401", stderr: "" };
+  }
+  return origSpawnSync(...args);
+};
+
+const proxy = require(${proxyPath});
+const prepared = proxy.noAuthProxy("http://127.0.0.1:8000/v1");
+prepared.persist();
+const running = proxy.getOllamaProxyToken();
+
+const tokenPath = path.join(process.env.HOME, ".nemoclaw", "ollama-proxy-token");
+const backendPath = path.join(process.env.HOME, ".nemoclaw", "ollama-backend");
+const stat = fs.statSync(tokenPath);
+console.log(JSON.stringify({
+  prepared,
+  backendUrl: fs.readFileSync(backendPath, "utf8").trim(),
+  mode: (stat.mode & 0o777).toString(8),
+  fileToken: fs.readFileSync(tokenPath, "utf8").trim(),
+  runningToken: running,
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir };
+    delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
+    delete childEnv.NEMOCLAW_OLLAMA_PORT;
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: childEnv,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{
+      prepared: { baseUrl: string; credentialValue: string };
+      backendUrl: string;
+      mode: string;
+      fileToken: string;
+      runningToken: string;
+    }>(result.stdout);
+    assert.equal(payload.prepared.baseUrl, "http://host.openshell.internal:11435/v1");
+    assert.equal(payload.prepared.credentialValue, payload.runningToken);
+    assert.equal(payload.backendUrl, "http://127.0.0.1:8000");
+    // Token file is 0600 and its contents match the running token.
+    assert.equal(payload.mode, "600");
+    assert.ok(payload.fileToken.length > 0, "expected a non-empty persisted token");
+    assert.equal(payload.fileToken, payload.runningToken);
+  });
+
+  it("restart preserves a 0600 token file whose contents match the respawned token (#2553)", () => {
+    // A stale recorded pid forces a restart. Beyond spawning with the persisted
+    // token (covered above), assert the lifecycle invariant: the token file
+    // survives the restart at mode 0600 and the respawned proxy is launched with
+    // exactly that file token — the persisted token round-trips into the child.
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-restart-mode-"));
+    const scriptPath = path.join(tmpDir, "restart-mode-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("child_process");
+const runner = require(${runnerPath});
+
+let spawnedToken = null;
+childProcess.spawn = (cmd, args, opts = {}) => {
+  spawnedToken = opts.env && opts.env.OLLAMA_PROXY_TOKEN;
+  return { pid: 4242, unref() {} };
+};
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  if (text.includes("ps -p 99999")) return "";
+  if (text.includes("ps -p 4242")) return "node /tmp/ollama-auth-proxy.js";
+  if (text.includes("lsof -ti :11435")) return "";
+  return "";
+};
+runner.run = () => ({ status: 0, stdout: "", stderr: "" });
+
+const origSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "curl") return { status: 0, stdout: "200", stderr: "" };
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  return origSpawnSync(...args);
+};
+
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+const tokenPath = path.join(stateDir, "ollama-proxy-token");
+fs.writeFileSync(tokenPath, "persisted-token\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "99999\n", { mode: 0o600 });
+
+const onboard = require(${onboardPath});
+onboard.ensureOllamaAuthProxy();
+
+const stat = fs.statSync(tokenPath);
+console.log(JSON.stringify({
+  spawnedToken,
+  mode: (stat.mode & 0o777).toString(8),
+  fileToken: fs.readFileSync(tokenPath, "utf8").trim(),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{ spawnedToken: string; mode: string; fileToken: string }>(
+      result.stdout,
+    );
+    // Restart reuses the persisted token; the file is untouched at 0600.
+    assert.equal(payload.mode, "600");
+    assert.equal(payload.fileToken, "persisted-token");
+    assert.equal(payload.spawnedToken, "persisted-token");
+  });
+
+  it("repairs a divergent on-disk token by restarting with the file token (#2553)", () => {
+    // Divergence: the running proxy holds a token that no longer matches the
+    // authoritative on-disk token (e.g. after a failed re-onboard rewrote the
+    // file). The file token probe returns 401, so ensureOllamaAuthProxy detects
+    // the divergence, reclaims the stale proxy, and restarts it with the FILE
+    // token — the on-disk value is authoritative, not whatever was running.
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-divergent-"));
+    const scriptPath = path.join(tmpDir, "divergent-token-check.js");
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("child_process");
+const runner = require(${runnerPath});
+
+let spawnedToken = null;
+const runCommands = [];
+childProcess.spawn = (cmd, args, opts = {}) => {
+  spawnedToken = opts.env && opts.env.OLLAMA_PROXY_TOKEN;
+  return { pid: 5000, unref() {} };
+};
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  if (text.includes("ps -p 4242")) return "node /tmp/ollama-auth-proxy.js";
+  if (text.includes("ps -p 5000")) return "node /tmp/ollama-auth-proxy.js";
+  if (text.includes("lsof -ti :11435")) return "";
+  return "";
+};
+runner.run = (command) => { runCommands.push(command); return { status: 0, stdout: "", stderr: "" }; };
+
+let curlCalls = 0;
+const origSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "curl") {
+    curlCalls += 1;
+    // The running proxy holds a DIFFERENT token: first probe (file token) → 401
+    // (divergence), post-restart probe → 200 (repaired).
+    return { status: 0, stdout: curlCalls === 1 ? "401" : "200", stderr: "" };
+  }
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  return origSpawnSync(...args);
+};
+
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+const tokenPath = path.join(stateDir, "ollama-proxy-token");
+// The authoritative on-disk token, divergent from whatever ran before.
+fs.writeFileSync(tokenPath, "new-file-token\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242\n", { mode: 0o600 });
+
+const proxy = require(${proxyPath});
+proxy.ensureOllamaAuthProxy();
+
+const stat = fs.statSync(tokenPath);
+console.log(JSON.stringify({
+  spawnedToken,
+  runCommands,
+  mode: (stat.mode & 0o777).toString(8),
+  fileToken: fs.readFileSync(tokenPath, "utf8").trim(),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{
+      spawnedToken: string;
+      runCommands: string[][];
+      mode: string;
+      fileToken: string;
+    }>(result.stdout);
+    // The stale proxy is reclaimed and the repair restart uses the FILE token.
+    assert.deepEqual(payload.runCommands[0], ["kill", "4242"]);
+    assert.equal(payload.spawnedToken, "new-file-token");
+    // The authoritative token file is preserved at 0600.
+    assert.equal(payload.mode, "600");
+    assert.equal(payload.fileToken, "new-file-token");
   });
 });

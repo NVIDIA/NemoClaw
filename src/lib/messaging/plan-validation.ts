@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../core/json-types";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 import type {
   MessagingAgentId,
@@ -24,7 +25,7 @@ export function parseSandboxMessagingPlan(
   options: SandboxMessagingPlanParseOptions = {},
 ): SandboxMessagingPlan | null {
   if (
-    !isObject(value) ||
+    !isObjectRecord(value) ||
     value.schemaVersion !== 1 ||
     typeof value.sandboxName !== "string" ||
     typeof value.agent !== "string" ||
@@ -32,7 +33,7 @@ export function parseSandboxMessagingPlan(
     !Array.isArray(value.channels) ||
     !Array.isArray(value.disabledChannels) ||
     !isOptionalObjectArray(value, "credentialBindings") ||
-    (Object.hasOwn(value, "networkPolicy") && !isObject(value.networkPolicy)) ||
+    (Object.hasOwn(value, "networkPolicy") && !isObjectRecord(value.networkPolicy)) ||
     !isOptionalObjectArray(value, "agentRender") ||
     !isOptionalObjectArray(value, "buildSteps") ||
     !isRuntimeSetup(value.runtimeSetup) ||
@@ -49,7 +50,7 @@ export function parseSandboxMessagingPlan(
     ? new Set(options.supportedChannelIds)
     : null;
   for (const [index, channel] of value.channels.entries()) {
-    if (!isObject(channel) || typeof channel.channelId !== "string") return null;
+    if (!isObjectRecord(channel) || typeof channel.channelId !== "string") return null;
     if (Object.hasOwn(channel, "configured") && typeof channel.configured !== "boolean") {
       return null;
     }
@@ -60,17 +61,17 @@ export function parseSandboxMessagingPlan(
     if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;
     if (
       Array.isArray(channel.inputs) &&
-      channel.inputs.some((input) => !isObject(input) || typeof input.inputId !== "string")
+      channel.inputs.some((input) => !isObjectRecord(input) || typeof input.inputId !== "string")
     ) {
       return null;
     }
-    if (Array.isArray(channel.hooks) && channel.hooks.some((hook) => !isObject(hook))) {
+    if (Array.isArray(channel.hooks) && channel.hooks.some((hook) => !isObjectRecord(hook))) {
       return null;
     }
     if (supported && !supported.has(channel.channelId)) return null;
     if (
       value.channels.findIndex(
-        (candidate) => isObject(candidate) && candidate.channelId === channel.channelId,
+        (candidate) => isObjectRecord(candidate) && candidate.channelId === channel.channelId,
       ) !== index
     ) {
       return null;
@@ -161,19 +162,15 @@ function stringifyPlanStateValue(value: MessagingSerializableValue | undefined):
   return text.length > 0 ? text : null;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isOptionalObjectArray(value: Record<string, unknown>, key: string): boolean {
   if (!Object.hasOwn(value, key)) return true;
   const entries = value[key];
-  return Array.isArray(entries) && entries.every(isObject);
+  return Array.isArray(entries) && entries.every(isObjectRecord);
 }
 
 function isHostForward(value: unknown): boolean {
   return (
-    isObject(value) &&
+    isObjectRecord(value) &&
     typeof value.channelId === "string" &&
     typeof value.port === "number" &&
     Number.isInteger(value.port) &&
@@ -186,12 +183,12 @@ function isHostForward(value: unknown): boolean {
 function isRuntimeSetup(value: unknown): boolean {
   if (value === undefined) return true;
   return (
-    isObject(value) &&
+    isObjectRecord(value) &&
     Array.isArray(value.nodePreloads) &&
     Array.isArray(value.envAliases) &&
     Array.isArray(value.secretScans) &&
-    value.nodePreloads.every(isObject) &&
-    value.envAliases.every(isObject) &&
-    value.secretScans.every(isObject)
+    value.nodePreloads.every(isObjectRecord) &&
+    value.envAliases.every(isObjectRecord) &&
+    value.secretScans.every(isObjectRecord)
   );
 }

@@ -224,7 +224,7 @@ if [ -n "$UNANSWERED_MAINT" ] && [ "$UNANSWERED_MAINT" != "null" ]; then
 fi
 ```
 
-When the unanswered-question variant fires (`UNANSWERED_MAINT_LOGIN` set), Step 10's comment template prepends a lead paragraph (exact shape lives with the templates in Step 10), and the closing @-mention block names BOTH the maintainer (acknowledging their question) and the reporter (asking for confirmation per the standard pattern), instead of just the reporter.
+When the unanswered-question variant fires (`UNANSWERED_MAINT_LOGIN` set), Step 10's comment template prepends a lead paragraph (the template lives in Step 10), and the closing @-mention block names BOTH the maintainer (acknowledging their question) and the reporter (asking for confirmation per the standard pattern), instead of just the reporter.
 
 **Candidate rule:** keep the issue if **either**:
 
@@ -241,7 +241,7 @@ The regex is intentionally **release-line agnostic**. Today NemoClaw ships `v0.0
 
 Sources, in order of trust:
 
-1. **Labels.** Any label that exactly matches `^v\d+\.\d+\.\d+$` AND appears in the repo's tag list. Labels matching the regex but absent from tags (e.g. `v0.0.35` as a *release-target* milestone before that version ships) are roadmap markers, not "reported on" — drop them.
+1. **Labels.** Any label that matches `^v\d+\.\d+\.\d+$` AND appears in the repo's tag list. Labels matching the regex but absent from tags (e.g. `v0.0.35` as a *release-target* milestone before that version ships) are roadmap markers, not "reported on" — drop them.
 2. **Body.** Use a **proximity-anchored** regex: `(?i)nemoclaw[^a-z\n]{0,80}v?(\d+\.\d+\.\d+)`. This matches a version that follows `nemoclaw` within 80 non-letter, non-newline characters, capturing just the semver. The anchoring is load-bearing — without it the parser also picks up `openshell 0.0.4`, Node.js `v22.16.0`, IP addresses (`0.0.0.0:11434`, `127.0.0.1`), and other near-NemoClaw products that happen to share the `v0.0.x` line. (This was confirmed in the dry-run: a non-anchored parser produced 12 false-positive candidates whose smallest tag-valid version was actually OpenShell's, not NemoClaw's.)
 3. **Comments by the original reporter** — same anchored regex as the body.
 

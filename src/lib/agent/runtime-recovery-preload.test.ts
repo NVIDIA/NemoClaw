@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { minimalAgent } from "./hermes-recovery-boundary-fixtures";
-import { buildOpenClawRecoveryScript, buildRecoveryScript } from "./runtime";
+import { buildRecoveryScript } from "./runtime";
 import { buildGatewayGuardRecoveryLines, GATEWAY_PRELOAD_GUARDS } from "./runtime-recovery-preload";
 
 const [SAFETY_NET_GUARD, CIAO_GUARD] = GATEWAY_PRELOAD_GUARDS;
@@ -402,73 +402,58 @@ describe("gateway recovery preload repair", () => {
     expect(result.files.gatewayLog).toContain("unsafe mode=664");
   });
 
-  it("wires the repair helper into both recovery script builders", () => {
-    const genericScript = buildRecoveryScript(minimalAgent, 19000);
-    const openClawScript = buildOpenClawRecoveryScript(18789);
-    for (const script of [genericScript, openClawScript]) {
-      expect(script).toContain("restoring library guards from packaged preloads");
-      expect(script).toContain("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js");
-      expect(script).toContain("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js");
-      expect(script).not.toContain("gateway launching without library guards");
-    }
+  it("wires the repair helper into custom-agent recovery", () => {
+    const script = buildRecoveryScript(minimalAgent, 19000);
+    expect(script).toContain("restoring library guards from packaged preloads");
+    expect(script).toContain("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js");
+    expect(script).toContain("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js");
+    expect(script).not.toContain("gateway launching without library guards");
   });
 
   it("validates proxy-env.sh before sourcing it in gateway recovery scripts", () => {
-    for (const script of [
-      buildRecoveryScript(minimalAgent, 19000),
-      buildOpenClawRecoveryScript(18789),
-    ]) {
-      expect(script).not.toContain("[ -r /tmp/nemoclaw-proxy-env.sh ]; then .");
-      const validateIdx = script!.indexOf(
-        "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
-      );
-      const sourceIdx = script!.indexOf('then . "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
-      expect(validateIdx).toBeGreaterThanOrEqual(0);
-      expect(sourceIdx).toBeGreaterThanOrEqual(0);
-      expect(validateIdx).toBeLessThan(sourceIdx);
-    }
+    const script = buildRecoveryScript(minimalAgent, 19000);
+    expect(script).not.toContain("[ -r /tmp/nemoclaw-proxy-env.sh ]; then .");
+    const validateIdx = script!.indexOf(
+      "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
+    );
+    const sourceIdx = script!.indexOf('then . "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
+    expect(validateIdx).toBeGreaterThanOrEqual(0);
+    expect(sourceIdx).toBeGreaterThanOrEqual(0);
+    expect(validateIdx).toBeLessThan(sourceIdx);
   });
 
   it("validates proxy-env.sh before shell init hooks can source it", () => {
-    for (const script of [
-      buildRecoveryScript(minimalAgent, 19000),
-      buildOpenClawRecoveryScript(18789),
-    ]) {
-      expect(script).not.toBeNull();
-      const validateIdx = script!.indexOf(
-        "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
-      );
-      const bashrcIdx = script!.indexOf("[ -f ~/.bashrc ] && . ~/.bashrc;");
-      const healthIdx = script!.indexOf("_GW_CODE=");
-      expect(validateIdx).toBeGreaterThanOrEqual(0);
-      expect(bashrcIdx).toBeGreaterThanOrEqual(0);
-      expect(healthIdx).toBeGreaterThanOrEqual(0);
-      expect(validateIdx).toBeLessThan(bashrcIdx);
-      expect(bashrcIdx).toBeLessThan(healthIdx);
-    }
+    const script = buildRecoveryScript(minimalAgent, 19000);
+    expect(script).not.toBeNull();
+    const validateIdx = script!.indexOf(
+      "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
+    );
+    const bashrcIdx = script!.indexOf("[ -f ~/.bashrc ] && . ~/.bashrc;");
+    const healthIdx = script!.indexOf("_GW_CODE=");
+    expect(validateIdx).toBeGreaterThanOrEqual(0);
+    expect(bashrcIdx).toBeGreaterThanOrEqual(0);
+    expect(healthIdx).toBeGreaterThanOrEqual(0);
+    expect(validateIdx).toBeLessThan(bashrcIdx);
+    expect(bashrcIdx).toBeLessThan(healthIdx);
   });
 
   it("repairs guard files before health probing and the ALREADY_RUNNING fast path", () => {
-    for (const script of [
-      buildRecoveryScript(minimalAgent, 19000),
-      buildOpenClawRecoveryScript(18789),
-    ]) {
-      expect(script).not.toBeNull();
-      const safetyNetStageIdx = script!.indexOf(
-        `_nemoclaw_stage_recovery_preload ${SAFETY_NET_GUARD.tmpPath} ${SAFETY_NET_GUARD.sourcePath}`,
-      );
-      const ciaoStageIdx = script!.indexOf(
-        `_nemoclaw_stage_recovery_preload ${CIAO_GUARD.tmpPath} ${CIAO_GUARD.sourcePath}`,
-      );
-      const healthIdx = script!.indexOf("_GW_CODE=");
-      const alreadyRunningIdx = script!.indexOf("echo ALREADY_RUNNING; exit 0");
-      expect(safetyNetStageIdx).toBeGreaterThanOrEqual(0);
-      expect(ciaoStageIdx).toBeGreaterThanOrEqual(0);
-      expect(healthIdx).toBeGreaterThanOrEqual(0);
-      expect(alreadyRunningIdx).toBeGreaterThanOrEqual(0);
-      expect(safetyNetStageIdx).toBeLessThan(healthIdx);
-      expect(ciaoStageIdx).toBeLessThan(healthIdx);
-      expect(healthIdx).toBeLessThan(alreadyRunningIdx);
-    }
+    const script = buildRecoveryScript(minimalAgent, 19000);
+    expect(script).not.toBeNull();
+    const safetyNetStageIdx = script!.indexOf(
+      `_nemoclaw_stage_recovery_preload ${SAFETY_NET_GUARD.tmpPath} ${SAFETY_NET_GUARD.sourcePath}`,
+    );
+    const ciaoStageIdx = script!.indexOf(
+      `_nemoclaw_stage_recovery_preload ${CIAO_GUARD.tmpPath} ${CIAO_GUARD.sourcePath}`,
+    );
+    const healthIdx = script!.indexOf("_GW_CODE=");
+    const alreadyRunningIdx = script!.indexOf("echo ALREADY_RUNNING; exit 0");
+    expect(safetyNetStageIdx).toBeGreaterThanOrEqual(0);
+    expect(ciaoStageIdx).toBeGreaterThanOrEqual(0);
+    expect(healthIdx).toBeGreaterThanOrEqual(0);
+    expect(alreadyRunningIdx).toBeGreaterThanOrEqual(0);
+    expect(safetyNetStageIdx).toBeLessThan(healthIdx);
+    expect(ciaoStageIdx).toBeLessThan(healthIdx);
+    expect(healthIdx).toBeLessThan(alreadyRunningIdx);
   });
 });

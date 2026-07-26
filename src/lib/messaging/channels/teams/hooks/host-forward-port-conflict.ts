@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getActiveMessagingHostForward } from "../../../host-forward";
+import { isObjectRecord } from "../../../../core/json-types";
 import { MessagingHookConflictError } from "../../../hooks/errors";
 import type {
   MessagingHookContext,
   MessagingHookHandler,
   MessagingHookRegistration,
 } from "../../../hooks/types";
+import { getActiveMessagingHostForward } from "../../../host-forward";
 import type { MessagingSerializableValue } from "../../../manifest";
 import { parseSandboxMessagingPlan } from "../../../plan-validation";
 
@@ -212,10 +213,10 @@ function parseRegistryEntries(
 ): readonly TeamsHostForwardPortConflictRegistryEntry[] | null {
   if (!Array.isArray(value)) return null;
   return value.flatMap((entry) => {
-    if (!isObject(entry) || typeof entry.name !== "string" || entry.name.length === 0) {
+    if (!isObjectRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0) {
       return [];
     }
-    const messaging = isObject(entry.messaging)
+    const messaging = isObjectRecord(entry.messaging)
       ? { plan: (entry.messaging as Record<string, unknown>).plan }
       : null;
     return [
@@ -240,8 +241,4 @@ function resolveNullableOption(
   value: string | null | (() => string | null) | undefined,
 ): string | null {
   return typeof value === "function" ? value() : (value ?? null);
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

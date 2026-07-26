@@ -2,40 +2,137 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 title: "Quickstart with LangChain Deep Agents Code"
-sidebar-title: "LangChain Deep Agents Code"
-description: "Create a NemoClaw sandbox that runs LangChain Deep Agents Code as a terminal harness."
-description-agent: "Creates a NemoClaw sandbox that runs LangChain Deep Agents Code as a terminal harness. Use when testing dcode with NemoClaw-managed inference."
-keywords: ["langchain deep agents code nemoclaw", "dcode openshell sandbox", "langchain coding agent"]
-topics: ["get-started", "terminal-runtime", "langchain-deepagents-code"]
-tags: ["deep-agents-code", "dcode", "managed-inference"]
+sidebar-title: "Quickstart with Deep Agents"
+description: "Install NemoClaw, launch a LangChain Deep Agents Code sandbox, and run your first prompt."
+description-agent: "Installs NemoClaw, launches a LangChain Deep Agents Code sandbox, and runs the first prompt. Use when installing or testing dcode for the first time."
+keywords: ["langchain deep agents code nemoclaw", "dcode openshell sandbox", "langchain coding agent", "dcode otlp tracing"]
+topics: ["get-started", "terminal-runtime", "langchain-deepagents-code", "observability"]
+tags: ["deep-agents-code", "dcode", "managed-inference", "otlp"]
 difficulty: "intermediate"
 audience: "operators"
 status: published
 content:
   type: "get_started"
 ---
+Create a sandboxed LangChain Deep Agents Code agent, then run your first prompt.
+The `nemo-deepagents` command is an alias for `nemoclaw` with the `langchain-deepagents-code` agent pre-selected.
 
-Use this guide to build an OpenShell sandbox with the `dcode` terminal coding agent installed and configured for NemoClaw-managed inference.
+## Set Up with the Starter Prompt on Your Coding Agent
 
-## Onboard
+Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
+The prompt points the agent to [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It asks the agent to confirm LangChain Deep Agents Code before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
 
-Run onboarding with the Deep Agents alias, or use `nemoclaw --agent` with either the canonical agent ID or a short alias.
+<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
+
+If you prefer to control setup directly, use [Set Up with the Interactive Installer on Your Terminal](#set-up-with-the-interactive-installer-on-your-terminal).
+
+## Set Up with the Interactive Installer on Your Terminal
+
+If you use the coding-agent prompt in the preceding section, you can skip this procedure or keep it as reference.
+The prompt directs your coding agent to this quickstart, so it has the full setup context.
+
+<Note>
+Review the [Prerequisites](prerequisites) before you begin.
+</Note>
+
+<Steps>
+  <Step title="Install NemoClaw for Deep Agents">
+    Select Deep Agents, then run the hosted installer.
+
+    ```bash
+    export NEMOCLAW_AGENT=langchain-deepagents-code
+    export NEMOCLAW_SANDBOX_NAME=my-deepagents
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
+  </Step>
+
+  <Step title="Complete Onboarding">
+    If the installer offers Express, you can accept it to use managed local inference for that platform.
+    Otherwise, choose an inference provider and model, then provide its credential when prompted.
+    The install command uses `my-deepagents` as the sandbox name.
+    Accept the suggested network policy tier for a first run.
+  </Step>
+
+  <Step title="Confirm the Sandbox Is Ready">
+    Wait for the ready summary, then check the sandbox state.
+
+    ```bash
+    nemo-deepagents my-deepagents status
+    ```
+  </Step>
+
+  <Step title="Run Your First Prompt">
+    Connect to the sandbox and launch the Deep Agents terminal UI.
+
+    ```bash
+    nemo-deepagents my-deepagents connect
+    dcode
+    ```
+  </Step>
+</Steps>
+
+## Installation and Runtime Details
+
+Use these details when you need more control during setup or after the first sandbox is running.
+
+<AccordionGroup>
+  <Accordion title="Use Docker and supported platforms">
+    Review [Prerequisites](prerequisites) for Docker requirements and the setup-oriented platform table.
+    If the installer prints a `newgrp docker` command, run that command before you retry the installer.
+    On macOS, start Docker Desktop or Colima first.
+
+    Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
+    Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
+
+    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
+    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+
+    Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles, Station choices, and headless setup.
+    Refer to [Platform Support](../reference/platform-support) for current validation status.
+  </Accordion>
+
+  <Accordion title="Onboarding and runtime behavior">
+
+### Installation and Onboarding Details
+
+The hosted installer follows the last-known-good (`lkg`) release tag by default, so the install command selects the maintained Deep Agents-capable build without a version override.
+If NemoClaw is already installed, run `nemo-deepagents onboard` to start Deep Agents onboarding directly.
+
+You can use the canonical agent ID or a short alias instead of `nemo-deepagents`.
 
 ```bash
-nemo-deepagents onboard
-# Equivalent:
 nemoclaw onboard --agent langchain-deepagents-code
-# Also accepted:
 nemoclaw onboard --agent dcode
 nemoclaw onboard --agent deepagents
 nemoclaw onboard --agent langchain
 ```
 
-The image installs a hash-locked, pinned Deep Agents Code release with NVIDIA provider support.
-NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
-NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
+The wizard asks for an inference provider, model, required credential, sandbox name, and policy tier before it prints the review summary.
+At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+The default Deep Agents sandbox name is `deepagents-code`.
+Use a distinct name, such as `my-deepagents`, when you run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
+Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider-specific prompts.
 
-## Choose the Default Sandbox
+The image installs hash-locked Deep Agents Code `0.1.34` with NVIDIA provider support.
+After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
+Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified.
+If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding.
+NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
+When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`.
+For this model, the managed image maps the OpenAI-compatible route to Deep Agents `0.7.0a6`'s native Nemotron 3 Ultra harness profile, including model-specific tool-calling, filesystem, retry, context, and final-answer safeguards.
+Rebuild existing Deep Agents Code sandboxes after upgrading to NemoClaw v0.0.76 or later so their image includes this profile.
+This agent-specific default does not change the shared Nemotron 3 Super default for OpenClaw and Hermes.
+NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
+Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.
+The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
+Managed interactive sessions pre-complete Deep Agents Code's optional first-run onboarding, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
+The image includes `ripgrep`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
+
+  </Accordion>
+
+  <Accordion title="Use the managed runtime">
+### Choose the Default Sandbox
 
 When you manage multiple sandboxes, use the Deep Agents alias to promote a registered Deep Agents Code sandbox to the default.
 
@@ -46,7 +143,7 @@ nemo-deepagents use <sandbox-name>
 The command updates NemoClaw's host-side registry.
 It does not modify the sandbox or the `dcode` configuration.
 
-## Use the Harness
+### Use the Harness
 
 Connect to the sandbox, then launch the terminal UI.
 
@@ -61,54 +158,175 @@ For a single headless task, run:
 dcode -n "Summarize this repository"
 ```
 
-The managed wrapper launches Deep Agents Code with `HOME=/sandbox`, update checks disabled, remote Deep Agents sandbox providers disabled, MCP auto-loading disabled, and shell allow-list overrides blocked.
+The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.
+For interactive and headless sessions, each launcher supervises its own process descendants so completion, terminal exit, or disconnect terminates the associated LangGraph server tree without affecting another session.
+After a disconnect, the supervisor uses bounded grace periods before it kills unresponsive processes from that session.
+The supervisor runs inside the Linux OpenShell sandbox and fails closed if invoked outside Linux; the host operating system does not change this sandbox guarantee.
+They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and project auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, native LangSmith tracing, and ambient OpenTelemetry exporter configuration.
+The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
+It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
+CLI and TUI model parameter overrides and custom rubric models are blocked.
+For headless runs, `--max-retries` remains available after Deep Agents Code validates the retry count.
+The managed boundary discards every other model parameter, including credentials, endpoints, and provider settings.
+Project and user-defined subagents remain available, but they inherit the managed chat model instead of accepting their own model override.
+MCP servers registered through `nemoclaw <sandbox-name> mcp add` remain available through NemoClaw's dedicated `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and OpenShell egress policy.
+Project and user MCP files are never auto-loaded.
+Sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`; remove, rebuild, and destroy can still scrub exact registry-owned legacy entries without claiming unrelated user content.
+Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders, then gives Deep Agents Code a process-local, integrity-bound snapshot for server starts and restarts.
+It prefers a sealed in-memory file when available; the OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
+Stdio commands, extra headers, raw credentials, and unrelated top-level configuration fail closed.
+For authenticated MCP setup and credential rotation, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) and [Manage MCP Servers](../manage-sandboxes/mcp-servers/manage-mcp-servers).
+This isolated-mode guarantee applies to those managed launchers, not arbitrary Python commands in the sandbox.
 
-## Python Environment
+Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts by default.
+Thread-wide auto-approval is unavailable unless you enable the managed thread opt-in capability, and shell allow-list auto-approval remains disabled.
+Headless `dcode -n` is an explicit automation boundary.
+It has no approval UI and automatically approves non-shell tool requests, including file writes and edits.
+The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP configuration, nested remote sandboxes, remote async subagents, and alternate model routes.
+Use the interactive TUI when you need to inspect each destructive tool request before it runs.
+
+#### Configure Thread Auto-Approval
+
+Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.
+In this mode, the TUI auto-approval choice and `dcode -y` fail closed.
+
+Enable the capability for a named sandbox through a transactional rebuild because NemoClaw bakes the capability into the managed image.
+
+```bash
+nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes
+```
+
+The `thread-opt-in` setting grants permission to activate auto-approval, but it does not activate auto-approval by itself.
+For each thread, select **Auto-approve for this thread** in the approval menu or start that `dcode` process with `dcode -y`.
+The TUI shows the upstream active-state indicator and a warning while the current thread can run tool calls, including shell commands, without further confirmation.
+
+NemoClaw resets the active state when you start a new `dcode` process, run `/clear` or `/force-clear`, switch or resume a different thread, or switch agents.
+You must opt in again after each reset.
+The host-side status command reports the configured capability, not whether one live TUI thread currently has auto-approval active.
+
+```bash
+nemo-deepagents <sandbox-name> status
+```
+
+Thread auto-approval does not bypass OpenShell network policy, credential isolation, the managed inference route, managed MCP validation, or the other Deep Agents runtime restrictions described above.
+Headless `dcode -n` remains a separate automation boundary with non-shell auto-approval and managed shell execution disabled.
+
+Return the sandbox to the default posture with another transactional rebuild.
+
+```bash
+nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval disabled --yes
+```
+
+To confirm which sandbox a session is in, run the identity command:
+
+```bash
+dcode status
+```
+
+The command prints the sandbox name, NemoClaw harness, active `dcode` agent, configured inference route, upstream provider, model, endpoint, and runtime, then exits without starting the interactive UI.
+`dcode whoami` and `dcode identity` are aliases.
+`dcode --help` lists the managed aliases before the upstream Deep Agents Code help.
+The sandbox name resolves when you run the command from a `nemoclaw <sandbox-name> connect` shell, which loads the NemoClaw runtime environment.
+
+Inspect the generated Deep Agents configuration from the host with:
+
+```bash
+nemo-deepagents <sandbox-name> config get
+```
+
+NemoClaw parses `config.toml`, removes gateway auth data, and redacts credential-shaped values before printing it.
+`config set` is not supported for this image-baked configuration; re-onboard the named sandbox to change its managed provider or model selection.
+
+  </Accordion>
+
+  <Accordion title="Manage Python and sandbox state">
+### Python Environment
 
 Deep Agents Code runs from a NemoClaw-managed Python virtual environment at `/opt/venv`.
 The sandbox puts `/opt/venv/bin` on `PATH` before the system Python directories, so `python3` and `pip3` resolve to that managed environment.
 NemoClaw keeps `/opt/venv` read-only to protect the installed harness.
 For project-specific Python dependencies, create a separate virtual environment under `/sandbox` and activate it before installing packages.
 
-## State and Backup
+### State and Backup
 
 Deep Agents Code state lives under `/sandbox/.deepagents`.
-NemoClaw snapshot and rebuild flows preserve the app state directory, skills, generated config, and hooks config when those files exist.
+NemoClaw snapshot and rebuild flows preserve the app state directory and skills when those paths exist.
+During managed re-onboarding, NemoClaw restores only these `config.toml` preferences from backup: boolean `ui.show_scrollbar`, boolean `ui.show_url_open_toast`, boolean `threads.relative_time`, and `threads.sort_order` when it is `updated_at` or `created_at`.
+Freshly generated model routing, update settings, provider metadata, and all other configuration remain authoritative.
+NemoClaw drops all other backup settings, including `ui.theme`, behavior-bearing keys, unknown keys, and security-sensitive keys.
+It recreates the sandbox when its live `dcode identity` output is unreadable or does not match the selected provider and model, then records the selection only after the restored runtime passes the same check.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
-NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there, and this managed harness disables MCP at runtime.
+NemoClaw intentionally does not back up `.deepagents/.env` or the user-owned `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there.
+The managed `.deepagents/.nemoclaw-mcp.json` projection is also excluded because NemoClaw reconstructs it from the credential-free registry after recreation.
+Service credentials remain in OpenShell provider state.
+It also does not preserve `hooks.json`; executable Deep Agents Code hooks are disabled in the managed harness.
+If `.deepagents/.state/auth.json` contains upstream credentials, or `.deepagents/.state/chatgpt-auth.json` exists, the managed Deep Agents Code launch paths refuse to start until that credential state is removed.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, and prepares the replacement from the recorded provider, model, policy, and build inputs with a pinned base and fingerprinted context.
+Initial failures stop before backup.
+After backup, NemoClaw rechecks the target, route, and retained build inputs before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
+If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
+Rebuild also preserves the standalone Deep Agents Code `tavily` preset, the recorded observability choice unless explicitly overridden, and recorded custom policies from their exact stored content.
 
-## Optional Web Search
+  </Accordion>
 
-Deep Agents Code uses Tavily web search when you provide a Tavily credential in the runtime environment.
-NemoClaw does not enable Tavily or LangSmith by default for this harness.
-The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
+  <Accordion title="Enable Tavily egress">
+### Optional Tavily Egress
 
-To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, then supply the credential.
+Deep Agents Code does not currently have a NemoClaw-managed web-search feature.
+If your project code or a manually configured tool needs Tavily, opt the sandbox Python egress path into Tavily explicitly.
+Register the raw key only with the OpenShell gateway on the host, not inside the sandbox, in `.env`, or in Deep Agents config files.
+The gateway injects it at egress instead.
+The managed Deep Agents Code entry points reject credential-shaped process environment values, disable project `.env` and global `/sandbox/.deepagents/.env` loading, and block upstream `/auth`, `/connect`, startup/onboarding credential prompts, model-selector credential prompts, notification-service key prompts, and ChatGPT OAuth.
+These controls apply to Deep Agents Code and do not sanitize arbitrary Python programs in the sandbox.
+Use NemoClaw-managed credential paths when support is available instead of storing service keys inside Deep Agents Code state.
+NemoClaw does not enable Tavily or observability by default for this harness.
+The sandbox policy denies `api.tavily.com` until you opt into Tavily and continues to deny direct `api.smith.langchain.com` egress when you enable observability.
+
+To allow Tavily egress for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
+The policy preset is a per-sandbox managed-Python opt-in, but provider registration is gateway-wide: `tavily-search` attaches to every sandbox that you build or rebuild afterward.
 
 ```bash
 # Preview the endpoints the preset opens:
-nemo-deepagents <sandbox-name> policy-add tavily --dry-run
+nemo-deepagents <sandbox-name> policy add tavily --dry-run
 # Apply it:
-nemo-deepagents <sandbox-name> policy-add tavily --yes
+nemo-deepagents <sandbox-name> policy add tavily --yes
+# Export the key on the host (NemoClaw reads it from the current shell):
+export TAVILY_API_KEY=tvly-...
+# Register the provider with the gateway:
+nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+# Remove the raw key from the host shell after the gateway stores it:
+unset TAVILY_API_KEY
+# Attach the new provider to the sandbox:
+nemo-deepagents <sandbox-name> rebuild
 ```
 
-The `tavily` preset only opens egress to `api.tavily.com:443`.
-Provide the Tavily API key to the agent at runtime; NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image.
+The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`.
+Attaching the credential provider alone does not authorize the managed Python interpreter; the explicit policy preset is the interpreter-level opt-in.
+Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value.
+NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image, and the managed wrapper rejects direct service-key injection into `dcode`.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
 
-Remove the access again when it is no longer needed.
+Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 
 ```bash
-nemo-deepagents <sandbox-name> policy-remove tavily --yes
+nemo-deepagents <sandbox-name> policy remove tavily --yes
 ```
 
-### Optional Tracing (LangSmith)
+This does not unregister the gateway-wide `tavily-search` provider; its credential and Node/curl routes remain available to sandboxes that attach it.
+When no sandbox needs the provider, destroy those sandboxes or detach it from each one with `openshell sandbox provider detach <sandbox-name> tavily-search`, then remove it globally with `nemo-deepagents credentials reset tavily-search --yes`.
+OpenShell rejects provider deletion while any sandbox still has it attached.
 
-NemoClaw does not support LangSmith tracing for this managed harness yet.
-`start.sh` forwards the non-secret `LANGSMITH_TRACING`/`LANGSMITH_PROJECT` toggles if set, but no policy preset opens `api.smith.langchain.com` and no supported mechanism injects `LANGSMITH_API_KEY`.
-If you need tracing, [add the egress endpoints manually](../network-policy/customize-network-policy).
-Treat it as unsupported until NemoClaw ships a maintained `langsmith` preset.
+  </Accordion>
+
+  <Accordion title="Export traces through a local collector" id="export-traces-through-a-local-collector">
+    Deep Agents trace export now has focused Monitoring pages.
+    Review [Understand Deep Agents Trace Export](../monitoring/understand-deepagents-trace-export) before you enable the exporter.
+    Follow [Set Up Deep Agents Trace Export](../monitoring/set-up-deepagents-trace-export) to configure the policy and host collector.
+    Use [Verify Deep Agents Trace Export](../monitoring/verify-deepagents-trace-export) to prove delivery or diagnose a failure.
+    Use [Manage Deep Agents Trace Export](../monitoring/manage-deepagents-trace-export) to stop, disable, reconfigure, or remove tracing.
+  </Accordion>
+</AccordionGroup>
 
 ## Troubleshooting
 
@@ -121,13 +339,24 @@ nemo-deepagents <sandbox-name> rebuild
 nemo-deepagents <sandbox-name> snapshot create --name before-change
 ```
 
+If you upgrade from a release that persisted LangSmith environment values, rebuild each existing Deep Agents Code sandbox so its image includes the corrected `start.sh`.
+If an existing sandbox displays `Choose a Recommended Model`, rebuild it so its image includes the managed startup behavior.
+
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
 If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.
+Proxy launchers and startup scripts are baked into the sandbox image.
+After upgrading NemoClaw from a release with older Deep Agents Code routing, rebuild each existing sandbox before troubleshooting `inference.local` connectivity.
+NemoClaw v0.0.78 and newer clients fail closed when a pre-v0.0.78 sandbox image lacks the trusted `/usr/local/lib/nemoclaw/dcode-managed-exec` route-probe helper, even when the installed Deep Agents Code version still matches the managed manifest.
+Rebuild the sandbox to install that image-owned helper before retrying `status`, `doctor`, `connect`, or onboarding recovery.
 There is no dashboard port or long-running gateway process for this harness.
 
 ## Next Steps
 
-- [Inference Options](../inference/inference-options) explains how to choose a provider and model.
-- [Backup and Restore](../manage-sandboxes/backup-restore) explains snapshot and rebuild preservation.
-- [Runtime Controls](../manage-sandboxes/runtime-controls) explains sandbox mutability and host-side control boundaries.
+- [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains how to choose a provider and model.
+- [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) explains `/sandbox/.deepagents`, memory, skills, and what NemoClaw preserves.
+- [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) explains snapshot and rebuild preservation.
+- [Set Up Deep Agents Trace Export](../monitoring/set-up-deepagents-trace-export) configures the policy and host collector.
+- [Network Policies](../reference/network-policies#local-otlp-trace-export) explains the local collector egress preset.
 - [Troubleshooting](../reference/troubleshooting) covers common setup and runtime issues.
+- [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) explains managed MCP configuration for Deep Agents sandboxes.
+- [Deep Agents Code overview](https://docs.langchain.com/oss/python/deepagents/code/overview) explains upstream `dcode` capabilities and commands.

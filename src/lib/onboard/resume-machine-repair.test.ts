@@ -11,11 +11,13 @@ import {
   type Session,
   type SessionUpdates,
 } from "../state/onboard-session";
+import { applyInvalidatedTransitionOrDefer } from "./__test-helpers__/machine-recorders";
 import { advanceTo, branchTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
-import { repairResumeMachineSnapshot, resumeMachineState } from "./resume-machine-repair";
+import { resumeMachineState } from "./resume-machine-repair";
 import { classifyResumeMachineRepair } from "./resume-repair-policy";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
+import { applySessionRecovery } from "./session-recovery";
 
 /**
  * Builds a failed durable session while letting each test set the interrupted step.
@@ -96,7 +98,7 @@ function createBoundaryHarness(initial: Session) {
  * Replays the live resume sequence from failed snapshot repair through completion.
  */
 async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
-  repairResumeMachineSnapshot(initial, "2026-06-01T00:01:00.000Z");
+  applySessionRecovery(initial, "2026-06-01T00:01:00.000Z");
   initial.failure = null;
   initial.status = "in_progress";
   const { boundary, getSession } = createBoundaryHarness(initial);
@@ -112,7 +114,16 @@ async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
     advanceTo("finalizing", { metadata: { state: "policies" } }),
   ];
   for (const result of results) {
-    await boundary.recordCompatibleStateResult(result);
+    const current = await boundary.getRuntime().session();
+    const sourceState =
+      result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
+    const invalidated = await applyInvalidatedTransitionOrDefer(
+      boundary,
+      result,
+      current.machine.state,
+      sourceState,
+    );
+    invalidated || (await boundary.recordStateResult(result));
   }
   await boundary.recordSessionComplete();
   return getSession();
@@ -187,13 +198,18 @@ describe("resume machine repair", () => {
     });
 
     expect(resumeMachineState(session)).toBe("preflight");
-    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+    applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
-    expect(session.machine).toEqual({
+    expect(session.machine).toMatchObject({
       version: MACHINE_SNAPSHOT_VERSION,
       state: "preflight",
       stateEnteredAt: "2026-06-01T00:01:00.000Z",
       revision: 8,
+      recoveryReceipt: {
+        reason: "failed_terminal_snapshot",
+        entry: "preflight",
+        revision: 8,
+      },
     });
   });
 
@@ -234,7 +250,7 @@ describe("resume machine repair", () => {
       },
     });
 
-    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+    applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
     expect(session.machine).toEqual({
       version: MACHINE_SNAPSHOT_VERSION,
@@ -259,13 +275,18 @@ describe("resume machine repair", () => {
     session.steps.preflight.status = "complete";
     session.steps.gateway.status = "complete";
 
-    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+    applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
-    expect(session.machine).toEqual({
+    expect(session.machine).toMatchObject({
       version: MACHINE_SNAPSHOT_VERSION,
       state: "provider_selection",
       stateEnteredAt: "2026-06-01T00:01:00.000Z",
       revision: 10,
+      recoveryReceipt: {
+        reason: "reopened_complete_snapshot",
+        entry: "provider_selection",
+        revision: 10,
+      },
     });
   });
 
@@ -282,7 +303,7 @@ describe("resume machine repair", () => {
     session.resumable = false;
     session.status = "complete";
 
-    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+    applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
     expect(session.machine).toEqual({
       version: MACHINE_SNAPSHOT_VERSION,

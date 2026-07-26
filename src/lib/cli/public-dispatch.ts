@@ -18,19 +18,30 @@ const { runOclifArgv, runOclifCommandById } = require("./oclif-runner");
 const {
   canonicalUsageList,
   globalCommandTokens,
-  sandboxActionTokens,
+  sandboxActionTokensForDispatch,
 } = require("./command-registry");
-import { normalizeArgv, suggestCommand, type NormalizedSandboxArgv } from "./argv-normalizer";
+
+import { migrateLegacyPortState } from "../state/legacy-port-migration";
+import {
+  type NormalizedArgv,
+  type NormalizedGlobalArgv,
+  type NormalizedSandboxArgv,
+  normalizeArgv,
+  suggestCommand,
+} from "./argv-normalizer";
+import { resolveBareConnectArgv } from "./bare-connect-routing";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import {
+  type PublicTranslationResult,
   translatePublicGlobalArgv,
   translatePublicSandboxArgv,
-  type PublicTranslationResult,
 } from "./public-argv-translation";
 
 // ── Global commands (derived from command registry) ──────────────
 
 const GLOBAL_COMMANDS = globalCommandTokens();
+const NATIVE_OCLIF_NAMESPACES = new Set(["internal", "sandbox"]);
+const MIGRATION_RECOVERY_SANDBOX_ACTIONS = new Set(["doctor", "recover"]);
 
 type RegistryModule = typeof import("../state/registry");
 type RegistryRecoveryModule = typeof import("../registry-recovery-action");
@@ -101,6 +112,22 @@ function hasPublicSandboxHelpFlag(action: string, args: readonly string[]): bool
   return hasHelpFlag(argsBeforeSeparator(args));
 }
 
+function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
+  if (argv[0] === "internal") {
+    const isStatefulUninstall =
+      argv[1] === "uninstall" && (argv[2] === "plan" || argv[2] === "run-plan");
+    return !isStatefulUninstall;
+  }
+  if (argv[0] === "sandbox") {
+    return MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "");
+  }
+  return (
+    argv.length > 1 &&
+    !GLOBAL_COMMANDS.has(argv[0] ?? "") &&
+    MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "")
+  );
+}
+
 function findRegisteredSandboxName(tokens: string[]): string | null {
   const registered = new Set(
     registry()
@@ -118,7 +145,7 @@ function printConnectOrderHint(candidate: string | null): void {
 }
 
 function sandboxActionList(): string[] {
-  return sandboxActionTokens();
+  return sandboxActionTokensForDispatch();
 }
 
 type OpenShellCommandHint = {
@@ -140,7 +167,7 @@ function getOpenShellCommandHint(argv: readonly string[]): OpenShellCommandHint 
     return {
       entered: argv.join(" "),
       command: "openshell policy set --policy <policy-file> --wait <sandbox-name>",
-      note: `For NemoClaw presets, use: ${CLI_NAME} <sandbox-name> policy-add <preset>`,
+      note: `For NemoClaw presets, use: ${CLI_NAME} <sandbox-name> policy add <preset>`,
     };
   }
   if (cmd === "gateway" && subcommand === "stop") {
@@ -201,6 +228,34 @@ function printDispatchUsageError(
     console.error(`    ${line}`);
   }
   process.exit(1);
+}
+
+/** Returns the sandbox-like positional argument passed to global `status`, if one exists. */
+function findGlobalStatusSandboxArgument(args: readonly string[]): string | null {
+  const positionals = args.filter((arg) => !["--json", "--help", "-h"].includes(arg));
+  if (positionals.some((arg) => arg.startsWith("-")) || positionals.length !== 1) return null;
+  if (GLOBAL_COMMANDS.has(positionals[0]) || NATIVE_OCLIF_NAMESPACES.has(positionals[0])) {
+    return null;
+  }
+  try {
+    validateName(positionals[0], "sandbox name");
+    return positionals[0];
+  } catch {
+    return null;
+  }
+}
+
+/** Prints the correction for `status <name>` and exits with the usage-error status code. */
+function printGlobalStatusScopeHint(sandboxName: string, args: readonly string[]): never {
+  const helpRequested = hasHelpFlag(args);
+  const forwardedFlags = helpRequested ? ["--help"] : args.includes("--json") ? ["--json"] : [];
+  const flagSuffix = forwardedFlags.length > 0 ? ` ${forwardedFlags.join(" ")}` : "";
+  console.error(`  '${CLI_NAME} status' shows the global sandbox/service overview.`);
+  console.error(`  It does not take a sandbox name.`);
+  console.error("");
+  console.error(`  Run: ${CLI_NAME} ${sandboxName} status${flagSuffix}`);
+  console.error(`  Or for global JSON: ${CLI_NAME} status --json`);
+  process.exit(2);
 }
 
 async function recoverRequestedSandboxIfNeeded(
@@ -284,24 +339,14 @@ async function runPublicTranslationResult(
     case "unknownPublicAction":
       console.error(`  Unknown action: ${result.action}`);
       console.error(`  Valid actions: ${validSandboxActionsText()}`);
+      console.error(`  Example: ${CLI_NAME} ${opts.sandboxName ?? "<name>"} connect`);
       process.exit(1);
   }
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────
 
-// eslint-disable-next-line complexity
-export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promise<void> {
-  if (argv[0] === "internal" || argv[0] === "sandbox") {
-    await runNativeOclifArgv(argv);
-    return;
-  }
-
-  const normalized = normalizeArgv(argv, {
-    globalCommands: GLOBAL_COMMANDS,
-    isSandboxConnectFlag: isPublicSandboxConnectFlag,
-  });
-
+async function dispatchNormalizedArgv(normalized: NormalizedArgv, argv: string[]): Promise<void> {
   if (normalized.kind === "rootHelp") {
     await runDirectOclifCommand("root:help", []);
     return;
@@ -313,23 +358,46 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
   }
 
   if (normalized.kind === "global") {
-    await runPublicTranslationResult(
-      translatePublicGlobalArgv(normalized.command, normalized.args),
-    );
+    await dispatchGlobalArgv(normalized);
     return;
   }
 
-  const cmd = normalized.sandboxName;
+  await dispatchSandboxArgv(normalized, argv);
+}
+
+async function dispatchGlobalArgv(normalized: NormalizedGlobalArgv): Promise<void> {
+  if (normalized.command === "status") {
+    const sandboxName = findGlobalStatusSandboxArgument(normalized.args);
+    if (sandboxName) printGlobalStatusScopeHint(sandboxName, normalized.args);
+  }
+  await runPublicTranslationResult(translatePublicGlobalArgv(normalized.command, normalized.args));
+}
+
+async function dispatchSandboxArgv(
+  normalized: NormalizedSandboxArgv,
+  argv: string[],
+): Promise<void> {
+  const routed = await resolveBareConnectArgv(normalized, {
+    findRegisteredSandboxName,
+    getDefault: () => registry().getDefault(),
+    getSandbox: (name) => registry().getSandbox(name),
+    listSandboxes: () => registry().listSandboxes(),
+    printConnectOrderHint,
+    printSandboxConnectHelp: (sandboxName) => sandboxConnect().printSandboxConnectHelp(sandboxName),
+    recoverRegistryEntries: () => registryRecovery().recoverRegistryEntries(),
+  });
+  if (!routed) return;
+  const cmd = routed.sandboxName;
   const rawArgsAfterCmd = argv.slice(1);
-  const requestedSandboxAction = normalized.action;
-  const requestedSandboxActionArgs = normalized.actionArgs;
-  if (handlePublicConnectHelp(normalized)) return;
+  const requestedSandboxAction = routed.action;
+  const requestedSandboxActionArgs = routed.actionArgs;
+  if (handlePublicConnectHelp(routed)) return;
 
   // Help is parser metadata, not sandbox runtime behavior. Render sandbox-scoped
   // public help before registry recovery so `nemoclaw missing channels start --help`
   // stays side-effect free and never starts or repairs services.
   if (
-    !normalized.connectHelpRequested &&
+    !routed.connectHelpRequested &&
     isKnownSandboxAction(requestedSandboxAction) &&
     hasPublicSandboxHelpFlag(requestedSandboxAction, requestedSandboxActionArgs)
   ) {
@@ -378,7 +446,10 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     return;
   }
 
-  // Unknown command — suggest
+  printUnknownSandboxOrCommand(cmd);
+}
+
+function printUnknownSandboxOrCommand(cmd: string): never {
   console.error(`  Unknown command: ${cmd}`);
   console.error("");
 
@@ -399,4 +470,45 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
 
   console.error(`  Run '${CLI_NAME} help' for usage.`);
   process.exit(1);
+}
+
+/** Normalize public argv and route it to oclif or sandbox-first command handlers. */
+export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const stateFreeInvocation =
+    argv.length === 0 ||
+    argv.includes("--help") ||
+    argv.includes("-h") ||
+    argv.includes("--version") ||
+    argv[0] === "version" ||
+    argv[0] === "help" ||
+    argv[0] === "completion";
+  if (!stateFreeInvocation && !isMigrationRecoveryInvocation(argv)) {
+    try {
+      const migration = migrateLegacyPortState();
+      if (migration.migratedSandboxNames.length > 0 || migration.migratedSession) {
+        console.error(
+          `  Migrated legacy state for gateway port ${process.env.NEMOCLAW_GATEWAY_PORT}: ` +
+            `${String(migration.migratedSandboxNames.length)} sandbox(s).`,
+        );
+      }
+      for (const warning of migration.warnings) console.error(`  Warning: ${warning}`);
+    } catch (error) {
+      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  if (argv[0] && NATIVE_OCLIF_NAMESPACES.has(argv[0])) {
+    await runNativeOclifArgv(argv);
+    return;
+  }
+
+  await dispatchNormalizedArgv(
+    normalizeArgv(argv, {
+      globalCommands: GLOBAL_COMMANDS,
+      isSandboxConnectFlag: isPublicSandboxConnectFlag,
+    }),
+    argv,
+  );
 }

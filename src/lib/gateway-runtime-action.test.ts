@@ -1,45 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type GatewayRuntimeModule = typeof import("./gateway-runtime-action");
-
-const requireDist = createRequire(import.meta.url);
-const gatewayRuntimeModulePath = "./gateway-runtime-action.js";
+import * as gatewayRuntime from "./gateway-runtime-action";
 
 describe("gateway-runtime-action per-sandbox gateway routing", () => {
-  let gatewayRuntime: GatewayRuntimeModule;
   let captureSpy: MockInstance;
   let runSpy: MockInstance;
   let startGatewaySpy: MockInstance;
-  let spies: MockInstance[];
 
   beforeEach(() => {
-    spies = [];
-    delete require.cache[requireDist.resolve(gatewayRuntimeModulePath)];
-    const openshellRuntime = requireDist("./adapters/openshell/runtime.js");
-    captureSpy = vi.spyOn(openshellRuntime, "captureOpenshell");
-    runSpy = vi.spyOn(openshellRuntime, "runOpenshell");
-    spies.push(captureSpy, runSpy);
-
-    // The recovery path also pokes onboard.startGatewayForRecovery via lazy
-    // require(); stub it so the tests do not pull onboard's runtime in.
-    const onboard = requireDist("./onboard.js");
+    captureSpy = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "captureOpenshell");
+    runSpy = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "runOpenshell");
     startGatewaySpy = vi
-      .spyOn(onboard, "startGatewayForRecovery")
+      .spyOn(gatewayRuntime.gatewayRuntimeDependencies, "startGatewayForRecovery")
       .mockResolvedValue(undefined as never);
-    spies.push(startGatewaySpy);
-
-    gatewayRuntime = requireDist(gatewayRuntimeModulePath);
   });
 
   afterEach(() => {
-    for (const spy of spies) spy.mockRestore();
+    vi.restoreAllMocks();
     delete process.env.OPENSHELL_GATEWAY;
-    delete require.cache[requireDist.resolve(gatewayRuntimeModulePath)];
   });
 
   describe("getNamedGatewayLifecycleState", () => {
@@ -76,6 +57,67 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
 
       expect(result.state).toBe("connected_other");
       expect(result.activeGateway).toBe("nemoclaw");
+    });
+
+    it("accepts a connected named gateway when the legacy gateway does not support info (#6903)", () => {
+      captureSpy
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Status: Connected\nGateway: nemoclaw\nVersion: 0.0.72\n",
+        })
+        .mockReturnValueOnce({
+          status: 1,
+          output: "gateway info is not supported by this gateway version",
+        });
+
+      const result = gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw");
+
+      expect(result.state).toBe("healthy_named");
+      expect(result.activeGateway).toBe("nemoclaw");
+    });
+
+    it.each([
+      {
+        label: "failed gateway metadata under a connected foreign gateway",
+        status: "Gateway: openshell\nStatus: Connected\n",
+        gatewayInfo: "No gateway metadata found",
+        gatewayInfoStatus: 1,
+        expected: "connected_other",
+      },
+      {
+        label: "arbitrary gateway info failure under a connected named gateway",
+        status: "Gateway: nemoclaw\nStatus: Connected\n",
+        gatewayInfo: "gateway info requires admin privileges",
+        gatewayInfoStatus: 1,
+        expected: "connected_other",
+      },
+      {
+        label: "empty lifecycle output",
+        status: "",
+        gatewayInfo: "",
+        gatewayInfoStatus: 0,
+        expected: "missing_named",
+      },
+      {
+        label: "malformed lifecycle output",
+        status: "??? garbage output ???",
+        gatewayInfo: "garbage gateway info",
+        gatewayInfoStatus: 0,
+        expected: "missing_named",
+      },
+    ])("classifies $label conservatively as $expected", ({
+      status,
+      gatewayInfo,
+      gatewayInfoStatus,
+      expected,
+    }) => {
+      captureSpy
+        .mockReturnValueOnce({ status: 0, output: status })
+        .mockReturnValueOnce({ status: gatewayInfoStatus, output: gatewayInfo });
+
+      const result = gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw");
+
+      expect(result.state).toBe(expected);
     });
 
     it("keeps probes fatal by default, but still captures stderr (ignoreError falsy)", () => {
@@ -135,6 +177,11 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
         .filter((args: string[]) => args[0] === "gateway" && args[1] === "select");
       expect(selectCalls).toContainEqual(["gateway", "select", "nemoclaw-8090"]);
       expect(selectCalls.every((args: string[]) => args[2] === "nemoclaw-8090")).toBe(true);
+      expect(
+        runSpy.mock.calls
+          .filter(([args]) => args[0] === "gateway" && args[1] === "select")
+          .every(([, options]) => options.stdio === "ignore"),
+      ).toBe(true);
       expect(result.recovered).toBe(true);
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
     });

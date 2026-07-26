@@ -3,23 +3,22 @@
 
 import { recoverNamedGatewayRuntime } from "../actions/global";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
-import { listMessagingProviderSuffixes } from "../messaging/channels";
+import { GATEWAY_PORT } from "../core/ports";
+import { resolveGatewayName } from "../onboard/gateway-binding";
+import { resolveGatewayCredentialMutationAuthority } from "../onboard/gateway-teardown-authority";
 
-// Suffixes that mark per-sandbox messaging integrations in the gateway's
-// provider list. These are managed by `channels`, not `credentials`.
-const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [...listMessagingProviderSuffixes()];
-
-export function isBridgeProviderName(name: string): boolean {
-  return BRIDGE_PROVIDER_SUFFIXES.some((suffix) => name.endsWith(suffix));
-}
+export { isBridgeProviderName } from "./provider-list";
 
 export function printCredentialsUsage(log: (message?: string) => void = console.log): void {
   log("");
   log(`  Usage: ${CLI_NAME} credentials <subcommand>`);
   log("");
   log("  Subcommands:");
-  log("    list                  List provider credentials registered with the OpenShell gateway");
-  log("    reset <PROVIDER> [--yes]   Remove a provider credential so onboard re-prompts");
+  log(
+    "    list                            List provider credentials registered with the OpenShell gateway",
+  );
+  log("    add <PROVIDER> --type <TYPE>    Register a provider credential (reads value from env)");
+  log("    reset <PROVIDER> [--yes]        Remove a provider credential so onboard re-prompts");
   log("");
   log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
   log("  Nothing is persisted to host disk; deploy/non-onboard commands read from env vars.");
@@ -34,6 +33,15 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
   ];
 }
 
+export function credentialsGatewayAuthorityFailureLines(error: unknown): string[] {
+  const detail = error instanceof Error ? error.message : String(error);
+  return [
+    "  Refusing to change provider credentials because the gateway lifecycle authority could not be revalidated.",
+    `  ${detail}`,
+    `  Run '${CLI_NAME} onboard' to bind the current gateway authority before retrying.`,
+  ];
+}
+
 export async function recoverGatewayOrExit(
   kind: "query" | "reach",
   reportFailure: (lines: readonly string[]) => void = (lines) =>
@@ -44,4 +52,22 @@ export async function recoverGatewayOrExit(
 
   reportFailure(credentialsGatewayRecoveryFailureLines(kind));
   return false;
+}
+
+export async function recoverGatewayForCredentialMutationOrExit(
+  reportFailure: (lines: readonly string[]) => void = (lines) =>
+    lines.forEach((line) => console.error(line)),
+): Promise<boolean> {
+  if (!(await recoverGatewayOrExit("reach", reportFailure))) return false;
+
+  try {
+    resolveGatewayCredentialMutationAuthority({
+      gatewayName: resolveGatewayName(GATEWAY_PORT),
+      gatewayPort: GATEWAY_PORT,
+    });
+    return true;
+  } catch (error) {
+    reportFailure(credentialsGatewayAuthorityFailureLines(error));
+    return false;
+  }
 }

@@ -316,14 +316,21 @@ function loadPersistedPid(): number | null {
   return loadLocalAdapterPid(PID_PATH);
 }
 
+const ADAPTER_LAUNCHER_BASENAMES = ["bedrock-runtime-adapter.mts", "bedrock-runtime-adapter.js"];
+const ADAPTER_PROCESS_NEEDLE = new RegExp(
+  `(?:^|[^A-Za-z0-9_.-])(?:${ADAPTER_LAUNCHER_BASENAMES.map((name) =>
+    name.replaceAll(".", "\\."),
+  ).join("|")})(?:$|[^A-Za-z0-9_.-])`,
+);
+
 function isAdapterProcess(pid: number | null | undefined): boolean {
-  return isLocalAdapterProcess(pid, "bedrock-runtime-adapter.js", runCapture);
+  return isLocalAdapterProcess(pid, ADAPTER_PROCESS_NEEDLE, runCapture);
 }
 
 function killStaleAdapter(): void {
   killLocalAdapterPid({
     pidPath: PID_PATH,
-    processNeedle: "bedrock-runtime-adapter.js",
+    processMatcher: ADAPTER_PROCESS_NEEDLE,
     run,
     runCapture,
   });
@@ -331,7 +338,7 @@ function killStaleAdapter(): void {
 
 function getAdapterScriptPath(): string {
   const scriptsDir = typeof SCRIPTS === "string" ? SCRIPTS : path.join(process.cwd(), "scripts");
-  return path.join(scriptsDir, "bedrock-runtime-adapter.js");
+  return path.join(scriptsDir, "bedrock-runtime-adapter.mts");
 }
 
 function copyAwsEnv(extra: Record<string, string>): void {
@@ -478,4 +485,6 @@ export function getCompatibleAnthropicCredentialForBedrock(): string | null {
 
 export const __test = {
   adapterCredentialHash,
+  adapterProcessNeedle: ADAPTER_PROCESS_NEEDLE,
+  getAdapterScriptPath,
 };

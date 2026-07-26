@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/onboard-config.schema.json",
+  "title": "NemoClaw onboard performance budget config",
+  "description": "Advisory warm-system cloud onboard timing budget and full-E2E cold-path phase budget.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$comment",
+    "schemaVersion",
+    "mode",
+    "scope",
+    "totalBudgetMs",
+    "regressionWarning",
+    "phaseRegressionWarning",
+    "fullE2eColdPath"
+  ],
+  "properties": {
+    "$comment": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "mode": {
+      "const": "advisory"
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "totalBudgetMs": {
+      "type": "number",
+      "minimum": 0
+    },
+    "regressionWarning": {
+      "$ref": "#/$defs/threshold"
+    },
+    "phaseRegressionWarning": {
+      "$ref": "#/$defs/threshold"
+    },
+    "fullE2eColdPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authoritativeLocalBaseBuildAllowanceMs",
+        "rootStartToFirstTurnCompletionBudgetMs",
+        "rootEndToFirstTurnCompletionBudgetMs",
+        "phaseBudgetsMs"
+      ],
+      "properties": {
+        "authoritativeLocalBaseBuildAllowanceMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Bounded extra time allowed for the root-start and sandbox-phase caps only when full-e2e observes the authoritative local base-image rebuild message."
+        },
+        "rootStartToFirstTurnCompletionBudgetMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Maximum time from the nemoclaw.onboard root start until the first agent-turn command completes."
+        },
+        "rootEndToFirstTurnCompletionBudgetMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": {
+            "$data": "1/rootStartToFirstTurnCompletionBudgetMs"
+          },
+          "description": "Maximum time from the nemoclaw.onboard root end until the first agent-turn command completes."
+        },
+        "phaseBudgetsMs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "nemoclaw.onboard.phase.preflight",
+            "nemoclaw.onboard.phase.gateway",
+            "nemoclaw.onboard.phase.provider_selection",
+            "nemoclaw.onboard.phase.inference",
+            "nemoclaw.onboard.phase.sandbox"
+          ],
+          "properties": {
+            "nemoclaw.onboard.phase.preflight": { "$ref": "#/$defs/milliseconds" },
+            "nemoclaw.onboard.phase.gateway": { "$ref": "#/$defs/milliseconds" },
+            "nemoclaw.onboard.phase.provider_selection": { "$ref": "#/$defs/milliseconds" },
+            "nemoclaw.onboard.phase.inference": { "$ref": "#/$defs/milliseconds" },
+            "nemoclaw.onboard.phase.sandbox": { "$ref": "#/$defs/milliseconds" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minDeltaMs", "minPercent"],
+      "properties": {
+        "minDeltaMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "minPercent": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "milliseconds": {
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

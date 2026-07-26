@@ -56,13 +56,17 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 49 entries", () => {
-      // 43 visible + 6 hidden (shields×3 + config get/set/rotate-token).
-      // 43 visible includes the sessions group (root + list + reset + delete +
+    it("should return exactly 60 entries", () => {
+      // 54 visible + 8 hidden (shields×3 + config get/set/rotate-token +
+      // inference get/set).
+      // 54 visible includes the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
-      // singular `agent` passthrough that forwards to `openclaw agent`, and
-      // the download + upload host-side openshell wrappers.
-      expect(sandboxCommands()).toHaveLength(49);
+      // singular `agent` passthrough that forwards to `openclaw agent`, the
+      // download + upload host-side openshell wrappers, the stop + start
+      // container lifecycle pair (#6026), the policy baseline exclude + restore
+      // pair, plus five MCP bridge display entries under the `mcp` parent and
+      // the gateway restart command under the `gateway` parent.
+      expect(sandboxCommands()).toHaveLength(62);
     });
 
     it("every entry has scope sandbox", () => {
@@ -85,9 +89,9 @@ describe("command-registry", () => {
   });
 
   describe("hidden commands", () => {
-    it("exactly 12 hidden commands: help/version aliases + shields + config", () => {
+    it("exactly 14 hidden commands: help/version aliases + shields + config + inference", () => {
       const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(hidden).toHaveLength(12);
+      expect(hidden).toHaveLength(14);
       const usages = hidden.map((c) => c.usage).sort();
       expect(usages).toEqual([
         "nemoclaw --help",
@@ -97,6 +101,8 @@ describe("command-registry", () => {
         "nemoclaw <name> config get",
         "nemoclaw <name> config rotate-token",
         "nemoclaw <name> config set",
+        "nemoclaw <name> inference get",
+        "nemoclaw <name> inference set",
         "nemoclaw <name> shields down",
         "nemoclaw <name> shields status",
         "nemoclaw <name> shields up",
@@ -183,10 +189,11 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 26 tokens matching the global dispatch commands", () => {
+    it("returns the exact set of 27 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "agents",
+        "completion",
         "onboard",
         "update",
         "list",
@@ -218,9 +225,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 29 unique action tokens including empty string", () => {
+    it("returns exactly 31 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(29);
+      expect(tokens).toHaveLength(31);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -230,12 +237,12 @@ describe("command-registry", () => {
         "download",
         "exec",
         "status",
+        "stop",
+        "start",
         "doctor",
+        "inference",
         "logs",
-        "policy-add",
-        "policy-explain",
-        "policy-remove",
-        "policy-list",
+        "policy",
         "hosts-add",
         "hosts-list",
         "hosts-remove",
@@ -249,6 +256,8 @@ describe("command-registry", () => {
         "shields",
         "config",
         "channels",
+        "mcp",
+        "gateway",
         "gateway-token",
         "upload",
         "",
@@ -306,6 +315,7 @@ describe("command-registry", () => {
         "Skills",
         "Policy Presets",
         "Messaging Channels",
+        "MCP Servers",
         "Compatibility Commands",
         "Services",
         "Troubleshooting",

@@ -26,6 +26,7 @@ const LIVE_SANDBOX_DISPLAY_PHASES = new Set([
   "Failed",
   "CrashLoopBackOff",
   "ImagePullBackOff",
+  "Evicted",
   "Unknown",
 ]);
 

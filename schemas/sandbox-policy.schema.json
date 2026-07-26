@@ -4,7 +4,10 @@
   "title": "NemoClaw Sandbox Policy",
   "description": "Schema for the base sandbox policy (openclaw-sandbox.yaml) — defines filesystem, process, and network egress rules.",
   "type": "object",
-  "required": ["version", "network_policies"],
+  "required": [
+    "version",
+    "network_policies"
+  ],
   "additionalProperties": false,
   "properties": {
     "version": {
@@ -14,14 +17,20 @@
     "filesystem_policy": {
       "type": "object",
       "properties": {
-        "include_workdir": { "type": "boolean" },
+        "include_workdir": {
+          "type": "boolean"
+        },
         "read_only": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "read_write": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -30,117 +39,29 @@
       "properties": {
         "compatibility": {
           "type": "string",
-          "enum": ["strict", "best_effort"]
+          "enum": [
+            "strict",
+            "best_effort"
+          ]
         }
       }
     },
     "process": {
       "type": "object",
       "properties": {
-        "run_as_user": { "type": "string" },
-        "run_as_group": { "type": "string" }
+        "run_as_user": {
+          "type": "string"
+        },
+        "run_as_group": {
+          "type": "string"
+        }
       }
     },
     "network_policies": {
       "type": "object",
       "minProperties": 1,
       "additionalProperties": {
-        "$ref": "#/$defs/networkPolicyEntry"
-      }
-    }
-  },
-  "$defs": {
-    "networkPolicyEntry": {
-      "type": "object",
-      "required": ["name", "endpoints", "binaries"],
-      "properties": {
-        "name": { "type": "string" },
-        "endpoints": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/endpoint" },
-          "minItems": 1
-        },
-        "binaries": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/binary" },
-          "minItems": 1
-        }
-      }
-    },
-    "endpoint": {
-      "type": "object",
-      "required": ["host", "port"],
-      "properties": {
-        "host": { "type": "string" },
-        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "protocol": { "type": "string", "enum": ["rest", "websocket"] },
-        "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
-        "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip"] },
-        "access": { "type": "string", "enum": ["full"] },
-        "websocket_credential_rewrite": { "type": "boolean" },
-        "request_body_credential_rewrite": { "type": "boolean" },
-        "allowed_ips": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "minItems": 1
-        },
-        "rules": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/rule" },
-          "minItems": 1
-        }
-      },
-      "if": {
-        "properties": { "protocol": { "enum": ["rest", "websocket"] } },
-        "required": ["protocol"]
-      },
-      "then": {
-        "anyOf": [
-          { "required": ["rules"] },
-          { "required": ["access"] }
-        ]
-      }
-    },
-    "rule": {
-      "type": "object",
-      "required": ["allow"],
-      "additionalProperties": false,
-      "properties": {
-        "allow": {
-          "type": "object",
-          "required": ["method", "path"],
-          "additionalProperties": false,
-          "properties": {
-            "method": {
-              "type": "string",
-              "enum": [
-                "GET",
-                "POST",
-                "PUT",
-                "PATCH",
-                "DELETE",
-                "HEAD",
-                "OPTIONS",
-                "WEBSOCKET_TEXT"
-              ]
-            },
-            "path": {
-              "type": "string",
-              "pattern": "^/"
-            }
-          }
-        }
-      }
-    },
-    "binary": {
-      "type": "object",
-      "required": ["path"],
-      "additionalProperties": false,
-      "properties": {
-        "path": {
-          "type": "string",
-          "pattern": "^/"
-        }
+        "$ref": "https://github.com/NVIDIA/NemoClaw/schemas/network-policy.schema.json#/$defs/networkPolicyEntry"
       }
     }
   }

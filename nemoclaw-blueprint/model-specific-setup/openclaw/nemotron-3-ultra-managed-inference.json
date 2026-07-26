@@ -2,9 +2,12 @@
   "$schema": "../schema.json",
   "id": "nemotron-3-ultra-managed-inference",
   "agent": "openclaw",
-  "description": "Disables OpenClaw's native code-based tool search for hosted Nemotron 3 Ultra on the NemoClaw managed inference.local route. The model can emit invalid JavaScript for the tool_search_code surface and return '[tools] tool_search_code failed' instead of completing real tool calls; routing it back to the structured tool-calling surface preserves tool use.",
+  "description": "Keeps OpenClaw Tool Search disabled for hosted Nemotron 3 Ultra on the managed inference.local route. The model generated invalid JavaScript for tool_search_code; boolean false preserves direct structured tool calling until a live trajectory proves search, describe, and call can replace this safeguard. Boolean true would select OpenClaw code mode, not structured mode.",
   "match": {
-    "modelIds": ["nvidia/nvidia/nemotron-3-ultra"],
+    "modelIds": [
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nvidia/nemotron-3-ultra"
+    ],
     "providerKey": "inference",
     "inferenceApi": "openai-completions",
     "baseUrl": "https://inference.local/v1"

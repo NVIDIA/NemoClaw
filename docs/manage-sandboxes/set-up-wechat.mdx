@@ -1,0 +1,38 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up WeChat"
+sidebar-title: "Set Up WeChat"
+description: "Pair experimental personal WeChat through the host-side iLink QR flow."
+description-agent: "Explains the experimental personal WeChat iLink QR flow, provider credential boundary, per-account metadata, and DM allowlist. Use before enabling WeChat."
+keywords: ["nemoclaw wechat", "wechat qr", "wechat ilink"]
+content:
+  type: "how_to"
+---
+WeChat support is experimental and uses Tencent's iLink gateway.
+The supported mode in this release is personal WeChat with `bot_type=3`.
+WeChat Official Account and WeCom or Enterprise WeChat are not wired up.
+
+## Understand the Pairing Flow
+
+NemoClaw runs QR login on the host during `$$nemoclaw onboard` or `channels add wechat` because the bot token exists only after a successful iLink handshake.
+Scan the QR with WeChat on your phone through **Discover** and **Scan**, then confirm the login.
+NemoClaw captures the token, `accountId`, `baseUrl`, and `userId` from the iLink response.
+
+NemoClaw registers the token as the `<sandbox>-wechat-bridge` OpenShell provider and substitutes the `openshell:resolve:env:WECHAT_BOT_TOKEN` placeholder inside the sandbox.
+The token does not land in the image or on disk inside the running container.
+
+NemoClaw bakes the non-secret `WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, and `WECHAT_USER_ID` metadata into the image so the bridge can pre-seed per-account context tokens without another QR handshake.
+
+## Configure Access
+
+WeChat is DM-only with `allowIdsMode: "dm"`.
+NemoClaw adds the operator who scanned the QR to `WECHAT_ALLOWED_IDS` automatically.
+
+You can append more comma-separated WeChat user IDs through the same variable.
+Set `NEMOCLAW_WECHAT_QUIET=1` after the flow is stable if you want to silence host-side `[wechat]` diagnostics such as poll status and IDC redirects.
+
+Tencent's iLink gateway is a third-party service.
+Review your organization's terms-of-service, compliance, and data-residency constraints before enabling WeChat.
+
+Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).

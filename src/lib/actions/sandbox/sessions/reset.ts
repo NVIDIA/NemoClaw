@@ -33,9 +33,9 @@
 //         (method name, params, error envelopes, unexpected payloads,
 //         `--keep-transcript` mapping, `--agent` mismatch refusal) —
 //         see `paths.test.ts`, `gateway-rpc.test.ts`, `reset.test.ts`,
-//         and `delete.test.ts`. The host-side E2E
-//         (`test/e2e/test-sessions-agents-cli.sh`, TC-SESS-03/04) proves
-//         the wrapper routes and that the gateway envelope round-trips.
+//         and `delete.test.ts`. The host-side E2E in
+//         `test/e2e/live/sessions-agents-cli.test.ts` proves the wrapper
+//         routes and that the gateway envelope round-trips.
 //         Adding stale-lock or corrupt-store seeding here would force
 //         NemoClaw to write into `/sandbox/.openclaw/sessions/` from the
 //         host, which the sandbox isolation guards specifically forbid.

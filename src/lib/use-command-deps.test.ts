@@ -35,13 +35,31 @@ describe("runUseCommand", () => {
     expect(deps.setDefault).not.toHaveBeenCalled();
   });
 
-  it("returns already-default and skips the registry write when the chosen sandbox is the default", () => {
+  it("returns already-default only after recording the explicit same-value choice", () => {
     const deps = makeDeps({ sandboxes: ["alpha", "beta"], defaultSandbox: "alpha" });
 
     const result = runUseCommand("alpha", deps);
 
     expect(result).toEqual({ outcome: "already-default", sandboxName: "alpha" });
-    expect(deps.setDefault).not.toHaveBeenCalled();
+    expect(deps.setDefault).toHaveBeenCalledOnce();
+    expect(deps.setDefault).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not report already-default when the locked write observes concurrent removal", () => {
+    const deps = makeDeps({
+      sandboxes: ["alpha", "beta"],
+      defaultSandbox: "alpha",
+      setDefault: () => false,
+    });
+
+    const result = runUseCommand("alpha", deps);
+
+    expect(result).toEqual({
+      outcome: "not-found",
+      sandboxName: "alpha",
+      knownSandboxes: ["alpha", "beta"],
+    });
+    expect(deps.setDefault).toHaveBeenCalledWith("alpha");
   });
 
   it("promotes the chosen sandbox and reports the previous default", () => {

@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { BRAVE_API_KEY_ENV } from "../inference/web-search";
+import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../inference/web-search";
 import { listChannels } from "../sandbox/channels";
 import {
   type CreateSandboxMessagingPrepInput,
@@ -37,6 +37,7 @@ function createInput(
       return null;
     },
     providerExistsInGateway: () => false,
+    providerMatchesGatewayCredential: () => false,
     ...overrides,
   };
 }
@@ -84,12 +85,50 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.missingBraveApiKey).toBe(true);
+    expect(result.missingWebSearchCredentialEnv).toBe(BRAVE_API_KEY_ENV);
     expect(result.extraPlaceholderKeys).toEqual([]);
     expect(result.messagingTokenDefs.some(({ envKey }) => envKey === BRAVE_API_KEY_ENV)).toBe(
       false,
     );
     expect(registerExtraPlaceholderProviders).not.toHaveBeenCalled();
+  });
+
+  it("reuses an exact Brave gateway provider when the raw key is unavailable (#6743)", () => {
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialEnv: string) =>
+        name === "demo-brave-search" && type === "brave" && credentialEnv === BRAVE_API_KEY_ENV,
+    );
+
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        webSearchConfig: { fetchEnabled: true },
+        requireExactProviderBinding: true,
+        providerMatchesGatewayCredential,
+      }),
+    );
+
+    expect(result.missingWebSearchCredentialEnv).toBeNull();
+    expect(result.messagingTokenDefs).toContainEqual({
+      name: "demo-brave-search",
+      envKey: BRAVE_API_KEY_ENV,
+      token: null,
+      providerType: "brave",
+    });
+    expect(result.reusableMessagingProviders).toEqual(["demo-brave-search"]);
+  });
+
+  it("reports a missing Tavily key using the selected provider credential", () => {
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        env: { [BRAVE_API_KEY_ENV]: "brv-does-not-satisfy-tavily" },
+      }),
+    );
+
+    expect(result.missingWebSearchCredentialEnv).toBe(TAVILY_API_KEY_ENV);
+    expect(result.messagingTokenDefs.some(({ envKey }) => envKey === TAVILY_API_KEY_ENV)).toBe(
+      false,
+    );
   });
 
   it("adds the Brave provider token from the credential store before host env fallback", () => {
@@ -104,7 +143,7 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.missingBraveApiKey).toBe(false);
+    expect(result.missingWebSearchCredentialEnv).toBeNull();
     expect(result.hasMessagingTokens).toBe(true);
     expect(result.messagingTokenDefs).toContainEqual({
       name: "demo-brave-search",
@@ -116,6 +155,41 @@ describe("prepareCreateSandboxMessaging", () => {
       "demo",
       result.messagingTokenDefs,
     );
+  });
+
+  it("adds a per-sandbox Tavily provider with credential-store precedence", () => {
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        env: { [TAVILY_API_KEY_ENV]: "tvly-host" },
+        getCredential: (envKey) => (envKey === TAVILY_API_KEY_ENV ? "tvly-store" : null),
+      }),
+    );
+
+    expect(result.missingWebSearchCredentialEnv).toBeNull();
+    expect(result.messagingTokenDefs).toContainEqual({
+      name: "demo-tavily-search",
+      envKey: TAVILY_API_KEY_ENV,
+      token: "tvly-store",
+      providerType: "tavily",
+    });
+  });
+
+  it("uses the versioned Hermes Tavily profile for Hermes sandboxes", () => {
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        agentName: "hermes",
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        env: { [TAVILY_API_KEY_ENV]: "tvly-host" },
+      }),
+    );
+
+    expect(result.messagingTokenDefs).toContainEqual({
+      name: "demo-tavily-search",
+      envKey: TAVILY_API_KEY_ENV,
+      token: "tvly-host",
+      providerType: "tavily-hermes-v1",
+    });
   });
 
   it("removes both Slack bot and app token definitions when Slack is disabled", () => {
@@ -133,12 +207,12 @@ describe("prepareCreateSandboxMessaging", () => {
   });
 
   it("includes all static token-backed channels by default without probing reusable providers", () => {
-    const providerExistsInGateway = vi.fn(() => true);
+    const providerMatchesGatewayCredential = vi.fn(() => true);
 
     const result = prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: null,
-        providerExistsInGateway,
+        providerMatchesGatewayCredential,
       }),
     );
 
@@ -152,7 +226,7 @@ describe("prepareCreateSandboxMessaging", () => {
     ]);
     expect(result.reusableMessagingProviders).toEqual([]);
     expect(result.reusableMessagingChannels).toEqual([]);
-    expect(providerExistsInGateway).not.toHaveBeenCalled();
+    expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
   it("uses BRAVE_API_KEY from host env when the credential store has no value", () => {
@@ -163,7 +237,6 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.missingBraveApiKey).toBe(false);
     expect(result.messagingTokenDefs).toContainEqual({
       name: "demo-brave-search",
       envKey: BRAVE_API_KEY_ENV,

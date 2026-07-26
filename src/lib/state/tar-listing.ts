@@ -52,8 +52,10 @@ function tarExitStatus(result: ReturnType<typeof spawnSync>): number {
   return result.status ?? (result.error || result.signal ? 1 : 0);
 }
 
+export type TarArchiveSource = Buffer | { filePath: string };
+
 export function runTarListing(
-  tarBuffer: Buffer,
+  tarArchive: TarArchiveSource,
   args: string[],
   failureLabel: string,
   onLine: (line: string) => void,
@@ -61,17 +63,32 @@ export function runTarListing(
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tar-listing-"));
   const listingPath = path.join(tempDir, "listing.txt");
   let listingFd: number | null = null;
+  let archiveFd: number | null = null;
   try {
     listingFd = openSync(listingPath, "w");
-    const result = spawnSync("tar", args, {
-      input: tarBuffer,
-      encoding: "utf-8",
-      stdio: ["pipe", listingFd, "pipe"],
-      timeout: 60000,
-      maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
-    });
+    const result = Buffer.isBuffer(tarArchive)
+      ? spawnSync("tar", args, {
+          input: tarArchive,
+          encoding: "utf-8",
+          stdio: ["pipe", listingFd, "pipe"],
+          timeout: 60000,
+          maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
+        })
+      : (() => {
+          archiveFd = openSync(tarArchive.filePath, "r");
+          return spawnSync("tar", args, {
+            encoding: "utf-8",
+            stdio: [archiveFd, listingFd, "pipe"],
+            timeout: 60000,
+            maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
+          });
+        })();
     closeSync(listingFd);
     listingFd = null;
+    if (archiveFd !== null) {
+      closeSync(archiveFd);
+      archiveFd = null;
+    }
 
     const status = tarExitStatus(result);
     if (status !== 0) {
@@ -88,6 +105,7 @@ export function runTarListing(
     return `${failureLabel} failed: ${error instanceof Error ? error.message : String(error)}`;
   } finally {
     if (listingFd !== null) closeSync(listingFd);
+    if (archiveFd !== null) closeSync(archiveFd);
     rmSync(tempDir, { recursive: true, force: true });
   }
 }

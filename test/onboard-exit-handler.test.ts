@@ -21,6 +21,7 @@ type OnboardModule = typeof import("../src/lib/onboard") & {
 const require = createRequire(import.meta.url);
 const onboard = require("../src/lib/onboard.js") as OnboardModule;
 const onboardSession = onboard.onboardSession;
+const ONBOARD_FIXTURE_PATH = ["/usr/bin", "/bin"].join(path.delimiter);
 const originalHome = process.env.HOME;
 const restoreOriginalHome =
   originalHome === undefined
@@ -35,6 +36,12 @@ function requireLoadedSession(sessionDeps = onboardSession) {
   const loaded = sessionDeps.loadSession();
   expect(loaded).not.toBeNull();
   return loaded ?? sessionDeps.createSession();
+}
+
+function writeSuccessfulOpenShell(tmpDir: string): string {
+  const openshellPath = path.join(tmpDir, "openshell");
+  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  return openshellPath;
 }
 
 describe("onboard exit handler registration", () => {
@@ -169,6 +176,7 @@ const { onboard } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        PATH: ONBOARD_FIXTURE_PATH,
         TMPDIR: tmpDir,
         NEMOCLAW_TEST_NO_SLEEP: "1",
       },
@@ -192,6 +200,7 @@ const { onboard } = require(${onboardPath});
   it("onboard() does not mark a completed session failed on later nonzero exit", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const scriptPath = path.join(tmpDir, "onboard-exit-completed.cjs");
+    const openshellPath = writeSuccessfulOpenShell(tmpDir);
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const initialPhasesPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "onboard", "machine", "initial-flow-phases.ts"),
@@ -287,6 +296,7 @@ finalPhases.runFinalOnboardFlowSlice = async ({ runtime }) => {
     { sandboxName: "complete-seam", provider: "nvidia", model: "nemotron-test" },
     { state: "post_verify" },
   ));
+  return { context: null, session: await runtime.session() };
 };
 
 const { onboard } = require(${onboardPath});
@@ -322,8 +332,10 @@ const { onboard } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        PATH: ONBOARD_FIXTURE_PATH,
         TMPDIR: tmpDir,
         NEMOCLAW_TEST_NO_SLEEP: "1",
+        NEMOCLAW_OPENSHELL_BIN: openshellPath,
       },
       timeout: 60_000,
     });

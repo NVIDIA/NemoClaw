@@ -84,7 +84,7 @@ If neither query returns anything, **skip the +25 signal**.
 | 60–84 | `fixed-on-latest` | `Needs Review` | Evidence-rich; ask the reporter to confirm and state the confidence cap. |
 | <60 | `verify-inconclusive` | No field change | Short, honest "couldn't verify" explanation. |
 
-Verdict names are comment and log vocabulary, not GitHub labels. Prepare the exact comment, Project update, assignment, and durable verdict marker as a dry run with `human_review_required: true`; apply only the accepted write set.
+Verdict names are comment and log vocabulary, not GitHub labels. Prepare the comment, Project update, assignment, and durable verdict marker as a dry run with `human_review_required: true`; apply only the accepted write set.
 
 **Special case: latest output matches the issue symptom (bug still reproduces on latest).**
 
@@ -193,7 +193,7 @@ Patterns live in a fenced block (not a Markdown table) because patterns 8 and 9 
 
 **Link-pass self-verification (all templates).** Same rule as Step 8.5d's link pass, applied to every template. Resolve at least one rendered Markdown link from each section that has them (`What's structurally fixed` / `Vestigial references` / `Existing CI coverage` for by-design; `Relevant changes since` / transcript code-anchor citations for the standard template) via `gh api repos/NVIDIA/NemoClaw/contents/<path>?ref=<tag>` (returns 200 + base64 if path exists at tag, 404 otherwise) or `curl -fsI <blob-url>`. A 404 on a citation in the rendered comment is worse than no citation — it advertises verification work that didn't actually happen. If any link fails to resolve, fix it or bail to `verify-inconclusive`.
 
-**Mandatory closing block — reporter @-mention with confirmation language.** Every template below **except `Still-reproduces`** ends with an explicit @-mention of the original reporter using this exact shape:
+**Mandatory closing block — reporter @-mention with confirmation language.** Every template below **except `Still-reproduces`** ends with this @-mention of the original reporter:
 
 > @\<reporter\> — please confirm the symptom is gone on a recent build (≥ v0.0.\<Z\>) and reopen with a fresh reproducer if you observe otherwise.
 
@@ -297,12 +297,12 @@ The trailing HTML comment is the **idempotency marker** Step 3 looks for. Always
 **Authorization boundary.** Before any write, present a dry run containing:
 
 - the verdict and confidence;
-- the exact redacted public comment, including its durable marker;
+- the redacted public comment, including its durable marker;
 - the proposed Project Status change (`Needs Review` only for `fixed-on-latest`; none for inconclusive or still-reproduces);
 - the proposed self-assignment, if any;
 - `human_review_required: true`.
 
-Wait for explicit approval of that exact write set. Comment approval does not authorize a Project change, and Project approval does not authorize modified comment text.
+Wait for explicit approval of that write set. Comment approval does not authorize a Project change, and Project approval does not authorize modified comment text.
 
 **Pre-post state-check.** A long-running verification can race with a maintainer closing the issue independently. Re-check `state == OPEN` immediately before applying an accepted write set. If closed, skip every write and report that the maintainer's close action is now authoritative.
 
@@ -314,7 +314,7 @@ if [ "$STATE" != "OPEN" ]; then
 fi
 ```
 
-**Apply the accepted write set in canonical order.** Resolve Project 199, Status-field, option, and item IDs from live GitHub data immediately before writing; do not use hardcoded IDs. For an accepted `fixed-on-latest` plan, set Project Status `Needs Review`, then self-assign only if that assignment was accepted. Treat the Project update and accepted assignment as one fail-fast write set: if either write fails, stop before posting the comment. For inconclusive and still-reproduces verdicts, do not change Project fields or assignment. Post the exact accepted comment last.
+**Apply the accepted write set in canonical order.** Resolve Project 199, Status-field, option, and item IDs from live GitHub data immediately before writing; do not use hardcoded IDs. For an accepted `fixed-on-latest` plan, set Project Status `Needs Review`, then self-assign only if that assignment was accepted. Treat the Project update and accepted assignment as one fail-fast write set: if either write fails, stop before posting the comment. For inconclusive and still-reproduces verdicts, do not change Project fields or assignment. Post the accepted comment last.
 
 If Project resolution, update, or accepted assignment fails, stop without posting the comment so the accepted write set is not partially represented. Record the Project update, assignment, and comment outcome in the activity log.
 
@@ -356,7 +356,7 @@ This degradation is expected — old releases rot at multiple phases (binary ins
 - For issues reported within 1–4 patches of `$LATEST`, baseline is more likely to install cleanly and the full +50 path is reachable.
 - The skill's design assumes baseline + latest both run cleanly; in practice latest-only with cap-at-84 is the workhorse path. The score-cap is doing real work, not just a fallback.
 
-**Keep-box-on-inconclusive.** When `verify-inconclusive` lands (Step 8c gave up, or Step 9 score < 60), **skip the cleanup trap** for this run if the box was provisioned by this run — set `PROVISIONED_NEW=0` before the trap fires so the EXIT handler is a no-op. Print the `brev shell "$INSTANCE_NAME"` command and an explicit `brev delete "$INSTANCE_NAME"` reminder in the run output so the maintainer can triage and clean up manually. Reused boxes stay regardless. Ship-failed verifications are the exact case where having an inspectable artifact pays for itself; an unbounded sleep-and-delete in the background isn't reliable across session ends, so we leave deletion explicit.
+**Keep-box-on-inconclusive.** When `verify-inconclusive` lands (Step 8c gave up, or Step 9 score < 60), **skip the cleanup trap** for this run if the box was provisioned by this run — set `PROVISIONED_NEW=0` before the trap fires so the EXIT handler is a no-op. Print the `brev shell "$INSTANCE_NAME"` command and an explicit `brev delete "$INSTANCE_NAME"` reminder in the run output so the maintainer can triage and clean up manually. Reused boxes stay regardless. Ship-failed verifications benefit from an inspectable artifact; an unbounded sleep-and-delete in the background isn't reliable across session ends, so we leave deletion explicit.
 
 ---
 

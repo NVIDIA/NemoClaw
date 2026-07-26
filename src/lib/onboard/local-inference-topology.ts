@@ -2,8 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
-import { isLocalProviderHostHealthy } from "../inference/local";
+import {
+  applyOllamaRuntimeContextWindow,
+  findReachableOllamaHost,
+  isLocalProviderHostHealthy,
+  validateOllamaModel,
+} from "../inference/local";
 import { ensureOllamaAuthProxy, isProxyHealthy } from "../inference/ollama/proxy";
+import {
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  resolveOllamaContextWindowFloor,
+} from "../inference/ollama-runtime-context";
 import { type ContainerRuntime, containerCanReachHostLoopback } from "../platform";
 import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 
@@ -142,19 +151,53 @@ export function shouldFrontOllamaWithProxy(): boolean {
   return !containerCanReachHostLoopback(getContainerRuntime());
 }
 
-// Repair the Ollama systemd loopback override for ollama-local providers.
-// No-ops for any other provider. Exits non-zero when the restart fails to
-// recover, matching the existing fail-closed posture in setupNim. (#3342)
+export interface RepairLocalInferenceSystemdOverrideOptions {
+  provider: string | null | undefined;
+  model: string | null | undefined;
+  contextWindowFloor: number;
+  isNonInteractive: () => boolean;
+}
+
+function failOllamaResumeRepair(message: string): never {
+  console.error(`  ${message}`);
+  throw new Error(message);
+}
+
+// Repair the Ollama systemd loopback override for recorded ollama-local
+// providers. Agents with a strict context floor also warm the exact recorded
+// model and verify the running daemon before resume can skip provider setup.
+// No-ops for any other provider and fails closed on incomplete runtime proof.
 export function repairLocalInferenceSystemdOverrideOrExit(
-  provider: string | null | undefined,
-  isNonInteractive: () => boolean,
+  options: RepairLocalInferenceSystemdOverrideOptions,
 ): void {
+  const { provider, model, isNonInteractive } = options;
   if (provider !== "ollama-local") return;
-  const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive });
+  const contextWindowFloor = resolveOllamaContextWindowFloor(options.contextWindowFloor);
+  const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
   if (state === "failed") {
-    console.error("  Ollama systemd restart did not recover after applying the loopback override.");
-    process.exit(1);
+    failOllamaResumeRepair(
+      "Ollama systemd restart did not recover after applying the loopback override.",
+    );
   }
+  if (contextWindowFloor <= MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) return;
+  if (!model) {
+    failOllamaResumeRepair(
+      "The recorded Ollama model is missing, so its runtime context window cannot be verified.",
+    );
+  }
+  if (!findReachableOllamaHost()) {
+    failOllamaResumeRepair(
+      "Ollama is not reachable, so the recorded model's runtime context window cannot be verified.",
+    );
+  }
+  const validation = validateOllamaModel(model);
+  if (!validation.ok) {
+    failOllamaResumeRepair(
+      validation.message || `Selected Ollama model '${model}' failed runtime validation.`,
+    );
+  }
+  const runtimeContext = applyOllamaRuntimeContextWindow(model, { contextWindowFloor });
+  if (!runtimeContext.ok) failOllamaResumeRepair(runtimeContext.message);
 }
 
 export interface LocalProviderReachabilityDeps {

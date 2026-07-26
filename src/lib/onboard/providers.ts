@@ -13,8 +13,10 @@ const {
   VLLM_LOCAL_CREDENTIAL_ENV,
   getSandboxInferenceConfig,
 } = require("../inference/config");
+const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
+const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -27,6 +29,10 @@ const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
+const MODEL_ENV = "NEMOCLAW_MODEL";
+// Compatibility for the NVIDIA QA non-interactive Ollama invocation tracked
+// in #6869. Remove after that workflow migrates to NEMOCLAW_MODEL.
+const PROVIDER_MODEL_ENV = "NEMOCLAW_PROVIDER_MODEL";
 // Private CI-compatible Inference Hub endpoint model IDs use the
 // provider/namespace/model convention. This endpoint is staged as a custom
 // OpenAI-compatible provider, not as the public build.nvidia.com provider.
@@ -35,6 +41,8 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
   cloud: "build",
   nim: "nim-local",
   vllm: "vllm",
+  "open-router": "openrouter",
+  openrouterai: "openrouter",
   anthropiccompatible: "anthropicCompatible",
   hermes: "hermesProvider",
   "hermes-provider": "hermesProvider",
@@ -44,6 +52,7 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
 };
 const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "build",
+  "openrouter",
   "openai",
   "anthropic",
   "anthropicCompatible",
@@ -60,7 +69,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -77,6 +86,17 @@ const REMOTE_PROVIDER_CONFIG = {
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     endpointUrl: BUILD_ENDPOINT_URL,
     helpUrl: "https://build.nvidia.com/settings/api-keys",
+    modelMode: "catalog",
+    defaultModel: DEFAULT_CLOUD_MODEL,
+    skipVerify: true,
+  },
+  openrouter: {
+    label: "OpenRouter",
+    providerName: openrouter.OPENROUTER_PROVIDER_NAME,
+    providerType: openrouter.OPENROUTER_PROVIDER_TYPE,
+    credentialEnv: openrouter.OPENROUTER_CREDENTIAL_ENV,
+    endpointUrl: openrouter.OPENROUTER_ENDPOINT_URL,
+    helpUrl: openrouter.OPENROUTER_HELP_URL,
     modelMode: "catalog",
     defaultModel: DEFAULT_CLOUD_MODEL,
     skipVerify: true,
@@ -212,8 +232,8 @@ function getEffectiveProviderName(providerKey) {
 
 // ── Non-interactive helpers ──────────────────────────────────────
 
-function getNonInteractiveProvider() {
-  stageHostedInferenceSourceSecretEnv();
+function getNonInteractiveProvider(allowHostedInferenceStaging = true) {
+  if (allowHostedInferenceStaging) stageHostedInferenceSourceSecretEnv();
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
   const normalized = NON_INTERACTIVE_PROVIDER_ALIASES[providerKey] || providerKey;
@@ -272,11 +292,11 @@ function stageHostedInferenceSourceSecretEnv() {
   process.env.NEMOCLAW_ENDPOINT_URL =
     (process.env.NEMOCLAW_ENDPOINT_URL || "").trim() || HOSTED_INFERENCE_ENDPOINT_URL;
   const model =
-    (process.env.NEMOCLAW_MODEL || "").trim() ||
+    getRequestedModelFromEnv() ||
     (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() ||
     (process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL || "").trim() ||
     HOSTED_INFERENCE_MODEL;
-  process.env.NEMOCLAW_MODEL = model;
+  process.env[MODEL_ENV] = model;
   process.env.NEMOCLAW_COMPAT_MODEL = (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() || model;
   process.env.NEMOCLAW_PREFERRED_API =
     (process.env.NEMOCLAW_PREFERRED_API || "").trim() || "openai-completions";
@@ -291,11 +311,29 @@ function isHostedInferenceProviderKeyCredentialCandidate(value) {
 
 const isProviderKeyCredentialCandidate = isHostedInferenceProviderKeyCredentialCandidate;
 
+/**
+ * Resolve the requested model from the preferred env var or its compatibility fallback.
+ */
+function getRequestedModelEnv(env = process.env) {
+  const model = (env[MODEL_ENV] || "").trim();
+  if (model) return { value: model, source: MODEL_ENV };
+  const providerModel = (env[PROVIDER_MODEL_ENV] || "").trim();
+  if (providerModel) return { value: providerModel, source: PROVIDER_MODEL_ENV };
+  return { value: "", source: null };
+}
+
+/**
+ * Return the requested model value without exposing which env var supplied it.
+ */
+function getRequestedModelFromEnv(env = process.env) {
+  return getRequestedModelEnv(env).value || null;
+}
+
 function getNonInteractiveModel(providerKey) {
-  const model = (process.env.NEMOCLAW_MODEL || "").trim();
+  const { value: model, source } = getRequestedModelEnv();
   if (!model) return null;
   if (!isSafeModelId(model)) {
-    console.error(`  Invalid NEMOCLAW_MODEL for provider '${providerKey}': ${model}`);
+    console.error(`  Invalid ${source || MODEL_ENV} for provider '${providerKey}': ${model}`);
     console.error("  Model values may only contain letters, numbers, '.', '_', ':', '/', and '-'.");
     process.exit(1);
   }
@@ -303,13 +341,14 @@ function getNonInteractiveModel(providerKey) {
 }
 
 // No default for nonInteractive — onboard.ts wrapper supplies isNonInteractive().
-function getRequestedProviderHint(nonInteractive) {
-  return nonInteractive ? getNonInteractiveProvider() : null;
+function getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging = true) {
+  return nonInteractive ? getNonInteractiveProvider(allowHostedInferenceStaging) : null;
 }
 
-function getRequestedModelHint(nonInteractive) {
+function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = true) {
   if (!nonInteractive) return null;
-  const providerKey = getRequestedProviderHint(nonInteractive) || "cloud";
+  const providerKey =
+    getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging) || "cloud";
   return getNonInteractiveModel(providerKey);
 }
 
@@ -493,12 +532,14 @@ module.exports = {
   stageHostedInferenceSourceSecretEnv,
   getNonInteractiveProvider,
   getNonInteractiveModel,
+  getRequestedModelFromEnv,
   getRequestedProviderHint,
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   buildProviderArgs,
   upsertProvider,
   providerExistsInGateway,
+  readGatewayProviderMetadata,
   upsertMessagingProviders,
   getSandboxInferenceConfig,
 };

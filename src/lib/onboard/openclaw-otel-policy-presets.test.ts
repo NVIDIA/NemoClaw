@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./messaging-policy-presets", () => ({
-  mergeRequiredMessagingChannelPolicyPresets: (presets: string[]) => presets,
+  mergeEnabledMessagingChannelPolicyPresets: (presets: string[]) => presets,
   requiredMessagingChannelPolicyPresets: () => [],
   pruneDisabledMessagingPolicyPresets: (presets: string[]) => presets,
   mergeAppliedPolicyPresetsForDisabledMessagingCleanup: (presets: string[]) => presets,
@@ -16,14 +16,13 @@ vi.mock("./hermes-managed-tools", () => ({
   HERMES_TOOL_GATEWAY_PRESET_NAMES: new Set(),
 }));
 
-import { mergeRequiredSetupPolicyPresets } from "./policy-selection";
-
 import {
-  OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
   isOpenclawOtelEnabled,
   mergeRequiredOpenclawOtelPolicyPresets,
+  OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
   requiredOpenclawOtelPolicyPresets,
 } from "./openclaw-otel-policy-presets";
+import { mergeRequiredSetupPolicyPresets } from "./policy-selection";
 
 describe("openclaw-otel-policy-presets", () => {
   const originalOtel = process.env.NEMOCLAW_OPENCLAW_OTEL;

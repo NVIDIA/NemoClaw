@@ -97,7 +97,11 @@ export function buildConfigPermsCheck(
     after = inspect(sandboxName);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    after = { applies: false, reason: `re-inspection failed: ${message}` };
+    after = {
+      applies: false,
+      skipReason: "unavailable",
+      reason: `re-inspection failed: ${message}`,
+    };
   }
   const fixed = repairResult.verified && after.applies && after.ok;
   // Prefer the post-repair issues; otherwise fall back to the repair errors and

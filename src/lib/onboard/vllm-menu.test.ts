@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
-import { buildVllmMenuEntries } from "./vllm-menu";
+import { buildVllmMenuEntries, isManagedVllmDefaultPlatform } from "./vllm-menu";
 
 describe("buildVllmMenuEntries", () => {
   it("returns no entries when nothing is running, no profile, and no opt-in", () => {
@@ -20,11 +20,12 @@ describe("buildVllmMenuEntries", () => {
     assert.deepEqual(entries, []);
   });
 
-  it("returns the running entry when vLLM is reachable on localhost", () => {
+  it("marks the running entry experimental on generic hosts", () => {
     const entries = buildVllmMenuEntries({
       vllmRunning: true,
       vllmProfile: null,
       experimental: false,
+      platform: "linux",
       hasVllmImage: false,
       log: () => {},
       env: {},
@@ -34,6 +35,27 @@ describe("buildVllmMenuEntries", () => {
     assert.match(entries[0].label, /Local vLLM \[experimental\]/);
     assert.match(entries[0].label, /running/);
   });
+
+  for (const [platform, hostLabel] of [
+    ["spark", "Spark"],
+    ["station", "Station"],
+  ] as const) {
+    it(`does not mark the running entry experimental on DGX ${hostLabel}`, () => {
+      const entries = buildVllmMenuEntries({
+        vllmRunning: true,
+        vllmProfile: null,
+        experimental: false,
+        platform,
+        hasVllmImage: false,
+        log: () => {},
+        env: {},
+      });
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].key, "vllm");
+      assert.doesNotMatch(entries[0].label, /experimental/);
+      assert.match(entries[0].label, /running/);
+    });
+  }
 
   it("returns the install entry when a profile matches and EXPERIMENTAL is set", () => {
     const entries = buildVllmMenuEntries({
@@ -158,5 +180,19 @@ describe("buildVllmMenuEntries", () => {
       log: (m) => logs.push(m),
     });
     assert.deepEqual(logs, []);
+  });
+});
+
+describe("isManagedVllmDefaultPlatform (#7293)", () => {
+  it("is true for the DGX managed-vLLM default platforms", () => {
+    assert.equal(isManagedVllmDefaultPlatform("spark"), true);
+    assert.equal(isManagedVllmDefaultPlatform("station"), true);
+  });
+
+  it("is false for other or missing platforms", () => {
+    assert.equal(isManagedVllmDefaultPlatform("linux"), false);
+    assert.equal(isManagedVllmDefaultPlatform("jetson"), false);
+    assert.equal(isManagedVllmDefaultPlatform(null), false);
+    assert.equal(isManagedVllmDefaultPlatform(undefined), false);
   });
 });

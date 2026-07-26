@@ -88,13 +88,43 @@ describe("public route/display separation", () => {
       "sandbox:hosts:add",
       "sandbox:hosts:list",
       "sandbox:hosts:remove",
-      "sandbox:policy:add",
-      "sandbox:policy:explain",
-      "sandbox:policy:list",
-      "sandbox:policy:remove",
     ]);
     expect(sandboxRouteTokens("sandbox:gateway:token")).toEqual(["gateway-token"]);
     expect(sandboxRouteTokens("sandbox:config:rotate-token")).toEqual(["config", "rotate-token"]);
+  });
+
+  it.each([
+    { verb: "add", args: ["github", "--yes"] },
+    { verb: "explain", args: ["--json"] },
+    { verb: "get", args: ["--raw"] },
+    { verb: "list", args: [] },
+    { verb: "remove", args: ["github", "--yes"] },
+  ])("routes canonical and legacy policy $verb spellings to the same command (#7178)", ({
+    verb,
+    args,
+  }) => {
+    const commandId = `sandbox:policy:${verb}`;
+    const expectedArgs = ["alpha", ...args];
+    expect(sandboxRouteTokens(commandId)).toEqual(["policy", verb]);
+    expectNative(
+      translatePublicSandboxArgv("alpha", "policy", [verb, ...args]),
+      commandId,
+      expectedArgs,
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", `policy-${verb}`, args),
+      commandId,
+      expectedArgs,
+    );
+  });
+
+  it("routes new policy subcommands only through their canonical two-token spelling (#7178)", () => {
+    expectNative(
+      translatePublicSandboxArgv("alpha", "policy", ["exclude", "nous_research", "--force"]),
+      "sandbox:policy:exclude",
+      ["alpha", "nous_research", "--force"],
+    );
+    expect(sandboxRouteTokens("sandbox:policy:restore")).toEqual(["policy", "restore"]);
   });
 });
 
@@ -159,9 +189,31 @@ describe("translatePublicSandboxArgv", () => {
       ["alpha", "--from-file"],
     );
     expectNative(
+      translatePublicSandboxArgv("alpha", "policy-get", ["--raw"]),
+      "sandbox:policy:get",
+      ["alpha", "--raw"],
+    );
+    expectNative(
       translatePublicSandboxArgv("alpha", "gateway-token", ["--quiet"]),
       "sandbox:gateway:token",
       ["alpha", "--quiet"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "hosts-add", [
+        "searxng.local",
+        "192.168.1.105",
+        "--dry-run",
+      ]),
+      "sandbox:hosts:add",
+      ["alpha", "searxng.local", "192.168.1.105", "--dry-run"],
+    );
+    expectNative(translatePublicSandboxArgv("alpha", "hosts-list", []), "sandbox:hosts:list", [
+      "alpha",
+    ]);
+    expectNative(
+      translatePublicSandboxArgv("alpha", "hosts-remove", ["searxng.local", "--dry-run"]),
+      "sandbox:hosts:remove",
+      ["alpha", "searxng.local", "--dry-run"],
     );
   });
 
@@ -211,6 +263,54 @@ describe("translatePublicSandboxArgv", () => {
     );
   });
 
+  it("translates sandbox-scoped inference get/set to native oclif argv (#5977)", () => {
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", ["get"]),
+      "sandbox:inference:get",
+      ["hermes-sb-5977"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", ["get", "--json"]),
+      "sandbox:inference:get",
+      ["hermes-sb-5977", "--json"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", [
+        "set",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "nvidia/nemotron-3-super-120b-a12b",
+      ]),
+      "sandbox:inference:set",
+      [
+        "hermes-sb-5977",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "nvidia/nemotron-3-super-120b-a12b",
+      ],
+    );
+  });
+
+  it("routes bare/help sandbox-scoped inference to the oclif parent like config does (#5977)", () => {
+    // `inference` exposes only get/set leaves (no `sandbox:inference` parent),
+    // so bare and --help forms defer to oclif exactly as `config` does above —
+    // never the NemoClaw-owned `Unknown action` path that broke this workflow.
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", ["--help"]),
+      "sandbox:inference",
+      ["--help"],
+      ["sandbox", "inference", "--help"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("hermes-sb-5977", "inference", []),
+      "sandbox:inference",
+      ["--help"],
+      ["sandbox", "inference", "--help"],
+    );
+  });
+
   it("translates nested sandbox subcommands and defaults", () => {
     expectNative(translatePublicSandboxArgv("alpha", "channels", []), "sandbox:channels:list", [
       "alpha",
@@ -221,9 +321,34 @@ describe("translatePublicSandboxArgv", () => {
       ["alpha", "slack"],
     );
     expectNative(
+      translatePublicSandboxArgv("alpha", "mcp", [
+        "add",
+        "github",
+        "--url",
+        "https://api.githubcopilot.com/mcp/",
+        "--env",
+        "GITHUB_TOKEN",
+      ]),
+      "sandbox:mcp",
+      [
+        "alpha",
+        "add",
+        "github",
+        "--url",
+        "https://api.githubcopilot.com/mcp/",
+        "--env",
+        "GITHUB_TOKEN",
+      ],
+    );
+    expectNative(
       translatePublicSandboxArgv("alpha", "snapshot", ["restore", "latest"]),
       "sandbox:snapshot:restore",
       ["alpha", "latest"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "gateway", ["restart", "--quiet"]),
+      "sandbox:gateway:restart",
+      ["alpha", "--quiet"],
     );
     expectNative(
       translatePublicSandboxArgv("alpha", "skill", ["remove", "my-skill"]),

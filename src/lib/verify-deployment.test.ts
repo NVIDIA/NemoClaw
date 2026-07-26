@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildChain } from "./dashboard/contract.js";
 import { formatVerificationDiagnostics, verifyDeployment } from "./verify-deployment.js";
 
@@ -10,6 +10,11 @@ const chain = buildChain();
 // Tests run probes with no inter-attempt delay so the suite stays fast.
 // Production callers use the default DEFAULT_RETRY_DELAYS_MS.
 const NO_RETRY = { retryDelaysMs: [], sleep: async (_ms: number) => {} };
+
+const CUSTOM_OPENCLAW_NO_RETRY = {
+  ...NO_RETRY,
+  diagnoseCustomOpenClawRuntime: true,
+};
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
@@ -24,6 +29,16 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     providerExistsInGateway: (_name: string) => true,
     ...overrides,
   };
+}
+
+function makeFailedCustomOpenClawDeps(runtimeProbeStdout: string) {
+  return makeDeps({
+    executeSandboxCommand: (_name: string, script: string) =>
+      script.includes("nemoclaw-runtime-probe-v1")
+        ? { status: 0, stdout: runtimeProbeStdout, stderr: "" }
+        : { status: 0, stdout: "000", stderr: "" },
+    probeHostPort: () => 0,
+  });
 }
 
 describe("verifyDeployment", () => {
@@ -55,6 +70,76 @@ describe("verifyDeployment", () => {
     const gwDiag = result.diagnostics.find((d) => d.link === "gateway");
     expect(gwDiag?.status).toBe("fail");
     expect(gwDiag?.hint).toContain("openshell-gateway.log");
+  });
+
+  it("diagnoses a base-only custom OpenClaw image without suggesting another port-forward retry (#6108)", async () => {
+    const sleepCalls: number[] = [];
+    const deps = makeFailedCustomOpenClawDeps("nemoclaw-runtime-probe-v1 log=0 start=0 config=0");
+    const result = await verifyDeployment("my-sandbox", chain, deps, {
+      retryDelaysMs: [10, 20],
+      sleep: async (delayMs) => {
+        sleepCalls.push(delayMs);
+      },
+      diagnoseCustomOpenClawRuntime: true,
+    });
+    const gateway = result.diagnostics.find((diagnostic) => diagnostic.link === "gateway");
+    const dashboard = result.diagnostics.find((diagnostic) => diagnostic.link === "dashboard");
+    expect(gateway?.hint).toContain("does not contain the NemoClaw-managed OpenClaw runtime");
+    expect(gateway?.hint).toContain("onboard --from");
+    expect(gateway?.hint).toContain("sandbox-base");
+    expect(dashboard?.hint).toContain("cannot start until the custom image includes");
+    expect(dashboard?.hint).not.toContain("openshell forward start");
+    expect(sleepCalls).toEqual([10, 20]);
+  });
+
+  it("keeps generic guidance when a custom image has the normal runtime contract", async () => {
+    const deps = makeFailedCustomOpenClawDeps("nemoclaw-runtime-probe-v1 log=0 start=1 config=1");
+    const result = await verifyDeployment("my-sandbox", chain, deps, CUSTOM_OPENCLAW_NO_RETRY);
+    const gateway = result.diagnostics.find((diagnostic) => diagnostic.link === "gateway");
+    const dashboard = result.diagnostics.find((diagnostic) => diagnostic.link === "dashboard");
+    expect(gateway?.hint).toContain("nemoclaw my-sandbox logs");
+    expect(dashboard?.hint).toContain("openshell forward start");
+  });
+
+  it.each([
+    ["gateway log only", "nemoclaw-runtime-probe-v1 log=1 start=0 config=0"],
+    ["startup script only", "nemoclaw-runtime-probe-v1 log=0 start=1 config=0"],
+  ])("keeps generic guidance for a partial custom runtime with %s", async (_name, stdout) => {
+    const result = await verifyDeployment(
+      "my-sandbox",
+      chain,
+      makeFailedCustomOpenClawDeps(stdout),
+      CUSTOM_OPENCLAW_NO_RETRY,
+    );
+    const gateway = result.diagnostics.find((diagnostic) => diagnostic.link === "gateway");
+    const dashboard = result.diagnostics.find((diagnostic) => diagnostic.link === "dashboard");
+    expect(gateway?.hint).toContain("nemoclaw my-sandbox logs");
+    expect(dashboard?.hint).toContain("openshell forward start");
+  });
+
+  it("keeps generic guidance when the custom sandbox is unreachable", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: () => null,
+      probeHostPort: () => 0,
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, CUSTOM_OPENCLAW_NO_RETRY);
+    const gateway = result.diagnostics.find((diagnostic) => diagnostic.link === "gateway");
+    const dashboard = result.diagnostics.find((diagnostic) => diagnostic.link === "dashboard");
+    expect(gateway?.hint).toContain("openshell-gateway.log");
+    expect(dashboard?.hint).toContain("openshell forward start");
+  });
+
+  it("does not probe the custom runtime contract when diagnosis is disabled", async () => {
+    const scripts: string[] = [];
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        scripts.push(script);
+        return { status: 0, stdout: "000", stderr: "" };
+      },
+      probeHostPort: () => 0,
+    });
+    await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(scripts.join("\n")).not.toContain("nemoclaw-runtime-probe-v1");
   });
 
   it("hint surfaces both the in-sandbox gateway log (via nemoclaw logs) and the host OpenShell log (#3563)", async () => {
@@ -94,7 +179,7 @@ describe("verifyDeployment", () => {
     expect(dashDiag?.hint).toContain("forward");
   });
 
-  it("inference failure is a warning, not a blocker", async () => {
+  it("reports unhealthy when the inference route is unreachable (#6849)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("inference.local")) {
@@ -105,10 +190,31 @@ describe("verifyDeployment", () => {
       },
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
-    expect(result.healthy).toBe(true); // inference is non-blocking
+    expect(result.healthy).toBe(false);
     expect(result.verification.inferenceRouteWorking).toBe(false);
     const infDiag = result.diagnostics.find((d) => d.link === "inference");
-    expect(infDiag?.status).toBe("warn");
+    expect(infDiag?.status).toBe("fail");
+    expect(infDiag?.hint).toContain("unreachable");
+  });
+
+  it("reports unhealthy when only the inference route returns HTTP 5xx (#6849)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => ({
+        status: 0,
+        stdout: script.includes("inference.local") ? "503" : "200",
+        stderr: "",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.healthy).toBe(false);
+    expect(result.verification.gatewayReachable).toBe(true);
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+    const infDiag = result.diagnostics.find((d) => d.link === "inference");
+    expect(infDiag?.status).toBe("fail");
+    expect(infDiag?.detail).toContain("503");
+    expect(infDiag?.hint).toContain("host.openshell.internal");
+    expect(infDiag?.hint).toContain("firewall");
+    expect(infDiag?.hint).not.toContain("0.0.0.0");
   });
 
   it("messaging failure is a warning, not a blocker", async () => {
@@ -330,6 +436,62 @@ describe("verifyDeployment", () => {
     expect(result.verification.gatewayVersion).toBe("2026.5.27");
   });
 
+  it("extracts the gateway version from decorated output (#5896)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("openclaw --version")
+          ? {
+              status: 0,
+              stdout: "Dependency 1.2.3\nOpenClaw v2026.5.27 (abcdef)\n",
+              stderr: "",
+            }
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    expect(result.verification.gatewayVersion).toBe("2026.5.27");
+  });
+
+  it("rejects malformed gateway version output (#5896)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("openclaw --version")
+          ? { status: 0, stdout: "OpenClaw development build\n", stderr: "" }
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    expect(result.verification.gatewayVersion).toBeNull();
+  });
+
+  it("rejects gateway versions with extra dotted components (#5896)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("openclaw --version")
+          ? { status: 0, stdout: "OpenClaw 2026.5.27.1\n", stderr: "" }
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    expect(result.verification.gatewayVersion).toBeNull();
+  });
+
+  it("rejects version output from a failed OpenClaw command (#5896)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("openclaw --version")
+          ? { status: 1, stdout: "OpenClaw v2026.5.27\n", stderr: "command failed" }
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    expect(result.verification.gatewayVersion).toBeNull();
+  });
+
   it("reports null version when gateway is down (skips version probe)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: () => ({ status: 0, stdout: "000", stderr: "" }),
@@ -415,6 +577,57 @@ describe("verifyDeployment", () => {
     expect(result.healthy).toBe(true);
     expect(result.verification.dashboardReachable).toBe(true);
     expect(dashboardCalls).toBe(2);
+  });
+
+  it("retries the inference probe and recovers when the route comes up late (#6849)", async () => {
+    const probeInference = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "000", stderr: "" })
+      .mockReturnValue({ status: 0, stdout: "200", stderr: "" });
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("inference.local")
+          ? probeInference()
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+    const sleepCalls: number[] = [];
+    const result = await verifyDeployment("my-sandbox", chain, deps, {
+      retryDelaysMs: [10, 20],
+      sleep: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
+    expect(result.healthy).toBe(true);
+    expect(result.verification.inferenceRouteWorking).toBe(true);
+    expect(probeInference).toHaveBeenCalledTimes(2);
+    expect(sleepCalls).toEqual([10]);
+  });
+
+  it("does not retry inference after the gateway retry budget is exhausted (#6849)", async () => {
+    const scripts: string[] = [];
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        scripts.push(script);
+        return { status: 0, stdout: "000", stderr: "" };
+      },
+    });
+    const sleepCalls: number[] = [];
+    const result = await verifyDeployment("my-sandbox", chain, deps, {
+      retryDelaysMs: [10, 20],
+      sleep: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
+    expect(result.healthy).toBe(false);
+    expect(result.verification.gatewayReachable).toBe(false);
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+    expect(
+      scripts.filter(
+        (script) => !script.includes("inference.local") && !script.includes("openclaw --version"),
+      ),
+    ).toHaveLength(3);
+    expect(scripts.filter((script) => script.includes("inference.local"))).toHaveLength(1);
+    expect(sleepCalls).toEqual([10, 20]);
   });
 
   it("gives up after retry budget is exhausted and surfaces the last failure detail", async () => {

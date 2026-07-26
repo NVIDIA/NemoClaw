@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# This fixture starts from the repository-built DCode base but removes both
+# reviewed upstream distributions. The tiny dcode stub lets the production
+# Dockerfile's executable-path preflight complete so the build must reach its
+# isolated Python import gate.
+ARG BASE_IMAGE
+
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+USER root
+
+RUN /opt/venv/bin/pip3 uninstall --yes deepagents-code deepagents \
+    && /opt/venv/bin/python3 -I -c 'import importlib.util; assert importlib.util.find_spec("deepagents") is None; assert importlib.util.find_spec("deepagents_code") is None' \
+    && rm -f /usr/local/bin/dcode \
+    && printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "deepagents-code 0.1.34"' > /usr/local/bin/dcode \
+    && chmod 0755 /usr/local/bin/dcode
+
+USER sandbox

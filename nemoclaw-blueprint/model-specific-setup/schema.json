@@ -40,6 +40,23 @@
           "minItems": 1,
           "uniqueItems": true
         },
+        "modelIdPrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "allOf": [
+              {
+                "pattern": ".*\\S.*"
+              },
+              {
+                "pattern": "^[^/]+$"
+              }
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
         "providerKey": {
           "type": "string",
           "minLength": 1,
@@ -55,6 +72,9 @@
           "minLength": 1,
           "pattern": ".*\\S.*"
         }
+      },
+      "not": {
+        "required": ["modelIds", "modelIdPrefixes"]
       }
     },
     "effects": {

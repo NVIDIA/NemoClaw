@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Producer-side coverage for the #4952 HEALTHCHECK fix: nemoclaw-start must
-// record the live gateway PID in /tmp/nemoclaw-gateway.pid so the Docker
-// HEALTHCHECK can confirm the actual gateway process is alive (not merely some
-// process named `openclaw`) when the in-container curl probe cannot reach the
-// dashboard port. The consumer side (the HEALTHCHECK reading this file) is
+// record the live gateway PID/starttime in /tmp/nemoclaw-gateway.pid so the
+// Docker HEALTHCHECK can confirm the actual gateway process is alive, rather
+// than merely some process named `openclaw`, when the in-container curl probe
+// cannot reach the dashboard port. The consumer side (the HEALTHCHECK reading this file) is
 // covered in test/sandbox-provisioning.test.ts.
 
 import { spawnSync } from "node:child_process";
@@ -35,7 +35,7 @@ function safeTmpHelpers(src: string): string {
 }
 
 describe("nemoclaw-start gateway PID recording for HEALTHCHECK (#4952)", () => {
-  it("record_gateway_pid writes the gateway PID to the file the HEALTHCHECK reads", () => {
+  it("record_gateway_pid writes the gateway PID and starttime the HEALTHCHECK reads", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-pid-"));
     try {
@@ -46,13 +46,13 @@ describe("nemoclaw-start gateway PID recording for HEALTHCHECK (#4952)", () => {
         safeTmpHelpers(src),
         `GATEWAY_PID_FILE=${JSON.stringify(pidPath)}`,
         fn,
-        'record_gateway_pid "12345"',
+        'record_gateway_pid "12345" "987654"',
       ].join("\n");
 
       const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
 
       expect(result.status).toBe(0);
-      expect(fs.readFileSync(pidPath, "utf-8").trim()).toBe("12345");
+      expect(fs.readFileSync(pidPath, "utf-8").trim()).toBe("12345 987654");
       expect((fs.statSync(pidPath).mode & 0o777).toString(8)).toBe("600");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -69,7 +69,7 @@ describe("nemoclaw-start gateway PID recording for HEALTHCHECK (#4952)", () => {
       safeTmpHelpers(src),
       "GATEWAY_PID_FILE=/nonexistent-dir/nemoclaw-gateway.pid",
       fn,
-      'record_gateway_pid "12345"',
+      'record_gateway_pid "12345" "987654"',
     ].join("\n");
 
     const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });

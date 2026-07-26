@@ -28,7 +28,7 @@ function readObject(record: ManifestRecordLike, key: string): ManifestRecordLike
   return value as ManifestRecordLike;
 }
 
-function isValidPort(value: unknown): value is number {
+function isValidNonPrivilegedPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1024 && value <= 65535;
 }
 
@@ -37,7 +37,7 @@ export function readDashboardUi(record: ManifestRecordLike): AgentDashboardUi | 
   if (!dashboardUi) return null;
 
   const port = dashboardUi.port;
-  if (!isValidPort(port)) {
+  if (!isValidNonPrivilegedPort(port)) {
     throw new Error(
       "Agent manifest field 'dashboard_ui.port' must be an integer TCP port between 1024 and 65535",
     );
@@ -70,9 +70,14 @@ function dashboardUiEnabled(agent: AgentDefinition, env: NodeJS.ProcessEnv): boo
   return !!dashboardUi && isTruthyEnv(env[dashboardUi.enableEnv]);
 }
 
-function dashboardUiPort(agent: AgentDefinition, env: NodeJS.ProcessEnv): number {
+function dashboardUiPort(
+  agent: AgentDefinition,
+  env: NodeJS.ProcessEnv,
+  effectiveDashboardPort?: number,
+): number {
   const dashboardUi = agent.dashboardUi;
   if (!dashboardUi) return agent.forwardPort;
+  if (isValidNonPrivilegedPort(effectiveDashboardPort)) return effectiveDashboardPort;
   const raw = env[dashboardUi.portEnv];
   if (raw && /^\d+$/.test(raw.trim())) {
     const port = Number(raw.trim());
@@ -86,6 +91,7 @@ export function printOptionalDashboardUi(
   deps: {
     buildControlUiUrls: (token: string | null, port: number) => string[];
     redactUrl: (url: string) => string;
+    effectiveDashboardPort?: number;
     env?: NodeJS.ProcessEnv;
     writeLine?: (message?: string) => void;
   },
@@ -95,7 +101,7 @@ export function printOptionalDashboardUi(
   if (!dashboardUi || !dashboardUiEnabled(agent, env)) return;
 
   const writeLine = deps.writeLine ?? console.log;
-  const port = dashboardUiPort(agent, env);
+  const port = dashboardUiPort(agent, env, deps.effectiveDashboardPort);
   writeLine("");
   writeLine(`  ${agent.displayName} ${dashboardUi.label}`);
   writeLine(`  Port ${port} must be forwarded before opening this URL.`);

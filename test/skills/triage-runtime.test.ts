@@ -14,7 +14,14 @@ interface TriageFixture {
   approvedOnly?: boolean;
 }
 
-const requiredChecks = ["checks", "commit-lint", "dco-check"].map((name) => ({
+const requiredChecks = [
+  "checks",
+  "check-hash",
+  "changes",
+  "commit-lint",
+  "dco-check",
+  "E2E / PR Gate",
+].map((name) => ({
   name,
   status: "COMPLETED",
   conclusion: "SUCCESS",

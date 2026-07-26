@@ -29,8 +29,8 @@ if (!range || typeof range !== "string") {
   process.exit(0);
 }
 
-// Pull the first \d+\.\d+\.\d+ from the range. Any of "22.16.0",
-// ">=22.16.0", "^22.16.0", "22.16.0 || 24.0.0" all yield 22.16.0.
+// Pull the first \d+\.\d+\.\d+ from the range. Any of "22.19.0",
+// ">=22.19.0", "^22.19.0", "22.19.0 || 24.0.0" all yield 22.19.0.
 const match = /(\d+)\.(\d+)\.(\d+)/.exec(range);
 if (!match) {
   process.exit(0);

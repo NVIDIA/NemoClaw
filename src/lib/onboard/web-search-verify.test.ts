@@ -18,24 +18,64 @@ function deps(output: string | null | Array<string | null>) {
 }
 
 describe("verifyWebSearchInsideSandbox", () => {
-  it("reports active Hermes web backend", () => {
-    const d = deps("web.backend: brave\n");
+  it("verifies Hermes Tavily egress through JSON body credential rewriting", () => {
+    const d = deps([
+      "web:\n  backend: tavily\n",
+      JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
+    ]);
 
     verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, d);
 
-    expect(d.log).toHaveBeenCalledWith("  ✓ Web search is active inside sandbox");
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(d.runCaptureOpenshell.mock.calls[0][0]).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "cat",
+      "/sandbox/.hermes/config.yaml",
+    ]);
+    expect(d.runCaptureOpenshell.mock.calls[1][0]).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+      expect.stringContaining('"api_key":"openshell:resolve:env:TAVILY_API_KEY"'),
+    ]);
+    expect(d.log).toHaveBeenCalledWith("  ✓ Tavily Search egress verified inside sandbox");
     expect(d.warn).not.toHaveBeenCalled();
   });
 
-  it("warns when Hermes does not report active web backend", () => {
-    const d = deps("active toolsets: shell\n");
+  it("does not treat pinned Hermes dump-shaped output as an active Tavily backend", () => {
+    const d = deps("active toolsets: web, shell\n");
 
     verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, d);
 
     expect(d.warn).toHaveBeenCalledWith(
-      "  ⚠ Web search was configured but Hermes does not report an active web backend.",
+      "  ⚠ Tavily Search was configured but Hermes config does not select web.backend=tavily.",
     );
-    expect(d.warn).toHaveBeenCalledWith("    Check: nemoclaw alpha exec hermes dump");
+    expect(d.warn).toHaveBeenCalledWith(
+      "    Check: nemoclaw alpha exec -- cat /sandbox/.hermes/config.yaml",
+    );
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns when the Hermes config is missing or malformed", () => {
+    const missing = deps(null);
+    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, missing);
+    expect(missing.warn).toHaveBeenCalledWith(
+      "  ⚠ Could not read Hermes config to verify Tavily Search.",
+    );
+
+    const malformed = deps("web: [\n");
+    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, malformed);
+    expect(malformed.warn).toHaveBeenCalledWith(
+      "  ⚠ Could not parse Hermes config to verify Tavily Search.",
+    );
   });
 
   it("verifies OpenClaw Brave Search egress through the subscription-token header", () => {
@@ -70,6 +110,63 @@ describe("verifyWebSearchInsideSandbox", () => {
       expect.stringContaining("X-Subscription-Token: openshell:resolve:env:BRAVE_API_KEY"),
     ]);
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
+  });
+
+  it("verifies OpenClaw Tavily Search egress through the bearer header", () => {
+    const d = deps([
+      JSON.stringify({
+        tools: { web: { search: { enabled: true, provider: "tavily" } } },
+        plugins: {
+          entries: {
+            tavily: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
+            },
+          },
+        },
+      }),
+      JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(d.runCaptureOpenshell.mock.calls[1][0]).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+      expect.stringContaining("Authorization: Bearer openshell:resolve:env:TAVILY_API_KEY"),
+    ]);
+    expect(d.runCaptureOpenshell.mock.calls[1][0][7]).toContain("https://api.tavily.com/search");
+    expect(d.log).toHaveBeenCalledWith("  ✓ Tavily Search egress verified inside sandbox");
+  });
+
+  it("does not accept an empty Tavily results array as successful verification", () => {
+    const d = deps([
+      JSON.stringify({
+        tools: { web: { search: { enabled: true, provider: "tavily" } } },
+        plugins: {
+          entries: {
+            tavily: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
+            },
+          },
+        },
+      }),
+      JSON.stringify({ results: [] }) + "\nHTTP_STATUS:200\n",
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+
+    expect(d.warn).toHaveBeenCalledWith(
+      "  ⚠ Tavily Search config exists, but egress verification returned HTTP 200.",
+    );
+    expect(d.log).not.toHaveBeenCalled();
   });
 
   it("still probes legacy configs that carry the apiKey inline on tools.web.search", () => {

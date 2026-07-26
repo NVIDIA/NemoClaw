@@ -697,31 +697,34 @@ EOF
       }
     });
 
-    it("bypasses shadowed ulimit functions for nproc and nofile enforcement and verification", () => {
-      const nprocLimit = process.platform === "darwin" ? 4000 : 4096;
-      const { stdout } = runWithLib(
-        [
-          `NEMOCLAW_SANDBOX_NPROC_LIMIT=${nprocLimit}`,
-          "ulimit() {",
-          '  case "$1:$#" in',
-          "    -Su:2 | -Hu:2 | -Sn:2 | -Hn:2) return 0 ;;",
-          "    -Su:1 | -Hu:1 | -Sn:1 | -Hn:1) printf '%s\\n' 999999; return 0 ;;",
-          "  esac",
-          "  return 0",
-          "}",
-          "harden_resource_limits --quiet",
-          "verify_resource_limits",
-          'printf "shadow=%s\\n" "$(type -t ulimit)"',
-          'printf "nproc=%s\\n" "$(builtin ulimit -u)"',
-          'printf "nofile=%s\\n" "$(builtin ulimit -n)"',
-        ].join("\n"),
-      );
-      expect(stdout).toContain("shadow=function");
-      expect(stdout).toContain(`nproc=${nprocLimit}`);
-      const nofile = Number(stdout.match(/nofile=(\d+)/)?.[1] ?? "NaN");
-      expect(nofile).toBeGreaterThan(0);
-      expect(nofile).toBeLessThanOrEqual(65536);
-    });
+    it.runIf(process.platform === "linux")(
+      "bypasses shadowed ulimit functions for nproc and nofile enforcement and verification",
+      () => {
+        const nprocLimit = 4096;
+        const { stdout } = runWithLib(
+          [
+            `NEMOCLAW_SANDBOX_NPROC_LIMIT=${nprocLimit}`,
+            "ulimit() {",
+            '  case "$1:$#" in',
+            "    -Su:2 | -Hu:2 | -Sn:2 | -Hn:2) return 0 ;;",
+            "    -Su:1 | -Hu:1 | -Sn:1 | -Hn:1) printf '%s\\n' 999999; return 0 ;;",
+            "  esac",
+            "  return 0",
+            "}",
+            "harden_resource_limits --quiet",
+            "verify_resource_limits",
+            'printf "shadow=%s\\n" "$(type -t ulimit)"',
+            'printf "nproc=%s\\n" "$(builtin ulimit -u)"',
+            'printf "nofile=%s\\n" "$(builtin ulimit -n)"',
+          ].join("\n"),
+        );
+        expect(stdout).toContain("shadow=function");
+        expect(stdout).toContain(`nproc=${nprocLimit}`);
+        const nofile = Number(stdout.match(/nofile=(\d+)/)?.[1] ?? "NaN");
+        expect(nofile).toBeGreaterThan(0);
+        expect(nofile).toBeLessThanOrEqual(65536);
+      },
+    );
 
     it("is best-effort: exits 0 and warns when ulimit fails", () => {
       const { stdout } = runWithLib(
@@ -999,6 +1002,10 @@ EOF
         join(libDir, "sandbox-init.sh"),
         "export NEMOCLAW_TEST_SANDBOX_INIT_LOADED=1\n",
       );
+      writeFileSync(
+        join(libDir, "gateway-supervisor.sh"),
+        "export NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED=1\n",
+      );
       const wrapperPath = join(scriptDir, "nemoclaw-start.sh");
       writeFileSync(
         wrapperPath,
@@ -1006,14 +1013,14 @@ EOF
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           src.slice(start, end),
-          'printf "LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}"',
+          'printf "INIT_LOADED=%s SUPERVISOR_LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}" "${NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED:-0}"',
         ].join("\n"),
         { mode: 0o700 },
       );
 
       try {
         const result = execFileSync("bash", [wrapperPath], { encoding: "utf-8" }).trim();
-        expect(result).toBe("LOADED=1");
+        expect(result).toBe("INIT_LOADED=1 SUPERVISOR_LOADED=1");
       } finally {
         rmSync(workDir, { recursive: true, force: true });
       }

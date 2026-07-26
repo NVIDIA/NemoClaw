@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isObjectRecord } from "../shared/object-record.js";
 
 const STATE_DIR = join(homedir(), ".nemoclaw", "state");
 
@@ -21,12 +22,6 @@ export interface NemoClawState {
   lastRebuildBackupPath: string | null;
 }
 
-type UnknownRecord = { [key: string]: unknown };
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function readNullableString(value: unknown): string | null | undefined {
   return value === undefined || value === null || typeof value === "string" ? value : undefined;
 }
@@ -36,7 +31,7 @@ function readString(value: unknown): string | undefined {
 }
 
 function readStatePatch(value: unknown): Partial<NemoClawState> {
-  if (!isRecord(value)) {
+  if (!isObjectRecord(value)) {
     return {};
   }
 

@@ -14,6 +14,92 @@ import {
   writeSandboxRegistry,
 } from "./helpers";
 
+function createInferenceRouteStatusSetup(options: {
+  executeRouteCommand?: boolean;
+  routeOutput: string;
+  routeExit?: number;
+  upstreamHttpStatus?: string;
+  upstreamExit?: number;
+}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-route-"));
+  const localBin = path.join(home, "bin");
+  const sandboxName = `route-${process.pid}-${Date.now()}`;
+  fs.mkdirSync(localBin, { recursive: true });
+  writeSandboxRegistry(home, sandboxName, {
+    model: "nvidia/nemotron",
+    provider: "nvidia-prod",
+    openshellDriver: "docker",
+  });
+  fs.writeFileSync(
+    path.join(localBin, "docker"),
+    [
+      "#!/usr/bin/env bash",
+      'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+      `if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; echo "openshell-${sandboxName}-7616dcb1"; exit 0; fi`,
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(localBin, "curl"),
+    [
+      "#!/usr/bin/env bash",
+      'out=""',
+      'while [ "$#" -gt 0 ]; do',
+      '  case "$1" in',
+      '    -o) out="$2"; shift 2 ;;',
+      "    -w|--connect-timeout|--max-time) shift 2 ;;",
+      "    *) shift ;;",
+      "  esac",
+      "done",
+      'if [ -n "$out" ]; then printf "{}" > "$out"; fi',
+      `printf ${JSON.stringify(options.upstreamHttpStatus ?? "200")}`,
+      `exit ${String(options.upstreamExit ?? 0)}`,
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(localBin, "openshell"),
+    [
+      "#!/usr/bin/env bash",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
+      `  echo 'Name: ${sandboxName}'`,
+      "  echo 'Phase: Ready'",
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+      ...(options.executeRouteCommand
+        ? [
+            '  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
+            '  [ "$#" -gt 0 ] && shift',
+            '  exec "$@"',
+          ]
+        : [
+            `  printf '%s\\n' ${JSON.stringify(options.routeOutput)}`,
+            `  exit ${String(options.routeExit ?? 0)}`,
+          ]),
+      "fi",
+      'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+      "  echo 'Provider: nvidia-prod'",
+      "  echo 'Model: nvidia/nemotron'",
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "status" ]; then',
+      "  echo 'Gateway: nemoclaw'",
+      "  echo 'Status: Connected'",
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+      "  echo 'Gateway: nemoclaw'",
+      "  exit 0",
+      "fi",
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return { home, localBin, sandboxName };
+}
+
 describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
   it("sandbox status --json emits structured per-sandbox report", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-"));
@@ -47,6 +133,10 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+        "  printf \"\\033[32m✓ Active gateway set to 'nemoclaw'\\033[0m\\n\"",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
         "  echo",
@@ -61,6 +151,10 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         "fi",
         'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
         "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        "  echo 'OK 200'",
         "  exit 0",
         "fi",
         "exit 0",
@@ -78,6 +172,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(r.out.trim().endsWith("}")).toBe(true);
     expect(r.out).not.toContain("Sandbox: ");
     expect(r.out).not.toContain("Nonexistent flag: --json");
+    expect(r.out).not.toContain("Active gateway set");
 
     const parsed = JSON.parse(r.out);
     expect(parsed).toMatchObject({
@@ -86,6 +181,13 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       found: true,
       model: "nvidia/nemotron",
       provider: "nvidia-prod",
+      recordedRoute: { provider: "configured-provider", model: "configured-model" },
+      liveRoute: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+      routeDrift: {
+        live: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+        recorded: { provider: "configured-provider", model: "configured-model" },
+        canConnect: true,
+      },
       hostGpuDetected: true,
       sandboxGpuEnabled: true,
       sandboxGpuMode: "passthrough",
@@ -102,6 +204,122 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(parsed).toHaveProperty("gatewayState");
   });
 
+  it.each([
+    {
+      name: "transport failure",
+      routeOutput: "BROKEN 000",
+      expectedFailure: "unreachable",
+      expectedProbed: true,
+    },
+    {
+      name: "HTTP 503",
+      routeOutput: "BROKEN 503 service unavailable",
+      expectedFailure: "unhealthy",
+      expectedProbed: true,
+    },
+    {
+      name: "HTTP 199 interim response",
+      routeOutput: "BROKEN 199",
+      expectedFailure: "unreachable",
+      expectedProbed: true,
+    },
+    {
+      name: "unavailable probe",
+      routeOutput: "",
+      routeExit: 1,
+      expectedFailure: undefined,
+      expectedProbed: false,
+    },
+  ])("sandbox status --json fails for $name on inference.local (#6192)", (testCase) => {
+    const { home, localBin, sandboxName } = createInferenceRouteStatusSetup(testCase);
+
+    const result = runWithEnv(`${sandboxName} status --json`, {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(result.code).toBe(1);
+    const parsed = JSON.parse(result.out);
+    expect(parsed.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: testCase.expectedProbed,
+      endpoint: "https://inference.local/v1/models",
+      ...(testCase.expectedFailure ? { failureLabel: testCase.expectedFailure } : {}),
+    });
+    expect(parsed.inferenceHealth.subprobes).toEqual([
+      expect.objectContaining({ ok: true, probeLabel: "upstream" }),
+    ]);
+  });
+
+  it("sandbox status --json reports a missing upstream credential as not probed when inference.local is reachable (#6192)", () => {
+    const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
+      routeOutput: "OK 200",
+      upstreamHttpStatus: "000",
+      upstreamExit: 7,
+    });
+
+    const result = runWithEnv(`${sandboxName} status --json`, {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(result.code).toBe(0);
+    const parsed = JSON.parse(result.out);
+    expect(parsed.inferenceHealth).toMatchObject({
+      ok: true,
+      probed: true,
+      endpoint: "https://inference.local/v1/models",
+    });
+    expect(parsed.inferenceHealth.subprobes).toEqual([
+      expect.objectContaining({ ok: true, probed: false, probeLabel: "upstream" }),
+    ]);
+  });
+
+  it.each([
+    401, 403,
+  ])("sandbox status --json treats an inference.local HTTP %s as healthy (#6192)", (httpStatus) => {
+    const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
+      routeOutput: `OK ${httpStatus}`,
+    });
+
+    const result = runWithEnv(`${sandboxName} status --json`, {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(result.code).toBe(0);
+    const parsed = JSON.parse(result.out);
+    expect(parsed.inferenceHealth).toMatchObject({
+      ok: true,
+      probed: true,
+      endpoint: "https://inference.local/v1/models",
+    });
+    expect(parsed.inferenceHealth).not.toHaveProperty("failureLabel");
+  });
+
+  it("sandbox status --json fails closed when the injected CA bundle is missing (#6192)", () => {
+    const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
+      executeRouteCommand: true,
+      routeOutput: "",
+    });
+
+    const result = runWithEnv(`${sandboxName} status --json`, {
+      CURL_CA_BUNDLE: path.join(home, "missing-openshell-ca.pem"),
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      SSL_CERT_FILE: "",
+    });
+
+    expect(result.code).toBe(1);
+    const parsed = JSON.parse(result.out);
+    expect(parsed.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: false,
+      endpoint: "https://inference.local/v1/models",
+    });
+    expect(parsed.inferenceHealth).not.toHaveProperty("failureLabel");
+  });
+
   it("sandbox status --json defaults openshell driver/version to 'unknown' strings", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-unknown-"),
@@ -111,7 +329,14 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     writeSandboxRegistry(home, "alpha");
     fs.writeFileSync(
       path.join(localBin, "openshell"),
-      ["#!/usr/bin/env bash", "exit 0"].join("\n"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        "  echo 'OK 200'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
       { mode: 0o755 },
     );
 
@@ -164,8 +389,8 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     const parsed = JSON.parse(r.out);
     expect(parsed.rpcIssue).toEqual({ kind: "protobuf_mismatch" });
     expect(parsed.inferenceHealth).toBeNull();
-    expect(parsed.model).toBe("unknown");
-    expect(parsed.provider).toBe("unknown");
+    expect(parsed.model).toBe("test-model");
+    expect(parsed.provider).toBe("nvidia-prod");
   });
 
   it("sandbox status --json reports found:false and exits 1 for unknown sandbox via canonical form", () => {
@@ -348,7 +573,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Error'",
@@ -401,7 +626,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Ready'",
@@ -490,7 +715,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo '  Name: alpha'",
           "  echo '  Phase: Error'",

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../../../../core/json-types";
 import { normalizeCredentialValue } from "../../../../credentials/store";
 import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
 import {
@@ -15,6 +16,10 @@ import {
   createTelegramOpenClawBridgeHealthHookRegistration,
   type OpenClawBridgeHealthHookOptions,
 } from "./openclaw-bridge-health";
+import {
+  createTelegramStatusHealthHookRegistration,
+  type TelegramStatusHealthHookOptions,
+} from "./status-health";
 
 export const TELEGRAM_GET_ME_REACHABILITY_HOOK_ID = "telegram.getMeReachability";
 const DEFAULT_TELEGRAM_REACHABILITY_TIMEOUT_MS = 10_000;
@@ -46,6 +51,7 @@ export interface TelegramGetMeReachabilityHookOptions extends TelegramAllowlistA
 export interface TelegramHookOptions extends TelegramGetMeReachabilityHookOptions {
   readonly openclawBridgeHealth?: OpenClawBridgeHealthHookOptions;
   readonly gatewayConflictStatus?: TelegramGatewayConflictStatusHookOptions;
+  readonly statusHealth?: TelegramStatusHealthHookOptions;
 }
 
 export function createTelegramGetMeReachabilityHook(
@@ -86,7 +92,7 @@ export function createTelegramGetMeReachabilityHook(
     }
 
     const payload = await readTelegramJson(response);
-    if (!isObject(payload) || payload.ok !== true) {
+    if (!isObjectRecord(payload) || payload.ok !== true) {
       logRejectedToken(log);
       logTelegramDisabled("the bot token was rejected by Telegram", log);
       throw new Error("Telegram bot token was rejected.");
@@ -103,6 +109,7 @@ export function createTelegramHookRegistrations(
     createTelegramAllowlistAliasesHookRegistration(options),
     createTelegramOpenClawBridgeHealthHookRegistration(options.openclawBridgeHealth),
     createTelegramGatewayConflictStatusHookRegistration(options.gatewayConflictStatus),
+    createTelegramStatusHealthHookRegistration(options.statusHealth),
     {
       id: TELEGRAM_GET_ME_REACHABILITY_HOOK_ID,
       handler: createTelegramGetMeReachabilityHook(options),
@@ -167,10 +174,6 @@ async function readTelegramJson(response: TelegramFetchResponse): Promise<unknow
   } catch (_error) {
     return {};
   }
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isRejectedTokenResponse(response: TelegramFetchResponse): boolean {

@@ -8,7 +8,7 @@ export interface MessagingChannelDiagnosticSpec {
   readonly channelId: string;
   readonly policyPresets: readonly string[];
   readonly preferredDefault: boolean;
-  readonly deepProbe?: "in-sandbox-qr";
+  readonly deepProbe?: "in-sandbox-qr" | "log-tail";
   readonly doctorWhenNoHealthSignals?: {
     readonly detail: string;
     readonly hint: string;
@@ -29,11 +29,16 @@ export function collectMessagingChannelDiagnostics(
   manifests: readonly ChannelManifest[],
 ): MessagingChannelDiagnosticSpec[] {
   return manifests.map((manifest) => {
-    const deepProbe = manifest.auth.mode === "in-sandbox-qr" ? "in-sandbox-qr" : undefined;
+    const deepProbe =
+      manifest.auth.mode === "in-sandbox-qr"
+        ? ("in-sandbox-qr" as const)
+        : manifest.diagnosticsProbe === "log-tail"
+          ? ("log-tail" as const)
+          : undefined;
     return {
       channelId: manifest.id,
       policyPresets: policyPresetNames(manifest.policyPresets),
-      preferredDefault: deepProbe !== undefined,
+      preferredDefault: manifest.auth.mode === "in-sandbox-qr",
       ...(deepProbe ? { deepProbe, doctorWhenNoHealthSignals: qrDeepProbeDoctorHint() } : {}),
     };
   });

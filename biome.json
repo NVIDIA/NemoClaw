@@ -21,7 +21,6 @@
       "scripts/**/*.js",
       "scripts/**/*.mjs",
       "test/**/*.js",
-      "docs/_ext/**/*.js",
       "!dist",
       "!nemoclaw/dist",
       "!node_modules",
@@ -104,26 +103,12 @@
         "scripts/**/*.mjs",
         "test/**/*.js",
         "test/credentials-shim.test.ts",
-        "test/runner-basic.test.ts",
-        "docs/_ext/**/*.js"
+        "test/runner-basic.test.ts"
       ],
       "linter": {
         "rules": {
           "correctness": {
             "noUnusedVariables": "error"
-          }
-        }
-      }
-    },
-    {
-      "includes": ["docs/_ext/**/*.js"],
-      "formatter": {
-        "enabled": false
-      },
-      "linter": {
-        "rules": {
-          "correctness": {
-            "noUnusedVariables": "off"
           }
         }
       }

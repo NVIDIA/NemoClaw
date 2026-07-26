@@ -15,23 +15,24 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { HOST_ADVISORY_CHECKS } from "../advisories/checks/host";
+import { runAdvisories } from "../advisories/runner";
+import { failLine } from "../cli/terminal-style";
 import { DASHBOARD_PORT } from "../core/ports";
+import {
+  MIN_RECOMMENDED_DOCKER_CPUS,
+  MIN_RECOMMENDED_DOCKER_MEM_GIB,
+} from "./container-runtime-resources";
+import { assessNvidiaCdiHost } from "./docker-cdi";
+import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
-import {
-  assessNvidiaCdiHost,
-  buildNvidiaCdiRefreshCommands,
-  buildNvidiaCdiRepairCommands,
-  buildStaleCdiManualWarnCommands,
-  buildStaleCdiWarnCommands,
-  explainNvidiaCdiRepairReason,
-  explainStaleCdiReason,
-  extractCdiMismatchFilePath,
-  getNvidiaCdiSpecPath,
-} from "./docker-cdi";
-import {
-  isWslDockerDesktopRuntime,
-  wslDockerDesktopGpuCompatibilityAction,
-} from "./wsl-docker-desktop-gpu";
+import { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
+
+export {
+  MIN_RECOMMENDED_DOCKER_CPUS,
+  MIN_RECOMMENDED_DOCKER_MEM_GIB,
+} from "./container-runtime-resources";
+export { buildContainerToolkitBootstrapCommands } from "./container-toolkit-bootstrap";
 export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
@@ -168,6 +169,7 @@ export interface AssessHostOpts {
   procVersion?: string;
   dockerInfoOutput?: string;
   dockerInfoError?: string;
+  dockerVersionOutput?: string;
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
   readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
@@ -212,6 +214,93 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
   if (normalized.includes("docker desktop")) return "docker-desktop";
   if (normalized.includes("docker")) return "docker";
   return "unknown";
+}
+
+type DockerVersionIdentity = "docker" | "podman" | "unknown";
+
+/**
+ * Classify the engine identity from the explicit
+ * `docker version --format '{{json .}}'` banner.
+ *
+ * Podman's docker-compat `/info` endpoint mimics Docker so closely that
+ * `docker info` carries no "podman" marker (observed on Apple Silicon macOS:
+ * `ServerVersion: "5.6.2"`, `OperatingSystem: "fedora"`, no "podman"
+ * substring), so `inferContainerRuntime` misclassifies it as plain Docker.
+ * The docker-compat `/version` payload still names the engine: a
+ * `Server.Components[].Name` of "Podman Engine" and a `Server.Platform.Name`
+ * like "linux/arm64/fedora-42". Real Docker reports
+ * `Server.Platform.Name: "Docker Engine - Community"` and components
+ * `Engine`/`containerd`/`runc`, which provide positive Docker identity on
+ * Docker Engine, Docker Desktop, and Colima (#7320).
+ */
+function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentity {
+  const text = String(versionOutput || "").trim();
+  if (!text) return "unknown";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Plain-text `docker version` still prints the "Podman Engine" server banner.
+    if (/podman/i.test(text)) return "podman";
+    return /docker engine/i.test(text) ? "docker" : "unknown";
+  }
+  const server = (parsed as Record<string, unknown> | null)?.Server;
+  if (!server || typeof server !== "object") return "unknown";
+  const s = server as Record<string, unknown>;
+  const platformName = (s.Platform as Record<string, unknown> | undefined)?.Name;
+  if (typeof platformName === "string" && /podman/i.test(platformName)) return "podman";
+  const components = s.Components;
+  const componentNames = Array.isArray(components)
+    ? components.flatMap((component) => {
+        const name =
+          component && typeof component === "object"
+            ? (component as Record<string, unknown>).Name
+            : undefined;
+        return typeof name === "string" ? [name] : [];
+      })
+    : [];
+  if (componentNames.some((name) => /podman/i.test(name))) return "podman";
+  if (
+    (typeof platformName === "string" && /^docker (?:engine|desktop)\b/i.test(platformName)) ||
+    componentNames.some((name) => name.trim().toLowerCase() === "engine")
+  ) {
+    return "docker";
+  }
+  return "unknown";
+}
+
+/**
+ * Use `ProductLicense: "Apache-2.0"` as a Podman backstop only when the
+ * authoritative `docker version` probe is unavailable. Podman's docker-compat
+ * `/info` reports this value, but Docker Engine can also report it. Without
+ * version evidence, preflight conservatively rejects that ambiguous runtime
+ * before the Docker-driver path (#7320).
+ */
+function dockerInfoReportsPodmanCompat(infoOutput = ""): boolean {
+  const text = String(infoOutput || "").trim();
+  if (!text) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const license = (parsed as Record<string, unknown>).ProductLicense;
+  return typeof license === "string" && license.trim().toLowerCase() === "apache-2.0";
+}
+
+/**
+ * Reclassify a Docker CLI routed to Podman's compatibility socket as `podman`
+ * so the unsupported-runtime gate fires before the forced macOS/Linux
+ * Docker-driver gateway binds Podman's VM-only bridge address and exits
+ * `EADDRNOTAVAIL` (#7320).
+ */
+function isDockerCompatPodman(dockerInfoOutput = "", dockerVersionOutput = ""): boolean {
+  const versionIdentity = classifyDockerVersionIdentity(dockerVersionOutput);
+  if (versionIdentity === "podman") return true;
+  if (versionIdentity === "docker") return false;
+  return dockerInfoReportsPodmanCompat(dockerInfoOutput);
 }
 
 function parseDockerCgroupVersion(info = ""): "v1" | "v2" | "unknown" {
@@ -350,9 +439,6 @@ export function parseDockerInfoMemTotalBytes(info = ""): number | undefined {
   return undefined;
 }
 
-export const MIN_RECOMMENDED_DOCKER_CPUS = 4;
-export const MIN_RECOMMENDED_DOCKER_MEM_GIB = 8;
-
 export function isDockerUnderProvisioned(
   cpus: number | undefined,
   memTotalBytes: number | undefined,
@@ -361,6 +447,56 @@ export function isDockerUnderProvisioned(
   const memLow =
     typeof memTotalBytes === "number" && memTotalBytes < MIN_RECOMMENDED_DOCKER_MEM_GIB * 1024 ** 3;
   return cpuLow || memLow;
+}
+
+export interface CheckContainerRuntimeResourcesOptions {
+  ignored: boolean;
+  nonInteractive: boolean;
+  confirm(): Promise<boolean>;
+  log?: (message: string) => void;
+  warn?: (message: string) => void;
+  error?: (message: string) => void;
+  exit?: (code: number) => never;
+}
+
+/** Report container capacity and gate interactive continuation when it is undersized. */
+export async function checkContainerRuntimeResources(
+  host: HostAssessment,
+  options: CheckContainerRuntimeResourcesOptions,
+): Promise<void> {
+  const log = options.log ?? console.log;
+  const warn = options.warn ?? console.warn;
+  const error = options.error ?? console.error;
+  const exit = options.exit ?? ((code: number): never => process.exit(code));
+  const detected: string[] = [];
+  if (typeof host.dockerCpus === "number") detected.push(`${host.dockerCpus} vCPU`);
+  if (typeof host.dockerMemTotalBytes === "number") {
+    detected.push(`${(host.dockerMemTotalBytes / 1024 ** 3).toFixed(1)} GiB`);
+  }
+  if (!host.isContainerRuntimeUnderProvisioned || options.ignored) {
+    if (host.dockerReachable && detected.length > 0) {
+      log(`  ✓ Container runtime resources: ${detected.join(" / ")}`);
+    }
+    return;
+  }
+
+  printUnderProvisionedRuntimeWarning(
+    {
+      detectedStr: detected.join(" / ") || "unknown",
+      runtime: host.runtime,
+      recommendedCpus: MIN_RECOMMENDED_DOCKER_CPUS,
+      recommendedMemGib: MIN_RECOMMENDED_DOCKER_MEM_GIB,
+    },
+    warn,
+  );
+  if (options.nonInteractive) {
+    warn("    WARNING: Non-interactive mode is continuing despite under-provisioned runtime.");
+    return;
+  }
+  if (!(await options.confirm())) {
+    error("  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.");
+    exit(1);
+  }
 }
 
 function readDockerDefaultCgroupnsMode(
@@ -454,35 +590,6 @@ function parseSystemctlState(value = ""): boolean | null {
   return null;
 }
 
-export function buildContainerToolkitBootstrapCommands(
-  packageManager: PackageManager | undefined,
-  generateCommands: readonly string[],
-): string[] {
-  const installGuide =
-    "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html";
-  if (packageManager === "apt") {
-    return [
-      "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
-      "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list",
-      "sudo apt-get update",
-      "sudo apt-get install -y nvidia-container-toolkit",
-      ...generateCommands,
-    ];
-  }
-  if (packageManager === "dnf" || packageManager === "yum") {
-    const pmCommand = packageManager === "dnf" ? "dnf" : "yum";
-    return [
-      `curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo`,
-      `sudo ${pmCommand} install -y nvidia-container-toolkit`,
-      ...generateCommands,
-    ];
-  }
-  return [
-    `# Install nvidia-container-toolkit per NVIDIA's install guide: ${installGuide}`,
-    ...generateCommands,
-  ];
-}
-
 export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
@@ -517,6 +624,16 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerRunning = true;
   }
 
+  // Capture the docker-compat engine banner so Podman fronting the Docker CLI
+  // socket is reclassified below. Only probed when the daemon is reachable so a
+  // down/absent Docker never pays for the extra call (#7320).
+  let dockerVersionOutput = opts.dockerVersionOutput;
+  if (dockerReachable && dockerVersionOutput === undefined) {
+    dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
+      ignoreError: true,
+    });
+  }
+
   const release = opts.release ?? os.release();
   const procVersion =
     opts.procVersion ??
@@ -528,6 +645,18 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
       }
     })();
   let runtime = inferContainerRuntime(dockerInfoOutput);
+  // Podman fronting the Docker CLI compatibility socket mimics Docker in
+  // `docker info`, so the grep above misclassifies it as `docker`. Reclassify
+  // from the explicit docker-compat signals so the unsupported-runtime gate
+  // fires before the forced Docker-driver gateway binds Podman's VM-only
+  // bridge IP and exits EADDRNOTAVAIL (#7320).
+  if (
+    dockerReachable &&
+    runtime !== "podman" &&
+    isDockerCompatPodman(dockerInfoOutput, dockerVersionOutput)
+  ) {
+    runtime = "podman";
+  }
   if (dockerReachable && runtime === "unknown" && platform === "linux") {
     runtime = "docker";
   }
@@ -664,6 +793,7 @@ export function assertCdiNvidiaGpuSpecPresent(
   host: HostAssessment,
   explicitlyOptedOutGpuPassthrough: boolean,
   hostGpuPlatform: string | null | undefined = null,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
 ): void {
   if (hostGpuPlatform === "jetson" || isWslDockerDesktopRuntime(host)) return;
   if (
@@ -675,268 +805,29 @@ export function assertCdiNvidiaGpuSpecPresent(
   )
     return;
   console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    failLine(
+      "Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    ),
   );
   printRemediationActions(planHostRemediation(host));
-  process.exit(1);
+  exitProcess(1);
+}
+
+export function planHostAdvisories(assessment: HostAssessment) {
+  return runAdvisories(HOST_ADVISORY_CHECKS, assessment, {
+    phase: "preflight.host",
+  }).advisories;
 }
 
 export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {
-  const actions: RemediationAction[] = [];
-
-  if (!assessment.dockerInstalled) {
-    if (assessment.isWsl) {
-      actions.push({
-        id: "enable_docker_desktop_wsl_integration",
-        title: "Enable Docker Desktop WSL integration",
-        kind: "manual",
-        reason:
-          "Docker is not available inside this WSL distro. When using Docker Desktop on Windows, WSL integration must be enabled for the Ubuntu distro before NemoClaw can create a gateway or sandbox.",
-        commands: [
-          "Open Docker Desktop → Settings → Resources → WSL integration.",
-          "Enable integration for this Ubuntu distro, apply the change, then run `wsl --shutdown` from Windows PowerShell.",
-          "Reopen Ubuntu, verify `docker info`, then rerun `nemoclaw onboard`.",
-        ],
-        blocking: true,
-      });
-      return actions;
-    }
-
-    const installCommands: Record<PackageManager, string> = {
-      apt: "Install Docker Engine, then rerun `nemoclaw onboard`.",
-      dnf: "Install Docker Engine with your package manager, then rerun `nemoclaw onboard`.",
-      yum: "Install Docker Engine with your package manager, then rerun `nemoclaw onboard`.",
-      brew: "Install Docker Desktop or Colima, then rerun `nemoclaw onboard`.",
-      pacman: "Install Docker Engine with your package manager, then rerun `nemoclaw onboard`.",
-      unknown: "Install Docker, then rerun `nemoclaw onboard`.",
-    };
-    actions.push({
-      id: "install_docker",
-      title: "Install Docker",
-      kind: "manual",
-      reason: "Docker is required before onboarding can create a gateway or sandbox.",
-      commands:
-        assessment.platform === "darwin"
-          ? ["Install Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
-          : [installCommands[assessment.packageManager ?? "unknown"]],
-      blocking: true,
-    });
-  } else if (!assessment.dockerReachable) {
-    // On Linux, if the systemd service is already active but the daemon is
-    // unreachable, the most likely cause is a permissions / docker-group issue
-    // rather than a stopped service.
-    const likelyGroupIssue =
-      assessment.platform === "linux" && assessment.dockerServiceActive === true;
-
-    if (assessment.isWsl) {
-      actions.push({
-        id: "enable_docker_desktop_wsl_integration",
-        title: "Enable Docker Desktop WSL integration",
-        kind: "manual",
-        reason:
-          "Docker is installed but this WSL distro cannot reach the Docker daemon. Docker Desktop may not be running, or WSL integration may be disabled for this distro.",
-        commands: [
-          "Start Docker Desktop on Windows.",
-          "Open Docker Desktop → Settings → Resources → WSL integration and enable integration for this Ubuntu distro.",
-          "Apply the change, run `wsl --shutdown` from Windows PowerShell, reopen Ubuntu, verify `docker info`, then rerun `nemoclaw onboard`.",
-        ],
-        blocking: true,
-      });
-      return actions;
-    } else if (likelyGroupIssue) {
-      const commands = [
-        "sudo usermod -aG docker $USER",
-        "newgrp docker   # or log out and back in",
-        "nemoclaw onboard",
-      ];
-      actions.push({
-        id: "docker_group_permission",
-        title: "Add user to docker group",
-        kind: "sudo",
-        reason:
-          "Docker is installed and the service is running, but the current user cannot reach the daemon. " +
-          "This usually means your user is not in the docker group. " +
-          "NemoClaw needs Docker access. " +
-          "On personal Linux development machines, adding your user to the docker group is the standard way to run Docker without sudo. " +
-          "Docker group members can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path. " +
-          "Background: https://docs.docker.com/engine/security/#docker-daemon-attack-surface.",
-        commands,
-        blocking: true,
-      });
-    } else {
-      const commands =
-        assessment.platform === "darwin"
-          ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
-          : assessment.systemctlAvailable
-            ? ["sudo systemctl start docker", "nemoclaw onboard"]
-            : ["Start the Docker daemon, then rerun `nemoclaw onboard`."];
-      if (assessment.isWsl) {
-        commands.unshift(DOCKER_DESKTOP_WSL_INTEGRATION_HINT);
-      }
-      actions.push({
-        id: "start_docker",
-        title: "Start Docker",
-        kind: "manual",
-        reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
-        commands,
-        blocking: true,
-      });
-    }
-  }
-
-  if (assessment.dockerReachable && assessment.isContainerRuntimeUnderProvisioned) {
-    const cpus = assessment.dockerCpus;
-    const memGiB =
-      typeof assessment.dockerMemTotalBytes === "number"
-        ? assessment.dockerMemTotalBytes / 1024 ** 3
-        : undefined;
-    const detected: string[] = [];
-    if (typeof cpus === "number") detected.push(`${cpus} vCPU`);
-    if (typeof memGiB === "number") detected.push(`${memGiB.toFixed(1)} GiB`);
-    const detectedStr = detected.length > 0 ? detected.join(" / ") : "unknown";
-    const recommendedStr = `${MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB`;
-    const isColima = assessment.runtime === "colima";
-    const isDockerDesktop = assessment.runtime === "docker-desktop";
-    const reason =
-      `Container runtime is under-provisioned (detected ${detectedStr}; recommended ${recommendedStr}). ` +
-      "Sandbox build will be slow and may stall when runtime resources are too low.";
-    const commands: string[] = [];
-    if (isColima) {
-      commands.push(
-        "colima stop",
-        `colima start --cpu ${MIN_RECOMMENDED_DOCKER_CPUS} --memory ${MIN_RECOMMENDED_DOCKER_MEM_GIB} --disk 100`,
-      );
-    } else if (isDockerDesktop) {
-      commands.push(
-        `Open Docker Desktop → Settings → Resources and raise CPUs to ≥ ${MIN_RECOMMENDED_DOCKER_CPUS} and memory to ≥ ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB.`,
-      );
-    } else {
-      commands.push(
-        `Raise your container runtime's resource limits to ≥ ${MIN_RECOMMENDED_DOCKER_CPUS} vCPU and ≥ ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB of memory before retrying.`,
-      );
-    }
-    actions.push({
-      id: "container_runtime_under_provisioned",
-      title: "Increase container runtime resources",
-      kind: "manual",
-      reason,
-      commands,
-      blocking: false,
-    });
-  }
-
-  if (assessment.isUnsupportedRuntime) {
-    actions.push({
-      id: "unsupported_runtime_warning",
-      title: "Use a supported Docker runtime if problems appear",
-      kind: "manual",
-      reason:
-        "OpenShell officially documents Docker-based runtimes. Podman may work in some environments, but it is not a supported runtime and behavior may vary.",
-      commands:
-        assessment.platform === "darwin"
-          ? ["If onboarding or sandbox lifecycle fails, switch to Docker Desktop or Colima."]
-          : ["If onboarding or sandbox lifecycle fails, switch to a Docker-supported runtime."],
-      blocking: false,
-    });
-  }
-
-  if (!assessment.nodeInstalled) {
-    actions.push({
-      id: "install_nodejs",
-      title: "Install Node.js",
-      kind: "manual",
-      reason: "NemoClaw requires Node.js for its CLI and plugin build steps.",
-      commands: ["Run the NemoClaw installer to install Node.js automatically."],
-      blocking: false,
-    });
-  }
-
-  if (!assessment.openshellInstalled) {
-    actions.push({
-      id: "install_openshell",
-      title: "Install OpenShell",
-      kind: "manual",
-      reason: "OpenShell is required before onboarding can create or manage a gateway.",
-      commands: ["Run the NemoClaw installer or `scripts/install-openshell.sh`."],
-      blocking: false,
-    });
-  }
-
-  if (assessment.isHeadlessLikely && !assessment.hasNvidiaGpu) {
-    actions.push({
-      id: "headless_remote_hint",
-      title: "Review remote/headless UI settings",
-      kind: "info",
-      reason:
-        "Headless Linux hosts often need explicit remote UI handling if you want browser access.",
-      commands: ["Set `CHAT_UI_URL` when remote browser access matters."],
-      blocking: false,
-    });
-  }
-
-  if (
-    assessment.cdiNvidiaGpuRefreshUnhealthy &&
-    !assessment.cdiNvidiaGpuSpecNeedsRepair &&
-    !assessment.cdiNvidiaGpuSpecMissing &&
-    !isWslDockerDesktopRuntime(assessment)
-  ) {
-    actions.push({
-      id: "warn_nvidia_cdi_refresh_unhealthy",
-      title: "Enable NVIDIA CDI refresh service",
-      kind: "sudo",
-      reason: explainNvidiaCdiRepairReason({
-        ...assessment,
-        cdiNvidiaGpuSpecMissing: false,
-        cdiNvidiaGpuSpecStale: false,
-        cdiNvidiaGpuSpecMismatch: undefined,
-      }),
-      commands: buildNvidiaCdiRefreshCommands(),
-      blocking: false,
-    });
-  }
-
-  if (assessment.cdiNvidiaGpuSpecNeedsRepair || assessment.cdiNvidiaGpuSpecMissing) {
-    const missingSpec = assessment.cdiNvidiaGpuSpecMissing;
-    const flaggedFilePath = extractCdiMismatchFilePath(assessment.cdiNvidiaGpuSpecMismatch);
-    const specPath = getNvidiaCdiSpecPath(assessment);
-    const repairCommands = missingSpec
-      ? buildNvidiaCdiRepairCommands(assessment, specPath)
-      : assessment.systemctlAvailable
-        ? buildStaleCdiWarnCommands(flaggedFilePath)
-        : buildStaleCdiManualWarnCommands(flaggedFilePath);
-    const reason = missingSpec
-      ? explainNvidiaCdiRepairReason(assessment)
-      : explainStaleCdiReason(assessment.cdiNvidiaGpuSpecMismatch);
-    if (isWslDockerDesktopRuntime(assessment)) {
-      actions.push(wslDockerDesktopGpuCompatibilityAction());
-    } else if (assessment.nvidiaContainerToolkitInstalled) {
-      const title = missingSpec
-        ? "Generate NVIDIA CDI device specs"
-        : "Refresh NVIDIA CDI device specs";
-      actions.push({
-        id: missingSpec ? "generate_nvidia_cdi_spec" : "refresh_nvidia_cdi_spec",
-        title,
-        kind: missingSpec || assessment.systemctlAvailable ? "sudo" : "manual",
-        reason,
-        commands: repairCommands,
-        blocking: true,
-      });
-    } else {
-      const title = missingSpec
-        ? "Install NVIDIA Container Toolkit and generate CDI device specs"
-        : "Install NVIDIA Container Toolkit and refresh CDI device specs";
-      actions.push({
-        id: "install_nvidia_container_toolkit",
-        title,
-        kind: "sudo",
-        reason: `${reason} The nvidia-container-toolkit package (which provides nvidia-ctk) is not installed on the host.`,
-        commands: buildContainerToolkitBootstrapCommands(assessment.packageManager, repairCommands),
-        blocking: true,
-      });
-    }
-  }
-
-  return actions;
+  return planHostAdvisories(assessment).map((advisory) => ({
+    id: advisory.id,
+    title: advisory.title,
+    kind: advisory.kind ?? "manual",
+    reason: advisory.reason,
+    commands: [...(advisory.commands ?? [])],
+    blocking: advisory.severity === "fatal" || advisory.severity === "blocking",
+  }));
 }
 
 // ── Port availability ────────────────────────────────────────────
@@ -1350,6 +1241,13 @@ export interface ProbeContainerDnsOpts {
   runProbeImpl?: RunProbeFn;
   /** Override the probe name (test seam; pinned name for stable assertions). */
   probeName?: string;
+  /**
+   * Resolver to test with `docker run --dns <ip>`, so the probe exercises the
+   * exact DNS path a recreated sandbox will use rather than Docker defaults.
+   * Must be an IP address (validated) since it is interpolated into the shell
+   * command. Null/undefined preserves Docker defaults. (#7172)
+   */
+  dnsServer?: string | null;
   /** Inject a precomputed image-cache result; skips the pre-pull. */
   ensureImageCachedOverride?: EnsureProbeImageCachedResult;
 }
@@ -1776,10 +1674,18 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
       `probeName must be a plain DNS name (RFC 1035 label characters), got: ${JSON.stringify(probeName)}`,
     );
   }
+  // Validate the resolver as an IP before interpolating it into the shell
+  // command (same injection guard as probeName above); detectSandboxFallbackDns
+  // only yields validated IPv4 or null, but defend the seam regardless.
+  const dnsServer = opts.dnsServer ?? null;
+  if (dnsServer !== null && net.isIP(dnsServer) === 0) {
+    throw new Error(`dnsServer must be an IP address, got: ${JSON.stringify(dnsServer)}`);
+  }
+  const dnsArg = dnsServer !== null ? ` --dns ${dnsServer}` : "";
   const command = opts.command ?? [
     "sh",
     "-c",
-    `docker run --rm --pull=missing ${BUSYBOX_PROBE_IMAGE} nslookup ${probeName} 2>&1`,
+    `docker run --rm --pull=missing${dnsArg} ${BUSYBOX_PROBE_IMAGE} nslookup ${probeName} 2>&1`,
   ];
 
   // Pre-pull the busybox image so the timed probe below measures only

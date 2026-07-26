@@ -13,6 +13,17 @@ import {
   writeSandboxRegistry,
 } from "./helpers";
 
+const HEALTHY_DEFAULT_GATEWAY_STUB = [
+  'if [ "$1" = "status" ]; then',
+  "  printf 'Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n'",
+  "  exit 0",
+  "fi",
+  'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+  "  echo 'Gateway: nemoclaw'",
+  "  exit 0",
+  "fi",
+];
+
 function createShareTestEnv(prefix: string): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
@@ -237,15 +248,16 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
           "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "my-agent" ]; then',
           "  echo 'Sandbox: my-agent'",
           "  exit 0",
           "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "my-agent" ]; then',
           "  echo 'Host openshell-my-agent'",
           "  echo '  HostName 127.0.0.1'",
           "  exit 0",
@@ -310,15 +322,16 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
           "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "my-agent" ]; then',
           "  echo 'Sandbox: my-agent'",
           "  exit 0",
           "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "my-agent" ]; then',
           "  echo 'Host openshell-my-agent'",
           "  echo '  HostName 127.0.0.1'",
           "  exit 0",
@@ -387,11 +400,12 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
           "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "my-agent" ]; then',
           "  echo 'Host openshell-my-agent'",
           "  echo '  HostName 127.0.0.1'",
           "  exit 0",
@@ -459,15 +473,16 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
           "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "my-agent" ]; then',
           "  echo 'Sandbox: my-agent'",
           "  exit 0",
           "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "my-agent" ]; then',
           "  echo 'Host openshell-my-agent'",
           "  echo '  HostName 127.0.0.1'",
           "  exit 0",

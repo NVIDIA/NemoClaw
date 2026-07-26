@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+if [ "$#" -ne 1 ] || [ "$1" != "--version" ]; then
+  exit 64
+fi
+printf '%s\n' 'openshell 0.0.85'

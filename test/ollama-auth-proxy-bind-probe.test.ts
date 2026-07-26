@@ -32,6 +32,8 @@
 import net from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import * as proxyExports from "../scripts/ollama-auth-proxy.mts";
+
 type ProbeResult = { ok: boolean; listeners: Array<{ address: string; port: number }> } | null;
 type ProxyExports = {
   parseProcNetTcpListeners: (
@@ -43,14 +45,13 @@ type ProxyExports = {
   probeLinuxLoopbackBind: (port: number) => ProbeResult;
   EXIT_BACKEND_NOT_LOOPBACK: number;
 };
-const proxyExports = require("../scripts/ollama-auth-proxy.js") as ProxyExports;
 const {
   parseProcNetTcpListeners,
   isLoopbackProcAddress,
   isLoopbackLsofAddress,
   probeLinuxLoopbackBind,
   EXIT_BACKEND_NOT_LOOPBACK,
-} = proxyExports;
+} = proxyExports as ProxyExports;
 
 // /proc/net/tcp header + one row template. Hex port 0x2CAA = 11434.
 const HEADER =

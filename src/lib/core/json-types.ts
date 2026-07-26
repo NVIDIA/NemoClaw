@@ -29,7 +29,21 @@ export type JsonObject = { [key: string]: JsonValue };
 /** Generic object record used when parsed input has not been domain-validated. */
 export type UnknownRecord = Record<string, unknown>;
 
-/** Return true when a value is a non-array object record. */
-export function isRecord(value: unknown): value is UnknownRecord {
+/**
+ * Return true when a value is an object but not `null` or an array.
+ *
+ * This is intentionally a shallow shape check. It does not inspect the
+ * object's prototype or values, so class instances and built-in objects such
+ * as `Date` also pass. Use {@link isPlainObject} when prototype identity is
+ * part of the boundary contract.
+ */
+export function isObjectRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Return true for object literals and objects with a null prototype. */
+export function isPlainObject(value: unknown): value is UnknownRecord {
+  if (!isObjectRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }

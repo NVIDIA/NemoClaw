@@ -69,6 +69,7 @@ describe("onboard machine vocabulary", () => {
       "state.repair.started",
       "state.repair.completed",
       "state.repair.failed",
+      "state.result.invalidated",
       "state.result.skipped",
       "context.updated",
       "resume.conflict",
@@ -145,6 +146,19 @@ describe("onboard machine transitions", () => {
     expect(() => assertValidOnboardMachineTransition("complete", "failed")).toThrow(
       "complete -> failed",
     );
+  });
+
+  it("never allows a terminal failed state to re-enter an agent or flow state (#6179)", () => {
+    for (const to of ["agent_setup", "openclaw", "sandbox", "policies", "init"] as const) {
+      expect(canTransitionOnboardMachineState("failed", to)).toBe(false);
+      expect(getOnboardMachineTransition("failed", to)).toBeNull();
+      expect(() => assertValidOnboardMachineTransition("failed", to)).toThrow(`failed -> ${to}`);
+    }
+    // Failure edges only ever point *into* the terminal failed state.
+    for (const transition of ONBOARD_MACHINE_TRANSITIONS) {
+      expect(transition.from).not.toBe("failed");
+      expect(transition.from).not.toBe("complete");
+    }
   });
 
   it("keeps the next-state map aligned with the transition list", () => {

@@ -5,7 +5,8 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+
+import { describe, expect, test as it } from "../helpers/owned-test-resources";
 
 import {
   CLI,
@@ -22,8 +23,8 @@ import {
 } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it("routes logs to OpenClaw and OpenShell log sources", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-routing-");
+  it("routes logs to OpenClaw and OpenShell log sources", ({ resources }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-routing-");
     const r = setup.runLogs();
 
     const calls = setup.readCalls();
@@ -37,8 +38,8 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
-  it("shows logs help without calling OpenShell", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-help-");
+  it("shows logs help without calling OpenShell", ({ resources }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-help-");
     const r = setup.runLogs("alpha logs --help");
 
     expect(r.code).toBe(0);
@@ -49,8 +50,8 @@ describe("CLI dispatch", () => {
     expect(setup.readCalls()).toEqual([]);
   });
 
-  it("rejects unknown logs flags before calling OpenShell", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-unknown-");
+  it("rejects unknown logs flags before calling OpenShell", ({ resources }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-unknown-");
     const r = setup.runLogs("alpha logs --bogus 2>&1");
 
     expect(r.code).not.toBe(0);
@@ -58,8 +59,10 @@ describe("CLI dispatch", () => {
     expect(setup.readCalls()).toEqual([]);
   });
 
-  it("continues to OpenShell logs when the OpenClaw gateway log probe times out", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-openclaw-timeout-", [
+  it("continues to OpenShell logs when the OpenClaw gateway log probe times out", ({
+    resources,
+  }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-openclaw-timeout-", [
       'if [ "$1" = "sandbox" ]; then',
       "  while true; do :; done",
       "fi",
@@ -73,8 +76,8 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
-  it("maps --follow to OpenShell live log streaming", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-follow-");
+  it("maps --follow to OpenShell live log streaming", ({ resources }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-follow-");
     const r = setup.runLogs("alpha logs --follow");
 
     const calls = setup.readCalls();
@@ -86,10 +89,11 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
-  it("starts OpenClaw logs before enabling audit logs for logs --follow", () => {
+  it("starts OpenClaw logs before enabling audit logs for logs --follow", ({ resources }) => {
     const gatewayStartedMarker = "gateway-started";
     const auditCompleteMarker = "audit-enabled";
     const setup = createLogsTestSetup(
+      resources,
       "nemoclaw-cli-logs-follow-audit-slow-",
       [
         'if [ "$1" = "settings" ]; then',
@@ -126,12 +130,10 @@ describe("CLI dispatch", () => {
   it(
     "keeps logs --follow running when one log source exits",
     testTimeoutOptions(10_000),
-    async () => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-source-exit-"));
-      const localBin = path.join(home, "bin");
+    async ({ resources }) => {
+      const { home, bin: localBin } = resources.home("nemoclaw-cli-logs-follow-source-exit-");
       const registryDir = path.join(home, ".nemoclaw");
       const markerFile = path.join(home, "logs-follow-source-exit-args");
-      fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(registryDir, { recursive: true });
       writeHealthyDockerStub(localBin);
       fs.writeFileSync(
@@ -171,11 +173,13 @@ describe("CLI dispatch", () => {
         { mode: 0o755 },
       );
 
-      const child = spawn(process.execPath, [CLI, "alpha", "logs", "--follow"], {
-        cwd: path.join(import.meta.dirname, ".."),
-        env: { ...process.env, HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
-        stdio: "ignore",
-      });
+      const child = resources.ownChild(
+        spawn(process.execPath, [CLI, "alpha", "logs", "--follow"], {
+          cwd: path.join(import.meta.dirname, ".."),
+          env: { ...process.env, HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+          stdio: "ignore",
+        }),
+      );
       const exitPromise = waitForChildExit(child);
       const readCalls = () =>
         fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8").trim().split(/\n/) : [];
@@ -198,11 +202,13 @@ describe("CLI dispatch", () => {
         expect(isChildRunning(child)).toBe(true);
         expect(calls).toContain("logs alpha -n 200 --source all --tail");
         expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
+        child.kill("SIGTERM");
+        expect(await exitPromise).toBe(143);
       } finally {
         if (isChildRunning(child)) {
-          child.kill("SIGTERM");
+          child.kill("SIGKILL");
         }
-        expect(await exitPromise).toBe(143);
+        await exitPromise;
       }
     },
   );
@@ -210,12 +216,10 @@ describe("CLI dispatch", () => {
   it(
     "waits for logs --follow children to stop after SIGTERM",
     testTimeoutOptions(10_000),
-    async () => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-sigterm-wait-"));
-      const localBin = path.join(home, "bin");
+    async ({ resources }) => {
+      const { home, bin: localBin } = resources.home("nemoclaw-cli-logs-follow-sigterm-wait-");
       const markerFile = path.join(home, "logs-follow-sigterm-wait-args");
       const releaseFile = path.join(home, "release-log-children");
-      fs.mkdirSync(localBin, { recursive: true });
       writeSandboxRegistry(home);
       writeHealthyDockerStub(localBin);
       fs.writeFileSync(
@@ -237,11 +241,13 @@ describe("CLI dispatch", () => {
         { mode: 0o755 },
       );
 
-      const child = spawn(process.execPath, [CLI, "alpha", "logs", "--follow"], {
-        cwd: path.join(import.meta.dirname, ".."),
-        env: { ...process.env, HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
-        stdio: "ignore",
-      });
+      const child = resources.ownChild(
+        spawn(process.execPath, [CLI, "alpha", "logs", "--follow"], {
+          cwd: path.join(import.meta.dirname, ".."),
+          env: { ...process.env, HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+          stdio: "ignore",
+        }),
+      );
       let hasExited = false;
       const exitPromise = waitForChildExit(child).then((code) => {
         hasExited = true;
@@ -289,6 +295,7 @@ describe("CLI dispatch", () => {
         if (isChildRunning(child)) {
           child.kill("SIGKILL");
         }
+        await exitPromise;
       }
     },
   );

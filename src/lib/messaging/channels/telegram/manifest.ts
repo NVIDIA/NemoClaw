@@ -8,6 +8,7 @@ export const telegramManifest = {
   id: "telegram",
   displayName: "Telegram",
   description: "Telegram bot messaging",
+  diagnosticsProbe: "log-tail",
   enrollmentNotes: [
     "For Telegram group chats, disable privacy mode in @BotFather (/setprivacy -> your bot -> Disable).",
     "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
@@ -187,26 +188,6 @@ export const telegramManifest = {
       ],
     },
   },
-  state: {
-    persist: {
-      allowedIds: ["allowedIds"],
-      telegramConfig: ["requireMention", "groupPolicy"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.telegram",
-        env: "TELEGRAM_ALLOWED_IDS",
-      },
-      {
-        statePath: "telegramConfig.requireMention",
-        env: "TELEGRAM_REQUIRE_MENTION",
-      },
-      {
-        statePath: "telegramConfig.groupPolicy",
-        env: "TELEGRAM_GROUP_POLICY",
-      },
-    ],
-  },
   hooks: [
     {
       id: "telegram-token-paste",
@@ -280,6 +261,18 @@ export const telegramManifest = {
       outputs: [
         {
           id: "bridgeHealth",
+          kind: "status",
+        },
+      ],
+    },
+    {
+      id: "telegram-status-health",
+      phase: "status",
+      handler: "telegram.statusHealth",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "channelHealth",
           kind: "status",
         },
       ],

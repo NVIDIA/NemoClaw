@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  healthyInferenceRouteStubLines,
   runWithEnv,
   testTimeoutOptions,
   writeHealthyDockerStub,
@@ -49,6 +50,7 @@ describe("CLI sandbox status text output", () => {
         "  echo 'Gateway: nemoclaw'",
         "  exit 0",
         "fi",
+        ...healthyInferenceRouteStubLines(),
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -88,7 +90,7 @@ describe("CLI sandbox status text output", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Ready'",
@@ -109,6 +111,7 @@ describe("CLI sandbox status text output", () => {
         "  echo 'Gateway: nemoclaw'",
         "  exit 0",
         "fi",
+        ...healthyInferenceRouteStubLines(),
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -142,7 +145,7 @@ describe("CLI sandbox status text output", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "dcode-station" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "dcode-station" ] || [ "$5" = "dcode-station" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: dcode-station'",
         "  echo '  Phase: Ready'",
@@ -163,6 +166,7 @@ describe("CLI sandbox status text output", () => {
         "  echo 'Gateway: nemoclaw'",
         "  exit 0",
         "fi",
+        ...healthyInferenceRouteStubLines(),
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -197,15 +201,17 @@ describe("CLI sandbox status text output", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Ready'",
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
-        "  echo 'oom_kill=1'",
-        "  echo 'source=/sys/fs/cgroup/memory.events'",
+        '  case "$*" in',
+        "    *inference.local/v1/models*) echo 'OK 200' ;;",
+        "    *) echo 'oom_kill=1'; echo 'source=/sys/fs/cgroup/memory.events' ;;",
+        "  esac",
         "  exit 0",
         "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
@@ -243,7 +249,7 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).toContain("Run `nemoclaw alpha rebuild` to restore.");
   });
 
-  it("sandbox <name> status preserves Inference probe and exits 0 when openshellDriver is not docker", () => {
+  it("sandbox <name> status reports reachable inference and an unprobed upstream when openshellDriver is not docker", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-non-docker-driver-"),
     );
@@ -277,6 +283,7 @@ describe("CLI sandbox status text output", () => {
         "  echo 'Gateway: nemoclaw'",
         "  exit 0",
         "fi",
+        ...healthyInferenceRouteStubLines(),
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -292,7 +299,8 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).toContain("Sandbox: alpha");
     expect(r.out).toContain("Provider: openai-api");
     expect(r.out).toContain("Model:    gpt-4o-mini");
-    expect(r.out).toContain("Inference: healthy");
+    expect(r.out).toContain("Inference: reachable (https://inference.local/v1/models)");
+    expect(r.out).toContain("Inference (upstream): not probed");
   });
 
   it("sandbox <name> status surfaces sandbox_container_stopped when the per-sandbox container exists but is not running", () => {
@@ -322,7 +330,7 @@ describe("CLI sandbox status text output", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Error'",
@@ -416,7 +424,7 @@ describe("CLI sandbox status text output", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo '  Name: alpha'",
           "  echo '  Phase: Error'",
@@ -486,7 +494,7 @@ describe("CLI sandbox status text output", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo",
           "  echo '  Id: abc'",

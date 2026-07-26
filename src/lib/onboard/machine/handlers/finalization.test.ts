@@ -42,6 +42,8 @@ function createDeps(
     diagnostics: vi.fn(() => ["  ✓ verified"]),
     verifyWebSearch: vi.fn(),
     dashboard: vi.fn(),
+    isHealthy: vi.fn(() => true),
+    reportReadiness: vi.fn(),
     error: vi.fn(),
     log: vi.fn(),
   };
@@ -63,6 +65,8 @@ function createDeps(
       formatVerificationDiagnostics: calls.diagnostics,
       verifyWebSearchInsideSandbox: calls.verifyWebSearch,
       printDashboard: calls.dashboard,
+      isDeploymentHealthy: calls.isHealthy,
+      reportDeploymentReadiness: calls.reportReadiness,
       error: calls.error,
       log: calls.log,
       ...overrides,
@@ -104,7 +108,14 @@ describe("handleFinalizationState", () => {
     expect(calls.buildChain).toHaveBeenCalledWith("http://127.0.0.1:18789");
     expect(calls.verify).toHaveBeenCalledWith("my-assistant", { port: 18789 });
     expect(calls.log).toHaveBeenCalledWith("  ✓ verified");
-    expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, null);
+    expect(calls.dashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      null,
+      true,
+    );
     expect(calls.postVerify).toHaveBeenCalledOnce();
     expect(result.stateResult).toEqual({
       type: "complete",
@@ -120,6 +131,65 @@ describe("handleFinalizationState", () => {
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
   });
 
+  it("prints a not-ready dashboard and returns a resumable failure when verification is unhealthy", async () => {
+    const { deps, calls } = createDeps({ isDeploymentHealthy: vi.fn(() => false) });
+
+    const result = await handleFinalizationState(baseOptions(deps));
+
+    expect(calls.dashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      null,
+      false,
+    );
+    expect(calls.reportReadiness).toHaveBeenCalledWith(false);
+    expect(calls.postVerify).toHaveBeenCalledOnce();
+    expect(result.deploymentHealthy).toBe(false);
+    expect(result.stateResult).toEqual({
+      type: "pause",
+      updates: {
+        sandboxName: "my-assistant",
+        provider: "provider",
+        model: "model",
+        hermesAuthMethod: null,
+        hermesToolGateways: [],
+      },
+      metadata: { state: "finalizing", reason: "deployment_not_ready" },
+    });
+  });
+
+  it("restores the default OpenClaw dashboard forward after process recovery", async () => {
+    let forwardLive = true;
+    const recoverProcesses = vi.fn(() => {
+      forwardLive = false;
+    });
+    const ensureDashboard = vi.fn(() => {
+      forwardLive = true;
+      return 18789;
+    });
+    const verify = vi.fn(async () => ({ ok: forwardLive }));
+    const { deps } = createDeps({
+      checkAndRecoverSandboxProcesses: recoverProcesses,
+      ensureAgentDashboardForward: ensureDashboard,
+      verifyDeployment: verify,
+      isDeploymentHealthy: vi.fn((result) => result.ok),
+    });
+
+    const result = await handleFinalizationState(baseOptions(deps));
+
+    expect(ensureDashboard).toHaveBeenCalledWith("my-assistant", null);
+    expect(ensureDashboard.mock.invocationCallOrder[0]).toBeGreaterThan(
+      recoverProcesses.mock.invocationCallOrder[1],
+    );
+    expect(ensureDashboard.mock.invocationCallOrder[0]).toBeLessThan(
+      verify.mock.invocationCallOrder[0],
+    );
+    expect(result.deploymentHealthy).toBe(true);
+    expect(result.stateResult.type).toBe("complete");
+  });
+
   it("ensures agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes" };
@@ -130,7 +200,36 @@ describe("handleFinalizationState", () => {
     expect(calls.ensureAgentDashboard.mock.invocationCallOrder[0]).toBeLessThan(
       calls.dashboard.mock.invocationCallOrder[0],
     );
-    expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, agent);
+    expect(calls.dashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      agent,
+      true,
+    );
+  });
+
+  it("rechecks gateway and forwarding after finalization work and before verification", async () => {
+    const { deps, calls } = createDeps();
+    const agent = { name: "openclaw" };
+
+    await handleFinalizationState({
+      ...baseOptions(deps),
+      agent,
+      webSearchEnabled: true,
+    });
+
+    const recoveryOrders = calls.recoverProcesses.mock.invocationCallOrder;
+    const refreshOrder = calls.ensureAgentDashboard.mock.invocationCallOrder[0];
+    expect(recoveryOrders).toHaveLength(2);
+    expect(recoveryOrders[1]).toBeGreaterThan(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]);
+    expect(recoveryOrders[1]).toBeGreaterThan(
+      calls.autoPairScopeApproval.mock.invocationCallOrder[0],
+    );
+    expect(recoveryOrders[1]).toBeGreaterThan(calls.verifyWebSearch.mock.invocationCallOrder[0]);
+    expect(refreshOrder).toBeGreaterThan(recoveryOrders[1]);
+    expect(refreshOrder).toBeLessThan(calls.verify.mock.invocationCallOrder[0]);
   });
 
   it("skips dashboard and gateway verification for terminal agents without forwards", async () => {

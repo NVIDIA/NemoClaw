@@ -13,6 +13,8 @@ on:
       - "README.md"
       - "package.json"
       - "package-lock.json"
+      - "scripts/generate-starter-prompt.mts"
+      - "scripts/sync-agent-variant-docs.mts"
       - ".github/workflows/docs-preview-pr.yaml"
 
 concurrency:
@@ -23,6 +25,9 @@ permissions:
   contents: read
   pull-requests: write
 
+env:
+  FERN_STAGING_INSTANCE: nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw
+
 jobs:
   preview:
     runs-on: ubuntu-latest
@@ -30,6 +35,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Check Fern preview availability
         id: fern-preview
@@ -44,15 +51,17 @@ jobs:
           fi
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
 
       - name: Install docs dependencies
         run: npm ci --ignore-scripts
 
-      - name: Validate docs
-        run: npm run docs
+      - name: Prepare and validate docs
+        run: |
+          npm run docs:prepare
+          npm run docs:validate
 
       - name: Generate preview URL
         if: ${{ steps.fern-preview.outputs.enabled == 'true' }}
@@ -61,10 +70,9 @@ jobs:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
           PREVIEW_ID: pr-${{ github.event.pull_request.number }}
         run: |
-          npm run docs:check-agent-variants
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
           set +e
-          OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --preview --id "$PREVIEW_ID" 2>&1)
+          OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE" --preview --id "$PREVIEW_ID" 2>&1)
           STATUS=$?
           set -e
           echo "$OUTPUT"
@@ -72,6 +80,19 @@ jobs:
           if [ -z "$URL" ]; then
             echo "::error::Failed to generate preview URL. See fern output above."
             exit "$STATUS"
+          fi
+          FERN_ORG=$(node -p "require('./fern/fern.config.json').organization")
+          INSTANCE_PATH="${FERN_STAGING_INSTANCE#*/}"
+          if [[ "$INSTANCE_PATH" == "$FERN_STAGING_INSTANCE" ]]; then
+            INSTANCE_PATH=""
+          else
+            INSTANCE_PATH="/${INSTANCE_PATH}"
+          fi
+          EXPECTED_BASE="https://${FERN_ORG}-preview-${PREVIEW_ID}.docs.buildwithfern.com${INSTANCE_PATH}"
+          EXPECTED_PREFIX="${EXPECTED_BASE}/"
+          if [[ "$URL" != "$EXPECTED_BASE" && "$URL" != "${EXPECTED_PREFIX}"* ]]; then
+            echo "::error::Preview URL must match ${EXPECTED_BASE} or start with ${EXPECTED_PREFIX}; got ${URL}."
+            exit 1
           fi
           echo "preview_url=$URL" >> "$GITHUB_OUTPUT"
 

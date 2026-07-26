@@ -1,0 +1,28 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.85
+
+NemoClaw v0.0.85 upgrades the supported OpenShell release, prepares qualified DGX Station hosts for express setup, strengthens inference identity and route changes, and improves recovery across onboarding, MCP, rebuild, and managed gateway operations.
+
+- NemoClaw now uses OpenShell v0.0.85 and pins its consumed release archives, manifests, binaries, and supervisor image to reviewed immutable identities.
+  The integration preserves multiline command arguments byte-for-byte, rejects supervisor TLS credentials that reach child processes, validates release archives before extraction, and reports unavailable credential rewriting with specific recovery guidance.
+  For more information, refer to [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- Authenticated MCP setup now rejects OpenShell's reserved revisioned credential names before provider mutation and keeps child-visible compatibility checks aligned with OpenShell v0.0.85.
+  MCP bridge validation also preserves fail-closed address pinning and reports credential-rewrite failures separately from generic transport errors.
+  For more information, refer to [About Managed MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/about-managed-mcp-servers), [Add an MCP Server](/user-guide/openclaw/manage-sandboxes/mcp-servers/add-an-mcp-server), and [Troubleshoot MCP Servers](/user-guide/openclaw/reference/troubleshoot-mcp-servers).
+- DGX Station GB300 express setup can prepare a qualified generic Ubuntu 24.04 ARM64 host with reviewed NVIDIA driver, Docker, Buildx, and NVIDIA Container Toolkit versions.
+  Preparation reuses exact matches, stops on unsupported version drift, validates CDI and GPU container access, restores Docker configuration after a failed runtime change, and resumes the accepted recipe after a required reboot.
+  DGX Station remains Deferred pending physical end-to-end validation, and the `--station-deepseek` express flag now requires an interactive terminal instead of silently continuing headlessly.
+  For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites), [NemoClaw Quickstart](/user-guide/openclaw/get-started/quickstart), and [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+- Managed and existing vLLM routes now distinguish a safe served-model alias from a model mismatch by requiring `/v1/models` to report the exact registered model as its root.
+  Managed Nemotron 3 Nano uses its reasoning parser, the Nemotron Ultra Build route removes an unsupported top-level thinking field, and inference switching verifies sandbox access before changing the live route.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation), and [Switch Models](/user-guide/openclaw/inference/manage-inference/switch-models).
+- Onboarding routes custom endpoint DNS failures through the transport recovery flow, with retry, back, and exit choices instead of returning silently to provider selection.
+  Installer upgrades also recover a user-local OpenShell installation, while interactive and non-interactive DGX Station notice handling remains explicit.
+  For more information, refer to [NemoClaw Quickstart](/user-guide/openclaw/get-started/quickstart), [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Rebuild now treats a backup as unsuccessful when every state directory fails, even if it captured loose files, and stops before deleting the original sandbox unless you explicitly accept the `--force` recovery path.
+  Managed gateway discovery ignores only descriptor-pinned, single-thread zombies while failing closed on ambiguous empty command lines, and Hermes shields transitions attest the private mutable runtime topology before acting.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Trusted Computing Base](/user-guide/openclaw/security/trusted-computing-base).

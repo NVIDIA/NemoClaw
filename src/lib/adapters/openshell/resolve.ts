@@ -4,6 +4,8 @@
 import { execSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 
+import { buildSubprocessEnv } from "../../subprocess-env";
+
 export interface ResolveOpenshellOptions {
   /** Mock result for `command -v` (undefined = run real command). */
   commandVResult?: string | null;
@@ -40,7 +42,10 @@ export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | n
   // Step 1: command -v
   if (opts.commandVResult === undefined) {
     try {
-      const found = execSync("command -v openshell", { encoding: "utf-8" }).trim();
+      const found = execSync("command -v openshell", {
+        encoding: "utf-8",
+        env: buildSubprocessEnv(),
+      }).trim();
       if (found.startsWith("/")) return found;
     } catch {
       /* ignored */

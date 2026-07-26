@@ -5,9 +5,14 @@ import { listAgents } from "../agent/defs";
 import { runOnboardCommand } from "../onboard/command";
 import type { OnboardFlags } from "../onboard/command-support";
 
-const { onboard: runOnboard } = require("../onboard") as {
-  onboard: (options?: unknown) => Promise<void>;
-};
+async function runOnboard(options?: unknown): Promise<void> {
+  // Keep the monolithic legacy onboarding graph lazy so command metadata/help
+  // imports do not execute it. Resolve it only when the user invokes onboard.
+  const { onboard } = (await import("../onboard")) as unknown as {
+    onboard: (onboardOptions?: unknown) => Promise<void>;
+  };
+  await onboard(options);
+}
 
 function buildOnboardCommandDeps(flags: OnboardFlags) {
   return {

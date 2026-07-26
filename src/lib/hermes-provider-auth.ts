@@ -47,6 +47,7 @@ export type HermesAuthMethod = "oauth" | "api_key";
 
 type RunOpenshellResult = {
   status?: number | null;
+  output?: string | Buffer | null;
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
 };
@@ -84,6 +85,31 @@ function agentKeyExpiresAt(minted: oauth.AgentKeyResponse): string | null {
 
 export function isHermesProviderRegistered(runOpenshell: RunOpenshell): boolean {
   return onboardProviders.providerExistsInGateway(HERMES_PROVIDER_NAME, runOpenshell);
+}
+
+export type HermesProviderBinding = {
+  exists: boolean;
+  credentialKeys: string[] | null;
+};
+
+export function inspectHermesProviderBinding(runOpenshell: RunOpenshell): HermesProviderBinding {
+  const result = runOpenshell(["provider", "get", HERMES_PROVIDER_NAME], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) return { exists: false, credentialKeys: null };
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}\n${result.output ?? ""}`;
+  const rawKeys = output.match(/Credential keys:\s*([^\r\n]+)/i)?.[1]?.trim();
+  if (!rawKeys) return { exists: true, credentialKeys: null };
+  if (rawKeys === "<none>") return { exists: true, credentialKeys: [] };
+  return {
+    exists: true,
+    credentialKeys: rawKeys
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .sort(),
+  };
 }
 
 export function registerHermesInferenceProvider(
@@ -206,6 +232,7 @@ module.exports = {
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
   AGENT_KEY_MIN_TTL_SECONDS,
   isHermesProviderRegistered,
+  inspectHermesProviderBinding,
   registerHermesInferenceProvider,
   ensureHermesProviderOAuthCredentials,
   ensureHermesProviderApiKeyCredentials,

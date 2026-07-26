@@ -1,0 +1,17 @@
+{
+  "$schema": "../schema.json",
+  "id": "gpt-5-o-series-managed-inference",
+  "agent": "openclaw",
+  "description": "Routes OpenClaw's reply budget to max_completion_tokens for GPT-5 and o1/o3/o4 model families on the managed inference.local chat completions route.",
+  "match": {
+    "modelIdPrefixes": ["gpt-5", "o1", "o3", "o4"],
+    "providerKey": "inference",
+    "inferenceApi": "openai-completions",
+    "baseUrl": "https://inference.local/v1"
+  },
+  "effects": {
+    "openclawCompat": {
+      "maxTokensField": "max_completion_tokens"
+    }
+  }
+}

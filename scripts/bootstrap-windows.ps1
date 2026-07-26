@@ -751,7 +751,7 @@ function Test-WslRepairOutputReportsForbidden {
     return $Output -match 'Forbidden\s*\(403\)'
 }
 
-function Test-WslRepairOutputRequiresReboot {
+function Test-WslOutputRequiresReboot {
     param([AllowNull()] [string]$Output)
 
     if (-not $Output) {
@@ -820,7 +820,7 @@ function Invoke-WslNoDistributionInstallRepair {
 
     if ($repairResult.ExitCode -eq 0) {
         Write-Status 'WSL repair command completed successfully.'
-        if (Test-WslRepairOutputRequiresReboot -Output $repairResult.Output) {
+        if (Test-WslOutputRequiresReboot -Output $repairResult.Output) {
             Request-Reboot
             return
         }
@@ -1113,31 +1113,174 @@ function Wait-WslDistroRegistrationOrInstallExit {
     }
 }
 
-function Write-WslInstallLog {
-    param([AllowNull()] [string]$LogPath)
+function Get-WslInstallLog {
+    param(
+        [AllowNull()] [string]$LogPath,
+        [switch]$SuppressWarnings
+    )
 
     if ([string]::IsNullOrWhiteSpace($LogPath)) {
-        return
+        return $null
     }
     if (-not (Test-Path -LiteralPath $LogPath)) {
-        return
+        return $null
     }
 
     try {
-        $log = Get-Content -LiteralPath $LogPath -Raw
+        return Get-Content -LiteralPath $LogPath -Raw
     } catch {
-        Write-Status -Level WARN "Could not read WSL install log: $($_.Exception.Message)"
-        return
+        if (-not $SuppressWarnings) {
+            Write-Status -Level WARN "Could not read WSL install log: $($_.Exception.Message)"
+        }
+        return $null
+    }
+}
+
+function Convert-WslInstallLogForDisplay {
+    param(
+        [AllowNull()] [string]$Log,
+        [AllowNull()] [string[]]$SensitivePaths = @()
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Log)) {
+        return $Log
     }
 
+    $redactedMarker = '[PowerShell transcript metadata redacted.]'
+    $lines = (($Log -replace "`r`n", "`n") -replace "`r", "`n") -split "`n"
+    $separatorPattern = '^[\s\uFEFF]*\*{6,}\s*$'
+    $firstSeparator = -1
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $separatorPattern) {
+            $firstSeparator = $i
+            break
+        }
+    }
+
+    if ($firstSeparator -lt 0) {
+        $transcriptEvidencePatterns = @(
+            '(?im)^\s*(?:Windows\s+)?PowerShell transcript (?:start|end)\s*$',
+            '(?i)\b(?:Start|Stop)-Transcript\b',
+            '(?i)\$transcriptStarted\b'
+        )
+        foreach ($pattern in $transcriptEvidencePatterns) {
+            if ($Log -match $pattern) {
+                return $redactedMarker
+            }
+        }
+        foreach ($path in $SensitivePaths) {
+            if (
+                -not [string]::IsNullOrWhiteSpace($path) -and
+                $Log.IndexOf($path, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            ) {
+                return $redactedMarker
+            }
+        }
+        return $Log
+    }
+
+    $headerEnd = -1
+    for ($i = $firstSeparator + 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $separatorPattern) {
+            $headerEnd = $i
+            break
+        }
+    }
+
+    if ($headerEnd -lt 0) {
+        return $redactedMarker
+    }
+
+    if (($headerEnd + 1) -lt $lines.Count) {
+        $bodyLines = @($lines[($headerEnd + 1)..($lines.Count - 1)])
+    } else {
+        $bodyLines = @()
+    }
+
+    $bodySeparators = @()
+    for ($i = 0; $i -lt $bodyLines.Count; $i++) {
+        if ($bodyLines[$i] -match $separatorPattern) {
+            $bodySeparators += $i
+        }
+    }
+
+    $footerStart = -1
+    if ($bodySeparators.Count -ge 2) {
+        $footerStart = $bodySeparators[$bodySeparators.Count - 2]
+    } elseif ($bodySeparators.Count -eq 1) {
+        $footerStart = $bodySeparators[0]
+    }
+
+    if ($footerStart -ge 0) {
+        if ($footerStart -eq 0) {
+            $bodyLines = @()
+        } else {
+            $bodyLines = @($bodyLines[0..($footerStart - 1)])
+        }
+    }
+
+    $filteredBodyLines = @()
+    foreach ($line in $bodyLines) {
+        $containsSensitivePath = $false
+        foreach ($path in $SensitivePaths) {
+            if (
+                -not [string]::IsNullOrWhiteSpace($path) -and
+                $line.IndexOf($path, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            ) {
+                $containsSensitivePath = $true
+                break
+            }
+        }
+        if (-not $containsSensitivePath) {
+            $filteredBodyLines += $line
+        }
+    }
+    $bodyLines = $filteredBodyLines
+
+    $bodyStart = 0
+    $bodyEnd = $bodyLines.Count - 1
+    while ($bodyStart -le $bodyEnd -and [string]::IsNullOrWhiteSpace($bodyLines[$bodyStart])) {
+        $bodyStart++
+    }
+    while ($bodyEnd -ge $bodyStart -and [string]::IsNullOrWhiteSpace($bodyLines[$bodyEnd])) {
+        $bodyEnd--
+    }
+    if ($bodyStart -le $bodyEnd) {
+        $bodyLines = @($bodyLines[($bodyStart)..($bodyEnd)])
+    } else {
+        $bodyLines = @()
+    }
+
+    return (@($redactedMarker) + $bodyLines) -join "`n"
+}
+
+function Write-WslInstallLog {
+    param(
+        [AllowNull()] [string]$LogPath,
+        [AllowNull()] [string]$StatusPath
+    )
+
+    $log = Get-WslInstallLog -LogPath $LogPath
     if ([string]::IsNullOrWhiteSpace($log)) {
+        return
+    }
+    $displayLog = Convert-WslInstallLogForDisplay -Log $log -SensitivePaths @($StatusPath, $LogPath)
+    if ([string]::IsNullOrWhiteSpace($displayLog)) {
         return
     }
 
     Write-Host ''
     Write-Host 'WSL install output:' -ForegroundColor Yellow
-    Write-NativeOutput -Value $log
+    Write-NativeOutput -Value $displayLog
     Write-Host ''
+}
+
+function Test-WslInstallLogRequiresReboot {
+    param([AllowNull()] [string]$LogPath)
+
+    $log = Get-WslInstallLog -LogPath $LogPath -SuppressWarnings
+    return Test-WslOutputRequiresReboot -Output $log
 }
 
 function Remove-WslInstallArtifacts {
@@ -1228,7 +1371,7 @@ function Ensure-UbuntuWsl {
         $registrationResult = Wait-WslDistroRegistrationOrInstallExit -Name $DistroName -StatusPath $installResult.StatusPath
 
         if ($null -ne $registrationResult.ExitCode -and $registrationResult.ExitCode -ne 0) {
-            Write-WslInstallLog -LogPath $installResult.LogPath
+            Write-WslInstallLog -LogPath $installResult.LogPath -StatusPath $installResult.StatusPath
             Remove-WslInstallArtifacts -StatusPath $installResult.StatusPath -LogPath $installResult.LogPath
             $installArtifactsRemoved = $true
             Write-WslUbuntuRequiredNotice -Name $DistroName
@@ -1237,13 +1380,20 @@ function Ensure-UbuntuWsl {
 
         if (-not $registrationResult.Registered) {
             if ($null -ne $registrationResult.ExitCode) {
-                Write-WslInstallLog -LogPath $installResult.LogPath
+                $installRequiresReboot = Test-WslInstallLogRequiresReboot -LogPath $installResult.LogPath
+                Write-WslInstallLog -LogPath $installResult.LogPath -StatusPath $installResult.StatusPath
                 Remove-WslInstallArtifacts -StatusPath $installResult.StatusPath -LogPath $installResult.LogPath
                 $installArtifactsRemoved = $true
                 Write-Status -Level WARN "$DistroName install command completed, but the distro is not registered yet."
-                Write-Status -Level WARN 'A reboot is required before WSL can finish registering the distro.'
-                Request-Reboot
-                return
+                if ($installRequiresReboot) {
+                    Write-Status -Level WARN 'A reboot is required before WSL can finish registering the distro.'
+                    Request-Reboot
+                    return
+                }
+
+                Write-Status -Level WARN 'The install output did not report that a reboot is required.'
+                Write-WslUbuntuRequiredNotice -Name $DistroName
+                throw "WSL distro '$DistroName' is still not registered after install."
             }
 
             Remove-WslInstallArtifacts -StatusPath $installResult.StatusPath -LogPath $installResult.LogPath

@@ -3,7 +3,8 @@
 
 // Source-of-truth boundary for the `nemoclaw <name> agent` passthrough.
 //
-// The wrapper enforces three host-side mirrors of upstream contracts:
+// The wrapper enforces three host-side mirrors of upstream contracts, one
+// advisory diagnostic, and one best-effort pre-dispatch recovery:
 //
 // 1. Agent-kind guard (registry mirror).
 //
@@ -67,6 +68,16 @@
 //      selector case is intercepted; everything else still flows through to
 //      the in-sandbox binary.
 //
+// 4. Recent shields-relock diagnostic (advisory audit mirror). Its complete
+//    source-boundary analysis lives with the focused implementation in
+//    `passthrough-shields-warning.ts`.
+//
+// 5. Ollama restart recovery (best-effort lifecycle bridge). Ollama owns model
+//    runner lifetime, while NemoClaw owns the registered route and dispatch
+//    ordering. The focused source-boundary analysis, reporting, and regression
+//    coverage live in `ollama-restart-recovery.ts` and
+//    `passthrough-ollama-recovery.ts`.
+//
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
 // forwarded argv, the registry-miss fallback to OpenClaw, registry and
 // manifest-resolution fail-closed paths, quoted manifest command rejection,
@@ -74,7 +85,8 @@
 // unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
 // the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
 // captured transport path used to append failure provenance without polluting
-// machine-readable stdout.
+// machine-readable stdout. The focused shields and Ollama modules own their
+// diagnostic and recovery tests.
 //
 // Removal conditions:
 //
@@ -86,15 +98,20 @@
 //     missing selector with a clean exit 2 and an actionable message.
 //   - Drop the simple-token parser when terminal runtime manifests expose
 //     argv arrays natively.
+//   - Drop Ollama pre-dispatch recovery when supported daemon restarts preserve
+//     loaded runners or NemoClaw manages and warms the daemon lifecycle.
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
+import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
+import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
+import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
 export {
   hasAgentPassthroughHelpToken,
@@ -127,6 +144,8 @@ export interface AgentPassthroughDeps {
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
+  runOllamaRestartRecovery?: typeof runOllamaRestartRecovery;
+  getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
   process?: {
     exit(code: number): never;
     stdout?: { write(s: string): unknown };
@@ -136,7 +155,13 @@ export interface AgentPassthroughDeps {
 
 type RegistryReadResult =
   | { kind: "missing" }
-  | { kind: "agent"; agent: string | null }
+  | {
+      kind: "agent";
+      agent: string | null;
+      provider: string | null;
+      model: string | null;
+      endpointUrl: string | null;
+    }
   | { kind: "error"; message: string };
 type ResolvedRegistryReadResult = Exclude<RegistryReadResult, { kind: "error" }>;
 type TerminalCommandResult =
@@ -150,7 +175,13 @@ function readSandboxAgentFromRegistry(
   try {
     const sandbox = getSandbox(sandboxName);
     if (!sandbox) return { kind: "missing" };
-    return { kind: "agent", agent: sandbox.agent ?? null };
+    return {
+      kind: "agent",
+      agent: sandbox.agent ?? null,
+      provider: sandbox.provider ?? null,
+      model: sandbox.model ?? null,
+      endpointUrl: sandbox.endpointUrl ?? null,
+    };
   } catch (error) {
     return { kind: "error", message: (error as Error).message ?? String(error) };
   }
@@ -299,9 +330,11 @@ function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
   // a value by another OpenClaw option. Source boundary: upstream OpenClaw owns
   // the complete argv grammar; NemoClaw mirrors documented flags only to choose
   // the host transport path. Unknown options fail conservative to normal
-  // passthrough, where OpenClaw parses argv itself. Regression tests cover each
-  // documented value flag, documented equals-form value flags, documented
-  // boolean flags, unknown flag fallback, and the `--` terminator. Removal
+  // passthrough, where OpenClaw parses argv itself. Any newly documented value
+  // flag, including a `--json-*` name, must be added to the value-flag set and
+  // its tests together. Regression tests cover each documented value flag,
+  // documented equals-form value flags, documented boolean flags, unknown flag
+  // fallback, and the `--` terminator. Removal
   // condition: OpenClaw exposes a machine-readable argv schema or NemoClaw stops
   // special-casing the JSON transport path.
   let skipNextValue = false;
@@ -413,6 +446,13 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);
+  }
+  if (isOpenClawPassthroughCommand(command)) {
+    if (lookup.kind === "agent" && lookup.provider === OLLAMA_LOCAL_PROVIDER) {
+      const recoverOllama = deps.runOllamaRestartRecovery ?? runOllamaRestartRecovery;
+      recoverOllama(lookup, proc);
+    }
+    maybeEmitShieldsRelockWarning(proc, sandboxName, deps.getRecentShieldsAutoRestore);
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;

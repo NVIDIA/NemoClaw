@@ -81,6 +81,20 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
+  it("does not report rollback success when restarting the backup has no exit status", () => {
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: false },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: null, error: new Error("spawn timed out") })),
+      },
+    );
+
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+  });
+
   it("is a no-op when the backup was already removed by the patch helper", () => {
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const result = { ...deferredCreateResult(), backupRemoved: true };
@@ -103,5 +117,42 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "openshell-alpha-nemoclaw-gpu-backup-1780491860342",
       expect.objectContaining({ ignoreError: true }),
     );
+  });
+
+  it("fails closed when backup removal has no exit status", () => {
+    const dockerRm = vi.fn((_name: string) => ({ status: null, stderr: "timed out" }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: true },
+      { dockerRm },
+    );
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+  });
+
+  it("stops rollback before start when rename has no exit status", () => {
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: false },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRename: vi.fn(() => ({ status: null })),
+        dockerStart,
+      },
+    );
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when rollback start has no exit status", () => {
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: false },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: null })),
+      },
+    );
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
   });
 });

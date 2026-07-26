@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,13 +10,19 @@ import {
   collectDocsVersionSegments,
   parseArgs,
   rewriteDocsPublicUrls,
-} from "../scripts/bump-version";
+} from "../scripts/bump-version.mts";
 
 describe("bump-version release contract", () => {
   it("rejects removed release PR flags", () => {
     for (const flag of ["--create-pr", "--no-create-pr", "--branch=release/1.2.3"]) {
       expect(() => parseArgs(["1.2.3", flag])).toThrow(`Unknown flag: ${flag}`);
     }
+  });
+
+  it("has no reachable scripts/bump-version.ts entrypoint left behind by the .mts migration", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    expect(existsSync(path.join(repoRoot, "scripts", "bump-version.ts"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "scripts", "bump-version.mts"))).toBe(true);
   });
 
   it("builds semver-tag-only push args without latest", () => {

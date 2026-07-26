@@ -8,7 +8,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { handleOllamaProbeFailure } from "./ollama-probe-failure";
+import {
+  completeOllamaRuntimeContextSelection,
+  handleOllamaProbeFailure,
+} from "./ollama-probe-failure";
 
 describe("handleOllamaProbeFailure (#4365)", () => {
   let originalProvider: string | undefined;
@@ -158,6 +161,89 @@ describe("handleOllamaProbeFailure (#4365)", () => {
       logSpy.mockRestore();
       exitSpy.mockRestore();
       restore();
+    }
+  });
+});
+
+describe("completeOllamaRuntimeContextSelection (#6760)", () => {
+  const selected = {
+    outcome: "selected" as const,
+    model: "qwen3.5:9b",
+    allowToolsIncompatible: false,
+  };
+
+  it("preserves a selected model when the runtime context is valid", () => {
+    expect(completeOllamaRuntimeContextSelection({ ok: true }, selected, () => false)).toEqual(
+      selected,
+    );
+  });
+
+  it("returns to provider selection after an interactive runtime context failure", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      expect(
+        completeOllamaRuntimeContextSelection(
+          { ok: false, message: "restart Ollama with OLLAMA_CONTEXT_LENGTH=64000" },
+          selected,
+          () => false,
+        ),
+      ).toEqual({ outcome: "back-to-selection" });
+      expect(errSpy).toHaveBeenCalledWith("  restart Ollama with OLLAMA_CONTEXT_LENGTH=64000");
+      expect(logSpy).toHaveBeenCalledWith("  Returning to provider selection.");
+    } finally {
+      errSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("aborts non-interactive runs after a runtime context failure", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    }) as never);
+
+    try {
+      expect(() =>
+        completeOllamaRuntimeContextSelection(
+          { ok: false, message: "restart Ollama with OLLAMA_CONTEXT_LENGTH=64000" },
+          selected,
+          () => true,
+        ),
+      ).toThrow(/process\.exit:1/);
+      expect(errSpy).toHaveBeenCalledWith(
+        "  [non-interactive] Aborting: restart Ollama with OLLAMA_CONTEXT_LENGTH=64000",
+      );
+    } finally {
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it("exits pinned interactive runs after a runtime context failure", () => {
+    vi.stubEnv("NEMOCLAW_PROVIDER", "ollama");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    }) as never);
+
+    try {
+      expect(() =>
+        completeOllamaRuntimeContextSelection(
+          { ok: false, message: "restart Ollama with OLLAMA_CONTEXT_LENGTH=64000" },
+          selected,
+          () => false,
+        ),
+      ).toThrow(/process\.exit:1/);
+      expect(errSpy).toHaveBeenCalledWith("  restart Ollama with OLLAMA_CONTEXT_LENGTH=64000");
+      expect(logSpy).not.toHaveBeenCalledWith("  Returning to provider selection.");
+    } finally {
+      errSpy.mockRestore();
+      logSpy.mockRestore();
+      exitSpy.mockRestore();
+      vi.unstubAllEnvs();
     }
   });
 });

@@ -25,6 +25,9 @@ export async function setupOllamaLocalInference(
     persistAndProbeOllamaProxy,
     localInference,
     OLLAMA_PROXY_CREDENTIAL_ENV,
+    exitProcess,
+    error,
+    log,
   } = deps;
 
   const validation = validateLocalProvider(provider);
@@ -50,16 +53,14 @@ export async function setupOllamaLocalInference(
           "The sandbox uses a different network path and may work correctly.",
       );
     } else {
-      console.error(`  ${validation.message}`);
+      error(`  ${validation.message}`);
       if (validation.diagnostic) {
-        console.error(`  Diagnostic: ${validation.diagnostic}`);
+        error(`  Diagnostic: ${validation.diagnostic}`);
       }
       if (process.platform === "darwin") {
-        console.error(
-          "  On macOS, local inference also depends on OpenShell host routing support.",
-        );
+        error("  On macOS, local inference also depends on OpenShell host routing support.");
       }
-      process.exit(1);
+      return exitProcess(1);
     }
   }
   const baseUrl = getLocalProviderBaseUrl(provider);
@@ -69,10 +70,8 @@ export async function setupOllamaLocalInference(
     if (!proxyReady) ensureOllamaAuthProxy();
     const proxyToken = getOllamaProxyToken();
     if (!proxyToken) {
-      console.error(
-        "  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.",
-      );
-      process.exit(1);
+      error("  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.");
+      return exitProcess(1);
     }
     ollamaCredential = proxyToken;
     // Persist token now that ollama-local is confirmed as the provider.
@@ -91,18 +90,18 @@ export async function setupOllamaLocalInference(
     { [OLLAMA_PROXY_CREDENTIAL_ENV]: ollamaCredential },
   );
   if (!providerResult.ok) {
-    console.error(`  ${providerResult.message}`);
-    process.exit(providerResult.status || 1);
+    error(`  ${providerResult.message}`);
+    return exitProcess(providerResult.status || 1);
   }
   if (await applyLocalInferenceRoute("ollama-local", model)) {
     return { done: true, result: { retry: "selection" } };
   }
-  console.log(`  Priming Ollama model: ${model}`);
+  log(`  Priming Ollama model: ${model}`);
   run(getOllamaWarmupCommand(model), { ignoreError: true });
   const probe = localInference.validateOllamaModelWithToolsOverride(model, allowToolsIncompatible);
   if (!probe.ok) {
-    console.error(`  ${probe.message}`);
-    process.exit(1);
+    error(`  ${probe.message}`);
+    return exitProcess(1);
   }
   // Do not mutate ~/.nemoclaw/credentials.json here: local Ollama now uses
   // OLLAMA_PROXY_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available

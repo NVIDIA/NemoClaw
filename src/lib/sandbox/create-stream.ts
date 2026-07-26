@@ -3,7 +3,17 @@
 
 import { type SpawnOptions, spawn } from "node:child_process";
 
+import { redact } from "../security/redact";
 import { ROOT } from "../state/paths";
+import {
+  BUILD_PROGRESS_PATTERNS,
+  type CreatePhase,
+  matchesAny,
+  PULL_PROGRESS_PATTERNS,
+  UPLOAD_PROGRESS_PATTERNS,
+  VISIBLE_PROGRESS_PATTERNS,
+} from "./create-stream-progress";
+import { getReadyCheckOutputPatterns } from "./create-stream-ready-gate";
 
 export interface StreamSandboxCreateResult {
   status: number;
@@ -14,6 +24,9 @@ export interface StreamSandboxCreateResult {
 
 export interface StreamSandboxCreateOptions {
   readyCheck?: (() => boolean) | null;
+  // Optional poll side effect. Must be paired with failureCheck so any
+  // observed side-effect error has an authoritative terminal-state classifier.
+  onPoll?: (() => void) | null;
   failureCheck?: (() => string | null | undefined) | null;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
@@ -54,81 +67,45 @@ export interface StreamableChildProcess {
   on(event: "close", listener: (code: number | null) => void): this;
 }
 
-export const BUILD_PROGRESS_PATTERNS: readonly RegExp[] = [
-  /^ {2}Building image /,
-  /^ {2}Step \d+\/\d+ : /,
-  /^#\d+ \[/,
-  /^#\d+ (DONE|CACHED)\b/,
-];
-
-const UPLOAD_PROGRESS_PATTERNS: readonly RegExp[] = [
-  /^ {2}Pushing image /,
-  /^\s*\[progress\]/,
-  /^\s*(?:✓\s*)?Image .*available in the gateway/,
-];
-
-// Pull-phase indicators. Detect classic Docker pull output (`<tag>: Pulling
-// from <ref>`, `<id>: Pulling fs layer / Downloading / Extracting / Pull
-// complete`, `Status: Downloaded`, `Digest:`) plus BuildKit pull progress
-// (`#N resolve <ref>`, `#N sha256:<id> <size> / <total>`). The tag prefix
-// regex uses [^:\s]+ so non-lowercase tags (`v1.2.3`, `cuda-12.5`, `12.4`)
-// also match. See #1829.
-const PULL_PROGRESS_PATTERNS: readonly RegExp[] = [
-  /^\s*(?:[^:\s]+:\s+)?Pulling from \S+/,
-  /^\s*[a-f0-9]{6,}: (?:Pulling fs layer|Waiting|Downloading|Extracting|Pull complete|Verifying Checksum|Download complete)\b/,
-  /^\s*Status: (?:Downloaded|Image is up to date)/,
-  /^\s*Digest: sha256:[a-f0-9]{8,}/,
-  /^\s*#\d+\s+(?:resolve\s+\S+|sha256:[a-f0-9]+\s+[\d.]+\s*(?:B|KB|MB|GB)\s*\/)/,
-];
-
-const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
-  ...BUILD_PROGRESS_PATTERNS,
-  /^ {2}Context: /,
-  /^ {2}Gateway: /,
-  /^Successfully built /,
-  /^Successfully tagged /,
-  /^ {2}Built image /,
-  ...UPLOAD_PROGRESS_PATTERNS,
-  ...PULL_PROGRESS_PATTERNS,
-  /^Created sandbox: /,
-  /^Creating sandbox/i,
-  /^Starting sandbox/i,
-  /^✓ /,
-];
-
-const VM_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
 const CLASSIC_DOCKER_STEP_RE = /^\s*Step (\d+)\/(\d+) : (.+)$/;
 const BUILDKIT_STEP_RE = /^#(\d+)\s+(.+)$/;
 
-function matchesAny(line: string, patterns: readonly RegExp[]) {
-  return patterns.some((pattern) => pattern.test(line));
-}
-
-function selectedDrivers(env: NodeJS.ProcessEnv): string[] {
-  const raw =
-    env.OPENSHELL_DRIVERS ??
-    process.env.OPENSHELL_DRIVERS ??
-    (process.platform === "darwin" ? "vm" : "docker");
-  return raw
-    .split(",")
-    .map((driver) => driver.trim())
-    .filter(Boolean);
-}
-
-function getReadyCheckOutputPatterns(
-  env: NodeJS.ProcessEnv,
-  patterns: readonly RegExp[] | undefined,
-): readonly RegExp[] {
-  if (patterns) return patterns;
-  return selectedDrivers(env).includes("vm") ? VM_READY_DETACH_OUTPUT_PATTERNS : [];
-}
-
+/**
+ * @deprecated Prefer the argv overload `streamSandboxCreate(command, args, env, options)` for
+ * trusted create paths. This legacy overload preserves shell-compatible callers by executing
+ * `bash -lc <command>`, so callers must not include unquoted user-controlled input. Remove
+ * this transitional overload in the #6258 follow-up once external callers have migrated.
+ */
 export function streamSandboxCreate(
   command: string,
-  env: NodeJS.ProcessEnv = process.env,
-  options: StreamSandboxCreateOptions = {},
+  env?: NodeJS.ProcessEnv,
+  options?: StreamSandboxCreateOptions,
+): Promise<StreamSandboxCreateResult>;
+export function streamSandboxCreate(
+  command: string,
+  args: readonly string[],
+  env?: NodeJS.ProcessEnv,
+  options?: StreamSandboxCreateOptions,
+): Promise<StreamSandboxCreateResult>;
+export function streamSandboxCreate(
+  command: string,
+  argsOrEnv: readonly string[] | NodeJS.ProcessEnv = process.env,
+  envOrOptions: NodeJS.ProcessEnv | StreamSandboxCreateOptions | undefined = undefined,
+  maybeOptions: StreamSandboxCreateOptions = {},
 ): Promise<StreamSandboxCreateResult> {
-  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)("bash", ["-lc", command], {
+  const hasArgs = Array.isArray(argsOrEnv);
+  const commandArgs = hasArgs ? argsOrEnv : ["-lc", command];
+  const spawnCommand = hasArgs ? command : "bash";
+  const env = hasArgs
+    ? ((envOrOptions ?? process.env) as NodeJS.ProcessEnv)
+    : (argsOrEnv as NodeJS.ProcessEnv);
+  const options = hasArgs ? maybeOptions : ((envOrOptions ?? {}) as StreamSandboxCreateOptions);
+  if (options.onPoll && !options.failureCheck) {
+    throw new Error(
+      "streamSandboxCreate onPoll requires failureCheck (e.g., dockerGpuCreatePatch.createFailureMessage)",
+    );
+  }
+  const child: StreamableChildProcess = (options.spawnImpl ?? spawn)(spawnCommand, commandArgs, {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -137,7 +114,7 @@ export function streamSandboxCreate(
   const logLine = options.logLine ?? console.log;
   const traceEvent = options.traceEvent ?? (() => {});
   const lines: string[] = [];
-  let pending = "";
+  const pending = { stdout: "", stderr: "" };
   let lastPrintedLine = "";
   let sawProgress = false;
   const readyCheckOutputPatterns = getReadyCheckOutputPatterns(
@@ -153,7 +130,6 @@ export function streamSandboxCreate(
   const silentPhaseMs = options.silentPhaseMs || 15000;
   const startedAt = Date.now();
   let lastOutputAt = startedAt;
-  type CreatePhase = "pull" | "build" | "upload" | "create" | "ready";
 
   let currentPhase: CreatePhase | null = null;
   let lastHeartbeatPhase: CreatePhase | null = null;
@@ -337,24 +313,26 @@ export function streamSandboxCreate(
     return matchesAny(line, VISIBLE_PROGRESS_PATTERNS);
   }
 
-  function onChunk(chunk: Buffer | string) {
-    pending += chunk.toString();
-    const parts = pending.split("\n");
-    pending = parts.pop() ?? "";
+  function onChunk(stream: keyof typeof pending, chunk: Buffer | string) {
+    pending[stream] += chunk.toString();
+    const parts = pending[stream].split("\n");
+    pending[stream] = parts.pop() ?? "";
     parts.forEach(flushLine);
   }
 
-  function flushPendingLine() {
-    if (!pending) return;
-    const trailing = pending;
-    pending = "";
-    flushLine(trailing);
+  function flushPendingLines() {
+    for (const stream of ["stdout", "stderr"] as const) {
+      if (!pending[stream]) continue;
+      const trailing = pending[stream];
+      pending[stream] = "";
+      flushLine(trailing);
+    }
   }
 
   function finish(status: number, overrides: Partial<StreamSandboxCreateResult> = {}) {
     if (settled) return;
     settled = true;
-    flushPendingLine();
+    flushPendingLines();
     if (!buildTimingFinished && buildStartedAtMs !== null) {
       finishBuildTiming(status === 0 ? "completed" : "stopped");
     }
@@ -378,8 +356,8 @@ export function streamSandboxCreate(
     child.unref?.();
   }
 
-  child.stdout?.on("data", onChunk);
-  child.stderr?.on("data", onChunk);
+  child.stdout?.on("data", (chunk) => onChunk("stdout", chunk));
+  child.stderr?.on("data", (chunk) => onChunk("stderr", chunk));
 
   const readyTimer = options.readyCheck
     ? setInterval(() => {
@@ -389,7 +367,10 @@ export function streamSandboxCreate(
           let ready = false;
           try {
             ready = !!options.readyCheck?.();
-          } catch {
+          } catch (error) {
+            emitTraceEvent("sandbox_create_ready_check_error", {
+              message: redact(error instanceof Error ? error.message : String(error)),
+            });
             return;
           }
           if (ready) {
@@ -418,7 +399,17 @@ export function streamSandboxCreate(
             return;
           }
 
-          const failure = options.failureCheck?.();
+          let pollFailure: string | null | undefined;
+          try {
+            options.onPoll?.();
+          } catch (error) {
+            emitTraceEvent("sandbox_create_poll_error", {
+              message: redact(error instanceof Error ? error.message : String(error)),
+            });
+            pollFailure = options.failureCheck?.() ?? "Sandbox create poll side effect failed.";
+          }
+
+          const failure = pollFailure ?? options.failureCheck?.();
           if (!failure) return;
           const detail = String(failure);
           lines.push(detail);
@@ -480,7 +471,7 @@ export function streamSandboxCreate(
     child.on("close", (code) => {
       // One last ready-check: the sandbox may have become Ready between the
       // last poll tick and the stream exit (e.g. SSH 255 after "Created sandbox:").
-      flushPendingLine();
+      flushPendingLines();
       if (code && code !== 0 && options.readyCheck) {
         try {
           if (options.readyCheck() && readyCheckOutputMatched) {

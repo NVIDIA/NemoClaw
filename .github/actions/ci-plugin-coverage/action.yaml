@@ -8,7 +8,7 @@ runs:
   using: composite
   steps:
     - name: Setup Node.js
-      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: "22"
         cache: npm
@@ -29,8 +29,13 @@ runs:
           --coverage.reporter=cobertura \
           --coverage.reportsDirectory=coverage/plugin \
           --coverage.include="nemoclaw/src/**/*.ts" \
+          --coverage.include="nemoclaw/src/**/*.cts" \
           --coverage.exclude="**/*.test.ts"
-        npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
+        coverage_ratchet=scripts/check-coverage-ratchet.mts
+        if [ ! -f "$coverage_ratchet" ]; then
+          coverage_ratchet=scripts/check-coverage-ratchet.ts
+        fi
+        npx tsx "$coverage_ratchet" coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
 
     - name: Upload plugin coverage report
       if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}

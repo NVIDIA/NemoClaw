@@ -1,25 +1,47 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { dockerRmi } from "../../adapters/docker/image";
 import {
   detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
-import { ensureAgentBaseImage } from "../../agent/onboard";
+import { loadAgent } from "../../agent/defs";
+import {
+  bindLocalAgentBaseImageHandoffToResolution,
+  bindLocalAgentBaseImageToPinnedProvenance,
+  ensureAgentBaseImage,
+  getAgentSandboxBaseImageEnvVar,
+  pinAgentSandboxBaseImageRef,
+  pinTrustedAgentBaseImageOverrideForOperation,
+  pinTrustedAgentRemoteBaseImageOverrideForOperation,
+} from "../../agent/onboard";
+import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import {
+  BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+  BACKUP_FAILURE_PERMISSION_DENIED,
+  formatFailedBackupItems,
+} from "../../domain/backup-failure";
+import {
+  getNamedGatewayLifecycleState,
+  recoverNamedGatewayRuntime,
+} from "../../gateway-runtime-action";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
+import {
+  parseContentAddressedSandboxBaseImageId,
+  type SandboxBaseImageResolutionMetadata,
+  type TrustedLocalBaseImageOverride,
+} from "../../sandbox-base-image";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
-import { loadAgent } from "../../agent/defs";
-import { CLI_NAME } from "../../cli/branding";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   getReconciledSandboxGatewayState,
   printGatewayLifecycleHint,
@@ -33,6 +55,100 @@ export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
 };
+
+export type RebuildAgentBaseImageOptions = {
+  resolutionHint?: SandboxBaseImageResolutionMetadata | null;
+  forceBaseImageRefresh?: boolean;
+};
+
+export type RebuildAgentBaseImagePreflight = {
+  ok: boolean;
+  imageRef: string | null;
+  overrideEnvVar: string | null;
+  resolutionMetadata?: SandboxBaseImageResolutionMetadata;
+  disposeImageRef?: () => boolean;
+  trustedLocalOverride?: TrustedLocalBaseImageOverride;
+  trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
+};
+
+const rebuildAgentBaseImageDisposalResults = new WeakMap<RebuildAgentBaseImagePreflight, boolean>();
+
+function isCanonicalLocalBaseImageRef(agentName: string, imageRef: string): boolean {
+  const escapedAgentName = agentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^nemoclaw-${escapedAgentName}-sandbox-base-local:image-[0-9a-f]{64}$`,
+    "i",
+  ).test(imageRef);
+}
+
+function isImmutableRemoteBaseImageRef(imageRef: string): boolean {
+  return /^[^\s@]+@sha256:[0-9a-f]{64}$/i.test(imageRef);
+}
+
+export function disposeRebuildAgentBaseImagePreflight(
+  preflight: RebuildAgentBaseImagePreflight | null | undefined,
+): boolean {
+  if (!preflight?.disposeImageRef) return true;
+  const priorResult = rebuildAgentBaseImageDisposalResults.get(preflight);
+  if (priorResult === true) return true;
+  const result = preflight.disposeImageRef();
+  if (result) rebuildAgentBaseImageDisposalResults.set(preflight, true);
+  return result;
+}
+
+function createTemporaryBaseImageHandoffDisposer(imageRef: string): () => boolean {
+  let removed = false;
+  const dispose = (): boolean => {
+    if (removed) return true;
+    try {
+      const removal = dockerRmi(imageRef, {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      if (!removal.error && removal.status === 0) {
+        removed = true;
+        process.removeListener("exit", dispose);
+        return true;
+      }
+    } catch {
+      // The caller reports the safe cleanup warning and can retry.
+    }
+    return false;
+  };
+  process.on("exit", dispose);
+  return dispose;
+}
+
+/**
+ * Select, health-check, and process-pin the gateway recorded for this sandbox
+ * before any provider or credential preflight. OpenShell's global selection is
+ * shared mutable metadata; OPENSHELL_GATEWAY keeps every later subprocess in
+ * this rebuild on the target even if another process selects a sibling gateway.
+ */
+export async function ensureRebuildTargetGatewaySelected(
+  sandboxName: string,
+  sb: RebuildSandboxEntry,
+  log: (message: string) => void,
+  bail: (message: string, code?: number) => never,
+): Promise<boolean> {
+  const gatewayName = resolveSandboxGatewayName(sb);
+  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  if (!recovery.recovered || recovery.after.state !== "healthy_named") {
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} could not select the target gateway '${gatewayName}'.`,
+    );
+    console.error(
+      `  Gateway state before: ${recovery.before.state}; after: ${recovery.after.state}.`,
+    );
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(`Could not select healthy gateway '${gatewayName}' for sandbox '${sandboxName}'`);
+    return false;
+  }
+  process.env.OPENSHELL_GATEWAY = gatewayName;
+  log(`Pinned rebuild subprocesses to target gateway '${gatewayName}'`);
+  return true;
+}
 
 export async function resolveRebuildLiveState(
   sandboxName: string,
@@ -49,7 +165,9 @@ export async function resolveRebuildLiveState(
   log(
     `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
   );
-  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive);
+  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive, {
+    gatewayName: recordedGateway,
+  });
   if (liveListIssue) {
     printOpenShellStateRpcIssue(liveListIssue, {
       action: `rebuilding sandbox '${sandboxName}'`,
@@ -136,9 +254,9 @@ export async function resolveRebuildLiveState(
 
 export function openRebuildShieldsWindowForState(
   sandboxName: string,
-  staleRecovery: boolean,
+  recoveryRecreate: boolean,
 ): { rebuildShieldsWindow: RebuildShieldsWindow | null; staleSandboxWasLocked: boolean } {
-  if (staleRecovery) {
+  if (recoveryRecreate) {
     return {
       staleSandboxWasLocked: !shields.isShieldsDown(sandboxName),
       rebuildShieldsWindow: { relocked: false, wasLocked: false },
@@ -153,12 +271,122 @@ export function openRebuildShieldsWindowForState(
 export function ensureRebuildAgentBaseImage(
   rebuildAgent: string | null,
   bail: (msg: string, code?: number) => never,
-): boolean {
-  if (!rebuildAgent) return true;
+  options: RebuildAgentBaseImageOptions = {},
+): RebuildAgentBaseImagePreflight {
+  if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
   const agentDef = loadAgent(rebuildAgent);
+  const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
+  const explicitOverride = process.env[overrideEnvVar]?.trim();
+  const hasExplicitOverride = Boolean(explicitOverride);
   try {
-    ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
-    return true;
+    // Prove that a retained local alias names the tracked official image before
+    // the resolver sees it, and lease that proof only for this resolution call.
+    // Arbitrary local overrides still fail closed in resolveSandboxBaseImage.
+    const explicitOverrideResolution = explicitOverride
+      ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, explicitOverride)
+      : null;
+    const restoreExplicitOverrideTrust =
+      explicitOverride && explicitOverrideResolution
+        ? pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, {
+            ref: explicitOverride,
+            resolutionMetadata: explicitOverrideResolution,
+          })
+        : () => undefined;
+    let result: ReturnType<typeof ensureAgentBaseImage>;
+    try {
+      result = ensureAgentBaseImage(agentDef, {
+        forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
+        ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
+        ...(options.forceBaseImageRefresh !== undefined
+          ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
+          : {}),
+      });
+    } finally {
+      restoreExplicitOverrideTrust();
+    }
+    const reusedLocalResolution =
+      result.resolutionMetadata?.source === "local" &&
+      result.reusedResolutionHint === result.resolutionMetadata;
+    if (
+      !hasExplicitOverride &&
+      result.imageTag &&
+      result.resolutionMetadata?.source === "local" &&
+      !result.trustedLocalOverride &&
+      !reusedLocalResolution
+    ) {
+      // A stale persisted hint may fall through to a fresh local fallback. Its
+      // public provenance label is not authority. Rebuild once so the build
+      // call returns a fresh in-memory lease bound to the canonical image ID.
+      result = ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
+    }
+    const needsTemporaryHandoff =
+      result.imageTag !== null &&
+      !isCanonicalLocalBaseImageRef(agentDef.name, result.imageTag) &&
+      !isImmutableRemoteBaseImageRef(result.imageTag);
+    const imageRef =
+      result.imageTag && !isImmutableRemoteBaseImageRef(result.imageTag)
+        ? pinAgentSandboxBaseImageRef(agentDef.name, result.imageTag, {
+            forceLocal: true,
+            ...(needsTemporaryHandoff ? { temporary: true } : {}),
+          })
+        : result.imageTag;
+    const disposeImageRef =
+      needsTemporaryHandoff && imageRef && imageRef !== result.imageTag
+        ? createTemporaryBaseImageHandoffDisposer(imageRef)
+        : undefined;
+    const inheritedTrustedOverride =
+      result.trustedLocalOverride?.ref === imageRef ? result.trustedLocalOverride : null;
+    let handoffTrustedOverride: TrustedLocalBaseImageOverride | null = null;
+    if (
+      imageRef &&
+      result.imageTag &&
+      !inheritedTrustedOverride &&
+      result.resolutionMetadata &&
+      result.reusedResolutionHint === result.resolutionMetadata
+    ) {
+      handoffTrustedOverride = bindLocalAgentBaseImageHandoffToResolution(
+        agentDef,
+        result.imageTag,
+        imageRef,
+        result.resolutionMetadata,
+        result.reusedResolutionHint,
+      );
+    }
+    const localImageName = `nemoclaw-${agentDef.name}-sandbox-base-local`;
+    const localHandoff =
+      imageRef && parseContentAddressedSandboxBaseImageId(localImageName, imageRef) !== null;
+    if (
+      imageRef &&
+      (needsTemporaryHandoff || localHandoff || result.resolutionMetadata?.source === "local") &&
+      !inheritedTrustedOverride &&
+      !handoffTrustedOverride
+    ) {
+      disposeImageRef?.();
+      throw new Error(
+        `Resolved ${agentDef.displayName} local base image could not be bound to its rebuild handoff`,
+      );
+    }
+    const resolutionMetadata =
+      result.resolutionMetadata ??
+      explicitOverrideResolution ??
+      (hasExplicitOverride && imageRef
+        ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, imageRef)
+        : null);
+    return {
+      ok: true,
+      imageRef,
+      overrideEnvVar,
+      ...(resolutionMetadata ? { resolutionMetadata } : {}),
+      ...(disposeImageRef ? { disposeImageRef } : {}),
+      ...(inheritedTrustedOverride
+        ? { trustedLocalOverride: inheritedTrustedOverride }
+        : handoffTrustedOverride
+          ? { trustedLocalOverride: handoffTrustedOverride }
+          : {}),
+      ...(imageRef && resolutionMetadata && isImmutableRemoteBaseImageRef(imageRef)
+        ? { trustedRemoteOverride: { ref: imageRef, resolutionMetadata } }
+        : {}),
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
@@ -167,8 +395,41 @@ export function ensureRebuildAgentBaseImage(
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
     bail(message);
-    return false;
+    return { ok: false, imageRef: null, overrideEnvVar: null };
   }
+}
+
+export function pinRebuildAgentBaseImageForRecreate(
+  preflight: RebuildAgentBaseImagePreflight,
+  env: NodeJS.ProcessEnv = process.env,
+): () => void {
+  const { imageRef, overrideEnvVar } = preflight;
+  if (!preflight.ok || !imageRef || !overrideEnvVar) return () => undefined;
+
+  const hadPriorValue = Object.hasOwn(env, overrideEnvVar);
+  const priorValue = env[overrideEnvVar];
+  const restoreTrustedOverride = preflight.trustedLocalOverride
+    ? pinTrustedAgentBaseImageOverrideForOperation(overrideEnvVar, preflight.trustedLocalOverride)
+    : () => undefined;
+  const restoreTrustedRemoteOverride = preflight.trustedRemoteOverride
+    ? pinTrustedAgentRemoteBaseImageOverrideForOperation(
+        overrideEnvVar,
+        preflight.trustedRemoteOverride,
+      )
+    : () => undefined;
+  env[overrideEnvVar] = imageRef;
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    restoreTrustedRemoteOverride();
+    restoreTrustedOverride();
+    if (hadPriorValue && priorValue !== undefined) {
+      env[overrideEnvVar] = priorValue;
+    } else {
+      delete env[overrideEnvVar];
+    }
+  };
 }
 
 export function backupSandboxStateForRebuild(
@@ -178,6 +439,7 @@ export function backupSandboxStateForRebuild(
   log: (msg: string) => void,
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: (msg: string, code?: number) => never,
+  options?: { force?: boolean },
 ): sandboxState.RebuildManifest | null | undefined {
   if (staleRecovery) return null;
 
@@ -188,12 +450,71 @@ export function backupSandboxStateForRebuild(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
   const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
-  if (!backup.success && !hasAnyBackup) {
+  // Saving a few loose files while every state directory failed is still
+  // catastrophic: the top-level state dirs (memories, sessions, workspace,
+  // plans, ...) would be permanently lost once rebuild recreates the sandbox.
+  // Guard against it the same way as a fully-empty backup so the rebuild aborts
+  // by default instead of silently discarding them. See issue #6972: a
+  // post-reboot mount-ownership/permission corruption left every `.hermes`
+  // state dir unreadable, the sandbox-user tar backed up only 3 loose files,
+  // and the old code proceeded and destroyed all 14 state directories.
+  const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
+  // State files are individually declared durability contracts. Losing even
+  // one cannot be treated like a salvageable partial directory archive: the
+  // replacement would otherwise delete the only live copy. (#7144)
+  const requiredStateFileFailed = backup.failedFiles.length > 0;
+  if (!backup.success && (!hasAnyBackup || allStateDirsFailed || requiredStateFileFailed)) {
+    if (options?.force) {
+      console.warn(
+        `  ${YW}⚠${R} Backup could not preserve sandbox state but --force was specified — continuing with any salvageable files and rebuilding from registry metadata.`,
+      );
+      log(
+        "Force-skip: backup could not preserve state directories; continuing as requested by --force",
+      );
+      // Keep the partial manifest when at least some files were saved so --force
+      // still restores what it could rather than throwing it away.
+      return hasAnyBackup ? (backup.manifest ?? null) : null;
+    }
     console.error("  Failed to back up sandbox state.");
-    if (backup.failedDirs.length > 0) console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
+    if (allStateDirsFailed && hasAnyBackup) {
+      const dirCount = backup.failedDirs.length;
+      const fileCount = backup.backedUpFiles.length;
+      console.error(
+        `  None of the ${dirCount} sandbox state ${dirCount === 1 ? "directory" : "directories"} could be preserved (only ${fileCount} loose ${fileCount === 1 ? "file was" : "files were"} saved).`,
+      );
+      // Tailor the hypothesis to the recorded per-dir cause instead of always
+      // blaming ownership: "permission denied" points at ownership/permissions,
+      // while "absent after extraction" points at an unstable/disappearing mount.
+      const reasons = Object.values(backup.failedDirReasons ?? {});
+      const anyPermissionDenied = reasons.includes(BACKUP_FAILURE_PERMISSION_DENIED);
+      const allAbsent =
+        reasons.length === backup.failedDirs.length &&
+        reasons.every((reason) => reason === BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION);
+      if (anyPermissionDenied) {
+        console.error(
+          "  The sandbox user could not read this state — the mounted files likely have wrong ownership or permissions, for example after a host reboot remapped the mount's UIDs.",
+        );
+      } else if (allAbsent) {
+        console.error(
+          "  The directories were reported by the sandbox but did not materialize on extraction — the mounted state may be unstable or disappearing under the container.",
+        );
+      } else {
+        console.error(
+          "  Inspect the per-directory failure reasons below along with the mount's ownership and permissions.",
+        );
+      }
+    }
+    if (backup.error) console.error(`  Reason: ${backup.error}`);
+    if (backup.failedDirs.length > 0)
+      console.error(
+        `  Failed: ${formatFailedBackupItems(backup.failedDirs, backup.failedDirReasons)}`,
+      );
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     console.error("  Aborting rebuild to prevent data loss.");
+    console.error(
+      `  Hint: use '${CLI_NAME} ${sandboxName} rebuild --force' only if you accept losing state the incomplete backup could not preserve.`,
+    );
     relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return undefined;
@@ -221,11 +542,19 @@ export function backupSandboxStateForRebuild(
     );
   }
   console.log(`    Backup: ${backupManifest.backupPath}`);
-  warnUnpreservedUserManagedFiles(sandboxName, log);
   return backupManifest;
 }
 
-function warnUnpreservedUserManagedFiles(sandboxName: string, log: (msg: string) => void): void {
+/**
+ * Warn only after MCP rebuild preparation has scrubbed NemoClaw-owned adapter
+ * entries. In particular, a managed-only Deep Agents `.mcp.json` is removed by
+ * that transaction; if the file still exists at this point it contains
+ * additional user-owned content that the state backup intentionally excludes.
+ */
+export function warnUnpreservedUserManagedFiles(
+  sandboxName: string,
+  log: (msg: string) => void,
+): void {
   let probe: userManagedFilesProbe.UserManagedFilesProbe;
   try {
     probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName);
@@ -247,7 +576,7 @@ function warnUnpreservedUserManagedFiles(sandboxName: string, log: (msg: string)
     return;
   }
   console.warn(
-    `  ${YW}⚠${R} User-managed files in sandbox not preserved by rebuild: ${probe.existing.join(", ")}`,
+    `  ${YW}⚠${R} User-managed files will not be preserved if rebuild replaces this sandbox: ${probe.existing.join(", ")}`,
   );
-  console.warn("    Re-add them after rebuild, or manage them from the host.");
+  console.warn("    After a successful rebuild, re-add them or manage them from the host.");
 }

@@ -30,3 +30,27 @@ describe("buildOnboardFlags --agent help (#5779)", () => {
     expect(flags.agent.description).toBe("Agent runtime to onboard");
   });
 });
+
+describe("buildOnboardFlags --observability help", () => {
+  it("discloses the bounded content exported by the opt-in", () => {
+    const flags = buildOnboardFlags();
+
+    expect(flags.observability.description).toBe(
+      "Export bounded prompt, response, tool argument, and tool result content to a local OTLP collector (Deep Agents Code only)",
+    );
+    expect(flags.observability.allowNo).toBe(true);
+  });
+});
+
+describe("buildOnboardFlags --events help", () => {
+  it("exposes the JSONL observer only on the canonical onboard command", () => {
+    const onboardFlags = buildOnboardFlags({ includeEvents: true });
+    const aliasFlags = buildOnboardFlags();
+
+    expect(onboardFlags.events.description).toBe(
+      "Emit versioned read-only onboarding events as JSON Lines on stdout",
+    );
+    expect(onboardFlags.events.options).toEqual(["jsonl"]);
+    expect(aliasFlags.events).toBeUndefined();
+  });
+});

@@ -119,28 +119,26 @@ describe("tiers", () => {
   });
 
   describe("tier: balanced", () => {
-    it("includes npm, pypi, huggingface, brew, brave, and weather", () => {
+    it("includes exactly npm, pypi, huggingface, brew, and brave", () => {
       const names = mustGetTier("balanced").presets.map((preset: TierPreset) => preset.name);
-      expect(names).toContain("npm");
-      expect(names).toContain("pypi");
-      expect(names).toContain("huggingface");
-      expect(names).toContain("brew");
-      expect(names).toContain("brave");
-      expect(names).toContain("weather");
+      expect(names).toEqual(
+        expect.arrayContaining(["npm", "pypi", "huggingface", "brew", "brave"]),
+      );
+      expect(names).toHaveLength(5);
     });
 
-    it("has at least 6 presets", () => {
-      expect(mustGetTier("balanced").presets.length).toBeGreaterThanOrEqual(6);
+    it("does not include the weather preset", () => {
+      const names = mustGetTier("balanced").presets.map((preset: TierPreset) => preset.name);
+      expect(names).not.toContain("weather");
     });
 
-    it("keeps dev presets read-write and weather read-only", () => {
+    it("keeps dev presets read-write", () => {
       const accessByName = new Map(
         mustGetTier("balanced").presets.map((preset: TierPreset) => [preset.name, preset.access]),
       );
       for (const name of ["npm", "pypi", "huggingface", "brew", "brave"]) {
         expect(accessByName.get(name)).toBe("read-write");
       }
-      expect(accessByName.get("weather")).toBe("read");
     });
 
     it("does not include messaging presets (slack, discord, telegram, wechat, whatsapp)", () => {
@@ -221,12 +219,12 @@ describe("tiers", () => {
   describe("resolveTierPresets", () => {
     it("returns default presets for balanced with no overrides", () => {
       const resolved: TierPreset[] = resolveTierPresets("balanced");
-      expect(resolved.length).toBeGreaterThanOrEqual(6);
+      expect(resolved.length).toBe(5);
       const accessByName = new Map(resolved.map((preset) => [preset.name, preset.access]));
       for (const name of ["npm", "pypi", "huggingface", "brew", "brave"]) {
         expect(accessByName.get(name)).toBe("read-write");
       }
-      expect(accessByName.get("weather")).toBe("read");
+      expect(accessByName.has("weather")).toBe(false);
     });
 
     it("applies access override for a specific preset", () => {

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
-import { getChannelTokenKeys, listChannels } from "../sandbox/channels";
 import * as webSearch from "../inference/web-search";
+import { getChannelTokenKeys, listChannels } from "../sandbox/channels";
 
 interface MessagingTokenDefShape {
   name: string;
@@ -26,7 +26,9 @@ export interface ExtraPlaceholderKeysResult {
 export function canonicalPlaceholderKeys(): Set<string> {
   const channels = listChannels();
   return new Set<string>(
-    channels.flatMap((c) => getChannelTokenKeys(c)).concat(webSearch.BRAVE_API_KEY_ENV),
+    channels
+      .flatMap((c) => getChannelTokenKeys(c))
+      .concat(webSearch.BRAVE_API_KEY_ENV, webSearch.TAVILY_API_KEY_ENV),
   );
 }
 
@@ -100,7 +102,7 @@ export function registerExtraPlaceholderProviders(
   );
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {
-    // Match the brave-search precedence in src/lib/onboard.ts: the credential
+    // Match web-search precedence: the credential
     // store wins so a same-named host env var cannot override an out-of-process
     // credential that the operator has staged through `nemoclaw credentials
     // set`. Collapse the empty-string result from normalizeCredentialValue to
@@ -122,5 +124,9 @@ export function appendExtraPlaceholderKeysEnvArg(
   formatEnvAssignment: (key: string, value: string) => string,
 ): void {
   if (extraKeys.length === 0) return;
-  envArgs.push(formatEnvAssignment(EXTRA_PLACEHOLDER_KEYS_ENV, extraKeys.join(" ")));
+  // OpenShell's Docker supervisor deserializes OPENSHELL_SANDBOX_COMMAND with
+  // split_whitespace(). Commas preserve this list as one env assignment when
+  // the Docker GPU compatibility path transports the command through that
+  // variable; both host and sandbox parsers accept comma separators.
+  envArgs.push(formatEnvAssignment(EXTRA_PLACEHOLDER_KEYS_ENV, extraKeys.join(",")));
 }

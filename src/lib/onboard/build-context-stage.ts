@@ -9,12 +9,14 @@ import type { AgentDefinition } from "../agent/defs";
 import { isErrnoException } from "../core/errno";
 import {
   collectBuildContextStats,
+  SANDBOX_BUILD_CONTEXT_PREFIX,
+  type SandboxBuildContextOrigin,
   type StagedBuildContext,
   stageOptimizedSandboxBuildContext,
 } from "../sandbox/build-context";
 import {
-  createCustomBuildContextFilter,
   CUSTOM_BUILD_CONTEXT_WARN_BYTES,
+  createCustomBuildContextFilter,
   isInsideIgnoredCustomBuildContextPath,
 } from "./custom-build-context";
 
@@ -31,7 +33,29 @@ export interface CreateSandboxBuildContextInput {
 }
 
 export interface CreateSandboxBuildContextResult extends StagedBuildContext {
+  origin: SandboxBuildContextOrigin;
   cleanupBuildCtx(): boolean;
+}
+
+/** Exact staged and patched context transferred from rebuild preflight to create. */
+export interface PreparedSandboxBuildContext extends CreateSandboxBuildContextResult {
+  buildId: string;
+  dashboardRemoteBindPrepared?: boolean;
+  /** Recheck retained bytes at the final one-shot consumption boundary. */
+  verifyBuildCtx?(): boolean;
+  /** Exact recorded target authorized to consume a generic rebuild handoff. */
+  rebuildTarget?: {
+    agentName: string | null;
+    fromDockerfile: string | null;
+  };
+}
+
+function isSameFile(leftPath: string, rightPath: string): boolean {
+  try {
+    return fs.realpathSync(leftPath) === fs.realpathSync(rightPath);
+  } catch {
+    return path.resolve(leftPath) === path.resolve(rightPath);
+  }
 }
 
 function createCleanupBuildContext(buildCtx: string): () => boolean {
@@ -52,6 +76,7 @@ export function stageCreateSandboxBuildContext(
   const warn = input.warn ?? console.warn;
   const error = input.error ?? console.error;
   const exit = input.exit ?? ((code?: number): never => process.exit(code));
+  const origin = input.fromDockerfile ? "custom" : "generated";
 
   let build: StagedBuildContext;
 
@@ -64,6 +89,23 @@ export function stageCreateSandboxBuildContext(
     if (!fs.statSync(fromResolved).isFile()) {
       error(`  Custom Dockerfile path is not a file: ${fromResolved}`);
       exit(1);
+    }
+    // The managed agent Dockerfile copies repository-root paths (src/,
+    // scripts/, nemoclaw-blueprint/), so the parent-directory contract can
+    // never satisfy it. Stage it exactly like the managed build instead of
+    // failing at the first COPY (#7205).
+    const agentDockerfile = input.agent?.dockerfilePath ?? null;
+    if (input.agent && agentDockerfile && isSameFile(fromResolved, agentDockerfile)) {
+      log(`  Using custom Dockerfile: ${fromResolved}`);
+      log(
+        `  This is the managed ${input.agent.displayName} Dockerfile; staging the repository root as the Docker build context.`,
+      );
+      build = input.createAgentSandbox(input.agent);
+      return {
+        ...build,
+        origin,
+        cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
+      };
     }
     const buildContextDir = path.dirname(fromResolved);
     if (isInsideIgnoredCustomBuildContextPath(buildContextDir)) {
@@ -87,7 +129,7 @@ export function stageCreateSandboxBuildContext(
         "  The --from flag sends the Dockerfile's parent directory to Docker; use a dedicated directory if this is not intentional.",
       );
     }
-    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
     const stagedDockerfile = path.join(buildCtx, "Dockerfile");
     const cleanupCustomBuildCtx = (): void => {
       try {
@@ -101,9 +143,11 @@ export function stageCreateSandboxBuildContext(
         recursive: true,
         filter: shouldIncludeCustomContextPath,
       });
-      if (path.basename(fromResolved) !== "Dockerfile") {
-        fs.copyFileSync(fromResolved, stagedDockerfile);
-      }
+      // Always materialize the selected Dockerfile as a regular file. cpSync
+      // preserves symlinks, which would otherwise leave a retained rebuild
+      // context dependent on a mutable source path after preflight succeeds.
+      fs.rmSync(stagedDockerfile, { force: true });
+      fs.copyFileSync(fromResolved, stagedDockerfile);
     } catch (err) {
       cleanupCustomBuildCtx();
       const errorObject = typeof err === "object" && err !== null ? err : null;
@@ -128,6 +172,7 @@ export function stageCreateSandboxBuildContext(
 
   return {
     ...build,
+    origin,
     cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
   };
 }

@@ -10,10 +10,13 @@
  * (regression of #2020) for the original motivation.
  */
 
+import fs from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
+import net from "node:net";
+import path from "node:path";
 
-import { getGatewayHttpEndpoint } from "../core/gateway-address";
+import { getGatewayHttpEndpoint, getGatewayHttpsEndpoint } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { addTraceEvent, withTraceSpan } from "../trace";
@@ -74,9 +77,10 @@ export function isGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return withTraceSpan("nemoclaw.gateway.http_probe", { timeout_ms: timeoutMs, url, method }, () =>
-    isGatewayHttpReadyImpl(timeoutMs, url, method),
+    isGatewayHttpReadyImpl(timeoutMs, url, method, signal),
   );
 }
 
@@ -84,6 +88,7 @@ function isGatewayHttpReadyImpl(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -96,13 +101,19 @@ function isGatewayHttpReadyImpl(
       settled = true;
       resolve(ready);
     };
-    const request = http
-      .request(url, { method }, (res) => {
-        res.resume();
-        const code = res.statusCode || 0;
-        settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
-      })
-      .on("error", () => settle(false));
+    let request: http.ClientRequest;
+    try {
+      request = http
+        .request(url, { method, signal }, (res) => {
+          res.resume();
+          const code = res.statusCode || 0;
+          settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
+        })
+        .on("error", () => settle(false));
+    } catch {
+      settle(false);
+      return;
+    }
     request.setTimeout(effectiveTimeout, () => {
       request.destroy();
       settle(false);
@@ -113,18 +124,20 @@ function isGatewayHttpReadyImpl(
 
 export function isDockerDriverGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
-  url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+  url = `${getGatewayHttpsEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   return withTraceSpan(
     "nemoclaw.gateway.docker_driver_http_probe",
     { timeout_ms: timeoutMs, url },
-    () => isDockerDriverGatewayHttpReadyImpl(timeoutMs, url),
+    () => isDockerDriverGatewayHttpReadyImpl(timeoutMs, url, env),
   );
 }
 
 function isDockerDriverGatewayHttpReadyImpl(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
-  url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+  url = `${getGatewayHttpsEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -177,7 +190,9 @@ function isDockerDriverGatewayHttpReadyImpl(
 
     try {
       const origin = `${parsed.protocol}//${parsed.host}`;
-      client = http2.connect(origin);
+      const connectOptions = dockerDriverGatewayHttp2ConnectOptions(parsed, env);
+      if (parsed.protocol === "https:" && !connectOptions) return settle(false);
+      client = http2.connect(origin, connectOptions);
       client.on("error", () => settle(false));
       stream = client.request({
         [http2.constants.HTTP2_HEADER_METHOD]: http2.constants.HTTP2_METHOD_POST,
@@ -208,6 +223,34 @@ function isDockerDriverGatewayHttpReadyImpl(
       settle(false);
     }
   });
+}
+
+function dockerDriverGatewayHttp2ConnectOptions(
+  parsed: URL,
+  env: NodeJS.ProcessEnv = process.env,
+): http2.SecureClientSessionOptions | undefined {
+  if (parsed.protocol !== "https:") return undefined;
+  const localTlsDir = env.OPENSHELL_LOCAL_TLS_DIR;
+  if (!localTlsDir) return undefined;
+  try {
+    const options: http2.SecureClientSessionOptions = {
+      ca: fs.readFileSync(path.join(localTlsDir, "ca.crt")),
+      cert: fs.readFileSync(path.join(localTlsDir, "client", "tls.crt")),
+      key: fs.readFileSync(path.join(localTlsDir, "client", "tls.key")),
+      rejectUnauthorized: true,
+    };
+    // Node 25 rejects an IP-literal TLS ServerName (RFC 6066; DEP0123 became a
+    // thrown error). For IP endpoints, certificate verification matches the
+    // connection IP against the certificate's IP SANs without SNI, so only
+    // send servername for DNS hostnames.
+    const bareHostname = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+    if (net.isIP(bareHostname) === 0) {
+      options.servername = parsed.hostname;
+    }
+    return options;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

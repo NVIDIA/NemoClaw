@@ -8,6 +8,14 @@ export type SandboxVersionCheck = {
   sandboxVersion?: string | null;
   expectedVersion?: string | null;
   detectionMethod?: string | null;
+  /**
+   * True whenever staleness could not be confirmed — probe failure, no
+   * expected version, opt-out probing, or a scheme mismatch between the
+   * runtime and manifest versions. `classifyUpgradeableSandboxes` treats
+   * these as `unknown` candidates so the operator can decide whether to
+   * rebuild rather than silently letting them fall through as "current".
+   */
+  verificationFailed?: boolean;
 };
 
 /**
@@ -101,7 +109,11 @@ export function classifyUpgradeableSandboxes(
             }
           : {}),
       });
-    } else if (versionCheck.detectionMethod === "unavailable") {
+    } else if (
+      versionCheck.detectionMethod === "unavailable" ||
+      versionCheck.detectionMethod === "unknown" ||
+      versionCheck.verificationFailed
+    ) {
       unknown.push({
         name: sandbox.name,
         expected: versionCheck.expectedVersion,
@@ -126,4 +138,52 @@ export function splitRebuildableSandboxes(stale: UpgradeSandboxCandidate[]): {
     }
   }
   return { rebuildable, stopped };
+}
+
+/**
+ * Compare two dotted version strings numerically, segment by segment.
+ * Canonical home of the comparison used by gateway compatibility checks and
+ * upgrade display; `onboard/docker-driver-gateway-compat` re-exports it for
+ * its existing consumers.
+ */
+export function compareDottedVersions(a: string, b: string): number {
+  const left = a.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const right = b.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const len = Math.max(left.length, right.length);
+  for (let i = 0; i < len; i += 1) {
+    const delta = (left[i] ?? 0) - (right[i] ?? 0);
+    if (delta !== 0) return delta;
+  }
+  return 0;
+}
+
+// #6520: a requested version below the recorded one is a downgrade (e.g.
+// reinstalling with an older NEMOCLAW_INSTALL_TAG than the build that created
+// the sandbox); call it out instead of framing it as a routine upgrade step.
+function downgradeSuffix(current?: string | null, expected?: string | null): string {
+  if (!current || !expected) return "";
+  return compareDottedVersions(expected, current) < 0 ? " (downgrade)" : "";
+}
+
+/**
+ * Build a human-readable description of why a sandbox needs rebuilding,
+ * covering an outdated agent version, NemoClaw image/build drift, or both
+ * (#5026), and labeling version regressions explicitly (#6520).
+ */
+export function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
+  const reasons = s.reasons ?? [];
+  const parts: string[] = [];
+  if (reasons.includes("agent-version")) {
+    parts.push(`v${s.current || "?"} → v${s.expected}${downgradeSuffix(s.current, s.expected)}`);
+  } else if (reasons.includes("image-drift") && s.current) {
+    // Agent version is current; make clear it is the NemoClaw image that drifted.
+    parts.push(`v${s.current} unchanged`);
+  }
+  if (reasons.includes("image-drift")) {
+    const from = s.imageCurrent ? `v${s.imageCurrent}` : "unknown build";
+    parts.push(
+      `NemoClaw image ${from} → v${s.imageExpected}${downgradeSuffix(s.imageCurrent, s.imageExpected)}`,
+    );
+  }
+  return parts.join("; ");
 }

@@ -22,7 +22,7 @@ function createResult(overrides = {}) {
     hasMessagingTokens: false,
     reusableMessagingProviders: [],
     reusableMessagingChannels: [],
-    missingBraveApiKey: false,
+    missingWebSearchCredentialEnv: null,
     ...overrides,
   };
 }
@@ -106,11 +106,12 @@ function createDeps(
   return {
     readMessagingPlanFromEnv: vi.fn(() => null),
     resolveDisabledChannels: vi.fn(() => []),
-    gatewayName: "nemoclaw",
+    gatewayName: vi.fn(() => "nemoclaw"),
     registry: {
       listSandboxes: vi.fn(() => ({ sandboxes: [] })),
     },
     providerExistsInGateway: vi.fn(() => false),
+    providerMatchesGatewayCredential: vi.fn(() => false),
     isNonInteractive: vi.fn(() => false),
     promptYesNoOrDefault: vi.fn(async () => true),
     cliName: vi.fn(() => "nemoclaw"),
@@ -216,7 +217,9 @@ describe("prepareSandboxMessagingPreflight", () => {
   });
 
   it("aborts a second Slack Socket Mode sandbox on the same gateway", async () => {
+    let gatewayName = "startup-gateway";
     const deps = createDeps({
+      gatewayName: vi.fn(() => gatewayName),
       readMessagingPlanFromEnv: vi.fn(() => createPlan("demo", "slack", "demo")),
       isNonInteractive: vi.fn(() => true),
       registry: {
@@ -224,13 +227,14 @@ describe("prepareSandboxMessagingPreflight", () => {
           sandboxes: [
             {
               name: "other",
-              gatewayName: "nemoclaw",
+              gatewayName: "selected-gateway",
               messaging: { plan: createPlan("other", "slack", "other") },
             },
           ],
         })),
       },
     });
+    gatewayName = "selected-gateway";
 
     await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
       code: 1,
@@ -241,18 +245,38 @@ describe("prepareSandboxMessagingPreflight", () => {
     expect(deps.error).toHaveBeenCalledWith(
       expect.stringContaining("resolve the messaging pre-enable conflict above"),
     );
+    expect(deps.gatewayName).toHaveBeenCalledOnce();
   });
 
   it("fails before recreate/delete when Brave search has no API key", async () => {
     const deps = createDeps({
-      prepareCreateSandboxMessaging: vi.fn(() => createResult({ missingBraveApiKey: true })),
+      prepareCreateSandboxMessaging: vi.fn(() =>
+        createResult({
+          missingWebSearchCredentialEnv: "BRAVE_API_KEY",
+        }),
+      ),
     });
 
     await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
       code: 1,
     });
     expect(deps.error).toHaveBeenCalledWith(
-      "  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.",
+      "  Web search is enabled, but BRAVE_API_KEY is not available in this process.",
+    );
+  });
+
+  it("names the selected Tavily credential when recreate preflight fails", async () => {
+    const deps = createDeps({
+      prepareCreateSandboxMessaging: vi.fn(() =>
+        createResult({ missingWebSearchCredentialEnv: "TAVILY_API_KEY" }),
+      ),
+    });
+
+    await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
+      code: 1,
+    });
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Web search is enabled, but TAVILY_API_KEY is not available in this process.",
     );
   });
 });

@@ -16,11 +16,6 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
 
-function requirePresetContent(content: string | null): string {
-  expect(content).toEqual(expect.any(String));
-  return content as string;
-}
-
 function parseResultPayload(stdout: string): any {
   const marker = "__RESULT__";
   const markerIndex = stdout.indexOf(marker);
@@ -53,16 +48,20 @@ function allowedRules(
 }
 
 describe("Teams policy preset", () => {
-  it("extracts Microsoft Teams Bot Framework and Graph hosts", () => {
-    const content = requirePresetContent(policies.loadPreset("teams"));
-    const hosts = policies.getPresetEndpoints(content);
+  it("composes Microsoft Teams Bot Framework and Graph capabilities", () => {
+    const merged = policies.mergePresetNamesIntoPolicy("version: 1\nnetwork_policies: {}\n", [
+      "teams",
+    ]);
+    expect(merged.appliedPresets).toEqual(["teams"]);
+    expect(merged.missingPresets).toEqual([]);
+    const teamsPolicy = YAML.parse(merged.policy).network_policies.teams;
+    const hosts = teamsPolicy.endpoints.map((endpoint: { host?: string }) => endpoint.host);
     expect(hosts).toContain("login.microsoftonline.com");
     expect(hosts).toContain("login.botframework.com");
     expect(hosts).toContain("api.botframework.com");
     expect(hosts).toContain("smba.trafficmanager.net");
     expect(hosts).toContain("graph.microsoft.com");
     expect(hosts).toContain("*.sharepoint.com");
-    const teamsPolicy = YAML.parse(content).network_policies.teams;
     expect(allowedMethods(teamsPolicy, "graph.microsoft.com")).toEqual(["GET"]);
     expect(allowedRules(teamsPolicy, "smba.trafficmanager.net")).toEqual([
       { method: "GET", path: "/**" },

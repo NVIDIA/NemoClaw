@@ -5,12 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentDefinition } from "./defs";
 import { loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
-import {
-  buildManualRecoveryCommand,
-  buildRecoveryScript,
-  getTerminalCommand,
-  TERMINAL_AGENT_RECOVERY_SCRIPT,
-} from "./runtime";
+import { buildRecoveryScript, getTerminalCommand, TERMINAL_AGENT_RECOVERY_SCRIPT } from "./runtime";
 
 const terminalAgent = {
   name: "terminal-agent",
@@ -31,7 +26,6 @@ describe("terminal agent runtime helpers", () => {
   it("resolves terminal launch commands without synthesizing gateway recovery", () => {
     expect(getTerminalCommand(terminalAgent)).toBe("terminal-agent");
     expect(getTerminalCommand(terminalAgent, "headless")).toBe("terminal-agent -n");
-    expect(buildManualRecoveryCommand(terminalAgent, 18789)).toBe("terminal-agent");
   });
 
   it("resolves Deep Agents Code interactive and headless commands from the real manifest", () => {
@@ -39,6 +33,5 @@ describe("terminal agent runtime helpers", () => {
 
     expect(getTerminalCommand(deepAgentsCode, "interactive")).toBe("dcode");
     expect(getTerminalCommand(deepAgentsCode, "headless")).toBe("dcode -n");
-    expect(buildManualRecoveryCommand(deepAgentsCode, 18789)).toBe("dcode");
   });
 });

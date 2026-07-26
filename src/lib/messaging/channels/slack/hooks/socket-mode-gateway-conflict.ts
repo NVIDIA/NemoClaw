@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../../../../core/json-types";
 import {
   findSlackSocketModeGatewayConflicts,
   formatSlackSocketModeConflictMessage,
@@ -104,7 +105,7 @@ function parseRegistryEntries(
 ): readonly ConflictRegistryEntry[] | null {
   if (!Array.isArray(value)) return null;
   const entries = value.flatMap((entry) => {
-    if (!isObject(entry) || typeof entry.name !== "string" || entry.name.length === 0) {
+    if (!isObjectRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0) {
       return [];
     }
     const gatewayName = normalizeNullableString(entry.gatewayName);
@@ -112,7 +113,7 @@ function parseRegistryEntries(
       {
         name: entry.name,
         gatewayName,
-        messaging: isObject(entry.messaging)
+        messaging: isObjectRecord(entry.messaging)
           ? (entry.messaging as ConflictRegistryEntry["messaging"])
           : null,
       },
@@ -133,8 +134,4 @@ function resolveNullableOption(
 
 function resolveStringOption(value: string | (() => string) | undefined): string | null {
   return typeof value === "function" ? value() : (value ?? null);
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

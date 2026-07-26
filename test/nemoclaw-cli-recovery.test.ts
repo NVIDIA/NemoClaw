@@ -72,7 +72,7 @@ if (args[0] === "gateway" && args[1] === "info") {
   process.exit(0);
 }
 
-if (args[0] === "sandbox" && args[1] === "get" && args[2] === "my-assistant") {
+if (args[0] === "sandbox" && args[1] === "get" && (args[2] === "my-assistant" || args[4] === "my-assistant")) {
   state.sandboxGetCalls += 1;
   fs.writeFileSync(statePath, JSON.stringify(state));
   if (state.sandboxGetCalls === 1) {
@@ -80,6 +80,11 @@ if (args[0] === "sandbox" && args[1] === "get" && args[2] === "my-assistant") {
     process.exit(1);
   }
   process.stdout.write("Sandbox:\\n\\n  Id: abc\\n  Name: my-assistant\\n  Namespace: openshell\\n  Phase: Ready\\n");
+  process.exit(0);
+}
+
+if (args[0] === "sandbox" && args[1] === "exec") {
+  process.stdout.write("OK 200\\n");
   process.exit(0);
 }
 

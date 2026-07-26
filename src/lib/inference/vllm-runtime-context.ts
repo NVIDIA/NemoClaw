@@ -3,10 +3,25 @@
 
 import { hasExplicitContextWindow, parsePositiveInteger } from "./ollama-runtime-context";
 
+// 4 MiB tokens (2^22) — far above any practical model context window, so it
+// rejects obviously broken daemon responses while never clipping a real one.
+// Matches the Ollama auto-detect ceiling (MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW).
 const MAX_AUTODETECTED_VLLM_CONTEXT_WINDOW = 4_194_304;
 
 type ModelEntry = { id?: unknown; max_model_len?: unknown };
 type ApplyOptions = { env?: NodeJS.ProcessEnv; logger?: Pick<Console, "log" | "warn"> };
+
+export type ResolveVllmContextWindowOptions = {
+  /**
+   * When true, only fall back to the first entry if the response lists exactly
+   * one model. Multi-model responses with no exact `id` match return null
+   * instead of guessing. Use for shared OpenAI-compatible gateways (which can
+   * serve many models under aliases) so an unrelated model's `max_model_len`
+   * is never baked in; local vLLM keeps the permissive single-served-model
+   * fallback (#6177).
+   */
+  strictModelMatch?: boolean;
+};
 
 /**
  * Extract the runtime context window for `modelId` from a vLLM `/v1/models`
@@ -19,15 +34,32 @@ export function resolveVllmContextWindowFromModels(
   modelsResponse: unknown,
   modelId: string | null | undefined,
   logger: Pick<Console, "warn"> = console,
+  options: ResolveVllmContextWindowOptions = {},
 ): number | null {
   const data = (modelsResponse as { data?: unknown } | null | undefined)?.data;
-  const entries = Array.isArray(data) ? (data as ModelEntry[]) : [];
+  // Drop non-object entries defensively: a compatible endpoint's /v1/models body
+  // is arbitrary JSON and may contain nulls/primitives (e.g. `{"data":[null]}`),
+  // which would otherwise throw when we read `.id` and abort onboarding (#6177).
+  const entries = (Array.isArray(data) ? data : []).filter(
+    (candidate): candidate is ModelEntry => typeof candidate === "object" && candidate !== null,
+  );
   if (entries.length === 0) return null;
 
   const target = String(modelId ?? "").trim();
-  const entry =
-    (target && entries.find((candidate) => String(candidate.id ?? "").trim() === target)) ||
-    entries[0];
+  const exactMatch = target
+    ? entries.find((candidate) => String(candidate.id ?? "").trim() === target)
+    : undefined;
+  let entry = exactMatch;
+  if (!entry) {
+    if (options.strictModelMatch && entries.length > 1) {
+      logger.warn(
+        `  ⚠ Endpoint /v1/models lists ${entries.length} models and none match '${target}'; ` +
+          `not auto-detecting the context window. Set NEMOCLAW_CONTEXT_WINDOW to override.`,
+      );
+      return null;
+    }
+    entry = entries[0];
+  }
   const rawMaxModelLen = entry?.max_model_len;
   if (
     rawMaxModelLen === undefined ||

@@ -18,6 +18,7 @@ type CommandArgs = string[];
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
+  replaceEnv?: boolean;
   stdio?: StdioOptions;
   input?: string;
   ignoreError?: boolean;
@@ -46,6 +47,7 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   return runOpenshellCommand(getOpenshellBinary(), args, {
     cwd: ROOT,
     env: opts.env,
+    replaceEnv: opts.replaceEnv,
     stdio: opts.stdio,
     input: opts.input,
     ignoreError: opts.ignoreError,
@@ -64,6 +66,7 @@ export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   return captureOpenshellCommand(getOpenshellBinary(), args, {
     cwd: ROOT,
     env: opts.env,
+    replaceEnv: opts.replaceEnv,
     ignoreError: opts.ignoreError,
     includeStderr: opts.includeStderr,
     includeStreams: opts.includeStreams,
@@ -79,6 +82,7 @@ export function captureSandboxSshConfig(sandboxName: string, opts: RunnerOptions
   return captureSandboxSshConfigCommand(getOpenshellBinary(), sandboxName, {
     cwd: ROOT,
     env: opts.env,
+    replaceEnv: opts.replaceEnv,
     ignoreError: opts.ignoreError,
     includeStreams: opts.includeStreams,
     timeout: opts.timeout,
@@ -99,6 +103,7 @@ export function captureOpenshellForStatus(args: CommandArgs, opts: RunnerOptions
   return captureOpenshellCommandAsync(getOpenshellBinary(), args, {
     cwd: ROOT,
     env: opts.env,
+    replaceEnv: opts.replaceEnv,
     ignoreError: opts.ignoreError,
     includeStreams: opts.includeStreams,
     timeout: opts.timeout ?? getStatusProbeTimeoutMs(),

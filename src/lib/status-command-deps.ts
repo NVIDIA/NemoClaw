@@ -6,9 +6,9 @@ import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand } from "./adapters/openshell/client";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { isObjectRecord } from "./core/json-types";
 import { GATEWAY_PORT } from "./core/ports";
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
-import { resolveGatewayName } from "./onboard/gateway-binding";
 import { getLiveGatewayInference } from "./inference/live";
 import type {
   GatewayHealth,
@@ -17,13 +17,14 @@ import type {
   ShowStatusCommandDeps,
 } from "./inventory";
 import { findAllOverlaps } from "./messaging/applier";
-import { createBuiltInChannelManifestRegistry } from "./messaging/channels";
-import { createBuiltInMessagingHookRegistry, runMessagingHookSync } from "./messaging/hooks";
-import type {
-  ChannelHookSpec,
-  MessagingAgentId,
-  MessagingSerializableValue,
-} from "./messaging/manifest";
+import { createBuiltInMessagingHookRegistry } from "./messaging/hooks";
+import {
+  type MessagingStatusHookRunResult,
+  runMessagingStatusHooks,
+} from "./messaging/hooks/status-runner";
+import type { MessagingAgentId } from "./messaging/manifest";
+import { resolveGatewayName } from "./onboard/gateway-binding";
+import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
@@ -96,64 +97,6 @@ function normalizeMessagingAgentId(agent: string | null | undefined): MessagingA
   return agent === "hermes" ? "hermes" : "openclaw";
 }
 
-interface MessagingStatusHookRunOptions {
-  readonly agent?: MessagingAgentId;
-  readonly agents?: ReadonlySet<MessagingAgentId>;
-  readonly channels?: ReadonlySet<string>;
-  readonly currentSandbox?: string;
-  readonly registryEntries?: readonly registry.SandboxEntry[];
-  readonly hookRegistry?: ReturnType<typeof createBuiltInMessagingHookRegistry>;
-}
-
-type MessagingStatusHookRunResult = {
-  readonly channelId: string;
-  readonly hookId: string;
-  readonly outputs: ReturnType<typeof runMessagingHookSync>["outputs"];
-};
-
-function runMessagingStatusHooks(
-  options: MessagingStatusHookRunOptions,
-): MessagingStatusHookRunResult[] {
-  const hookRegistry = options.hookRegistry ?? createBuiltInMessagingHookRegistry();
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
-  const agents: ReadonlySet<MessagingAgentId> = options.agent
-    ? new Set<MessagingAgentId>([options.agent])
-    : (options.agents ?? new Set<MessagingAgentId>(["openclaw"]));
-  const hookResults: MessagingStatusHookRunResult[] = [];
-  const seen = new Set<string>();
-
-  for (const agent of agents) {
-    for (const manifest of manifestRegistry.listAvailable({ agent })) {
-      if (options.channels && !options.channels.has(manifest.id)) continue;
-      for (const hook of manifest.hooks) {
-        if (!shouldRunStatusHook(hook, agent)) continue;
-        const key = `${manifest.id}\0${hook.id}\0${hook.handler}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        try {
-          const result = runMessagingHookSync(hook, hookRegistry, {
-            channelId: manifest.id,
-            inputs: createMessagingStatusHookInputs(options),
-          });
-          hookResults.push({
-            channelId: manifest.id,
-            hookId: hook.id,
-            outputs: result.outputs,
-          });
-        } catch {
-          // Status hooks are advisory; a broken hook must not hide the rest of
-          // `nemoclaw status`.
-        }
-      }
-    }
-  }
-  return hookResults;
-}
-
-function shouldRunStatusHook(hook: ChannelHookSpec, agent: MessagingAgentId): boolean {
-  return hook.phase === "status" && (!hook.agents || hook.agents.includes(agent));
-}
-
 function executeSandboxCommand(
   rootDir: string,
   openshell: string,
@@ -179,29 +122,6 @@ function executeSandboxCommand(
   } catch {
     return null;
   }
-}
-
-function createMessagingStatusHookInputs(
-  options: MessagingStatusHookRunOptions,
-): Record<string, MessagingSerializableValue> {
-  const inputs: Record<string, MessagingSerializableValue> = {};
-  if (options.currentSandbox) inputs.currentSandbox = options.currentSandbox;
-  if (options.registryEntries) {
-    inputs.registryEntries = options.registryEntries.map(serializeRegistryEntry);
-  }
-  return inputs;
-}
-
-function serializeRegistryEntry(entry: registry.SandboxEntry): MessagingSerializableValue {
-  return {
-    name: entry.name,
-    gatewayName: entry.gatewayName ?? null,
-    messaging: entry.messaging?.plan
-      ? {
-          plan: entry.messaging.plan as unknown as MessagingSerializableValue,
-        }
-      : null,
-  };
 }
 
 function safeListRegistryEntries(): readonly registry.SandboxEntry[] {
@@ -269,10 +189,6 @@ function isStringPair(value: unknown): value is [string, string] {
     typeof value[0] === "string" &&
     typeof value[1] === "string"
   );
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readGatewayLog(rootDir: string, sandboxName: string): string | null {
@@ -356,6 +272,7 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     showServiceStatus,
     getServiceStatuses,
     getGatewayHealth: probeGatewayHealth,
+    getGatewayAuthority: () => summarizeForDebug()?.gatewayAuthority ?? null,
     getActiveSessionCount: sessionDeps
       ? (name) => {
           try {

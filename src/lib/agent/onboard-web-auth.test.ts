@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import type { AgentDefinition } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
 import { printDashboardUi } from "./onboard";
@@ -28,15 +28,15 @@ function makeBearerAgent(): AgentDefinition {
 }
 
 describe("printDashboardUi bearer-token agents", () => {
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  let logSpy: MockInstance<typeof console.log>;
   const noteSpy = vi.fn();
 
   beforeEach(() => {
-    logSpy.mockClear();
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     noteSpy.mockReset();
   });
 
-  afterAll(() => {
+  afterEach(() => {
     logSpy.mockRestore();
   });
 

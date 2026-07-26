@@ -24,6 +24,16 @@ function extractStartScriptHeredoc(src, marker) {
   throw new Error(`Expected ${marker} heredoc in scripts/nemoclaw-start.sh`);
 }
 
+function extractShellFunction(source, name) {
+  const header = `${name}() {`;
+  const start = source.indexOf(header);
+  expect(start, `expected ${name} in nemoclaw-start.sh`).not.toBe(-1);
+  const body = source.slice(start + header.length);
+  const closing = body.match(/^}$/m);
+  expect(closing, `expected closing brace for ${name}`).not.toBeNull();
+  return `${name}() {${body.slice(0, closing?.index ?? 0)}\n}`;
+}
+
 describe("NVIDIA endpoint inference fix preload (#1193, #2051, #4063)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -49,7 +59,18 @@ describe("NVIDIA endpoint inference fix preload (#1193, #2051, #4063)", () => {
       "set -euo pipefail",
       'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
       "NODE_OPTIONS='--require /already-loaded.js'",
+      "NODE_USE_ENV_PROXY=0",
+      extractShellFunction(src, "node_options_has_require"),
+      extractShellFunction(src, "append_node_require_once"),
       block,
+      `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tempDir, "safety-net.js"))}`,
+      `_SANDBOX_SAFETY_NET_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
+      `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tempDir, "proxy-fix.js"))}`,
+      `_PROXY_FIX_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
+      `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tempDir, "ciao-guard.js"))}`,
+      `_CIAO_GUARD_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
+      extractShellFunction(src, "install_core_runtime_preloads"),
+      "install_core_runtime_preloads",
       "printf 'NODE_OPTIONS=%s\\n' \"$NODE_OPTIONS\"",
       "printf 'SCRIPT=%s\\n' \"$_NEMOTRON_FIX_SCRIPT\"",
     ].join("\n");
@@ -150,6 +171,184 @@ console.log(JSON.stringify(records));
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
   });
 
+  it("preload strips top-level `thinking` for Nemotron-3 only on managed NVIDIA Build routes (#6913)", () => {
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const http = require('http');
+const https = require('https');
+const records = [];
+function installStub(mod) {
+  mod.request = function (options) {
+    const record = { options, writes: [], headers: {}, removed: [] };
+    records.push(record);
+    return {
+      write(chunk) {
+        record.writes.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+        return true;
+      },
+      end(cb) { if (typeof cb === 'function') cb(); return true; },
+      getHeader(name) { return record.headers[name]; },
+      setHeader(name, value) { record.headers[name] = value; },
+      removeHeader(name) { record.removed.push(name); delete record.headers[name]; },
+    };
+  };
+}
+installStub(http);
+installStub(https);
+${preload}
+function send(mod, options, body) {
+  const req = mod.request(options);
+  req.write(body);
+  req.end();
+}
+// A system message is present so the #4851 tool-less nudge does not fire and
+// the assertions stay focused on the top-level thinking strip.
+process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nvidia-prod';
+send(http, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', hostname: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }] }));
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-4-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'deepseek-ai/deepseek-v4-pro', messages: [], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'openai/gpt-oss-120b', messages: [], thinking: { type: 'enabled' } }));
+// Runtime provider markers override the stale image-baked provider after
+// the inference set command switches the managed route.
+send(http, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions', headers: { 'X-NemoClaw-Upstream-Provider': 'compatible-endpoint' } }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', hostname: 'inference.local', path: '/v1/chat/completions', headers: { 'x-nemoclaw-upstream-provider': 'nim-local' } }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'compatible-endpoint';
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions', headers: { 'X-NemoClaw-Upstream-Provider': 'nvidia-prod' } }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+delete process.env.NEMOCLAW_UPSTREAM_PROVIDER;
+send(https, { method: 'POST', host: 'inference.local', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: false }));
+console.log(JSON.stringify(records));
+`;
+
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    const records = JSON.parse(result.stdout.trim());
+
+    // Ultra + object-form top-level thinking → stripped, Content-Length refreshed.
+    const ultraObj = JSON.parse(records[0].writes[0]);
+    expect(ultraObj).toEqual({
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      messages: [{ role: "system", content: "x" }],
+      chat_template_kwargs: { force_nonempty_content: true },
+    });
+    expect(records[0].removed).toContain("content-length");
+    expect(Number(records[0].headers["Content-Length"])).toBeGreaterThan(0);
+
+    // Ultra + boolean-form top-level thinking → also stripped.
+    const ultraBool = JSON.parse(records[1].writes[0]);
+    expect(ultraBool).toEqual(ultraObj);
+
+    // Ultra without a thinking field → nothing to strip; still nemotron, so
+    // force_nonempty_content is injected by the kwargs rule.
+    const ultraNone = JSON.parse(records[2].writes[0]);
+    expect(ultraNone).toEqual(ultraObj);
+
+    // Adjacent Nemotron families remain outside the accepted strip scope. Their
+    // pre-existing force_nonempty_content rewrite remains.
+    const otherFamily = JSON.parse(records[3].writes[0]);
+    expect(otherFamily).toEqual({
+      model: "nvidia/nemotron-4-ultra-550b-a55b",
+      messages: [{ role: "system", content: "x" }],
+      thinking: { type: "enabled" },
+      chat_template_kwargs: { force_nonempty_content: true },
+    });
+
+    const superObj = JSON.parse(records[4].writes[0]);
+    expect(superObj).toEqual({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      messages: [{ role: "system", content: "x" }],
+      chat_template_kwargs: { force_nonempty_content: true },
+    });
+
+    const nanoBool = JSON.parse(records[5].writes[0]);
+    expect(nanoBool).toEqual({
+      model: "nvidia/nemotron-3-nano-30b-a3b",
+      messages: [{ role: "system", content: "x" }],
+      chat_template_kwargs: { force_nonempty_content: true },
+    });
+
+    // deepseek-v4-pro is out of the strip scope → top-level thinking preserved;
+    // it gets the chat_template_kwargs.thinking rewrite instead.
+    const deepSeek = JSON.parse(records[6].writes[0]);
+    expect(deepSeek).toEqual({
+      model: "deepseek-ai/deepseek-v4-pro",
+      messages: [],
+      thinking: { type: "enabled" },
+      chat_template_kwargs: { thinking: false },
+    });
+
+    // gpt-oss-120b accepts top-level thinking on the endpoint, so no rule
+    // matches it and the request passes through completely untouched — proving
+    // the strip is not a blanket rewrite.
+    const gptOss = JSON.parse(records[7].writes[0]);
+    expect(gptOss).toEqual({
+      model: "openai/gpt-oss-120b",
+      messages: [],
+      thinking: { type: "enabled" },
+    });
+
+    const compatibleEndpoint = JSON.parse(records[8].writes[0]);
+    expect(compatibleEndpoint.thinking).toEqual({ type: "enabled" });
+    expect(records[8].removed).toContain("x-nemoclaw-upstream-provider");
+
+    const localNim = JSON.parse(records[9].writes[0]);
+    expect(localNim.thinking).toBe(true);
+    expect(records[9].removed).toContain("x-nemoclaw-upstream-provider");
+
+    const switchedToBuild = JSON.parse(records[10].writes[0]);
+    expect(switchedToBuild.thinking).toBeUndefined();
+    expect(records[10].removed).toContain("x-nemoclaw-upstream-provider");
+
+    const missingProvider = JSON.parse(records[11].writes[0]);
+    expect(missingProvider.thinking).toBe(false);
+  });
+
+  it("preload removes the runtime provider marker from URL-form Node requests (#6913)", () => {
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const http = require('http');
+const https = require('https');
+${preload}
+function inspectHeaders(mod, url, headers) {
+  const request = mod.request(url, { headers });
+  const actualHeaders = request.getHeaders();
+  request.on('error', () => {});
+  request.destroy();
+  return actualHeaders;
+}
+const headers = [
+  inspectHeaders(http, 'http://127.0.0.1:9/v1/models', {
+    'X-NemoClaw-Upstream-Provider': 'nvidia-prod',
+    'X-Keep': 'http',
+  }),
+  inspectHeaders(https, new URL('https://127.0.0.1:9/v1/models'), {
+    'x-nemoclaw-upstream-provider': 'compatible-endpoint',
+    'X-Keep': 'https',
+  }),
+];
+console.log(JSON.stringify(headers));
+`;
+
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const headers = JSON.parse(result.stdout.trim());
+
+    expect(headers).toHaveLength(2);
+    expect(headers[0]["x-nemoclaw-upstream-provider"]).toBeUndefined();
+    expect(headers[0]["x-keep"]).toBe("http");
+    expect(headers[1]["x-nemoclaw-upstream-provider"]).toBeUndefined();
+    expect(headers[1]["x-keep"]).toBe("https");
+  });
+
   it("preload also injects model-specific kwargs for stubbed fetch requests", () => {
     const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
     const harness = `
@@ -165,12 +364,31 @@ globalThis.fetch = async function (input, init) {
 };
 ${preload}
 async function main() {
+  process.env.NEMOCLAW_UPSTREAM_PROVIDER = 'nvidia-prod';
   await fetch('https://inference.local/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'content-length': '999' },
     body: JSON.stringify({
       model: 'deepseek-ai/deepseek-v4-pro',
       messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  await fetch('https://inference.local/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'X-NemoClaw-Upstream-Provider': 'nvidia-prod' },
+    body: JSON.stringify({
+      model: 'nvidia/nemotron-3-super-120b-a12b',
+      messages: [{ role: 'system', content: 'x' }],
+      thinking: true,
+    }),
+  });
+  await fetch('https://inference.local/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'X-NemoClaw-Upstream-Provider': 'compatible-endpoint' },
+    body: JSON.stringify({
+      model: 'nvidia/nemotron-3-super-120b-a12b',
+      messages: [{ role: 'system', content: 'x' }],
+      thinking: true,
     }),
   });
   await fetch('https://inference.local/v1/chat/completions', {
@@ -196,6 +414,7 @@ async function main() {
       record.headers instanceof Headers
         ? record.headers.get('content-length')
         : (record.headers && record.headers['content-length']) || null,
+    upstreamProvider: new Headers(record.headers || {}).get('x-nemoclaw-upstream-provider'),
   }))));
 }
 main().catch((err) => {
@@ -212,10 +431,14 @@ main().catch((err) => {
     const records = JSON.parse(result.stdout.trim());
     expect(JSON.parse(records[0].body).chat_template_kwargs).toEqual({ thinking: false });
     expect(records[0].contentLength).toBeNull();
-    expect(JSON.parse(records[1].body).chat_template_kwargs).toEqual({ thinking: false });
-    expect(records[1].contentLength).toBeNull();
-    expect(JSON.parse(records[2].body).chat_template_kwargs).toBeUndefined();
-    expect(records[2].contentLength).toBe("999");
+    expect(JSON.parse(records[1].body).thinking).toBeUndefined();
+    expect(records[1].upstreamProvider).toBeNull();
+    expect(JSON.parse(records[2].body).thinking).toBe(true);
+    expect(records[2].upstreamProvider).toBeNull();
+    expect(JSON.parse(records[3].body).chat_template_kwargs).toEqual({ thinking: false });
+    expect(records[3].contentLength).toBeNull();
+    expect(JSON.parse(records[4].body).chat_template_kwargs).toBeUndefined();
+    expect(records[4].contentLength).toBe("999");
   });
 
   it("preload mutates real Node fetch/undici requests and refreshes Content-Length", () => {
@@ -273,6 +496,7 @@ async function main() {
     await postJson(url, {
       model: 'nvidia/nemotron-3-ultra-550b-a55b',
       messages: [{ role: 'user', content: 'Create a file and run it.' }],
+      thinking: { type: 'enabled' },
     }, { 'content-type': 'application/json', 'content-length': '999' });
     console.log(JSON.stringify(records));
   } finally {
@@ -306,9 +530,10 @@ main().catch((err) => {
     const otherBody = JSON.parse(records[2].body);
     expect(otherBody.chat_template_kwargs).toBeUndefined();
 
-    // #4851: Ultra 550B injection takes the fetch/undici path too, system
-    // message is prepended and Content-Length is refreshed for the larger body
+    // #4851: The tool-less system prompt still takes the fetch/undici path, but
+    // #6913's Build-specific thinking strip leaves this local endpoint intact.
     const ultraBody = JSON.parse(records[3].body);
+    expect(ultraBody.thinking).toEqual({ type: "enabled" });
     expect(ultraBody.messages[0].role).toBe("system");
     expect(ultraBody.messages[0].content).toMatch(/do not have tools/i);
     expect(ultraBody.messages[1]).toEqual({

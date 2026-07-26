@@ -20,6 +20,7 @@ describe("messaging channel diagnostics", () => {
     expect(specs.find((spec) => spec.channelId === "telegram")).toMatchObject({
       policyPresets: ["telegram"],
       preferredDefault: false,
+      deepProbe: "log-tail",
     });
     expect(specs.find((spec) => spec.channelId === "wechat")).toMatchObject({
       policyPresets: ["wechat"],

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-
-import * as shields from "../../../lib/shields/index";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
+import * as shields from "../../../lib/shields/index";
+import { withSandboxMutationLock } from "../../../lib/state/mcp-lifecycle-lock";
 
 export default class ShieldsStatusCommand extends NemoClawCommand {
   static id = "sandbox:shields:status";
@@ -18,6 +18,6 @@ export default class ShieldsStatusCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ShieldsStatusCommand);
-    shields.shieldsStatus(args.sandboxName);
+    await withSandboxMutationLock(args.sandboxName, () => shields.shieldsStatus(args.sandboxName));
   }
 }

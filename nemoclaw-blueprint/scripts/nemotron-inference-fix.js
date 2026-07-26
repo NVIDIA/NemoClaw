@@ -86,6 +86,49 @@
 //   Removal condition: remove the TOOL_LESS_SYSTEM_PROMPT_RULES entry for
 //   Ultra 550B once NVB#6272828 ships and a clean Ultra response to the
 //   #4851 prompt no longer requires the nudge.
+//
+// Source-of-truth / removal contract (NemoClaw#6913):
+//   Invalid state: OpenClaw emits a top-level `thinking` field on every
+//   chat-completions request for a model whose generated config has
+//   `reasoning: true`. NVIDIA Build's OpenAI-compatible endpoint rejects that
+//   field — `400 "Validation: Unsupported parameter(s): thinking"` — in BOTH
+//   its object (`{"type":"enabled"}`) and boolean (`true`) forms. Ultra 550B
+//   is a reasoning model, so a reasoning-enabled Ultra sandbox 400s on every
+//   agent turn (0/20 in the report). The model still reasons without the
+//   field (the endpoint returns `reasoning_content` either way), so the field
+//   carries no behavior to preserve.
+//
+//   Scope: the `nvidia/nemotron-3-` model family when the managed
+//   `inference.local` route currently selects nvidia-prod. The image-baked
+//   NEMOCLAW_UPSTREAM_PROVIDER establishes the onboarding route; after an
+//   in-place provider switch, OpenClaw's private request marker is authoritative
+//   and this preload removes it before forwarding. Ultra, Super, and Nano all
+//   reject the top-level field on NVIDIA Build, while unrelated models and
+//   other upstream providers must remain untouched.
+//
+//   Source boundary: NemoClaw owns the sandbox preload that wraps outgoing
+//   chat-completions traffic. The `thinking` field originates in OpenClaw's
+//   request builder and the strict validation lives in the NVIDIA Build
+//   endpoint — both outside this repository — so neither end can be fixed
+//   from here without vendoring one of them.
+//
+//   Why not fix only at the origin: the same reason as the kwargs rules above
+//   — the sandbox must sanitize multiple client transports/SDK versions
+//   without vendoring OpenClaw, and the endpoint contract is upstream.
+//   Stripping (not relocating) is correct because both accepted shapes are
+//   rejected and reasoning happens regardless of the field.
+//
+//   Regression proof: test/nemotron-inference-fix.test.ts covers the strip/
+//   skip branches; the http/https/fetch transports share the same
+//   patchJsonBody path already exercised by the kwargs tests. Verified
+//   end-to-end against integrate.api.nvidia.com by replaying an Ultra request
+//   carrying a top-level `thinking` through this preload: 400 without the
+//   strip, 200 with it (both object and boolean forms).
+//
+//   Removal condition: remove STRIP_TOP_LEVEL_THINKING_RE once OpenClaw stops
+//   emitting a top-level `thinking` on the managed Build route (e.g. it moves
+//   the flag into a shape the endpoint accepts) or NVIDIA Build accepts the
+//   field.
 
 (function () {
   'use strict';
@@ -94,11 +137,23 @@
   var https = require('https');
 
   var COMPLETIONS_RE = /\/v1\/chat\/completions/;
+  // Written only by NemoClaw's runtime config synchronization. This is
+  // non-secret control metadata and must not leave the sandbox.
+  var UPSTREAM_PROVIDER_HEADER = 'x-nemoclaw-upstream-provider';
   var CHAT_TEMPLATE_KWARG_RULES = [
     { pattern: /nemotron/i, kwargs: { force_nonempty_content: true } },
     { pattern: /^deepseek-ai\/deepseek-v4-pro$/i, kwargs: { thinking: false } },
     { pattern: /^moonshotai\/kimi-k2\.6$/i, kwargs: { thinking: false } },
   ];
+
+  // #6913: models whose top-level `thinking` field the NVIDIA Build endpoint
+  // rejects outright. Distinct from the CHAT_TEMPLATE_KWARG_RULES above, which
+  // set `chat_template_kwargs.thinking` (a chat-template arg the endpoint
+  // accepts); this strips the *top-level* `thinking` request field entirely.
+  //
+  // Scope is the Nemotron-3 family verified by #6913. Do not widen this to all
+  // NVIDIA endpoint models: some models accept and use top-level `thinking`.
+  var STRIP_TOP_LEVEL_THINKING_RE = /^nvidia\/nemotron-3-/i;
 
   // #4851: Ultra 550B silently drops intermediate steps from `content` when
   // asked to perform multi-step tasks without execution-capable tools —
@@ -140,7 +195,7 @@
   // `nemoclaw/src/index.ts:WRITE_TOOL_NAMES` so this allowlist stays
   // aligned with the same write-capable surface OpenClaw scans for
   // secrets. `tool_call` is the OpenClaw compact-catalog wrapper from
-  // `scripts/patch-openclaw-tool-catalog.js` — when it's present we
+  // `scripts/patch-openclaw-tool-catalog.mts` — when it's present we
   // can't tell from the request alone which underlying tool will be
   // dispatched, so treat it as execution-capable and skip the nudge.
   var EXECUTION_TOOL_NAMES = new Set([
@@ -253,11 +308,20 @@
     return true;
   }
 
-  function patchJsonBody(raw) {
+  function applyStripTopLevelThinking(body) {
+    if (!body || typeof body.model !== 'string') return false;
+    if (!STRIP_TOP_LEVEL_THINKING_RE.test(body.model)) return false;
+    if (!Object.prototype.hasOwnProperty.call(body, 'thinking')) return false;
+    delete body.thinking;
+    return true;
+  }
+
+  function patchJsonBody(raw, stripTopLevelThinking) {
     try {
       var body = JSON.parse(raw.toString('utf-8'));
       var changed = false;
       if (applyChatTemplateKwargs(body)) changed = true;
+      if (stripTopLevelThinking && applyStripTopLevelThinking(body)) changed = true;
       if (applyToolLessSystemPrompt(body)) changed = true;
       if (!changed) return null;
       return Buffer.from(JSON.stringify(body), 'utf-8');
@@ -288,27 +352,95 @@
     return isChatCompletionsPost(fetchMethod(input, init), fetchUrl(input));
   }
 
-  function headersWithoutContentLength(headers) {
+  function upstreamProviderFromHeaders(headers) {
+    if (!headers) return undefined;
+    if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+      return headers.has(UPSTREAM_PROVIDER_HEADER)
+        ? headers.get(UPSTREAM_PROVIDER_HEADER)
+        : undefined;
+    }
+    if (Array.isArray(headers)) {
+      for (var i = 0; i < headers.length; i++) {
+        var entry = headers[i];
+        if (
+          entry &&
+          String(entry[0]).toLowerCase() === UPSTREAM_PROVIDER_HEADER
+        ) {
+          return String(entry[1]);
+        }
+      }
+      return undefined;
+    }
+    if (typeof headers === 'object') {
+      var keys = Object.keys(headers);
+      for (var j = 0; j < keys.length; j++) {
+        if (keys[j].toLowerCase() === UPSTREAM_PROVIDER_HEADER) {
+          return String(headers[keys[j]]);
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function isNvidiaBuildUpstream(upstreamProvider) {
+    var provider =
+      upstreamProvider === undefined
+        ? process.env.NEMOCLAW_UPSTREAM_PROVIDER
+        : upstreamProvider;
+    return provider === 'nvidia-prod';
+  }
+
+  function isManagedBuildHost(host, upstreamProvider) {
+    return (
+      isNvidiaBuildUpstream(upstreamProvider) &&
+      /^inference\.local(?::\d+)?$/i.test(String(host || ''))
+    );
+  }
+
+  function isManagedBuildFetch(input, upstreamProvider) {
+    if (!isNvidiaBuildUpstream(upstreamProvider)) return false;
+    try {
+      return new URL(fetchUrl(input)).hostname.toLowerCase() === 'inference.local';
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function isManagedBuildRequest(options, upstreamProvider) {
+    return isManagedBuildHost(options.hostname || options.host, upstreamProvider);
+  }
+
+  function headersWithoutNames(headers, names) {
     if (typeof Headers !== 'undefined' && headers instanceof Headers) {
       var copy = new Headers(headers);
-      copy.delete('content-length');
+      names.forEach(function (name) {
+        copy.delete(name);
+      });
       return copy;
     }
     if (Array.isArray(headers)) {
       return headers.filter(function (entry) {
-        return !entry || String(entry[0]).toLowerCase() !== 'content-length';
+        return !entry || !names.has(String(entry[0]).toLowerCase());
       });
     }
     if (headers && typeof headers === 'object') {
       var next = {};
       Object.keys(headers).forEach(function (key) {
-        if (key.toLowerCase() !== 'content-length') {
+        if (!names.has(key.toLowerCase())) {
           next[key] = headers[key];
         }
       });
       return next;
     }
     return headers;
+  }
+
+  function headersWithoutContentLength(headers) {
+    return headersWithoutNames(headers, new Set(['content-length']));
+  }
+
+  function headersWithoutUpstreamProvider(headers) {
+    return headersWithoutNames(headers, new Set([UPSTREAM_PROVIDER_HEADER]));
   }
 
   function bytesFromSimpleBody(body) {
@@ -363,19 +495,34 @@
 
     var origFetch = globalThis.fetch;
     var wrappedFetch = async function (input, init) {
+      var nextInit = init ? Object.assign({}, init) : {};
+      var effectiveHeaders = nextInit.headers || (input && input.headers);
+      var upstreamProvider = upstreamProviderFromHeaders(effectiveHeaders);
+      var hasUpstreamProviderMarker = upstreamProvider !== undefined;
+      if (hasUpstreamProviderMarker) {
+        nextInit.headers = headersWithoutUpstreamProvider(effectiveHeaders);
+      }
       if (!isChatCompletionsFetch(input, init)) {
-        return origFetch.apply(this, arguments);
+        return hasUpstreamProviderMarker
+          ? origFetch.call(this, input, nextInit)
+          : origFetch.apply(this, arguments);
       }
 
-      var nextInit = init ? Object.assign({}, init) : {};
       var rawPromise = bytesFromFetch(input, nextInit);
       if (!rawPromise) {
-        return origFetch.apply(this, arguments);
+        return hasUpstreamProviderMarker
+          ? origFetch.call(this, input, nextInit)
+          : origFetch.apply(this, arguments);
       }
 
-      var modified = patchJsonBody(await rawPromise);
+      var modified = patchJsonBody(
+        await rawPromise,
+        isManagedBuildFetch(input, upstreamProvider)
+      );
       if (!modified) {
-        return origFetch.apply(this, arguments);
+        return hasUpstreamProviderMarker
+          ? origFetch.call(this, input, nextInit)
+          : origFetch.apply(this, arguments);
       }
 
       nextInit.body = modified.toString('utf-8');
@@ -392,18 +539,29 @@
     var origRequest = mod.request;
 
     mod.request = function (options, callback) {
-      // Only intercept object-form calls with a recognisable path.
-      if (typeof options === 'string' || !options) {
+      var isUrlForm =
+        typeof options === 'string' ||
+        (typeof URL !== 'undefined' && options instanceof URL);
+      var requestOptions =
+        isUrlForm && callback && typeof callback === 'object' ? callback : options;
+      if (!requestOptions || typeof requestOptions !== 'object') {
         return origRequest.apply(mod, arguments);
       }
 
+      var upstreamProvider = upstreamProviderFromHeaders(requestOptions.headers);
+      var req = origRequest.apply(mod, arguments);
+      if (upstreamProvider !== undefined && req.removeHeader) {
+        req.removeHeader(UPSTREAM_PROVIDER_HEADER);
+      }
+
+      // Only intercept object-form calls with a recognisable path.
+      if (isUrlForm) return req;
       var path = options.path || '';
       if (!isChatCompletionsPost(options.method, path)) {
-        return origRequest.apply(mod, arguments);
+        return req;
       }
 
       // Create the real request, then intercept write/end to buffer the body.
-      var req = origRequest.apply(mod, arguments);
       var origWrite = req.write;
       var origEnd = req.end;
       var chunks = [];
@@ -421,7 +579,10 @@
         }
 
         var raw = Buffer.concat(chunks);
-        var modified = patchJsonBody(raw);
+        var modified = patchJsonBody(
+          raw,
+          isManagedBuildRequest(options, upstreamProvider)
+        );
         var bodyToSend = modified || raw;
         if (modified && req.getHeader && req.setHeader) {
           req.removeHeader('content-length');

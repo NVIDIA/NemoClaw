@@ -7,7 +7,11 @@ import {
   BRAVE_PROVIDER_PROFILE_ID,
   braveProviderProfilePath,
   ensureBraveProviderProfile,
+  ensureWebSearchProviderProfiles,
+  HERMES_TAVILY_PROVIDER_PROFILE_ID,
   shouldEnableBraveWebSearch,
+  TAVILY_PROVIDER_PROFILE_ID,
+  webSearchProviderProfilePath,
 } from "./brave-provider-profile";
 
 function makeDeps(runOpenshell: ReturnType<typeof vi.fn>, overrides: Record<string, unknown> = {}) {
@@ -47,6 +51,47 @@ describe("ensureBraveProviderProfile", () => {
     );
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "import", "--file", braveProviderProfilePath("/repo")],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("imports Tavily and Brave profiles when both have tokens", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stderr: "", stdout: "" }));
+    ensureWebSearchProviderProfiles(
+      [
+        { providerType: TAVILY_PROVIDER_PROFILE_ID, token: "tvly-test" },
+        { providerType: BRAVE_PROVIDER_PROFILE_ID, token: "brv-test" },
+      ],
+      makeDeps(runOpenshell),
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "profile", "import", "--file", webSearchProviderProfilePath("/repo", "tavily")],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["provider", "profile", "import", "--file", braveProviderProfilePath("/repo")],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("uses a versioned Hermes profile instead of accepting a stale Tavily profile", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stderr: "", stdout: "" }));
+
+    ensureWebSearchProviderProfiles(
+      [{ providerType: HERMES_TAVILY_PROVIDER_PROFILE_ID, token: "tvly-test" }],
+      makeDeps(runOpenshell),
+    );
+
+    expect(runOpenshell).toHaveBeenCalledWith(
+      [
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        webSearchProviderProfilePath("/repo", HERMES_TAVILY_PROVIDER_PROFILE_ID),
+      ],
       expect.objectContaining({ ignoreError: true }),
     );
   });

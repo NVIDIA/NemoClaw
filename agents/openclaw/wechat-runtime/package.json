@@ -1,0 +1,14 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "name": "nemoclaw-wechat-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Locked production dependency graph for the OpenClaw WeChat plugin",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@tencent-weixin/openclaw-weixin": "2.4.3"
+  },
+  "engines": {
+    "node": ">=22.16.0"
+  }
+}

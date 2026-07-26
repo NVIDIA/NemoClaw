@@ -2,16 +2,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-import { upsertStickyComment } from "../advisors/github.mts";
+import {
+  credentialFreeTestIdForFile,
+  E2E_RENDER_LIMIT,
+  type TrustedE2eRecommendationInventory,
+  trustedE2eRecommendationInventory,
+} from "../advisors/e2e-recommendations.mts";
+import { deleteBotOwnedStickyComments, upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 const COMMENT_TITLE = "PR Review Advisor";
+const MAX_COMMENT_BYTES = 60 * 1024;
+const COMMENT_TRUNCATION_NOTICE =
+  "\n\n_Comment truncated to fit GitHub's size limit. The workflow artifact contains the complete review._\n";
+let cachedE2eInventory: TrustedE2eRecommendationInventory | undefined;
 
 type ReviewAdvisorResult = {
   headSha?: string;
+  changedFiles?: string[];
   summary?: {
     recommendation?: string;
     confidence?: string;
@@ -43,24 +55,39 @@ type ReviewAdvisorResult = {
       safetyBoundary?: string;
     };
   }>;
-  acceptanceCoverage?: Array<{
-    clause?: string;
-    status?: string;
-    evidence?: string;
-  }>;
-  sourceOfTruthReview?: Array<{
-    surface?: string;
-    status?: string;
-    regressionTest?: string;
-    evidence?: string;
-  }>;
-  testDepth?: {
-    verdict?: string;
-    rationale?: string;
-    suggestedTests?: string[];
-  };
-  reviewCompleteness?: {
-    limitations?: string[];
+  e2e?: {
+    coverage?: {
+      requiredTests?: Array<{ id?: string; reason?: string }>;
+      optionalTests?: Array<{ id?: string; reason?: string }>;
+      newE2eRecommendations?: Array<{
+        domain?: string;
+        reason?: string;
+        suggestedTest?: string;
+      }>;
+      noE2eReason?: string | null;
+    };
+    targets?: {
+      changedCredentialFreeTests?: Array<{
+        id?: string;
+        file?: string;
+        headSha?: string;
+      }>;
+      required?: Array<{
+        id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
+        reason?: string;
+      }>;
+      optional?: Array<{
+        id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
+        reason?: string;
+      }>;
+      noTargetE2eReason?: string | null;
+    };
   };
 };
 
@@ -68,6 +95,11 @@ type CommentMetadata = {
   runId?: string;
   runAttempt?: string;
   commentId?: string;
+  eventName?: string;
+  prNumber?: string;
+  workflowSha?: string;
+  baseSha?: string;
+  workflowPath?: string;
 };
 
 type Finding = NonNullable<ReviewAdvisorResult["findings"]>[number];
@@ -77,14 +109,28 @@ type FindingRecord = {
   finding: Finding;
 };
 
-type TestingFollowup = {
-  label: string;
-  text: string;
+type FindingCounts = {
+  blockers: number;
+  warnings: number;
+  suggestions: number;
 };
 
-type TestingFollowupRecord = {
-  id: string;
-  followup: TestingFollowup;
+type LaneFingerprints = {
+  findings: string;
+  e2e: string;
+};
+
+export type AdvisorLaneReport = {
+  status: "completed" | "failed" | "skipped" | "unavailable";
+  partial: boolean;
+  counts?: FindingCounts;
+  confidence?: "low" | "medium" | "high";
+  fingerprints?: LaneFingerprints;
+};
+
+export type AdvisorLaneReports = {
+  primary: AdvisorLaneReport;
+  secondOpinion: AdvisorLaneReport;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -101,6 +147,14 @@ async function main(): Promise<void> {
   const summaryPath = args.summary || "artifacts/pr-review-advisor/pr-review-advisor-summary.md";
   const resultPath =
     args.result || "artifacts/pr-review-advisor/pr-review-advisor-final-result.json";
+  if (!args.analysisResult) {
+    throw new Error("--analysis-result is required");
+  }
+  if (Boolean(args.secondOpinionAnalysisResult) !== Boolean(args.secondOpinionResult)) {
+    throw new Error(
+      "--second-opinion-analysis-result and --second-opinion-result must be provided together",
+    );
+  }
   const { marker, title, label } = normalizeCommentOptions({
     marker: args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER,
     title: args.title || process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || COMMENT_TITLE,
@@ -125,9 +179,20 @@ async function main(): Promise<void> {
     summaryExplicit: Boolean(args.summary),
     resultExplicit: Boolean(args.result),
   });
+  const lanes = readAdvisorLaneReports({
+    primaryAnalysisResultPath: args.analysisResult,
+    primaryResult: result,
+    secondOpinionAnalysisResultPath: args.secondOpinionAnalysisResult,
+    secondOpinionResultPath: args.secondOpinionResult,
+  });
   const baseMetadata = {
-    runId: process.env.GITHUB_RUN_ID,
-    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+    runId: process.env.PR_REVIEW_ADVISOR_RUN_ID || process.env.GITHUB_RUN_ID,
+    runAttempt: process.env.PR_REVIEW_ADVISOR_RUN_ATTEMPT || process.env.GITHUB_RUN_ATTEMPT,
+    eventName: process.env.PR_REVIEW_ADVISOR_EVENT_NAME || process.env.GITHUB_EVENT_NAME,
+    prNumber: pr,
+    workflowSha: process.env.TRUSTED_WORKFLOW_SHA,
+    baseSha: process.env.PR_BASE_SHA,
+    workflowPath: process.env.PR_REVIEW_ADVISOR_WORKFLOW_PATH,
   };
   const body = buildComment({
     summary,
@@ -136,6 +201,7 @@ async function main(): Promise<void> {
     marker,
     title,
     metadata: baseMetadata,
+    lanes,
   });
 
   await upsertStickyComment({
@@ -153,7 +219,15 @@ async function main(): Promise<void> {
         marker,
         title,
         metadata: { ...baseMetadata, commentId: String(comment.id) },
+        lanes,
       }),
+  });
+  await deleteBotOwnedStickyComments({
+    repo,
+    pr,
+    token,
+    markers: ["<!-- nemoclaw-e2e-advisor -->", "<!-- nemoclaw-e2e-target-advisor -->"],
+    label: "legacy E2E advisor",
   });
 }
 
@@ -208,6 +282,70 @@ export function readCommentArtifacts(
   return { summary, result };
 }
 
+export function readAdvisorLaneReports({
+  primaryAnalysisResultPath,
+  primaryResult,
+  secondOpinionAnalysisResultPath,
+  secondOpinionResultPath,
+}: {
+  primaryAnalysisResultPath: string;
+  primaryResult?: ReviewAdvisorResult;
+  secondOpinionAnalysisResultPath?: string;
+  secondOpinionResultPath?: string;
+}): AdvisorLaneReports {
+  const primaryAnalysisResult = readJsonIfExists<unknown>(primaryAnalysisResultPath);
+  if (!primaryAnalysisResult) {
+    throw new Error(`No primary advisor analysis result found at ${primaryAnalysisResultPath}`);
+  }
+  const primary = normalizeAdvisorLaneReport(primaryAnalysisResult, primaryResult);
+  if (!secondOpinionAnalysisResultPath || !secondOpinionResultPath) {
+    return { primary, secondOpinion: unavailableLaneReport() };
+  }
+
+  try {
+    const secondOpinionAnalysisResult = readJsonIfExists<unknown>(secondOpinionAnalysisResultPath);
+    const secondOpinionResult = readJsonIfExists<ReviewAdvisorResult>(secondOpinionResultPath);
+    return {
+      primary,
+      secondOpinion: normalizeAdvisorLaneReport(
+        secondOpinionAnalysisResult,
+        secondOpinionResult,
+        primaryResult?.headSha,
+      ),
+    };
+  } catch {
+    // The evaluation lane is deliberately non-blocking. A malformed or
+    // unreadable second-opinion artifact is reported as unavailable and can
+    // never suppress publication of the trusted primary result.
+    return { primary, secondOpinion: unavailableLaneReport() };
+  }
+}
+
+export function normalizeAdvisorLaneReport(
+  analysisResult: unknown,
+  finalResult: unknown,
+  expectedHeadSha?: string,
+): AdvisorLaneReport {
+  if (!isRecord(analysisResult)) return unavailableLaneReport();
+  const failed = analysisResult.failed === true;
+  const skipped = analysisResult.skipped === true;
+  if (failed && skipped) return unavailableLaneReport();
+  if (skipped) return { status: "skipped", partial: false };
+
+  const partial = failed && analysisResult.partial === true;
+  if (failed && !partial) return { status: "failed", partial: false };
+  const structure = trustedLaneStructure(finalResult, expectedHeadSha);
+  if (failed) {
+    return {
+      status: "failed",
+      partial: true,
+      ...(structure ?? {}),
+    };
+  }
+  if (analysisResult.version !== 1 || !structure) return unavailableLaneReport();
+  return { status: "completed", partial: false, ...structure };
+}
+
 export function buildComment({
   summary: _summary,
   result,
@@ -215,6 +353,7 @@ export function buildComment({
   marker,
   title,
   metadata,
+  lanes,
 }: {
   summary: string;
   result?: ReviewAdvisorResult;
@@ -222,9 +361,9 @@ export function buildComment({
   marker?: string;
   title?: string;
   metadata?: CommentMetadata;
+  lanes?: AdvisorLaneReports;
 }): string {
   const findingRecords = collectFindingRecords(result);
-  const testingFollowups = collectTestingFollowupRecords(result);
   const blockerCount = findingRecords.filter(
     (record) => record.finding.severity === "blocker",
   ).length;
@@ -234,30 +373,249 @@ export function buildComment({
   const suggestionCount = findingRecords.filter(
     (record) => record.finding.severity === "suggestion",
   ).length;
-  const secondary = buildSecondarySummary(result, findingRecords);
-  const actionChecklist = renderActionChecklist(findingRecords, testingFollowups);
-  const findingsIndex = renderFindingsIndex(findingRecords);
+  const reviewHistory = buildSecondarySummary(result);
+  const informational =
+    result?.summary?.recommendation === "info_only" && result.summary.oneLine
+      ? `**Status:** ${escapeCommentText(result.summary.oneLine)}\n`
+      : "";
   const findingsDetails = renderFindingsDetails(findingRecords);
-  const simplificationDetails = renderSimplificationDetails(findingRecords);
-  const testingFollowupsDetails = renderTestingFollowupsDetails(testingFollowups);
-  const previousReviewDetails = renderPreviousReviewDetails(result, findingRecords);
+  const e2eDetails = renderE2eDetails(result);
+  const laneDetails = renderAdvisorLanes(lanes);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
-  const posture = reviewPosture(result?.summary?.recommendation);
-  const headline = reviewHeadline(result?.summary?.recommendation);
+  const posture = reviewPosture(
+    result?.summary?.recommendation,
+    result?.summary?.confidence,
+    blockerCount,
+  );
+  const headline = reviewHeadline(result?.summary?.recommendation, blockerCount);
   const heading = validateSingleLineCommentField(title || COMMENT_TITLE, "title");
   const renderedMarker = validateCommentMarker(marker || MARKER);
-  return `${renderedMarker}
-${hiddenMetadata}## ${heading} — ${headline}
+  const prefix = `${renderedMarker}\n${hiddenMetadata}`;
+  const content = `## ${heading} — ${headline}
 
-**Merge posture:** ${posture}
-**Primary next action:** ${primaryNextAction(findingRecords, testingFollowups)}
-**Open items:** ${compactCount(blockerCount, "required", "required")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "suggestion")} · ${compactCount(testingFollowups.length, "test follow-up")}
-${secondary}${actionChecklist}${findingsIndex}${findingsDetails}${simplificationDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
+**Advisor assessment:** ${posture}
+**Next action:** ${nextAction(findingRecords)}
+**Findings:** ${compactCount(blockerCount, "blocker")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "suggestion")}
+${informational}${laneDetails}${reviewHistory}${e2eDetails}${findingsDetails}${details}
 
-This is an automated, non-binding review; it still expects maintainers and agents to respond to each required or warning item. Treat suggestions as current-PR improvements when they touch changed code; defer only with maintainer rationale or a linked follow-up. A human maintainer must make the final merge decision.
+This automated review informs maintainers. Warnings and suggestions do not require a response. A maintainer decides whether to merge.
 
 `;
+  return boundedComment(prefix, content);
+}
+
+function renderAdvisorLanes(lanes?: AdvisorLaneReports): string {
+  if (!lanes) return "";
+  const lines = [
+    "",
+    "### Model lanes",
+    `- **GPT-5.6 Terra (primary):** ${renderLaneReport(lanes.primary)}`,
+    `- **Nemotron 3 Ultra (second opinion):** ${renderLaneReport(lanes.secondOpinion)}`,
+  ];
+  const comparison = renderLaneComparison(lanes.primary, lanes.secondOpinion);
+  if (comparison) lines.push(`- **Model comparison:** ${comparison}`);
+  lines.push(
+    "",
+    "_Nemotron output stays in workflow artifacts and does not change the assessment above._",
+    "",
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+function renderLaneReport(report: AdvisorLaneReport): string {
+  const status =
+    report.status === "completed"
+      ? "Completed"
+      : report.status === "failed"
+        ? report.partial
+          ? "Failed after a partial review"
+          : "Failed"
+        : report.status === "skipped"
+          ? "Skipped"
+          : "Unavailable";
+  if (!report.counts) return status;
+  const confidence = report.confidence ? ` · ${report.confidence} confidence` : "";
+  return `${status}${confidence} · ${compactCount(report.counts.blockers, "blocker")} · ${compactCount(report.counts.warnings, "warning")} · ${compactCount(report.counts.suggestions, "suggestion")}`;
+}
+
+function renderLaneComparison(
+  primary: AdvisorLaneReport,
+  secondOpinion: AdvisorLaneReport,
+): string | undefined {
+  if (
+    primary.status !== "completed" ||
+    secondOpinion.status !== "completed" ||
+    !primary.counts ||
+    !secondOpinion.counts ||
+    !primary.fingerprints ||
+    !secondOpinion.fingerprints
+  ) {
+    return undefined;
+  }
+  const differences = [
+    countDifference(secondOpinion.counts.blockers - primary.counts.blockers, "blocker"),
+    countDifference(secondOpinion.counts.warnings - primary.counts.warnings, "warning"),
+    countDifference(secondOpinion.counts.suggestions - primary.counts.suggestions, "suggestion"),
+  ];
+  const findingComparison =
+    primary.fingerprints.findings === secondOpinion.fingerprints.findings
+      ? "normalized findings match"
+      : "normalized findings differ";
+  const e2eComparison =
+    primary.fingerprints.e2e === secondOpinion.fingerprints.e2e
+      ? "normalized E2E selections match"
+      : "normalized E2E selections differ";
+  const countComparison = differences.every((difference) =>
+    difference.startsWith("the same number"),
+  )
+    ? "severity counts match"
+    : `Nemotron reported ${differences.join(", ")}`;
+  return `${findingComparison}; ${e2eComparison}; ${countComparison}.`;
+}
+
+function countDifference(difference: number, label: string): string {
+  if (difference === 0) return `the same number of ${label}s`;
+  const direction = difference > 0 ? "more" : "fewer";
+  const count = Math.abs(difference);
+  return `${count} ${direction} ${count === 1 ? label : `${label}s`}`;
+}
+
+function renderE2eDetails(result?: ReviewAdvisorResult): string {
+  const coverage = result?.e2e?.coverage;
+  const targets = result?.e2e?.targets;
+  if (!coverage && !targets) return "";
+
+  const inventory = commentE2eInventory();
+  const changedCredentialFreeJobIds = trustedChangedCredentialFreeJobIds(result);
+  const requiredCoverage = trustedCoverageIds(coverage?.requiredTests, inventory);
+  const optionalCoverage = trustedCoverageIds(coverage?.optionalTests, inventory);
+  const requiredTargets = trustedTargetIds(
+    targets?.required,
+    true,
+    inventory,
+    changedCredentialFreeJobIds,
+  );
+  const optionalTargets = trustedTargetIds(
+    targets?.optional,
+    false,
+    inventory,
+    changedCredentialFreeJobIds,
+  );
+  const requiredE2e = uniqueE2eIds([...requiredTargets, ...requiredCoverage]);
+  const optionalE2e = uniqueE2eIds([...optionalTargets, ...optionalCoverage]);
+  const lines = [
+    "",
+    "### E2E guidance",
+    "_Advisory only. E2E / PR Gate selects and runs jobs independently._",
+    "",
+  ];
+
+  const hiddenRequiredCount = requiredE2e.length - E2E_RENDER_LIMIT;
+  const hiddenRequiredText = hiddenRequiredCount > 0 ? ` (+${hiddenRequiredCount} more)` : "";
+  lines.push(`**Recommended E2E:** ${renderE2eIds(requiredE2e) || "_None_"}${hiddenRequiredText}`);
+
+  if (optionalE2e.length > 0) {
+    lines.push(
+      "",
+      "<details>",
+      `<summary>${compactCount(optionalE2e.length, "optional E2E recommendation")}</summary>`,
+      "",
+    );
+    for (const id of optionalE2e.slice(0, E2E_RENDER_LIMIT)) {
+      lines.push(`- <code>${escapeLocationHtml(id)}</code>`);
+    }
+    if (optionalE2e.length > E2E_RENDER_LIMIT) {
+      lines.push(`- _${optionalE2e.length - E2E_RENDER_LIMIT} more._`);
+    }
+    lines.push("", "</details>");
+  }
+
+  lines.push("");
+  return `${lines.join("\n")}\n`;
+}
+
+function trustedCoverageIds(
+  items: Array<{ id?: string; reason?: string }> | undefined,
+  inventory: TrustedE2eRecommendationInventory,
+): string[] {
+  const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+  const seen = new Set<string>();
+  return (items ?? []).flatMap((item) => {
+    const id = item.id;
+    if (!id || !allowedIds.has(id) || seen.has(id)) return [];
+    seen.add(id);
+    return [id];
+  });
+}
+
+function trustedTargetIds(
+  items:
+    | Array<{
+        id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
+        reason?: string;
+      }>
+    | undefined,
+  required: boolean,
+  inventory: TrustedE2eRecommendationInventory,
+  changedCredentialFreeJobIds: ReadonlySet<string>,
+): string[] {
+  const allowedJobs = new Set(inventory.allowedJobIds);
+  const allowedTargets = new Set(inventory.liveSupportedTargetIds);
+  const seen = new Set<string>();
+  return (items ?? []).flatMap((item) => {
+    const id = item.id;
+    const selectorType = item.selectorType;
+    if (!id || item.workflow !== inventory.workflow || item.required !== required) return [];
+    const trustedTuple =
+      (selectorType === "all" && id === inventory.fanoutId) ||
+      (selectorType === "job" && (allowedJobs.has(id) || changedCredentialFreeJobIds.has(id))) ||
+      (selectorType === "target" && allowedTargets.has(id));
+    const key = `${selectorType}:${id}`;
+    if (!trustedTuple || seen.has(key)) return [];
+    seen.add(key);
+    return [id];
+  });
+}
+
+function uniqueE2eIds(ids: string[]): string[] {
+  return [...new Set(ids)];
+}
+
+function trustedChangedCredentialFreeJobIds(result?: ReviewAdvisorResult): Set<string> {
+  const ids = new Set<string>();
+  const headSha = result?.headSha;
+  if (!headSha || !/^[0-9a-f]{40}$/.test(headSha)) return ids;
+  const changedFiles = new Set(
+    (result.changedFiles ?? []).filter((file): file is string => typeof file === "string"),
+  );
+  const evidence = result.e2e?.targets?.changedCredentialFreeTests;
+  if (!Array.isArray(evidence)) return ids;
+
+  for (const item of evidence) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    if (Object.keys(item).some((key) => !["id", "file", "headSha"].includes(key))) continue;
+    const { id, file, headSha: evidenceHeadSha } = item;
+    if (!id || !file || evidenceHeadSha !== headSha || !changedFiles.has(file)) continue;
+    if (credentialFreeTestIdForFile(file) !== id) continue;
+    ids.add(id);
+  }
+  return ids;
+}
+
+function commentE2eInventory(): TrustedE2eRecommendationInventory {
+  cachedE2eInventory ??= trustedE2eRecommendationInventory();
+  return cachedE2eInventory;
+}
+
+function renderE2eIds(ids: string[]): string {
+  return ids
+    .slice(0, E2E_RENDER_LIMIT)
+    .map((id) => `<code>${escapeLocationHtml(id)}</code>`)
+    .join(", ");
 }
 
 function collectFindingRecords(result?: ReviewAdvisorResult): FindingRecord[] {
@@ -267,11 +625,109 @@ function collectFindingRecords(result?: ReviewAdvisorResult): FindingRecord[] {
   }));
 }
 
-function collectTestingFollowupRecords(result?: ReviewAdvisorResult): TestingFollowupRecord[] {
-  return collectTestingFollowups(result).map((followup, index) => ({
-    id: `PRA-T${index + 1}`,
-    followup,
-  }));
+function trustedLaneStructure(
+  value: unknown,
+  expectedHeadSha?: string,
+):
+  | {
+      counts: FindingCounts;
+      confidence?: "low" | "medium" | "high";
+      fingerprints: LaneFingerprints;
+    }
+  | undefined {
+  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.findings)) return undefined;
+  if (expectedHeadSha && value.headSha !== expectedHeadSha) return undefined;
+  const counts: FindingCounts = { blockers: 0, warnings: 0, suggestions: 0 };
+  for (const finding of value.findings) {
+    if (!isRecord(finding)) continue;
+    if (finding.severity === "blocker") counts.blockers += 1;
+    else if (finding.severity === "warning") counts.warnings += 1;
+    else if (finding.severity === "suggestion") counts.suggestions += 1;
+  }
+  const summary = isRecord(value.summary) ? value.summary : undefined;
+  const confidence = trustedLaneConfidence(summary?.confidence);
+  return {
+    counts,
+    ...(confidence ? { confidence } : {}),
+    fingerprints: {
+      findings: opaqueFingerprint(normalizedFindingRecords(value.findings)),
+      e2e: opaqueFingerprint(e2eDecisionSets(value.e2e)),
+    },
+  };
+}
+
+function normalizedFindingRecords(value: unknown[]): unknown[] {
+  return value
+    .filter(isRecord)
+    .map((finding) => ({ ...finding }))
+    .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
+}
+
+function trustedLaneConfidence(value: unknown): "low" | "medium" | "high" | undefined {
+  return value === "low" || value === "medium" || value === "high" ? value : undefined;
+}
+
+function e2eDecisionSets(value: unknown): Record<string, string[]> {
+  const e2e = isRecord(value) ? value : {};
+  const coverage = isRecord(e2e.coverage) ? e2e.coverage : {};
+  const targets = isRecord(e2e.targets) ? e2e.targets : {};
+  return {
+    requiredCoverage: normalizedIds(coverage.requiredTests),
+    optionalCoverage: normalizedIds(coverage.optionalTests),
+    requiredSelectors: normalizedSelectors(targets.required),
+    optionalSelectors: normalizedSelectors(targets.optional),
+  };
+}
+
+function normalizedIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.flatMap((item) => (isRecord(item) && typeof item.id === "string" ? [item.id] : [])),
+    ),
+  ].sort();
+}
+
+function normalizedSelectors(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.flatMap((item) => {
+        if (
+          !isRecord(item) ||
+          typeof item.id !== "string" ||
+          typeof item.workflow !== "string" ||
+          typeof item.selectorType !== "string"
+        ) {
+          return [];
+        }
+        return [`${item.workflow}:${item.selectorType}:${item.id}`];
+      }),
+    ),
+  ].sort();
+}
+
+function opaqueFingerprint(value: unknown): string {
+  return createHash("sha256").update(stableJson(value)).digest("hex");
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function unavailableLaneReport(): AdvisorLaneReport {
+  return { status: "unavailable", partial: false };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function renderHiddenMetadata(result?: ReviewAdvisorResult, metadata?: CommentMetadata): string {
@@ -283,6 +739,13 @@ function renderHiddenMetadata(result?: ReviewAdvisorResult, metadata?: CommentMe
     metadata?.runId ? `run_id: ${safeMetadataValue(metadata.runId)}` : undefined,
     metadata?.runAttempt ? `run_attempt: ${safeMetadataValue(metadata.runAttempt)}` : undefined,
     metadata?.commentId ? `comment_id: ${safeMetadataValue(metadata.commentId)}` : undefined,
+    metadata?.eventName ? `event: ${safeMetadataValue(metadata.eventName)}` : undefined,
+    metadata?.prNumber ? `pr_number: ${safeMetadataValue(metadata.prNumber)}` : undefined,
+    metadata?.workflowSha ? `workflow_sha: ${safeMetadataValue(metadata.workflowSha)}` : undefined,
+    metadata?.baseSha ? `base_sha: ${safeMetadataValue(metadata.baseSha)}` : undefined,
+    metadata?.workflowPath
+      ? `workflow_path: ${safeMetadataValue(metadata.workflowPath)}`
+      : undefined,
   ].filter((field): field is string => Boolean(field));
   return fields.length > 0 ? `<!-- ${fields.join("; ")} -->\n` : "";
 }
@@ -294,118 +757,74 @@ function safeMetadataValue(value: string): string {
     .slice(0, 120);
 }
 
-function reviewHeadline(recommendation?: string): string {
-  if (recommendation === "merge_as_is") return "No blocking findings";
-  if (recommendation === "merge_after_fixes") return "Changes requested";
-  if (recommendation === "needs_rework" || recommendation === "blocked") return "Blocked";
+function boundedComment(prefix: string, content: string): string {
+  const full = `${prefix}${content}`;
+  if (Buffer.byteLength(full, "utf8") <= MAX_COMMENT_BYTES) return full;
+  const contentBytes =
+    MAX_COMMENT_BYTES -
+    Buffer.byteLength(prefix, "utf8") -
+    Buffer.byteLength(COMMENT_TRUNCATION_NOTICE, "utf8");
+  if (contentBytes <= 0) throw new Error("PR review advisor metadata exceeds comment size limit");
+  return `${prefix}${truncateUtf8(content, contentBytes).trimEnd()}${COMMENT_TRUNCATION_NOTICE}`;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(value.slice(0, middle), "utf8") <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  if (low > 0 && /[\uD800-\uDBFF]/.test(value[low - 1])) low -= 1;
+  return value.slice(0, low);
+}
+
+function reviewHeadline(recommendation: string | undefined, blockerCount: number): string {
+  if (blockerCount > 0) return "Blocking findings reported";
   if (recommendation === "superseded") return "Superseded";
   if (recommendation === "info_only") return "Informational";
-  return "Review ready";
+  return "No blocking findings reported";
 }
 
-function reviewPosture(recommendation?: string): string {
-  if (recommendation === "merge_as_is") return "No blocking advisor findings";
-  if (recommendation === "merge_after_fixes") return "Do not merge yet";
-  if (recommendation === "needs_rework" || recommendation === "blocked") {
-    return "Do not merge until addressed";
-  }
+function reviewPosture(
+  recommendation: string | undefined,
+  confidence: string | undefined,
+  blockerCount: number,
+): string {
+  if (blockerCount > 0) return "Blockers require maintainer review";
   if (recommendation === "superseded") return "Superseded by other work";
-  if (recommendation === "info_only") return "Informational / low confidence";
-  return "Review findings and decide before merge";
+  if (recommendation === "info_only") {
+    return `Informational / ${trustedConfidence(confidence)} confidence`;
+  }
+  return "No blocking advisor findings reported";
 }
 
-function primaryNextAction(
-  records: FindingRecord[],
-  testingFollowups: TestingFollowupRecord[],
-): string {
-  const blocker = records.find((record) => record.finding.severity === "blocker");
-  if (blocker) {
-    const testText =
-      testingFollowups.length > 0 ? `; then add or justify \`${testingFollowups[0]?.id}\`` : "";
-    return `Fix \`${blocker.id}\`: ${escapeCommentText(findingTitle(blocker.finding))}${testText}.`;
-  }
-  const warning = records.find((record) => record.finding.severity === "warning");
-  if (warning) {
-    return `Resolve or justify \`${warning.id}\`: ${escapeCommentText(findingTitle(warning.finding))}.`;
-  }
-  if (testingFollowups.length > 0) {
-    return `Add or justify \`${testingFollowups[0]?.id || "PRA-T1"}\` and any related test follow-ups.`;
-  }
-  const suggestion = records.find((record) => record.finding.severity === "suggestion");
-  if (suggestion) {
-    return `Consider \`${suggestion.id}\`: ${escapeCommentText(findingTitle(suggestion.finding))}.`;
-  }
-  return "No advisor follow-up required beyond maintainer review.";
+function trustedConfidence(confidence: string | undefined): string {
+  return confidence === "low" || confidence === "medium" || confidence === "high"
+    ? confidence
+    : "unknown";
 }
 
-function buildSecondarySummary(
-  result?: ReviewAdvisorResult,
-  records: FindingRecord[] = [],
-): string {
+function nextAction(records: FindingRecord[]): string {
+  if (records.some((record) => record.finding.severity === "blocker")) {
+    return "Review the blockers below.";
+  }
+  if (records.some((record) => record.finding.severity === "warning")) {
+    return "Review the warnings below.";
+  }
+  if (records.some((record) => record.finding.severity === "suggestion")) {
+    return "Consider the suggestions below.";
+  }
+  return "No advisor follow-up needed.";
+}
+
+function buildSecondarySummary(result?: ReviewAdvisorResult): string {
   const sinceLastReview = result?.summary?.sinceLastReview;
   if (sinceLastReview) {
     return `**Since last review:** ${countLabel(sinceLastReview.resolved, "prior item")} resolved · ${countLabel(sinceLastReview.stillApplies, "still applies", "still apply")} · ${countLabel(sinceLastReview.newItems, "new item")} found\n`;
   }
-  const topItem = result?.summary?.topItem || topFindingTitle(records);
-  return topItem ? `**Top item:** ${escapeCommentText(topItem)}\n` : "";
-}
-
-function topFindingTitle(records: FindingRecord[]): string | undefined {
-  return (
-    records.find((record) => record.finding.severity === "blocker")?.finding.title ||
-    records.find((record) => record.finding.severity === "warning")?.finding.title ||
-    records.find((record) => record.finding.severity === "suggestion")?.finding.title
-  );
-}
-
-function renderActionChecklist(
-  records: FindingRecord[],
-  testingFollowups: TestingFollowupRecord[],
-): string {
-  if (records.length === 0 && testingFollowups.length === 0) return "";
-  const lines = ["", "### Action checklist", ""];
-  for (const record of records.filter((item) => item.finding.severity === "blocker").slice(0, 10)) {
-    lines.push(formatChecklistFinding(record, "Fix"));
-  }
-  for (const record of records.filter((item) => item.finding.severity === "warning").slice(0, 10)) {
-    lines.push(formatChecklistFinding(record, "Resolve or justify"));
-  }
-  for (const followup of testingFollowups.slice(0, 8))
-    lines.push(formatChecklistFollowup(followup));
-  for (const record of records
-    .filter((item) => item.finding.severity === "suggestion")
-    .slice(0, 10)) {
-    lines.push(formatChecklistFinding(record, "In-scope improvement"));
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-function formatChecklistFinding(record: FindingRecord, action: string): string {
-  const location = formatInlineLocation(record.finding);
-  const locationText = location ? ` in ${location}` : "";
-  return `- [ ] \`${record.id}\` ${action}: ${escapeCommentText(findingTitle(record.finding))}${locationText}`;
-}
-
-function formatChecklistFollowup(record: TestingFollowupRecord): string {
-  return `- [ ] \`${record.id}\` Add or justify test follow-up: ${escapeCommentText(record.followup.label)}`;
-}
-
-function renderFindingsIndex(records: FindingRecord[]): string {
-  if (records.length === 0) return "";
-  const lines = [
-    "",
-    "### Findings index",
-    "",
-    "| ID | Severity | Category | Location | Required action |",
-    "|---|---|---|---|---|",
-  ];
-  for (const record of records.slice(0, 20)) {
-    const finding = record.finding;
-    lines.push(
-      `| \`${record.id}\` | ${severityLabel(finding.severity)} | ${escapeCommentText(finding.category || "uncategorized")} | ${formatTableLocation(finding)} | ${escapeCommentText(finding.recommendation || findingTitle(finding))} |`,
-    );
-  }
-  return `${lines.join("\n")}\n`;
+  return "";
 }
 
 function renderFindingsDetails(records: FindingRecord[]): string {
@@ -415,163 +834,26 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   const suggestionFindings = records.filter((record) => record.finding.severity === "suggestion");
   const lines: string[] = [];
   if (blockerFindings.length > 0) {
-    lines.push("", "### 🚨 Required before merge");
-    lines.push(
-      "_Address these before merging unless a maintainer explicitly overrides the advisor with rationale._",
-      "",
-    );
+    lines.push("", "### Blockers", "");
     for (const record of blockerFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
   if (warningFindings.length === 0 && suggestionFindings.length === 0)
     return `${lines.join("\n")}\n`;
   lines.push(
-    "<details>",
-    `<summary>Review findings by urgency: ${countLabel(blockerFindings.length, "required fix", "required fixes")}, ${countLabel(warningFindings.length, "item to resolve/justify", "items to resolve/justify")}, ${countLabel(suggestionFindings.length, "in-scope improvement", "in-scope improvements")}</summary>`,
-    "",
-  );
-  lines.push("### ⚠️ Resolve or justify before merge");
-  lines.push(
-    "_Investigate these in the current review; either fix them, explain why they are not applicable, or document the accepted risk._",
-  );
-  if (warningFindings.length === 0) {
-    lines.push("- _None._");
-  } else {
-    for (const record of warningFindings.slice(0, 20)) lines.push(formatFinding(record));
-  }
-  lines.push("", "### 💡 In-scope improvements");
-  lines.push(
-    "_These are lower-risk, not throwaway. Prefer fixing them in this PR when they are local to changed code; defer only with rationale or a linked follow-up._",
-  );
-  if (suggestionFindings.length === 0) {
-    lines.push("- _None._");
-  } else {
-    for (const record of suggestionFindings.slice(0, 20)) lines.push(formatFinding(record));
-  }
-  lines.push("", "</details>", "");
-  return `${lines.join("\n")}\n`;
-}
-
-function renderSimplificationDetails(records: FindingRecord[]): string {
-  const findings = records.filter((record) => record.finding.simplification);
-  if (findings.length === 0) return "";
-  const netLines = findings.reduce((total, record) => {
-    const value = record.finding.simplification?.estimatedNetLines;
-    return typeof value === "number" && Number.isFinite(value) ? total + value : total;
-  }, 0);
-  const netLabel = netLines < 0 ? `, net ${netLines} lines possible` : "";
-  const lines: string[] = [
     "",
     "<details>",
-    `<summary>Simplification opportunities: ${countLabel(findings.length, "possible cut", "possible cuts")}${netLabel}</summary>`,
+    `<summary>${countLabel(warningFindings.length, "warning")} · ${countLabel(suggestionFindings.length, "suggestion")}</summary>`,
     "",
-    "_These are safe simplification checks only. Do not remove validation, security controls, data-loss prevention, or required tests._",
-  ];
-  for (const record of findings.slice(0, 12)) {
-    const item = record.finding.simplification;
-    if (!item) continue;
-    const location = formatFindingLocation(record.finding);
-    lines.push(
-      `- \`${record.id}\` **${escapeCommentText(item.tag || "shrink")}**${location}: ${escapeCommentText(item.cut || record.finding.title || "Review simplification")}`,
-    );
-    lines.push(
-      `  - Replacement: ${escapeCommentText(item.replacement || "Use the simpler existing path.")}`,
-    );
-    if (typeof item.estimatedNetLines === "number") {
-      lines.push(`  - Net: ${item.estimatedNetLines} lines`);
-    }
-    lines.push(
-      `  - Safety boundary: ${escapeCommentText(item.safetyBoundary || "Keep validation, security, data-loss prevention, and required tests.")}`,
-    );
+  );
+  if (warningFindings.length > 0) {
+    lines.push("### Warnings", "_Warnings do not block._", "");
+    for (const record of warningFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
-  lines.push("", "</details>", "");
-  return `${lines.join("\n")}\n`;
-}
-
-function renderTestingFollowupsDetails(records: TestingFollowupRecord[]): string {
-  if (records.length === 0) return "";
-  const lines: string[] = [
-    "",
-    "<details>",
-    "<summary>Test follow-ups to resolve or justify</summary>",
-    "",
-    "_If these cover changed behavior, prefer adding them in this PR; otherwise state why existing coverage is enough or link the follow-up._",
-  ];
-  for (const record of records) lines.push(formatTestingFollowup(record));
-  lines.push("", "</details>", "");
-  return `${lines.join("\n")}\n`;
-}
-
-function collectTestingFollowups(result?: ReviewAdvisorResult): TestingFollowup[] {
-  const followups: TestingFollowup[] = [];
-  if (!result) return followups;
-  if (result.testDepth?.verdict && result.testDepth.verdict !== "unit_sufficient") {
-    const label = testDepthLabel(result.testDepth.verdict);
-    const rationale = result.testDepth.rationale ? ` ${result.testDepth.rationale}` : "";
-    for (const suggestion of result.testDepth.suggestedTests?.slice(0, 5) || []) {
-      followups.push({ label, text: `${suggestion}.${rationale}` });
-    }
+  if (suggestionFindings.length > 0) {
+    lines.push("### Suggestions", "_No response is required._", "");
+    for (const record of suggestionFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
-  for (const finding of result.findings?.filter((item) => item.category === "tests").slice(0, 5) ||
-    []) {
-    followups.push({
-      label: finding.title || "Test coverage",
-      text:
-        finding.recommendation ||
-        finding.description ||
-        "Add targeted coverage for the changed behavior.",
-    });
-  }
-  for (const clause of result.acceptanceCoverage
-    ?.filter((item) => item.status && item.status !== "met")
-    .slice(0, 5) || []) {
-    followups.push({
-      label: "Acceptance clause",
-      text: `${clause.clause || "unspecified"} — add test evidence or identify existing coverage. ${clause.evidence || ""}`.trim(),
-    });
-  }
-  for (const review of result.sourceOfTruthReview
-    ?.filter((item) => item.status === "missing" || item.status === "needs_followup")
-    .slice(0, 5) || []) {
-    followups.push({
-      label: review.surface || "Localized behavior",
-      text: `${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence || ""}`.trim(),
-    });
-  }
-  return uniqueTestingFollowups(followups).slice(0, 8);
-}
-
-function formatTestingFollowup(record: TestingFollowupRecord): string {
-  return `- \`${record.id}\` **${escapeCommentText(record.followup.label)}** — ${escapeCommentText(record.followup.text)}`;
-}
-
-function uniqueTestingFollowups(followups: TestingFollowup[]): TestingFollowup[] {
-  const seen = new Set<string>();
-  const unique: TestingFollowup[] = [];
-  for (const followup of followups) {
-    const key = `${followup.label}\u0000${followup.text}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(followup);
-  }
-  return unique;
-}
-
-function testDepthLabel(verdict: string): string {
-  if (verdict === "runtime_validation_recommended") return "Runtime validation";
-  if (verdict === "mocks_recommended") return "Mocked behavioral coverage";
-  return "Test coverage";
-}
-
-function renderPreviousReviewDetails(
-  result: ReviewAdvisorResult | undefined,
-  records: FindingRecord[],
-): string {
-  const sinceLastReview = result?.summary?.sinceLastReview;
-  if (!sinceLastReview || records.length === 0) return "";
-  const lines: string[] = ["<details>", "<summary>Since last review details</summary>", ""];
-  lines.push("Current findings, using the urgency labels above:");
-  for (const record of records.slice(0, 20)) lines.push(formatFinding(record));
-  lines.push("", "</details>", "");
+  lines.push("</details>", "");
   return `${lines.join("\n")}\n`;
 }
 
@@ -585,20 +867,26 @@ function formatFinding(record: FindingRecord): string {
   if (finding.impact) lines.push(`- **Impact:** ${escapeCommentText(finding.impact)}`);
   if (finding.recommendation) {
     lines.push(
-      `- **${actionFieldLabel(finding.severity)}:** ${escapeCommentText(finding.recommendation)}`,
+      `- **${findingActionLabel(finding.severity)}:** ${escapeCommentText(finding.recommendation)}`,
     );
   }
-  const expectedFollowUp = findingExpectedFollowUp(finding.severity);
-  if (expectedFollowUp) lines.push(`- **Expected follow-up:** ${expectedFollowUp}`);
   if (finding.verificationHint) {
     lines.push(`- **Verification:** ${escapeCommentText(finding.verificationHint)}`);
   }
   if (finding.missingRegressionTest) {
-    lines.push(
-      `- **Missing regression test:** ${escapeCommentText(finding.missingRegressionTest)}`,
-    );
+    lines.push(`- **Test coverage:** ${escapeCommentText(finding.missingRegressionTest)}`);
   }
-  lines.push(`- **Done when:** ${doneWhenForFinding(finding)}`);
+  if (finding.simplification) {
+    const item = finding.simplification;
+    const net =
+      typeof item.estimatedNetLines === "number" ? ` Net: ${item.estimatedNetLines} lines.` : "";
+    lines.push(
+      `- **Simplification (${escapeCommentText(item.tag || "shrink")}):** Remove ${escapeCommentText(item.cut || finding.title || "the custom path")}; use ${escapeCommentText(item.replacement || "the simpler existing path")}.${net}`,
+    );
+    if (item.safetyBoundary) {
+      lines.push(`- **Keep:** ${escapeCommentText(item.safetyBoundary)}`);
+    }
+  }
   if (finding.evidence) lines.push(`- **Evidence:** ${escapeCommentText(finding.evidence)}`);
   return lines.join("\n");
 }
@@ -608,67 +896,22 @@ function findingTitle(finding: Finding): string {
 }
 
 function severityLabel(severity?: string): string {
-  if (severity === "blocker") return "Required";
-  if (severity === "warning") return "Resolve/justify";
-  if (severity === "suggestion") return "Improvement";
+  if (severity === "blocker") return "Blocker";
+  if (severity === "warning") return "Warning";
+  if (severity === "suggestion") return "Suggestion";
   return "Review";
 }
 
-function actionFieldLabel(severity?: string): string {
-  if (severity === "blocker") return "Required action";
-  if (severity === "warning") return "Recommended action";
-  if (severity === "suggestion") return "Suggested action";
+function findingActionLabel(severity?: string): string {
+  if (severity === "blocker") return "Fix";
+  if (severity === "suggestion") return "Suggestion";
   return "Recommendation";
-}
-
-function findingExpectedFollowUp(severity?: string): string {
-  if (severity === "blocker") return "Fix before merge or get explicit maintainer override.";
-  if (severity === "warning") return "Resolve in this PR or explain why the risk is acceptable.";
-  if (severity === "suggestion") {
-    return "Prefer a current-PR fix when local to changed code; defer only with rationale or linked follow-up.";
-  }
-  return "Review and decide whether this PR should act on it.";
-}
-
-function doneWhenForFinding(finding: Finding): string {
-  if (finding.severity === "blocker") {
-    const verification = finding.verificationHint
-      ? `and verification passes: ${stripTerminalPunctuation(finding.verificationHint)}`
-      : "and the fix is covered by relevant test or review evidence";
-    return escapeCommentText(`The required change is committed ${verification}.`);
-  }
-  if (finding.severity === "warning") {
-    const verification = finding.verificationHint
-      ? ` Verification: ${stripTerminalPunctuation(finding.verificationHint)}.`
-      : "";
-    return escapeCommentText(`The risk is fixed or explicitly justified in the PR.${verification}`);
-  }
-  if (finding.severity === "suggestion") {
-    return escapeCommentText(
-      "The local improvement is applied, or the PR notes why it should be deferred.",
-    );
-  }
-  return escapeCommentText("The PR records the maintainer decision for this item.");
-}
-
-function stripTerminalPunctuation(value: string): string {
-  return value.trim().replace(/[.!?]+$/g, "");
-}
-
-function formatFindingLocation(finding: Finding): string {
-  if (!finding.file) return "";
-  const line = Number.isInteger(finding.line) && Number(finding.line) > 0 ? `:${finding.line}` : "";
-  return ` (${escapeCommentText(finding.file)}${line})`;
 }
 
 function formatInlineLocation(finding: Finding): string {
   if (!finding.file) return "";
   const line = Number.isInteger(finding.line) && Number(finding.line) > 0 ? `:${finding.line}` : "";
   return `<code>${escapeLocationHtml(`${finding.file}${line}`)}</code>`;
-}
-
-function formatTableLocation(finding: Finding): string {
-  return formatInlineLocation(finding) || "—";
 }
 
 function escapeLocationHtml(value: string): string {

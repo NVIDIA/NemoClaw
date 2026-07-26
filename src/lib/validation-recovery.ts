@@ -32,7 +32,12 @@ export function getTransportRecoveryMessage(failure: ValidationFailureLike = {})
   if (failure.httpStatus && failure.httpStatus >= 500 && failure.httpStatus < 600) {
     return "  The provider endpoint is reachable but currently failing upstream.";
   }
-  if (failure.curlStatus === 6 || /could not resolve host|name or service not known/.test(text)) {
+  if (
+    failure.curlStatus === 6 ||
+    /cannot resolve endpoint host|did not resolve to any address|could not resolve host|name or service not known|enotfound|eai_again/.test(
+      text,
+    )
+  ) {
     return "  Validation could not resolve the provider hostname. Check DNS, VPN, or the endpoint URL.";
   }
   if (failure.curlStatus === 7 || /connection refused|failed to connect/.test(text)) {

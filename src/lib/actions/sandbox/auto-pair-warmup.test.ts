@@ -4,7 +4,6 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-import { wrapSandboxShellScript } from "./auto-pair-approval";
 import { WARMUP_SCRIPT, WARMUP_TIMEOUT_MS } from "./auto-pair-warmup";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
@@ -42,37 +41,25 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
   });
 });
 
-describe("warm-up payload survives OpenShell exec in v2 (#4504)", () => {
-  // The leaf wraps its in-sandbox script with the shared `wrapSandboxShellScript`
-  // (OpenShell exec rejects newline-bearing args). These cases pin that wrapper
-  // contract — the exact mechanism the warm-up exec relies on — without needing
-  // the un-mockable lazy require.
-  it("encodes a multi-line warm-up-shaped payload onto a single newline-free line", () => {
-    const warmupShaped = [
-      "command -v openclaw >/dev/null 2>&1 || exit 0",
-      'openclaw agent --agent main -m "ping" \\',
-      `  --session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)" >/dev/null 2>&1 || true`,
-      "exit 0",
-      "",
-    ].join("\n");
-    const wrapped = wrapSandboxShellScript(warmupShaped);
-    expect(wrapped).not.toMatch(/[\n\r]/);
-    expect(wrapped).toContain("base64 -d");
-    expect(wrapped).toContain("mktemp");
+describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", () => {
+  it("keeps the real warm-up as one multiline command argument", () => {
+    expect(WARMUP_SCRIPT).toContain("\n");
+    expect(WARMUP_SCRIPT).toContain("command -v openclaw");
+    expect(WARMUP_SCRIPT).not.toContain("base64 -d");
+    expect(WARMUP_SCRIPT).not.toContain("mktemp");
   });
 
   const shAvailable = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf-8" }).status === 0;
   const itWithSh = shAvailable ? it : it.skip;
 
-  itWithSh("round-trips a warm-up-shaped payload and preserves its exit-0 status when run", () => {
+  itWithSh("runs a multiline warm-up-shaped payload and preserves its exit-0 status", () => {
     // Mirror the real warm-up: the provoke command itself may "fail" (the agent
     // falls back to embedded mode), but `|| true` + trailing `exit 0` mean the
     // wrapped script always exits 0 — so a failed provoke never surfaces as a
     // nonzero status to the onboard path. Use `false` to stand in for the failing
     // openclaw run.
     const inner = ["false || true", "exit 0", ""].join("\n");
-    const wrapped = wrapSandboxShellScript(inner);
-    const result = spawnSync("sh", ["-c", wrapped], { encoding: "utf-8", timeout: 10_000 });
+    const result = spawnSync("sh", ["-c", inner], { encoding: "utf-8", timeout: 10_000 });
     expect(result.status).toBe(0);
   });
 });
@@ -81,6 +68,16 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
   it("tags the provoke session with the shared warm-up prefix", () => {
     expect(WARMUP_SESSION_ID_PREFIX).toBe("nemoclaw-onboard-warmup-");
     expect(WARMUP_SCRIPT).toContain(`--session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`);
+  });
+
+  it("forces device pairing only for the provoke command on OpenClaw 2026.7.1", () => {
+    const [provoke, poll] = WARMUP_SCRIPT.split("command -v python3", 2);
+    expect(WARMUP_SCRIPT).toContain(
+      'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\\n  openclaw agent --agent main -m "ping" \\',
+    );
+    expect(provoke.match(/NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1/g)).toHaveLength(1);
+    expect(poll).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
+    expect(WARMUP_SCRIPT).not.toContain("export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
   });
 
   it("keeps the v2 provoke run foreground and within the original budget (#4504)", () => {

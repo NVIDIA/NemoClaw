@@ -13,7 +13,14 @@ import {
 } from "../../state/onboard-session";
 import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
-import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
+import {
+  advanceTo,
+  branchTo,
+  completeOnboardMachine,
+  failOnboardMachine,
+  pauseOnboardMachine,
+  retryTo,
+} from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import { InvalidOnboardMachineTransitionError } from "./transitions";
 
@@ -297,6 +304,31 @@ describe("OnboardRuntime", () => {
     });
   });
 
+  it("persists safe context while leaving a paused non-terminal session retryable", async () => {
+    const harness = createHarness(sessionInState("post_verify"));
+
+    await harness.runtime.applyResult(
+      pauseOnboardMachine(
+        { sandboxName: "my-assistant", provider: "compatible-endpoint" },
+        { reason: "deployment_not_ready" },
+      ),
+    );
+
+    expect(harness.getSession()).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      sandboxName: "my-assistant",
+      provider: "compatible-endpoint",
+      machine: { state: "post_verify", revision: 7 },
+    });
+    expect(harness.events).toHaveLength(1);
+    expect(harness.events[0]).toMatchObject({
+      type: "context.updated",
+      state: "post_verify",
+      metadata: { reason: "deployment_not_ready" },
+    });
+  });
+
   it("rejects invalid explicit transition kinds before mutating context", async () => {
     const { runtime, getSession } = createHarness(sessionInState("inference"));
 
@@ -325,6 +357,9 @@ describe("OnboardRuntime", () => {
   it("rejects terminal-state failure and invalid completion transitions", async () => {
     const completeHarness = createHarness(sessionInState("complete"));
     await expect(completeHarness.runtime.fail("boom")).rejects.toThrow("complete -> failed");
+    await expect(completeHarness.runtime.applyResult(pauseOnboardMachine())).rejects.toThrow(
+      "Cannot pause terminal onboarding state: complete",
+    );
     expect(completeHarness.getSession().machine.state).toBe("complete");
 
     const policiesHarness = createHarness(sessionInState("policies"));

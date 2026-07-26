@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { EventEmitter } from "node:events";
+import readline from "node:readline";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { isAnyPromptActive } from "../core/prompt-activity";
 import {
   applyMessagingSelectorKey,
   createMessagingSelectorNormalizerState,
   normalizeMessagingSelectorInput,
+  promptMessagingChannelLineSelection,
   readMessagingChannelSelection,
   resolveMessagingChannelSelectorEntry,
 } from "./messaging-selector";
@@ -100,6 +103,83 @@ describe("messaging selector key handling", () => {
     expect(resolveMessagingChannelSelectorEntry("2", channels)?.id).toBe("discord");
     expect(resolveMessagingChannelSelectorEntry("WeChat", channels)?.id).toBe("wechat");
     expect(resolveMessagingChannelSelectorEntry("mattermost", channels)).toBeNull();
+  });
+
+  it("releases line-mode prompt activity when stdin closes before an answer (#6651)", async () => {
+    const rl = new EventEmitter() as EventEmitter & {
+      close: ReturnType<typeof vi.fn>;
+      question: ReturnType<typeof vi.fn>;
+    };
+    rl.close = vi.fn();
+    rl.question = vi.fn();
+    vi.spyOn(readline, "createInterface").mockReturnValue(rl as unknown as readline.Interface);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const stdinRef = vi.spyOn(process.stdin, "ref").mockImplementation(() => process.stdin);
+    const stdinPause = vi.spyOn(process.stdin, "pause").mockImplementation(() => process.stdin);
+    const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
+
+    expect(isAnyPromptActive()).toBe(false);
+    const selection = promptMessagingChannelLineSelection(channels, new Set<string>(), () => "");
+    expect(isAnyPromptActive()).toBe(true);
+
+    rl.emit("close");
+
+    await expect(selection).rejects.toMatchObject({ code: "EOF" });
+    expect(isAnyPromptActive()).toBe(false);
+    expect(rl.close).toHaveBeenCalledOnce();
+    expect(stdinRef).toHaveBeenCalledOnce();
+    expect(stdinPause).toHaveBeenCalledOnce();
+    expect(stdinUnref).toHaveBeenCalledOnce();
+  });
+
+  it("releases raw-mode prompt activity when terminal setup throws (#6651)", async () => {
+    const input = createMockSelectorInput();
+    input.setRawMode.mockImplementation(() => {
+      throw new Error("raw mode unavailable");
+    });
+    const output = { write: vi.fn() };
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      value: input,
+    });
+    Object.defineProperty(process, "stderr", {
+      configurable: true,
+      value: output,
+    });
+
+    expect(isAnyPromptActive()).toBe(false);
+    const selection = readMessagingChannelSelection(channels, new Set<string>(), () => {});
+
+    await expect(selection).rejects.toThrow("raw mode unavailable");
+    expect(isAnyPromptActive()).toBe(false);
+    expect(input.pause).toHaveBeenCalledOnce();
+    expect(input.unref).toHaveBeenCalledOnce();
+    expect(input.listenerCount("data")).toBe(0);
+  });
+
+  it("releases raw-mode prompt activity when stdin closes before a selection (#6651)", async () => {
+    const input = createMockSelectorInput();
+    const output = { write: vi.fn() };
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      value: input,
+    });
+    Object.defineProperty(process, "stderr", {
+      configurable: true,
+      value: output,
+    });
+
+    expect(isAnyPromptActive()).toBe(false);
+    const selection = readMessagingChannelSelection(channels, new Set<string>(), () => {});
+    expect(isAnyPromptActive()).toBe(true);
+
+    input.emit("close");
+
+    await expect(selection).rejects.toMatchObject({ code: "EOF" });
+    expect(isAnyPromptActive()).toBe(false);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+    expect(input.listenerCount("close")).toBe(0);
   });
 
   it("restores raw mode and removes listeners when SIGTERM interrupts", async () => {

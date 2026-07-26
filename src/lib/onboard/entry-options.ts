@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  requireStationExpressResumeIntent,
+  type StationExpressSessionLike,
+  wrapOnboard as wrapStationExpressOnboard,
+} from "./station-express-resume";
+
 export interface OnboardEntryOptionsInput {
   opts: {
     resume?: boolean;
@@ -41,6 +47,56 @@ export interface ResolvedOnboardEntryOptions {
   requestedFromDockerfile: string | null;
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
+}
+
+type NonInteractiveEntryOptions = { nonInteractive?: boolean };
+type ResumableEntryOptions = NonInteractiveEntryOptions & { resume?: boolean; fresh?: boolean };
+interface StationExpressSessionLifecycle {
+  loadSession(): StationExpressSessionLike | null;
+  reconcileStationExpressReceiptRetirement(generation: string): void;
+}
+
+/** Scope the CLI flag to helpers that still read the compatibility environment variable. */
+export function withNonInteractiveEnvironment<Options extends NonInteractiveEntryOptions>(
+  run: (options?: Options) => Promise<void>,
+  env: NodeJS.ProcessEnv = process.env,
+): (options?: Options) => Promise<void> {
+  return async (options) => {
+    if (options?.nonInteractive !== true) return run(options);
+
+    const previous = env.NEMOCLAW_NON_INTERACTIVE;
+    env.NEMOCLAW_NON_INTERACTIVE = "1";
+    try {
+      await run(options);
+    } finally {
+      if (previous === undefined) delete env.NEMOCLAW_NON_INTERACTIVE;
+      else env.NEMOCLAW_NON_INTERACTIVE = previous;
+    }
+  };
+}
+
+export function wrapOnboard<Options extends ResumableEntryOptions>(
+  run: (options?: Options) => Promise<void>,
+  session: StationExpressSessionLifecycle,
+): (options?: Options) => Promise<void> {
+  return wrapStationExpressOnboard(
+    withNonInteractiveEnvironment(run),
+    session.loadSession,
+    session.reconcileStationExpressReceiptRetirement,
+  );
+}
+
+export function prepareSessionInput<RuntimeControlRequests extends object>(
+  runtimeControlRequests: RuntimeControlRequests,
+  sandboxName: string | null,
+  resume: boolean,
+  preflight: () => void,
+) {
+  preflight();
+  return {
+    ...runtimeControlRequests,
+    stationExpressIntent: requireStationExpressResumeIntent(process.env, sandboxName, resume),
+  };
 }
 
 export function resolveOnboardEntryOptions(

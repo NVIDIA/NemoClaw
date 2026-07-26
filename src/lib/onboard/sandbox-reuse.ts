@@ -41,6 +41,7 @@ export interface ReusedSandboxDashboardStateInput {
   gatewayName: string;
   gatewayPort: number;
   manageDashboard?: boolean;
+  getSandbox?(sandboxName: string): SandboxEntry | null;
   ensureDashboardForward(sandboxName: string, chatUiUrl: string): number;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
@@ -65,6 +66,16 @@ export function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
 ): ReusedSandboxDashboardStateResult {
   const manageDashboard = input.manageDashboard ?? true;
+  if (
+    manageDashboard &&
+    input.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" &&
+    (input.getSandbox ?? registry.getSandbox)(input.sandboxName)?.dashboardRemoteBindPrepared !==
+      true
+  ) {
+    throw new Error(
+      `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
+    );
+  }
   const dashboardPort = manageDashboard
     ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)
     : 0;

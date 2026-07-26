@@ -47,6 +47,20 @@ describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
       "NEMOCLAW_PROVIDER_KEY",
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_MODEL",
+      "NEMOCLAW_COMPAT_MODEL",
+      "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
+      "NEMOCLAW_PREFERRED_API",
+      "NEMOCLAW_REASONING",
+      "NEMOCLAW_VLLM_MODEL",
+      "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
+      "NEMOCLAW_FROM_DOCKERFILE",
+      "NEMOCLAW_WEB_SEARCH_PROVIDER",
+      "NEMOCLAW_POLICY_TIER",
+      "NEMOCLAW_POLICY_MODE",
+      "NEMOCLAW_POLICY_PRESETS",
+      "NEMOCLAW_SANDBOX_GPU",
+      "NEMOCLAW_SANDBOX_GPU_DEVICE",
+      "NEMOCLAW_TOOL_DISCLOSURE",
     ]);
   });
 });
@@ -62,8 +76,15 @@ describe("assessAmbientRecreateEnv", () => {
     const result = assessAmbientRecreateEnv("openclaw", {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
+      NEMOCLAW_PREFERRED_API: "chat-completions",
+      NEMOCLAW_REASONING: "true",
     });
-    expect(result.presentVars).toEqual(["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER_KEY"]);
+    expect(result.presentVars).toEqual([
+      "NEMOCLAW_AGENT",
+      "NEMOCLAW_PROVIDER_KEY",
+      "NEMOCLAW_PREFERRED_API",
+      "NEMOCLAW_REASONING",
+    ]);
     expect(result.agentMismatch).toEqual({
       envAgent: "langchain-deepagents-code",
       registryAgent: "openclaw",
@@ -97,6 +118,19 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
       NEMOCLAW_MODEL: "some-model",
+      NEMOCLAW_COMPAT_MODEL: "some-compat-model",
+      NEMOCLAW_PREFERRED_API: "openai-responses",
+      NEMOCLAW_REASONING: "false",
+      NEMOCLAW_VLLM_MODEL: "ambient-vllm-model",
+      NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '{"ambient":true}',
+      NEMOCLAW_FROM_DOCKERFILE: "/tmp/unrelated.Dockerfile",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+      NEMOCLAW_POLICY_TIER: "permissive",
+      NEMOCLAW_POLICY_MODE: "customize",
+      NEMOCLAW_POLICY_PRESETS: "ambient-preset",
+      NEMOCLAW_SANDBOX_GPU: "0",
+      NEMOCLAW_SANDBOX_GPU_DEVICE: "9",
+      NVIDIA_INFERENCE_API_KEY: "hosted-source-key",
       // not part of the selection set — must be left untouched
       NVIDIA_API_KEY: "nvapi-keep-me",
     };
@@ -106,6 +140,7 @@ describe("isolateAmbientRecreateEnv", () => {
     for (const name of AMBIENT_RECREATE_ENV_VARS) {
       expect(env[name]).toBeUndefined();
     }
+    expect(env.NVIDIA_INFERENCE_API_KEY).toBe("hosted-source-key");
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
 
     restore();
@@ -113,6 +148,19 @@ describe("isolateAmbientRecreateEnv", () => {
     expect(env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
     expect(env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus");
     expect(env.NEMOCLAW_MODEL).toBe("some-model");
+    expect(env.NEMOCLAW_COMPAT_MODEL).toBe("some-compat-model");
+    expect(env.NEMOCLAW_PREFERRED_API).toBe("openai-responses");
+    expect(env.NEMOCLAW_REASONING).toBe("false");
+    expect(env.NEMOCLAW_VLLM_MODEL).toBe("ambient-vllm-model");
+    expect(env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON).toBe('{"ambient":true}');
+    expect(env.NEMOCLAW_FROM_DOCKERFILE).toBe("/tmp/unrelated.Dockerfile");
+    expect(env.NEMOCLAW_WEB_SEARCH_PROVIDER).toBe("tavily");
+    expect(env.NEMOCLAW_POLICY_TIER).toBe("permissive");
+    expect(env.NEMOCLAW_POLICY_MODE).toBe("customize");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("ambient-preset");
+    expect(env.NEMOCLAW_SANDBOX_GPU).toBe("0");
+    expect(env.NEMOCLAW_SANDBOX_GPU_DEVICE).toBe("9");
+    expect(env.NVIDIA_INFERENCE_API_KEY).toBe("hosted-source-key");
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
     // A var that was never set stays unset after restore.
     expect("NEMOCLAW_PROVIDER" in env).toBe(false);

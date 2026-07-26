@@ -133,33 +133,22 @@ export const wechatManifest = {
       manager: "openclaw-plugin",
       spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
       pin: true,
+      integrity:
+        "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+      tarballUrl:
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+      runtimeLock: {
+        cachePath: "/usr/local/share/nemoclaw/wechat-npm-cache",
+        installCacheEnvKey: "NEMOCLAW_WECHAT_NPM_INSTALL_CACHE",
+        lockFile: "/usr/local/lib/nemoclaw/wechat-runtime/package-lock.json",
+        projectsRoot: "/sandbox/.openclaw/npm/projects",
+        verifierPath: "/usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts",
+        offline: true,
+        legacyPeerDeps: true,
+      },
       required: true,
     },
   ],
-  state: {
-    persist: {
-      wechatConfig: ["accountId", "baseUrl", "userId"],
-      allowedIds: ["allowedIds"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "wechatConfig.accountId",
-        env: "WECHAT_ACCOUNT_ID",
-      },
-      {
-        statePath: "wechatConfig.baseUrl",
-        env: "WECHAT_BASE_URL",
-      },
-      {
-        statePath: "wechatConfig.userId",
-        env: "WECHAT_USER_ID",
-      },
-      {
-        statePath: "allowedIds.wechat",
-        env: "WECHAT_ALLOWED_IDS",
-      },
-    ],
-  },
   hooks: [
     {
       id: "wechat-host-qr",

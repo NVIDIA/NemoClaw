@@ -5,9 +5,13 @@ import { GATEWAY_PORT } from "../../core/ports";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as registry from "../../state/registry";
 
-export function getSandboxTargetGatewayName(sandboxName = ""): string {
+export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | null {
   const sb = sandboxName ? registry.getSandbox(sandboxName) : null;
-  return sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
+  return sb ? resolveSandboxGatewayName(sb) : null;
+}
+
+export function getSandboxTargetGatewayName(sandboxName = ""): string {
+  return getKnownSandboxTargetGatewayName(sandboxName) ?? resolveGatewayName(GATEWAY_PORT);
 }
 
 export function gatewayNamePattern(gatewayName: string): RegExp {

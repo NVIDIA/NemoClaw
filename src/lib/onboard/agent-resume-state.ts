@@ -30,6 +30,12 @@ export function clearAgentScopedResumeState(session: Session, selectedAgentName:
   session.nimContainer = null;
   session.routerPid = null;
   session.routerCredentialHash = null;
+  session.webSearchConfig = null;
+  session.messagingPlan = null;
+  if (session.sandboxPromptProgress) {
+    session.sandboxPromptProgress.webSearch = false;
+    session.sandboxPromptProgress.messaging = false;
+  }
   session.policyPresets = null;
 
   const resetSteps = [

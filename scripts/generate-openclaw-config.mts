@@ -9,16 +9,20 @@
 //
 // Main inputs:
 //   CHAT_UI_URL, NEMOCLAW_DASHBOARD_PORT, NEMOCLAW_MODEL,
-//   NEMOCLAW_PROVIDER_KEY, NEMOCLAW_UPSTREAM_PROVIDER, NEMOCLAW_PRIMARY_MODEL_REF,
+//   NEMOCLAW_INFERENCE_PROVIDER_ID, NEMOCLAW_UPSTREAM_PROVIDER, NEMOCLAW_PRIMARY_MODEL_REF,
 //   NEMOCLAW_INFERENCE_BASE_URL, NEMOCLAW_INFERENCE_API,
 //   NEMOCLAW_INFERENCE_INPUTS, NEMOCLAW_CONTEXT_WINDOW,
 //   NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING,
+//   NEMOCLAW_TOOL_DISCLOSURE,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
 //   NEMOCLAW_INFERENCE_COMPAT_B64,
+//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_WSL_DASHBOARD_EXPOSURE,
 //   NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
 //   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
+//   NEMOCLAW_WEB_SEARCH_PROVIDER,
 //   NEMOCLAW_OPENCLAW_OTEL, NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE.
 
@@ -33,6 +37,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readToolDisclosureEnv } from "../src/lib/tool-disclosure.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -45,6 +50,21 @@ const MODEL_SETUP_EFFECT_KEYS: Record<string, Set<string>> = {
 const DEFAULT_DASHBOARD_PORT = 18789;
 const MIN_DASHBOARD_PORT = 1024;
 const MAX_DASHBOARD_PORT = 65535;
+const REMOTE_DASHBOARD_BIND_VALUES = new Set(["0.0.0.0"]);
+const DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
+const BOOLEAN_BUILD_FLAG_VALUES = new Set(["0", "1"]);
+
+function readOptionalEnumEnv(env: Env, name: string, allowedValues: ReadonlySet<string>): string {
+  const value = env[name] ?? "";
+  if (value !== "" && !allowedValues.has(value)) {
+    throw new Error(`${name} must be empty or one of: ${[...allowedValues].join(", ")}`);
+  }
+  return value;
+}
+
+function readBooleanBuildFlag(env: Env, name: string): boolean {
+  return readOptionalEnumEnv(env, name, BOOLEAN_BUILD_FLAG_VALUES) === "1";
+}
 
 // Local Ollama small-context compaction policy (NemoClaw #5468).
 //
@@ -71,7 +91,35 @@ const OPENCLAW_MIN_PROMPT_BUDGET_TOKENS = 8_000;
 const SMALL_OLLAMA_CONTEXT_THRESHOLD =
   OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_PROMPT_BUDGET_TOKENS;
 const LOCAL_OLLAMA_UPSTREAM_PROVIDER = "ollama-local";
+const MANAGED_INFERENCE_PROVIDER_KEY = "inference";
+const MANAGED_INFERENCE_HOSTNAME = "inference.local";
+// Upstream source of truth (#4781): OpenClaw's `AgentCompactionConfig` schema and
+// safeguard compactor/session runtime shipped by the exact `OPENCLAW_VERSION`
+// pin in the production image (`Dockerfile` and `Dockerfile.base`). The observed
+// long-running `/compact` operation and growing active context occur there after
+// NemoClaw hands off this config.
+// NemoClaw does not own that runtime, so this is a generator-side mitigation,
+// not a source fix.
+// The runtime-overrides E2E validates this object with the pinned OpenClaw CLI;
+// that does not prove live token reduction, so keep #4781 open. Remove this
+// override only after a newer pinned OpenClaw runtime has managed-inference
+// regression evidence that `/compact` completes and leaves a no-larger active
+// context without it.
+const MANAGED_INFERENCE_SAFEGUARD_COMPACTION: JsonObject = {
+  mode: "safeguard",
+  timeoutSeconds: 120,
+  maxHistoryShare: 0.35,
+  recentTurnsPreserve: 1,
+  qualityGuard: { enabled: true, maxRetries: 0 },
+  notifyUser: true,
+  truncateAfterCompaction: true,
+};
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+const WEB_SEARCH_PROVIDERS = {
+  brave: { credentialEnv: "BRAVE_API_KEY" },
+  tavily: { credentialEnv: "TAVILY_API_KEY" },
+} as const;
+type WebSearchProvider = keyof typeof WEB_SEARCH_PROVIDERS;
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
 const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -79,6 +127,14 @@ const SCRIPT_DIR = dirname(SCRIPT_PATH);
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveWebSearchProvider(env: Env): WebSearchProvider {
+  const provider = (env.NEMOCLAW_WEB_SEARCH_PROVIDER || "brave").trim();
+  if (provider === "brave" || provider === "tavily") return provider;
+  throw new Error(
+    `NEMOCLAW_WEB_SEARCH_PROVIDER must be "brave" or "tavily", got ${JSON.stringify(provider)}`,
+  );
 }
 
 function unique<T>(values: Iterable<T>): T[] {
@@ -320,7 +376,13 @@ function validateManifestPayload(payload: unknown, manifestPath: string): JsonOb
   if (Object.keys(match).length === 0) {
     throw new Error(`${manifestPath}: field 'match' must be a non-empty object`);
   }
-  const allowedMatchKeys = new Set(["modelIds", "providerKey", "inferenceApi", "baseUrl"]);
+  const allowedMatchKeys = new Set([
+    "modelIds",
+    "modelIdPrefixes",
+    "providerKey",
+    "inferenceApi",
+    "baseUrl",
+  ]);
   const unknownMatchKeys = Object.keys(match)
     .filter((key) => !allowedMatchKeys.has(key))
     .sort();
@@ -336,6 +398,28 @@ function validateManifestPayload(payload: unknown, manifestPath: string): JsonOb
       !modelIds.every((modelId) => typeof modelId === "string" && modelId.trim()))
   ) {
     throw new Error(`${manifestPath}: match.modelIds must be a non-empty string array`);
+  }
+  const modelIdPrefixes = match.modelIdPrefixes;
+  if (
+    modelIdPrefixes !== undefined &&
+    (!Array.isArray(modelIdPrefixes) ||
+      modelIdPrefixes.length === 0 ||
+      !modelIdPrefixes.every((prefix) => typeof prefix === "string" && prefix.trim()))
+  ) {
+    throw new Error(`${manifestPath}: match.modelIdPrefixes must be a non-empty string array`);
+  }
+  if (
+    Array.isArray(modelIdPrefixes) &&
+    modelIdPrefixes.some((prefix) => String(prefix).includes("/"))
+  ) {
+    throw new Error(
+      `${manifestPath}: match.modelIdPrefixes must contain bare model ids without namespaces`,
+    );
+  }
+  if (modelIds !== undefined && modelIdPrefixes !== undefined) {
+    throw new Error(
+      `${manifestPath}: match.modelIds and match.modelIdPrefixes are mutually exclusive`,
+    );
   }
   for (const key of ["providerKey", "inferenceApi", "baseUrl"]) {
     const value = match[key];
@@ -388,8 +472,14 @@ function validateSelectedAgentEffects(
           `${manifestPath}: unknown effects.openclawTools keys: ${unknownToolKeys.join(", ")}`,
         );
       }
+      // Source: openclaw@2026.5.27 ToolSearchSchema and resolveToolSearchConfig
+      // (`src/config/zod-schema.agent-runtime.ts`, `src/agents/tool-search.ts`).
+      // Keep the registry override narrower than the runtime config: false
+      // disables Tool Search, while true selects its default code bridge.
       if ("toolSearch" in tools && typeof tools.toolSearch !== "boolean") {
-        throw new Error(`${manifestPath}: effects.openclawTools.toolSearch must be a boolean`);
+        throw new Error(
+          `${manifestPath}: effects.openclawTools.toolSearch must be a boolean override`,
+        );
       }
     }
 
@@ -444,13 +534,31 @@ function validateSelectedAgentEffects(
 
 function modelSetupMatches(payload: JsonObject, context: JsonObject): boolean {
   const match = payload.match;
+  const normalizedModel = String(context.model).trim().toLowerCase();
   const modelIds = match.modelIds;
   if (
     Array.isArray(modelIds) &&
     modelIds.length > 0 &&
-    !new Set(modelIds.map((modelId) => String(modelId).trim().toLowerCase())).has(
-      String(context.model).trim().toLowerCase(),
-    )
+    !new Set(modelIds.map((modelId) => String(modelId).trim().toLowerCase())).has(normalizedModel)
+  ) {
+    return false;
+  }
+
+  const modelIdPrefixes = match.modelIdPrefixes;
+  const bareModel = normalizedModel.includes("/")
+    ? normalizedModel.slice(normalizedModel.lastIndexOf("/") + 1)
+    : normalizedModel;
+  if (
+    Array.isArray(modelIdPrefixes) &&
+    modelIdPrefixes.length > 0 &&
+    !modelIdPrefixes.some((value) => {
+      const prefix = String(value).trim().toLowerCase();
+      return (
+        bareModel === prefix ||
+        bareModel.startsWith(`${prefix}.`) ||
+        bareModel.startsWith(`${prefix}-`)
+      );
+    })
   ) {
     return false;
   }
@@ -996,6 +1104,39 @@ export function buildLocalOllamaSmallContextCompaction(
   return { reserveTokens, reserveTokensFloor: reserveTokens };
 }
 
+function isManagedInferenceLocalRoute(
+  providerKey: string | undefined,
+  inferenceBaseUrl: string,
+): boolean {
+  if ((providerKey || "").trim() !== MANAGED_INFERENCE_PROVIDER_KEY) {
+    return false;
+  }
+  return parseUrl(normalizeUrlForParse(inferenceBaseUrl)).hostname === MANAGED_INFERENCE_HOSTNAME;
+}
+
+// Managed inference sessions other than Local Ollama use OpenClaw's safeguard
+// compaction rather than its plain runtime compactor. A two-minute timeout
+// bounds each attempt, lifecycle notices expose automatic and agent-run
+// compaction progress, and
+// successful compaction rotates the active transcript. These safeguards do not
+// guarantee that summarization succeeds or that the resulting context is smaller.
+export function buildManagedInferenceSafeguardCompaction(
+  providerKey: string | undefined,
+  upstreamProvider: string | undefined,
+  inferenceBaseUrl: string,
+): JsonObject | undefined {
+  if (!isManagedInferenceLocalRoute(providerKey, inferenceBaseUrl)) {
+    return undefined;
+  }
+  if ((upstreamProvider || "").trim() === LOCAL_OLLAMA_UPSTREAM_PROVIDER) {
+    return undefined;
+  }
+  return {
+    ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION,
+    qualityGuard: { ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard },
+  };
+}
+
 export function buildConfig(env: Env = process.env): JsonObject {
   const proxyHost = env.NEMOCLAW_PROXY_HOST || "10.200.0.1";
   const proxyPort = env.NEMOCLAW_PROXY_PORT || "3128";
@@ -1011,12 +1152,13 @@ export function buildConfig(env: Env = process.env): JsonObject {
   ) {
     chatUiUrl = `http://127.0.0.1:${gatewayPort}`;
   }
-  const providerKey = env.NEMOCLAW_PROVIDER_KEY as string;
+  const providerKey = (env.NEMOCLAW_INFERENCE_PROVIDER_ID || env.NEMOCLAW_PROVIDER_KEY) as string;
   const primaryModelRef = env.NEMOCLAW_PRIMARY_MODEL_REF as string;
   const inferenceBaseUrl = env.NEMOCLAW_INFERENCE_BASE_URL as string;
   const inferenceApi = env.NEMOCLAW_INFERENCE_API as string;
   const contextWindow = coercePositiveInt(env, "NEMOCLAW_CONTEXT_WINDOW", 131072);
   const maxTokens = coercePositiveInt(env, "NEMOCLAW_MAX_TOKENS", 4096);
+  const toolDisclosure = readToolDisclosureEnv(env);
 
   const reasoning = (env.NEMOCLAW_REASONING || "false") === "true";
   const inferenceInputs = (env.NEMOCLAW_INFERENCE_INPUTS || "text")
@@ -1074,7 +1216,27 @@ export function buildConfig(env: Env = process.env): JsonObject {
       openclawToolOverrides,
     );
   }
-  const openclawTools: JsonObject = { toolSearch: true, ...openclawToolOverrides };
+  // OpenClaw v2026.5.27 accepts either a boolean shorthand or this object form.
+  // Model-specific manifests intentionally remain boolean-only and replace this
+  // value wholesale: false disables Tool Search; true restores upstream code
+  // mode. Do not shallow-merge a boolean override into the structured object.
+  const structuredToolSearch: JsonObject = {
+    mode: "tools",
+    searchDefaultLimit: 8,
+    maxSearchLimit: 20,
+  };
+  const openclawTools: JsonObject = {
+    ...openclawToolOverrides,
+    // An explicit direct request is authoritative. Compatibility manifests may
+    // downgrade progressive mode to false, but may never re-enable search over
+    // a user's direct selection.
+    toolSearch:
+      toolDisclosure === "direct"
+        ? false
+        : "toolSearch" in openclawToolOverrides
+          ? openclawToolOverrides.toolSearch
+          : structuredToolSearch,
+  };
 
   if (providerKey === "ollama" || providerKey === "ollama-local") {
     inferenceCompat.supportsUsageInStreaming ??= true;
@@ -1091,8 +1253,48 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const origins = unique([loopbackOrigin, chatOrigin, portlessOrigin].filter(Boolean) as string[]);
 
   const isRemote = !isLoopback(parsed.hostname || "");
-  const disableDeviceAuth = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1" || isRemote;
+  const dashboardBind = readOptionalEnumEnv(
+    env,
+    "NEMOCLAW_DASHBOARD_BIND",
+    REMOTE_DASHBOARD_BIND_VALUES,
+  );
+  const remoteBindOptIn = dashboardBind === "0.0.0.0";
+  const wslDashboardExposure = readBooleanBuildFlag(env, "NEMOCLAW_WSL_DASHBOARD_EXPOSURE");
+  const hasRemoteDashboardExposure = isRemote || remoteBindOptIn || wslDashboardExposure;
+  const deviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
+  const deviceAuthOptOutSource = readOptionalEnumEnv(
+    env,
+    "NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE",
+    DEVICE_AUTH_OPT_OUT_SOURCES,
+  );
+  const managedDeviceAuthOptOut = deviceAuthOptOut && deviceAuthOptOutSource === "managed-onboard";
+  const disableDeviceAuth = deviceAuthOptOut || hasRemoteDashboardExposure;
   const allowInsecure = parsed.scheme === "http";
+  const securityAuditSuppressions: JsonObject[] = [];
+  if (allowInsecure && !hasRemoteDashboardExposure) {
+    const reason =
+      "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.";
+    securityAuditSuppressions.push(
+      { checkId: "gateway.control_ui.insecure_auth", reason },
+      {
+        checkId: "config.insecure_or_dangerous_flags",
+        detailIncludes: "gateway.controlUi.allowInsecureAuth=true",
+        reason,
+      },
+    );
+  }
+  if (managedDeviceAuthOptOut && !hasRemoteDashboardExposure) {
+    const reason =
+      "NemoClaw onboarding disables device authentication for immediate dashboard access (managed compatibility behavior; see #1217).";
+    securityAuditSuppressions.push(
+      { checkId: "gateway.control_ui.device_auth_disabled", reason },
+      {
+        checkId: "config.insecure_or_dangerous_flags",
+        detailIncludes: "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+        reason,
+      },
+    );
+  }
 
   const providerModels: JsonObject[] = [
     {
@@ -1156,28 +1358,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
   };
 
   const pluginEntries: JsonObject = {
-    acpx: { enabled: false },
     bonjour: { enabled: false },
-    qqbot: { enabled: false },
   };
-  const bundledProviderPlugins: Record<string, Set<string>> = {
-    "amazon-bedrock": new Set(["amazon-bedrock", "bedrock"]),
-    "amazon-bedrock-mantle": new Set(["amazon-bedrock-mantle"]),
-    anthropic: new Set(["anthropic"]),
-    "anthropic-vertex": new Set(["anthropic-vertex"]),
-    fireworks: new Set(["fireworks"]),
-    google: new Set(["google", "google-gemini-cli"]),
-    kimi: new Set(["kimi"]),
-    lmstudio: new Set(["lmstudio"]),
-    ollama: new Set(["ollama", "ollama-local"]),
-    openai: new Set(["openai"]),
-    xai: new Set(["xai"]),
-  };
-  for (const [pluginId, providerKeys] of Object.entries(bundledProviderPlugins)) {
-    if (!providerKeys.has(providerKey)) {
-      pluginEntries[pluginId] = { enabled: false };
-    }
-  }
   const openclawOtel = buildOpenClawOtelConfig(env);
   if (openclawOtel) {
     pluginEntries["diagnostics-otel"] = { enabled: true };
@@ -1214,6 +1396,14 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (smallOllamaCompaction) {
     agentDefaults.compaction = smallOllamaCompaction;
   }
+  const managedInferenceCompaction = buildManagedInferenceSafeguardCompaction(
+    providerKey,
+    env.NEMOCLAW_UPSTREAM_PROVIDER,
+    inferenceBaseUrl,
+  );
+  if (managedInferenceCompaction) {
+    agentDefaults.compaction = managedInferenceCompaction;
+  }
 
   const config: JsonObject = {
     agents: {
@@ -1224,6 +1414,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
     channels: { defaults: {} },
     tools: openclawTools,
     update: { checkOnStart: false },
+    ...(securityAuditSuppressions.length > 0
+      ? { security: { audit: { suppressions: securityAuditSuppressions } } }
+      : {}),
     plugins,
     gateway: {
       mode: "local",
@@ -1232,6 +1425,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
         allowInsecureAuth: allowInsecure,
         dangerouslyDisableDeviceAuth: disableDeviceAuth,
         allowedOrigins: origins,
+        ...(remoteBindOptIn && !isRemote ? { dangerouslyAllowHostHeaderOriginFallback: true } : {}),
       },
       trustedProxies: ["127.0.0.1", "::1"],
       auth: { token: "" },
@@ -1270,18 +1464,16 @@ export function buildConfig(env: Env = process.env): JsonObject {
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
 
   if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
-    // OpenClaw 2026.5.x: web-search providers are external plugins. The
-    // provider-owned apiKey lives under plugins.entries.<plugin>.config,
-    // not inline in tools.web.search. Writing the legacy inline shape makes
-    // the build-time `openclaw plugins install` exit non-zero during its
-    // pre-install config validation (the brave plugin is not installed yet),
-    // aborting the image build under `set -eu` before `doctor --fix` can
-    // migrate it. Emit the current schema directly so install validates
-    // cleanly. See NemoClaw #5266 (follow-up to #4955 / #3948).
-    tools.web.search = { enabled: true, provider: "brave" };
-    config.plugins.entries.brave = {
+    // OpenClaw 2026.5.x keeps provider-owned credentials under
+    // plugins.entries.<provider>.config rather than inline on tools.web.search.
+    // Brave is installed externally during the image build; Tavily ships as a
+    // bundled OpenClaw extension. Both use the same plugin-scoped config shape.
+    const webSearchProvider = resolveWebSearchProvider(env);
+    const credentialEnv = WEB_SEARCH_PROVIDERS[webSearchProvider].credentialEnv;
+    tools.web.search = { enabled: true, provider: webSearchProvider };
+    config.plugins.entries[webSearchProvider] = {
       enabled: true,
-      config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
+      config: { webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` } },
     };
   }
 
