@@ -115,6 +115,12 @@ describe("OpenClaw managed extension symlink policy", () => {
       ),
     ).toBe(true);
     expect(
+      isAllowedStateSymlink(
+        "extensions/whatsapp/node_modules/openclaw",
+        "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
+      ),
+    ).toBe(true);
+    expect(
       isAllowedStateSymlink("extensions/nemoclaw/node_modules/.bin/json5", "../json5/lib/cli.js"),
     ).toBe(true);
   });
@@ -150,6 +156,12 @@ describe("OpenClaw managed extension symlink policy", () => {
   it("rejects allowed targets outside the narrowly recognized source paths", () => {
     expect(
       isAllowedStateSymlink("workspace/openclaw", "/usr/local/lib/node_modules/openclaw"),
+    ).toBe(false);
+    expect(
+      isAllowedStateSymlink(
+        "workspace/openclaw",
+        "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
+      ),
     ).toBe(false);
     expect(isAllowedStateSymlink("extensions/nemoclaw/bin/json5", "../json5/lib/cli.js")).toBe(
       false,

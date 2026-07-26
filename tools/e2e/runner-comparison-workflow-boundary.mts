@@ -23,6 +23,14 @@ const MCP_FINALIZE_GUARD = `\${{ always() && ${TRUSTED_MAIN_GUARD} && ${MCP_AGEN
 
 const COMPARISON_JOBS: ReadonlyMap<string, { initializeIf: string; finalizeIf: string }> = new Map([
   [
+    "agent-turn-latency",
+    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
+  ],
+  [
+    "bedrock-runtime-compatible-anthropic",
+    { initializeIf: HERMES_INITIALIZE_GUARD, finalizeIf: HERMES_FINALIZE_GUARD },
+  ],
+  [
     "channels-stop-start",
     { initializeIf: HERMES_INITIALIZE_GUARD, finalizeIf: HERMES_FINALIZE_GUARD },
   ],
@@ -136,16 +144,20 @@ function publicationIndex(jobSteps: readonly WorkflowStep[]): number {
 }
 
 /**
- * Keep the #7145 comparison to 12 routed workflow lane identities / 15
- * concrete trusted-main job executions. Telemetry is best-effort, but it must
- * span the complete stable-capacity job and finish before evidence is scanned
- * or uploaded. Rebuild jobs establish their fixed swap capacity first because
- * the v2 ledger rejects capacity changes after initialization.
+ * Keep runner diagnostics to 14 routed workflow lane identities / 17 concrete
+ * trusted-main job executions. Telemetry is best-effort, but it must span the
+ * complete stable-capacity job and finish before evidence is scanned or
+ * uploaded. Rebuild jobs establish their fixed swap capacity first because the
+ * v2 ledger rejects capacity changes after initialization.
  */
 export function validateRunnerComparisonWorkflow(workflowValue: unknown): string[] {
   const jobs = record(record(workflowValue).jobs);
   const errors: string[] = [];
 
+  requireExactMatrixValues(errors, jobs, "bedrock-runtime-compatible-anthropic", "agent", [
+    "openclaw",
+    "hermes",
+  ]);
   requireExactMatrixValues(errors, jobs, "channels-stop-start", "agent", ["openclaw", "hermes"]);
   requireExactMatrixValues(errors, jobs, "common-egress-agent", "scenario", [
     "openclaw-balanced-weather",

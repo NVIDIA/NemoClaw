@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -25,7 +26,6 @@ const COMPATIBLE_API_KEY = "hermes-shields-e2e-key";
 const COMPATIBLE_MODEL = "hermes-shields-e2e-model";
 const CONFIG_PATH = "/sandbox/.hermes/config.yaml";
 const HERMES_DIR = "/sandbox/.hermes";
-const TEST_TIMEOUT_MS = 45 * 60_000;
 const COMMAND_TIMEOUT_MS = 120_000;
 
 validateSandboxName(SANDBOX_NAME);
@@ -153,7 +153,7 @@ async function completeShieldsCycle(
 }
 
 test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields cycles (#6381)", {
-  timeout: TEST_TIMEOUT_MS,
+  timeout: HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "prepare Hermes shields fixture",

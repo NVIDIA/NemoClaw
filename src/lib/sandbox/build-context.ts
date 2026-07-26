@@ -41,7 +41,7 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
 }
 
 function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
-  for (const runtimeName of ["mcporter-runtime", "wechat-runtime"]) {
+  for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
     const sourceDir = path.join(rootDir, "agents", "openclaw", runtimeName);
     const stagedDir = path.join(buildCtx, "agents", "openclaw", runtimeName);
     fs.mkdirSync(stagedDir, { recursive: true });
@@ -275,6 +275,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-shared-state-permissions.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-shared-state-permissions.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-bundled-npm-brace-expansion.mts"),
+    path.join(stagedScriptsDir, "patch-bundled-npm-brace-expansion.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-bundled-npm-tar.mts"),

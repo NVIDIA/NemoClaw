@@ -39,7 +39,7 @@ describe("sandbox build context staging", () => {
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
     );
-    for (const runtimeName of ["mcporter-runtime", "wechat-runtime"]) {
+    for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
       for (const fileName of ["package.json", "package-lock.json"]) {
         writeFixture(
           path.join("agents", "openclaw", runtimeName, fileName),
@@ -120,6 +120,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-gateway-daemon-dialback.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
+    writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-tar.mts"));
     writeFixture(path.join("scripts", "upgrade-bundled-npm.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
@@ -190,7 +191,7 @@ describe("sandbox build context staging", () => {
   }
 
   function expectStagedOpenClawRuntimeGraphs(buildCtx: string, sourceRoot: string) {
-    for (const runtimeName of ["mcporter-runtime", "wechat-runtime"]) {
+    for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
       const runtimeDir = path.join(buildCtx, "agents", "openclaw", runtimeName);
       expect(fs.readdirSync(runtimeDir).sort()).toEqual(["package-lock.json", "package.json"]);
       for (const fileName of ["package.json", "package-lock.json"]) {
@@ -528,6 +529,9 @@ describe("sandbox build context staging", () => {
         ),
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-tar.mts"))).toBe(true);
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-brace-expansion.mts")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "checks", "node-tar-image-scan.mts")),

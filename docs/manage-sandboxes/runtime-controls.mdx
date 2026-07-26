@@ -23,7 +23,7 @@ NemoClaw applies its security posture in three layers: what onboarding writes in
 | Inference provider | Runtime route and config update while shields are down; rebuild only if you need to recreate the image | Run `$$nemoclaw <name> shields down`, then `$$nemoclaw inference set`, then restore shields |
 | Inference model on the current provider | Runtime route and config update while shields are down | Run `$$nemoclaw <name> shields down`, then `$$nemoclaw inference set`, then restore shields |
 | Sub-agent | Re-onboard required because the sub-agent and workspace are baked at onboard | `$$nemoclaw onboard --recreate-sandbox` |
-| Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy-add <preset>` or `policy-remove <preset>` |
+| Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy add <preset>` or `policy remove <preset>` |
 | Network allowlist | Runtime on the next request | `openshell policy set` or the interactive approval prompt at the gateway |
 | Channel tokens | Rebuild required because the channel configuration and credential attachment are created during onboarding or rebuild | `$$nemoclaw <name> channels add <channel>`, then accept the rebuild prompt |
 | Channel enable or disable | Rebuild required because `openclaw.json` is the runtime source of truth | `$$nemoclaw <name> channels stop <channel>`, then rebuild |
@@ -68,7 +68,7 @@ If preflight detects an unsafe path, invalid config, invalid ownership posture, 
 | Inference provider | Runtime route changes apply immediately; rebuild if you need to rebake model metadata into the image | `$$nemoclaw inference set` for route changes, or `$$nemoclaw <name> rebuild` after changing build-time settings |
 | Inference model on the current provider | Hot-reloadable through the Hermes config sync path | `$$nemoclaw inference set` |
 | Agent runtime | Re-onboard required because the agent and state layout are baked at onboard | `$$nemoclaw onboard --recreate-sandbox` or `nemoclaw onboard --agent openclaw --recreate-sandbox` |
-| Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy-add <preset>` or `policy-remove <preset>` |
+| Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy add <preset>` or `policy remove <preset>` |
 | Network allowlist | Runtime on the next request | `openshell policy set` or the interactive approval prompt at the gateway |
 | Channel tokens | Rebuild required because the channel configuration and credential attachment are created during onboarding or rebuild | `$$nemoclaw <name> channels add <channel>`, then accept the rebuild prompt |
 | Channel enable or disable | Rebuild required because `/sandbox/.hermes/.env` and Hermes config are baked at image build time | `$$nemoclaw <name> channels stop <channel>`, then rebuild |

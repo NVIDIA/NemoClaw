@@ -23,14 +23,29 @@ function corePackageSpecs(block) {
 }
 
 function explicitLifecycleScripts(block) {
-  return [...block.matchAll(
+  const scripts = [...block.matchAll(
     /^\s*([0-9]+(?:\.[0-9]+){2}(?:\|[0-9]+(?:\.[0-9]+){2})*)\)\s+(node [^;]+postinstall-bundled-plugins\.mjs)\s+;;/gm,
   )].flatMap((match) =>
     match[1].split("|").map((version) => ({
       packageSpec: "openclaw@" + version,
       explicitCommand: match[2],
     })),
-  ).sort((left, right) => left.packageSpec.localeCompare(right.packageSpec));
+  );
+  const lockedRuntimeCommand =
+    "node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs";
+  if (
+    block.includes("npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci") &&
+    block.includes(lockedRuntimeCommand)
+  ) {
+    const manifest = JSON.parse(
+      fs.readFileSync("agents/openclaw/openclaw-runtime/package.json", "utf8"),
+    );
+    scripts.push({
+      packageSpec: "openclaw@" + manifest.dependencies.openclaw,
+      explicitCommand: lockedRuntimeCommand,
+    });
+  }
+  return scripts.sort((left, right) => left.packageSpec.localeCompare(right.packageSpec));
 }
 
 const dockerfile = fs.readFileSync("Dockerfile", "utf8");
