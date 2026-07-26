@@ -634,10 +634,16 @@ case "$*" in
     exit 0
     ;;
   "help trust")
-    exit 0
+    exit "\${NEMOCLAW_TEST_BREW_TRUST_HELP_STATUS:-0}"
+    ;;
+  "help untrust")
+    exit "\${NEMOCLAW_TEST_BREW_UNTRUST_HELP_STATUS:-0}"
     ;;
   "trust --formula nvidia/openshell/openshell")
     exit "\${NEMOCLAW_TEST_BREW_TRUST_STATUS:-0}"
+    ;;
+  "untrust --formula nvidia/openshell/openshell")
+    exit "\${NEMOCLAW_TEST_BREW_UNTRUST_STATUS:-0}"
     ;;
   "list --formula openshell")
     exit 1
@@ -723,6 +729,87 @@ exit 1`,
       expect(refusedTrustEvents).not.toContain("reinstall --formula nvidia/openshell/openshell");
 
       fs.writeFileSync(brewLog, "");
+      const unsupportedTrust = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          XDG_BIN_HOME: path.join(tmp, "local-bin"),
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          NEMOCLAW_TEST_BREW_TRUST_HELP_STATUS: "1",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(
+        unsupportedTrust.status,
+        `${unsupportedTrust.stdout}\n${unsupportedTrust.stderr}`,
+      ).toBe(0);
+      const unsupportedTrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
+      expect(unsupportedTrustEvents).toContain("help trust");
+      expect(unsupportedTrustEvents).not.toContain("trust --formula nvidia/openshell/openshell");
+      expect(unsupportedTrustEvents).toContain("install --formula nvidia/openshell/openshell");
+      expect(unsupportedTrust.stdout).toContain(
+        "OpenShell Homebrew service staged; onboarding will start it after gateway validation.",
+      );
+
+      fs.writeFileSync(brewLog, "");
+      const missingUntrust = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          XDG_BIN_HOME: path.join(tmp, "local-bin"),
+          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+          NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+          NEMOCLAW_TEST_BREW_UNTRUST_HELP_STATUS: "1",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.85-dev.8+g7bce1223d",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(
+        missingUntrust.status,
+        `${missingUntrust.stdout}\n${missingUntrust.stderr}`,
+      ).toBeGreaterThan(0);
+      expect(missingUntrust.stderr).toContain(
+        "Homebrew supports formula trust but not the required untrust cleanup",
+      );
+      const missingUntrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
+      expect(missingUntrustEvents).toContain("help trust");
+      expect(missingUntrustEvents).toContain("help untrust");
+      expect(missingUntrustEvents).not.toContain("untrust --formula nvidia/openshell/openshell");
+      expect(missingUntrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
+
+      fs.writeFileSync(brewLog, "");
+      const refusedUntrust = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          XDG_BIN_HOME: path.join(tmp, "local-bin"),
+          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+          NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+          NEMOCLAW_TEST_BREW_UNTRUST_STATUS: "1",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.85-dev.8+g7bce1223d",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(
+        refusedUntrust.status,
+        `${refusedUntrust.stdout}\n${refusedUntrust.stderr}`,
+      ).toBeGreaterThan(0);
+      expect(refusedUntrust.stderr).toContain(
+        "Homebrew refused to remove inherited trust for the unverified OpenShell dev formula nvidia/openshell/openshell",
+      );
+      const refusedUntrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
+      expect(refusedUntrustEvents).toContain("help trust");
+      expect(refusedUntrustEvents).toContain("help untrust");
+      expect(refusedUntrustEvents).toContain("untrust --formula nvidia/openshell/openshell");
+      expect(refusedUntrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
+
+      fs.writeFileSync(brewLog, "");
       const devInstall = spawnSync("bash", [SCRIPT], {
         env: {
           ...process.env,
@@ -739,9 +826,19 @@ exit 1`,
 
       expect(devInstall.status, `${devInstall.stdout}\n${devInstall.stderr}`).toBe(0);
       const devBrewEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
-      expect(devBrewEvents).not.toContain("help trust");
+      expect(devBrewEvents).toEqual([
+        "tap-info nvidia/openshell",
+        "tap-new --no-git nvidia/openshell",
+        "--repository nvidia/openshell",
+        "help trust",
+        "help untrust",
+        "untrust --formula nvidia/openshell/openshell",
+        "list --formula openshell",
+        "install --formula nvidia/openshell/openshell",
+        "untrust --formula nvidia/openshell/openshell",
+        "--prefix",
+      ]);
       expect(devBrewEvents).not.toContain("trust --formula nvidia/openshell/openshell");
-      expect(devBrewEvents).toContain("install --formula nvidia/openshell/openshell");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
