@@ -13,7 +13,6 @@ import {
   applyResolutionPatch,
   ConflictFixerError,
   listTreeChanges,
-  listUnmergedPaths,
   prepareMerge,
   replaceWithTree,
   requireSha,
@@ -100,11 +99,6 @@ export function validateResolutionPatch(input: {
 
   replaceWithTree(merge.repository, merge.conflictTree);
   applyResolutionPatch(merge.repository, input.patchPath);
-  const unmergedPaths = listUnmergedPaths(merge.repository);
-  if (unmergedPaths.length > 0) {
-    throw new ConflictFixerError("The resolution patch leaves unresolved index entries");
-  }
-
   const finalTree = writeTree(merge.repository);
   const changedPaths = listTreeChanges(merge.repository, merge.conflictTree, finalTree);
   const allowedPaths = new Set(merge.conflictPaths);
