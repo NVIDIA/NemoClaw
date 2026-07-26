@@ -82,6 +82,7 @@ export function selectConflictingPullRequests(
   return eligibleSameRepositoryPullRequests(pullRequests, repository).flatMap((pullRequest) => {
     const conflictPaths = checkConflict(pullRequest, baseSha);
     if (!conflictPaths) return [];
+    if (conflictPaths.some((file) => file.startsWith(".github/workflows/"))) return [];
     return [
       {
         base_sha: baseSha,
