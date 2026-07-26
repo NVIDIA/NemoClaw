@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 4 as const;
+export const RISK_PLAN_VERSION = 5 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
 
@@ -19,6 +19,7 @@ export type RiskFamilyId =
   | "inference-policy"
   | "messaging-lifecycle"
   | "platform-install"
+  | "openclaw-image"
   | "credentials-security"
   | "e2e-control-plane"
   | "sandbox-boundary"
@@ -241,6 +242,17 @@ export const RISK_RULES: readonly RiskRule[] = [
       file === "scripts/e2e/sanitize-trace-timing.py" ||
       file === "ci/onboard-performance-budget.json" ||
       RISK_RELEVANT_TEST_FILES.has(file),
+  },
+  {
+    id: "openclaw-image",
+    summary: "OpenClaw final-image changes must preserve cold onboarding and a usable first turn.",
+    tier: 3,
+    requiredJobs: ["full-e2e"],
+    invariants: [
+      "the repository-root image builds through the same cold path exercised by supported hosts",
+      "the resulting OpenClaw sandbox becomes ready and completes a real first turn",
+    ],
+    matches: (file) => file === "Dockerfile",
   },
   {
     id: "credentials-security",

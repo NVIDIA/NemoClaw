@@ -30,6 +30,7 @@ import {
   renderSandboxInventoryText,
 } from "../src/lib/inventory/index.js";
 import { recoverRegistryEntriesWithFallback } from "../src/lib/list-command-deps.js";
+import { resolveGatewayName } from "../src/lib/onboard/gateway-binding.js";
 import { nemoclawStateRoot } from "../src/lib/state/state-root.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -248,7 +249,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     fs.writeFileSync(path.join(binDir, "openshell"), lines.join("\n"), { mode: 0o755 });
   }
 
-  function seedRegistry(stateDir: string, model = "test-model"): void {
+  function seedRegistry(stateDir: string, model = "test-model", gatewayPort?: number): void {
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(
       path.join(stateDir, "sandboxes.json"),
@@ -260,6 +261,9 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
             provider: "nvidia-prod",
             gpuEnabled: false,
             policies: [],
+            ...(gatewayPort === undefined
+              ? {}
+              : { gatewayName: resolveGatewayName(gatewayPort), gatewayPort }),
           },
         },
         defaultSandbox: "my-assist",
@@ -292,7 +296,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
   it("nemoclaw list reads the registry scoped to a non-default gateway port (#3053)", () => {
     const port = 9123;
     seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
-    seedRegistry(nemoclawStateRoot(home, port), "selected-port-model");
+    seedRegistry(nemoclawStateRoot(home, port), "selected-port-model", port);
 
     const { code, stdout, stderr } = runCli(["list"], {
       NEMOCLAW_GATEWAY_PORT: String(port),
@@ -311,7 +315,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     () => {
       const port = 9123;
       seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
-      seedRegistry(nemoclawStateRoot(home, port), "selected-port-model");
+      seedRegistry(nemoclawStateRoot(home, port), "selected-port-model", port);
 
       const { code, stdout, stderr } = runCli(["my-assist", "status"], {
         NEMOCLAW_GATEWAY_PORT: String(port),
@@ -433,7 +437,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
     const port = (listener.address() as { port: number }).port;
     fs.rmSync(path.join(home, ".nemoclaw", "sandboxes.json"), { force: true });
-    seedRegistry(nemoclawStateRoot(home, port));
+    seedRegistry(nemoclawStateRoot(home, port), "test-model", port);
 
     try {
       // Fake docker: info OK, ps shows nothing running, ps -a shows the
@@ -441,7 +445,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       writeFakeDocker([
         "#!/usr/bin/env bash",
         "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
-        'if [ "$1" = ps ] && [ "$2" = -a ]; then echo \'openshell-cluster-nemoclaw\'; exit 0; fi',
+        `if [ "$1" = ps ] && [ "$2" = -a ]; then echo 'openshell-cluster-nemoclaw-${port}'; exit 0; fi`,
         'if [ "$1" = ps ]; then exit 0; fi',
         "exit 0",
       ]);
@@ -452,7 +456,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       writeFakeOpenshell([
         "#!/usr/bin/env bash",
         'case "$*" in',
-        '  "sandbox get my-assist"|"sandbox get -g nemoclaw my-assist")',
+        `  "sandbox get my-assist"|"sandbox get -g nemoclaw-${port} my-assist")`,
         "    echo 'transport error: unexpected EOF' >&2",
         "    exit 1",
         "    ;;",

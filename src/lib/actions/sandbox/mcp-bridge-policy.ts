@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -9,7 +10,11 @@ import {
   MCP_BRIDGE_POLICY_SOURCE,
   McpBridgeError,
 } from "./mcp-bridge-contracts";
-import { buildMcpBridgePolicyKey, buildMcpBridgePolicyYaml } from "./mcp-bridge-policy-render";
+import {
+  buildMcpBridgePolicyKey,
+  buildMcpBridgePolicyName,
+  buildMcpBridgePolicyYaml,
+} from "./mcp-bridge-policy-render";
 
 export {
   buildMcpBridgePolicyKey,
@@ -233,6 +238,76 @@ export function assertGeneratedPolicyRegistrationMutationSafe(
     );
   }
   return owned ? registeredPolicy : undefined;
+}
+
+/**
+ * Prove that a complete bridge still owns its exact live policy without
+ * reconciling crash markers or writing registry state. This is intentionally
+ * stricter than the mutation preflight: a still-live sandbox whose adapter
+ * cannot be inspected may cross the rebuild delete boundary only from a fully
+ * committed policy registration generated for the authoritative recorded-agent
+ * adapter and exactly matching the gateway.
+ */
+export function assertGeneratedPolicyExactReadOnly(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  adapter: AgentMcpAdapter,
+  resolvedAddresses: readonly string[],
+): registry.CustomPolicyEntry {
+  const canonicalOwnershipError = (): McpBridgeError =>
+    new McpBridgeError(
+      "Generated MCP policy ownership is not canonical for its recorded bridge definition. Refusing host-side rebuild recovery.",
+    );
+  let expectedPolicyName: string;
+  try {
+    expectedPolicyName = buildMcpBridgePolicyName(entry.server);
+  } catch {
+    throw canonicalOwnershipError();
+  }
+  if (
+    entry.policyName !== expectedPolicyName ||
+    entry.adapter !== adapter ||
+    resolvedAddresses.length === 0
+  ) {
+    throw canonicalOwnershipError();
+  }
+  let expectedContent: string;
+  try {
+    expectedContent = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, resolvedAddresses);
+  } catch {
+    // Registry entries are untrusted local state. Keep malformed URLs and any
+    // credential-shaped material out of the recovery diagnostic.
+    throw canonicalOwnershipError();
+  }
+  const sameNamePolicies = registry
+    .getCustomPolicies(sandboxName)
+    .filter((policy) => policy.name === expectedPolicyName);
+  if (sameNamePolicies.length !== 1) {
+    throw new McpBridgeError(
+      "Generated MCP policy ownership is missing or ambiguous. Refusing host-side rebuild recovery for a still-live sandbox.",
+    );
+  }
+  const [registeredPolicy] = sameNamePolicies;
+  if (registeredPolicy?.sourcePath !== MCP_BRIDGE_POLICY_SOURCE) {
+    throw new McpBridgeError(
+      "Generated MCP policy has no exact NemoClaw ownership record. Refusing host-side rebuild recovery for a still-live sandbox.",
+    );
+  }
+  if (registeredPolicy.pendingContent !== undefined) {
+    throw new McpBridgeError(
+      "Generated MCP policy has an incomplete registry transition. Refusing read-only host-side rebuild recovery.",
+    );
+  }
+  if (registeredPolicy.content !== expectedContent) {
+    throw canonicalOwnershipError();
+  }
+  const state = policies.getPresetContentGatewayState(sandboxName, registeredPolicy.content);
+  if (state !== "match") {
+    throw new McpBridgeError(
+      "Generated MCP policy is absent, unreachable, or drifted from its exact ownership record. Refusing host-side rebuild recovery.",
+    );
+  }
+  return { ...registeredPolicy };
 }
 
 export function removeGeneratedPolicy(

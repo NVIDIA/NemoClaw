@@ -175,9 +175,10 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
-    version: 3,
+    version: 4,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
+    checkoutRepository: "NVIDIA/NemoClaw",
     workflowSha: WORKFLOW_SHA,
     planHash: plan.planHash,
     correlationId: CORRELATION_ID,

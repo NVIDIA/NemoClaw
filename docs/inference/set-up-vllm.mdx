@@ -270,17 +270,19 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 Set `NEMOCLAW_VLLM_MODEL=<slug>` before onboarding to select a model without prompting.
 NemoClaw applies the registered `vllm serve` arguments, including the reasoning parser, tool-call parser, and `--max-model-len`.
 
-| Slug | Hugging Face model | Notes |
-|---|---|---|
-| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Supported override. |
-| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark default. |
-| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Generic Linux NVIDIA GPU default. |
-| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station profile default outside express install. |
-| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
-| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated and requires license acceptance. |
+| Slug | Hugging Face model | Supported host profiles | Notes |
+|---|---|---|---|
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Supported override. |
+| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark | DGX Spark default. |
+| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Generic Linux NVIDIA GPU default. |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | DGX Station profile default outside express install. |
+| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Gated and requires license acceptance. |
 
 Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID.
 An unrecognized value fails before image or model downloads and prints the valid slugs.
+A recognized override that does not support the detected host also fails before image or model downloads.
+The error names the selected model and detected host profile.
 
 Gated models require a Hugging Face token and license acceptance.
 Follow [Authenticate Hugging Face Downloads](#authenticate-hugging-face-downloads) before onboarding so NemoClaw can forward the token temporarily to the one-shot model downloader.

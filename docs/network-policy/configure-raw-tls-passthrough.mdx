@@ -1,0 +1,86 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Configure Raw TLS Passthrough"
+sidebar-title: "Configure Raw TLS"
+description: "Use a scoped raw TLS tunnel when an allowed endpoint cannot use OpenShell L7 inspection."
+description-agent: "Configures scoped raw TLS passthrough with tls skip. Use when a Cloudflare-fronted endpoint or direct TLS protocol fails through the inspected proxy."
+keywords: ["openshell tls skip", "nemoclaw raw tls passthrough", "network policy connect tunnel"]
+content:
+  type: "how_to"
+skill:
+  priority: 10
+---
+Use raw TLS passthrough only when an allowed endpoint requires direct TLS negotiation.
+Keep L7 inspection for every endpoint that supports it.
+
+## Identify the TLS Failure
+
+OpenShell normally terminates TLS for allowed HTTPS endpoints so it can inspect traffic.
+The proxy creates a new TLS connection to the upstream, including endpoints with `access: full`.
+Some Cloudflare-fronted upstreams reset that new handshake.
+Clients can report `ECONNRESET` or a TLS error such as `curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL`.
+
+Protocols that require direct TLS negotiation can fail in the same way.
+For example, the WhatsApp HTTP/1.1 Noise-over-WebSocket handshake cannot use the proxy's HTTP/2 ALPN negotiation.
+
+## Create a Passthrough Preset
+
+Set `access: full` and `tls: skip` for the exact endpoint:
+
+```yaml
+preset:
+  name: cf-fronted-api
+  description: "Cloudflare-fronted API that resets re-originated TLS"
+network_policies:
+  cf_fronted_api:
+    name: cf_fronted_api
+    endpoints:
+      - host: api.example.com
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/local/bin/node }
+```
+
+Save the file as `nemoclaw-blueprint/policies/presets/cf-fronted-api.yaml`.
+The filename without `.yaml` must match `preset.name`.
+
+Apply the catalog preset:
+
+```bash
+$$nemoclaw my-assistant policy add cf-fronted-api
+```
+
+Run the same command after editing the file.
+NemoClaw compares the preset with the live policy and applies changed content.
+
+The maintained `whatsapp` channel preset uses this structure for `web.whatsapp.com`.
+<AgentOnly variant="openclaw">
+Refer to `src/lib/messaging/channels/whatsapp/policy/openclaw.yaml` for an example.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Refer to `src/lib/messaging/channels/whatsapp/policy/hermes.yaml` for an example.
+</AgentOnly>
+It combines `tls: skip` tunnel endpoints with inspected `protocol: rest` endpoints.
+
+## Understand the Security Boundary
+
+<Warning>
+`tls: skip` disables L7 inspection and egress-boundary credential resolution for that endpoint.
+The proxy cannot filter the HTTP method, path, or body after it creates the tunnel.
+Endpoint `rules` cannot constrain what the agent sends through the tunnel.
+The proxy also cannot replace an OpenShell credential placeholder inside the encrypted request.
+This configuration does not unblock endpoints that require both raw passthrough and egress-boundary credential resolution.
+</Warning>
+
+The declared host, port, and `binaries` scope remain in effect.
+Use `tls: skip` only for the exact hosts that require raw passthrough.
+Do not use a broad wildcard.
+
+## Related Topics
+
+- [Create Custom Policy Presets](create-custom-policy-presets) explains custom preset validation and application.
+- [Apply Policy Presets](apply-policy-presets) explains reapplication and persistence.
+- [OpenShell Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) provides the complete endpoint schema.

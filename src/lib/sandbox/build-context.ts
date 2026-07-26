@@ -27,7 +27,7 @@ function createBuildContextDir(tmpDir: string = os.tmpdir()): string {
 function normalizeReadModesForDockerCopy(rootDir: string): void {
   const stat = fs.lstatSync(rootDir);
   if (stat.isDirectory()) {
-    fs.chmodSync(rootDir, (stat.mode & 0o777) | 0o555);
+    fs.chmodSync(rootDir, (stat.mode & 0o777 & ~0o022) | 0o555);
     for (const entry of fs.readdirSync(rootDir)) {
       normalizeReadModesForDockerCopy(path.join(rootDir, entry));
     }
@@ -36,12 +36,12 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
 
   if (stat.isFile()) {
     const mode = stat.mode & 0o777;
-    fs.chmodSync(rootDir, mode | 0o444 | (mode & 0o111 ? 0o111 : 0));
+    fs.chmodSync(rootDir, (mode & ~0o022) | 0o444 | (mode & 0o111 ? 0o111 : 0));
   }
 }
 
 function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
-  for (const runtimeName of ["mcporter-runtime", "wechat-runtime"]) {
+  for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
     const sourceDir = path.join(rootDir, "agents", "openclaw", runtimeName);
     const stagedDir = path.join(buildCtx, "agents", "openclaw", runtimeName);
     fs.mkdirSync(stagedDir, { recursive: true });
@@ -273,8 +273,16 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-shared-state-permissions.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-bundled-npm-brace-expansion.mts"),
+    path.join(stagedScriptsDir, "patch-bundled-npm-brace-expansion.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-bundled-npm-tar.mts"),
     path.join(stagedScriptsDir, "patch-bundled-npm-tar.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "upgrade-bundled-npm.mts"),
+    path.join(stagedScriptsDir, "upgrade-bundled-npm.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "verify-wechat-runtime-lock.mts"),

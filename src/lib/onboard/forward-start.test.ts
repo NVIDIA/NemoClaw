@@ -7,10 +7,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildDetachedForwardStartSpawn,
+  looksLikeForwardListenerStartFailure,
   looksLikeForwardPortConflict,
   looksLikeUntrackedForward,
   runDetachedForwardStartWithDiagnostics,
-  runDetachedForwardStartWithPortReleaseRetries,
+  runDetachedForwardStartWithRetries,
 } from "./forward-start";
 
 // Build an `openshell forward list`-shaped output for the given live entries.
@@ -421,13 +422,11 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     expect(isPortListening).toHaveBeenCalledWith(18789);
   });
 
-  it("keeps waiting (then times out) when ssh exits under ControlMaster but the port is not live (#6099)", () => {
-    // A genuinely failed ssh (auth error, refused connection) produces the same
-    // exit diagnostic without a live listener — the fallback must not confirm.
+  it("returns immediately when ssh exits and no ControlMaster listener is live (#7266)", () => {
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
       fs.writeSync(stderr, "ssh exited before local forward listener opened on 127.0.0.1:18789\n");
-      return { pid: 782 };
+      return {};
     });
     const sleep = vi.fn();
     const isPortListening = vi.fn().mockReturnValue(false);
@@ -440,8 +439,123 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe("timeout");
-    expect(isPortListening).toHaveBeenCalled();
+    expect(result.reason).toBe("listener-start-failure");
+    expect(isPortListening).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("returns immediately for openshell's listener timeout when the port remains closed (#7266)", () => {
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "Error: ssh process started but local forward listener was not reachable\n" +
+          "local forward listener did not open on 127.0.0.1:18789 within 10000ms\n",
+      );
+      return {};
+    });
+    const sleep = vi.fn();
+    const isPortListening = vi.fn().mockReturnValue(false);
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 180_000, pollIntervalMs: 500, sleepMs: sleep, isPortListening },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("listener-start-failure");
+    expect(result.diagnostic).not.toContain("forward did not appear in list within");
+    expect(isPortListening).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("rejects another sandbox's live row during listener-start failure (#7266)", () => {
+    const fetchList = vi
+      .fn()
+      .mockReturnValue(forwardListWith([{ sandbox: "other-sandbox", port: 18789 }]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "local forward listener did not open on 127.0.0.1:18789 within 10000ms\n",
+      );
+      return {};
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 180_000, sleepMs: vi.fn(), isPortListening },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("listener-ownership-conflict");
+    expect(isPortListening).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a live port after an ownership lookup failure (#7266)", () => {
+    const fetchList = vi.fn().mockImplementation(() => {
+      throw new Error("gateway transport: access denied");
+    });
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(stderr, "ssh exited before local forward listener opened on 127.0.0.1:18789\n");
+      return { pid: 786 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 180_000, sleepMs: vi.fn(), isPortListening },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("listener-start-failure");
+      expect(result.diagnostic).toMatch(/openshell forward list failed:.*access denied/i);
+      expect(isPortListening).not.toHaveBeenCalled();
+      expect(killSpy).toHaveBeenCalledWith(786, "SIGTERM");
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
+  });
+
+  it("rejects a live port without the established untracked-forward diagnostic (#7266)", () => {
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "local forward listener did not open on 127.0.0.1:18789 within 10000ms\n",
+      );
+      return { pid: 787 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 180_000, sleepMs: vi.fn(), isPortListening },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("listener-ownership-conflict");
+      expect(isPortListening).toHaveBeenCalledWith(18789);
+      expect(killSpy).toHaveBeenCalledWith(787, "SIGTERM");
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
   });
 
   it("keeps waiting (then times out) when openshell reports untracked but the port is not live", () => {
@@ -468,10 +582,9 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     expect(isPortListening).toHaveBeenCalled();
   });
 
-  it("does not consult the port probe unless openshell reports an untracked forward", () => {
-    // A plain empty list (no "not tracked" notice) must NOT trigger the
-    // live-port fallback — otherwise an unrelated listener on the port could be
-    // mistaken for the forward. This guards the gate on looksLikeUntrackedForward.
+  it("does not run the post-spawn probe without a relevant diagnostic", () => {
+    // A plain empty list must not trigger the post-spawn live-port probe. The
+    // retry wrapper's separate pre-attempt probe is outside this helper.
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockReturnValue({ pid: 42 });
     const sleep = vi.fn();
@@ -488,9 +601,189 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     expect(result.reason).toBe("timeout");
     expect(isPortListening).not.toHaveBeenCalled();
   });
+
+  it("rejects an untracked live-port fallback while the expected row is dead (#7140)", () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const fetchList = vi
+      .fn()
+      .mockReturnValue(forwardListWith([{ sandbox: "my-sandbox", port: 18789, status: "dead" }]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "Could not discover backgrounded SSH process; forward may be running but is not tracked\n",
+      );
+      return { pid: 788 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      {
+        overallTimeoutMs: 10_000,
+        pollIntervalMs: 500,
+        sleepMs: (ms) => {
+          now += ms;
+        },
+        isPortListening,
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("dead-forward");
+    expect(isPortListening).not.toHaveBeenCalled();
+    expect(killSpy).toHaveBeenCalledWith(788, "SIGTERM");
+  });
 });
 
-describe("runDetachedForwardStartWithPortReleaseRetries", () => {
+describe("runDetachedForwardStartWithRetries", () => {
+  it("stops and retries an expected forward whose ANSI status stays dead (#7140)", () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const spawn = vi.fn().mockReturnValueOnce({ pid: 41 }).mockReturnValueOnce({ pid: 42 });
+    const fetchList = vi
+      .fn()
+      .mockImplementation(() =>
+        spawn.mock.calls.length === 1
+          ? forwardListWith([
+              { sandbox: "my-sandbox", port: 18789, status: "\u001B[31mdead\u001B[0m" },
+            ])
+          : forwardListWith([{ sandbox: "my-sandbox", port: 18789 }]),
+      );
+    const beforeRetry = vi.fn();
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        overallTimeoutMs: 10_000,
+        pollIntervalMs: 500,
+        sleepMs: (ms) => {
+          now += ms;
+        },
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe("ok");
+    expect(beforeRetry).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(killSpy).toHaveBeenCalledWith(41, "SIGTERM");
+    expect(killSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      beforeRetry.mock.invocationCallOrder[0],
+    );
+    expect(killSpy).not.toHaveBeenCalledWith(42, expect.anything());
+  });
+
+  it("allows only one cleanup when the replacement forward also stays dead (#7140)", () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const spawn = vi.fn().mockReturnValueOnce({ pid: 41 }).mockReturnValueOnce({ pid: 42 });
+    const fetchList = vi
+      .fn()
+      .mockReturnValue(forwardListWith([{ sandbox: "my-sandbox", port: 18789, status: "dead" }]));
+    const beforeRetry = vi.fn();
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        overallTimeoutMs: 10_000,
+        pollIntervalMs: 500,
+        sleepMs: (ms) => {
+          now += ms;
+        },
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("dead-forward");
+    expect(beforeRetry).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(killSpy).toHaveBeenCalledTimes(2);
+    expect(killSpy).toHaveBeenNthCalledWith(1, 41, "SIGTERM");
+    expect(killSpy).toHaveBeenNthCalledWith(2, 42, "SIGTERM");
+  });
+
+  it("accepts an expected forward that recovers during the dead-state grace (#7140)", () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const spawn = vi.fn().mockReturnValue({ pid: 41 });
+    const fetchList = vi
+      .fn()
+      .mockReturnValueOnce(
+        forwardListWith([{ sandbox: "my-sandbox", port: 18789, status: "dead" }]),
+      )
+      .mockReturnValue(forwardListWith([{ sandbox: "my-sandbox", port: 18789 }]));
+    const beforeRetry = vi.fn();
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        overallTimeoutMs: 10_000,
+        pollIntervalMs: 500,
+        sleepMs: (ms) => {
+          now += ms;
+        },
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe("ok");
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not clean up dead rows for another sandbox or port (#7140)", () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const spawn = vi.fn().mockReturnValue({ pid: 41 });
+    const fetchList = vi.fn().mockReturnValue(
+      forwardListWith([
+        { sandbox: "my-sandbox", port: 18790, status: "dead" },
+        { sandbox: "other-sandbox", port: 18789, status: "dead" },
+      ]),
+    );
+    const beforeRetry = vi.fn();
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        overallTimeoutMs: 3_000,
+        pollIntervalMs: 500,
+        sleepMs: (ms) => {
+          now += ms;
+        },
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
   it("retries after a port-conflict diagnostic, then succeeds", () => {
     const fetchList = vi
       .fn()
@@ -506,12 +799,18 @@ describe("runDetachedForwardStartWithPortReleaseRetries", () => {
       .mockReturnValueOnce({ pid: 99 });
     const sleep = vi.fn();
 
-    const result = runDetachedForwardStartWithPortReleaseRetries(
+    const result = runDetachedForwardStartWithRetries(
       spawn,
       fetchList,
       { port: 18789, sandboxName: "my-sandbox" },
       beforeRetry,
-      { overallTimeoutMs: 30, pollIntervalMs: 10, sleepMs: sleep, maxRetries: 3 },
+      {
+        overallTimeoutMs: 30,
+        pollIntervalMs: 10,
+        sleepMs: sleep,
+        maxRetries: 3,
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
     );
 
     expect(result.ok).toBe(true);
@@ -525,12 +824,18 @@ describe("runDetachedForwardStartWithPortReleaseRetries", () => {
     const spawn = vi.fn().mockReturnValue({ pid: 42 });
     const sleep = vi.fn();
 
-    const result = runDetachedForwardStartWithPortReleaseRetries(
+    const result = runDetachedForwardStartWithRetries(
       spawn,
       fetchList,
       { port: 18789, sandboxName: "my-sandbox" },
       beforeRetry,
-      { overallTimeoutMs: 20, pollIntervalMs: 10, sleepMs: sleep, maxRetries: 3 },
+      {
+        overallTimeoutMs: 20,
+        pollIntervalMs: 10,
+        sleepMs: sleep,
+        maxRetries: 3,
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
     );
 
     expect(result.ok).toBe(false);
@@ -547,17 +852,157 @@ describe("runDetachedForwardStartWithPortReleaseRetries", () => {
       .mockReturnValue({ error: new Error("EADDRINUSE: address already in use") });
     const sleep = vi.fn();
 
-    const result = runDetachedForwardStartWithPortReleaseRetries(
+    const result = runDetachedForwardStartWithRetries(
       spawn,
       fetchList,
       { port: 18789, sandboxName: "my-sandbox" },
       beforeRetry,
-      { overallTimeoutMs: 20, pollIntervalMs: 10, sleepMs: sleep, maxRetries: 2 },
+      {
+        overallTimeoutMs: 20,
+        pollIntervalMs: 10,
+        sleepMs: sleep,
+        maxRetries: 2,
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
     );
 
     expect(result.ok).toBe(false);
     expect(beforeRetry).toHaveBeenCalledTimes(2);
     expect(spawn).toHaveBeenCalledTimes(3); // initial + 2 retries
+  });
+
+  it("preserves a concurrent same-target replacement while retrying (#7266)", () => {
+    const fetchList = vi
+      .fn()
+      .mockReturnValueOnce(forwardListWith([]))
+      .mockReturnValue(forwardListWith([{ sandbox: "my-sandbox", port: 18789 }]));
+    const spawn = vi
+      .fn()
+      .mockImplementationOnce(({ stderr }: { stderr: number }) => {
+        fs.writeSync(
+          stderr,
+          "local forward listener did not open on 127.0.0.1:18789 within 10000ms\n",
+        );
+        return {};
+      })
+      .mockReturnValueOnce({ pid: 785 });
+    const beforeRetry = vi.fn();
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        overallTimeoutMs: 180_000,
+        pollIntervalMs: 500,
+        sleepMs: vi.fn(),
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    // The second forward-list row can belong to a concurrent replacement.
+    // Listener-failure retry must observe it without stopping by sandbox/port.
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves a ControlMaster listener created by the current attempt (#6099)", () => {
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(stderr, "ssh exited before local forward listener opened on 127.0.0.1:18789\n");
+      return { pid: 785 };
+    });
+    const beforeRetry = vi.fn();
+    const isPortListening = vi
+      .fn()
+      .mockReturnValueOnce(false) // free before this attempt starts
+      .mockReturnValueOnce(true); // mux owns the listener after ssh exits
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      { isPortListening },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe("ok-port-live");
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(isPortListening).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops after bounded retries when listener startup keeps failing (#7266)", () => {
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "local forward listener did not open on 127.0.0.1:18789 within 10000ms\n",
+      );
+      return {};
+    });
+    const beforeRetry = vi.fn();
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        overallTimeoutMs: 180_000,
+        pollIntervalMs: 500,
+        sleepMs: vi.fn(),
+        isPortListening: vi.fn().mockReturnValue(false),
+        maxRetries: 2,
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("listener-start-failure");
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not retry unrelated authentication failures (#7266)", () => {
+    const fetchList = vi.fn();
+    const spawn = vi.fn().mockReturnValue({ error: new Error("Permission denied (publickey)") });
+    const beforeRetry = vi.fn();
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      { maxRetries: 3, isPortListening: vi.fn().mockReturnValue(false) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("spawn-error");
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
+  it("never spawns over an arbitrary listener that predates the attempt (#7266)", () => {
+    const fetchList = vi.fn();
+    const spawn = vi.fn();
+    const beforeRetry = vi.fn();
+    const isPortListening = vi.fn().mockReturnValue(true);
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      { maxRetries: 2, isPortListening },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("listener-ownership-conflict");
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(fetchList).not.toHaveBeenCalled();
   });
 });
 
@@ -573,6 +1018,23 @@ describe("looksLikeForwardPortConflict", () => {
   it("returns false for unrelated errors", () => {
     expect(looksLikeForwardPortConflict("transport: connection refused")).toBe(false);
     expect(looksLikeForwardPortConflict("")).toBe(false);
+  });
+});
+
+describe("looksLikeForwardListenerStartFailure", () => {
+  it("matches only definitive listener termination diagnostics", () => {
+    expect(
+      looksLikeForwardListenerStartFailure(
+        "local forward listener did not open on 127.0.0.1:18789 within 10000ms",
+      ),
+    ).toBe(true);
+    expect(
+      looksLikeForwardListenerStartFailure(
+        "ssh exited before local forward listener opened on 127.0.0.1:18789",
+      ),
+    ).toBe(true);
+    expect(looksLikeForwardListenerStartFailure("Permission denied (publickey)")).toBe(false);
+    expect(looksLikeForwardListenerStartFailure("gateway transport unavailable")).toBe(false);
   });
 });
 

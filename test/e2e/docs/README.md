@@ -255,9 +255,9 @@ test/e2e/
   matches are drawn only from the trusted controller workflow and scripts.
   Other or mixed internal
   control-plane revisions require a maintainer-authorized run for the PR SHA; only
-  its verified evidence can pass coordination. Risky forks retain the audited
-  credentialed-E2E skip approval. See [NemoClaw E2E CI](../README.md) for the
-  full lifecycle.
+  its verified evidence can pass coordination. Risky forks require protected
+  approval before the trusted workflow runs their exact repository and SHA with
+  E2E credentials. See [NemoClaw E2E CI](../README.md) for the full lifecycle.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -276,11 +276,19 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  PR E2E dispatches validate the PR SHA and controller metadata before
-  preparation, attach `test/e2e/risk-signal-reporter.ts` to live Vitest
-  invocations, and suppress PR reporting and scorecards. The workflow boundary
-  requires every selected job shard to upload its evidence artifact.
-- `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
+  PR E2E dispatches authenticate the controller-owned coordination check before
+  checking out the PR revision, then validate the PR SHA and controller
+  metadata before preparation. Direct manual dispatches cannot reuse the PR
+  input shape to run fork code. Selected runs attach
+  `test/e2e/risk-signal-reporter.ts` to live Vitest invocations and suppress PR
+  reporting and scorecards. The workflow boundary requires every selected job
+  shard to upload its evidence artifact.
+- `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
+  four independent shards on each of macOS and WSL, with `fail-fast` disabled.
+  Each macOS shard installs the pinned OpenShell formula and has a 30-minute
+  budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
+  root-required contracts on shard 1 only.
+  `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
   `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E targets directly
   for their E2E coverage. Individual repository-hosted targets, including
   `ollama-auth-proxy`, are selected through `.github/workflows/e2e.yaml`.

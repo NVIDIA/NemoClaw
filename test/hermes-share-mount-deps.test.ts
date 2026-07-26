@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
@@ -30,7 +31,28 @@ function extractHermesInstallCommand(dockerfile: string): string {
   return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
 }
 
-function runLoggedShell(command: string, tmp: string) {
+function extractHermesIntegrityCommand(dockerfile: string): string {
+  const integrityStart = dockerfile.indexOf("# Cross-check the pinned release");
+  const installStart = dockerfile.indexOf("WORKDIR /opt/hermes", integrityStart);
+  expect(integrityStart).toBeGreaterThanOrEqual(0);
+  expect(installStart).toBeGreaterThan(integrityStart);
+  const match = dockerfile.slice(integrityStart, installStart).match(/RUN\s+set -eu;[\s\S]*$/m);
+  expect(match).not.toBeNull();
+  return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
+}
+
+function extractHermesRuntimeGuard(dockerfile: string): string {
+  const guardStart = dockerfile.indexOf("RUN /usr/local/bin/hermes --version");
+  const nextRun = dockerfile.indexOf("\nRUN chmod -R", guardStart);
+  expect(guardStart).toBeGreaterThanOrEqual(0);
+  expect(nextRun).toBeGreaterThan(guardStart);
+  return dockerfile
+    .slice(guardStart, nextRun)
+    .replace(/^RUN\s+/, "")
+    .replace(/\\\n/g, " ");
+}
+
+function runLoggedShell(command: string, tmp: string, functionDefs: string[] = []) {
   const logPath = path.join(tmp, "calls.log");
   const scriptPath = path.join(tmp, "run-hermes-apt-layer.sh");
   const script = [
@@ -38,6 +60,7 @@ function runLoggedShell(command: string, tmp: string) {
     "set -euo pipefail",
     `call_log=${JSON.stringify(logPath)}`,
     'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+    ...functionDefs,
     command,
   ].join("\n");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -50,27 +73,64 @@ function runHermesInstallLayer(
   command: string,
   tmp: string,
   opts: {
+    uiTuiLockfile?: "directory" | "workspace" | "missing";
     webLockfile?: "directory" | "workspace" | "missing";
     whatsappBridge?: "lockfile" | "package-json";
   } = {},
 ) {
   const fixture = path.join(tmp, "hermes");
   const logPath = path.join(tmp, "calls.log");
+  const npmCache = path.join(tmp, "root-cache", "npm");
+  const electronCache = path.join(tmp, "root-cache", "electron");
+  const nodeGypCache = path.join(tmp, "root-cache", "node-gyp");
   const scriptPath = path.join(tmp, "run-hermes-install-layer.sh");
+  const uiTuiLockfile = opts.uiTuiLockfile ?? "missing";
   const webLockfile = opts.webLockfile ?? "directory";
+  const rootLockPackages = {
+    ...(uiTuiLockfile === "workspace" ? { "ui-tui": {} } : {}),
+    ...(webLockfile === "workspace" ? { web: {} } : {}),
+  };
   fs.mkdirSync(path.join(fixture, "web"), { recursive: true });
   fs.writeFileSync(path.join(fixture, "pyproject.toml"), 'version = "0.16.0"\n');
   fs.writeFileSync(
     path.join(fixture, "package-lock.json"),
-    webLockfile === "workspace" ? '{"packages":{"web":{}}}\n' : "{}\n",
+    `${JSON.stringify({
+      packages: rootLockPackages,
+    })}\n`,
   );
   fs.writeFileSync(path.join(fixture, "web", "package.json"), "{}\n");
+  const writeUiTuiLockfile = {
+    directory: () => {
+      fs.mkdirSync(path.join(fixture, "ui-tui"), { recursive: true });
+      fs.writeFileSync(path.join(fixture, "ui-tui", "package.json"), "{}\n");
+      fs.writeFileSync(path.join(fixture, "ui-tui", "package-lock.json"), "{}\n");
+    },
+    missing: () => undefined,
+    workspace: () => {
+      fs.mkdirSync(path.join(fixture, "ui-tui"), { recursive: true });
+      fs.writeFileSync(path.join(fixture, "ui-tui", "package.json"), "{}\n");
+    },
+  } satisfies Record<typeof uiTuiLockfile, () => void>;
+  writeUiTuiLockfile[uiTuiLockfile]();
   const writeWebLockfile = {
     directory: () => fs.writeFileSync(path.join(fixture, "web", "package-lock.json"), "{}\n"),
     missing: () => undefined,
     workspace: () => undefined,
   } satisfies Record<typeof webLockfile, () => void>;
   writeWebLockfile[webLockfile]();
+  const workspaceBuildTrees = [
+    ...(uiTuiLockfile === "workspace" ? ["ui-tui"] : []),
+    ...(webLockfile === "workspace" ? ["web"] : []),
+  ];
+  for (const uiDir of workspaceBuildTrees) {
+    const nodeModules = path.join(fixture, uiDir, "node_modules");
+    fs.mkdirSync(nodeModules, { recursive: true });
+    fs.writeFileSync(path.join(nodeModules, "build-only-dependency"), `${uiDir}\n`);
+  }
+  for (const cache of [npmCache, electronCache, nodeGypCache]) {
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, "build-only-cache"), "unused after image assembly\n");
+  }
   if (opts.whatsappBridge) {
     const bridgeDir = path.join(fixture, "scripts", "whatsapp-bridge");
     fs.mkdirSync(bridgeDir, { recursive: true });
@@ -114,12 +174,16 @@ function runHermesInstallLayer(
     'export HERMES_SEMVER="0.16.0"',
     'export HERMES_NPM_INTEGRITY="sha512-test"',
     'export HERMES_UV_EXTRAS="messaging mcp"',
-    command.replaceAll("/opt/hermes", fixture),
+    command
+      .replaceAll("/opt/hermes", fixture)
+      .replaceAll("/root/.npm", npmCache)
+      .replaceAll("/root/.cache/electron", electronCache)
+      .replaceAll("/root/.cache/node-gyp", nodeGypCache),
   ].join("\n");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
   const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-  return { result, calls };
+  return { cachePaths: [npmCache, electronCache, nodeGypCache], result, calls };
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
@@ -127,11 +191,22 @@ describe("Hermes share mount package parity (#2947)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-share-apt-"));
     const lists = path.join(tmp, "apt-lists");
+    const securityDebs = path.join(tmp, "security-debs");
+    const inventoryDirectory = path.join(tmp, "security-inventory");
+    const inventory = path.join(inventoryDirectory, "security-packages.txt");
     fs.mkdirSync(lists);
 
     try {
-      const command = extractAptInstallCommand(dockerfile).replaceAll("/var/lib/apt/lists", lists);
-      const { result, calls } = runLoggedShell(command, tmp);
+      const command = extractAptInstallCommand(dockerfile)
+        .replaceAll("/var/lib/apt/lists", lists)
+        .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
+        .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
+        .replaceAll("/usr/local/share/nemoclaw", inventoryDirectory);
+      const { result, calls } = runLoggedShell(command, tmp, [
+        'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+        'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+        ...BASE_APT_SECURITY_FUNCTIONS,
+      ]);
 
       expect(result.status).toBe(0);
       expect(calls).toContain("apt-get update");
@@ -157,18 +232,23 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls).not.toContain("--prefix ui-tui");
       expect(calls).toContain("npm ci --prefix web --prefer-offline --no-audit --no-fund");
       expect(calls).toContain("npm run build --prefix web");
+      expect(calls).toContain(
+        "npm ci --omit=dev --workspaces=false --prefer-offline --no-audit --no-fund",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("builds the Hermes web workspace from the root package-lock.json", () => {
+  it("keeps only root runtime dependencies after building workspace UIs (#7144)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-ui-workspace-"));
+    const hermesRoot = path.join(tmp, "hermes");
 
     try {
       const command = extractHermesInstallCommand(dockerfile);
       const { result, calls } = runHermesInstallLayer(command, tmp, {
+        uiTuiLockfile: "workspace",
         webLockfile: "workspace",
       });
 
@@ -176,7 +256,149 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls).toContain("npm ci --prefer-offline --no-audit --no-fund");
       expect(calls).not.toContain("npm ci --prefix web");
       expect(calls).toContain("npm run build --workspace web");
-      expect(calls).toContain("npm ci --omit=dev --prefer-offline --no-audit --no-fund");
+      const cleanInstall = "rm -rf node_modules ui-tui/node_modules web/node_modules";
+      const runtimeInstall =
+        "npm ci --omit=dev --workspaces=false --prefer-offline --no-audit --no-fund";
+      expect(calls).toContain(cleanInstall);
+      expect(calls).toContain(runtimeInstall);
+      expect(calls.indexOf(cleanInstall)).toBeLessThan(calls.indexOf(runtimeInstall));
+      expect(calls).not.toContain("npm ci --omit=dev --prefer-offline --no-audit --no-fund");
+      expect(calls).not.toContain("--workspace=ui-tui --include-workspace-root");
+      expect(fs.existsSync(path.join(hermesRoot, "node_modules"))).toBe(true);
+      expect(fs.existsSync(path.join(hermesRoot, "ui-tui", "node_modules"))).toBe(false);
+      expect(fs.existsSync(path.join(hermesRoot, "web", "node_modules"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a legacy TUI build tree after bundling from its own lockfile", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-ui-legacy-"));
+    const uiTuiNodeModules = path.join(tmp, "hermes", "ui-tui", "node_modules");
+
+    try {
+      const command = extractHermesInstallCommand(dockerfile);
+      const { result, calls } = runHermesInstallLayer(command, tmp, {
+        uiTuiLockfile: "directory",
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toContain("npm ci --prefix ui-tui --prefer-offline --no-audit --no-fund");
+      expect(calls).toContain(
+        "npm ci --omit=dev --workspaces=false --prefer-offline --no-audit --no-fund",
+      );
+      expect(fs.existsSync(uiTuiNodeModules)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("removes build-only caches in the Hermes dependency layer (#7144)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-build-cache-"));
+
+    try {
+      const command = extractHermesInstallCommand(dockerfile);
+      const { cachePaths, result } = runHermesInstallLayer(command, tmp);
+
+      expect(result.status, result.stderr).toBe(0);
+      for (const cachePath of cachePaths) {
+        expect(() => fs.lstatSync(cachePath)).toThrow();
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("smokes the prebuilt Hermes TUI without runtime node_modules (#7144)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tui-runtime-"));
+    const hermesRoot = path.join(tmp, "hermes");
+    const fakeHermes = path.join(tmp, "hermes-cli");
+    const agentBrowser = path.join(hermesRoot, "node_modules", ".bin", "agent-browser");
+    const python = path.join(hermesRoot, ".venv", "bin", "python");
+    const tuiEntry = path.join(hermesRoot, "ui-tui", "dist", "entry.js");
+    const webIndex = path.join(hermesRoot, "hermes_cli", "web_dist", "index.html");
+    const scriptPath = path.join(tmp, "run-hermes-runtime-guard.sh");
+
+    try {
+      for (const file of [agentBrowser, python, tuiEntry, webIndex]) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+      }
+      fs.writeFileSync(fakeHermes, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(agentBrowser, "#!/bin/sh\nprintf 'agent-browser test\\n'\n", {
+        mode: 0o700,
+      });
+      fs.writeFileSync(python, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(
+        tuiEntry,
+        [
+          'const fs = require("node:fs");',
+          'const path = require("node:path");',
+          'const runtimeModules = path.resolve(__dirname, "../../node_modules");',
+          "if (fs.readdirSync(runtimeModules).length !== 0) process.exit(41);",
+          'console.error("hermes-tui: no TTY");',
+        ].join("\n"),
+      );
+      fs.writeFileSync(webIndex, "<!doctype html>\n");
+
+      const command = extractHermesRuntimeGuard(dockerfile)
+        .replaceAll("/usr/local/bin/hermes", fakeHermes)
+        .replaceAll("/opt/hermes", hermesRoot);
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'timeout() { shift; "$@"; }',
+          `export HERMES_TUI_DIR=${JSON.stringify(path.join(hermesRoot, "ui-tui"))}`,
+          `export HERMES_WEB_DIST=${JSON.stringify(path.join(hermesRoot, "hermes_cli", "web_dist"))}`,
+          command,
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("hermes-tui: no TTY");
+      expect(fs.existsSync(agentBrowser)).toBe(true);
+      expect(fs.existsSync(path.join(hermesRoot, ".node_modules.runtime"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("uses and removes a disposable cache for the Hermes npm integrity lookup (#7144)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-integrity-cache-"));
+    const hermesRoot = path.join(tmp, "hermes");
+    const integrityCache = path.join(tmp, "integrity-cache");
+    const scriptPath = path.join(tmp, "run-hermes-integrity-layer.sh");
+    fs.mkdirSync(hermesRoot, { recursive: true });
+    fs.writeFileSync(path.join(hermesRoot, "pyproject.toml"), 'version = "0.16.0"\n');
+
+    try {
+      const command = extractHermesIntegrityCommand(dockerfile)
+        .replaceAll("/opt/hermes", hermesRoot)
+        .replaceAll("/tmp/hermes-npm-integrity-cache", integrityCache);
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `expected_cache=${JSON.stringify(integrityCache)}`,
+        'npm() { [ "${npm_config_cache:-}" = "$expected_cache" ] || return 41; mkdir -p "$npm_config_cache"; printf "lookup cache\\n" > "$npm_config_cache/entry"; printf "%s\\n" "$HERMES_NPM_INTEGRITY"; }',
+        'export HERMES_VERSION="v0.16.0"',
+        'export HERMES_SEMVER="0.16.0"',
+        'export HERMES_NPM_INTEGRITY="sha512-test"',
+        command,
+      ].join("\n");
+      fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(() => fs.lstatSync(integrityCache)).toThrow();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

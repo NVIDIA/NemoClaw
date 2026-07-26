@@ -18,6 +18,11 @@ import {
 } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
 import {
+  HERMES_TIMEOUT_CONTRACTS,
+  HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
+  HERMES_TIMEOUT_HEADROOM_MINUTES,
+} from "./hermes-timeout-contract.mts";
+import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
@@ -1049,6 +1054,34 @@ function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord)
 function validateInferenceRoutingJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "inference-routing";
   const steps = asSteps(asRecord(jobs[jobName]).steps);
+  const cloudflaredPrereq = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install and verify cloudflared prerequisite",
+  );
+  const cloudflaredPrereqEnv = asRecord(cloudflaredPrereq?.env);
+  if (cloudflaredPrereqEnv.CLOUDFLARED_VERSION !== REVIEWED_CLOUDFLARED_VERSION) {
+    errors.push(
+      `inference-routing cloudflared prerequisite step must pin CLOUDFLARED_VERSION=${REVIEWED_CLOUDFLARED_VERSION}`,
+    );
+  }
+  if (cloudflaredPrereqEnv.CLOUDFLARED_DEB_SHA256 !== REVIEWED_CLOUDFLARED_DEB_SHA256) {
+    errors.push(
+      `inference-routing cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=${REVIEWED_CLOUDFLARED_DEB_SHA256}`,
+    );
+  }
+  requireRunContains(
+    errors,
+    cloudflaredPrereq,
+    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb",
+  );
+  requireRunContains(errors, cloudflaredPrereq, "sha256sum -c -");
+  requireRunContains(errors, cloudflaredPrereq, "dpkg-deb -f");
+  requireRunContains(errors, cloudflaredPrereq, "sudo dpkg -i");
+  requireRunContains(errors, cloudflaredPrereq, "cloudflared version ${CLOUDFLARED_VERSION}");
+  requireRunDoesNotContain(errors, cloudflaredPrereq, "pkg.cloudflare.com");
+  requireRunDoesNotContain(errors, cloudflaredPrereq, "apt-get install");
   const run = requireJobStep(errors, jobName, steps, "Run inference routing live test");
   requireRunContains(errors, run, "test/e2e/live/inference-routing.test.ts");
   requireRunDoesNotContain(errors, run, "inference-routing-provider-smoke.test.ts");
@@ -2800,6 +2833,27 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
 
+function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): void {
+  for (const {
+    innerTest,
+    innerTimeoutMinutes,
+    jobName,
+    jobTimeoutMinutes,
+  } of HERMES_TIMEOUT_CONTRACTS) {
+    const actualJobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
+    const maximumJobTimeoutMinutes = innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES;
+    if (
+      !Number.isInteger(actualJobTimeoutMinutes) ||
+      (actualJobTimeoutMinutes as number) < jobTimeoutMinutes ||
+      (actualJobTimeoutMinutes as number) > maximumJobTimeoutMinutes
+    ) {
+      errors.push(
+        `${jobName} timeout must be between ${jobTimeoutMinutes} and ${maximumJobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with ${HERMES_TIMEOUT_HEADROOM_MINUTES}-${HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes of job headroom`,
+      );
+    }
+  }
+}
+
 function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "diagnostics";
   const targetName = "diagnostics";
@@ -3162,8 +3216,8 @@ function runContainsCloudflaredAptInstall(run: string): boolean {
   );
 }
 
-const TUNNEL_LIFECYCLE_CLOUDFLARED_VERSION = "2026.6.1";
-const TUNNEL_LIFECYCLE_CLOUDFLARED_DEB_SHA256 =
+const REVIEWED_CLOUDFLARED_VERSION = "2026.6.1";
+const REVIEWED_CLOUDFLARED_DEB_SHA256 =
   "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526";
 
 function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3252,14 +3306,14 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
     "NVIDIA_INFERENCE_API_KEY",
   );
   requireRunContains(errors, cloudflaredPrereq, "cloudflared --version");
-  if (cloudflaredPrereqEnv.CLOUDFLARED_VERSION !== TUNNEL_LIFECYCLE_CLOUDFLARED_VERSION) {
+  if (cloudflaredPrereqEnv.CLOUDFLARED_VERSION !== REVIEWED_CLOUDFLARED_VERSION) {
     errors.push(
-      `tunnel-lifecycle cloudflared prerequisite step must pin CLOUDFLARED_VERSION=${TUNNEL_LIFECYCLE_CLOUDFLARED_VERSION}`,
+      `tunnel-lifecycle cloudflared prerequisite step must pin CLOUDFLARED_VERSION=${REVIEWED_CLOUDFLARED_VERSION}`,
     );
   }
-  if (cloudflaredPrereqEnv.CLOUDFLARED_DEB_SHA256 !== TUNNEL_LIFECYCLE_CLOUDFLARED_DEB_SHA256) {
+  if (cloudflaredPrereqEnv.CLOUDFLARED_DEB_SHA256 !== REVIEWED_CLOUDFLARED_DEB_SHA256) {
     errors.push(
-      `tunnel-lifecycle cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=${TUNNEL_LIFECYCLE_CLOUDFLARED_DEB_SHA256}`,
+      `tunnel-lifecycle cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=${REVIEWED_CLOUDFLARED_DEB_SHA256}`,
     );
   }
   requireRunContains(
@@ -4335,6 +4389,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateMatrix["runs-on"] !== "ubuntu-latest") {
     errors.push("generate-matrix job must run on ubuntu-latest");
   }
+  if (generateMatrix["timeout-minutes"] !== 10) {
+    errors.push("generate-matrix job must keep the 10 minute timeout");
+  }
   const generateOutputs = asRecord(generateMatrix.outputs);
   if (
     generateOutputs.matrix !==
@@ -4779,6 +4836,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateCloudInferenceJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
+  validateHermesTimeoutHeadroom(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "hermes-discord", "hermes-discord");
   validateNetworkPolicyJob(errors, jobs);
   validateCommonEgressAgentJob(errors, jobs);
@@ -4840,6 +4898,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (Object.keys(reportToPr).length === 0) {
     errors.push("workflow missing report-to-pr job");
   } else {
+    if (reportToPr["timeout-minutes"] !== 15) {
+      errors.push("report-to-pr job must keep the 15 minute timeout");
+    }
     const needs = Array.isArray(reportToPr.needs) ? reportToPr.needs : [];
     for (const required of ["generate-matrix", "live"]) {
       if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
@@ -4957,6 +5018,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         );
       }
     }
+  }
+
+  const scorecard = asRecord(jobs.scorecard);
+  if (scorecard["timeout-minutes"] !== 15) {
+    errors.push("scorecard job must keep the 15 minute timeout");
   }
 
   return errors;

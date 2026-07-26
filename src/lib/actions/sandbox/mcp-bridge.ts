@@ -16,6 +16,7 @@ import {
 } from "./mcp-bridge-destroy";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
+  type McpRebuildPreparation,
   prepareMcpBridgesForAbsentSandboxRebuild as prepareMcpBridgesForAbsentSandboxRebuildLifecycle,
   prepareMcpBridgesForRebuild as prepareMcpBridgesForRebuildLifecycle,
   reattachMcpProvidersAfterRebuildAbort as reattachMcpProvidersAfterRebuildAbortLifecycle,
@@ -69,6 +70,7 @@ export {
   parseMcpProviderMetadata,
   providerDetachChangedState,
 } from "./mcp-bridge-provider";
+export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild";
 export {
   buildMcpBridgeProviderName,
   MCP_SERVER_URL_MAX_LENGTH,
@@ -78,6 +80,7 @@ export {
   validateMcpCredentialEnvName,
   validateMcpServerName,
 } from "./mcp-bridge-validation";
+export type { McpRebuildPreparation };
 export { statusMcpBridge };
 
 export interface McpDestroyPreparation {
@@ -88,12 +91,6 @@ export interface McpDestroyPreparation {
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
   destroyAlreadyPending: boolean;
-}
-
-export interface McpRebuildPreparation {
-  entries: McpBridgeEntry[];
-  detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
 }
 
 export async function addMcpBridge(
