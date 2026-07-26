@@ -225,6 +225,9 @@ const { createSandbox } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "agent-base-skip.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const hermesPolicyPath = JSON.stringify(
+      path.join(repoRoot, "agents", "hermes", "policy-additions.yaml"),
+    );
     const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
@@ -359,7 +362,7 @@ const { createSandbox } = require(${onboardPath});
     healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
     dashboard: { kind: "ui", label: "Dashboard", path: "/", healthPath: "/api/status", auth: "session" },
     expectedVersion: "2026.4.23",
-    policyAdditionsPath: null,
+    policyAdditionsPath: ${hermesPolicyPath},
   };
   await createSandbox(
     null,

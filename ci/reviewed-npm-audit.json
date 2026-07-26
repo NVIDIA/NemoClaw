@@ -1,6 +1,7 @@
 {
   "schemaVersion": 2,
   "nodeVersion": "22.23.1",
+  "registryOrigin": "https://registry.npmjs.org/",
   "severityThreshold": "high",
   "exceptionFile": "ci/npm-audit-exceptions.json",
   "archiveGraphId": "reviewed-archive-graph",
@@ -63,12 +64,22 @@
   ],
   "lockedGraphs": [
     {
+      "id": "openclaw-runtime",
+      "label": "OpenClaw 2026.7.1 locked runtime graph",
+      "packageSpec": "openclaw@2026.7.1",
+      "integrity": "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
+      "directory": "agents/openclaw/openclaw-runtime",
+      "lockSha256": "82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88"
+    },
+    {
       "id": "mcporter-runtime",
       "label": "mcporter 0.7.3 locked runtime graph",
       "packageSpec": "mcporter@0.7.3",
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
-      "directory": "agents/openclaw/mcporter-runtime"
+      "directory": "agents/openclaw/mcporter-runtime",
+      "lockSha256": "c31959d7950903f7477ca2e143b3f1f4adfd10f1961fe97db40cd72f62b84830"
     }
   ]
 }

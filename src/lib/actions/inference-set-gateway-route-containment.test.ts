@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
+import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/https-pin-runtime";
 import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
@@ -28,6 +29,7 @@ const entry = (name: string, overrides: Partial<SandboxEntry> = {}): SandboxEntr
 describe("runtime shared gateway route containment", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    delete process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];
   });
 
   it("rejects an ambient gateway endpoint before OpenShell prep or state mutation", async () => {
@@ -213,7 +215,7 @@ describe("runtime shared gateway route containment", () => {
     const peer = entry("late-peer", {
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointUrl: "https://peer.example.test/v1",
+      endpointUrl: "http://peer.example.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
     });
@@ -224,13 +226,16 @@ describe("runtime shared gateway route containment", () => {
       .mockReturnValue({ sandboxes: [alpha, peer], defaultSandbox: "alpha" });
     deps.listSandboxes = listSandboxes;
 
+    // HTTP (not HTTPS) so this test exercises rewriteUrlWithDnsPinning directly
+    // to create the async validation gap; DNS-backed HTTPS endpoints route
+    // through the HTTPS-pin runtime adapter instead.
     await expect(
       runInferenceSet(
         {
           provider: "compatible-endpoint",
           model: "custom/model",
           sandboxName: "alpha",
-          endpointUrl: "https://alpha.example.test/v1",
+          endpointUrl: "http://alpha.example.test/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: "openai-completions",
         },
@@ -279,8 +284,11 @@ describe("runtime shared gateway route containment", () => {
   });
 
   it("catches a DNS change between the preliminary and finalized gateway route checks", async () => {
-    const firstEndpoint = "https://first.example.test/v1";
-    const secondEndpoint = "https://second.example.test/v1";
+    // HTTP (not HTTPS) so this test exercises rewriteUrlWithDnsPinning directly;
+    // DNS-backed HTTPS endpoints route through the HTTPS-pin runtime adapter
+    // instead (see inference-set-https-pin-runtime.test.ts).
+    const firstEndpoint = "http://first.example.test/v1";
+    const secondEndpoint = "http://second.example.test/v1";
     const customRoute = {
       provider: "compatible-endpoint",
       model: "custom/model",
@@ -304,6 +312,7 @@ describe("runtime shared gateway route containment", () => {
       sandboxes: [alpha, peer],
     });
     const rewriteUrlWithDnsPinning = vi.fn().mockResolvedValueOnce(secondEndpoint);
+    const ensureHttpsPinRuntimeAdapter = vi.fn();
 
     await expect(
       finalizeInferenceSetRoute({
@@ -315,11 +324,159 @@ describe("runtime shared gateway route containment", () => {
         onboardEndpointUrl: null,
         getSandboxes: () => [alpha, peer],
         rewriteUrlWithDnsPinning,
+        ensureHttpsPinRuntimeAdapter,
       }),
     ).rejects.toThrow("custom-peer");
 
     expect(rewriteUrlWithDnsPinning).toHaveBeenCalledOnce();
     expect(rewriteUrlWithDnsPinning).toHaveBeenCalledWith(firstEndpoint);
+    expect(ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("matches a same-gateway peer by deterministic adapter route without persisting the source hostname (#6141)", async () => {
+    const sourceEndpoint = "https://shared.example.test/v1";
+    const alpha = entry("alpha");
+    const prepare = (sandboxes: SandboxEntry[]) =>
+      prepareInferenceSetRoute({
+        entry: alpha,
+        sandboxName: alpha.name,
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        customRoute: {
+          endpointUrl: sourceEndpoint,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        session: null,
+        sandboxes,
+      });
+    const first = prepare([alpha]);
+    const adapterBaseUrl = first.preliminaryExplicitMetadata?.endpointUrl;
+    expect(adapterBaseUrl).toMatch(/^http:\/\/host\.openshell\.internal:/);
+    const peer = entry("custom-peer", {
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: adapterBaseUrl,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+
+    const prepared = prepare([alpha, peer]);
+    const result = await finalizeInferenceSetRoute({
+      prepared,
+      sandboxName: alpha.name,
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      canReuseRecordedRoute: false,
+      onboardEndpointUrl: null,
+      getSandboxes: () => [alpha, peer],
+      rewriteUrlWithDnsPinning: vi.fn(async (value: unknown) => value as string),
+      ensureHttpsPinRuntimeAdapter: vi.fn(async () => ({
+        baseUrl: adapterBaseUrl as string,
+        credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+        token: "route-token",
+        routeId: "route-id",
+      })),
+    });
+
+    expect(result.registryMetadata.endpointUrl).toBe(adapterBaseUrl);
+    expect(JSON.stringify(result)).not.toContain("shared.example.test");
+  });
+
+  it("keeps concurrent HTTPS-pin route bindings isolated without shared process.env staging (#6141)", async () => {
+    const firstEndpoint = "https://race-a.example.test/v1";
+    const secondEndpoint = "https://race-b.example.test/v1";
+    const routeFor = (endpointUrl: string) => ({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const alpha = entry("alpha", routeFor(firstEndpoint));
+    const beta = entry("beta", {
+      ...routeFor(secondEndpoint),
+      gatewayName: "nemoclaw-9091",
+      gatewayPort: 9091,
+    });
+    const preparedFor = (target: SandboxEntry, endpointUrl: string) =>
+      prepareInferenceSetRoute({
+        entry: target,
+        sandboxName: target.name,
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        customRoute: {
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        session: null,
+        sandboxes: [alpha, beta],
+      });
+
+    let releaseA: () => void = () => {};
+    const aGate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const callOrder: string[] = [];
+    const adapterBehaviorByEndpoint: Record<
+      string,
+      () => Promise<{ baseUrl: string; credentialEnv: string; token: string; routeId: string }>
+    > = {
+      [firstEndpoint]: async () => {
+        callOrder.push("a-start");
+        await aGate;
+        callOrder.push("a-end");
+        return {
+          baseUrl: "http://host.openshell.internal:1/route/a",
+          credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+          token: "token-a",
+          routeId: "route-a",
+        };
+      },
+      [secondEndpoint]: async () => {
+        callOrder.push("b-start");
+        return {
+          baseUrl: "http://host.openshell.internal:1/route/b",
+          credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+          token: "token-b",
+          routeId: "route-b",
+        };
+      },
+    };
+    const ensureHttpsPinRuntimeAdapter = vi.fn(async (options: { endpointUrl: string }) =>
+      adapterBehaviorByEndpoint[options.endpointUrl](),
+    );
+    const rewriteUrlWithDnsPinning = vi.fn(async (value: unknown) => value as string);
+
+    const finalize = (target: SandboxEntry, endpointUrl: string) =>
+      finalizeInferenceSetRoute({
+        prepared: preparedFor(target, endpointUrl),
+        sandboxName: target.name,
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        canReuseRecordedRoute: false,
+        onboardEndpointUrl: null,
+        getSandboxes: () => [alpha, beta],
+        rewriteUrlWithDnsPinning,
+        ensureHttpsPinRuntimeAdapter,
+      });
+
+    const callA = finalize(alpha, firstEndpoint);
+    await vi.waitFor(() => expect(callOrder).toContain("a-start"));
+    const callB = finalize(beta, secondEndpoint);
+
+    await vi.waitFor(() => expect(callOrder).toContain("b-start"));
+
+    releaseA();
+    const [resultA, resultB] = await Promise.all([callA, callB]);
+
+    expect(callOrder).toEqual(["a-start", "b-start", "a-end"]);
+    expect(resultA.registryMetadata.endpointUrl).toBe("http://host.openshell.internal:1/route/a");
+    expect(resultB.registryMetadata.endpointUrl).toBe("http://host.openshell.internal:1/route/b");
+    expect(resultA.httpsPinProviderBinding?.token).toBe("token-a");
+    expect(resultB.httpsPinProviderBinding?.token).toBe("token-b");
+    expect(process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV]).toBeUndefined();
   });
 
   it("blocks an incomplete legacy custom target even without a peer (#6315)", async () => {

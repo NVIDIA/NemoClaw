@@ -149,6 +149,7 @@ export function resolveSandboxCreateIntent({
   extraPlaceholderKeys = [],
   agentName,
   policyTier,
+  baselineExclusions = [],
 }: ResolveSandboxCreateIntentInput): SandboxCreateIntent {
   const enabledMessagingProviderRequests = filterMessagingProviderRequestsByEnabledChannel(
     messagingProviderRequests,
@@ -188,6 +189,7 @@ export function resolveSandboxCreateIntent({
         additionalPresets: [...hermesToolGateways],
         ...(agentName !== undefined ? { agentName } : {}),
         policyTier,
+        baselineExclusions: [...baselineExclusions].map((exclusion) => ({ ...exclusion })),
       },
     },
     gpuCreateArgs: [...gpuCreateArgs],

@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createBuildContextVerifier } from "../../src/lib/actions/sandbox/rebuild-prepared-image-context";
 import { fingerprintBuildContext } from "../../src/lib/adapters/fs/build-context-fingerprint";
+import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -237,10 +238,7 @@ export function registerRebuildFlowTargetImageTests(): void {
           harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
         ).rejects.toThrow("Replacement sandbox image context changed before delete");
 
-        expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-          ["sandbox", "delete", "alpha"],
-          expect.anything(),
-        );
+        expectNoSandboxDelete(harness.runOpenshellSpy);
         expect(harness.onboardSpy).not.toHaveBeenCalled();
         expect(cleanupBuildCtx).toHaveBeenCalledOnce();
       } finally {
@@ -299,10 +297,7 @@ export function registerRebuildFlowTargetImageTests(): void {
           await expect(
             harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
           ).rejects.toThrow("Replacement sandbox image context changed before delete");
-          expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-            ["sandbox", "delete", "alpha"],
-            expect.anything(),
-          );
+          expectNoSandboxDelete(harness.runOpenshellSpy);
           expect(harness.onboardSpy).not.toHaveBeenCalled();
           expect(cleanupBuildCtx).toHaveBeenCalledOnce();
         } finally {
@@ -348,7 +343,7 @@ export function registerRebuildFlowTargetImageTests(): void {
         expect(harness.session.policyPresets).toEqual(["npm", "bad", "throw"]);
         expect(harness.session.gpuPassthrough).toBe(false);
         expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-          ["sandbox", "delete", "alpha"],
+          ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
           expect.objectContaining({ ignoreError: true }),
         );
       } finally {
@@ -370,7 +365,7 @@ export function registerRebuildFlowTargetImageTests(): void {
       ).resolves.toBeUndefined();
 
       expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
         expect.objectContaining({ ignoreError: true }),
       );
       expect(harness.onboardSpy).toHaveBeenCalled();

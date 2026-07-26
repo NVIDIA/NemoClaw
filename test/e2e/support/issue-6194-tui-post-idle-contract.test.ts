@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
   buildIssue6194OpenShellApprovalExpectScript,
+  buildIssue6194PairExpectProcedure,
   buildIssue6194TuiExpectScript,
   ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
   ISSUE6194_NETWORK_APPROVAL_HOST,
@@ -63,18 +65,21 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(script).toContain('puts "ISSUE6194_MARK $name"');
     expect(script).toContain('send_log "ISSUE6194_MARK $name\\n"');
     expect(script).toContain("proc expect_or_exit");
+    expect(script).toContain("proc expect_pair_or_exit");
+    expect(script.match(/exp_continue -continue_timer/gu)).toHaveLength(2);
+    expect(script).not.toContain("while {!$firstSeen || !$secondSeen}");
     expect(script).toContain(
       "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_initial 10 11",
     );
-    expect(script).toContain("expect_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply 20 21");
     expect(script).toContain(
-      "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23",
+      "expect_pair_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply {connected[^\\r\\n]*idle} connected_idle_after_chat 20 21 22 23",
     );
     expect(script).toContain("/nemoclaw status");
-    expect(script).toContain("expect_or_exit {NemoClaw Status} slash_status_output 30 31");
     expect(script).toContain(
-      "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33",
+      "expect_pair_or_exit {NemoClaw Status} slash_status_output {connected[^\\r\\n]*idle} connected_idle_after_status 30 31 32 33",
     );
+    expect(script).toContain("if {!$firstSeen} { exit $firstTimeoutExit }");
+    expect(script).toContain("if {!$firstSeen} { exit $firstEofExit }");
     expect(script).toContain("mark clean_exit");
 
     const markers = [
@@ -91,6 +96,63 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     const order = markers.map((marker) => script.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  describe.runIf(
+    spawnSync("expect", ["-v"], {
+      encoding: "utf8",
+      timeout: 5000,
+      killSignal: "SIGKILL",
+    }).status === 0,
+  )("paired Expect behavior", () => {
+    function runPair(command: string, timeoutSeconds = 1) {
+      const script = `set timeout ${timeoutSeconds}
+proc mark {name} { puts "ISSUE6194_MARK $name" }
+${buildIssue6194PairExpectProcedure()}spawn sh -c {${command}}
+expect_pair_or_exit {FIRST_SIGNAL} first {SECOND_SIGNAL} second 20 21 22 23
+exit 0
+`;
+      const startedAt = Date.now();
+      const result = spawnSync("expect", ["-c", script], {
+        encoding: "utf8",
+        timeout: 2500,
+        killSignal: "SIGKILL",
+      });
+      return { ...result, elapsedMs: Date.now() - startedAt };
+    }
+
+    it.each([
+      ["first then second", "printf 'FIRST_SIGNAL\\n'; sleep 0.05; printf 'SECOND_SIGNAL\\n'"],
+      ["second then first", "printf 'SECOND_SIGNAL\\n'; sleep 0.05; printf 'FIRST_SIGNAL\\n'"],
+    ])("accepts %s", (_name, command) => {
+      const result = runPair(command);
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("ISSUE6194_MARK first");
+      expect(result.stdout).toContain("ISSUE6194_MARK second");
+    });
+
+    it.each([
+      ["first signal timeout", "printf 'SECOND_SIGNAL\\n'; sleep 2", 20],
+      ["first signal EOF", "printf 'SECOND_SIGNAL\\n'", 21],
+      ["second signal timeout", "printf 'FIRST_SIGNAL\\n'; sleep 2", 22],
+      ["second signal EOF", "printf 'FIRST_SIGNAL\\n'", 23],
+    ])("preserves the %s exit", (_name, command, expectedExit) => {
+      const result = runPair(command);
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(expectedExit);
+    });
+
+    it("keeps repeated redraws inside one timeout", () => {
+      const repeatedSecondSignals = Array.from(
+        { length: 30 },
+        () => "printf 'SECOND_SIGNAL\\n'; sleep 0.1",
+      ).join("; ");
+      const result = runPair(`${repeatedSecondSignals}; sleep 2`);
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(20);
+      expect(result.elapsedMs).toBeLessThan(2200);
+    });
   });
 
   it("confirms the two-step Ctrl+C exit without waiting for the global timeout", () => {

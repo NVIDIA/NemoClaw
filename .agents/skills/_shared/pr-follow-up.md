@@ -5,6 +5,49 @@
 
 Use this workflow after you create a PR or push to an open PR.
 
+## Preserve repository-owned review routing
+
+Treat reviewer selection as repository configuration, not an agent decision.
+
+Reviewer selection can come from these repository-owned sources:
+
+- `CODEOWNERS` loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+- Rulesets configured for `NVIDIA/NemoClaw`.
+- NemoClaw workflow definitions loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+- NemoClaw skills loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+
+Before you use a reviewer-request write, confirm that one of these conditions is true:
+
+- The current user names the exact reviewer.
+- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
+
+Otherwise, do not use any of these reviewer-request writes:
+
+- `gh pr edit --add-reviewer` or `--remove-reviewer`.
+- The requested-reviewers REST endpoint.
+- A GraphQL review-request mutation.
+- An equivalent reviewer-request write.
+
+Under the same authorization rules, do not manually request or re-request a third-party reviewer.
+This restriction includes Copilot and CodeRabbit.
+The following review conditions do not authorize a reviewer-request write:
+
+- The repository produced no review.
+- The review covers an earlier PR SHA.
+- A reviewer quota prevents the review.
+- The review failed.
+
+Observe only review signals that the repository produces.
+Triage each signal according to this workflow.
+
+If a repository-owned workflow dispatch performs no reviewer-request write, do not treat the dispatch as reviewer selection.
+A documented PR Review Advisor refresh is one such dispatch.
+Follow the exact NemoClaw skill instructions for the dispatch.
+
+GitHub can create an automatic review-request event when a contributor or agent pushes.
+GitHub can attribute the event to the pushing account.
+If the command trace contains no reviewer-request write, report the event as an automatic review-request event.
+
 ## Monitor checks
 
 ```bash

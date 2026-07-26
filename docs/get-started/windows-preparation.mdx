@@ -168,9 +168,11 @@ You can also start it yourself beforehand with `ollama serve`.
 
 You can also use Ollama for Windows.
 During onboarding, NemoClaw can use an already-running Windows-host daemon, start or restart an installed daemon, or install Ollama on the Windows host.
-If the installer offers express install on WSL, accepting it selects this Windows-host Ollama path automatically.
-The Windows-host Ollama path requires Docker Desktop WSL integration, and the express prompt appears on WSL regardless of the container runtime.
-With native Docker Engine inside WSL, decline the express prompt (or set `NEMOCLAW_NO_EXPRESS=1`) and select the WSL Ollama instance during onboarding; the menu labels the Windows-host actions as requiring Docker Desktop integration.
+If the installer offers express install on WSL, accepting it selects a local Ollama path automatically based on the container runtime: the Windows-host Ollama path only when it detects Docker Desktop WSL integration, and WSL-local Ollama otherwise.
+The Windows-host Ollama path requires Docker Desktop WSL integration; the express prompt appears on WSL regardless of the container runtime.
+With native Docker Engine inside WSL, or when the Docker runtime is unavailable or cannot be probed, express install configures WSL-local Ollama instead of aborting.
+When containers cannot reach host loopback, onboarding fronts that WSL-local daemon with the sandbox auth proxy.
+You can still decline the express prompt (or set `NEMOCLAW_NO_EXPRESS=1`) to choose a provider manually; the onboarding menu labels the Windows-host actions as requiring Docker Desktop integration.
 When Ollama runs on the Windows host, NemoClaw detects it from WSL through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.

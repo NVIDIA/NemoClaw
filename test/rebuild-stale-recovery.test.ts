@@ -28,6 +28,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { expectNoSandboxDelete } from "./helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -140,7 +141,7 @@ if (a[0]==="-V" || a[0]==="--version")       { process.stdout.write("openshell 0
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="create" && ${JSON.stringify(failSandboxCreate)}) { process.stderr.write("injected sandbox create failure\\n"); process.exit(1); }
-if (a[0]==="sandbox" && a[1]==="get")        { process.stderr.write("Error:   × Not Found: sandbox not found\\n"); process.exit(1); }
+if (a[0]==="sandbox" && a[1]==="get")        { process.stderr.write("Error: sandbox ${sandboxName} not found\\n"); process.exit(1); }
 if (a[0]==="status")                         { ${healthyTargetStatus} }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway Info\\n\\nGateway: ${targetGatewayName}\\nGateway endpoint: https://127.0.0.1:${targetGatewayPort}/\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
@@ -303,10 +304,7 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     // Must surface the wrong-gateway guidance and preserve the registry entry.
     expect(output).toContain("NOT been removed");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
@@ -338,10 +336,7 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(output).not.toContain("Creating new sandbox with current image");
     expect(output).toContain("openshell gateway select nemoclaw-9000");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });

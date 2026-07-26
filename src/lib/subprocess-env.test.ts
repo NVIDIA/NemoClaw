@@ -196,3 +196,75 @@ describe("buildSubprocessEnv NO_PROXY injection", () => {
     expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
   });
 });
+
+describe("buildMinimalCredentialAdapterEnv", () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("excludes toolchain, proxy, and unrelated secret-like variables even when ambient", async () => {
+    process.env.DOCKER_HOST = "unix:///var/run/docker.sock";
+    process.env.KUBECONFIG = "/home/user/.kube/config";
+    process.env.SSH_AUTH_SOCK = "/tmp/ssh-agent.sock";
+    process.env.HTTP_PROXY = "http://proxy.example.com:8888";
+    process.env.HTTPS_PROXY = "http://proxy.example.com:8888";
+    process.env.NO_PROXY = "corp.internal";
+    process.env.NVIDIA_INFERENCE_API_KEY = "should-not-leak";
+    process.env.GITHUB_TOKEN = "should-not-leak";
+
+    const { buildMinimalCredentialAdapterEnv } = await import("./subprocess-env");
+    const env = buildMinimalCredentialAdapterEnv();
+    expect(env.DOCKER_HOST).toBeUndefined();
+    expect(env.KUBECONFIG).toBeUndefined();
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.HTTP_PROXY).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.NO_PROXY).toBeUndefined();
+    expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(env.GITHUB_TOKEN).toBeUndefined();
+  });
+
+  it("includes only the documented runtime and TLS names", async () => {
+    process.env.HOME = "/home/user";
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.NODE_ENV = "production";
+    process.env.NODE_EXTRA_CA_CERTS = "/etc/ssl/corp-ca.pem";
+    process.env.SSL_CERT_FILE = "/etc/ssl/cert.pem";
+    process.env.USER = "someone-else-is-not-included";
+
+    const { buildMinimalCredentialAdapterEnv } = await import("./subprocess-env");
+    const env = buildMinimalCredentialAdapterEnv();
+    expect(env.HOME).toBe("/home/user");
+    expect(env.PATH).toBe("/usr/bin:/bin");
+    expect(env.NODE_ENV).toBe("production");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/corp-ca.pem");
+    expect(env.SSL_CERT_FILE).toBe("/etc/ssl/cert.pem");
+    expect(env.USER).toBeUndefined();
+  });
+
+  it("merges explicit adapter bootstrap fields via extra", async () => {
+    const { buildMinimalCredentialAdapterEnv } = await import("./subprocess-env");
+    const env = buildMinimalCredentialAdapterEnv({
+      NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT: "9999",
+    });
+    expect(env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT).toBe("9999");
+  });
+
+  it("does not inject NO_PROXY the way buildSubprocessEnv does, since PROXY vars are never forwarded", async () => {
+    process.env.HTTP_PROXY = "http://proxy.example.com:8888";
+    delete process.env.NO_PROXY;
+    delete process.env.no_proxy;
+
+    const { buildMinimalCredentialAdapterEnv } = await import("./subprocess-env");
+    const env = buildMinimalCredentialAdapterEnv();
+    expect(env.NO_PROXY).toBeUndefined();
+    expect(env.no_proxy).toBeUndefined();
+  });
+});

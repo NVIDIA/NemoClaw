@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { TestModule, Vitest } from "vitest/node";
+import type { TestModule, TestSpecification, Vitest } from "vitest/node";
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
 import {
   classifyLiveTestOutcome,
@@ -84,6 +84,21 @@ function matchesNamePattern(fullName: string, pattern: RegExp | undefined): bool
   const stablePattern = new RegExp(pattern.source, pattern.flags);
   // Vitest joins suite names with spaces when it applies testNamePattern.
   return stablePattern.test(fullName.replaceAll(" > ", " "));
+}
+
+function testNamePatternForRun(
+  specifications: ReadonlyArray<TestSpecification>,
+  globalTestNamePattern: RegExp | undefined,
+): RegExp | undefined {
+  const [first = globalTestNamePattern, ...rest] = specifications.map(
+    (specification) => specification.testNamePattern ?? globalTestNamePattern,
+  );
+  if (
+    rest.some((pattern) => pattern?.source !== first?.source || pattern?.flags !== first?.flags)
+  ) {
+    throw new Error("risk signal requires one test name pattern per Vitest run");
+  }
+  return first;
 }
 
 function counts(testModules: ReadonlyArray<TestModule>, testNamePattern?: RegExp) {
@@ -190,6 +205,7 @@ export function writeRiskSignal(
 export default class E2eRiskSignalReporter implements Reporter {
   private readonly environment: RiskSignalEnvironment | null;
   private readonly outcomeFile: string | null;
+  private globalTestNamePattern: RegExp | undefined;
   private testNamePattern: RegExp | undefined;
   private processTimedOut = false;
 
@@ -199,11 +215,12 @@ export default class E2eRiskSignalReporter implements Reporter {
   }
 
   onInit(vitest: Vitest): void {
-    this.testNamePattern = vitest.config.testNamePattern;
+    this.globalTestNamePattern = vitest.getGlobalTestNamePattern();
   }
 
-  onTestRunStart(): void {
+  onTestRunStart(specifications: ReadonlyArray<TestSpecification>): void {
     this.processTimedOut = false;
+    this.testNamePattern = testNamePatternForRun(specifications, this.globalTestNamePattern);
     if (!this.outcomeFile) return;
     fs.mkdirSync(path.dirname(this.outcomeFile), { recursive: true });
     writeLiveTestOutcome(this.outcomeFile, "none");
