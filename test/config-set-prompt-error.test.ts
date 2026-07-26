@@ -18,9 +18,14 @@ function installMock(modulePath: string, exports: unknown): void {
   } as any;
 }
 
-function restoreCachedModule(modulePath: string, previous: unknown): void {
-  Reflect.deleteProperty(requireCache, modulePath);
-  if (previous !== undefined) requireCache[modulePath] = previous;
+/** Put an own property back exactly as captured, leaving it absent when it had none. */
+function restoreOwnProperty(
+  target: object,
+  key: string,
+  descriptor: PropertyDescriptor | undefined,
+): void {
+  Reflect.deleteProperty(target, key);
+  Object.defineProperties(target, descriptor ? { [key]: descriptor } : {});
 }
 
 async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
@@ -47,11 +52,12 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
     credentialStorePath,
   ];
   const cachedModules = new Map(
-    modulePaths.map((modulePath) => [modulePath, require.cache[modulePath]]),
+    modulePaths.map((modulePath) => [
+      modulePath,
+      Object.getOwnPropertyDescriptor(requireCache, modulePath),
+    ]),
   );
   const stdinTtyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-  const priorAcceptNewPath = process.env.NEMOCLAW_CONFIG_ACCEPT_NEW_PATH;
-  const priorNonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE;
   const configWrite = vi.fn(
     (_privileged: unknown, _action: string, options: { input?: string }) => ({
       issues: [],
@@ -99,8 +105,8 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
     });
     installMock(credentialStorePath, { prompt });
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    delete process.env.NEMOCLAW_CONFIG_ACCEPT_NEW_PATH;
-    delete process.env.NEMOCLAW_NON_INTERACTIVE;
+    vi.stubEnv("NEMOCLAW_CONFIG_ACCEPT_NEW_PATH", undefined);
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", undefined);
 
     const { configSet } = require("../src/lib/sandbox/config");
     try {
@@ -110,16 +116,11 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
     }
     return { auditWrite, configWrite, error };
   } finally {
-    if (stdinTtyDescriptor) {
-      Object.defineProperty(process.stdin, "isTTY", stdinTtyDescriptor);
-    } else {
-      Reflect.deleteProperty(process.stdin, "isTTY");
+    restoreOwnProperty(process.stdin, "isTTY", stdinTtyDescriptor);
+    vi.unstubAllEnvs();
+    for (const [modulePath, descriptor] of cachedModules) {
+      restoreOwnProperty(requireCache, modulePath, descriptor);
     }
-    if (priorAcceptNewPath === undefined) delete process.env.NEMOCLAW_CONFIG_ACCEPT_NEW_PATH;
-    else process.env.NEMOCLAW_CONFIG_ACCEPT_NEW_PATH = priorAcceptNewPath;
-    if (priorNonInteractive === undefined) delete process.env.NEMOCLAW_NON_INTERACTIVE;
-    else process.env.NEMOCLAW_NON_INTERACTIVE = priorNonInteractive;
-    for (const [modulePath, previous] of cachedModules) restoreCachedModule(modulePath, previous);
   }
 }
 
