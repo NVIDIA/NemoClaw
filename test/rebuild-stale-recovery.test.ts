@@ -141,7 +141,7 @@ if (a[0]==="-V" || a[0]==="--version")       { process.stdout.write("openshell 0
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="create" && ${JSON.stringify(failSandboxCreate)}) { process.stderr.write("injected sandbox create failure\\n"); process.exit(1); }
-if (a[0]==="sandbox" && a[1]==="get")        { process.stderr.write("Error:   × Not Found: sandbox not found\\n"); process.exit(1); }
+if (a[0]==="sandbox" && a[1]==="get")        { process.stderr.write("Error: sandbox ${sandboxName} not found\\n"); process.exit(1); }
 if (a[0]==="status")                         { ${healthyTargetStatus} }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway Info\\n\\nGateway: ${targetGatewayName}\\nGateway endpoint: https://127.0.0.1:${targetGatewayPort}/\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
