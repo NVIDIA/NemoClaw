@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import type { AgentDefinition } from "../agent/defs";
 import { formatEnvAssignment } from "../core/url-utils";
 import { buildSubprocessEnv } from "../subprocess-env";
@@ -223,9 +225,20 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
   input: SandboxCreateLaunchWithPrebuildInput,
 ): Promise<SandboxCreateLaunchWithPrebuild> {
   const { prebuild: prebuildInput, ...launchInput } = input;
+  const managedHermesBuildFailureCapability =
+    prebuildInput.managedHermesBuildFailureCapability ??
+    issueManagedHermesBuildFailureCapability({
+      agentName: input.agent?.name ?? null,
+      origin: prebuildInput.origin,
+      dockerDriverGateway: prebuildInput.dockerDriverGateway,
+      buildCtx: prebuildInput.buildCtx,
+      stagedDockerfile: path.join(prebuildInput.buildCtx, "Dockerfile"),
+      buildId: prebuildInput.buildId,
+    });
   const prebuild = await prebuildSandboxImageIfEligible({
     ...prebuildInput,
     createArgs: input.createArgs,
+    managedHermesBuildFailureCapability,
     sandboxName: input.sandboxName,
   });
   return {

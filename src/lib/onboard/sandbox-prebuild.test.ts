@@ -428,7 +428,6 @@ describe("sandbox BuildKit prebuild", () => {
     const { buildCtx, createArgs, dockerfile } = createBuildContext();
     const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
       agentName: "hermes",
-      fromDockerfile: null,
       origin: "generated",
       dockerDriverGateway: true,
       buildCtx,
@@ -456,7 +455,6 @@ describe("sandbox BuildKit prebuild", () => {
     const { buildCtx, dockerfile } = createBuildContext();
     const base = {
       agentName: "hermes",
-      fromDockerfile: null,
       origin: "generated",
       dockerDriverGateway: true,
       buildCtx,
@@ -467,9 +465,6 @@ describe("sandbox BuildKit prebuild", () => {
     expect(issueManagedHermesBuildFailureCapability(base)).toBeDefined();
     expect(
       issueManagedHermesBuildFailureCapability({ ...base, agentName: "openclaw" }),
-    ).toBeUndefined();
-    expect(
-      issueManagedHermesBuildFailureCapability({ ...base, fromDockerfile: dockerfile }),
     ).toBeUndefined();
     expect(issueManagedHermesBuildFailureCapability({ ...base, origin: "custom" })).toBeUndefined();
     expect(
@@ -488,7 +483,6 @@ describe("sandbox BuildKit prebuild", () => {
     const buildImage = vi.fn(async () => 0);
     const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
       agentName: "hermes",
-      fromDockerfile: null,
       origin: "generated",
       dockerDriverGateway: true,
       buildCtx,
@@ -527,7 +521,6 @@ describe("sandbox BuildKit prebuild", () => {
     const { buildCtx, createArgs, dockerfile } = createBuildContext();
     const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
       agentName: "hermes",
-      fromDockerfile: null,
       origin: "generated",
       dockerDriverGateway: true,
       buildCtx,
@@ -555,7 +548,6 @@ describe("sandbox BuildKit prebuild", () => {
     const buildImage = vi.fn(async () => 1);
     const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
       agentName: "hermes",
-      fromDockerfile: null,
       origin: "generated",
       dockerDriverGateway: true,
       buildCtx,
@@ -586,7 +578,6 @@ describe("sandbox BuildKit prebuild", () => {
     const buildImage = vi.fn(async () => 1);
     const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
       agentName: "hermes",
-      fromDockerfile: null,
       origin: "generated",
       dockerDriverGateway: true,
       buildCtx: issued.buildCtx,
@@ -620,7 +611,6 @@ describe("sandbox BuildKit prebuild", () => {
     const buildImage = vi.fn(async () => 1);
     const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
       agentName: "hermes",
-      fromDockerfile: null,
       origin: "generated",
       dockerDriverGateway: true,
       buildCtx,
@@ -652,7 +642,6 @@ describe("sandbox BuildKit prebuild", () => {
     const buildImage = vi.fn(async () => 1);
     const issuedCapability = issueManagedHermesBuildFailureCapability({
       agentName: "hermes",
-      fromDockerfile: null,
       origin: "generated",
       dockerDriverGateway: true,
       buildCtx,

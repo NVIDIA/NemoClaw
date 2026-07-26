@@ -70,7 +70,6 @@ export interface ManagedHermesBuildFailureCapability {
 
 export interface ManagedHermesBuildFailureCapabilityInput {
   agentName: string | null;
-  fromDockerfile: string | null;
   origin: SandboxBuildContextOrigin;
   dockerDriverGateway: boolean;
   buildCtx: string;
@@ -120,12 +119,7 @@ function stagedPathIdentityMatches(
 export function issueManagedHermesBuildFailureCapability(
   input: ManagedHermesBuildFailureCapabilityInput,
 ): ManagedHermesBuildFailureCapability | undefined {
-  if (
-    input.agentName !== "hermes" ||
-    input.fromDockerfile !== null ||
-    input.origin !== "generated" ||
-    !input.dockerDriverGateway
-  ) {
+  if (input.agentName !== "hermes" || input.origin !== "generated" || !input.dockerDriverGateway) {
     return undefined;
   }
 

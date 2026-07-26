@@ -12,7 +12,6 @@ import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   buildSandboxRuntimeEnvArgs,
-  issueManagedHermesBuildFailureCapability,
   prepareSandboxCreateLaunch,
   prepareSandboxCreateLaunchWithPrebuild,
 } from "./sandbox-create-launch";
@@ -398,16 +397,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
   it("preserves OpenClaw gateway fallback after a local build failure (#7140)", async () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
-    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
-      agentName: "openclaw",
-      fromDockerfile: null,
-      origin: "generated",
-      dockerDriverGateway: true,
-      buildCtx,
-      stagedDockerfile: dockerfile,
-      buildId: "build-123",
-    });
-    expect(managedHermesBuildFailureCapability).toBeUndefined();
     const result = await prepareSandboxCreateLaunchWithPrebuild({
       agent: { name: "openclaw" } as any,
       chatUiUrl: "",
@@ -428,7 +417,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
         buildImage: async () => 1,
         log: vi.fn(),
         origin: "generated",
-        managedHermesBuildFailureCapability,
       },
     });
 
@@ -445,15 +433,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const openshellShellCommand = vi.fn((args: string[]) => args.join(" "));
-    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
-      agentName: "hermes",
-      fromDockerfile: null,
-      origin: "generated",
-      dockerDriverGateway: true,
-      buildCtx,
-      stagedDockerfile: dockerfile,
-      buildId: "build-123",
-    });
 
     await expect(
       prepareSandboxCreateLaunchWithPrebuild({
@@ -476,7 +455,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
           buildImage: async () => 1,
           log: vi.fn(),
           origin: "generated",
-          managedHermesBuildFailureCapability,
         },
       }),
     ).rejects.toThrow(/Managed Hermes local BuildKit build failed \(exit 1\)/);
@@ -488,15 +466,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const buildImage = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(0);
     const openshellShellCommand = vi.fn((args: string[]) => args.join(" "));
-    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
-      agentName: "hermes",
-      fromDockerfile: null,
-      origin: "generated",
-      dockerDriverGateway: true,
-      buildCtx,
-      stagedDockerfile: dockerfile,
-      buildId: "build-123",
-    });
     const input = {
       agent: { name: "hermes" } as any,
       chatUiUrl: "",
@@ -518,7 +487,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
         inspectImageId: () => IMAGE_ID,
         log: vi.fn(),
         origin: "generated" as const,
-        managedHermesBuildFailureCapability,
       },
     };
 
