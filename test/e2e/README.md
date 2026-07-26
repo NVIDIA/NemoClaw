@@ -544,9 +544,9 @@ and changes to the Deep Agents Code headless-inference check select the exact
 ordinary test changes alone do not select it. The target is hashed into the
 risk plan beside any control-plane floor jobs, so the controller dispatches
 both selector types in one correlated workflow run. Fork revisions whose plans
-select credential-bearing jobs or targets instead require explicit
-credentialed-E2E skip approval. Plans with no selected jobs or targets can
-complete without an E2E run.
+select credential-bearing jobs or targets instead require explicit protected
+credentialed-E2E approval. Plans with no selected jobs or targets can complete
+without an E2E run.
 An internal revision whose matched control-plane files are drawn only from the
 trusted controller and observer boundaries—`.github/workflows/pr-e2e-gate.yaml`,
 `tools/e2e/pr-e2e-gate.mts`, and `tools/e2e/pr-e2e-required.mts`—automatically
