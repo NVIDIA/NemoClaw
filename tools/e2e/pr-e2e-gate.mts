@@ -74,6 +74,9 @@ const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
 const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
 const FORK_E2E_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run fork E2E";
+const EVALUATING_PR_COMMIT_TITLE = "Evaluating PR commit";
+const RUNNER_LOSS_RETRY_PREPARATION_TITLE = "Preparing one-time hosted-runner-loss retry";
+const AUTHORIZED_EXECUTION_TITLE_PREFIX = "E2E execution authorized by @";
 const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
 const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
 const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
@@ -2187,13 +2190,16 @@ async function requireUnchangedCompletedWorkflowRun(
 }
 
 function isValidExpectedPreDispatchTitle(title: string): boolean {
-  const authorizationPrefix = "E2E execution authorized by @";
   return (
-    title === "Evaluating PR commit" ||
-    title === "Preparing one-time hosted-runner-loss retry" ||
-    (title.startsWith(authorizationPrefix) &&
-      MAINTAINER_PATTERN.test(title.slice(authorizationPrefix.length)))
+    title === EVALUATING_PR_COMMIT_TITLE ||
+    title === RUNNER_LOSS_RETRY_PREPARATION_TITLE ||
+    (title.startsWith(AUTHORIZED_EXECUTION_TITLE_PREFIX) &&
+      MAINTAINER_PATTERN.test(title.slice(AUTHORIZED_EXECUTION_TITLE_PREFIX.length)))
   );
+}
+
+function authorizedExecutionTitle(maintainer: string): string {
+  return `${AUTHORIZED_EXECUTION_TITLE_PREFIX}${maintainer}`;
 }
 
 function assertCurrentPreDispatchCheck(
@@ -2745,7 +2751,7 @@ async function dispatchRunnerLossRetry(options: {
     workflowSha: options.state.workflowSha,
     planHash: options.state.planHash,
     correlationId,
-    expectedCheckTitle: "Preparing one-time hosted-runner-loss retry",
+    expectedCheckTitle: RUNNER_LOSS_RETRY_PREPARATION_TITLE,
   });
   const childRunId = dispatch.runId;
   try {
@@ -2852,7 +2858,7 @@ export async function retryRunnerLossPrGate(
         baseSha: state.baseSha,
       },
       token,
-      "Preparing one-time hosted-runner-loss retry",
+      RUNNER_LOSS_RETRY_PREPARATION_TITLE,
       `Revalidating the exact PR/base SHA and risk plan after [attempt 1](${originalRunUrl}) lost its GitHub-hosted runner.`,
     );
 
@@ -3116,7 +3122,7 @@ export async function startPrGate(
       baseSha: ciIdentity.baseSha,
     },
     token,
-    "Evaluating PR commit",
+    EVALUATING_PR_COMMIT_TITLE,
     "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
   );
 
@@ -3286,7 +3292,7 @@ export async function startPrGate(
       workflowSha: command.workflowSha,
       plan,
       checkRunId,
-      expectedCheckTitle: "Evaluating PR commit",
+      expectedCheckTitle: EVALUATING_PR_COMMIT_TITLE,
       paths: command,
     });
   } catch (error) {
@@ -3322,6 +3328,7 @@ async function startAuthorizedPrGate(
     throw new Error("E2E authorization must use the first workflow run attempt");
   }
   const reason = normalizedWaiverReason(command.reason);
+  const executionTitle = authorizedExecutionTitle(command.maintainer);
   const pendingTitle =
     authorizationKind === "fork" ? FORK_E2E_AUTHORIZATION_TITLE : CONTROL_PLANE_AUTHORIZATION_TITLE;
 
@@ -3410,7 +3417,7 @@ async function startAuthorizedPrGate(
         baseSha: command.baseSha,
       },
       token,
-      `E2E execution authorized by @${command.maintainer}`,
+      executionTitle,
       `Running the exact reviewed head and base revision. Review reason: ${reason.replace(/`/gu, "'")}`,
     );
     await dispatchSelectedPrGate({
@@ -3421,7 +3428,7 @@ async function startAuthorizedPrGate(
       workflowSha: command.workflowSha,
       plan,
       checkRunId,
-      expectedCheckTitle: `E2E execution authorized by @${command.maintainer}`,
+      expectedCheckTitle: executionTitle,
       paths: command,
     });
   } catch (error) {

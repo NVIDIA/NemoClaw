@@ -16,6 +16,7 @@ import type {
   MessagingSerializableObject,
   SandboxMessagingPlan,
 } from "../manifest";
+import { compactSandboxMessagingPlanForPersistence } from "../persistence";
 import { MessagingSetupApplier } from "./setup-applier";
 import {
   MESSAGING_SETUP_APPLIER_ENV_KEY,
@@ -57,6 +58,7 @@ const ALL_CHANNEL_ENV = {
 const ALL_CHANNELS = createBuiltInChannelManifestRegistry()
   .listAvailable({ agent: "hermes" })
   .map((manifest) => manifest.id);
+const E2E_STOP_START_CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
 
 async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
@@ -185,6 +187,89 @@ describe("MessagingSetupApplier", () => {
     const cyclic = { ...plan } as Record<string, unknown>;
     cyclic.self = cyclic;
     expect(() => MessagingSetupApplier.encodePlan(cyclic as never)).toThrow(/circular/i);
+  });
+
+  it("reuses the Hermes image-build plan after the five-channel stop/start lifecycle (#7144)", async () => {
+    await withEnv(ALL_CHANNEL_ENV, async () => {
+      const lifecyclePlanner = planner();
+      const onboardPlan = await lifecyclePlanner.buildPlan({
+        sandboxName: "demo",
+        agent: "hermes",
+        workflow: "onboard",
+        isInteractive: false,
+        configuredChannels: E2E_STOP_START_CHANNELS,
+      });
+      let lifecyclePlan = onboardPlan;
+
+      for (const channelId of E2E_STOP_START_CHANNELS) {
+        const stopped = await lifecyclePlanner.buildChannelStopPlanFromSandboxEntry({
+          sandboxName: "demo",
+          agent: "hermes",
+          channelId,
+          sandboxEntry: {
+            name: "demo",
+            messaging: {
+              schemaVersion: 1,
+              plan: compactSandboxMessagingPlanForPersistence(
+                lifecyclePlan,
+              ) as unknown as SandboxMessagingPlan,
+            },
+          },
+        });
+        expect(stopped).not.toBeNull();
+        lifecyclePlan = stopped!;
+      }
+
+      for (const channelId of E2E_STOP_START_CHANNELS) {
+        const started = await lifecyclePlanner.buildChannelStartPlanFromSandboxEntry({
+          sandboxName: "demo",
+          agent: "hermes",
+          channelId,
+          sandboxEntry: {
+            name: "demo",
+            messaging: {
+              schemaVersion: 1,
+              plan: compactSandboxMessagingPlanForPersistence(
+                lifecyclePlan,
+              ) as unknown as SandboxMessagingPlan,
+            },
+          },
+        });
+        expect(started).not.toBeNull();
+        lifecyclePlan = started!;
+      }
+
+      expect(lifecyclePlan.disabledChannels).toEqual([]);
+      const { workflow: onboardWorkflow, ...onboardImageBuildPlan } = onboardPlan;
+      const { workflow: lifecycleWorkflow, ...lifecycleImageBuildPlan } = lifecyclePlan;
+      expect([onboardWorkflow, lifecycleWorkflow]).toEqual(["onboard", "start-channel"]);
+      expect(lifecycleImageBuildPlan).toEqual(onboardImageBuildPlan);
+      expect(JSON.stringify(lifecycleImageBuildPlan)).not.toBe(
+        JSON.stringify(onboardImageBuildPlan),
+      );
+      expect(MessagingSetupApplier.encodePlan(lifecyclePlan)).not.toBe(
+        MessagingSetupApplier.encodePlan(onboardPlan),
+      );
+
+      const imageBuildEncoding = MessagingSetupApplier.encodePlanForImageBuild(onboardPlan);
+      expect(MessagingSetupApplier.encodePlanForImageBuild(lifecyclePlan)).toBe(imageBuildEncoding);
+      expect(
+        MessagingSetupApplier.encodePlanForImageBuild({
+          ...lifecyclePlan,
+          channels: [...lifecyclePlan.channels].reverse(),
+        }),
+      ).not.toBe(imageBuildEncoding);
+
+      const imageBuildPlan = JSON.parse(
+        Buffer.from(imageBuildEncoding, "base64").toString("utf8"),
+      ) as Record<string, unknown>;
+      expect(imageBuildPlan).not.toHaveProperty("workflow");
+      expect(imageBuildPlan).toMatchObject({
+        schemaVersion: 1,
+        sandboxName: "demo",
+        agent: "hermes",
+      });
+    });
   });
 
   it("lists hook requests by phase without executing hook implementations", async () => {
