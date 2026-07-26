@@ -14,6 +14,12 @@ export type GitHubRequestOptions = {
   signal?: AbortSignal;
 };
 
+export type GitHubApiResponse<T> = {
+  data: T;
+  status: number;
+  requestId?: string;
+};
+
 export type GitHubApiFailureKind = "http" | "decode";
 
 const MAX_GITHUB_RESPONSE_EXCERPT_CHARS = 512;
@@ -30,7 +36,11 @@ function responseExcerpt(text: string): string {
 }
 
 function responseRequestId(response: Response): string | undefined {
-  const requestId = response.headers.get("x-github-request-id")?.trim();
+  const headers = response.headers as Headers | undefined;
+  const requestId =
+    headers && typeof headers.get === "function"
+      ? headers.get("x-github-request-id")?.trim()
+      : undefined;
   return requestId && GITHUB_REQUEST_ID_PATTERN.test(requestId) ? requestId : undefined;
 }
 
@@ -130,11 +140,11 @@ export async function githubGraphql(
   return payload;
 }
 
-export async function githubApi<T>(
+export async function githubApiWithResponse<T>(
   apiPath: string,
   token: string,
   options: GitHubRequestOptions = {},
-): Promise<T> {
+): Promise<GitHubApiResponse<T>> {
   // lgtm[js/file-access-to-http] Advisor workflows intentionally send normalized
   // artifact summaries and strictly validated dispatch inputs to GitHub APIs.
   // Callers construct apiPath from fixed workflow/comment endpoints, not PR text.
@@ -151,6 +161,7 @@ export async function githubApi<T>(
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     signal: options.signal,
   });
+  const requestId = responseRequestId(response);
   const text = await response.text();
   if (!response.ok) {
     throw new GitHubApiError({
@@ -158,24 +169,38 @@ export async function githubApi<T>(
       method,
       apiPath,
       status: response.status,
-      requestId: responseRequestId(response),
+      requestId,
       responseText: text,
     });
   }
-  if (!text) return undefined as T;
+  if (!text) {
+    return { data: undefined as T, status: response.status, requestId };
+  }
   try {
-    return JSON.parse(text) as T;
+    return {
+      data: JSON.parse(text) as T,
+      status: response.status,
+      requestId,
+    };
   } catch (error) {
     throw new GitHubApiError({
       kind: "decode",
       method,
       apiPath,
       status: response.status,
-      requestId: responseRequestId(response),
+      requestId,
       responseText: text,
       cause: error,
     });
   }
+}
+
+export async function githubApi<T>(
+  apiPath: string,
+  token: string,
+  options: GitHubRequestOptions = {},
+): Promise<T> {
+  return (await githubApiWithResponse<T>(apiPath, token, options)).data;
 }
 
 export async function upsertStickyComment({

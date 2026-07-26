@@ -3,13 +3,36 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { GitHubApiError, githubApi } from "../tools/advisors/github.mts";
+import { GitHubApiError, githubApi, githubApiWithResponse } from "../tools/advisors/github.mts";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("GitHub API response identity", () => {
+  it("returns successful response status and a safe GitHub request ID when requested", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response('{"workflow_run_id":23}', {
+          status: 200,
+          headers: { "x-github-request-id": "SUCCESS:1234" },
+        }),
+      ),
+    );
+
+    await expect(
+      githubApiWithResponse<{ workflow_run_id: number }>(
+        "repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/dispatches",
+        "token",
+      ),
+    ).resolves.toEqual({
+      data: { workflow_run_id: 23 },
+      status: 200,
+      requestId: "SUCCESS:1234",
+    });
+  });
+
   it("preserves structured HTTP status and a safe GitHub request ID", async () => {
     vi.stubGlobal(
       "fetch",
