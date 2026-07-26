@@ -10,6 +10,7 @@
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
@@ -17,6 +18,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     VIRTUAL_ENV=/opt/venv \
     PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Install the reviewed libexpat, jq, and Vim packages from the same immutable,
+# checksum-bound Debian snapshot used by the OpenClaw base image.
+# hadolint ignore=DL3001,DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
         python3-pip=25.1.1+dfsg-1 \
@@ -31,9 +35,92 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
-        jq=1.7.1-6+deb13u2 \
         ripgrep=14.1.1-1+b4 \
-        vim-tiny=2:9.1.1230-2 \
+    && arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) \
+            libexpat_sha256="37d24b40a745107941f823d1f22c38f197f01981f7f0783777fe0026af016463"; \
+            libonig_sha256="3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c"; \
+            libjq_sha256="9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941"; \
+            jq_sha256="b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0"; \
+            vim_tiny_sha256="0e6e231d6d2430a92cf76f8a78506090418fa37758c33b31ed50dfbfc76e22ed" \
+            ;; \
+        arm64) \
+            libexpat_sha256="df928e3a8e4da79408d4b18e8cd80a03dffa90130d0698e50041aab5e14f9397"; \
+            libonig_sha256="137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f"; \
+            libjq_sha256="eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e"; \
+            jq_sha256="c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696"; \
+            vim_tiny_sha256="be30f7e9de0b872bec0128ccd890452c0e0e29d99017d16c0f3aa74164f6700d" \
+            ;; \
+        *) echo "Unsupported architecture for Debian security packages: $arch" >&2; exit 1 ;; \
+    esac \
+    && security_deb_dir="/tmp/nemoclaw-debian-security" \
+    && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
+    && vim_common_sha256="6b063038246492c4a20e0a212c896dde4d5aa9f59d6fb43ff33d10080bc53a39" \
+    && mkdir -p "$security_deb_dir" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libexpat1.deb" \
+        "$snapshot_url/e/expat/libexpat1_2.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libonig5.deb" \
+        "$snapshot_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libjq1.deb" \
+        "$snapshot_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/jq.deb" \
+        "$snapshot_url/j/jq/jq_1.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/vim-common.deb" \
+        "$snapshot_url/v/vim/vim-common_9.2.0782-1_all.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/vim-tiny.deb" \
+        "$snapshot_url/v/vim/vim-tiny_9.2.0782-1_${arch}.deb" \
+    && printf '%s  %s\n' \
+        "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
+        "$libonig_sha256" "$security_deb_dir/libonig5.deb" \
+        "$libjq_sha256" "$security_deb_dir/libjq1.deb" \
+        "$jq_sha256" "$security_deb_dir/jq.deb" \
+        "$vim_common_sha256" "$security_deb_dir/vim-common.deb" \
+        "$vim_tiny_sha256" "$security_deb_dir/vim-tiny.deb" \
+        | sha256sum -c - \
+    && dpkg -i \
+        "$security_deb_dir/libexpat1.deb" \
+        "$security_deb_dir/libonig5.deb" \
+        "$security_deb_dir/libjq1.deb" \
+        "$security_deb_dir/jq.deb" \
+        "$security_deb_dir/vim-common.deb" \
+        "$security_deb_dir/vim-tiny.deb" \
+    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
+    && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1" \
+    && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1" \
+    && test "$(jq --version)" = "jq-1.8.2" \
+    && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
+    && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
+    && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION" \
+    && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
+    && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
+    && printf '%s\n' \
+        "architecture=$arch" \
+        "libexpat1=2.8.2-1" \
+        "libonig5=6.9.9-1+b1" \
+        "libjq1=1.8.2-1" \
+        "jq=1.8.2-1" \
+        "vim-common=2:9.2.0782-1" \
+        "vim-tiny=2:9.2.0782-1" \
+        > /usr/local/share/nemoclaw/security-packages.txt \
+    && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
+    && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/*
 
 # Node remains available to the managed terminal at runtime, so remediate
@@ -46,6 +133,12 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 # the reviewed dependency set.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# Replace npm 11.18.0's private brace-expansion 5.0.7 package with the
+# registry- and SRI-pinned 5.0.8 release.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 RUN groupadd -r sandbox \

@@ -129,6 +129,10 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       path.join(REPO_ROOT, "scripts", "audit-reviewed-npm-graph.mts"),
       "utf8",
     );
+    const helper = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts", "lib", "reviewed-npm-audit.mts"),
+      "utf8",
+    );
 
     expect(action).toContain('node-version: "22.23.1"');
     expect(action).toContain("npm install --global npm@10.9.4");
@@ -139,6 +143,8 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     );
     expect(action).not.toContain("run: node --experimental-strip-types scripts/");
     expect(driver).toContain("resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT)");
+    expect(helper).toContain("const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 45_000");
+    expect(helper).toContain("timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS");
     expect(driver).not.toContain('resolveTargetPath(\n  "ci/reviewed-npm-audit.json"');
   });
 
