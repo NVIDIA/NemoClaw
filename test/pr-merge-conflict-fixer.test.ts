@@ -218,7 +218,9 @@ describe("PR merge conflict fixer", () => {
       "b".repeat(40),
       {
         checkConflict: (candidate) =>
-          candidate.number === 1 ? [".github/workflows/e2e.yaml"] : ["conflict.txt"],
+          candidate.number === 1
+            ? ["conflict.txt", ".github/workflows/e2e.yaml"]
+            : ["conflict.txt"],
       },
     );
 
