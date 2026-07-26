@@ -437,25 +437,21 @@ describe("PR E2E controller lifecycle", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
-            () => {
-              if (failedRunningUpdate) {
-                return githubResponse(
-                  exactPrGateCheck({
-                    ...failedRunningUpdate,
-                    details_url: "https://github.com/NVIDIA/NemoClaw/runs/999",
-                  }),
-                );
-              }
-              return githubResponse(
+            () =>
+              githubResponse(
                 exactPrGateCheck({
-                  output: {
-                    title: "Evaluating PR commit",
-                    summary:
-                      "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
-                  },
+                  ...(failedRunningUpdate ?? {
+                    output: {
+                      title: "Evaluating PR commit",
+                      summary:
+                        "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+                    },
+                  }),
+                  ...(failedRunningUpdate
+                    ? { details_url: "https://github.com/NVIDIA/NemoClaw/runs/999" }
+                    : undefined),
                 }),
-              );
-            },
+              ),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
@@ -465,11 +461,13 @@ describe("PR E2E controller lifecycle", () => {
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => {
               checkPatches += 1;
-              if (checkPatches === 2) {
-                failedRunningUpdate = (request.body ?? {}) as Record<string, unknown>;
-                return githubResponse({ message: "simulated update failure" }, 500);
-              }
-              return prGateMutationResponse(request);
+              failedRunningUpdate =
+                checkPatches === 2
+                  ? ((request.body ?? {}) as Record<string, unknown>)
+                  : failedRunningUpdate;
+              return checkPatches === 2
+                ? githubResponse({ message: "simulated update failure" }, 500)
+                : prGateMutationResponse(request);
             },
           ),
         ],

@@ -676,12 +676,15 @@ describe("PR E2E dispatch-not-observed recovery", () => {
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => {
-              check = { ...check, ...((request.body ?? {}) as Record<string, unknown>) };
               const title = (request.body as { output?: { title?: string } } | undefined)?.output
                 ?.title;
-              if (title?.startsWith("Running ")) {
-                check.details_url = publishedDetailsUrl;
-              }
+              check = {
+                ...check,
+                ...((request.body ?? {}) as Record<string, unknown>),
+                ...(title?.startsWith("Running ")
+                  ? { details_url: publishedDetailsUrl }
+                  : undefined),
+              };
               return title?.startsWith("Running ")
                 ? new Response("{", { status: 200 })
                 : githubResponse(check);
