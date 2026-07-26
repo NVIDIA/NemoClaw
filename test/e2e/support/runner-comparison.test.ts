@@ -448,7 +448,7 @@ describe("runner comparison v2 schema", () => {
       phase: "build",
       largestProcess: {
         class: "docker-buildkit",
-        rssKb: 1000,
+        rssKb: 1100,
         breakdown: processBreakdown(),
       },
     });
@@ -976,7 +976,7 @@ describe("runner comparison summary", () => {
       at: "2026-07-22T10:00:30.000Z",
       largestProcess: {
         class: "docker-buildkit",
-        rssKb: 1000,
+        rssKb: 1100,
         breakdown: processBreakdown({
           rssAnonKb: 100,
           rssFileKb: 850,
@@ -1017,7 +1017,7 @@ describe("runner comparison summary", () => {
     );
     expect(enriched.largestProcess).toEqual({
       class: "docker-buildkit",
-      rssKb: 1000,
+      rssKb: 1100,
       phase: "export",
       breakdown: {
         vmRssKb: 1000,
