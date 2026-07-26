@@ -620,18 +620,20 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   const jobs = input.jobs ?? "";
   const targets = input.targets ?? "";
   const errors: string[] = [];
+  const jobsMatchSelectorPattern = !jobs || SELECTOR_PATTERN.test(jobs);
+  const normalizedJobs = jobsMatchSelectorPattern
+    ? normalizeE2eSelectorIds(splitSelector(jobs))
+    : [];
 
   if (targets && !SELECTOR_PATTERN.test(targets)) {
     errors.push("Invalid target input");
   }
-  if (jobs && !SELECTOR_PATTERN.test(jobs)) {
+  if (!jobsMatchSelectorPattern) {
     errors.push("Invalid jobs input");
   }
-  if (jobs && SELECTOR_PATTERN.test(jobs)) {
-    for (const job of normalizeE2eSelectorIds(splitSelector(jobs))) {
-      if (!freeStandingJobIds.includes(job)) {
-        errors.push(`Unknown free-standing E2E job: ${job}`);
-      }
+  for (const job of normalizedJobs) {
+    if (!freeStandingJobIds.includes(job)) {
+      errors.push(`Unknown free-standing E2E job: ${job}`);
     }
   }
 
@@ -657,7 +659,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
     };
   }
 
-  const selectedFreeStandingJobs = new Set(normalizeE2eSelectorIds(splitSelector(jobs)));
+  const selectedFreeStandingJobs = new Set(normalizedJobs);
   const registryTargets: string[] = [];
   for (const target of normalizeE2eSelectorIds(splitSelector(targets))) {
     const job = freeStandingTargetToJob.get(target);
