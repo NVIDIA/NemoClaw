@@ -250,7 +250,7 @@ describe("policy preset pickers", () => {
     it("rejects selecting an already-applied preset", async () => {
       const result = await runSelectionPrompt("selectFromList", "1\n", { applied: ["npm"] });
 
-      expect(result.stderr).toMatch(/already applied\.[\s\S]*policy-add npm'/);
+      expect(result.stderr).toMatch(/already applied\.[\s\S]*policy add npm'/);
       expect(result.selected).toBeNull();
     });
 

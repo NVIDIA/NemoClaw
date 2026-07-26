@@ -793,7 +793,7 @@ exit 1
         const combined = errors.join("\n");
         expect(combined).toContain("my-assistant");
         expect(combined).toMatch(/could not be\s+recorded locally/);
-        expect(combined).toMatch(/policy-list or status/);
+        expect(combined).toMatch(/policy list or status/);
       } finally {
         errSpy.mockRestore();
         logSpy.mockRestore();

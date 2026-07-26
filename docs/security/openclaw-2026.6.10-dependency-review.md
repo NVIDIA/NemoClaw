@@ -57,6 +57,7 @@ Revalidated on 2026-07-21: the command exited `0` under Node `v22.22.2`.
 This runtime satisfies the OpenClaw engine requirement of `>=22.19.0`.
 The remediated reviewed-archive graph reported `0` info, `1` low, `12` moderate, `0` high, and `0` critical findings across `767` total dependencies.
 The mcporter locked graph reported no findings across `138` dependencies.
+The locked mcporter graph overrides `@hono/node-server` to patched release `2.0.11` because `@modelcontextprotocol/sdk@1.29.0` still requests a v1 range that contains no patched release for `GHSA-frvp-7c67-39w9`.
 The configured `high` threshold therefore passed.
 
 The retained low finding is `GHSA-v422-hmwv-36x6` in `body-parser@2.0.0` through `2.2.2`.

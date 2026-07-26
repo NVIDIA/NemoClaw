@@ -7,6 +7,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
+import { BASELINE_EXCLUSION_SUPPORT_IMPACT } from "../../policy/baseline-exclusion";
 import type * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
@@ -61,6 +62,19 @@ interface SuccessfulRebuildSummaryInput {
   expectedVersion: string | null;
 }
 
+/** Disclose carried-over baseline exclusions and their support impact after a rebuild. */
+export function printBaselineExclusionsRebuildSummary(
+  sandboxName: string,
+  writeLine: (message: string) => void = console.log,
+): void {
+  const exclusions = registry.getBaselineExclusions(sandboxName);
+  if (exclusions.length === 0) return;
+  const keys = exclusions.map((exclusion) => exclusion.key).join(", ");
+  writeLine(
+    `    Baseline exclusions carried over: ${keys} \u2014 ${BASELINE_EXCLUSION_SUPPORT_IMPACT}`,
+  );
+}
+
 export function printSuccessfulRebuildSummary(
   input: SuccessfulRebuildSummaryInput,
   writeLine: (message: string) => void = console.log,
@@ -78,6 +92,7 @@ export function printSuccessfulRebuildSummary(
   if (input.expectedVersion) {
     writeLine(`    Now running: ${input.rebuiltAgentName} v${input.expectedVersion}`);
   }
+  printBaselineExclusionsRebuildSummary(input.sandboxName, writeLine);
 }
 
 function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
@@ -301,15 +316,16 @@ export async function runRebuildPostRestorePhase(
     }
     printHermesGatewayRestoreRecovery(sandboxName, hermesGatewayRestoreState);
     printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
+    printBaselineExclusionsRebuildSummary(sandboxName);
     if (policyPresetRestoreIncomplete) {
       if (failedPresets.length > 0) {
         console.log(
-          `    Policy presets failed to reapply: ${failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${sandboxName} policy-add\``,
+          `    Policy presets failed to reapply: ${failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${sandboxName} policy add\``,
         );
       }
       if (failedPresetRemovals.length > 0 || !policyPresetReconciliationVerified) {
         console.log(
-          `    Exact live policy reconciliation was incomplete${failedPresetRemovals.length > 0 ? `; remove failed: ${failedPresetRemovals.join(", ")}` : ""} \u2014 reconcile manually with \`${CLI_NAME} ${sandboxName} policy-add\` or \`${CLI_NAME} ${sandboxName} policy-remove\``,
+          `    Exact live policy reconciliation was incomplete${failedPresetRemovals.length > 0 ? `; remove failed: ${failedPresetRemovals.join(", ")}` : ""} \u2014 reconcile manually with \`${CLI_NAME} ${sandboxName} policy add\` or \`${CLI_NAME} ${sandboxName} policy remove\``,
         );
       }
     }

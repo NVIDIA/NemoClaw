@@ -201,6 +201,40 @@ describe("reviewed npm archive", () => {
     }
   });
 
+  it("uses a lock alias's canonical package identity for cache verification", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "alias-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify(
+        {
+          lockfileVersion: 3,
+          packages: {
+            "": {},
+            "node_modules/legacy-name": {
+              integrity: INTEGRITY,
+              name: "@example/reviewed",
+              resolved: TARBALL_URL,
+              version: "1.2.3",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }> = [];
+
+    expect(
+      verifyReviewedNpmCache({ ...reviewed, lockfilePath }, cachedArchiveRunner(calls)),
+    ).toEqual([PACKAGE_SPEC]);
+    expect(calls.map(({ request }) => request.packageSpec)).toEqual([
+      PACKAGE_SPEC,
+      PACKAGE_SPEC,
+      PACKAGE_SPEC,
+    ]);
+  });
+
   it("rejects an off-origin locked archive before npm can read the cache", () => {
     const reviewed = cacheRequest();
     const lock = JSON.parse(fs.readFileSync(WECHAT_LOCK, "utf-8"));

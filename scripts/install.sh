@@ -928,7 +928,7 @@ print_usage_notice_body_shell() {
 }
 
 show_usage_notice_shell() {
-  local notice_json version title prompt notice_body answer answer_lc
+  local notice_json version title prompt notice_body answer answer_lc answer_trimmed
   notice_json="$(usage_notice_config_path)"
   if [[ ! -f "$notice_json" ]]; then
     error "Third-party software notice configuration not found."
@@ -954,16 +954,24 @@ show_usage_notice_shell() {
   printf "  ──────────────────────────────────────────────────\n"
   printf "%s\n" "$notice_body"
   printf "\n"
-  printf "  %s" "${prompt:-Type 'yes' to accept the NemoClaw license and third-party software notice and continue [no]: }"
-  if ! IFS= read -r answer; then
-    printf "\n  Installation cancelled\n" >&2
-    return 1
-  fi
-  answer_lc="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$answer_lc" != "yes" ]]; then
+  while true; do
+    printf "  %s" "${prompt:-Type 'yes' to accept the NemoClaw license and third-party software notice and continue [no]: }"
+    if ! IFS= read -r answer; then
+      printf "\n  Installation cancelled\n" >&2
+      return 1
+    fi
+    answer_lc="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$answer_lc" == "yes" ]]; then
+      break
+    fi
+    answer_trimmed="$(printf "%s" "$answer_lc" | tr -d '[:space:]')"
+    if [[ "$answer_trimmed" == y* ]]; then
+      printf "  Did you mean 'yes'? Type the full word 'yes' to accept.\n" >&2
+      continue
+    fi
     printf "  Installation cancelled\n" >&2
     return 1
-  fi
+  done
 
   save_usage_notice_acceptance_shell "$version"
   return 0
@@ -1282,6 +1290,216 @@ prefer_user_local_openshell() {
   fi
 }
 
+NEMOCLAW_GATEWAY_SERVICE_MARKER="NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1"
+NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE="# ${NEMOCLAW_GATEWAY_SERVICE_MARKER}"
+NEMOCLAW_GATEWAY_SERVICE_NAME="nemoclaw-openshell-gateway"
+
+upstream_openshell_gateway_user_service_installed() {
+  [[ "$(uname -s)" == "Linux" ]] || return 1
+  [[ -f /usr/local/lib/systemd/user/openshell-gateway.service ]] \
+    || [[ -f /usr/lib/systemd/user/openshell-gateway.service ]] \
+    || [[ -f /lib/systemd/user/openshell-gateway.service ]]
+}
+
+macos_openshell_homebrew_gateway_service_installed() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 1
+  command -v brew >/dev/null 2>&1 || return 1
+  brew list --formula openshell >/dev/null 2>&1 || return 1
+  brew info --json=v2 openshell 2>/dev/null \
+    | grep -Eq '"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"'
+}
+
+resolve_openshell_gateway_bin_for_service() {
+  local gateway_bin="${NEMOCLAW_OPENSHELL_GATEWAY_BIN:-}"
+  if [[ -n "$gateway_bin" && -x "$gateway_bin" ]]; then
+    printf "%s\n" "$gateway_bin"
+    return 0
+  fi
+
+  gateway_bin="$(command -v openshell-gateway 2>/dev/null || true)"
+  [[ -n "$gateway_bin" && -x "$gateway_bin" ]] || return 1
+  printf "%s\n" "$gateway_bin"
+}
+
+trusted_openshell_gateway_bin_for_service() {
+  local gateway_bin="${1:-}"
+  local user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  if [[ "$user_bin_home" != /* ]]; then
+    user_bin_home="${HOME}/.local/bin"
+  fi
+  user_bin_home="${user_bin_home%/}"
+  case "$gateway_bin" in
+    "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_nemoclaw_openshell_gateway_user_service() {
+  local service_path="${1:-}"
+  [[ -f "$service_path" ]] || return 1
+  grep -Fxq "$NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE" "$service_path"
+}
+
+openshell_user_config_home() {
+  if [[ -n "${XDG_CONFIG_HOME:-}" && "$XDG_CONFIG_HOME" == /* ]]; then
+    printf '%s\n' "$XDG_CONFIG_HOME"
+  else
+    printf '%s\n' "${HOME}/.config"
+  fi
+}
+
+install_nemoclaw_openshell_gateway_user_service() {
+  [[ "$(uname -s)" == "Linux" ]] || return 0
+  [[ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ]] || return 0
+
+  local service_dir
+  service_dir="$(openshell_user_config_home)/systemd/user"
+  local service_path="${service_dir}/${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+  local service_template="${NEMOCLAW_SOURCE_ROOT}/scripts/lib/openshell-gateway.service.in"
+
+  if [[ -L "$service_path" ]]; then
+    error "Refusing to replace symlinked OpenShell gateway user service: $service_path"
+  fi
+
+  if upstream_openshell_gateway_user_service_installed; then
+    if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
+      error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
+    fi
+    info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
+    return 0
+  fi
+
+  local gateway_bin
+  if ! gateway_bin="$(resolve_openshell_gateway_bin_for_service)"; then
+    warn "OpenShell gateway binary was not found; the default managed user service was not staged."
+    return 0
+  fi
+
+  case "$gateway_bin" in
+    *[[:space:]]*)
+      error "OpenShell gateway user service binary path contains whitespace: $gateway_bin"
+      ;;
+    /*) ;;
+    *)
+      error "OpenShell gateway user service binary path is not absolute: $gateway_bin"
+      ;;
+  esac
+  if ! trusted_openshell_gateway_bin_for_service "$gateway_bin"; then
+    error "OpenShell gateway user service binary path is not a trusted install path: $gateway_bin"
+  fi
+
+  if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
+    error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
+  fi
+  if [[ ! -f "$service_template" || -L "$service_template" ]]; then
+    error "OpenShell gateway user service template is unavailable: $service_template"
+  fi
+
+  if ! {
+    mkdir -p "$service_dir" \
+      && chmod 700 "$service_dir" \
+      && node - "$service_path" "$service_template" "$gateway_bin" "$NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE" <<'NODE'
+const fs = require("node:fs");
+
+const [servicePath, templatePath, gatewayBin, managedMarker] = process.argv.slice(2);
+const noFollow = fs.constants.O_NOFOLLOW;
+const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+
+if (typeof noFollow !== "number") {
+  console.error("O_NOFOLLOW is unavailable");
+  process.exit(1);
+}
+
+function errnoCode(error) {
+  return error && typeof error === "object" && "code" in error ? String(error.code) : null;
+}
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function openServiceFile() {
+  try {
+    return fs.openSync(servicePath, fs.constants.O_RDWR | noFollow | nonblock);
+  } catch (error) {
+    if (errnoCode(error) === "ELOOP") {
+      fail(`Refusing to replace symlinked OpenShell gateway user service: ${servicePath}`);
+    }
+    if (errnoCode(error) !== "ENOENT") throw error;
+  }
+
+  try {
+    return fs.openSync(
+      servicePath,
+      fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow | nonblock,
+      0o600,
+    );
+  } catch (error) {
+    if (errnoCode(error) === "ELOOP" || errnoCode(error) === "EEXIST") {
+      fail(
+        `Refusing to replace OpenShell gateway user service because it changed during validation: ${servicePath}`,
+      );
+    }
+    throw error;
+  }
+}
+
+function assertServiceIdentity(descriptor) {
+  const opened = fs.fstatSync(descriptor);
+  const current = fs.lstatSync(servicePath);
+  if (
+    !opened.isFile() ||
+    opened.nlink !== 1 ||
+    current.isSymbolicLink() ||
+    !current.isFile() ||
+    current.nlink !== 1 ||
+    opened.dev !== current.dev ||
+    opened.ino !== current.ino
+  ) {
+    fail(
+      `Refusing to replace OpenShell gateway user service because it changed during validation: ${servicePath}`,
+    );
+  }
+}
+
+let descriptor;
+try {
+  descriptor = openServiceFile();
+  assertServiceIdentity(descriptor);
+  const existing = fs.readFileSync(descriptor, "utf8");
+  if (existing && !existing.split(/\r?\n/u).includes(managedMarker)) {
+    fail(`Refusing to replace non-NemoClaw OpenShell gateway user service: ${servicePath}`);
+  }
+  const contents = fs
+    .readFileSync(templatePath, "utf8")
+    .replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBin);
+  assertServiceIdentity(descriptor);
+  const bytes = Buffer.from(contents, "utf8");
+  const written = fs.writeSync(descriptor, bytes, 0, bytes.length, 0);
+  if (written !== bytes.length) {
+    fail("Short write while installing OpenShell gateway user service");
+  }
+  fs.ftruncateSync(descriptor, bytes.length);
+  fs.fchmodSync(descriptor, 0o600);
+  assertServiceIdentity(descriptor);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+} finally {
+  if (descriptor !== undefined) fs.closeSync(descriptor);
+}
+NODE
+  }; then
+    error "Could not install OpenShell gateway user service at $service_path"
+  fi
+
+  info "Installed OpenShell gateway user service at $service_path"
+}
+
 # Run scripts/install-openshell.sh during install_nemoclaw when appropriate.
 # - mode=force:      always invoke (GitHub-clone branch — fresh install path)
 # - mode=if-missing: invoke only when openshell is absent from PATH
@@ -1296,10 +1514,21 @@ maybe_install_openshell_during_install() {
     return 0
   fi
   if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
-    return 0
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1 \
+      && ! macos_openshell_homebrew_gateway_service_installed; then
+      info "OpenShell CLI exists but the macOS Homebrew gateway service is missing."
+    else
+      if [[ "$(uname -s)" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
+        warn "Homebrew is not installed; using the standalone OpenShell gateway without reboot persistence."
+      fi
+      prefer_user_local_openshell
+      install_nemoclaw_openshell_gateway_user_service
+      return 0
+    fi
   fi
   spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
   prefer_user_local_openshell
+  install_nemoclaw_openshell_gateway_user_service
 }
 
 ensure_cli_shim() {
@@ -3631,6 +3860,88 @@ clear_station_express_resume() {
   done
 }
 
+# Report the container runtime's operating-system string (e.g. "Docker Desktop"
+# or "Ubuntu 24.04.4 LTS"). Bounded with a hard timeout so a wedged,
+# misconfigured, or dead-DOCKER_HOST daemon cannot hang the interactive express
+# prompt: this runs from describe_express_install before ensure_docker, and WSL
+# skips ensure_docker entirely. Empty on timeout or error.
+express_wsl_docker_operating_system() {
+  timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
+}
+
+# Resolve Docker's effective context name: the DOCKER_CONTEXT override if set,
+# otherwise the persisted currentContext from Docker's config (what
+# `docker context use` writes). A missing config or a config with no
+# currentContext uses Docker's "default"; an unreadable or unparseable config
+# fails closed as non-local.
+express_wsl_docker_active_context() {
+  if [ -n "${DOCKER_CONTEXT:-}" ]; then
+    printf '%s' "${DOCKER_CONTEXT}"
+    return 0
+  fi
+  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
+  local ctx="" parse_status=0
+  if [ ! -e "$cfg" ]; then
+    printf '%s' "default"
+    return 0
+  fi
+  if [ -e "$cfg" ] && [ ! -r "$cfg" ]; then
+    printf '%s' "__unknown__"
+    return 0
+  fi
+  if command -v node >/dev/null 2>&1; then
+    ctx="$(
+      node - "$cfg" <<'NODE'
+const fs = require("node:fs");
+
+let config;
+try {
+  config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+} catch {
+  process.exit(1);
+}
+if (config === null || typeof config !== "object" || Array.isArray(config)) process.exit(1);
+if (!Object.prototype.hasOwnProperty.call(config, "currentContext")) process.exit(2);
+if (typeof config.currentContext !== "string") process.exit(1);
+process.stdout.write(config.currentContext);
+NODE
+    )" || parse_status=$?
+    if [ "$parse_status" -eq 0 ]; then
+      printf '%s' "$ctx"
+      return 0
+    fi
+    if [ "$parse_status" -eq 2 ]; then
+      printf '%s' "default"
+      return 0
+    fi
+    printf '%s' "__unknown__"
+    return 0
+  fi
+  printf '%s' "__unknown__"
+}
+
+# True only when the Docker CLI targets the LOCAL default daemon: the active
+# context is "default" and no DOCKER_HOST override is set. A DOCKER_HOST, a
+# DOCKER_CONTEXT override, or a persisted currentContext other than "default"
+# (a context name like desktop-linux is not proof of a local endpoint — it can be
+# pointed at a remote daemon) can reach a remote Docker Desktop whose sandbox
+# containers cannot reach this machine's Windows-host Ollama (PRA-1). Fails closed
+# (non-local) on any non-default, unreadable, or unparseable context.
+express_wsl_docker_target_is_local() {
+  [ -z "${DOCKER_HOST:-}" ] || return 1
+  [ "$(express_wsl_docker_active_context)" = "default" ]
+}
+
+# Windows-host Ollama only works through LOCAL Docker Desktop WSL integration
+# (host.docker.internal routes to the Windows host). Native Docker Engine (#3695),
+# a remote/unknown target, or a failed probe can't reach it, so use WSL-local
+# Ollama instead; the onboard provider setup fronts that loopback daemon with
+# the sandbox auth proxy when containers cannot reach host loopback (#7318).
+express_wsl_can_use_windows_host_ollama() {
+  express_wsl_docker_target_is_local || return 1
+  express_wsl_docker_operating_system | grep -qi 'docker desktop'
+}
+
 activate_express_install() {
   local platform="$1"
   _SELECTED_EXPRESS_PLATFORM="$platform"
@@ -3660,7 +3971,11 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      export NEMOCLAW_PROVIDER=install-windows-ollama
+      if express_wsl_can_use_windows_host_ollama; then
+        export NEMOCLAW_PROVIDER=install-windows-ollama
+      else
+        export NEMOCLAW_PROVIDER=install-ollama
+      fi
       ;;
   esac
 }
@@ -3831,7 +4146,11 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      inference_summary="Windows-host Ollama through host.docker.internal"
+      if express_wsl_can_use_windows_host_ollama; then
+        inference_summary="Windows-host Ollama through host.docker.internal"
+      else
+        inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
+      fi
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     *)

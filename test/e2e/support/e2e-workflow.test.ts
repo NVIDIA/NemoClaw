@@ -221,6 +221,23 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("keeps orchestration jobs within bounded timeouts", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { "timeout-minutes"?: number }>;
+    };
+    workflow.jobs["generate-matrix"]!["timeout-minutes"] = 11;
+    delete workflow.jobs["report-to-pr"]!["timeout-minutes"];
+    workflow.jobs.scorecard!["timeout-minutes"] = 16;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "generate-matrix job must keep the 10 minute timeout",
+        "report-to-pr job must keep the 15 minute timeout",
+        "scorecard job must keep the 15 minute timeout",
+      ]),
+    );
+  });
+
   it("keeps controller target selection bound to the generated matrix (#7031)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
