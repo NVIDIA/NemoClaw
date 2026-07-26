@@ -25,7 +25,10 @@ import {
   renderRunnerComparisonSummary,
   summarizeRunnerComparison,
 } from "../../../tools/e2e/runner-comparison-core.mts";
-import type { ResourceSnapshot } from "../../../tools/e2e/runner-pressure-core.mts";
+import type {
+  ProcessMemoryBreakdown,
+  ResourceSnapshot,
+} from "../../../tools/e2e/runner-pressure-core.mts";
 
 const REPO_ROOT = process.cwd();
 const TSX_IMPORT = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "loader.mjs");
@@ -116,6 +119,17 @@ function currentSample(overrides: CurrentOverrides = {}): RunnerComparisonSample
 
 function currentLedger(...samples: RunnerComparisonSample[]): string {
   return `${samples.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+}
+
+function processBreakdown(overrides: Partial<ProcessMemoryBreakdown> = {}): ProcessMemoryBreakdown {
+  return {
+    vmRssKb: 1000,
+    rssAnonKb: 700,
+    rssFileKb: 250,
+    rssShmemKb: 50,
+    vmSwapKb: 10,
+    ...overrides,
+  };
 }
 
 function emptyCurrentSample(
@@ -225,7 +239,17 @@ describe("runner comparison collection", () => {
       memoryPressure: { someAvg10: 1, someAvg60: 1, fullAvg10: 2, fullAvg60: 2 },
       ioPressure: { someAvg10: 3, someAvg60: 3, fullAvg10: 4, fullAvg60: 4 },
       topProcesses: [{ rssKb: 999 }],
-      largestProcess: { class: "docker-buildkit", rssKb: 999 },
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 999,
+        breakdown: {
+          vmRssKb: 999,
+          rssAnonKb: 700,
+          rssFileKb: 250,
+          rssShmemKb: 49,
+          vmSwapKb: 10,
+        },
+      },
       containers: [
         { cpuPercent: 12.5, memBytes: 500, memLimitBytes: 1_000 },
         { cpuPercent: 3, memBytes: 700, memLimitBytes: 1_000 },
@@ -278,7 +302,17 @@ describe("runner comparison collection", () => {
         maximumContainerMemoryBytes: 700,
         maximumContainerCpuPercent: 99,
       },
-      largestProcess: { class: "docker-buildkit", rssKb: 999 },
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 999,
+        breakdown: {
+          vmRssKb: 999,
+          rssAnonKb: 700,
+          rssFileKb: 250,
+          rssShmemKb: 49,
+          vmSwapKb: 10,
+        },
+      },
     });
   });
 });
@@ -393,6 +427,107 @@ describe("runner comparison v2 schema", () => {
     expect(parseRunnerComparisonLedger(currentLedger(...samples))).toEqual(samples);
   });
 
+  it("round-trips both historical two-key and enriched three-key process shapes", () => {
+    const historical = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "build",
+      largestProcess: { class: "docker-buildkit", rssKb: 1000 },
+    });
+    const historicalLine = JSON.stringify(historical);
+    const parsedHistorical = parseRunnerComparisonSample(historicalLine);
+    if (parsedHistorical.v !== 2) throw new Error("expected a v2 sample");
+    expect(JSON.stringify(parsedHistorical)).toBe(historicalLine);
+    expect(parsedHistorical.largestProcess).not.toHaveProperty("breakdown");
+
+    const enriched = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "build",
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: processBreakdown(),
+      },
+    });
+    expect(parseRunnerComparisonSample(JSON.stringify(enriched))).toEqual(enriched);
+
+    const denied = currentSample({
+      sequence: 1,
+      kind: "periodic",
+      phase: "build",
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: null,
+      },
+    });
+    expect(parseRunnerComparisonSample(JSON.stringify(denied))).toEqual(denied);
+  });
+
+  it.each([
+    [
+      "breakdown for a non-Docker process",
+      { class: "openshell", rssKb: 1000, breakdown: processBreakdown() },
+    ],
+    [
+      "unknown breakdown field",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: { ...processBreakdown(), command: "ghp_nested_secret" },
+      },
+    ],
+    [
+      "missing resident field",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: {
+          vmRssKb: 1000,
+          rssAnonKb: 700,
+          rssFileKb: 250,
+          vmSwapKb: 10,
+        },
+      },
+    ],
+    [
+      "negative component",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: processBreakdown({ rssAnonKb: -1 }),
+      },
+    ],
+    [
+      "overflowing component sum",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: processBreakdown({
+          vmRssKb: Number.MAX_SAFE_INTEGER,
+          rssAnonKb: Number.MAX_SAFE_INTEGER,
+        }),
+      },
+    ],
+    [
+      "incoherent resident total",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: processBreakdown({ vmRssKb: 999 }),
+      },
+    ],
+  ])("rejects a process %s", (_label, largestProcess) => {
+    const candidate = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "build",
+      largestProcess: largestProcess as RunnerComparisonSample["largestProcess"],
+    });
+    expect(() => parseRunnerComparisonSample(JSON.stringify(candidate))).toThrow();
+  });
+
   it.each([
     [
       "zero logical CPUs",
@@ -466,6 +601,10 @@ describe("runner comparison v2 schema", () => {
     expect(() => parseRunnerComparisonLedger(currentLedger(...samples))).toThrow(
       "between one and 256",
     );
+  });
+
+  it("enforces the 4096-byte sample limit before parsing attacker-controlled JSON", () => {
+    expect(() => parseRunnerComparisonSample(" ".repeat(4097))).toThrow("exceeds its size bound");
   });
 });
 

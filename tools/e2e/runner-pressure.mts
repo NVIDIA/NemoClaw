@@ -47,6 +47,7 @@ import {
 import {
   assertPhaseLabel,
   classifyFailure,
+  collectLargestClassifiedProcess,
   countKernelOomKills,
   decideRetry,
   parseBaselineLine,
@@ -56,7 +57,6 @@ import {
   parseCpuTicks,
   parseDockerStatsEvidence,
   parseDockerSystemDf,
-  parseLargestClassifiedProcess,
   parseLoadAverages,
   parseMeminfo,
   parsePressure,
@@ -206,7 +206,7 @@ export function collectResourceSnapshot(
   const psText =
     commandPlan.processTimeoutMs === null
       ? null
-      : sources.run("ps", ["-eo", "rss=,comm="], commandPlan.processTimeoutMs);
+      : sources.run("ps", ["-eo", "pid=,rss=,comm="], commandPlan.processTimeoutMs);
   const statsText =
     commandPlan.containerTimeoutMs === null
       ? null
@@ -245,7 +245,8 @@ export function collectResourceSnapshot(
     memoryPressure: memoryPressure === null ? null : parsePressure(memoryPressure),
     ioPressure: ioPressure === null ? null : parsePressure(ioPressure),
     topProcesses: psText === null ? [] : parseTopProcesses(psText),
-    largestProcess: psText === null ? null : parseLargestClassifiedProcess(psText),
+    largestProcess:
+      psText === null ? null : collectLargestClassifiedProcess(psText, sources.readText),
     containers: dockerStats.containers,
     maximumContainerCpuPercent: dockerStats.maximumCpuPercent,
     dockerDisk: dfText === null ? null : parseDockerSystemDf(dfText),
