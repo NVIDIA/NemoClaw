@@ -216,9 +216,11 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
   return "unknown";
 }
 
+type DockerVersionIdentity = "docker" | "podman" | "unknown";
+
 /**
- * Detect Podman fronting the Docker CLI compatibility socket from the explicit
- * `docker version --format '{{json .}}'` engine banner.
+ * Classify the engine identity from the explicit
+ * `docker version --format '{{json .}}'` banner.
  *
  * Podman's docker-compat `/info` endpoint mimics Docker so closely that
  * `docker info` carries no "podman" marker (observed on Apple Silicon macOS:
@@ -228,35 +230,43 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
  * `Server.Components[].Name` of "Podman Engine" and a `Server.Platform.Name`
  * like "linux/arm64/fedora-42". Real Docker reports
  * `Server.Platform.Name: "Docker Engine - Community"` and components
- * `Engine`/`containerd`/`runc`, so this stays false on Docker Engine,
- * Docker Desktop, and Colima (#7320).
+ * `Engine`/`containerd`/`runc`, which provide positive Docker identity on
+ * Docker Engine, Docker Desktop, and Colima (#7320).
  */
-function dockerVersionReportsPodman(versionOutput = ""): boolean {
+function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentity {
   const text = String(versionOutput || "").trim();
-  if (!text) return false;
+  if (!text) return "unknown";
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
     // Plain-text `docker version` still prints the "Podman Engine" server banner.
-    return /podman/i.test(text);
+    if (/podman/i.test(text)) return "podman";
+    return /docker engine/i.test(text) ? "docker" : "unknown";
   }
   const server = (parsed as Record<string, unknown> | null)?.Server;
-  if (!server || typeof server !== "object") return false;
+  if (!server || typeof server !== "object") return "unknown";
   const s = server as Record<string, unknown>;
   const platformName = (s.Platform as Record<string, unknown> | undefined)?.Name;
-  if (typeof platformName === "string" && /podman/i.test(platformName)) return true;
+  if (typeof platformName === "string" && /podman/i.test(platformName)) return "podman";
   const components = s.Components;
-  return (
-    Array.isArray(components) &&
-    components.some((component) => {
-      const name =
-        component && typeof component === "object"
-          ? (component as Record<string, unknown>).Name
-          : undefined;
-      return typeof name === "string" && /podman/i.test(name);
-    })
-  );
+  const componentNames = Array.isArray(components)
+    ? components.flatMap((component) => {
+        const name =
+          component && typeof component === "object"
+            ? (component as Record<string, unknown>).Name
+            : undefined;
+        return typeof name === "string" ? [name] : [];
+      })
+    : [];
+  if (componentNames.some((name) => /podman/i.test(name))) return "podman";
+  if (
+    (typeof platformName === "string" && /^docker (?:engine|desktop)\b/i.test(platformName)) ||
+    componentNames.some((name) => name.trim().toLowerCase() === "engine")
+  ) {
+    return "docker";
+  }
+  return "unknown";
 }
 
 /**
@@ -287,9 +297,9 @@ function dockerInfoReportsPodmanCompat(infoOutput = ""): boolean {
  * `EADDRNOTAVAIL` (#7320).
  */
 function isDockerCompatPodman(dockerInfoOutput = "", dockerVersionOutput = ""): boolean {
-  if (String(dockerVersionOutput || "").trim()) {
-    return dockerVersionReportsPodman(dockerVersionOutput);
-  }
+  const versionIdentity = classifyDockerVersionIdentity(dockerVersionOutput);
+  if (versionIdentity === "podman") return true;
+  if (versionIdentity === "docker") return false;
   return dockerInfoReportsPodmanCompat(dockerInfoOutput);
 }
 
