@@ -11,8 +11,10 @@ import {
   coordinationExternalId,
   findCoordinationCheck,
   formatRequiredGateOutcome,
+  isRetryableGithubReadError,
   type RequiredGateIdentity,
   type RequiredGateResult,
+  retryableGithubRead,
   waitForRequiredGate,
 } from "../tools/e2e/pr-e2e-required.mts";
 import { createGitHubFetchRouter, githubFetchRoute } from "./support/github-fetch-router.ts";
@@ -471,5 +473,247 @@ describe("native PR E2E required job", () => {
     await expect(
       waitForRequiredGate(identity, { timeoutMs: 100, pollIntervalMs: 10 }),
     ).rejects.toThrow("not the expected open PR with the observed PR SHA and base SHA");
+  });
+
+  describe("bounded GitHub read retries (#7207)", () => {
+    it("classifies only network, rate-limit, and server failures as retryable", () => {
+      expect(isRetryableGithubReadError(new TypeError("fetch failed"))).toBe(true);
+      expect(
+        isRetryableGithubReadError(new Error("GitHub API repos/x/pulls/1 failed: 429 limited")),
+      ).toBe(true);
+      expect(
+        isRetryableGithubReadError(new Error("GitHub API repos/x/pulls/1 failed: 503 unavailable")),
+      ).toBe(true);
+      expect(
+        isRetryableGithubReadError(new Error("GitHub API repos/x/pulls/1 failed: 404 missing")),
+      ).toBe(false);
+      expect(
+        isRetryableGithubReadError(new Error("GitHub API repos/x/pulls/1 failed: 401 denied")),
+      ).toBe(false);
+      expect(
+        isRetryableGithubReadError(new Error("GitHub API repos/x/pulls/1 failed: 403 denied")),
+      ).toBe(false);
+      expect(isRetryableGithubReadError(new Error("fetch failed"))).toBe(false);
+    });
+
+    it("retries a transient read with deterministic bounded delay", async () => {
+      let calls = 0;
+      const sleepCalls: number[] = [];
+
+      await expect(
+        retryableGithubRead(
+          "coordination checks",
+          async () => {
+            calls += 1;
+            if (calls === 1) throw new TypeError("fetch failed");
+            return "success";
+          },
+          null,
+          {
+            baseDelayMs: 100,
+            random: () => 0,
+            sleep: async (milliseconds) => {
+              sleepCalls.push(milliseconds);
+            },
+          },
+        ),
+      ).resolves.toBe("success");
+
+      expect(calls).toBe(2);
+      expect(sleepCalls).toEqual([50]);
+    });
+
+    it("preserves the first retryable failure as the exhaustion cause", async () => {
+      let calls = 0;
+      const error = await retryableGithubRead(
+        "coordination checks",
+        async () => {
+          calls += 1;
+          throw new TypeError(`fetch failed attempt ${calls}`);
+        },
+        null,
+        { baseDelayMs: 1, random: () => 0, sleep: async () => {} },
+      ).catch((caught: unknown) => caught);
+
+      expect(calls).toBe(3);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "E2E / PR Gate [coordination checks] attempt 3/3: network",
+      );
+      expect((error as Error & { cause?: Error }).cause?.message).toBe("fetch failed attempt 1");
+    });
+
+    it("does not retry or expose a non-retryable response body", async () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      let calls = 0;
+
+      const error = await retryableGithubRead(
+        "coordination checks",
+        async () => {
+          calls += 1;
+          throw new Error("GitHub API repos/x/pulls/1 failed: 404 secret response");
+        },
+        null,
+        { sleep: async () => {} },
+      ).catch((caught: unknown) => caught);
+
+      expect(calls).toBe(1);
+      expect((error as Error).message).toBe(
+        "E2E / PR Gate [coordination checks] attempt 1/3: http",
+      );
+      expect((error as Error).message).not.toContain("secret response");
+      expect((error as Error & { cause?: Error }).cause?.message).toContain("secret response");
+      expect(log).not.toHaveBeenCalled();
+    });
+
+    it("logs a retry class without reflecting the GitHub response body", async () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      let calls = 0;
+
+      await retryableGithubRead(
+        "coordination checks",
+        async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new Error("GitHub API repos/x/check-runs failed: 503 credential-like-body");
+          }
+          return "success";
+        },
+        null,
+        { baseDelayMs: 1, random: () => 0, sleep: async () => {} },
+      );
+
+      expect(log).toHaveBeenCalledWith("E2E / PR Gate [coordination checks] attempt 1/3: http");
+      expect(log.mock.calls.flat().join(" ")).not.toContain("credential-like-body");
+    });
+
+    it("does not expose a retryable response body after exhaustion", async () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const error = await retryableGithubRead(
+        "coordination checks",
+        async () => {
+          throw new Error("GitHub API repos/x/check-runs failed: 503 credential-like-body");
+        },
+        null,
+        { baseDelayMs: 1, random: () => 0, sleep: async () => {} },
+      ).catch((caught: unknown) => caught);
+
+      expect((error as Error).message).toBe(
+        "E2E / PR Gate [coordination checks] attempt 3/3: http",
+      );
+      expect((error as Error).message).not.toContain("credential-like-body");
+      expect(log.mock.calls.flat().join(" ")).not.toContain("credential-like-body");
+      expect((error as Error & { cause?: Error }).cause?.message).toContain("credential-like-body");
+    });
+
+    it("fails closed when exact PR identity changes before a retry", async () => {
+      let calls = 0;
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        githubResponse(pullRequest({ head: { sha: "c".repeat(40) } })),
+      );
+
+      await expect(
+        retryableGithubRead(
+          "coordination checks",
+          async () => {
+            calls += 1;
+            throw new TypeError("fetch failed");
+          },
+          identity,
+          { baseDelayMs: 1, random: () => 0, sleep: async () => {} },
+        ),
+      ).rejects.toThrow("not the expected open PR with the observed PR SHA and base SHA");
+
+      expect(calls).toBe(1);
+    });
+
+    it("proves exact PR identity through transient revalidation before retrying", async () => {
+      let calls = 0;
+      let identityCalls = 0;
+      const sleepCalls: number[] = [];
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        identityCalls += 1;
+        if (identityCalls === 1) throw new TypeError("identity fetch failed");
+        return githubResponse(pullRequest());
+      });
+
+      await expect(
+        retryableGithubRead(
+          "coordination checks",
+          async () => {
+            calls += 1;
+            if (calls === 1) throw new TypeError("coordination fetch failed");
+            return "success";
+          },
+          identity,
+          {
+            baseDelayMs: 100,
+            random: () => 0,
+            sleep: async (milliseconds) => {
+              sleepCalls.push(milliseconds);
+            },
+          },
+        ),
+      ).resolves.toBe("success");
+
+      expect(calls).toBe(2);
+      expect(identityCalls).toBe(2);
+      expect(sleepCalls).toEqual([50, 50]);
+    });
+
+    it("does not retry the original read when identity cannot be proven", async () => {
+      let calls = 0;
+      let identityCalls = 0;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        identityCalls += 1;
+        throw new TypeError(`identity fetch failed ${identityCalls}`);
+      });
+
+      await expect(
+        retryableGithubRead(
+          "coordination checks",
+          async () => {
+            calls += 1;
+            throw new TypeError("coordination fetch failed");
+          },
+          identity,
+          { baseDelayMs: 1, random: () => 0, sleep: async () => {} },
+        ),
+      ).rejects.toThrow("E2E / PR Gate [exact PR identity] attempt 3/3: network");
+
+      expect(calls).toBe(1);
+      expect(identityCalls).toBe(3);
+    });
+
+    it("revalidates identity after the backoff and before the original read", async () => {
+      let calls = 0;
+      let identityChanged = false;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        githubResponse(
+          identityChanged ? pullRequest({ head: { sha: "c".repeat(40) } }) : pullRequest(),
+        ),
+      );
+
+      await expect(
+        retryableGithubRead(
+          "coordination checks",
+          async () => {
+            calls += 1;
+            throw new TypeError("coordination fetch failed");
+          },
+          identity,
+          {
+            baseDelayMs: 1,
+            random: () => 0,
+            sleep: async () => {
+              identityChanged = true;
+            },
+          },
+        ),
+      ).rejects.toThrow("not the expected open PR with the observed PR SHA and base SHA");
+
+      expect(calls).toBe(1);
+    });
   });
 });
