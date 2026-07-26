@@ -43,7 +43,7 @@ import {
   requireRebuildHermesHostedInferenceRoute,
   requireRebuildHermesOpenshellBin,
   resolveRebuildHermesCurrentBase,
-  trackOptionalRebuildHermesDashboardPort,
+  trackRebuildHermesCleanupPort,
 } from "./rebuild-hermes-bootstrap.ts";
 import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
@@ -742,10 +742,10 @@ test(STALE_BASE_REBUILD
     cleanupHermesDiscordProvider(host, apiKey, activeOpenshellBin),
   );
   cleanup.trackDisposable("stop Hermes dashboard and API forwards", async () => {
-    trackOptionalRebuildHermesDashboardPort(observedForwardPorts, dashboardPort);
     const recordedPort = readJsonFileOr<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]
       ?.dashboardPort;
-    trackOptionalRebuildHermesDashboardPort(observedForwardPorts, recordedPort);
+    const rejectedPort = trackRebuildHermesCleanupPort(observedForwardPorts, recordedPort);
+    await artifacts.writeJson("cleanup-dashboard-port.json", { rejectedPort });
     for (const port of observedForwardPorts) {
       await cleanupHermesForward(host, testEnv, apiKey, SANDBOX_NAME, port, redactionValues);
     }

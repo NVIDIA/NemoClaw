@@ -19,7 +19,7 @@ import {
   requireRebuildHermesHostedInferenceRoute,
   resolveRebuildHermesCurrentBase,
   resolveRebuildHermesDashboardPort,
-  trackOptionalRebuildHermesDashboardPort,
+  trackRebuildHermesCleanupPort,
 } from "../live/rebuild-hermes-bootstrap.ts";
 import { REBUILD_HERMES_PHASES } from "../live/rebuild-hermes-phases.ts";
 
@@ -283,8 +283,13 @@ describe("rebuild-Hermes direct bootstrap", () => {
       /valid non-API dashboard port/,
     );
     const cleanupPorts = new Set<number>();
-    trackOptionalRebuildHermesDashboardPort(cleanupPorts, 18791);
-    trackOptionalRebuildHermesDashboardPort(cleanupPorts, undefined);
+    expect(trackRebuildHermesCleanupPort(cleanupPorts, 18791)).toBeNull();
+    expect(trackRebuildHermesCleanupPort(cleanupPorts, undefined)).toBeNull();
+    expect(trackRebuildHermesCleanupPort(cleanupPorts, "not-a-port")).toEqual({
+      source: "cleanup registry dashboardPort",
+      received: "not-a-port",
+      error: expect.stringMatching(/valid non-API dashboard port/),
+    });
     expect([...cleanupPorts]).toEqual([18791]);
   });
 
@@ -339,8 +344,10 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(liveSource).not.toContain("phase-1-remove-initial-hermes-image");
     expect(liveSource).not.toContain("phase-1-stop-hermes-forward");
     expect(liveSource).not.toContain('"--cleanup-gateway"');
+    expect(liveSource).toContain("observedForwardPorts.add(dashboardPort)");
     expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 18789 "$SANDBOX_NAME"');
     expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 8642 "$SANDBOX_NAME"');
+    expect(liveSource).toContain('artifacts.writeJson("cleanup-dashboard-port.json"');
     expect(liveSource).not.toMatch(/host\.command\(\s*["']openshell["']/u);
     expect(liveSource).not.toMatch(/^\s*['"`]openshell\s/mu);
 

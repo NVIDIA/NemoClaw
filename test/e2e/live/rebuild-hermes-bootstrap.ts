@@ -375,11 +375,28 @@ export function requireRebuildHermesDashboardPort(value: unknown, label: string)
   return value;
 }
 
-export function trackOptionalRebuildHermesDashboardPort(ports: Set<number>, value: unknown): void {
+export interface RebuildHermesRejectedDashboardPort {
+  source: "cleanup registry dashboardPort";
+  received: string;
+  error: string;
+}
+
+export function trackRebuildHermesCleanupPort(
+  ports: Set<number>,
+  value: unknown,
+): RebuildHermesRejectedDashboardPort | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
   try {
     ports.add(requireRebuildHermesDashboardPort(value, "cleanup registry dashboardPort"));
-  } catch {
-    // Cleanup remains best-effort when a failed rebuild left malformed registry state.
+    return null;
+  } catch (error) {
+    return {
+      source: "cleanup registry dashboardPort",
+      received: String(value),
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
