@@ -29,6 +29,8 @@ const HERMES_BUILD_PUSH_ACTION =
   "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a";
 const HERMES_DOWNLOAD_ARTIFACT_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const HERMES_UPLOAD_ARTIFACT_ACTION =
+  "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const HERMES_CACHE_TO =
   "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
@@ -63,6 +65,10 @@ const EXPECTED_AUTH_ENV = {
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const REGISTRY_WRITE =
   /(?:\bdocker\s+(?:image\s+)?push\b|\bdocker\s+buildx\s+build\b[^\n]*\s--push(?:\s|$)|\b(?:oras|crane)\s+push\b|\bskopeo\s+copy\b)/u;
+
+function normalizeShellContinuations(run: string): string {
+  return run.replace(/\\\r?\n[ \t]*/gu, " ");
+}
 
 type GuardedProductionBuildContract = {
   args: string;
@@ -345,7 +351,12 @@ function validateSecretScopeAndRegistryWrites(
     for (const step of steps(job)) {
       const label = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
       const run = typeof step.run === "string" ? step.run : "";
-      const serialized = `${JSON.stringify(record(step.env))}\n${run}`;
+      const normalizedRun = normalizeShellContinuations(run);
+      const serialized = [
+        JSON.stringify(record(step.env)),
+        JSON.stringify(record(step.with)),
+        run,
+      ].join("\n");
       for (const secret of FORBIDDEN_RUNTIME_SECRETS) {
         if (serialized.includes(secret)) {
           errors.push(`${label} must not receive ${secret}`);
@@ -357,14 +368,17 @@ function validateSecretScopeAndRegistryWrites(
             errors.push(`${label} must not receive ${secret}`);
           }
         }
-        if (/\bdocker\s+login\b/u.test(run)) {
+        if (
+          /\bdocker\s+login\b/u.test(normalizedRun) ||
+          String(step.uses ?? "").startsWith("docker/login-action@")
+        ) {
           errors.push(`${label} must not authenticate to a registry`);
         }
       }
       const buildActionWritesRegistry =
         String(step.uses ?? "").startsWith("docker/build-push-action@") &&
         record(step.with).push !== false;
-      if (REGISTRY_WRITE.test(run) || buildActionWritesRegistry) {
+      if (REGISTRY_WRITE.test(normalizedRun) || buildActionWritesRegistry) {
         errors.push(`${label} must not write images to a registry`);
       }
     }
@@ -373,10 +387,10 @@ function validateSecretScopeAndRegistryWrites(
 
 function dockerBuildLines(job: SandboxImagesWorkflowJob): string[] {
   return steps(job).flatMap((step) =>
-    (step.run ?? "")
+    normalizeShellContinuations(step.run ?? "")
       .split("\n")
       .map((line) => line.trim())
-      .filter((line) => /^docker\s+build(?:\s|$)/u.test(line)),
+      .filter((line) => /^docker\s+(?:build|buildx\s+build)(?:\s|$)/u.test(line)),
   );
 }
 
@@ -839,7 +853,13 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   if (testJob.needs !== producerName) {
     errors.push("Hermes image tests must depend on the Hermes image producer");
   }
-  if (steps(testJob).some((step) => step.name === AUTH_STEP_NAME)) {
+  const consumerAuthSteps = steps(testJob).filter(
+    (step) =>
+      step.name === AUTH_STEP_NAME ||
+      String(step.uses ?? "").startsWith("docker/login-action@") ||
+      /\bdocker\s+login\b/u.test(normalizeShellContinuations(step.run ?? "")),
+  );
+  if (consumerAuthSteps.length !== 0) {
     errors.push("Hermes image test consumer must not authenticate to Docker Hub");
   }
   const consumerBuilds = steps(testJob).filter(
@@ -929,7 +949,8 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
     }) ||
     steps(testJob).filter((step) => step.name === "Load Hermes production image").length !== 1 ||
     !(load.run ?? "").includes("/tmp/hermes-isolation-image.tar.gz | docker load") ||
-    !(load.run ?? "").includes("docker image inspect nemoclaw-hermes-production")
+    !(load.run ?? "").includes("docker image inspect nemoclaw-hermes-production") ||
+    stepIndex(testJob, download.name ?? "") >= stepIndex(testJob, load.name ?? "")
   ) {
     errors.push(
       "Hermes image tests must download and load the producer artifact exactly once with the canonical action",
@@ -949,8 +970,7 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   const upload = requireStep(errors, producerName, producer, "Upload Hermes isolation image");
   if (
     steps(producer).filter((step) => step.name === "Upload Hermes isolation image").length !== 1 ||
-    !(upload.uses ?? "").startsWith("actions/upload-artifact@") ||
-    !FULL_SHA_ACTION.test(upload.uses ?? "") ||
+    upload.uses !== HERMES_UPLOAD_ARTIFACT_ACTION ||
     !isDeepStrictEqual(record(upload.with), {
       name: "hermes-isolation-image",
       path: "/tmp/hermes-isolation-image.tar.gz",
@@ -1017,8 +1037,7 @@ function validateStateDirGuardMetadataImageReuse(
     ["Hermes", hermesDownload, { name: "hermes-isolation-image", path: "/tmp" }],
   ] as const) {
     if (
-      !(step.uses ?? "").startsWith("actions/download-artifact@") ||
-      !FULL_SHA_ACTION.test(step.uses ?? "") ||
+      step.uses !== HERMES_DOWNLOAD_ARTIFACT_ACTION ||
       !isDeepStrictEqual(record(step.with), expectedWith)
     ) {
       errors.push(`state-dir guard metadata must download the saved ${label} production image`);

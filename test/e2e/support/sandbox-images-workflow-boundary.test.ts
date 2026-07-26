@@ -170,6 +170,27 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("rejects action-based Docker auth and secrets in Hermes consumer inputs", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["test-hermes-sandbox-image"].steps!.push({
+      name: "Authenticate with Docker action",
+      uses: `docker/login-action@${"0".repeat(40)}`,
+      with: {
+        username: "${{ secrets.DOCKERHUB_USERNAME }}",
+        password: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes image test consumer must not authenticate to Docker Hub",
+        "test-hermes-sandbox-image step \x27Authenticate with Docker action\x27 must not receive DOCKERHUB_USERNAME",
+        "test-hermes-sandbox-image step \x27Authenticate with Docker action\x27 must not receive DOCKERHUB_TOKEN",
+        "test-hermes-sandbox-image step \x27Authenticate with Docker action\x27 must not authenticate to a registry",
+      ]),
+    );
+  });
+
   it("rejects a duplicate Hermes production-image build", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
@@ -179,6 +200,71 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
       "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
+    );
+  });
+
+  it("rejects a second Hermes production build through the Buildx CLI", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    producer.steps!.splice(-1, 0, {
+      name: "Build Hermes production image again",
+      run: "docker buildx build --load -f agents/hermes/Dockerfile -t nemoclaw-hermes-production .",
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
+    );
+  });
+
+  it("rejects a multiline Hermes Buildx registry write", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    producer.steps!.splice(-1, 0, {
+      name: "Publish Hermes production image",
+      run: [
+        "docker buildx build \\",
+        "  --push -t registry.example.invalid/nemoclaw-hermes .",
+      ].join("\n"),
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "build-hermes-sandbox-image step \x27Publish Hermes production image\x27 must not write images to a registry",
+    );
+  });
+
+  it("requires the Hermes artifact download before its load", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const downloadIndex = consumer.steps!.findIndex(
+      (step) => step.name === "Download Hermes production image",
+    );
+    const [download] = consumer.steps!.splice(downloadIndex, 1);
+    const loadIndex = consumer.steps!.findIndex(
+      (step) => step.name === "Load Hermes production image",
+    );
+    consumer.steps!.splice(loadIndex + 1, 0, download);
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image tests must download and load the producer artifact exactly once with the canonical action",
+    );
+  });
+
+  it("rejects non-canonical Hermes artifact upload and metadata download pins", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const upload = imageWorkflow.jobs["build-hermes-sandbox-image"].steps!.find(
+      (step) => step.name === "Upload Hermes isolation image",
+    )!;
+    upload.uses = `actions/upload-artifact@${"0".repeat(40)}`;
+    const download = imageWorkflow.jobs["state-dir-guard-metadata"].steps!.find(
+      (step) => step.name === "Download Hermes production image",
+    )!;
+    download.uses = `actions/download-artifact@${"0".repeat(40)}`;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes producer must upload the saved production image before auth cleanup",
+        "state-dir guard metadata must download the saved Hermes production image",
+      ]),
     );
   });
 
