@@ -134,6 +134,7 @@ export default defineConfig({
             "test/e2e/support/**",
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
+            "test/install-express-wsl-ollama.test.ts",
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
@@ -158,6 +159,7 @@ export default defineConfig({
           setupFiles: [fixtureUmaskSetup],
           include: [
             "test/install-express-prompt.test.ts",
+            "test/install-express-wsl-ollama.test.ts",
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",

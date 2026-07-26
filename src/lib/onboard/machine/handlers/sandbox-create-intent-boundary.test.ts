@@ -86,6 +86,7 @@ describe("sandbox create intent machine boundary", () => {
               directGpu: false,
               additionalPresets: [],
               policyTier: null,
+              baselineExclusions: [],
             },
           },
           gpuCreateArgs: [],

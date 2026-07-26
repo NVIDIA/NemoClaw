@@ -87,23 +87,24 @@ const SKIP_DIRS = new Set([
   "nemoclaw/dist",
   "nemoclaw/node_modules",
   "node_modules",
+  "worktrees",
 ]);
 
 function normalizePathText(text: string): string {
   return text.replaceAll("\\", "/");
 }
 
-function isSkippedPath(absPath: string): boolean {
+export function isSourceShapePathSkipped(absPath: string): boolean {
   const rel = normalizePathText(relative(REPO_ROOT, absPath));
   return [...SKIP_DIRS].some((dir) => rel === dir || rel.startsWith(`${dir}/`));
 }
 
 function* walkFiles(dir: string): Generator<string> {
-  if (!existsSync(dir) || isSkippedPath(dir)) return;
+  if (!existsSync(dir) || isSourceShapePathSkipped(dir)) return;
 
   for (const entry of readdirSync(dir)) {
     const abs = join(dir, entry);
-    if (isSkippedPath(abs)) continue;
+    if (isSourceShapePathSkipped(abs)) continue;
 
     const stats = statSync(abs);
     if (stats.isDirectory()) {

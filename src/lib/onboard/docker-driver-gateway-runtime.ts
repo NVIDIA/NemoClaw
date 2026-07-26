@@ -11,6 +11,9 @@ import {
   createDockerDriverGatewayPortListenerHelpers,
   type DockerDriverGatewayPortListenerOptions,
   type DockerDriverGatewayPortListenerScan,
+  type DockerDriverGatewayServicePortOwnership,
+  type DockerDriverGatewayServicePortOwnershipOptions,
+  type GatewayPortListenerRawScan,
 } from "./docker-driver-gateway-port-listener";
 import {
   getDockerDriverGatewayTargetIdentityDrift,
@@ -68,6 +71,10 @@ export interface DockerDriverGatewayRuntimeDeps {
 
 export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewayRuntimeDeps): {
   clearDockerDriverGatewayRuntimeFiles(): void;
+  createGatewayServicePortOwnership(
+    portCheck: PortProbeResult,
+    opts: DockerDriverGatewayServicePortOwnershipOptions,
+  ): DockerDriverGatewayServicePortOwnership;
   getDockerDriverGatewayEnv(
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
@@ -82,7 +89,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   getGatewayPortListenerRawScan(
     portCheck: PortProbeResult,
     opts?: DockerDriverGatewayPortListenerOptions,
-  ): DockerDriverGatewayPortListenerScan;
+  ): GatewayPortListenerRawScan;
   /** Compatibility view for callers that only need the verified PID list. */
   getDockerDriverGatewayPortListenerPids(
     portCheck: PortProbeResult,
@@ -96,6 +103,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     pid: number,
     desiredEnv: Record<string, string>,
     gatewayBin?: string | null,
+    platform?: NodeJS.Platform,
+  ): DockerDriverGatewayRuntimeDrift | null;
+  getDockerDriverGatewayReuseDrift(
+    pid: number,
+    desiredEnv: Record<string, string>,
+    gatewayBin?: string | null,
+    trustedServicePid?: number | null,
     platform?: NodeJS.Platform,
   ): DockerDriverGatewayRuntimeDrift | null;
   getDockerDriverGatewayRuntimeDriftFromSnapshot(snapshot: {
@@ -386,6 +400,35 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     });
   }
 
+  function getDockerDriverGatewayReuseDrift(
+    pid: number,
+    desiredEnv: Record<string, string>,
+    gatewayBin?: string | null,
+    trustedServicePid?: number | null,
+    platform: NodeJS.Platform = process.platform,
+  ): DockerDriverGatewayRuntimeDrift | null {
+    if (pid !== trustedServicePid)
+      return getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin, platform);
+    if (platform === "linux") {
+      return getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: readProcessEnv(pid),
+        processExe: readProcessExe(pid),
+        desiredEnv,
+        gatewayBin,
+      });
+    }
+    if (
+      platform === "darwin" &&
+      desiredEnv.OPENSHELL_DRIVERS === "docker" &&
+      vmDriverProcess.hasOpenShellVmDriverChildProcess(pid, (args) =>
+        deps.runCapture([...args], { ignoreError: true }),
+      )
+    ) {
+      return { reason: "VM driver child process is still attached to the gateway" };
+    }
+    return null;
+  }
+
   function captureProcessArgs(pid: number): string {
     return deps
       .runCapture(["ps", "-p", String(pid), "-o", "args="], {
@@ -439,6 +482,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   // dependencies. Returning the configured methods keeps onboard on one
   // authoritative runtime instance rather than constructing a second factory.
   const {
+    createGatewayServicePortOwnership,
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayPortListenerScan,
     getGatewayPortListenerRawScan,
@@ -467,6 +511,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
 
   return {
     clearDockerDriverGatewayRuntimeFiles,
+    createGatewayServicePortOwnership,
     getDockerDriverGatewayEnv,
     getDockerDriverGatewayPid,
     getDockerDriverGatewayPidFile,
@@ -474,6 +519,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     getGatewayPortListenerRawScan,
     getDockerDriverGatewayPortListenerPids,
     getDockerDriverGatewayPortListenerPid,
+    getDockerDriverGatewayReuseDrift,
     getDockerDriverGatewayRuntimeDrift,
     getDockerDriverGatewayRuntimeDriftFromSnapshot,
     getDockerDriverGatewayStateDir,

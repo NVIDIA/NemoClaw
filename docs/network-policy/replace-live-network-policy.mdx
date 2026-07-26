@@ -1,0 +1,75 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Replace the Live Network Policy"
+sidebar-title: "Replace the Live Policy"
+description: "Export, edit, validate, and replace the complete live policy for a NemoClaw sandbox."
+description-agent: "Replaces the complete live sandbox policy. Use when a full policy edit cannot use NemoClaw policy presets."
+keywords: ["openshell policy set", "nemoclaw policy get", "replace live network policy"]
+content:
+  type: "how_to"
+skill:
+  priority: 10
+---
+Replace the live policy only when you cannot express the change as a NemoClaw preset.
+This workflow requires OpenShell 0.0.72+.
+
+<Warning>
+`openshell policy set` replaces the sandbox's live policy with the file you provide.
+It does not merge.
+A running policy contains the baseline plus every preset layered during onboarding and later operations.
+Applying a file that contains only one part silently removes the other entries.
+</Warning>
+
+## Export the Base Policy
+
+Start from the current round-trippable base policy so the applied presets remain in the file:
+
+```bash
+$$nemoclaw my-assistant policy get > current-policy.yaml
+```
+
+The command retrieves and validates the base policy.
+It exits nonzero instead of writing partial output when retrieval or validation fails.
+Do not use `--raw` because raw output retains the OpenShell metadata header.
+
+## Edit the Complete Policy
+
+Edit `current-policy.yaml`.
+Add entries under `network_policies` and keep the existing `version` field.
+Preserve every baseline and preset entry that the sandbox still needs.
+
+The `openshell policy set` command accepts a raw policy file.
+It does not accept a preset file that starts with a `preset:` metadata block.
+Use [Apply Policy Presets](apply-policy-presets) when a maintained or custom preset can express the change.
+
+## Apply the Replacement
+
+Apply the complete file:
+
+```bash
+openshell policy set --policy current-policy.yaml --wait my-assistant
+```
+
+The change applies to the running sandbox.
+For a durable source-of-truth change, update the baseline policy or record a custom preset with NemoClaw.
+
+## Verify the Result
+
+Inspect the tracked preset state:
+
+```bash
+$$nemoclaw my-assistant policy list
+```
+
+Inspect the effective OpenShell policy before testing the endpoint:
+
+```bash
+openshell policy get my-assistant
+```
+
+## Related Topics
+
+- [Create Custom Policy Presets](create-custom-policy-presets) records scoped additions with the sandbox.
+- [Change the Baseline Network Policy](change-baseline-network-policy) changes every future sandbox.
+- [Approve or Deny Network Requests](../approve-network-requests) handles one-off access.

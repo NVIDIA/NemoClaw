@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
+import net from "node:net";
 import path from "node:path";
 
 import { getGatewayHttpEndpoint, getGatewayHttpsEndpoint } from "../core/gateway-address";
@@ -124,17 +125,19 @@ function isGatewayHttpReadyImpl(
 export function isDockerDriverGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpsEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   return withTraceSpan(
     "nemoclaw.gateway.docker_driver_http_probe",
     { timeout_ms: timeoutMs, url },
-    () => isDockerDriverGatewayHttpReadyImpl(timeoutMs, url),
+    () => isDockerDriverGatewayHttpReadyImpl(timeoutMs, url, env),
   );
 }
 
 function isDockerDriverGatewayHttpReadyImpl(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpsEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -187,7 +190,7 @@ function isDockerDriverGatewayHttpReadyImpl(
 
     try {
       const origin = `${parsed.protocol}//${parsed.host}`;
-      const connectOptions = dockerDriverGatewayHttp2ConnectOptions(parsed);
+      const connectOptions = dockerDriverGatewayHttp2ConnectOptions(parsed, env);
       if (parsed.protocol === "https:" && !connectOptions) return settle(false);
       client = http2.connect(origin, connectOptions);
       client.on("error", () => settle(false));
@@ -224,18 +227,27 @@ function isDockerDriverGatewayHttpReadyImpl(
 
 function dockerDriverGatewayHttp2ConnectOptions(
   parsed: URL,
+  env: NodeJS.ProcessEnv = process.env,
 ): http2.SecureClientSessionOptions | undefined {
   if (parsed.protocol !== "https:") return undefined;
-  const localTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
+  const localTlsDir = env.OPENSHELL_LOCAL_TLS_DIR;
   if (!localTlsDir) return undefined;
   try {
-    return {
+    const options: http2.SecureClientSessionOptions = {
       ca: fs.readFileSync(path.join(localTlsDir, "ca.crt")),
       cert: fs.readFileSync(path.join(localTlsDir, "client", "tls.crt")),
       key: fs.readFileSync(path.join(localTlsDir, "client", "tls.key")),
       rejectUnauthorized: true,
-      servername: parsed.hostname,
     };
+    // Node 25 rejects an IP-literal TLS ServerName (RFC 6066; DEP0123 became a
+    // thrown error). For IP endpoints, certificate verification matches the
+    // connection IP against the certificate's IP SANs without SNI, so only
+    // send servername for DNS hostnames.
+    const bareHostname = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+    if (net.isIP(bareHostname) === 0) {
+      options.servername = parsed.hostname;
+    }
+    return options;
   } catch {
     return undefined;
   }

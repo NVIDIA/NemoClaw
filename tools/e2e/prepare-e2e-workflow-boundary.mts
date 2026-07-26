@@ -13,8 +13,8 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(REPO_ROOT, ".github", "actions", "prepare-e2e", "action.yaml");
 
 const PREPARE_E2E_ACTION_PROVENANCE = {
-  reference: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28",
-  contentSha256: "eca1994acd70f4305cddae2990d1604e9fac455b45d3d89dfb4b08a07d7552a1",
+  reference: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75",
+  contentSha256: "1283c2eadfbc38ccb3b795684ba5ced9c89ae2040fffbb6b81854a9d1926802b",
 } as const;
 
 export const PREPARE_E2E_ACTION = PREPARE_E2E_ACTION_PROVENANCE.reference;
@@ -77,7 +77,7 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
   const expectedSteps = [
     {
       name: "Set up Node",
-      uses: "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+      uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
       with: { "node-version": 22, cache: "npm" },
     },
     {

@@ -25,6 +25,7 @@ import {
   readOnboardTraceWindow,
 } from "../fixtures/onboard-performance.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import {
   assertSecurityPosture,
   securityPostureEnabled,
@@ -86,6 +87,18 @@ async function repoNemoclaw(
     env: env(extraEnv),
     timeoutMs,
   });
+}
+
+async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResult> {
+  const status = await pollUntil({
+    artifactPrefix: "phase-3-nemoclaw-status",
+    attempts: 5,
+    delayMs: 5_000,
+    probe: async (_attempt, artifactName) =>
+      await repoNemoclaw(host, [SANDBOX_NAME, "status"], artifactName, {}, 60_000),
+    accept: (result) => result.exitCode === 0,
+  });
+  return status.value;
 }
 
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
@@ -409,7 +422,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
   expect(list.exitCode, resultText(list)).toBe(0);
   expect(list.stdout).toContain(SANDBOX_NAME);
-  const status = await repoNemoclaw(host, [SANDBOX_NAME, "status"], "phase-3-nemoclaw-status");
+  const status = await waitForSandboxStatus(host);
   expect(status.exitCode, resultText(status)).toBe(0);
 
   const inference = await sandbox.openshell(["inference", "get"], {
