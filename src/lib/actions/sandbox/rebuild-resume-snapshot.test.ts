@@ -162,7 +162,7 @@ describe("rebuild resume snapshot repair", () => {
         status: 1,
         output: "",
         stdout: "",
-        stderr: "Not Found: sandbox not found",
+        stderr: "Error: sandbox alpha not found",
       } as never),
       vi.spyOn(destroy, "removeSandboxRegistryEntry").mockReturnValue(true),
       vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),

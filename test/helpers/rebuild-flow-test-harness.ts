@@ -411,7 +411,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       const argv = Array.isArray(args) ? args.map(String) : [];
       return overrides.captureOpenshell
         ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
-        : { status: 1, output: "", stderr: "Not Found: sandbox not found" };
+        : { status: 1, output: "", stderr: "Error: sandbox alpha not found" };
     });
   const defaultRemovalReceipt = {
     entry: preDeleteSandboxEntry,

@@ -152,7 +152,7 @@ describe("rebuild local-provider recreation", () => {
       status: 1,
       output: "",
       stdout: "",
-      stderr: "Not Found: sandbox not found",
+      stderr: "Error: sandbox alpha not found",
     });
     let harness!: RebuildFlowHarness;
     let setupResult: SetupResult | undefined;

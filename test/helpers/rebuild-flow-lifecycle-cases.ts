@@ -252,7 +252,7 @@ network_policies:
         },
         {
           event: "absent",
-          result: { status: 1, output: "", stderr: "Not Found: sandbox not found" },
+          result: { status: 1, output: "", stderr: "Error: sandbox alpha not found" },
         },
       ];
       const harness = createRebuildFlowHarness({
