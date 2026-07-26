@@ -128,6 +128,34 @@ describe("runCapture with argv array", () => {
     expect(output).toBe("");
   });
 
+  it("keeps stderr out of ignored failures unless requested", () => {
+    const output = runner.runCapture(
+      [process.execPath, "-e", 'process.stderr.write("stderr-only\\n"); process.exit(2)'],
+      { ignoreError: true },
+    );
+    expect(output).toBe("");
+  });
+
+  it("keeps stdout out of ignored failures unless combined output is requested", () => {
+    const output = runner.runCapture(
+      [process.execPath, "-e", 'process.stdout.write("stdout-only\\n"); process.exit(2)'],
+      { ignoreError: true },
+    );
+    expect(output).toBe("");
+  });
+
+  it("captures stderr from ignored failures when requested", () => {
+    const output = runner.runCapture(
+      [
+        process.execPath,
+        "-e",
+        'process.stdout.write("stdout-line\\n"); process.stderr.write("stderr-line\\n"); process.exit(2)',
+      ],
+      { ignoreError: true, includeStderr: true },
+    );
+    expect(output).toBe(["stdout-line", "stderr-line"].join("\n"));
+  });
+
   it("throws on failure without ignoreError", () => {
     expect(() => runner.runCapture(["false"])).toThrow();
   });

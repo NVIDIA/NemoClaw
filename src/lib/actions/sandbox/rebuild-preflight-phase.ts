@@ -20,6 +20,7 @@ import {
   isDcodeRebuildAgent,
 } from "./rebuild-dcode-orchestrator";
 import {
+  disposeRebuildAgentBaseImagePreflight,
   type RebuildAgentBaseImagePreflight,
   type RebuildLiveState,
   type RebuildSandboxEntry,
@@ -37,6 +38,7 @@ import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   acquireRebuildOnboardLock,
   assertRebuildEntryUnchanged,
+  blockRebuildOnPendingBaselineTransition,
   checkRebuildGatewaySchemaPreflight,
   expectedRebuildEntryAfterVersionCheck,
   getRebuildSandboxEntryOrBail,
@@ -89,9 +91,10 @@ export async function runRebuildPreflightPhase(
     requestedObservabilityEnabled,
     skipConfirm,
   } = createRebuildCommandContext(options, opts);
-  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
+  if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return null;
+  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   // #6376: refuse a stuck MCP destroy transaction up front — before backup,
   // image prep, or the old-sandbox delete. The only MCP marker check used to
   // live inside the destroy phase, which runs AFTER the backup phase, so a
@@ -190,6 +193,8 @@ export async function runRebuildPreflightPhase(
   let retainDcodePreflight = false;
   let preparedImage: PreparedRebuildImage | null = null;
   let retainPreparedImage = false;
+  let baseImagePreflight: RebuildAgentBaseImagePreflight | null = null;
+  let retainBaseImagePreflight = false;
   try {
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
     let retainOnboardLock = false;
@@ -215,6 +220,7 @@ export async function runRebuildPreflightPhase(
         bail,
       });
       if (!preparedTarget) return null;
+      baseImagePreflight = preparedTarget.baseImagePreflight;
       preparedImage = preparedTarget.preparedImage;
 
       const liveState = await resolveRebuildLiveState(sandboxName, expectedSandboxEntry, log, bail);
@@ -252,6 +258,7 @@ export async function runRebuildPreflightPhase(
       retainOnboardLock = true;
       retainDcodePreflight = true;
       retainPreparedImage = true;
+      retainBaseImagePreflight = true;
       return {
         sandboxEntry: expectedSandboxEntry,
         rebuildAgent,
@@ -273,5 +280,12 @@ export async function runRebuildPreflightPhase(
   } finally {
     if (!retainDcodePreflight) dcodePreflight.cleanup();
     if (!retainPreparedImage && preparedImage) disposePreparedBuildContext(preparedImage);
+    if (
+      !retainBaseImagePreflight &&
+      baseImagePreflight &&
+      !disposeRebuildAgentBaseImagePreflight(baseImagePreflight)
+    ) {
+      console.warn("  Warning: temporary rebuild base-image handoff could not be removed.");
+    }
   }
 }

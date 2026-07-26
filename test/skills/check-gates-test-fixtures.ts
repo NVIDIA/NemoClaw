@@ -112,6 +112,10 @@ interface ComplianceFixture {
     state: string;
     submittedAt?: string | null;
   }>;
+  headRefName?: string;
+  headRepository?: string;
+  emptyHeadRepositoryNameWithOwner?: boolean;
+  headRepositoryNameWithOwner?: string;
   prAuthorLogin?: string;
   mergeable?: string;
   mergeStateStatus?: string;
@@ -254,6 +258,8 @@ function runGate(fixture: ComplianceFixture) {
   fs.mkdirSync(bin);
   const ghPath = path.join(bin, "gh");
 
+  const headRepository = fixture.headRepository ?? "NVIDIA/NemoClaw";
+  const [headRepositoryOwner, headRepositoryName] = headRepository.split("/");
   const pr = {
     number: 42,
     title: "fix(policy): align maintainer workflow",
@@ -271,9 +277,15 @@ function runGate(fixture: ComplianceFixture) {
     isDraft: false,
     headRefOid: HEAD_SHA,
     baseRefOid: BASE_SHA,
-    headRefName: "feature-branch",
+    headRefName: fixture.headRefName ?? "feature-branch",
     baseRefName: "main",
-    headRepository: { nameWithOwner: "NVIDIA/NemoClaw" },
+    headRepository: {
+      name: headRepositoryName,
+      nameWithOwner:
+        fixture.headRepositoryNameWithOwner ??
+        (fixture.emptyHeadRepositoryNameWithOwner ? "" : headRepository),
+    },
+    headRepositoryOwner: { login: headRepositoryOwner },
     author: { login: fixture.prAuthorLogin ?? "contributor" },
   };
   const finalPr = { ...pr, ...fixture.finalPr };

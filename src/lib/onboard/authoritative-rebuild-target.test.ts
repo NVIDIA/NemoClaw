@@ -25,6 +25,7 @@ const originalGateway = process.env.OPENSHELL_GATEWAY;
 
 function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
   return {
+    resolveBaselinePolicy: vi.fn(() => ({})),
     runFatalRuntimePreflight: vi.fn(),
     ensureOpenshell: vi.fn(),
     inferenceRouteReady: vi.fn(() => true),
@@ -107,6 +108,7 @@ describe("prepared provider reconfiguration handoff", () => {
     onboardLockAlreadyHeld: true,
     targetGatewayName: "nemoclaw-8081",
     targetGatewayPort: 8081,
+    endpointSource: "onboard" as const,
     rebuildProviderReconfigure: providerTarget,
   };
 
@@ -148,6 +150,7 @@ describe("prepared provider reconfiguration handoff", () => {
         provider: "compatible-endpoint",
         model: "nvidia/model",
         endpointUrl: "https://inference.example.test/v1",
+        endpointSource: "onboard",
         preferredInferenceApi: "openai-completions",
         source: "registry",
       },
@@ -163,7 +166,7 @@ describe("prepared provider reconfiguration handoff", () => {
     };
 
     const activated = rebuildProviderFlowOptions(
-      { ...authorizedOptions, providerRecoveryReceipt: receipt },
+      { ...authorizedOptions, endpointSource: "onboard", providerRecoveryReceipt: receipt },
       flowContext,
     );
     expect(activated.providerRecoveryReceipt?.sessionId).toBe("sess-alpha");
@@ -196,6 +199,18 @@ describe("prepared provider reconfiguration handoff", () => {
 });
 
 describe("authoritative rebuild target preflight", () => {
+  it("rejects an unreadable replacement baseline before runtime probes (#7194)", async () => {
+    const targetDeps = deps({ resolveBaselinePolicy: vi.fn(() => null) });
+
+    await expect(preflightAuthoritativeRebuildTarget(target, targetDeps)).rejects.toThrow(
+      "Could not read the baseline policy",
+    );
+
+    expect(targetDeps.runFatalRuntimePreflight).not.toHaveBeenCalled();
+    expect(targetDeps.ensureOpenshell).not.toHaveBeenCalled();
+    expect(targetDeps.inferenceRouteReady).not.toHaveBeenCalled();
+  });
+
   it("pins the requested gateway for route and forward checks, then restores it", async () => {
     process.env.OPENSHELL_GATEWAY = "before";
     const seen: string[] = [];

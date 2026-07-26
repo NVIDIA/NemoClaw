@@ -390,4 +390,66 @@ describe("docker-driver gateway runtime helpers", () => {
         ?.reason,
     ).toBe(`executable=${replacementGatewayBin} (expected ${identityGatewayBin})`);
   });
+
+  it("reuses a systemd-owned gateway without detached cleanup identity (#6903)", () => {
+    const pid = 12_350;
+    const gatewayBin = "/usr/bin/openshell-gateway";
+    const desiredEnv = { OPENSHELL_DRIVERS: "docker" };
+    const { helpers } = makeHelpers({
+      runCapture: vi.fn(() => gatewayBin),
+    });
+    const originalExistsSync = fs.existsSync.bind(fs);
+    const originalReadFileSync = fs.readFileSync.bind(fs);
+    const originalReadlinkSync = fs.readlinkSync.bind(fs);
+    const existingProcPaths = new Set([
+      `/proc/${pid}/cmdline`,
+      `/proc/${pid}/environ`,
+      `/proc/${pid}/exe`,
+    ]);
+    const procFileContents = new Map([
+      [`/proc/${pid}/cmdline`, `${gatewayBin}\0`],
+      [`/proc/${pid}/environ`, "OPENSHELL_DRIVERS=docker\0"],
+    ]);
+    try {
+      vi.spyOn(fs, "existsSync").mockImplementation(
+        ((candidate) =>
+          existingProcPaths.has(String(candidate)) ||
+          originalExistsSync(candidate)) as typeof fs.existsSync,
+      );
+      vi.spyOn(fs, "readFileSync").mockImplementation(
+        ((candidate, options) =>
+          procFileContents.get(String(candidate)) ??
+          originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync,
+      );
+      vi.spyOn(fs, "readlinkSync").mockImplementation(((candidate, options) =>
+        String(candidate) === `/proc/${pid}/exe`
+          ? gatewayBin
+          : originalReadlinkSync(candidate, options as never)) as typeof fs.readlinkSync);
+
+      expect(
+        helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin, "linux")?.reason,
+      ).toContain("lacks target-bound cleanup identity");
+      expect(
+        helpers.getDockerDriverGatewayReuseDrift(pid, desiredEnv, gatewayBin, pid, "linux"),
+      ).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("reuses the active official Homebrew gateway without detached cleanup identity (#6903)", () => {
+    const pid = 12_351;
+    const gatewayBin = "/opt/homebrew/bin/openshell-gateway";
+    const { helpers } = makeHelpers();
+
+    expect(
+      helpers.getDockerDriverGatewayReuseDrift(
+        pid,
+        { OPENSHELL_DRIVERS: "docker" },
+        gatewayBin,
+        pid,
+        "darwin",
+      ),
+    ).toBeNull();
+  });
 });

@@ -390,6 +390,71 @@ with tempfile.TemporaryDirectory() as root:
         control._verify_locked_hermes_hash = lambda: preflight_steps.append({"hash": "checked"})
         try:
             control._hermes_preflight(reader, supervisor)
+            verified_preflight_steps = list(preflight_steps)
+
+            real_read_stable_file = reader.read_stable_file
+            real_monotonic = control.time.monotonic
+            real_sleep = control.time.sleep
+            transient_preflight_reads = []
+            fake_clock = [0.0]
+            def transient_preflight_read(identity, name, limit):
+                transient_preflight_reads.append(identity.pid)
+                if len(transient_preflight_reads) <= 2:
+                    raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+                return real_read_stable_file(identity, name, limit)
+            reader.read_stable_file = transient_preflight_read
+            control.time.monotonic = lambda: fake_clock[0]
+            control.time.sleep = lambda seconds: fake_clock.__setitem__(0, fake_clock[0] + seconds)
+            try:
+                control._hermes_preflight(reader, supervisor)
+                transient_preflight_retry = [
+                    len(transient_preflight_reads),
+                    round(fake_clock[0], 3),
+                ]
+            finally:
+                reader.read_stable_file = real_read_stable_file
+
+            persistent_preflight_reads = []
+            fake_clock[0] = 0.0
+            def persistent_preflight_read(identity, _name, _limit):
+                persistent_preflight_reads.append(identity.pid)
+                raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+            reader.read_stable_file = persistent_preflight_read
+            try:
+                control._hermes_preflight(reader, supervisor)
+                persistent_preflight_retry = ["accepted", False, fake_clock[0]]
+            except control.ControlError as error:
+                persistent_preflight_retry = [
+                    error.code,
+                    len(persistent_preflight_reads) > 1,
+                    round(fake_clock[0], 3),
+                ]
+            finally:
+                reader.read_stable_file = real_read_stable_file
+
+            identity_change_reads = []
+            fake_clock[0] = 0.0
+            real_capture = reader.capture
+            def identity_change_read(identity, _name, _limit):
+                identity_change_reads.append(identity.pid)
+                raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+            def capture_changed_supervisor(pid):
+                captured = real_capture(pid)
+                if pid == supervisor.pid:
+                    return replace(captured, start_time="replaced")
+                return captured
+            reader.read_stable_file = identity_change_read
+            reader.capture = capture_changed_supervisor
+            try:
+                control._hermes_preflight(reader, supervisor)
+                changed_preflight_identity = ["accepted", fake_clock[0]]
+            except control.ControlError as error:
+                changed_preflight_identity = [error.code, fake_clock[0]]
+            finally:
+                reader.read_stable_file = real_read_stable_file
+                reader.capture = real_capture
+                control.time.monotonic = real_monotonic
+                control.time.sleep = real_sleep
         finally:
             control._run_fixed_validator = real_validator
             control._validate_runtime_environment = real_runtime_validator
@@ -877,7 +942,165 @@ with tempfile.TemporaryDirectory() as root:
 
     control.__file__ = sys.argv[1]
     os.environ["NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST"] = "1"
+    os.environ["NEMOCLAW_MANAGED_CONTROL_PROC_ROOT"] = proc_root
+    os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = system_root
+    os.makedirs(os.path.join(system_root, "tmp"), exist_ok=True)
+    start_log_path = os.path.join(system_root, "tmp/nemoclaw-start.log")
+    start_log_events = [
+        "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
+        "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
+        "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
+        "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
+        "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
+        "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
+        "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+        "[CRITICAL] Newly launched Hermes gateway pid 5252 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
+    ]
+    supervisor_log_uid = 1000 if os.geteuid() == 0 else os.geteuid()
+
+    def write_start_log(lines=start_log_events):
+        with open(start_log_path, "w", encoding="utf-8") as stream:
+            stream.write("\n".join(lines) + "\n")
+        os.chmod(start_log_path, 0o600)
+        if os.geteuid() == 0:
+            os.chown(start_log_path, supervisor_log_uid, os.getegid())
+
+    diagnostic_supervisor = replace(
+        supervisor,
+        uids=(supervisor_log_uid,) * 4,
+    )
+
+    class ExactSupervisorReader:
+        def __init__(self, identity=diagnostic_supervisor):
+            self.identity = identity
+            self.capture_calls = 0
+
+        def capture(self, pid):
+            assert pid == self.identity.pid
+            self.capture_calls += 1
+            return self.identity
+
+    write_start_log()
+    real_system_path = control._system_path
+    real_geteuid = control.os.geteuid
+    control.__file__ = control.INSTALLED_HELPER_PATH
+    control._system_path = lambda _path: start_log_path
+    control.os.geteuid = lambda: 0
+    installed_reader = ExactSupervisorReader()
+    try:
+        start_log_excerpt = control._read_start_log_diagnostic_excerpt(
+            installed_reader, diagnostic_supervisor
+        )
+        installed_topology = [
+            control.os.geteuid(),
+            diagnostic_supervisor.uids[0],
+            os.stat(start_log_path).st_uid,
+            installed_reader.capture_calls,
+        ]
+    finally:
+        control.os.geteuid = real_geteuid
+        control._system_path = real_system_path
+        control.__file__ = sys.argv[1]
+
+    accepted_event_lines = [
+        control._sanitize_start_log_diagnostic_line(line)
+        for line in start_log_events
+    ]
+    unsafe_line_excerpts = [
+        control._sanitize_start_log_diagnostic_line(
+            start_log_events[1] + "; token=sk-suffix-secret"
+        ),
+        control._sanitize_start_log_diagnostic_line(
+            "[gateway] Hermes HF_TOKEN=hf-secret-value"
+        ),
+        control._sanitize_start_log_diagnostic_line(
+            "\x1b[31m" + start_log_events[2] + "\x1b[0m"
+        ),
+        control._sanitize_start_log_diagnostic_line(
+            start_log_events[3] + "\x07"
+        ),
+        control._sanitize_start_log_diagnostic_line(
+            start_log_events[0] + ("x" * 600)
+        ),
+    ]
+
+    control._system_path = lambda _path: start_log_path
+    exact_reader = ExactSupervisorReader()
+    os.chmod(start_log_path, 0o644)
+    unsafe_mode_excerpt = control._read_start_log_diagnostic_excerpt(
+        exact_reader, diagnostic_supervisor
+    )
+    write_start_log()
+    os.link(start_log_path, start_log_path + ".link")
+    hardlink_excerpt = control._read_start_log_diagnostic_excerpt(
+        ExactSupervisorReader(), diagnostic_supervisor
+    )
+    os.unlink(start_log_path + ".link")
+    wrong_owner_supervisor = replace(
+        diagnostic_supervisor,
+        uids=(diagnostic_supervisor.uids[0] + 1,) * 4,
+    )
+    wrong_owner_excerpt = control._read_start_log_diagnostic_excerpt(
+        ExactSupervisorReader(wrong_owner_supervisor),
+        wrong_owner_supervisor,
+    )
+    os.rename(start_log_path, start_log_path + ".regular")
+    os.symlink(start_log_path + ".regular", start_log_path)
+    symlink_excerpt = control._read_start_log_diagnostic_excerpt(
+        ExactSupervisorReader(), diagnostic_supervisor
+    )
+    os.unlink(start_log_path)
+    os.rename(start_log_path + ".regular", start_log_path)
+    os.rename(start_log_path, start_log_path + ".regular")
+    os.mkfifo(start_log_path, 0o600)
+    non_regular_excerpt = control._read_start_log_diagnostic_excerpt(
+        ExactSupervisorReader(), diagnostic_supervisor
+    )
+    os.unlink(start_log_path)
+    os.rename(start_log_path + ".regular", start_log_path)
+
+    class ChurningSupervisorReader(ExactSupervisorReader):
+        def capture(self, pid):
+            current = super().capture(pid)
+            if self.capture_calls > 1:
+                return replace(current, start_time="replaced")
+            return current
+
+    supervisor_churn_excerpt = control._read_start_log_diagnostic_excerpt(
+        ChurningSupervisorReader(), diagnostic_supervisor
+    )
+
+    real_os_read = control.os.read
+    mutated = [False]
+
+    def mutate_during_read(fd, count):
+        chunk = real_os_read(fd, count)
+        if not mutated[0]:
+            mutated[0] = True
+            with open(start_log_path, "a", encoding="utf-8") as stream:
+                stream.write(start_log_events[1] + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+        return chunk
+
+    control.os.read = mutate_during_read
+    try:
+        mutation_excerpt = control._read_start_log_diagnostic_excerpt(
+            ExactSupervisorReader(), diagnostic_supervisor
+        )
+    finally:
+        control.os.read = real_os_read
+        control._system_path = real_system_path
+    write_start_log(start_log_events[-2:])
+
     real_control = control._control
+    real_start_log_reader = control._read_start_log_diagnostic_excerpt
+    diagnostic_output_events = tuple(
+        start_log_events[index] for index in (2, 3, 6)
+    )
+    control._read_start_log_diagnostic_excerpt = (
+        lambda _reader, _supervisor: diagnostic_output_events
+    )
     control._control = lambda *_args: (_ for _ in ()).throw(
         control.ControlError("SUPERVISOR_UNAVAILABLE", stage="await-replacement")
     )
@@ -888,6 +1111,32 @@ with tempfile.TemporaryDirectory() as root:
     finally:
         control._control = real_control
     staged_diagnostic = [staged_status, staged_stderr.getvalue().splitlines()]
+    control._control = lambda *_args: (_ for _ in ()).throw(
+        control.ControlError("GATEWAY_HEALTH_TIMEOUT", stage="await-replacement")
+    )
+    health_stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(health_stderr):
+            health_status = control.main(["restart", "f" * 64])
+    finally:
+        control._control = real_control
+        control._read_start_log_diagnostic_excerpt = real_start_log_reader
+    health_diagnostic = [health_status, health_stderr.getvalue().splitlines()]
+    exact_failure_diagnostics = []
+    for failure_code in ("SUPERVISOR_BUSY", "SUPERVISOR_NOT_RUNNING"):
+        def fail_with_exact_marker(*_args, code=failure_code):
+            with control._control_stage("discover-supervisor"):
+                raise control.ControlError(code)
+        control._control = fail_with_exact_marker
+        exact_stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(exact_stderr):
+                exact_status = control.main(["restart", "f" * 64])
+        finally:
+            control._control = real_control
+        exact_failure_diagnostics.append(
+            [exact_status, exact_stderr.getvalue().splitlines()]
+        )
 
     print(json.dumps({
         "initial": initial_proof,
@@ -898,7 +1147,12 @@ with tempfile.TemporaryDirectory() as root:
         "persistent_supervisor_churn": persistent_supervisor_churn,
         "transient_gateway_candidates": transient_gateway_candidates,
         "namespace_denied": namespace_denied,
-        "preflight": preflight_steps,
+        "preflight": verified_preflight_steps,
+        "preflight_proof_retry": [
+            transient_preflight_retry,
+            persistent_preflight_retry,
+            changed_preflight_identity,
+        ],
         "runtime_validation": runtime_validation,
         "missing_supervisor": missing_supervisor,
         "appearing_supervisor": appearing_supervisor,
@@ -948,7 +1202,22 @@ with tempfile.TemporaryDirectory() as root:
         "source_seams": [source_proc, source_system],
         "disabled_source_seams": [disabled_source_proc, disabled_source_system],
         "installed_seams": [installed_proc, installed_system],
+        "start_log_security": {
+            "installed_topology": installed_topology,
+            "accepted_events": accepted_event_lines,
+            "excerpt": start_log_excerpt,
+            "rejected_lines": unsafe_line_excerpts,
+            "wrong_mode": unsafe_mode_excerpt,
+            "hardlink": hardlink_excerpt,
+            "wrong_owner": wrong_owner_excerpt,
+            "symlink": symlink_excerpt,
+            "non_regular": non_regular_excerpt,
+            "supervisor_churn": supervisor_churn_excerpt,
+            "file_mutation": mutation_excerpt,
+        },
         "staged_diagnostic": staged_diagnostic,
+        "health_diagnostic": health_diagnostic,
+        "exact_failure_diagnostics": exact_failure_diagnostics,
     }))
 `;
 
@@ -960,7 +1229,8 @@ describe("managed gateway root control", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
+    const output = JSON.parse(result.stdout);
+    expect(output).toEqual({
       initial: {
         stable_zombie: ["Z", 0],
         supervisor: [40, "222", 1],
@@ -989,6 +1259,11 @@ describe("managed gateway root control", () => {
           runtime_port: "18789",
         },
         { hash: "checked" },
+      ],
+      preflight_proof_retry: [
+        [3, 0.1],
+        ["SUPERVISOR_UNAVAILABLE", true, 1],
+        ["SUPERVISOR_UNAVAILABLE", 0],
       ],
       runtime_validation: "in-process",
       missing_supervisor: "SUPERVISOR_NOT_RUNNING",
@@ -1045,11 +1320,70 @@ describe("managed gateway root control", () => {
       source_seams: ["/attacker/proc", "/attacker/root"],
       disabled_source_seams: ["/proc", "/"],
       installed_seams: ["/proc", "/"],
+      start_log_security: {
+        installed_topology: [0, expect.any(Number), expect.any(Number), 2],
+        accepted_events: [
+          "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
+          "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
+          "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
+          "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
+          "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
+          "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
+          "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+          "[CRITICAL] Newly launched Hermes gateway pid 5252 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
+        ],
+        excerpt: [
+          "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
+          "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
+          "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
+          "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
+          "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+          "[CRITICAL] Newly launched Hermes gateway pid 5252 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
+        ],
+        rejected_lines: [null, null, null, null, null],
+        wrong_mode: [],
+        hardlink: [],
+        wrong_owner: [],
+        symlink: [],
+        non_regular: [],
+        supervisor_churn: [],
+        file_mutation: [],
+      },
       staged_diagnostic: [
         1,
-        ["SUPERVISOR_UNAVAILABLE", "NEMOCLAW_CONTROL_STAGE=await-replacement"],
+        [
+          "SUPERVISOR_UNAVAILABLE",
+          "NEMOCLAW_CONTROL_STAGE=await-replacement",
+          "NEMOCLAW_SUPERVISOR_PID=40",
+          "NEMOCLAW_GATEWAY_PID=44",
+          "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
+          "NEMOCLAW_START_LOG=[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
+          "NEMOCLAW_START_LOG=[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+        ],
+      ],
+      health_diagnostic: [
+        1,
+        [
+          "GATEWAY_HEALTH_TIMEOUT",
+          "NEMOCLAW_CONTROL_STAGE=await-replacement",
+          "NEMOCLAW_SUPERVISOR_PID=40",
+          "NEMOCLAW_GATEWAY_PID=44",
+          "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
+          "NEMOCLAW_START_LOG=[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
+          "NEMOCLAW_START_LOG=[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+        ],
+      ],
+      exact_failure_diagnostics: [
+        [1, ["SUPERVISOR_BUSY"]],
+        [1, ["SUPERVISOR_NOT_RUNNING"]],
       ],
     });
+    expect(output.start_log_security.installed_topology[0]).not.toBe(
+      output.start_log_security.installed_topology[1],
+    );
+    expect(output.start_log_security.installed_topology[1]).toBe(
+      output.start_log_security.installed_topology[2],
+    );
   });
 
   it.each([

@@ -95,6 +95,8 @@ describe("OpenShell candidate compatibility contract", () => {
             if?: string;
             name?: string;
             run?: string;
+            with?: Record<string, string>;
+            "working-directory"?: string;
           }>;
         }
       >;
@@ -102,8 +104,18 @@ describe("OpenShell candidate compatibility contract", () => {
       permissions: Record<string, string>;
     };
     const evidence = workflow.jobs.evidence;
+    const liveSteps = workflow.jobs.live?.steps ?? [];
     const finalize = evidence?.steps?.find((step) => step.name === "Finalize auditable evidence");
     const enforce = evidence?.steps?.find((step) => step.name === "Enforce aggregate result");
+    const uploadLiveEvidence = workflow.jobs.live?.steps?.find(
+      (step) => step.name === "Upload live evidence",
+    );
+    const artifactSafety = workflow.jobs.live?.steps?.find(
+      (step) => step.name === "Validate final OpenShell gateway auth contract artifacts",
+    );
+    const recordLiveResult = workflow.jobs.live?.steps?.find(
+      (step) => step.name === "Record receipt-bound live result",
+    );
     expect(Object.keys(workflow.on.workflow_dispatch.inputs).sort()).toEqual([
       "candidate",
       "component",
@@ -122,6 +134,28 @@ describe("OpenShell candidate compatibility contract", () => {
     expect(source).toContain("RESOLUTION_ID: ${{ needs.resolve.outputs.resolution_id }}");
     expect(source).toContain("verify-invocations");
     expect(source).toContain("openshell-gateway-auth-source-contract.test.ts");
+    expect(artifactSafety).toMatchObject({
+      env: {
+        E2E_ARTIFACT_DIR:
+          "${{ github.workspace }}/candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract",
+      },
+      id: "artifact_safety",
+      if: "${{ always() }}",
+      run: 'node --experimental-strip-types --no-warnings controller/tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"',
+    });
+    expect(liveSteps.findIndex((step) => step.id === "live_test")).toBeLessThan(
+      liveSteps.indexOf(recordLiveResult!),
+    );
+    expect(liveSteps.indexOf(recordLiveResult!)).toBeLessThan(liveSteps.indexOf(artifactSafety!));
+    expect(liveSteps.indexOf(artifactSafety!)).toBeLessThan(liveSteps.indexOf(uploadLiveEvidence!));
+    expect(uploadLiveEvidence?.with?.path).toBe(
+      [
+        "candidate-results/live-openshell-gateway-auth-contract.json",
+        "candidate-live-observed.json",
+        "${{ steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path || '' }}",
+        "",
+      ].join("\n"),
+    );
     expect(evidence?.permissions).toEqual({ actions: "read", contents: "read" });
     expect(finalize?.id).toBe("finalize");
     expect(finalize?.env).toMatchObject({

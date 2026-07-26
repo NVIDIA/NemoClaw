@@ -426,15 +426,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("issue-2478: gateway recovery preserves guard chain and avoids crash loop", async ({
-  artifacts,
-  cleanup,
-  environment,
-  gateway,
-  host,
-  runtime,
-  sandbox,
-}) => {
+test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
+  meta: {
+    e2ePhases: [
+      "start the compatible endpoint and confirm host readiness",
+      "onboard the guarded OpenClaw sandbox",
+      "confirm initial gateway and inference health",
+      "exercise repeated gateway crash recovery",
+      "exercise recovery without proxy environment state",
+      "restore proxy state and prepare the stability soak",
+      "measure gateway and inference stability",
+    ],
+  },
+}, async ({ artifacts, cleanup, environment, gateway, host, progress, runtime, sandbox }) => {
   await artifacts.target.declare({
     id: "issue-2478-crash-loop-recovery",
     issues: ["#2478", "#2701"],
@@ -452,6 +456,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
   });
 
   await environment.assertReady(ENVIRONMENT);
+  progress.phase("onboard the guarded OpenClaw sandbox");
   const instance = await onboardWithCompatibleEndpoint(
     host,
     cleanup,
@@ -463,6 +468,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
     await artifacts.writeJson("final-gateway-pid.json", { pid });
   });
 
+  progress.phase("confirm initial gateway and inference health");
   const initialPid = await waitForGatewayPid(gateway, instance, 60_000);
   expect(initialPid, "gateway should be running after onboard").not.toBeNull();
   await gateway.expectGuardChainActive(instance);
@@ -471,6 +477,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
     timeoutMs: 60_000,
   });
 
+  progress.phase("exercise repeated gateway crash recovery");
   let previousPid = initialPid!;
   for (let cycle = 1; cycle <= CRASH_CYCLES; cycle += 1) {
     await killGatewayPid(sandbox, instance.sandboxName, previousPid, `cycle-${cycle}-kill-gateway`);
@@ -486,6 +493,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
     previousPid = nextPid!;
   }
 
+  progress.phase("exercise recovery without proxy environment state");
   await moveProxyEnvToBackup(sandbox, instance.sandboxName);
   await killOpenclawTreeForRecovery(
     sandbox,
@@ -498,6 +506,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
   expect(negativePid, "missing proxy-env warning path should still respawn gateway").not.toBeNull();
   await gateway.expectGuardChainActive(instance);
 
+  progress.phase("restore proxy state and prepare the stability soak");
   await restoreProxyEnvFromBackup(sandbox, instance.sandboxName);
   await killOpenclawTreeForRecovery(
     sandbox,
@@ -513,6 +522,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
     timeoutMs: 60_000,
   });
 
+  progress.phase("measure gateway and inference stability");
   const soak = await sampleGatewayStability(gateway, runtime, instance, SOAK_SECONDS);
   await artifacts.writeJson("soak-summary.json", soak);
   const distinctPids = new Set(soak.samples.filter((pid): pid is number => pid !== null));

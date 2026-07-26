@@ -10,6 +10,9 @@ import type { PulledModelDiscoveryDeps } from "./model-discovery";
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../runner");
+const {
+  redirectInheritedChildStdoutToStderr,
+}: typeof import("../../cli/stdout-guard") = require("../../cli/stdout-guard");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { isNonInteractiveEnv }: typeof import("../../core/non-interactive") =
   require("../../core/non-interactive");
@@ -27,7 +30,13 @@ const {
   probeOllamaModelCapabilities,
   validateOllamaModel,
 } = require("../local");
-const { anyRegistryModelFits, modelFitsAvailableMemory } = require("../ollama-model-registry");
+const {
+  anyRegistryModelFits,
+  describeOllamaModelCapacity,
+  effectiveGpuMemoryMB,
+  modelFitsAvailableMemory,
+} = require("../ollama-model-registry");
+const { formatBytes } = require("./model-size");
 const { isOllamaAuthProxyCommandLine }: typeof import("./process") = require("./process");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
@@ -61,7 +70,8 @@ function sleep(seconds: number): void {
 
 // ── Token persistence ────────────────────────────────────────────
 
-function persistProxyToken(token: string): void {
+function persistProxyToken(token: string, backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`): void {
+  writeLocalAdapterSecretFile(path.join(PROXY_STATE_DIR, "ollama-backend"), backendUrl);
   writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
 }
 
@@ -139,13 +149,15 @@ function isOllamaProxyProcess(pid: number | null | undefined): boolean {
   return isLocalAdapterProcess(pid, isOllamaAuthProxyCommandLine, runCapture);
 }
 
-function spawnOllamaAuthProxy(token: string): number | null {
+function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null {
+  const url = backendUrl || readLocalAdapterTextFile(path.join(PROXY_STATE_DIR, "ollama-backend"));
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
     env: {
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+      ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
     },
     buildEnv: buildSubprocessEnv,
   });
@@ -253,7 +265,7 @@ function printProxyPortConflict(owners: { pids: number[]; descriptions: string[]
 // so poll with backoff instead of the previous single 2s probe (issue #4820).
 const PROXY_START_ATTEMPTS = 12;
 
-function startOllamaAuthProxy(): boolean {
+function startOllamaAuthProxy(backendUrl?: string): boolean {
   const crypto = require("crypto");
   killStaleProxy();
 
@@ -274,7 +286,7 @@ function startOllamaAuthProxy(): boolean {
   // Don't persist yet — wait until provider is confirmed in setupInference.
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
-  const pid = spawnOllamaAuthProxy(proxyToken);
+  const pid = spawnOllamaAuthProxy(proxyToken, backendUrl || `http://127.0.0.1:${OLLAMA_PORT}`);
 
   // Poll for readiness with backoff. Three terminal outcomes:
   //   • proxy alive and listening → success
@@ -311,6 +323,26 @@ function startOllamaAuthProxy(): boolean {
   console.error("  Containers will not be able to reach Ollama without the proxy.");
   console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
   return false;
+}
+
+function noAuthProxy(endpointUrl: string) {
+  const endpoint = new URL(endpointUrl);
+  if (!startOllamaAuthProxy(endpoint.origin)) {
+    restorePersistedOllamaAuthProxy();
+    throw new Error("Could not start the protected loopback route.");
+  }
+  return {
+    baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`,
+    credentialValue: getOllamaProxyToken()!,
+    persist: () => persistProxyToken(getOllamaProxyToken()!, endpoint.origin),
+    restore: restorePersistedOllamaAuthProxy,
+  };
+}
+
+function restorePersistedOllamaAuthProxy(): void {
+  killStaleProxy();
+  ollamaProxyToken = null;
+  ensureOllamaAuthProxy();
 }
 
 /**
@@ -360,11 +392,25 @@ function proxyOwnsPortWithToken(token: string): boolean {
  * after a failed re-onboard (see issue #2553).
  */
 function ensureOllamaAuthProxy(): void {
+  const pid = loadPersistedProxyPid();
+  // startOllamaAuthProxy replaces the live proxy before setupInference confirms
+  // the selected provider and calls persistProxyToken. It cannot persist sooner:
+  // the user may still back out, leaving the previous route as the committed one.
+  // Preserve this in-memory proxy across recovery during that transition. This
+  // exception can go away when provider selection commits the replacement token
+  // and backend before any recovery path can call ensureOllamaAuthProxy.
+  if (
+    ollamaProxyToken &&
+    isOllamaProxyProcess(pid) &&
+    probeProxyToken(ollamaProxyToken) === "accepted"
+  ) {
+    return;
+  }
+
   // Try to load persisted token first — if none, this isn't an Ollama setup.
   const token = loadPersistedProxyToken();
   if (!token) return;
 
-  const pid = loadPersistedProxyPid();
   if (isOllamaProxyProcess(pid)) {
     const tokenStatus = probeProxyToken(token);
     if (tokenStatus === "accepted") {
@@ -491,6 +537,27 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   };
 }
 
+function formatOllamaMemoryMB(memoryMB: number): string {
+  return formatBytes(memoryMB * 1024 * 1024);
+}
+
+function annotateOllamaModelOption(tag: string, gpu: GpuInfo | null): string {
+  const facts = describeOllamaModelCapacity(tag, gpu);
+  const hasAvailableMemory =
+    typeof gpu?.availableMemoryMB === "number" && gpu.availableMemoryMB > 0;
+  const parts: string[] = [];
+  if (typeof facts.downloadSizeBytes === "number") {
+    parts.push(`${formatBytes(facts.downloadSizeBytes)} download`);
+  }
+  if (typeof facts.requiredMemoryMB === "number") {
+    parts.push(`~${formatOllamaMemoryMB(facts.requiredMemoryMB)} VRAM`);
+  }
+  if (facts.fits === false) {
+    parts.push(hasAvailableMemory ? "exceeds available memory" : "exceeds total memory");
+  }
+  return parts.length > 0 ? `  (${parts.join(" · ")})` : "";
+}
+
 async function promptOllamaModel(
   gpu: GpuInfo | null = null,
   promptOptions: { defaultModel?: string | null; excludeModels?: ReadonlySet<string> } = {},
@@ -530,8 +597,16 @@ async function promptOllamaModel(
 
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
+  const effectiveMemoryMB = effectiveGpuMemoryMB(gpu);
+  const hasAvailableMemory =
+    typeof gpu?.availableMemoryMB === "number" && gpu.availableMemoryMB > 0;
+  const capacityLabel = hasAvailableMemory ? "currently available GPU memory" : "total GPU memory";
+  if (typeof effectiveMemoryMB === "number") {
+    const memoryKind = hasAvailableMemory ? "Available" : "Total";
+    console.log(`  ${memoryKind} GPU memory: ${formatOllamaMemoryMB(effectiveMemoryMB)}.`);
+  }
   options.forEach((option: string, index: number) => {
-    console.log(`    ${index + 1}) ${option}`);
+    console.log(`    ${index + 1}) ${option}${annotateOllamaModelOption(option, gpu)}`);
   });
   console.log(`    ${options.length + 1}) Other...`);
   if (!usingInstalled) {
@@ -540,13 +615,15 @@ async function promptOllamaModel(
       console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
     } else {
       console.log(
-        "  No installed Ollama model fits the host's currently available memory; showing starter models instead.",
+        `  No installed Ollama model fits the host's ${capacityLabel}; showing starter models instead.`,
       );
     }
   }
   if (!usingInstalled && !anyRegistryModelFits(gpu)) {
     console.log(
-      "  ! Even the smallest known bootstrap model may not fit currently available GPU memory; free memory or expect the runner to reject the load.",
+      `  ! Even the smallest known bootstrap model may not fit ${capacityLabel}; ${
+        hasAvailableMemory ? "free memory" : "choose a smaller model"
+      } or expect the runner to reject the load.`,
     );
   }
   console.log("");
@@ -613,7 +690,7 @@ function pullOllamaModelViaCli(model: string): boolean {
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
     cwd: ROOT,
     encoding: "utf8",
-    stdio: "inherit",
+    stdio: redirectInheritedChildStdoutToStderr("inherit"),
     timeout: timeoutMs,
     env: buildSubprocessEnv(),
   });
@@ -971,6 +1048,7 @@ export {
   getOllamaPullTimeoutMs,
   isProxyHealthy,
   killStaleProxy,
+  noAuthProxy,
   persistAndProbeOllamaProxy,
   persistProxyToken,
   prepareOllamaModel,

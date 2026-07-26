@@ -25,6 +25,7 @@ import {
   runInferenceSet,
 } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
+import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const onboardProviders: any =
@@ -279,11 +280,33 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     });
   }
 
-  it("keeps the SSRF guard AND adds an actionable hint when the sandbox is already on this provider", async () => {
-    // The reporter's case: a sandbox onboarded on compatible-endpoint against an
-    // internal Hub. `inference set --endpoint-url <internal>` still (correctly)
-    // trips the SSRF guard — but the message now tells the operator they can
-    // omit --endpoint-url to switch only the model.
+  // A DNS-backed HTTPS endpoint (the shape every URL in this suite uses) never
+  // reaches rewriteConfigUrlsWithDnsPinning/ssrfGuard above — it is eligible for
+  // the HTTPS-pin runtime adapter, whose real implementation runs its own SSRF
+  // preflight (assertEndpointResolvesPublic) before registering a route. This
+  // stand-in mirrors that preflight against the same STUB_INTERNAL_HOSTS set.
+  function httpsPinAdapterGuard() {
+    return vi.fn(async (options: EnsureHttpsPinRuntimeAdapterOptions) => {
+      const host = new URL(options.endpointUrl).hostname;
+      return STUB_INTERNAL_HOSTS.has(host)
+        ? Promise.reject(
+            new Error(
+              `URL hostname "${host}" resolves to private/internal address "10.48.203.205". This could expose internal services to the sandbox.`,
+            ),
+          )
+        : Promise.resolve({
+            baseUrl: "http://host.openshell.internal:11438/route/test-route",
+            credentialEnv: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_TOKEN",
+            token: "test-adapter-token",
+            routeId: "test-route",
+          });
+    });
+  }
+
+  it("keeps the SSRF guard when same-endpoint onboarding provenance is missing", async () => {
+    // Legacy registry rows have no machine-checkable endpoint source. Exact
+    // string equality is insufficient because inference set also persists the
+    // current endpoint, so the guarded path remains authoritative.
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
       entry: {
@@ -295,7 +318,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       },
-      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+      ensureHttpsPinRuntimeAdapter: httpsPinAdapterGuard(),
     });
 
     const attempt = runInferenceSet(
@@ -319,10 +342,12 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     expectNoInferenceMutation(deps.calls);
   });
 
-  it("keeps the SSRF guard AND guides on the anthropicCompatible provider family (#6321)", async () => {
-    // The reporter's exact provider family: the same-URL switch on
-    // compatible-anthropic-endpoint (reached via the anthropicCompatible alias)
-    // must still hit the guard and receive the omit-flag guidance.
+  it("accepts the same onboard-provenanced internal endpoint for anthropicCompatible (#6321)", async () => {
+    // The reporter's exact provider family now has a durable trust boundary:
+    // the canonical supplied URL must match the URL whose registry source is
+    // onboarding. DNS re-resolution is not required for that exact identity.
+    const guard = ssrfGuard();
+    const adapterGuard = httpsPinAdapterGuard();
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/anthropic/model-a" } } } },
       entry: {
@@ -331,35 +356,35 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
         provider: "compatible-anthropic-endpoint",
         model: "anthropic/model-a",
         endpointUrl: "https://inference-api.nvidia.com/v1",
+        endpointSource: "onboard",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       },
-      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+      rewriteConfigUrlsWithDnsPinning: guard,
+      ensureHttpsPinRuntimeAdapter: adapterGuard,
     });
-    const attempt = runInferenceSet(
-      {
-        provider: "anthropicCompatible",
-        model: "anthropic/model-b",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        noVerify: true,
-      },
-      deps,
-    );
-    await expect(attempt).rejects.toThrow(/endpoint-url is not allowed:/);
-    await expect(attempt).rejects.toThrow(/already configured for 'compatible-anthropic-endpoint'/);
-    await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
-    expectNoInferenceMutation(deps.calls);
+    await expect(
+      runInferenceSet(
+        {
+          provider: "anthropicCompatible",
+          model: "anthropic/model-b",
+          endpointUrl: "https://inference-api.nvidia.com/v1",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).resolves.toBeTruthy();
+    expect(guard).not.toHaveBeenCalled();
+    expect(adapterGuard).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({ endpointSource: "onboard" }),
+    ]);
   });
 
-  it("re-supplying the SAME onboard-recorded internal endpoint is rejected with omit-guidance (no bypass) (#6321)", async () => {
-    // The recorded `entry.endpointUrl` is NOT trusted to skip the guard: this
-    // same `inference set` action persists endpointUrl, so a string-equality
-    // bypass would be self-authorizing (a value this command wrote could later
-    // authorize an internal-resolving switch). Re-supplying the exact recorded
-    // internal URL therefore still goes through the DNS-pinning SSRF guard and is
-    // rejected — with actionable guidance to omit --endpoint-url for a model-only
-    // switch on the already-established route (see the guided-path test below).
+  it("accepts the same onboard-provenanced internal endpoint after canonicalization (#6321)", async () => {
     const guard = ssrfGuard();
+    const adapterGuard = httpsPinAdapterGuard();
     const deps = createDeps({
       config: {
         agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
@@ -371,33 +396,68 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
         provider: "compatible-endpoint",
         model: "nvidia/model-a",
         endpointUrl: "https://inference-api.nvidia.com/v1",
+        endpointSource: "onboard",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       },
       rewriteConfigUrlsWithDnsPinning: guard,
+      ensureHttpsPinRuntimeAdapter: adapterGuard,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "nvidia/model-b",
+          endpointUrl: "https://inference-api.nvidia.com/v1/",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).resolves.toBeTruthy();
+    expect(guard).not.toHaveBeenCalled();
+    expect(adapterGuard).not.toHaveBeenCalled();
+  });
+
+  it("keeps the SSRF guard for an inference-set-authored endpoint", async () => {
+    const guard = httpsPinAdapterGuard();
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        endpointSource: "inference-set",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      ensureHttpsPinRuntimeAdapter: guard,
     });
 
     const attempt = runInferenceSet(
       {
         provider: "compatible-endpoint",
         model: "nvidia/model-b",
-        // Same internal URL onboarding recorded, even a trailing-slash variant.
-        endpointUrl: "https://inference-api.nvidia.com/v1/",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
         noVerify: true,
       },
       deps,
     );
+    await expect(attempt).rejects.toThrow(/endpoint-url is not allowed:/);
     await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
-    // The guard WAS consulted for the re-supplied URL — no string-equality bypass.
     expect(guard).toHaveBeenCalled();
     expectNoInferenceMutation(deps.calls);
   });
 
   it("still blocks a DIFFERENT internal endpoint even on a same-provider sandbox (no blanket exemption) (#6321)", async () => {
-    // Every supplied `--endpoint-url` goes through the SSRF guard (no bypass),
-    // so a *different* internal URL than the recorded one is blocked. Pinned as a
-    // regression: the fix does not hand the sandbox a way to reach arbitrary
-    // internal services.
+    // Onboarding provenance authorizes only the exact canonical endpoint it
+    // accompanies. A different internal URL still reaches the SSRF guard, so
+    // the fix cannot be used to reach arbitrary internal services.
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
       entry: {
@@ -406,6 +466,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
         provider: "compatible-endpoint",
         model: "nvidia/model-a",
         endpointUrl: "https://inference-api.nvidia.com/v1",
+        endpointSource: "onboard",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       },
@@ -469,7 +530,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
         provider: "nvidia-prod",
         model: "nvidia/model-a",
       },
-      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+      ensureHttpsPinRuntimeAdapter: httpsPinAdapterGuard(),
     });
 
     const attempt = runInferenceSet(

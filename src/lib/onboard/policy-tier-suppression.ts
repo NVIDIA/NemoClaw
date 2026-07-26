@@ -117,7 +117,7 @@ export function emitSuppressedAgentRequiredPresetsNote(
   const suppressed = suppressedAgentRequiredPresets(tierName, agent);
   if (suppressed.length > 0) {
     note(
-      `  Restricted tier suppresses agent-required preset(s): ${suppressed.join(", ")}. Apply later with 'nemoclaw <name> policy-add <preset>' if needed.`,
+      `  Restricted tier suppresses agent-required preset(s): ${suppressed.join(", ")}. Apply later with 'nemoclaw <name> policy add <preset>' if needed.`,
     );
   }
   return new Set(suppressed);

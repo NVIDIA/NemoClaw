@@ -29,6 +29,7 @@ import {
 
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
+const SUPERSEDED_HEAD_SHA = "c".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
 const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
@@ -174,9 +175,10 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
-    version: 3,
+    version: 4,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
+    checkoutRepository: "NVIDIA/NemoClaw",
     workflowSha: WORKFLOW_SHA,
     planHash: plan.planHash,
     correlationId: CORRELATION_ID,
@@ -296,6 +298,7 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
     name: "E2E",
     path: ".github/workflows/e2e.yaml",
     workflow_id: 304268429,
+    run_attempt: 1,
     event: "workflow_dispatch",
     head_sha: gate.workflowSha,
     status: "completed",
@@ -516,7 +519,7 @@ describe("PR E2E controller lifecycle", () => {
       expectedSummary:
         "moved from head `aaaaaaa` on base `bbbbbbb` to head `ccccccc` on base `bbbbbbb`",
     },
-  ])("records an obsolete exact-diff outcome without failing the controller when $label", async ({
+  ])("records an obsolete PR/base SHA outcome without failing the controller when $label", async ({
     currentPull,
     firstFinalizationPull = currentPull,
     writeEvidence,
@@ -644,7 +647,7 @@ describe("PR E2E controller lifecycle", () => {
       expectedRetryReason: undefined,
     },
     {
-      label: "a GitHub-hosted runner disappears with its live step still active",
+      label: "a lost-runner step shape lacks trusted annotation identity",
       status: "completed",
       conclusion: "failure",
       jobs: [
@@ -655,6 +658,8 @@ describe("PR E2E controller lifecycle", () => {
           conclusion: "failure",
           runner_id: 1_020_705_058,
           runner_name: "GitHub Actions 1020705058",
+          runner_group_id: 0,
+          runner_group_name: "Unverified runner group",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -676,8 +681,91 @@ describe("PR E2E controller lifecycle", () => {
       assertCompletionLink: expectSelectedRunLink,
       expectCancellation: false,
       expectedTitle: "rebuild-hermes failed",
-      expectedSummary: "confirmed hosted-runner loss on attempt 1",
-      expectedRetryReason: "child-cancelled",
+      expectedSummary: "concluded `failure`",
+      expectedRetryReason: undefined,
+    },
+    {
+      label: "a terminalized shutdown shape lacks trusted annotation identity",
+      status: "completed",
+      conclusion: "failure",
+      jobs: [
+        {
+          id: 77,
+          name: "Hermes security-posture",
+          status: "completed",
+          conclusion: "failure",
+          runner_id: 1_021_276_374,
+          runner_name: "GitHub Actions 1021276374",
+          runner_group_id: 0,
+          runner_group_name: "Unverified runner group",
+          labels: ["ubuntu-latest"],
+          steps: [
+            { name: "Set up job", status: "completed", conclusion: "success" },
+            {
+              name: "Run security posture live Vitest test",
+              status: "completed",
+              conclusion: "cancelled",
+            },
+            {
+              name: "Upload security posture artifacts",
+              status: "completed",
+              conclusion: "skipped",
+            },
+            {
+              name: "Clean up Docker auth",
+              status: "completed",
+              conclusion: "skipped",
+            },
+            { name: "Complete job", status: "completed", conclusion: "success" },
+          ],
+        },
+      ],
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
+      expectCancellation: false,
+      expectedTitle: "Hermes security-posture failed",
+      expectedSummary: "concluded `failure`",
+      expectedRetryReason: undefined,
+    },
+    {
+      label: "a cancelled step followed by successful cleanup is not runner loss",
+      status: "completed",
+      conclusion: "failure",
+      jobs: [
+        {
+          id: 77,
+          name: "Hermes security-posture",
+          status: "completed",
+          conclusion: "failure",
+          runner_id: 1_021_276_374,
+          runner_name: "GitHub Actions 1021276374",
+          runner_group_id: 0,
+          runner_group_name: "Unverified runner group",
+          labels: ["ubuntu-latest"],
+          steps: [
+            { name: "Set up job", status: "completed", conclusion: "success" },
+            {
+              name: "Run security posture live Vitest test",
+              status: "completed",
+              conclusion: "cancelled",
+            },
+            {
+              name: "Upload security posture artifacts",
+              status: "completed",
+              conclusion: "success",
+            },
+            { name: "Complete job", status: "completed", conclusion: "success" },
+          ],
+        },
+      ],
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
+      expectCancellation: false,
+      expectedTitle: "Hermes security-posture failed",
+      expectedSummary: "concluded `failure`",
+      expectedRetryReason: undefined,
     },
     {
       label: "runner-loss metadata coexists with an ordinary failed child",
@@ -691,6 +779,8 @@ describe("PR E2E controller lifecycle", () => {
           conclusion: "failure",
           runner_id: 1_020_705_058,
           runner_name: "GitHub Actions 1020705058",
+          runner_group_id: 0,
+          runner_group_name: "Unverified runner group",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -708,6 +798,8 @@ describe("PR E2E controller lifecycle", () => {
           conclusion: "failure",
           runner_id: 1_020_705_059,
           runner_name: "GitHub Actions 1020705059",
+          runner_group_id: 0,
+          runner_group_name: "GitHub Actions",
           labels: ["ubuntu-latest"],
           steps: [
             {
@@ -723,8 +815,7 @@ describe("PR E2E controller lifecycle", () => {
       assertCompletionLink: expectSelectedRunLink,
       expectCancellation: false,
       expectedTitle: "Selected E2E did not pass",
-      expectedSummary:
-        "an unclassified failure is never retried; only a confirmed hosted-runner loss is",
+      expectedSummary: "failed step: `Run security posture live test`",
       expectedRetryReason: undefined,
     },
     {
@@ -865,7 +956,8 @@ describe("PR E2E controller lifecycle", () => {
             () => githubResponse(undefined, 202),
           ),
           githubFetchRoute(
-            ({ url, method }) => url.includes("/actions/runs/23/jobs?") && method === "GET",
+            ({ url, method }) =>
+              url.includes("/actions/runs/23/attempts/1/jobs?") && method === "GET",
             () =>
               jobs === null
                 ? githubResponse({ message: "temporary failure" }, 503)
@@ -1154,6 +1246,56 @@ describe("PR E2E controller lifecycle", () => {
     ).toHaveLength(1);
   });
 
+  it("closes the superseded head check before the current revision requests approval", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    const supersededCheck = exactPrGateCheck({
+      head_sha: SUPERSEDED_HEAD_SHA,
+      external_id: prGateExternalId(42, SUPERSEDED_HEAD_SHA, BASE_SHA),
+      output: { title: "E2E reviewer authorization required to run E2E" },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${SUPERSEDED_HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [supersededCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/workflows/e2e.yaml/runs?") && method === "GET",
+            () => githubResponse({ workflow_runs: [] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) =>
+              githubResponse({
+                ...supersededCheck,
+                ...(request.body as Record<string, unknown>),
+              }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(cancelPrGate(42, HEAD_SHA, SUPERSEDED_HEAD_SHA)).resolves.toBe(0);
+    const completion = requests.find((request) => request.url.endsWith("/check-runs/17"));
+    expect(completion?.body).toMatchObject({
+      status: "completed",
+      conclusion: "cancelled",
+      output: {
+        title: "Superseded by PR update",
+      },
+    });
+  });
+
   it("fails before cancellation when an active-status search reaches its result limit", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
@@ -1200,6 +1342,10 @@ describe("PR E2E controller lifecycle", () => {
             () => githubResponse(undefined, 202),
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(exactPrGateCheck({ status: "in_progress" })),
+          ),
+          githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => prGateMutationResponse(request),
           ),
@@ -1211,10 +1357,11 @@ describe("PR E2E controller lifecycle", () => {
     try {
       await abandonPrGate(17, 23);
       expect(requests.map((request) => request.url)).toEqual([
+        "https://api.github.com/repos/NVIDIA/NemoClaw/check-runs/17",
         "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23/cancel",
         "https://api.github.com/repos/NVIDIA/NemoClaw/check-runs/17",
       ]);
-      expect(requests[1]?.body).toMatchObject({
+      expect(requests[2]?.body).toMatchObject({
         status: "completed",
         conclusion: "failure",
         output: {
@@ -1223,6 +1370,37 @@ describe("PR E2E controller lifecycle", () => {
         },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not cancel a child after an abandoned check is already completed", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-abandon-done-"));
+    const outputPath = path.join(directory, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(exactPrGateCheck({ status: "completed", conclusion: "failure" })),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(abandonPrGate(17, 23)).resolves.toBeUndefined();
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.method).toBe("GET");
+      expect(requests.some((request) => request.url.endsWith("/cancel"))).toBe(false);
+      expect(fs.readFileSync(outputPath, "utf8")).toBe("finalized=true\n");
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

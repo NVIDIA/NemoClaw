@@ -27,7 +27,7 @@ const GATEWAY_INFO_NEMOCLAW =
 
 const STATUS_CONNECTED_NEMOCLAW =
   "Server Status\n\nGateway: nemoclaw\nServer: https://127.0.0.1:8080/\nStatus: Connected\n";
-const SANDBOX_GET_NOT_FOUND = "Error:   × Not Found: sandbox not found";
+const SANDBOX_GET_NOT_FOUND = "Error: sandbox my-assistant not found";
 
 interface ScenarioScript {
   // sandbox get responses, one per call (cycled / stops at last)

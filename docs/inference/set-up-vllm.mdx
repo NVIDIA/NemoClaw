@@ -97,6 +97,33 @@ The first run duration depends on image and model size, storage performance, and
 Later runs reuse the cached image and model weights.
 The managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
 
+### Authenticate Hugging Face Downloads
+
+Authentication is optional for public models, but a read token reduces exposure to anonymous HTTP `429` rate limiting during large downloads.
+Create a read token at [Hugging Face Access Tokens](https://huggingface.co/settings/tokens), then export it in your shell before you start or restart onboarding.
+Do not paste the token into NemoClaw prompts or chat.
+
+```bash
+export HF_TOKEN="<your-read-token>"
+$$nemoclaw onboard
+```
+
+NemoClaw reports whether the download is authenticated without displaying the token value.
+It passes the token only to the temporary model downloader (`hf download`) and does not retain it in onboarding state or the long-running vLLM container.
+NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN` as a compatibility alias, but new setup should use `HF_TOKEN`.
+When neither variable is present, public-model downloads continue anonymously.
+
+If `hf download` reports HTTP `429`, export `HF_TOKEN` and resume onboarding.
+The downloader reuses files already stored in `~/.cache/huggingface` instead of starting the model download from an empty cache.
+
+```bash
+export HF_TOKEN="<your-read-token>"
+$$nemoclaw onboard --resume
+```
+
+Authentication reduces anonymous rate-limit exposure but does not guarantee that a download cannot receive HTTP `429`.
+Gated models still require license acceptance and a token before NemoClaw starts image or model downloads.
+
 ### Check Storage Before Downloads
 
 For a cold managed-vLLM install, NemoClaw estimates local storage before the watched image pull starts.
@@ -155,7 +182,22 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 On DGX Station, accepting the installer express prompt sets `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b` and overrides the profile default.
-Pass `--station-deepseek` to select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow.
+To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+<AgentOnly variant="openclaw">
+  NEMOCLAW_AGENT=openclaw \
+</AgentOnly>
+<AgentOnly variant="hermes">
+  NEMOCLAW_AGENT=hermes \
+</AgentOnly>
+<AgentOnly variant="deepagents">
+  NEMOCLAW_AGENT=langchain-deepagents-code \
+</AgentOnly>
+  bash -s -- --station-deepseek
+```
+
 The flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
 Without terminal access, the installer stops before it installs Docker or build dependencies instead of silently continuing with another configuration.
 The registered Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
@@ -163,18 +205,17 @@ NemoClaw intentionally keeps its existing bridge-networked managed-inference top
 The container publishes port `8000` through Docker, so apply the firewall guidance at the top of this page.
 
 <Warning>
-DGX Station remains Deferred.
-On DGX Station GB300, NemoClaw can prepare a clean generic Ubuntu 24.04 ARM64 host for the reviewed Station path.
-By default, stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` requires the supported release marker before NemoClaw validates the factory GPU runtime in place.
-For the explicit temporary metadata override, follow [Prepare DGX Station to Install NemoClaw](../../get-started/prerequisites/dgx-station-preparation).
-On Station GB300 only, a direct GPU sandbox receives the exact read-only BDF directory for each host-discovered NVIDIA display-class PCI device, plus the existing CPU, memory, NUMA topology, and NVIDIA module initialization paths.
-The policy does not grant `/sys`, the PCI parent subtree, or sysfs write access.
-In the physical DGX OS `7.5.0` validation, this exact-BDF policy passed sandbox `cuInit(0)` while reads of `/sys/fs/cgroup/cgroup.controllers` and `/sys/class/net/lo/address` remained denied.
-One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
-DGX Station remains Deferred pending repeat qualification from a clean host and CI coverage.
+Before managed vLLM setup on DGX Station, follow [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation).
+For the current support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
 </Warning>
 
 ## Run Non-Interactive Onboarding
+
+On DGX Spark, non-interactive onboarding can select local vLLM when `NEMOCLAW_PROVIDER` is unset and no provider is recorded for the sandbox.
+It reuses a running local vLLM server first.
+If no server is running, it selects the managed install or start entry.
+If neither local entry is available, it selects NVIDIA Endpoints.
+On DGX Station and other hosts, an unset provider keeps NVIDIA Endpoints as the automatic default.
 
 Use an already-running server.
 
@@ -203,26 +244,48 @@ NEMOCLAW_PROVIDER=install-vllm \
   $$nemoclaw onboard --non-interactive
 ```
 
+For a headless or CI first install on a qualifying DGX Station after host preparation, set the same managed-vLLM recipe in the installer environment.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+<AgentOnly variant="openclaw">
+  NEMOCLAW_AGENT=openclaw \
+</AgentOnly>
+<AgentOnly variant="hermes">
+  NEMOCLAW_AGENT=hermes \
+</AgentOnly>
+<AgentOnly variant="deepagents">
+  NEMOCLAW_AGENT=langchain-deepagents-code \
+</AgentOnly>
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_MODEL=deepseek-v4-flash \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
+  bash
+```
+
 ## Select a Managed Model
 
 Set `NEMOCLAW_VLLM_MODEL=<slug>` before onboarding to select a model without prompting.
 NemoClaw applies the registered `vllm serve` arguments, including the reasoning parser, tool-call parser, and `--max-model-len`.
 
-| Slug | Hugging Face model | Notes |
-|---|---|---|
-| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Supported override. |
-| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark default. |
-| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Generic Linux NVIDIA GPU default. |
-| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station profile default outside express install. |
-| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
-| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated and requires license acceptance. |
+| Slug | Hugging Face model | Supported host profiles | Notes |
+|---|---|---|---|
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Supported override. |
+| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark | DGX Spark default. |
+| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Generic Linux NVIDIA GPU default. |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | DGX Station profile default outside express install. |
+| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Gated and requires license acceptance. |
 
 Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID.
 An unrecognized value fails before image or model downloads and prints the valid slugs.
+A recognized override that does not support the detected host also fails before image or model downloads.
+The error names the selected model and detected host profile.
 
-Gated models require a Hugging Face token.
-Export `HF_TOKEN` before onboarding so NemoClaw can forward it temporarily to the one-shot model downloader.
-The token is not retained in the long-lived managed vLLM container after the explicit download completes.
+Gated models require a Hugging Face token and license acceptance.
+Follow [Authenticate Hugging Face Downloads](#authenticate-hugging-face-downloads) before onboarding so NemoClaw can forward the token temporarily to the one-shot model downloader.
 
 ```bash
 export HF_TOKEN="<your-hf-token>"
@@ -231,7 +294,7 @@ NEMOCLAW_PROVIDER=install-vllm \
   $$nemoclaw onboard --non-interactive
 ```
 
-NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN`.
+NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN` as a compatibility alias.
 The host checks the token before `docker pull`, so a missing or empty token stops onboarding before bandwidth is spent on a request that would return `401`.
 
 ## Add Managed Serve Arguments

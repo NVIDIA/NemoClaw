@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import * as policies from "../../policy";
+import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   buildMcpBridgePolicyName,
@@ -12,8 +13,23 @@ import {
   buildMcpBridgeProviderName,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
+  MCP_BRIDGE_POLICY_SOURCE,
 } from "./mcp-bridge";
-import { applyGeneratedPolicy } from "./mcp-bridge-policy";
+import { applyGeneratedPolicy, assertGeneratedPolicyExactReadOnly } from "./mcp-bridge-policy";
+
+function githubBridgeEntry(overrides: Partial<McpBridgeEntry> = {}): McpBridgeEntry {
+  return {
+    server: "github",
+    agent: "openclaw",
+    adapter: "mcporter",
+    url: "https://api.githubcopilot.com/mcp",
+    env: ["GITHUB_MCP_TOKEN"],
+    providerName: "alpha-mcp-github-0123456789abcdef",
+    policyName: "mcp-bridge-github",
+    addedAt: "2026-06-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 describe("MCP OpenShell policy", () => {
   afterEach(() => {
@@ -134,6 +150,143 @@ describe("MCP OpenShell policy", () => {
       nonFatal: true,
       skipRegistryUpdate: true,
     });
+  });
+
+  it("accepts only the canonical generated policy for the exact bridge and DNS pins", () => {
+    const entry = githubBridgeEntry();
+    const pins = ["8.8.8.8", "2606:4700:4700::1111"];
+    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", pins);
+    const registration = {
+      name: entry.policyName,
+      content,
+      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+    };
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([registration]);
+    const gatewayState = vi
+      .spyOn(policies, "getPresetContentGatewayState")
+      .mockReturnValue("match");
+
+    expect(assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", pins)).toEqual(
+      registration,
+    );
+    expect(gatewayState).toHaveBeenCalledWith("alpha", content);
+  });
+
+  it.each([
+    "owned-first",
+    "unowned-first",
+  ])("rejects duplicate same-name ownership records regardless of order (%s)", (order) => {
+    const entry = githubBridgeEntry();
+    const pins = ["8.8.8.8"];
+    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", pins);
+    const owned = {
+      name: entry.policyName,
+      content,
+      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+    };
+    const unowned = {
+      name: entry.policyName,
+      content: `${content}\n# conflicting duplicate`,
+      sourcePath: "/tmp/operator-policy.yaml",
+    };
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue(
+      order === "owned-first" ? [owned, unowned] : [unowned, owned],
+    );
+    const gatewayState = vi.spyOn(policies, "getPresetContentGatewayState");
+
+    expect(() => assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", pins)).toThrow(
+      /ownership is missing or ambiguous/,
+    );
+    expect(gatewayState).not.toHaveBeenCalled();
+  });
+
+  it("rejects individually valid policy records that disagree with their bridge definition", () => {
+    const entry = githubBridgeEntry();
+    const pins = ["8.8.8.8"];
+    const canonical = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", pins);
+    const wrongKeyDocument = YAML.parse(canonical) as {
+      network_policies: Record<string, { name: string }>;
+    };
+    wrongKeyDocument.network_policies.mcp_bridge_other = {
+      ...wrongKeyDocument.network_policies.mcp_bridge_github,
+      name: "mcp_bridge_other",
+    };
+    delete wrongKeyDocument.network_policies.mcp_bridge_github;
+
+    const mismatches: Array<{
+      label: string;
+      candidateEntry?: McpBridgeEntry;
+      candidateName?: string;
+      content: string;
+    }> = [
+      {
+        label: "host",
+        content: buildMcpBridgePolicyYaml(
+          entry.server,
+          "https://mcp.example.test/mcp",
+          "mcporter",
+          pins,
+        ),
+      },
+      {
+        label: "path",
+        content: buildMcpBridgePolicyYaml(
+          entry.server,
+          "https://api.githubcopilot.com/other",
+          "mcporter",
+          pins,
+        ),
+      },
+      {
+        label: "adapter",
+        content: buildMcpBridgePolicyYaml(entry.server, entry.url, "hermes-config", pins),
+      },
+      { label: "network policy key", content: YAML.stringify(wrongKeyDocument) },
+      {
+        label: "resolved address pins",
+        content: buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", ["1.1.1.1"]),
+      },
+      {
+        label: "policy name",
+        candidateEntry: githubBridgeEntry({ policyName: "mcp-bridge-other" }),
+        candidateName: "mcp-bridge-other",
+        content: canonical,
+      },
+    ];
+
+    for (const mismatch of mismatches) {
+      vi.restoreAllMocks();
+      const candidateEntry = mismatch.candidateEntry ?? entry;
+      vi.spyOn(registry, "getCustomPolicies").mockReturnValue([
+        {
+          name: mismatch.candidateName ?? candidateEntry.policyName,
+          content: mismatch.content,
+          sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+        },
+      ]);
+      const gatewayState = vi.spyOn(policies, "getPresetContentGatewayState");
+
+      expect(
+        () => assertGeneratedPolicyExactReadOnly("alpha", candidateEntry, "mcporter", pins),
+        mismatch.label,
+      ).toThrow(/not canonical for its recorded bridge definition/);
+      expect(gatewayState, mismatch.label).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not expose malformed persisted URLs in canonical ownership errors", () => {
+    const secret = `nvapi-${"a".repeat(32)}`;
+    const entry = githubBridgeEntry({ url: `not-a-url-${secret}` });
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
+
+    let message = "";
+    try {
+      assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", ["8.8.8.8"]);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("not canonical for its recorded bridge definition");
+    expect(message).not.toContain(secret);
   });
 
   it("pins the current OpenShell main client-to-server MCP method profile", () => {

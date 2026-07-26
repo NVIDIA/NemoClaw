@@ -24,6 +24,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/gateway-guard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-dashboard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-workflow-boundary.test.ts",
+  "test/hosted-runner-recovery-workflow.test.ts",
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
@@ -40,6 +41,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/spark-install-workflow-boundary.test.ts",
+  "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
   "test/e2e/support/tunnel-lifecycle-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
   "test/e2e/support/workflow-plan.test.ts",
@@ -58,6 +60,9 @@ const OPAQUE_INPUTS = [
   ".github/workflows/e2e.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/pr-e2e-gate.yaml",
+  ".github/workflows/hosted-runner-recovery.yaml",
+  ".github/workflows/wsl-e2e.yaml",
+  ".github/workflows/macos-e2e.yaml",
   ".github/workflows/platform-vitest-main.yaml",
   "ci/platform-vitest-macos-requirements.lock",
 ] as const;
@@ -111,7 +116,17 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/pr-e2e-gate-workflow.test.ts",
       "test/pr-e2e-required.test.ts",
     ]);
+    expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
+      "test/hosted-runner-recovery-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/wsl-e2e.yaml")).toEqual([
+      "test/hosted-runner-recovery-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/macos-e2e.yaml")).toEqual([
+      "test/hosted-runner-recovery-workflow.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
+      "test/hosted-runner-recovery-workflow.test.ts",
       "test/platform-vitest-main-workflow.test.ts",
     ]);
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([

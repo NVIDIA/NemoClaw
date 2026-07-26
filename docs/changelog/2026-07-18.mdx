@@ -9,7 +9,7 @@ NemoClaw v0.0.88 strengthens DGX Station host preparation, makes inference healt
 
 - DGX Station preparation preserves stopped containers whose restart policy is `no` and stops if the container inventory changes or a workload becomes active.
   It provides RDMA-aware remediation when `openibd.service` fails and can restore the packaged CDI refresh lifecycle on the exact June 2026 NVIDIA AI Developer Tools factory image without generating CDI directly or restarting Docker or containerd.
-  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/prerequisites/dgx-station-preparation), [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation), [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Sandbox `status` and `doctor` now distinguish an inference route that is `reachable` from an upstream model that is `healthy` by using bounded authenticated model-invocation probes for supported remote providers.
   Gateway-based agents also report `Serving process: not checked` so a fresh sandbox exec is not presented as proof that the long-running gateway process has equivalent inference access.
   For more information, refer to [Verify the Sandbox Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).

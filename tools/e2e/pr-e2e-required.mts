@@ -27,10 +27,20 @@ const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-required";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const AUTHORIZATION_TITLES = new Set(["Maintainer approval required to skip credentialed E2E"]);
 const MAX_LOG_URLS = 20;
+const MAX_GITHUB_READ_ATTEMPTS = 3;
+const GITHUB_HTTP_ERROR_PATTERN = /^GitHub API [^\r\n]* failed: ([1-5]\d{2})\b/u;
+const RETRYABLE_HTTP_PATTERN = /^GitHub API [^\r\n]* failed: (?:429|5\d{2})\b/u;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
+type GithubReadOperation = "check runs" | "coordination checks" | "exact PR identity";
+
+export type RetryableGithubReadOptions = {
+  baseDelayMs?: number;
+  maxAttempts?: number;
+  random?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
+};
 
 export type CoordinationCheckRun = {
   id: number;
@@ -146,7 +156,7 @@ function validatePullRequest(value: unknown, identity: RequiredGateIdentity): Pu
     !isObjectRecord(value.base) ||
     value.base.sha !== identity.baseSha
   ) {
-    throw new Error("PR no longer matches the exact head and base revision observed by this job");
+    throw new Error("PR is not the expected open PR with the observed PR SHA and base SHA");
   }
   return value as PullRequest;
 }
@@ -160,6 +170,74 @@ async function requireExactPullRequest(identity: RequiredGateIdentity): Promise<
     ),
     identity,
   );
+}
+
+export function isRetryableGithubReadError(error: unknown): boolean {
+  return (
+    error instanceof TypeError ||
+    (error instanceof Error && RETRYABLE_HTTP_PATTERN.test(error.message))
+  );
+}
+
+export async function retryableGithubRead<T>(
+  operation: GithubReadOperation,
+  read: () => Promise<T>,
+  identity: RequiredGateIdentity | null,
+  options: RetryableGithubReadOptions = {},
+): Promise<T> {
+  const maxAttempts = options.maxAttempts ?? MAX_GITHUB_READ_ATTEMPTS;
+  const baseDelayMs = options.baseDelayMs ?? 1000;
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5) {
+    throw new Error("GitHub read retry attempts must be an integer from 1 through 5");
+  }
+  if (!Number.isSafeInteger(baseDelayMs) || baseDelayMs < 1 || baseDelayMs > 4000) {
+    throw new Error("GitHub read retry delay must be an integer from 1 through 4000");
+  }
+  const random = options.random ?? Math.random;
+  const sleep =
+    options.sleep ??
+    ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+
+  let firstError: Error | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await read();
+    } catch (error: unknown) {
+      const retryable = isRetryableGithubReadError(error);
+      if (!retryable || attempt === maxAttempts) {
+        const errorClass =
+          error instanceof TypeError
+            ? "network"
+            : error instanceof Error && GITHUB_HTTP_ERROR_PATTERN.test(error.message)
+              ? "http"
+              : null;
+        if (errorClass) {
+          throw new Error(
+            `E2E / PR Gate [${operation}] attempt ${attempt}/${maxAttempts}: ${errorClass}`,
+            { cause: retryable ? (firstError ?? error) : error },
+          );
+        }
+        throw error;
+      }
+      if (error instanceof Error) firstError ??= error;
+      const errorClass = error instanceof TypeError ? "network" : "http";
+      console.log(`E2E / PR Gate [${operation}] attempt ${attempt}/${maxAttempts}: ${errorClass}`);
+
+      const jitter = 0.5 + random() * 0.5;
+      const delay = Math.min(baseDelayMs * 2 ** (attempt - 1) * jitter, 4000);
+      await sleep(delay);
+
+      if (identity) {
+        await retryableGithubRead(
+          "exact PR identity",
+          () => requireExactPullRequest(identity),
+          null,
+          options,
+        );
+      }
+    }
+  }
+  throw new Error("GitHub read retry loop ended unexpectedly");
 }
 
 function hasRetryableFailureMarker(check: CoordinationCheckRun): boolean {
@@ -188,16 +266,19 @@ function currentCoordinationCheck(
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => left.id - right.id);
   if (new Set(ordered.map((check) => check.id)).size !== ordered.length) {
-    throw new Error("Duplicate exact-diff coordination check IDs exist");
+    throw new Error("Duplicate coordination check IDs exist for one PR/base SHA pair");
   }
   const active = ordered.filter((check) => check.status !== "completed");
-  if (active.length > 1) throw new Error("Multiple active exact-diff coordination checks exist");
+  if (active.length > 1)
+    throw new Error("Multiple active coordination checks exist for one PR/base SHA pair");
   if (ordered.slice(0, -1).some((check) => !hasRetryableFailureMarker(check))) {
-    throw new Error("Exact-diff coordination history contains a non-retryable older check");
+    throw new Error(
+      "Coordination history contains a non-retryable older check for one PR/base SHA pair",
+    );
   }
   const current = ordered.at(-1)!;
   if (active[0] && active[0].id !== current.id) {
-    throw new Error("Exact-diff coordination history contains an older active check");
+    throw new Error("Coordination history for one PR/base SHA pair contains an older active check");
   }
   return current;
 }
@@ -207,10 +288,15 @@ async function matchingChecks(
   name: string,
 ): Promise<CoordinationCheckRun[]> {
   const response = validateCheckRunsResponse(
-    await githubApi<unknown>(
-      `repos/${identity.repository}/commits/${identity.headSha}/check-runs?check_name=${encodeURIComponent(name)}&filter=all&per_page=100`,
-      identity.token,
-      { userAgent: USER_AGENT },
+    await retryableGithubRead(
+      "check runs",
+      () =>
+        githubApi<unknown>(
+          `repos/${identity.repository}/commits/${identity.headSha}/check-runs?check_name=${encodeURIComponent(name)}&filter=all&per_page=100`,
+          identity.token,
+          { userAgent: USER_AGENT },
+        ),
+      identity,
     ),
   );
   const externalId = coordinationExternalId(identity.prNumber, identity.headSha, identity.baseSha);
@@ -221,7 +307,9 @@ async function matchingChecks(
       check.external_id === externalId,
   );
   if (claimed.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
-    throw new Error("The exact-diff coordination identity was claimed by an unexpected GitHub App");
+    throw new Error(
+      "The PR/base SHA coordination identity was claimed by an unexpected GitHub App",
+    );
   }
   const current = currentCoordinationCheck(
     claimed.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID),
@@ -234,13 +322,15 @@ export async function findCoordinationCheck(
 ): Promise<CoordinationCheckRun | undefined> {
   assertIdentity(identity);
   const current = await matchingChecks(identity, COORDINATION_CHECK_NAME);
-  if (current.length > 1) throw new Error("Multiple exact-diff coordination checks exist");
+  if (current.length > 1)
+    throw new Error("Multiple coordination checks exist for one PR/base SHA pair");
   if (current[0]) return current[0];
 
   // Migration bridge for PRs whose base-branch controller still publishes the
   // old name. Remove after this workflow is on main and open PRs resynchronize.
   const legacy = await matchingChecks(identity, LEGACY_COORDINATION_CHECK_NAME);
-  if (legacy.length > 1) throw new Error("Multiple legacy exact-diff coordination checks exist");
+  if (legacy.length > 1)
+    throw new Error("Multiple legacy coordination checks exist for one PR/base SHA pair");
   return legacy[0];
 }
 
@@ -314,10 +404,7 @@ export function classifyCoordinationCheck(
   if (check.status !== "completed") {
     return { state: "waiting", description: title, ...links };
   }
-  if (
-    check.conclusion === "failure" &&
-    (AUTHORIZATION_TITLES.has(title) || hasRetryableFailureMarker(check))
-  ) {
+  if (check.conclusion === "failure" && hasRetryableFailureMarker(check)) {
     return { state: "waiting", description: title, ...links };
   }
   if (
@@ -362,14 +449,21 @@ export async function waitForRequiredGate(
   let lastDescription = "";
   let lastLogUrls: string[] | undefined;
 
-  await requireExactPullRequest(identity);
+  await retryableGithubRead("exact PR identity", () => requireExactPullRequest(identity), null, {
+    sleep,
+  });
   while (now() < deadline) {
     const classified = classifyCoordinationCheck(
       await findCoordinationCheck(identity),
       identity.repository,
     );
     if (classified.state === "complete") {
-      await requireExactPullRequest(identity);
+      await retryableGithubRead(
+        "exact PR identity",
+        () => requireExactPullRequest(identity),
+        null,
+        { sleep },
+      );
       return classified.result;
     }
     const message = `${classified.description}${logUrlSuffix(classified.logUrls)}`;
@@ -414,7 +508,7 @@ async function main(): Promise<void> {
     baseSha: requiredArgument(args.base, "base"),
   };
   const timeoutSeconds = parsePositiveInteger(args.timeoutSeconds, "timeout-seconds");
-  if (timeoutSeconds > 10_200) throw new Error("--timeout-seconds must not exceed 10200");
+  if (timeoutSeconds > 21_480) throw new Error("--timeout-seconds must not exceed 21480");
   const result = await waitForRequiredGate(identity, { timeoutMs: timeoutSeconds * 1000 });
   appendJobSummary();
   console.log(`E2E / PR Gate completed: ${formatRequiredGateOutcome(result)}`);

@@ -35,7 +35,8 @@ Run `$$nemoclaw onboard` to register the provider, then retry the switch.
 <AgentOnly variant="openclaw,hermes">
 
 Pass the target provider and model together.
-Pass `--sandbox <name>` when you do not want to use the default sandbox.
+Target a non-default sandbox by name.
+The `shields` commands take a positional name. `inference set` takes `--sandbox <name>`.
 
 ```bash
 $$nemoclaw <name> shields down
@@ -61,9 +62,9 @@ This flag does not bypass shared-gateway compatibility checks.
 
 </AgentOnly>
 
-## Recreate a Deep Agents Sandbox
-
 <AgentOnly variant="deepagents">
+
+## Recreate a Deep Agents Sandbox
 
 Deep Agents uses fresh sandbox recreation for provider changes.
 The recreation validates the provider and rewrites `/sandbox/.deepagents/config.toml` with the OpenShell route.
@@ -96,6 +97,11 @@ An explicit different API family is rejected for that route.
 
 To point a sandbox at a different custom endpoint, re-run onboarding with the new endpoint.
 A rebuild reuses the recorded endpoint and cannot change it.
+
+If updating an existing compatible provider fails after OpenShell selects the new route, NemoClaw attempts to restore the previously recorded provider and model.
+The command still exits nonzero because the provider binding might be partially updated.
+Retry the switch or re-run onboarding to reconcile the provider.
+If NemoClaw reports that it could not restore the previous selection, do not use the route until you re-run onboarding.
 
 </AgentOnly>
 

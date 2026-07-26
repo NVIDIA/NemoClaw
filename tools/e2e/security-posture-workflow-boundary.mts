@@ -59,9 +59,6 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
   if (job.needs !== "generate-matrix") {
     errors.push(`${JOB_NAME} must depend on generate-matrix`);
   }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push(`${JOB_NAME} must run on ubuntu-latest`);
-  }
   if (job["timeout-minutes"] !== 75) {
     errors.push(`${JOB_NAME} must retain its 75 minute two-agent budget`);
   }

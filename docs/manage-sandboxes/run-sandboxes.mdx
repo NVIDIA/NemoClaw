@@ -118,8 +118,10 @@ Stop a sandbox's container to free CPU, memory, and GPU resources without losing
 $$nemoclaw <sandbox-name> stop
 ```
 
-Workspace files, credentials, network policies, and the registry entry are preserved; only the container stops running.
+Workspace files, credentials, network policies, and the registry entry are preserved.
+The container stops running.
 <AgentOnly variant="openclaw,hermes">
+After the container stops, NemoClaw attempts to stop that sandbox's host dashboard forward.
 The shared host gateway and tunnel services keep serving other sandboxes.
 </AgentOnly>
 

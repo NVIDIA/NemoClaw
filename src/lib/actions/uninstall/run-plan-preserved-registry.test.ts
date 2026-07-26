@@ -7,7 +7,12 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { type RunResult, runUninstallPlan, type UninstallRunDeps } from "./run-plan";
+import {
+  type RunResult,
+  type UninstallRunDeps,
+  type UninstallRunOptions,
+  runUninstallPlan as runUninstallPlanBase,
+} from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -15,6 +20,28 @@ function ok(stdout = ""): RunResult {
 
 function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
+}
+
+function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return runUninstallPlanBase(options, {
+    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: gatewayPort === 8080 ? "packaged-service" : "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+    ...deps,
+  });
+}
+
+function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
+  return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+    ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+    : ok();
 }
 
 function setupStateDir(): { tmpHome: string; stateDir: string } {
@@ -39,7 +66,7 @@ function preserveCaseDeps(
   opts: { envOverrides?: Record<string, string> } = {},
 ): UninstallRunDeps {
   return {
-    commandExists: () => false,
+    commandExists: (command) => command === "openshell",
     env: {
       HOME: tmpHome,
       NEMOCLAW_NON_INTERACTIVE: "",
@@ -50,7 +77,7 @@ function preserveCaseDeps(
     existsSync: (target: string) => target.startsWith(tmpHome) && fs.existsSync(target),
     isTty: false,
     log: (line) => logs.push(line),
-    run: vi.fn(() => ok()),
+    run: vi.fn(okWithKnownGatewayList),
     runDocker: () => ok(""),
   };
 }
@@ -74,7 +101,13 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) =>
-          command === "openshell" ? notFound() : args[0] === "-c" ? ok("/fake/bin/tool\n") : ok(),
+          command === "openshell" && args[0] === "gateway" && args[1] === "list"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : command === "openshell"
+              ? notFound()
+              : args[0] === "-c"
+                ? ok("/fake/bin/tool\n")
+                : ok(),
         runDocker: () => ok(""),
       },
     );

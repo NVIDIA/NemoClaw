@@ -19,6 +19,7 @@ import {
   type HostedInferenceSecrets,
   requireHostedInferenceConfig,
 } from "./hosted-inference.ts";
+import type { TestProgress, TestProgressCapability } from "./progress.ts";
 
 /**
  * Gives E2E suites one inference contract across three execution modes.
@@ -32,7 +33,7 @@ import {
  * Tests normally consume the `inference` fixture from `e2e-test.ts`, pass
  * `inference.env()` to install/onboard commands, use its model and provider
  * fields in assertions, and rely on fixture cleanup. When migrating
- * `launchable-smoke`, `issue-4434-tui-unreachable-inference`,
+ * `bootstrap-install-smoke`, `issue-4434-tui-unreachable-inference`,
  * `model-router-provider-routed-inference`, or `agent-turn-latency`, replace
  * bespoke inference env/probes with that lifecycle, preserve the suite-specific
  * sandbox assertions, scope `inference_mode` to the consuming workflow job,
@@ -63,6 +64,7 @@ export interface E2EInferenceAdapterOptions {
   readonly artifacts: ArtifactSink;
   readonly env?: NodeJS.ProcessEnv;
   readonly provider: Pick<ProviderClient, "requestJson">;
+  readonly progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   readonly secrets: HostedInferenceSecrets;
 }
 
@@ -374,6 +376,7 @@ export async function createE2EInferenceAdapter(
       host: "0.0.0.0",
       model,
       publicHost: SANDBOX_HOST_ALIAS,
+      progress: options.progress,
       requireAuth: true,
       responseText: "PONG",
     });

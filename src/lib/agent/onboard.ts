@@ -16,7 +16,14 @@ import { redact, run } from "../runner";
 import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
-import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
+import {
+  type AgentDefinition,
+  isTerminalAgent,
+  loadAgent,
+  requireAgentPolicyAdditionsPath,
+  resolveAgentName,
+} from "./defs";
+import { waitForAgentGatewayReady } from "./gateway-readiness";
 import { runAgentSmokeCommands } from "./terminal-smoke";
 import { enforceTerminalAgentVersion } from "./terminal-version-enforcement";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
@@ -35,6 +42,8 @@ export interface OnboardContext {
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+  now?: () => number;
+  sleepSeconds?: (seconds: number) => void;
 }
 
 // Keep these compatibility exports as ordinary writable functions. Focused
@@ -44,8 +53,49 @@ export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
   return baseImage.getAgentSandboxBaseImageEnvVar(agentName);
 }
 
-export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string): string {
-  return baseImage.pinAgentSandboxBaseImageRef(agentName, imageRef);
+export function pinAgentSandboxBaseImageRef(
+  agentName: string,
+  imageRef: string,
+  options: { forceLocal?: boolean; temporary?: boolean } = {},
+): string {
+  return baseImage.pinAgentSandboxBaseImageRef(agentName, imageRef, options);
+}
+
+export function bindLocalAgentBaseImageToPinnedProvenance(
+  agent: AgentDefinition,
+  imageRef: string,
+): ReturnType<typeof baseImage.bindLocalAgentBaseImageToPinnedProvenance> {
+  return baseImage.bindLocalAgentBaseImageToPinnedProvenance(agent, imageRef);
+}
+
+export function bindLocalAgentBaseImageHandoffToResolution(
+  agent: AgentDefinition,
+  sourceRef: string,
+  handoffRef: string,
+  metadata: import("../sandbox-base-image").SandboxBaseImageResolutionMetadata,
+  reusedResolutionHint: import("../sandbox-base-image").SandboxBaseImageResolutionMetadata,
+): ReturnType<typeof baseImage.bindLocalAgentBaseImageHandoffToResolution> {
+  return baseImage.bindLocalAgentBaseImageHandoffToResolution(
+    agent,
+    sourceRef,
+    handoffRef,
+    metadata,
+    reusedResolutionHint,
+  );
+}
+
+export function pinTrustedAgentBaseImageOverrideForOperation(
+  overrideEnvVar: string,
+  override: import("../sandbox-base-image").TrustedLocalBaseImageOverride,
+): () => void {
+  return baseImage.pinTrustedAgentBaseImageOverrideForOperation(overrideEnvVar, override);
+}
+
+export function pinTrustedAgentRemoteBaseImageOverrideForOperation(
+  overrideEnvVar: string,
+  override: baseImage.TrustedRemoteBaseImageOverride,
+): () => void {
+  return baseImage.pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, override);
 }
 
 export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
@@ -86,7 +136,8 @@ export function resolveAgent({
  * Get the agent-specific network policy path, or null to use the default.
  */
 export function getAgentPolicyPath(agent: AgentDefinition): string | null {
-  return agent.policyAdditionsPath || null;
+  if (agent.name === "openclaw") return null;
+  return requireAgentPolicyAdditionsPath(agent);
 }
 
 /**
@@ -329,29 +380,27 @@ export async function handleAgentSetup(
   const probe = agent.healthProbe;
   if (probe?.url) {
     const timeoutSecs = probe.timeout_seconds || 60;
-    const pollInterval = 3;
-    const maxAttempts = Math.ceil(timeoutSecs / pollInterval);
     console.log(`  Waiting for ${agent.displayName} gateway (up to ${timeoutSecs}s)...`);
-    let healthy = false;
-    for (let i = 0; i < maxAttempts; i++) {
-      const result = runCaptureOpenshell(
-        [
-          "sandbox",
-          "exec",
-          "-n",
-          sandboxName,
-          "--",
-          "curl",
-          ...buildValidatedCurlCommandArgs(["-sf", "--max-time", "3", probe.url]),
-        ],
-        { ignoreError: true },
-      );
-      if (isHealthProbeOk(result)) {
-        healthy = true;
-        break;
-      }
-      sleep(pollInterval);
-    }
+    const healthy = waitForAgentGatewayReady({
+      timeoutSeconds: timeoutSecs,
+      now: ctx.now,
+      sleepSeconds: ctx.sleepSeconds ?? sleep,
+      probe: () => {
+        const result = runCaptureOpenshell(
+          [
+            "sandbox",
+            "exec",
+            "-n",
+            sandboxName,
+            "--",
+            "curl",
+            ...buildValidatedCurlCommandArgs(["-sf", "--max-time", "3", probe.url]),
+          ],
+          { ignoreError: true },
+        );
+        return isHealthProbeOk(result);
+      },
+    });
     if (healthy) {
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {

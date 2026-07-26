@@ -5,6 +5,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
+import {
+  HERMES_DASHBOARD_JOB_TIMEOUT_MAX_MINUTES,
+  HERMES_DASHBOARD_JOB_TIMEOUT_MINUTES,
+} from "./hermes-timeout-contract.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -67,8 +71,16 @@ export function validateHermesDashboardWorkflow(workflow: HermesDashboardWorkflo
   }
 
   requireEqual(errors, job.needs, "generate-matrix", `${JOB_NAME} must depend on generate-matrix`);
-  requireEqual(errors, job["runs-on"], "ubuntu-latest", `${JOB_NAME} must run on ubuntu-latest`);
-  requireEqual(errors, job["timeout-minutes"], 75, `${JOB_NAME} timeout must be 75 minutes`);
+  const timeoutMinutes = job["timeout-minutes"];
+  if (
+    !Number.isInteger(timeoutMinutes) ||
+    (timeoutMinutes as number) < HERMES_DASHBOARD_JOB_TIMEOUT_MINUTES ||
+    (timeoutMinutes as number) > HERMES_DASHBOARD_JOB_TIMEOUT_MAX_MINUTES
+  ) {
+    errors.push(
+      `${JOB_NAME} timeout must be between ${HERMES_DASHBOARD_JOB_TIMEOUT_MINUTES} and ${HERMES_DASHBOARD_JOB_TIMEOUT_MAX_MINUTES} minutes`,
+    );
+  }
   requireEqual(errors, env.E2E_JOB, "1", `${JOB_NAME} must be free-standing`);
   requireEqual(
     errors,

@@ -6,6 +6,7 @@ import {
   configureDcodeSession,
   makeDcodeSandboxEntry,
 } from "../../../../test/helpers/rebuild-dcode-flow-support";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   resetRebuildFlowTestEnvironment,
@@ -73,7 +74,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     const warningProbeOrder =
       harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0];
     const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
-      ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
+      ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete -g nemoclaw alpha",
     );
     const deleteOrder = harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall];
     const onboardOrder = harness.onboardSpy.mock.invocationCallOrder[0];
@@ -119,10 +120,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       [detached],
       [scrubbed],
     );
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
   });

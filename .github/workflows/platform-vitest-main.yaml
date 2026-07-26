@@ -42,7 +42,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
@@ -79,7 +79,11 @@ jobs:
 
   macos-vitest:
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -88,13 +92,13 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
 
       - name: Setup Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
           cache: pip
@@ -130,6 +134,11 @@ jobs:
           stat --version | head -n 1
           awk --version | head -n 1
 
+      - name: Install pinned OpenShell
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
       - name: Install dependencies
         run: |
           npm ci --ignore-scripts
@@ -143,11 +152,15 @@ jobs:
           npm run build
 
       - name: Run full Vitest suite on macOS
-        run: npx vitest run --testTimeout 60000
+        run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
 
   wsl-vitest:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       WSL_DISTRO: Ubuntu
       WSL_TEST_USER: nemoclaw-ci
@@ -305,7 +318,7 @@ jobs:
           cd '$env:WSL_WORKDIR'
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
-          npx vitest run --testTimeout 60000
+          npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
           "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
@@ -313,6 +326,7 @@ jobs:
           wsl -d $env:WSL_DISTRO --user $env:WSL_TEST_USER -- bash -l $wslTmp
 
       - name: Run root-required Vitest contracts in WSL
+        if: ${{ matrix.shard == 1 }}
         shell: powershell
         run: |
           $script = @"

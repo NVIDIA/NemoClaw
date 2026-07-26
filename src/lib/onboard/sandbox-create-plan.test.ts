@@ -169,6 +169,16 @@ describe("resolveSandboxCreateIntent", () => {
       extraPlaceholderKeys: ["TELEGRAM_BOT_TOKEN_AGENT_A"],
       agentName: "hermes",
       policyTier: "balanced",
+      baselineExclusions: [
+        {
+          version: 1 as const,
+          agent: "hermes",
+          key: "nous_research",
+          digest: "abc",
+          acknowledgedAt: "2026-07-19T00:00:00.000Z",
+          appliedAgentVersion: null,
+        },
+      ],
     };
 
     const first = resolveSandboxCreateIntent(input);
@@ -193,6 +203,16 @@ describe("resolveSandboxCreateIntent", () => {
         additionalPresets: ["github"],
         agentName: "hermes",
         policyTier: "balanced",
+        baselineExclusions: [
+          {
+            version: 1,
+            agent: "hermes",
+            key: "nous_research",
+            digest: "abc",
+            acknowledgedAt: "2026-07-19T00:00:00.000Z",
+            appliedAgentVersion: null,
+          },
+        ],
       },
     });
     expect(JSON.parse(JSON.stringify(first))).toEqual(first);
@@ -457,6 +477,7 @@ describe("prepareSandboxCreatePlan", () => {
         additionalPresets: ["github"],
         agentName: "langchain-deepagents-code",
         policyTier: "restricted",
+        baselineExclusions: [],
       },
     );
     expect(result.policyTier).toBe("restricted");

@@ -92,6 +92,9 @@ jobs:
 
       - name: Audit reviewed production npm graphs
         uses: ./.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/reviewed-npm-audit
 
   real-openclaw-dist-harness:
     runs-on: ubuntu-latest
@@ -109,7 +112,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
@@ -122,6 +125,11 @@ jobs:
           NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
         run: npx vitest run --project integration test/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
 
+      - name: Verify reviewed Jaeger header handling
+        env:
+          NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS: "1"
+        run: npx vitest run --project integration test/openclaw-diagnostics-jaeger-runtime.test.ts --silent=false --reporter=default
+
       - name: Audit managed OpenClaw security finding suppressions
         env:
           NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS: "1"
@@ -129,7 +137,7 @@ jobs:
 
   cli-test-shards:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -250,6 +258,7 @@ jobs:
       - real-openclaw-dist-harness
       - cli-tests
       - plugin-tests
+      - sandbox-images-and-e2e
     if: always()
     permissions:
       actions: read
@@ -267,6 +276,7 @@ jobs:
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           GH_TOKEN: ${{ github.token }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          SANDBOX_IMAGES_E2E_RESULT: ${{ needs['sandbox-images-and-e2e'].result }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -304,7 +314,7 @@ jobs:
             local job_id=""
             dependency_url="$RUN_URL"
             case "$name" in
-              static-checks|build-typecheck|installer-integration|wechat-runtime-audit|reviewed-npm-audit|real-openclaw-dist-harness|cli-tests|plugin-tests) ;;
+              static-checks|build-typecheck|installer-integration|wechat-runtime-audit|reviewed-npm-audit|real-openclaw-dist-harness|cli-tests|plugin-tests|sandbox-images-and-e2e) ;;
               *) return ;;
             esac
             load_job_listing
@@ -347,11 +357,12 @@ jobs:
           require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
           require_success "cli-tests" "$CLI_TESTS_RESULT"
           require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
+          require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"
 
           [ "$failed" -eq 0 ]
 
   sandbox-images-and-e2e:
-    needs: checks
+    needs: [static-checks, build-typecheck]
     uses: ./.github/workflows/sandbox-images-and-e2e.yaml
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}

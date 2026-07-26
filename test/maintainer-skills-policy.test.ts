@@ -83,7 +83,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain('--event push --commit "$RELEASE_SHA"');
     expect(release).toContain("Expected exactly one release-latest-tag push run");
     expect(morning).toContain("post-tag housekeeping was interrupted");
-    expect(priorities).toContain("automatically carry stragglers to the next patch");
+    expect(priorities).toContain("Move open items to the next patch label");
     expect(priorities).toContain("delete the released label");
     expect(policy).toContain("automatically move every open straggler to the next patch label");
     expect(policy).toContain("delete the released version label");
@@ -160,7 +160,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain("tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
     expect(dailyFlow).toContain("freeze the candidate SHA and review every E2E test");
-    expect(priorities).toContain("collect the E2E evidence or itemized maintainer exceptions");
+    expect(priorities).toContain("Record the release SHA and required E2E evidence");
   });
 
   it("runs release-prep docs before generating the final release plan", () => {
@@ -196,7 +196,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(releaseNotes).toContain("does not replace or create that canonical entry");
     expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
     expect(policy).toContain("The pre-tag release-note docs PR must create or update");
-    expect(priorities).toContain("pre-tag release-note docs PR containing");
+    expect(priorities).toContain("the pre-tag changelog PR contains");
     expect(skillsGuide).toContain("create the canonical `docs/changelog/YYYY-MM-DD.mdx` entry");
     expect(agents).toContain("a PR that updates ordinary pages without the dated changelog entry");
     expect(docsAgents).toContain("Every pre-tag release-note docs PR must create or update");
@@ -208,8 +208,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     const sweep = read(".agents/skills/nemoclaw-maintainer-cross-issue-sweep/SKILL.md");
     const comparator = read(".agents/skills/nemoclaw-maintainer-pr-comparator/SKILL.md");
 
-    expect(sweep).toContain("The comparator does not call it");
-    expect(comparator).toContain("Cross-issue regression sweep (separate skill)");
+    expect(sweep).toContain("The comparator does not run this skill or use its findings");
+    expect(comparator).toContain("Run `nemoclaw-maintainer-cross-issue-sweep` separately");
   });
 
   it("uses the merge gate's unresolved-issue threshold for ready-now PRs", () => {
@@ -239,7 +239,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
       ".agents/skills/nemoclaw-maintainer-pr-comparator/scripts/collect-gates.sh",
     );
 
-    expect(mergeGate).toContain("every PR commit appears as `Verified` in GitHub");
+    expect(mergeGate).toContain("Require every commit to appear as `Verified` in GitHub");
     expect(comparator).toContain("gate_contributor_compliance");
     expect(comparator).toContain(".commit.verification.verified");
   });
@@ -253,6 +253,60 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
     expect(verdict).not.toContain(
       "PR-body DCO declaration or GitHub Verified commit history is missing",
+    );
+  });
+
+  it("keeps PR workflow writes behind their safety checks", () => {
+    const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
+    const judgment = read(
+      ".agents/skills/nemoclaw-maintainer-cross-issue-sweep/checks/relationship-judgment.md",
+    );
+    const mergeGate = read(".agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md");
+    const salvage = read(".agents/skills/nemoclaw-maintainer-day/SALVAGE-PR.md");
+
+    expect(createPr).toContain("For work that is not ready for review, complete Step 4");
+    expect(createPr).toContain("--body-file /tmp/nemoclaw-pr-body.md");
+    expect(createPr).not.toContain('--body "..."');
+    expect(judgment).toContain("{candidate_comments}");
+    expect(
+      mergeGate.match(
+        /the PR is open and that the PR SHA, base SHA, and coordination identity still match/gu,
+      ),
+    ).toHaveLength(2);
+    expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");
+    expect(salvage).toContain("git push origin <local-branch>:<headRefName>");
+    expect(salvage).toContain("If `maintainerCanModify` is false, do not push");
+  });
+
+  it("keeps maintainer ordering, state, and write authorization explicit", () => {
+    const sequence = read(".agents/skills/nemoclaw-maintainer-day/SEQUENCE-WORK.md");
+    const state = read(".agents/skills/nemoclaw-maintainer-day/STATE-SCHEMA.md");
+    const instructions = read(
+      ".agents/skills/nemoclaw-maintainer-policies/references/triage-instructions.md",
+    );
+    const triage = read(".agents/skills/nemoclaw-maintainer-triage/SKILL.md");
+
+    expect(sequence).toContain("An identified security concern overrides this default order");
+    expect(state).toContain("Keep at most 50 entries");
+    expect(instructions).toContain(
+      "keep `labels_to_add` and `labels_to_remove` as dry-run output and do not change labels",
+    );
+    expect(instructions).toContain(
+      "An authorized agent-owned workflow may add or remove only `agt: *` labels",
+    );
+    expect(triage).toContain("Before each write, re-read Issue Type, Project fields, and labels");
+    expect(triage).toContain("present an updated proposal for acceptance");
+  });
+
+  it("resolves security-review issue inputs to one verified PR", () => {
+    const securityReview = read(".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md");
+
+    expect(securityReview).toContain("--json closedByPullRequestsReferences");
+    expect(securityReview).toContain("Continue only when this returns one PR number");
+    expect(securityReview).toContain("Use the verified PR number in each later command");
+    expect(securityReview).toContain("If no changed or reviewable security surface exists");
+    expect(securityReview).toContain(
+      "Dockerfiles, workflows, network policies, blueprints, dependencies, and security configuration",
     );
   });
 });
