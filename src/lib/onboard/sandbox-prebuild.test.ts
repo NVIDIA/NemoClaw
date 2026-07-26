@@ -491,23 +491,13 @@ describe("sandbox BuildKit prebuild", () => {
       "exits nonzero",
       async (): Promise<number> => 1,
       /local build failed \(exit 1\).*Inspect the preceding BuildKit output/,
-      null,
     ],
     [
       "returns no exit status",
       async (): Promise<null> => null,
       /local build failed without an exit status.*Inspect the preceding BuildKit output/,
-      null,
     ],
-    [
-      "cannot start",
-      async (): Promise<never> => {
-        throw BUILD_START_ERROR;
-      },
-      /local build could not start \(daemon unavailable\).*Start Docker.*BuildKit is enabled/,
-      BUILD_START_ERROR,
-    ],
-  ] as const)("fails closed when a required local BuildKit build %s (#7140)", async (_label, buildImage, message, expectedCause) => {
+  ] as const)("fails closed when a required local BuildKit build %s (#7140)", async (_label, buildImage, message) => {
     const { buildCtx, createArgs } = createBuildContext();
     const failure = prebuildSandboxImageIfEligible({
       buildCtx,
@@ -523,8 +513,28 @@ describe("sandbox BuildKit prebuild", () => {
     });
 
     await expect(failure).rejects.toThrow(message);
-    if (expectedCause) {
-      await expect(failure).rejects.toMatchObject({ cause: expectedCause });
-    }
+  });
+
+  it("preserves the cause when a required local BuildKit build cannot start (#7140)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const failure = prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      gatewayFallback: "forbidden",
+      env: {},
+      buildImage: async (): Promise<never> => {
+        throw BUILD_START_ERROR;
+      },
+      log: () => {},
+    });
+
+    await expect(failure).rejects.toThrow(
+      /local build could not start \(daemon unavailable\).*Start Docker.*BuildKit is enabled/,
+    );
+    await expect(failure).rejects.toMatchObject({ cause: BUILD_START_ERROR });
   });
 });
