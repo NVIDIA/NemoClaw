@@ -44,6 +44,7 @@ import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-wo
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
+import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
@@ -105,6 +106,11 @@ export interface FreeStandingJobsInventory {
 export interface FocusedE2eJob {
   id: string;
   matchedFiles: string[];
+}
+
+export interface StagingBrevLaunchableDispatchEvaluation {
+  failReadiness: boolean;
+  runQualification: boolean;
 }
 
 type CachedFreeStandingJobsInventory = {
@@ -180,14 +186,12 @@ const RUNNER_ROUTING_SCRIPT = [
   "  fi",
   '  larger_runner="${LARGER_RUNNER_LABEL}"',
   "fi",
-  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-dashboard":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}\')"',
+  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}\')"',
   'printf \'runner_routing=%s\\n\' "${runner_routing}" >> "${GITHUB_OUTPUT}"',
 ].join("\n");
 const ROUTED_JOB_RUNNER_EXPRESSIONS = {
   "common-egress-agent":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}",
-  "hermes-dashboard":
-    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-dashboard'] }}",
   "hermes-discord":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}",
   "hermes-e2e": "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}",
@@ -621,18 +625,20 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   const jobs = input.jobs ?? "";
   const targets = input.targets ?? "";
   const errors: string[] = [];
+  const jobsMatchSelectorPattern = !jobs || SELECTOR_PATTERN.test(jobs);
+  const normalizedJobs = jobsMatchSelectorPattern
+    ? normalizeE2eSelectorIds(splitSelector(jobs))
+    : [];
 
   if (targets && !SELECTOR_PATTERN.test(targets)) {
     errors.push("Invalid target input");
   }
-  if (jobs && !SELECTOR_PATTERN.test(jobs)) {
+  if (!jobsMatchSelectorPattern) {
     errors.push("Invalid jobs input");
   }
-  if (jobs && SELECTOR_PATTERN.test(jobs)) {
-    for (const job of splitSelector(jobs)) {
-      if (!freeStandingJobIds.includes(job)) {
-        errors.push(`Unknown free-standing E2E job: ${job}`);
-      }
+  for (const job of normalizedJobs) {
+    if (!freeStandingJobIds.includes(job)) {
+      errors.push(`Unknown free-standing E2E job: ${job}`);
     }
   }
 
@@ -658,9 +664,9 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
     };
   }
 
-  const selectedFreeStandingJobs = new Set(splitSelector(jobs));
+  const selectedFreeStandingJobs = new Set(normalizedJobs);
   const registryTargets: string[] = [];
-  for (const target of splitSelector(targets)) {
+  for (const target of normalizeE2eSelectorIds(splitSelector(targets))) {
     const job = freeStandingTargetToJob.get(target);
     if (job) selectedFreeStandingJobs.add(target);
     else registryTargets.push(target);
@@ -672,6 +678,33 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
     selectedFreeStandingJobs: [...selectedFreeStandingJobs].sort(),
     registryTargets,
     liveTargetsRun: registryTargets.length > 0,
+  };
+}
+
+export function evaluateStagingBrevLaunchableDispatch(input: {
+  eventName: "schedule" | "workflow_dispatch";
+  includeStagingBrevLaunchable?: boolean;
+  jobs?: string;
+  readinessEnabled?: boolean;
+  targets?: string;
+  trustedMain?: boolean;
+}): StagingBrevLaunchableDispatchEvaluation {
+  const jobs = input.jobs ?? "";
+  const targets = input.targets ?? "";
+  const fullDispatch =
+    input.eventName === "workflow_dispatch" &&
+    input.includeStagingBrevLaunchable === true &&
+    jobs === "" &&
+    targets === "";
+  const explicitlySelected =
+    input.eventName === "workflow_dispatch" &&
+    splitSelector(jobs).includes("staging-brev-launchable");
+  const requested = input.eventName === "schedule" || fullDispatch || explicitlySelected;
+  const trustedMain = input.trustedMain !== false;
+
+  return {
+    failReadiness: fullDispatch && (input.readinessEnabled !== true || !trustedMain),
+    runQualification: requested && input.readinessEnabled === true && trustedMain,
   };
 }
 
@@ -4135,6 +4168,18 @@ function validateInferenceModeGeneration(
   requireRunContains(errors, step, "--ci-output");
 }
 
+function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
+  const concurrency = asRecord(workflow.concurrency);
+  const expectedGroup =
+    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
+  if (concurrency.group !== expectedGroup) {
+    errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
+  }
+  if (concurrency["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("workflow concurrency must cancel only superseded PR gate runs");
+  }
+}
+
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
   const environment = asRecord(job.environment);
@@ -4148,11 +4193,74 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   ) {
     errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
   }
+  const expectedSelector =
+    "${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}";
+  if (job.if !== expectedSelector) {
+    errors.push(
+      "staging-brev-launchable must run for schedules, explicit selection, or an empty-selector full dispatch",
+    );
+  }
+  const concurrency = asRecord(job.concurrency);
+  if (
+    concurrency.group !== "staging-brev-launchable-cpu" ||
+    concurrency.queue !== "max" ||
+    concurrency["cancel-in-progress"] !== false
+  ) {
+    errors.push(
+      "staging-brev-launchable concurrency must queue all pending qualifications without cancellation",
+    );
+  }
   const steps = asSteps(job.steps);
-  const prepareEnv = asRecord(requireStep(errors, steps, "Prepare the trusted lane")?.env);
-  const runEnv = asRecord(
-    requireStep(errors, steps, "Build, deploy, verify, test, and clean up")?.env,
-  );
+  const prepare = requireStep(errors, steps, "Prepare the trusted lane");
+  const prepareEnv = asRecord(prepare?.env);
+  const dispatchIdentity = requireStep(errors, steps, "Record E2E dispatch identity");
+  const dispatchEnv = asRecord(dispatchIdentity?.env);
+  for (const [key, expected] of [
+    ["CANDIDATE_SHA", "${{ env.CANDIDATE_SHA }}"],
+    ["DISPATCH_JOBS", "${{ inputs.jobs }}"],
+    ["DISPATCH_TARGETS", "${{ inputs.targets }}"],
+    ["EVENT_NAME", "${{ github.event_name }}"],
+    [
+      "INCLUDE_STAGING_BREV_LAUNCHABLE",
+      "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    ],
+    ["RUN_ATTEMPT", "${{ github.run_attempt }}"],
+    ["RUN_ID", "${{ github.run_id }}"],
+    ["WORK_DIR", "${{ steps.workspace.outputs.work_dir }}"],
+  ] as const) {
+    if (dispatchEnv[key] !== expected) {
+      errors.push(`staging-brev-launchable dispatch identity must bind ${key}`);
+    }
+  }
+  for (const required of [
+    'kind: "nemoclaw-e2e-dispatch-v1"',
+    "candidateSha: $candidateSha",
+    "eventName: $eventName",
+    "workflowRunId: $workflowRunId",
+    "workflowRunAttempt: $workflowRunAttempt",
+    "jobs: $jobs",
+    "targets: $targets",
+    "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    'defaultSuiteSelected: ($jobs == "" and $targets == "")',
+    '>"$WORK_DIR/dispatch.json"',
+  ]) {
+    requireRunContains(errors, dispatchIdentity, required);
+  }
+  const run = requireStep(errors, steps, "Build, deploy, verify, test, and clean up");
+  if (
+    prepare &&
+    dispatchIdentity &&
+    run &&
+    !(
+      steps.indexOf(prepare) < steps.indexOf(dispatchIdentity) &&
+      steps.indexOf(dispatchIdentity) < steps.indexOf(run)
+    )
+  ) {
+    errors.push(
+      "staging-brev-launchable must record dispatch identity after preparation and before qualification",
+    );
+  }
+  const runEnv = asRecord(run?.env);
   for (const [env, key, secret] of [
     [prepareEnv, "BREV_API_KEY", "BREV_API_KEY"],
     [prepareEnv, "BREV_ORG_ID", "BREV_ORG_ID"],
@@ -4164,6 +4272,51 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
       errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
     }
   }
+}
+
+function validateStagingBrevLaunchableInput(
+  errors: string[],
+  dispatchInputs: WorkflowRecord,
+): void {
+  const input = requireInput(errors, dispatchInputs, "include_staging_brev_launchable");
+  if (input.type !== "boolean" || input.default !== false) {
+    errors.push(
+      "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
+    );
+  }
+  const description = stringValue(input.description);
+  if (
+    !description.includes("Exact staging Brev Launchable") ||
+    !description.includes("jobs and targets are empty") ||
+    !description.includes("persistent repository readiness gate")
+  ) {
+    errors.push(
+      "workflow_dispatch include_staging_brev_launchable input must document qualification scope and readiness",
+    );
+  }
+}
+
+function validateStagingBrevLaunchableReadinessJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["staging-brev-launchable-readiness"]);
+  if (job.needs !== "generate-matrix") {
+    errors.push("staging-brev-launchable-readiness must depend on generate-matrix");
+  }
+  const expectedIf =
+    "${{ github.event_name == 'workflow_dispatch' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && (github.repository != 'NVIDIA/NemoClaw' || github.ref != 'refs/heads/main' || vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED != 'true') }}";
+  if (job.if !== expectedIf) {
+    errors.push(
+      "staging-brev-launchable-readiness must fail only full dispatches with disabled readiness",
+    );
+  }
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("staging-brev-launchable-readiness must run on ubuntu-latest");
+  }
+  const steps = asSteps(job.steps);
+  const fail = namedStep(steps, "Fail when staging Brev Launchable is not ready");
+  requireRunContains(errors, fail, "NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED=true");
+  requireRunContains(errors, fail, "protected environment");
+  requireRunContains(errors, fail, "staging Launchable ID");
+  requireRunContains(errors, fail, "exit 1");
 }
 
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
@@ -4198,6 +4351,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
+  validateFullE2eConcurrency(errors, workflow);
+  validateStagingBrevLaunchableInput(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
@@ -4219,6 +4374,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  const expectedRunName =
+    "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
+  if (workflow["run-name"] !== expectedRunName) {
+    errors.push("workflow run-name must expose the unique manual-dispatch correlation ID");
+  }
   errors.push(...validateJetsonRunnerDispatchBoundary(workflow));
   const { errors: inventoryErrors, inventory: freeStandingInventory } =
     deriveFreeStandingJobsInventoryFromJobs(jobs);
@@ -4668,6 +4828,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   validateSharedE2eJob(errors, jobs);
   validateStagingBrevLaunchableJob(errors, jobs);
+  validateStagingBrevLaunchableReadinessJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration", "credential-migration");
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
@@ -4843,6 +5004,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/report-e2e-results.mts")
       ) {
         errors.push("report-to-pr report helper checkout must sparse-checkout the report helper");
+      }
+      if (
+        !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/selector-aliases.mts")
+      ) {
+        errors.push("report-to-pr report helper checkout must sparse-checkout selector aliases");
       }
       const reportStepIndex = reportSteps.findIndex(
         (step) => asRecord(step).name === "Post E2E target results to PR",

@@ -290,6 +290,7 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     });
     const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
     const host = cdiHostDeps();
+    const detectSandboxFallbackDns = vi.fn(() => null);
 
     const result = recreateOpenShellDockerSandboxWithGpu(
       { sandboxName: "alpha", timeoutSecs: 1 },
@@ -297,6 +298,8 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
         dockerCapture,
         readDir: host.readDir,
         readFile: host.readFile,
+        // Keep the unit test independent of the runner's resolver setup.
+        detectSandboxFallbackDns,
         dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
         dockerRunDetached,
         dockerRename: vi.fn(() => ({ status: 0 })),
@@ -308,6 +311,7 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
       },
     );
 
+    expect(detectSandboxFallbackDns).toHaveBeenCalledOnce();
     expect(result.mode.kind).toBe("cdi");
     expect(dockerRunDetached).toHaveBeenCalledWith(
       expect.arrayContaining(["--name", "openshell-alpha", "--device", "nvidia.com/gpu=all"]),

@@ -435,6 +435,19 @@ describe("PR E2E controller lifecycle", () => {
               }),
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () =>
+              githubResponse(
+                exactPrGateCheck({
+                  output: {
+                    title: "Evaluating PR commit",
+                    summary:
+                      "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+                  },
+                }),
+              ),
+          ),
+          githubFetchRoute(
             ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
             () => githubResponse(undefined, 202),
           ),
@@ -457,9 +470,18 @@ describe("PR E2E controller lifecycle", () => {
       expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(
         true,
       );
-      const checkUpdates = requests.filter((request) => request.url.endsWith("/check-runs/17"));
-      expect(checkUpdates).toHaveLength(3);
+      const checkUpdates = requests.filter(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(checkUpdates).toHaveLength(4);
       expect(checkUpdates[2]?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: {
+          title: "Child authorization publication was not confirmed",
+        },
+      });
+      expect(checkUpdates[3]?.body).toMatchObject({
         status: "completed",
         conclusion: "failure",
         output: {
@@ -467,6 +489,11 @@ describe("PR E2E controller lifecycle", () => {
           summary: expect.stringContaining("The controller could not complete the check."),
         },
       });
+      const revocationIndex = requests.indexOf(checkUpdates[2]!);
+      const cancellationIndex = requests.findIndex((request) =>
+        request.url.endsWith("/actions/runs/23/cancel"),
+      );
+      expect(cancellationIndex).toBeGreaterThan(revocationIndex);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
