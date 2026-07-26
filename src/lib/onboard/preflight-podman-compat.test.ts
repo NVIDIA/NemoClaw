@@ -71,13 +71,31 @@ describe("assessHost Podman docker-compat detection (#7320)", () => {
     expect(result.isUnsupportedRuntime).toBe(true);
   });
 
-  it("keeps real Docker classified as supported (no Podman false positive)", () => {
+  it.each([
+    ["an empty JSON object", "{}"],
+    ["unexpected plain text", "unexpected version output"],
+  ])("rejects a Podman-compatible runtime when version output is %s (#7320)", (_case, versionOutput) => {
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: PODMAN_COMPAT_DOCKER_INFO,
+      dockerVersionOutput: versionOutput,
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.dockerReachable).toBe(true);
+    expect(result.runtime).toBe("podman");
+    expect(result.isUnsupportedRuntime).toBe(true);
+  });
+
+  it("keeps Docker Engine supported when ProductLicense reports Apache-2.0", () => {
     const realDockerInfo = JSON.stringify({
       ServerVersion: "29.6.2",
       OperatingSystem: "Ubuntu 24.04.3 LTS",
       OSType: "linux",
       Architecture: "x86_64",
       DefaultRuntime: "runc",
+      ProductLicense: "Apache-2.0",
       DockerRootDir: "/var/lib/docker",
       DefaultAddressPools: [{ Base: "192.168.240.0/20", Size: 24 }],
       ClientInfo: { Platform: { Name: "Docker Engine - Community" } },

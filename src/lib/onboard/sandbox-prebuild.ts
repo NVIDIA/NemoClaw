@@ -34,6 +34,7 @@ export interface SandboxPrebuildInput {
   sandboxName: string;
   dockerDriverGateway: boolean;
   origin: SandboxBuildContextOrigin;
+  managedHermesBuildFailureCapability?: ManagedHermesBuildFailureCapability;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
@@ -53,6 +54,109 @@ export interface SandboxPrebuildResult {
 interface TrustedStagedBuildContext {
   buildCtx: string;
   dockerfile: string;
+}
+
+interface StagedPathIdentity {
+  path: string;
+  device: number;
+  inode: number;
+}
+
+export interface ManagedHermesBuildFailureCapability {
+  readonly buildCtx: StagedPathIdentity;
+  readonly dockerfile: StagedPathIdentity;
+  readonly buildId: string;
+}
+
+export interface ManagedHermesBuildFailureCapabilityInput {
+  agentName: string | null;
+  origin: SandboxBuildContextOrigin;
+  dockerDriverGateway: boolean;
+  buildCtx: string;
+  stagedDockerfile: string;
+  buildId: string;
+}
+
+const issuedManagedHermesBuildFailureCapabilities = new WeakSet<object>();
+
+function readStagedPathIdentity(
+  filePath: string,
+  expected: "directory" | "file",
+): StagedPathIdentity {
+  const resolved = fs.realpathSync(filePath);
+  const stat = fs.statSync(resolved);
+  const matchesExpectedKind = expected === "directory" ? stat.isDirectory() : stat.isFile();
+  if (!matchesExpectedKind) {
+    throw new Error(
+      `Cannot bind managed Hermes build provenance: ${resolved} is not a ${expected}.`,
+    );
+  }
+  return Object.freeze({ path: resolved, device: stat.dev, inode: stat.ino });
+}
+
+function stagedPathIdentityMatches(
+  filePath: string,
+  identity: StagedPathIdentity,
+  expected: "directory" | "file",
+): boolean {
+  try {
+    const current = readStagedPathIdentity(filePath, expected);
+    return (
+      current.path === identity.path &&
+      current.device === identity.device &&
+      current.inode === identity.inode
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Issue an in-memory capability only for the managed, no-custom-image Hermes
+ * path. The capability is bound to the staged context, Dockerfile, and build
+ * identity so it cannot authorize failure handling for another build.
+ */
+export function issueManagedHermesBuildFailureCapability(
+  input: ManagedHermesBuildFailureCapabilityInput,
+): ManagedHermesBuildFailureCapability | undefined {
+  if (input.agentName !== "hermes" || input.origin !== "generated" || !input.dockerDriverGateway) {
+    return undefined;
+  }
+
+  try {
+    const buildCtx = readStagedPathIdentity(input.buildCtx, "directory");
+    const dockerfile = readStagedPathIdentity(input.stagedDockerfile, "file");
+    if (
+      path.dirname(dockerfile.path) !== buildCtx.path ||
+      path.basename(dockerfile.path) !== "Dockerfile"
+    ) {
+      return undefined;
+    }
+
+    const capability = Object.freeze({ buildCtx, dockerfile, buildId: input.buildId });
+    issuedManagedHermesBuildFailureCapabilities.add(capability);
+    return capability;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasExactManagedHermesBuildFailureCapability(
+  input: SandboxPrebuildInput,
+  fromDockerfile: string | undefined,
+): boolean {
+  const capability = input.managedHermesBuildFailureCapability;
+  if (!capability) return false;
+
+  return (
+    issuedManagedHermesBuildFailureCapabilities.has(capability) &&
+    input.origin === "generated" &&
+    input.dockerDriverGateway &&
+    input.buildId === capability.buildId &&
+    stagedPathIdentityMatches(input.buildCtx, capability.buildCtx, "directory") &&
+    typeof fromDockerfile === "string" &&
+    stagedPathIdentityMatches(fromDockerfile, capability.dockerfile, "file")
+  );
 }
 
 /**
@@ -145,7 +249,9 @@ export function sandboxLocalImageRef(sandboxName: string, buildId: string): stri
 /**
  * Build a NemoClaw-generated staged context with BuildKit on the shared local
  * Docker daemon. User-supplied Dockerfiles stay on the OpenShell gateway
- * builder trust boundary, and any failure preserves that original build path.
+ * builder trust boundary, and ordinary failures preserve that original build
+ * path. An exact managed-Hermes capability preserves an attempted BuildKit
+ * failure instead of replacing it with a known-incompatible builder error.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
  */
@@ -155,6 +261,12 @@ export async function prebuildSandboxImageIfEligible(
   const createArgs = [...input.createArgs];
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
+  const fromIndex = createArgs.indexOf("--from");
+  const fromDockerfile = createArgs[fromIndex + 1];
+  const preserveManagedHermesBuildFailure = hasExactManagedHermesBuildFailureCapability(
+    input,
+    fromDockerfile,
+  );
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
     return { createArgs, imageRef: null, imageId: null };
   }
@@ -164,8 +276,6 @@ export async function prebuildSandboxImageIfEligible(
     );
     return { createArgs, imageRef: null, imageId: null };
   }
-  const fromIndex = createArgs.indexOf("--from");
-  const fromDockerfile = createArgs[fromIndex + 1];
   if (
     fromIndex < 0 ||
     !fromDockerfile ||
@@ -222,6 +332,13 @@ export async function prebuildSandboxImageIfEligible(
 
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
+    if (preserveManagedHermesBuildFailure) {
+      throw new Error(
+        `Managed Hermes local BuildKit build failed${detail}. ` +
+          "Inspect the preceding BuildKit output and fix the reported image input or Dockerfile error. " +
+          "Gateway-builder fallback is disabled for this exact staged build because the managed Hermes Dockerfile uses BuildKit-only instructions.",
+      );
+    }
     log(`  Local BuildKit build failed${detail}; using the gateway builder instead.`);
     return { createArgs, imageRef: null, imageId: null };
   }

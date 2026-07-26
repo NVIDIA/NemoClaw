@@ -6,7 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
   getSandbox: vi.fn(
-    (_name: string): { name: string; agent: string; nimContainer?: string | null } | null => null,
+    (
+      _name: string,
+    ): {
+      name: string;
+      agent: string;
+      nimContainer?: string | null;
+      gatewayName?: string | null;
+      gatewayPort?: number | null;
+    } | null => null,
   ),
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
   prepareMcpForRebuild: vi.fn(),
@@ -69,7 +77,10 @@ describe("rebuild destroy phase", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    mocks.getSandbox.mockReturnValue(null);
+    mocks.getSandbox.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+    });
     mocks.listSandboxes.mockReturnValue({ sandboxes: [] });
     mocks.prepareMcpForRebuild.mockResolvedValue({
       entries: [],
@@ -200,6 +211,12 @@ describe("rebuild destroy phase", () => {
 
   it("pins deletion to the recorded gateway when ambient selection changes (#7062)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-29080");
+    mocks.getSandbox.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+    });
 
     await runRebuildDestroyPhase({
       sandboxName: "alpha",
@@ -224,6 +241,71 @@ describe("rebuild destroy phase", () => {
       ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
+  });
+
+  it.each([
+    [
+      "sandbox name",
+      {
+        name: "beta",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      },
+    ],
+    [
+      "gateway binding",
+      {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw-29080",
+        gatewayPort: 29080,
+      },
+    ],
+  ])("refuses deletion when the registry %s changes before MCP preparation (#7062)", async (_label, currentEntry) => {
+    mocks.getSandbox.mockReturnValue(currentEntry);
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [{ server: "github" }],
+      detachedProviderEntries: [{ server: "github" }],
+      scrubbedAdapterEntries: [],
+    });
+    const relockShieldsIfNeeded = vi.fn(() => true);
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: {
+          name: "alpha",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+        },
+        staleRecovery: false,
+        backupManifest: null,
+        force: true,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded,
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Sandbox delete target changed during rebuild preparation.");
+
+    expect(mocks.getSandbox).toHaveBeenCalledTimes(2);
+    expect(mocks.prepareMcpForRebuild.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(mocks.runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      [{ server: "github" }],
+      [],
+    );
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
   it("refuses sandbox deletion when read-only MCP state drifts at the delete edge (#7062)", async () => {
@@ -652,6 +734,23 @@ describe("rebuild destroy phase", () => {
     expect(currentMs).toBeLessThanOrEqual(15_000);
   });
 
+  it("recognizes the exact structured OpenShell sandbox-absence response (#7062)", () => {
+    const log = vi.fn();
+
+    expect(
+      waitForRebuildDeleteAbsence("alpha", "nemoclaw", log, {
+        captureSandboxGet: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error:   × code: 'Some requested entity was not found', message: \"sandbox not found\"",
+        })),
+      }),
+    ).toBe(true);
+
+    expect(log).toHaveBeenCalledWith("Delete convergence probe 1: status=1, state=absent");
+  });
+
   it.each([
     ["another sandbox", { status: 1, stderr: "sandbox beta not found" }],
     [
@@ -661,6 +760,22 @@ describe("rebuild destroy phase", () => {
     [
       "a missing provider",
       { status: 1, stderr: 'status: NotFound, message: "provider alpha-mcp-github not found"' },
+    ],
+    [
+      "a structured missing gateway",
+      {
+        status: 1,
+        stderr:
+          "Error:   × code: 'Some requested entity was not found', message: \"gateway not found\"",
+      },
+    ],
+    [
+      "a structured missing provider",
+      {
+        status: 1,
+        stderr:
+          "Error:   × code: 'Some requested entity was not found', message: \"provider not found\"",
+      },
     ],
     [
       "mixed gateway and sandbox diagnostics",
@@ -757,7 +872,7 @@ describe("rebuild destroy phase", () => {
     expect(mocks.removeSandboxRegistryEntryWithReceipt).toHaveBeenCalledWith("alpha");
   });
 
-  it("preserves backup and registry state when transport failures prevent deletion confirmation", async () => {
+  it("marks accepted deletion as ambiguous when transport failures prevent confirmation", async () => {
     mocks.runOpenshell.mockReturnValue({ status: 0, stdout: "deleted", stderr: "" });
     mocks.captureOpenshell.mockReturnValue({
       status: 1,
@@ -765,6 +880,8 @@ describe("rebuild destroy phase", () => {
       stderr: "tcp connect error: Connection refused",
     });
     const onDeleted = vi.fn();
+    const onDeleteStateAmbiguous = vi.fn();
+    const relockShieldsIfNeeded = vi.fn(() => true);
 
     await expect(
       runRebuildDestroyPhase({
@@ -776,12 +893,15 @@ describe("rebuild destroy phase", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded: vi.fn(() => true),
+        relockShieldsIfNeeded,
         onDeleted,
+        onDeleteStateAmbiguous,
       }),
     ).rejects.toThrow("Sandbox deletion could not be confirmed.");
 
     expect(onDeleted).not.toHaveBeenCalled();
+    expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
+    expect(relockShieldsIfNeeded).not.toHaveBeenCalled();
     expect(mocks.runOpenshell).toHaveBeenCalledTimes(1);
     expect(mocks.captureOpenshell).toHaveBeenCalledTimes(3);
     expect(mocks.waitUntil).toHaveBeenCalledWith(

@@ -1,0 +1,158 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: PR Conflicts / Resolve
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan conflicting PRs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      count: ${{ steps.scan.outputs.count }}
+      matrix: ${{ steps.scan.outputs.matrix }}
+    steps:
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - id: scan
+        name: Reproduce PR merges
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types --no-warnings tools/pr-merge-conflict-fixer/discover.mts
+
+  resolve:
+    name: Resolve PR #${{ matrix.item.pr_number }}
+    needs: scan
+    if: ${{ needs.scan.outputs.count != '0' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scan.outputs.matrix) }}
+    env:
+      ARTIFACT_DIR: ${{ github.workspace }}/resolution-artifact
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
+      RESOLUTION_WORKDIR: ${{ github.workspace }}/repo
+      RESOLVER_CONFIG_DIR: ${{ github.workspace }}/pi-config
+      SANDBOX_NAME: pr-conflict-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.item.pr_number }}
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: trusted
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - id: prepare
+        name: Reproduce the recorded conflict
+        env:
+          MATRIX_ENTRY: ${{ toJSON(matrix.item) }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" prepare
+
+      - name: Install OpenShell
+        run: |
+          env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
+
+      - name: Configure OpenShell inference
+        env:
+          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" configure
+
+      - name: Create the credential-free sandbox
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" create
+
+      - name: Run one Pi conflict-resolution task
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" run
+
+      - name: Export the Git patch
+        env:
+          CONFLICT_TREE: ${{ steps.prepare.outputs.conflict_tree }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" export
+
+      - name: Delete the sandbox
+        if: always()
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" delete
+
+      - name: Upload the resolution patch
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-conflict-resolution-${{ matrix.item.pr_number }}-${{ matrix.item.head_sha }}-${{ matrix.item.base_sha }}
+          path: ${{ env.ARTIFACT_DIR }}/resolution.patch
+
+  publish:
+    name: Publish PR #${{ matrix.item.pr_number }}
+    needs:
+      - scan
+      - resolve
+    if: ${{ always() && needs.scan.outputs.count != '0' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scan.outputs.matrix) }}
+    env:
+      ARTIFACT_DIR: ${{ github.workspace }}/resolution-artifact
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted publisher code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: trusted
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - id: download
+        name: Download the resolution patch
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-conflict-resolution-${{ matrix.item.pr_number }}-${{ matrix.item.head_sha }}-${{ matrix.item.base_sha }}
+          path: ${{ env.ARTIFACT_DIR }}
+
+      - name: Validate and publish the merge commit
+        if: ${{ steps.download.outcome == 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MATRIX_ENTRY: ${{ toJSON(matrix.item) }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/publish.mts"

@@ -22,6 +22,30 @@ describe("sandbox image workflow boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual([]);
   });
 
+  it("rejects late sandbox scheduling or omission from the final main gate", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    mainWorkflow.jobs["sandbox-images-and-e2e"].needs = "checks";
+    mainWorkflow.jobs.checks.needs = (mainWorkflow.jobs.checks.needs as string[]).filter(
+      (dependency) => dependency !== "sandbox-images-and-e2e",
+    );
+    const gate = mainWorkflow.jobs.checks.steps!.find(
+      (step) => step.name === "Verify required main checks",
+    )!;
+    delete gate.env!.SANDBOX_IMAGES_E2E_RESULT;
+    gate.run = gate.run!.replace(
+      'require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"',
+      "",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "main sandbox image workflow must start after the cheap preflight jobs",
+        "main checks must wait for the sandbox image workflow",
+        "main checks must require the sandbox image workflow result",
+      ]),
+    );
+  });
+
   it("rejects auth ordering drift, incomplete cleanup, and registry writes", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
@@ -191,6 +215,21 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("rejects a continued Buildx rebuild in the Hermes image consumer", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["test-hermes-sandbox-image"].steps!.push({
+      name: "Rebuild Hermes production image",
+      run: [
+        "docker buildx \\",
+        "  build --load -f agents/hermes/Dockerfile -t nemoclaw-hermes-production .",
+      ].join("\n"),
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image test consumer must not rebuild the prebuilt image",
+    );
+  });
+
   it("rejects a duplicate Hermes production-image build", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
@@ -229,6 +268,54 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
       "build-hermes-sandbox-image step \x27Publish Hermes production image\x27 must not write images to a registry",
+    );
+  });
+
+  it("rejects an assigned Buildx push flag in an image consumer", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
+      name: "Publish from metadata consumer",
+      run: "docker buildx build --push=true -t registry.example.invalid/nemoclaw .",
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "state-dir-guard-metadata step \x27Publish from metadata consumer\x27 must not write images to a registry",
+    );
+  });
+
+  it("rejects a mixed-case assigned Buildx push flag in an image consumer", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
+      name: "Publish from metadata consumer",
+      run: "docker buildx build --push=True -t registry.example.invalid/nemoclaw .",
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "state-dir-guard-metadata step \x27Publish from metadata consumer\x27 must not write images to a registry",
+    );
+  });
+
+  it("rejects a shell-expanded Buildx push flag in an image consumer", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
+      name: "Publish from expanded metadata consumer",
+      run: 'docker buildx build --push="${PUSH_IMAGES}" -t registry.example.invalid/nemoclaw .',
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "state-dir-guard-metadata step \x27Publish from expanded metadata consumer\x27 must not write images to a registry",
+    );
+  });
+
+  it("treats an explicit false Buildx push assignment as non-writing", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
+      name: "Disable publishing from metadata consumer",
+      run: "docker buildx build --push=false -t nemoclaw-metadata-consumer .",
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).not.toContain(
+      "state-dir-guard-metadata step \x27Disable publishing from metadata consumer\x27 must not write images to a registry",
     );
   });
 
