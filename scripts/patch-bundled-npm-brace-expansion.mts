@@ -21,7 +21,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const AFFECTED_BRACE_EXPANSION_VERSION = "5.0.7";
@@ -73,10 +73,34 @@ function rejectUnsafeTree(root: string): void {
   }
 }
 
-function collectBraceExpansionVersions(directory: string, versions: string[]): void {
+function isContainedBinSymlink(nodeModulesRoot: string, directory: string, entryName: string): boolean {
+  if (basename(directory) !== ".bin") return false;
+  try {
+    const target = realpathSync(join(directory, entryName));
+    const targetRelative = relative(nodeModulesRoot, target);
+    return (
+      targetRelative !== "" &&
+      targetRelative !== ".." &&
+      !targetRelative.startsWith(`..${sep}`) &&
+      !isAbsolute(targetRelative) &&
+      lstatSync(target).isFile()
+    );
+  } catch {
+    return false;
+  }
+}
+
+function collectBraceExpansionVersions(
+  directory: string,
+  nodeModulesRoot: string,
+  versions: string[],
+): void {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.isSymbolicLink()) {
-      throw new Error(`npm package contains an unsafe symlink: ${join(directory, entry.name)}`);
+      if (!isContainedBinSymlink(nodeModulesRoot, directory, entry.name)) {
+        throw new Error(`npm package contains an unsafe symlink: ${join(directory, entry.name)}`);
+      }
+      continue;
     }
     if (
       entry.isDirectory() &&
@@ -90,7 +114,7 @@ function collectBraceExpansionVersions(directory: string, versions: string[]): v
     }
     const child = join(directory, entry.name);
     if (entry.isDirectory()) {
-      collectBraceExpansionVersions(child, versions);
+      collectBraceExpansionVersions(child, nodeModulesRoot, versions);
       continue;
     }
     if (entry.name !== "package.json") continue;
@@ -140,7 +164,8 @@ export function inspectBundledNpmBraceExpansion(npmRoot: string): BundledNpmBrac
   }
 
   const versions: string[] = [];
-  collectBraceExpansionVersions(join(root, "node_modules"), versions);
+  const nodeModulesRoot = realDirectory(join(root, "node_modules"), "npm node_modules root");
+  collectBraceExpansionVersions(nodeModulesRoot, nodeModulesRoot, versions);
   if (versions.length !== 1 || versions[0] !== version) {
     throw new Error(`npm bundled brace-expansion layout has drifted: ${JSON.stringify(versions)}`);
   }

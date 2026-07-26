@@ -43,6 +43,12 @@ function fixture(braceExpansionVersion: string) {
     version: braceExpansionVersion,
   });
   fs.writeFileSync(path.join(npmRoot, "node_modules", "brace-expansion", "old.js"), "old\n");
+  const arboristBin = path.join(npmRoot, "node_modules", "@npmcli", "arborist", "bin", "index.js");
+  fs.mkdirSync(path.dirname(arboristBin), { recursive: true });
+  fs.writeFileSync(arboristBin, "#!/usr/bin/env node\n");
+  const npmBin = path.join(npmRoot, "node_modules", ".bin");
+  fs.mkdirSync(npmBin);
+  fs.symlinkSync("../@npmcli/arborist/bin/index.js", path.join(npmBin, "arborist"));
   writeJson(path.join(replacementRoot, "package.json"), {
     dependencies: { "balanced-match": "^4.0.2" },
     name: "brace-expansion",
@@ -162,6 +168,17 @@ describe("npm bundled brace-expansion remediation", () => {
       path.join(symlinkedNpmTree.npmRoot, "node_modules", "brace-expansion-alias"),
     );
     expect(() => patchBundledNpmBraceExpansion(symlinkedNpmTree)).toThrow(
+      "npm package contains an unsafe symlink",
+    );
+
+    const escapingBinLink = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
+    const outsideNodeModules = path.join(path.dirname(escapingBinLink.npmRoot), "outside.js");
+    fs.writeFileSync(outsideNodeModules, "outside\n");
+    fs.symlinkSync(
+      "../../../outside.js",
+      path.join(escapingBinLink.npmRoot, "node_modules", ".bin", "escape"),
+    );
+    expect(() => patchBundledNpmBraceExpansion(escapingBinLink)).toThrow(
       "npm package contains an unsafe symlink",
     );
   });

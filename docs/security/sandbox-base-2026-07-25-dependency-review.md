@@ -82,7 +82,8 @@ Node 22 and Node 24 base images.
 The replacement helper:
 
 1. rejects npm identities other than the reviewed `11.18.0`;
-2. rejects unexpected, duplicate, nested, or symlinked package layouts;
+2. rejects unexpected, duplicate, nested, or unsafe symlinked package layouts
+   while accepting npm's contained `node_modules/.bin` command links;
 3. downloads the exact registry tarball without invoking npm;
 4. verifies the packed bytes against the reviewed SHA-512 integrity;
 5. extracts without restoring archive owners or modes;
