@@ -1,0 +1,240 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { InferenceSetDeps } from "./inference-set";
+import { __test, prepareHttpsPinProviderBinding } from "./inference-set-https-pin-provider";
+import type { HttpsPinProviderBinding } from "./inference-set-route-containment";
+
+const PROVIDER_ID = "11111111-2222-4333-8444-555555555555";
+function binding(overrides: Partial<HttpsPinProviderBinding> = {}): HttpsPinProviderBinding {
+  return {
+    baseUrl: "http://host.openshell.internal:11438/route/route-a/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    token: "route-token-a",
+    routeId: "route-a",
+    providerType: "openai",
+    ...overrides,
+  };
+}
+
+function providerOutput(options: {
+  id?: string;
+  resourceVersion: number;
+  providerName?: string;
+  type?: string;
+  credentialKey?: string;
+  configKey?: string;
+}): string {
+  return [
+    `Name: ${options.providerName ?? "compatible-endpoint"}`,
+    `Id: ${options.id ?? PROVIDER_ID}`,
+    `Type: ${options.type ?? "openai"}`,
+    `Resource version: ${options.resourceVersion}`,
+    `Credential keys: ${options.credentialKey ?? "COMPATIBLE_API_KEY"}`,
+    `Config keys: ${options.configKey ?? "OPENAI_BASE_URL"}`,
+  ].join("\n");
+}
+
+function captureSequence(
+  results: Array<{ status: number; stdout?: string; stderr?: string; output?: string }>,
+): InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn> {
+  return vi.fn(
+    () =>
+      results.shift() ??
+      (() => {
+        throw new Error("unexpected OpenShell call");
+      })(),
+  ) as InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn>;
+}
+
+describe("HTTPS-pin provider binding", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("updates an owned provider with only the route token in invocation-local env", () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const before = providerOutput({ resourceVersion: 4 });
+    const after = providerOutput({ resourceVersion: 5 });
+    const capture = captureSequence([
+      { status: 0, stdout: before, stderr: "", output: before },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 0, stdout: after, stderr: "", output: after },
+    ]);
+
+    const mutation = prepareHttpsPinProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      captureOpenshell: capture,
+    });
+    mutation.commit();
+
+    expect(capture.mock.calls[1]).toEqual([
+      [
+        "provider",
+        "update",
+        "-g",
+        "nemoclaw",
+        "compatible-endpoint",
+        "--credential",
+        "COMPATIBLE_API_KEY",
+        "--config",
+        "OPENAI_BASE_URL=http://host.openshell.internal:11438/route/route-a/v1",
+      ],
+      expect.objectContaining({ env: { COMPATIBLE_API_KEY: "route-token-a" } }),
+    ]);
+    expect(JSON.stringify(capture.mock.calls)).not.toContain("real-upstream-secret");
+    expect(process.env.COMPATIBLE_API_KEY).toBe("real-upstream-secret");
+    expect(JSON.stringify(binding())).not.toContain("real-upstream-secret");
+  });
+
+  it("creates an absent provider and verifies its new identity", () => {
+    const after = providerOutput({ resourceVersion: 1 });
+    const capture = captureSequence([
+      { status: 1, stdout: "", stderr: "Provider 'compatible-endpoint' not found" },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 0, stdout: after, stderr: "" },
+    ]);
+
+    expect(() =>
+      prepareHttpsPinProviderBinding({
+        gatewayName: "nemoclaw",
+        providerName: "compatible-endpoint",
+        binding: binding(),
+        captureOpenshell: capture,
+      }),
+    ).not.toThrow();
+    expect(capture.mock.calls[1][0]).toContain("create");
+  });
+
+  it("removes a newly created provider when the caller rolls back", () => {
+    const after = providerOutput({ resourceVersion: 1 });
+    const capture = captureSequence([
+      { status: 1, stdout: "", stderr: "Provider 'compatible-endpoint' not found" },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 0, stdout: after, stderr: "" },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 1, stdout: "", stderr: "Provider 'compatible-endpoint' not found" },
+    ]);
+
+    const mutation = prepareHttpsPinProviderBinding({
+      gatewayName: "nemoclaw",
+      providerName: "compatible-endpoint",
+      binding: binding(),
+      captureOpenshell: capture,
+    });
+    mutation.rollback();
+
+    expect(mutation.action).toBe("create");
+    expect(capture.mock.calls[3][0]).toEqual([
+      "provider",
+      "delete",
+      "-g",
+      "nemoclaw",
+      "compatible-endpoint",
+    ]);
+  });
+
+  it.each([
+    ["same resource version", PROVIDER_ID, 4],
+    ["delete and recreate", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", 5],
+  ])("fails closed on update identity drift: %s", (_label, id, resourceVersion) => {
+    const capture = captureSequence([
+      { status: 0, stdout: providerOutput({ resourceVersion: 4 }), stderr: "" },
+      { status: 0, stdout: "", stderr: "" },
+      { status: 0, stdout: providerOutput({ id, resourceVersion }), stderr: "" },
+    ]);
+
+    expect(() =>
+      prepareHttpsPinProviderBinding({
+        gatewayName: "nemoclaw",
+        providerName: "compatible-endpoint",
+        binding: binding(),
+        captureOpenshell: capture,
+      }).commit(),
+    ).toThrow("may be partial");
+  });
+
+  it("fails closed when provider metadata is malformed or foreign", () => {
+    const malformed = providerOutput({ resourceVersion: 4, credentialKey: "FOREIGN_TOKEN" });
+    const capture = captureSequence([{ status: 0, stdout: malformed, stderr: "" }]);
+
+    expect(() =>
+      prepareHttpsPinProviderBinding({
+        gatewayName: "nemoclaw",
+        providerName: "compatible-endpoint",
+        binding: binding(),
+        captureOpenshell: capture,
+      }),
+    ).toThrow("malformed, foreign");
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a nonzero mutation as ambiguous and never infers success from post-state", () => {
+    const before = providerOutput({ resourceVersion: 4 });
+    const after = providerOutput({ resourceVersion: 5 });
+    const capture = captureSequence([
+      { status: 0, stdout: before, stderr: "" },
+      { status: 1, stdout: "", stderr: "transient failure" },
+      { status: 0, stdout: after, stderr: "" },
+    ]);
+
+    expect(() =>
+      prepareHttpsPinProviderBinding({
+        gatewayName: "nemoclaw",
+        providerName: "compatible-endpoint",
+        binding: binding(),
+        captureOpenshell: capture,
+      }).commit(),
+    ).toThrow("may have partially applied");
+  });
+
+  it("keeps route credentials isolated across independent invocations", () => {
+    const mutations: Array<NodeJS.ProcessEnv | undefined> = [];
+    const makeCapture = (id: string): InferenceSetDeps["captureOpenshell"] => {
+      let version = 1;
+      return (args, opts) => {
+        switch (args[1]) {
+          case "get": {
+            const output = providerOutput({ id, resourceVersion: version });
+            return { status: 0, stdout: output, stderr: "", output };
+          }
+          default:
+            mutations.push(opts?.env);
+            version += 1;
+            return { status: 0, stdout: "", stderr: "", output: "" };
+        }
+      };
+    };
+
+    prepareHttpsPinProviderBinding({
+      gatewayName: "gateway-a",
+      providerName: "compatible-endpoint",
+      binding: binding({ token: "route-token-a" }),
+      captureOpenshell: makeCapture("aaaaaaaa-2222-4333-8444-555555555555"),
+    }).commit();
+    prepareHttpsPinProviderBinding({
+      gatewayName: "gateway-b",
+      providerName: "compatible-endpoint",
+      binding: binding({ token: "route-token-b", routeId: "route-b" }),
+      captureOpenshell: makeCapture("bbbbbbbb-2222-4333-8444-555555555555"),
+    }).commit();
+
+    expect(mutations).toEqual([
+      { COMPATIBLE_API_KEY: "route-token-a" },
+      { COMPATIBLE_API_KEY: "route-token-b" },
+    ]);
+  });
+
+  it("parses styled identity fields but rejects duplicates and invalid versions", () => {
+    expect(
+      __test.parseProviderVersion(
+        "\u001b[2mId:\u001b[0m 11111111-2222-4333-8444-555555555555\n\u001b[2mResource version:\u001b[0m 7",
+      ),
+    ).toEqual({ id: PROVIDER_ID, resourceVersion: 7 });
+    expect(
+      __test.parseProviderVersion(`Id: ${PROVIDER_ID}\nId: ${PROVIDER_ID}\nResource version: 7`),
+    ).toBeNull();
+    expect(__test.parseProviderVersion(`Id: ${PROVIDER_ID}\nResource version: 0`)).toBeNull();
+  });
+});

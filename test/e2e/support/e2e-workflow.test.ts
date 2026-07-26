@@ -365,26 +365,49 @@ describe("e2e workflow boundary", () => {
     }
   });
 
-  // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
+  // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes and mutable tunnel tooling
   it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+      jobs: Record<
+        string,
+        { steps?: Array<{ name?: string; run?: string; env?: Record<string, string> }> }
+      >;
     };
     const run = workflow.jobs["inference-routing"]?.steps?.find(
       (step) => step.name === "Run inference routing live test",
     );
     expect(run).toBeDefined();
     run!.run = "npx vitest run --project e2e-live inference-routing-provider-smoke.test.ts";
+    const prerequisite = workflow.jobs["inference-routing"]?.steps?.find(
+      (step) => step.name === "Install and verify cloudflared prerequisite",
+    );
+    expect(prerequisite?.env).toBeDefined();
+    prerequisite!.env!.CLOUDFLARED_VERSION = "latest";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    const digestWorkflowPath = path.join(tmp, "digest-workflow.yaml");
+    const digestWorkflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ name?: string; env?: Record<string, string> }> }>;
+    };
+    const digestPrerequisite = digestWorkflow.jobs["inference-routing"]?.steps?.find(
+      (step) => step.name === "Install and verify cloudflared prerequisite",
+    );
+    expect(digestPrerequisite?.env).toBeDefined();
+    digestPrerequisite!.env!.CLOUDFLARED_DEB_SHA256 = "mutable";
+    fs.writeFileSync(digestWorkflowPath, YAML.stringify(digestWorkflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "step 'Run inference routing live test' run script must include test/e2e/live/inference-routing.test.ts",
           "step 'Run inference routing live test' run script must not include inference-routing-provider-smoke.test.ts",
+          "inference-routing cloudflared prerequisite step must pin CLOUDFLARED_VERSION=2026.6.1",
         ]),
+      );
+      expect(validateE2eWorkflowBoundary(digestWorkflowPath)).toContain(
+        "inference-routing cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

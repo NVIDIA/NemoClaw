@@ -3104,7 +3104,8 @@ NemoClaw rejects loopback, link-local, private, and internal endpoint addresses,
 For a same-provider model change, pass `--endpoint-url` with the exact canonical endpoint URL that the target sandbox registry identifies as onboarding-established.
 Missing or `inference set` provenance and every different URL remain subject to the full address validation above.
 For public HTTP URLs, NemoClaw stores the validated IP address to prevent DNS rebinding.
-DNS-backed HTTPS URLs are rejected because NemoClaw cannot pin the downstream peer address while preserving TLS SNI and host validation across the OpenShell runtime boundary; HTTPS IP-literal URLs remain supported.
+For a DNS-backed HTTPS URL, NemoClaw routes the endpoint through a local HTTPS Pin Runtime adapter that terminates a pinned, SNI-correct outbound connection to the real upstream hostname; the sandbox and the persisted registry only ever see a local `host.openshell.internal` route, never the real hostname.
+HTTPS IP-literal URLs remain supported and do not need the adapter.
 NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
 `--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 
@@ -3415,8 +3416,8 @@ Passthrough commands do not consume flags intended for the downstream command as
 </AgentOnly>
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
-`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, or OpenRouter runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `11434`, `11435`, and `11437`.
-When you select OpenRouter, `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` must also be distinct from the gateway, vLLM, Ollama, and Ollama proxy ports.
+`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `11434`, `11435`, `11437`, and `11438`.
+When you select OpenRouter, `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` must also be distinct from the gateway, vLLM, Ollama, Ollama proxy, and HTTPS Pin Runtime adapter ports.
 When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another.
 Only port `8080` uses a NemoClaw-managed Linux systemd user service or macOS Homebrew service.
 NemoClaw-managed gateways on custom ports run as detached processes and do not change the default gateway service.
