@@ -100,7 +100,8 @@ function createConflictFixture(): {
   git(repository, ["config", "commit.gpgsign", "false"]);
   write(repository, "conflict.txt", "shared\n");
   write(repository, "clean-merge.txt", "first\nkeep-1\nkeep-2\nkeep-3\nkeep-4\nkeep-5\nlast\n");
-  git(repository, ["add", "conflict.txt", "clean-merge.txt"]);
+  write(repository, "pr-deleted.txt", "delete this on the PR branch\n");
+  git(repository, ["add", "conflict.txt", "clean-merge.txt", "pr-deleted.txt"]);
   git(repository, ["commit", "-m", "test: add shared file"]);
 
   git(repository, ["checkout", "-b", "pull-request"]);
@@ -110,7 +111,8 @@ function createConflictFixture(): {
     "clean-merge.txt",
     "pull request\nkeep-1\nkeep-2\nkeep-3\nkeep-4\nkeep-5\nlast\n",
   );
-  git(repository, ["add", "conflict.txt", "clean-merge.txt"]);
+  fs.rmSync(path.join(repository, "pr-deleted.txt"));
+  git(repository, ["add", "-A"]);
   git(repository, ["commit", "-m", "test: change PR side"]);
   const headSha = git(repository, ["rev-parse", "HEAD"]);
 
@@ -346,8 +348,14 @@ describe("PR merge conflict fixer", () => {
     ).not.toThrow();
   });
 
-  it("creates a verified two-parent commit before the atomic head update (#7542)", async () => {
+  it("creates a verified commit from a main-relative tree before the atomic head update (#7542)", async () => {
     const fixture = createConflictFixture();
+    for (let index = 0; index < 100; index += 1) {
+      write(fixture.repository, `stale-main/${index}.txt`, `main ${index}\n`);
+    }
+    git(fixture.repository, ["add", "stale-main"]);
+    git(fixture.repository, ["commit", "-m", "test: advance main beyond the PR head"]);
+    fixture.baseSha = git(fixture.repository, ["rev-parse", "HEAD"]);
     const entry = entryFor(fixture);
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
     const finalTree = createResolutionPatch(fixture, patchPath);
@@ -409,6 +417,27 @@ describe("PR merge conflict fixer", () => {
       tree: finalTree,
     });
     expect(JSON.stringify(commitRequest?.body)).not.toMatch(/author|committer|signature/u);
+    const treeRequest = required(
+      requests.find((item) => item.path.endsWith("/git/trees")),
+      "missing tree request",
+    );
+    const treeBody = treeRequest.body as {
+      base_tree: string;
+      tree: Array<{ mode: string; path: string; sha: string | null; type: string }>;
+    };
+    expect(treeBody.base_tree).toBe(entry.base_sha);
+    expect(treeBody.tree.map((item) => item.path)).toEqual([
+      "clean-merge.txt",
+      "conflict.txt",
+      "pr-deleted.txt",
+    ]);
+    expect(treeBody.tree.find((item) => item.path === "pr-deleted.txt")).toEqual({
+      mode: "100644",
+      path: "pr-deleted.txt",
+      sha: null,
+      type: "blob",
+    });
+    expect(treeBody.tree.some((item) => item.path.startsWith("stale-main/"))).toBe(false);
     const blobRequests = requests.filter((item) => item.path.endsWith("/git/blobs"));
     expect(
       blobRequests
