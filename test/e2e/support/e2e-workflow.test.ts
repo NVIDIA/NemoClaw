@@ -156,6 +156,23 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("rejects superseding full-dispatch and qualification concurrency drift (#7487)", () => {
+    const workflow = readWorkflow() as {
+      concurrency: Record<string, unknown>;
+      jobs: Record<string, { concurrency?: Record<string, unknown> }>;
+    };
+    workflow.concurrency.group =
+      "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
+    delete workflow.jobs["staging-brev-launchable"]!.concurrency!.queue;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "workflow concurrency must isolate each full dispatch with github.run_id",
+        "staging-brev-launchable concurrency must queue all pending qualifications without cancellation",
+      ]),
+    );
+  });
+
   it("keeps network-policy scenarios isolated with cleanup reserve", () => {
     const workflow = readWorkflow() as {
       jobs: Record<

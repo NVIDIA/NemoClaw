@@ -4113,6 +4113,18 @@ function validateInferenceModeGeneration(
   requireRunContains(errors, step, "--ci-output");
 }
 
+function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
+  const concurrency = asRecord(workflow.concurrency);
+  const expectedGroup =
+    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
+  if (concurrency.group !== expectedGroup) {
+    errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
+  }
+  if (concurrency["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("workflow concurrency must cancel only superseded PR gate runs");
+  }
+}
+
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
   const environment = asRecord(job.environment);
@@ -4131,6 +4143,16 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   if (job.if !== expectedSelector) {
     errors.push(
       "staging-brev-launchable must run for schedules, explicit selection, or an empty-selector full dispatch",
+    );
+  }
+  const concurrency = asRecord(job.concurrency);
+  if (
+    concurrency.group !== "staging-brev-launchable-cpu" ||
+    concurrency.queue !== "max" ||
+    concurrency["cancel-in-progress"] !== false
+  ) {
+    errors.push(
+      "staging-brev-launchable concurrency must queue all pending qualifications without cancellation",
     );
   }
   const steps = asSteps(job.steps);
@@ -4274,6 +4296,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
+  validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
