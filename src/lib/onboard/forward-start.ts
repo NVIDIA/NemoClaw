@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { compactText } from "../core/url-utils";
 import { redact } from "../security/redact";
+import { parseForwardList } from "../state/sandbox-session";
 import { getOccupiedPorts } from "./dashboard-port";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
@@ -40,6 +41,7 @@ export interface DetachedForwardStartOutcome {
     | "spawn-error"
     | "timeout"
     | "spawn-conflict"
+    | "dead-forward"
     | "listener-ownership-conflict"
     | "listener-start-failure";
 }
@@ -162,6 +164,11 @@ function blockingSleepMs(ms: number): void {
     timeout: ms + 5_000,
   });
 }
+
+// A newly registered OpenShell row can briefly report `dead` while its
+// background SSH process settles. Require the exact sandbox+port row to stay
+// dead across several normal polls before reclaiming it.
+const DEAD_FORWARD_GRACE_MS = 2_000;
 
 /**
  * Build a `DetachedForwardSpawnRunner` that spawns the given argv as a
@@ -363,6 +370,7 @@ export function runDetachedForwardStartWithDiagnostics(
     const portProbeIntervalMs = Math.max(pollIntervalMs, 5_000);
     let nextPortProbeAt = start;
     let lastListSnapshot = "";
+    let deadForwardObservedAt: number | null = null;
     while (Date.now() < deadline) {
       let list = "";
       try {
@@ -380,39 +388,62 @@ export function runDetachedForwardStartWithDiagnostics(
         return { ok: true, diagnostic: readDiag(), pid, reason: "ok" };
       }
       const listedForAnotherSandbox = Boolean(listedOwner);
+      const expectedForwardIsDead = parseForwardList(list).some(
+        (entry) =>
+          entry.sandboxName === expect.sandboxName &&
+          entry.port === String(expect.port) &&
+          entry.status === "dead",
+      );
       const diagSoFar = readDiag();
       if (looksLikeForwardPortConflict(diagSoFar)) {
         terminateDetachedForwardChild(pid);
         return { ok: false, diagnostic: diagSoFar, pid, reason: "spawn-conflict" };
       }
-      // A completed listener-start failure cannot recover through more list
-      // polling. Preserve the established ControlMaster exception from #6099
-      // only when forward-list ownership enumeration succeeded and openshell
-      // also emitted that narrower untracked-forward diagnostic. A live TCP
-      // port alone is not evidence that this attempt owns the listener.
-      const listenerOutcome = classifyListenerStartDiagnostic({
-        diagnostic: diagSoFar,
-        pid,
-        port: expect.port,
-        ownerLookupSucceeded: lastFetchError === null,
-        listedForAnotherSandbox,
-        isPortListening,
-      });
-      if (listenerOutcome) return listenerOutcome;
-      // Preserve the established "untracked forward" compatibility path
-      // (GitHub #6099). It requires openshell's narrow diagnostic, a successful
-      // list query with no foreign sandbox row, and a live local port. This is
-      // intentionally not widened to other diagnostics because the probe does
-      // not establish process identity.
-      if (
-        lastFetchError === null &&
-        !listedForAnotherSandbox &&
-        looksLikeUntrackedForward(diagSoFar) &&
-        Date.now() >= nextPortProbeAt
-      ) {
-        nextPortProbeAt = Date.now() + portProbeIntervalMs;
-        if (isPortListening(expect.port)) {
-          return { ok: true, diagnostic: readDiag(), pid, reason: "ok-port-live" };
+      if (expectedForwardIsDead) {
+        deadForwardObservedAt ??= Date.now();
+        if (Date.now() - deadForwardObservedAt >= DEAD_FORWARD_GRACE_MS) {
+          terminateDetachedForwardChild(pid);
+          const deadSummary =
+            `forward on port ${expect.port} remained dead for ` +
+            `${DEAD_FORWARD_GRACE_MS}ms after startup`;
+          return {
+            ok: false,
+            diagnostic: diagSoFar ? `${deadSummary} ${diagSoFar}` : deadSummary,
+            pid,
+            reason: "dead-forward",
+          };
+        }
+      } else {
+        deadForwardObservedAt = null;
+        // A completed listener-start failure cannot recover through more list
+        // polling. Preserve the established ControlMaster exception from #6099
+        // only when forward-list ownership enumeration succeeded and openshell
+        // also emitted that narrower untracked-forward diagnostic. A live TCP
+        // port alone is not evidence that this attempt owns the listener.
+        const listenerOutcome = classifyListenerStartDiagnostic({
+          diagnostic: diagSoFar,
+          pid,
+          port: expect.port,
+          ownerLookupSucceeded: lastFetchError === null,
+          listedForAnotherSandbox,
+          isPortListening,
+        });
+        if (listenerOutcome) return listenerOutcome;
+        // Preserve the established "untracked forward" compatibility path
+        // (GitHub #6099). It requires openshell's narrow diagnostic, a successful
+        // list query with no foreign sandbox row, and a live local port. This is
+        // intentionally not widened to other diagnostics because the probe does
+        // not establish process identity.
+        if (
+          lastFetchError === null &&
+          !listedForAnotherSandbox &&
+          looksLikeUntrackedForward(diagSoFar) &&
+          Date.now() >= nextPortProbeAt
+        ) {
+          nextPortProbeAt = Date.now() + portProbeIntervalMs;
+          if (isPortListening(expect.port)) {
+            return { ok: true, diagnostic: readDiag(), pid, reason: "ok-port-live" };
+          }
         }
       }
       if (onProgress && Date.now() >= nextProgressAt) {
@@ -444,16 +475,16 @@ export function runDetachedForwardStartWithDiagnostics(
 
 /**
  * Retry the detached forward-start after an EADDRINUSE-style port conflict or
- * a definitive listener-start failure. `beforePortConflictRetry` preserves the
- * established conflict-recovery behavior. Listener-start failures retry
- * without sandbox/port cleanup because OpenShell does not expose immutable
- * attempt identity.
+ * a definitive listener-start failure. A persistently dead exact sandbox+port
+ * row also retries after the sandbox-scoped cleanup callback. Listener-start
+ * failures retry without sandbox/port cleanup because OpenShell does not
+ * expose immutable attempt identity.
  */
 export function runDetachedForwardStartWithRetries(
   runDetachedSpawn: DetachedForwardSpawnRunner,
   fetchForwardList: ForwardListFetcher,
   expect: { port: number; sandboxName: string },
-  beforePortConflictRetry: () => void,
+  beforeRetryCleanup: () => void,
   options: DetachedForwardStartOptions = {},
 ): DetachedForwardStartOutcome {
   const maxRetries = options.maxRetries ?? 3;
@@ -472,12 +503,13 @@ export function runDetachedForwardStartWithRetries(
     !attempt.ok &&
     ((attempt.reason !== "listener-ownership-conflict" &&
       looksLikeForwardPortConflict(attempt.diagnostic)) ||
-      attempt.reason === "listener-start-failure") &&
+      attempt.reason === "listener-start-failure" ||
+      attempt.reason === "dead-forward") &&
     retries < maxRetries;
     retries++
   ) {
-    if (looksLikeForwardPortConflict(attempt.diagnostic)) {
-      beforePortConflictRetry();
+    if (looksLikeForwardPortConflict(attempt.diagnostic) || attempt.reason === "dead-forward") {
+      beforeRetryCleanup();
     }
     attempt = runAttempt();
   }
