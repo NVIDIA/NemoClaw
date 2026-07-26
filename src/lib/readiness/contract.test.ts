@@ -155,9 +155,7 @@ describe("system readiness contract", () => {
   });
 
   it("rejects duplicate IDs and unresolved references (#7409)", async () => {
-    const fixture = (await readJson(
-      `${fixtureRoot}/supported.json`,
-    )) as SystemReadinessReport;
+    const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as SystemReadinessReport;
     const duplicateEvidence = {
       ...fixture,
       evidence: [...fixture.evidence, fixture.evidence[0]!],
