@@ -739,12 +739,14 @@ describe("dockerfile patch helpers", () => {
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
       const patchedMessagingPlan = readMessagingPlanArg(patched) as {
+        workflow?: unknown;
         channels?: Array<{ channelId?: string; active?: boolean }>;
         agentRender?: unknown;
         runtimeSetup?: {
           nodePreloads?: Array<{ channelId?: string; module?: string }>;
         };
       };
+      assert.equal(patchedMessagingPlan.workflow, undefined);
       assert.deepEqual(patchedMessagingPlan.agentRender, messagingPlan.agentRender);
       assert.deepEqual(
         patchedMessagingPlan.channels?.map((channel) => ({

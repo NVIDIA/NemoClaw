@@ -58,7 +58,12 @@ function canonicalJsonStringify(value: unknown): string {
 
 export class MessagingSetupApplier {
   static encodePlan(plan: SandboxMessagingPlan): string {
-    return Buffer.from(canonicalJsonStringify(plan), "utf8").toString("base64");
+    return Buffer.from(JSON.stringify(plan), "utf8").toString("base64");
+  }
+
+  static encodePlanForImageBuild(plan: SandboxMessagingPlan): string {
+    const { workflow: _workflow, ...imageBuildPlan } = plan;
+    return Buffer.from(canonicalJsonStringify(imageBuildPlan), "utf8").toString("base64");
   }
 
   static decodePlan(encoded: string): SandboxMessagingPlan {
