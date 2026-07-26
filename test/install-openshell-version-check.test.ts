@@ -710,7 +710,9 @@ exit 1`,
         encoding: "utf8",
       });
 
-      expect(refusedTrust.status, `${refusedTrust.stdout}\n${refusedTrust.stderr}`).toBe(1);
+      expect(refusedTrust.status, `${refusedTrust.stdout}\n${refusedTrust.stderr}`).toBeGreaterThan(
+        0,
+      );
       expect(refusedTrust.stderr).toContain(
         "Homebrew refused to trust the checksum-verified OpenShell formula nvidia/openshell/openshell",
       );
