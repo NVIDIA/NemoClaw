@@ -20,8 +20,14 @@ import {
   validateResolutionPatch,
 } from "../tools/pr-merge-conflict-fixer/publish.mts";
 import {
+  configureOpenShellInference,
+  createResolutionSandbox,
+  deleteResolutionSandbox,
+  exportResolutionPatch,
+  type ResolverTools,
   resolverModelConfiguration,
   resolverPrompt,
+  runResolutionTask,
 } from "../tools/pr-merge-conflict-fixer/resolve.mts";
 
 const temporaryDirectories: string[] = [];
@@ -51,6 +57,35 @@ function required<T>(value: T | null | undefined, message: string): T {
   expect(value, message).not.toBeNull();
   expect(value, message).toBeDefined();
   return value as T;
+}
+
+function resolverEnvironment(): NodeJS.ProcessEnv {
+  const directory = temporaryDirectory();
+  return {
+    ARTIFACT_DIR: path.join(directory, "artifact"),
+    CONFLICT_TREE: "a".repeat(40),
+    GH_TOKEN: "gh-secret",
+    GITHUB_TOKEN: "github-secret",
+    HOME: path.join(directory, "home"),
+    OPENAI_API_KEY: "provider-secret",
+    OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
+    PATH: "/usr/bin",
+    PI_IMAGE: "pi-image",
+    PR_REVIEW_ADVISOR_API_KEY: "advisor-secret",
+    RESOLUTION_WORKDIR: "/resolution",
+    RESOLVER_CONFIG_DIR: "/config",
+    RUNNER_TEMP: directory,
+    SANDBOX_NAME: "sandbox-test",
+    TRUSTED_CHECKOUT: "/trusted",
+  };
+}
+
+function resolverTools(outputs: string[] = []): ResolverTools {
+  return {
+    run: vi.fn(() => outputs.shift() ?? ""),
+    start: vi.fn(),
+    wait: vi.fn(async () => undefined),
+  };
 }
 
 function createConflictFixture(): {
@@ -326,6 +361,155 @@ describe("PR merge conflict fixer", () => {
     });
     expect(requests.filter((item) => item.path.includes("/pulls/"))).toHaveLength(1);
     expect(requests.filter((item) => item.path.endsWith("/git/ref/heads/main"))).toHaveLength(1);
+  });
+
+  it("configures approved inference through a loopback gateway (#7542)", async () => {
+    const env = resolverEnvironment();
+    const tools = resolverTools(["/trusted/bin/openshell-sandbox"]);
+
+    await configureOpenShellInference(env, tools);
+
+    const gatewayDirectory = path.join(
+      required(env.RUNNER_TEMP, "RUNNER_TEMP"),
+      "openshell-gateway",
+    );
+    const configurationPath = path.join(gatewayDirectory, "gateway.toml");
+    const configuration = fs.readFileSync(configurationPath, "utf8");
+    expect(configuration).toContain('bind_address = "127.0.0.1:8080"');
+    expect(configuration).toContain("allow_unauthenticated_users = true");
+    expect(configuration).toContain('supervisor_bin = "/trusted/bin/openshell-sandbox"');
+    expect(configuration).not.toContain("provider-secret");
+    expect(fs.statSync(configurationPath).mode & 0o777).toBe(0o600);
+
+    const run = vi.mocked(tools.run);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      [
+        "provider",
+        "create",
+        "--name",
+        "terra",
+        "--type",
+        "openai",
+        "--credential",
+        "OPENAI_API_KEY",
+        "--config",
+        "OPENAI_BASE_URL=https://inference-api.nvidia.com/v1",
+      ],
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENAI_API_KEY: "provider-secret" }),
+      }),
+    );
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      [
+        "inference",
+        "set",
+        "--provider",
+        "terra",
+        "--model",
+        "azure/openai/gpt-5.6-terra",
+        "--timeout",
+        "900",
+      ],
+      expect.anything(),
+    );
+    expect(vi.mocked(tools.start)).toHaveBeenCalledWith(
+      "openshell-gateway",
+      ["--config", configurationPath],
+      expect.objectContaining({
+        env: expect.not.objectContaining({ OPENAI_API_KEY: expect.anything() }),
+        logPath: path.join(gatewayDirectory, "gateway.log"),
+      }),
+    );
+    expect(run.mock.calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
+    expect(
+      run.mock.calls.map(([command, args]) => [command, ...args].join(" ")).join("\n"),
+    ).not.toContain("provider-secret");
+  });
+
+  it("runs sandbox phases without host credentials (#7542)", () => {
+    const env = resolverEnvironment();
+    const tools = resolverTools(["", "", "", "", "sandbox-test\n", ""]);
+
+    createResolutionSandbox(env, tools);
+    runResolutionTask(env, tools);
+    exportResolutionPatch(env, tools);
+    deleteResolutionSandbox(env, tools);
+
+    const calls = vi.mocked(tools.run).mock.calls;
+    expect(calls).toHaveLength(6);
+    expect(required(calls[0], "missing sandbox create call")[1]).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "create",
+        "--from",
+        "pi-image",
+        "--policy",
+        "/trusted/tools/pr-merge-conflict-fixer/policy.yaml",
+        "--upload",
+        "/resolution:/sandbox",
+        "--upload",
+        "/config:/sandbox",
+        "--no-git-ignore",
+      ]),
+    );
+    expect(required(calls[1], "missing Pi task call")[1]).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "exec",
+        "--workdir",
+        "/sandbox/repo",
+        "PI_CODING_AGENT_DIR=/sandbox/pi-config",
+        "--model",
+        "azure/openai/gpt-5.6-terra",
+        "--no-context-files",
+        "--no-skills",
+        "--offline",
+      ]),
+    );
+    const exportArgs = required(calls[2], "missing patch export call")[1];
+    expect(exportArgs).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "exec",
+        "CONFLICT_TREE=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/usr/bin/bash",
+        "-c",
+      ]),
+    );
+    expect(exportArgs.join("\n")).toContain("git ls-files -u");
+    expect(exportArgs.join("\n")).toContain("git diff --binary");
+    expect(required(calls[3], "missing patch download call")[1]).toEqual([
+      "sandbox",
+      "download",
+      "sandbox-test",
+      "/sandbox/resolution.patch",
+      `${required(env.ARTIFACT_DIR, "ARTIFACT_DIR")}/`,
+    ]);
+    expect(required(calls[4], "missing sandbox list call")[2].capture).toBe(true);
+    expect(required(calls[5], "missing sandbox delete call")[1]).toEqual([
+      "sandbox",
+      "delete",
+      "sandbox-test",
+    ]);
+    for (const [, , options] of calls) {
+      expect(options.env.GH_TOKEN).toBeUndefined();
+      expect(options.env.GITHUB_TOKEN).toBeUndefined();
+      expect(options.env.OPENAI_API_KEY).toBeUndefined();
+      expect(options.env.PR_REVIEW_ADVISOR_API_KEY).toBeUndefined();
+    }
+    expect(fs.existsSync(required(env.ARTIFACT_DIR, "ARTIFACT_DIR"))).toBe(true);
+  });
+
+  it("skips sandbox cleanup when OpenShell is unavailable (#7542)", () => {
+    const tools = resolverTools();
+    vi.mocked(tools.run).mockImplementation(() => {
+      throw new Error("openshell unavailable");
+    });
+
+    expect(() => deleteResolutionSandbox(resolverEnvironment(), tools)).not.toThrow();
+    expect(tools.run).toHaveBeenCalledOnce();
   });
 
   it("configures Pi for credential-free OpenShell inference (#7542)", () => {

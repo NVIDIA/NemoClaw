@@ -45,6 +45,10 @@ function checkout(job: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
+function resolverInvocation(command: string): string {
+  return `node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" ${command}`;
+}
+
 describe("PR merge conflict fixer workflow boundary", () => {
   const jobs = record(workflow.jobs);
   const scan = record(jobs.scan);
@@ -64,7 +68,7 @@ describe("PR merge conflict fixer workflow boundary", () => {
     ).toHaveLength(1);
   });
 
-  it("pins actions and checks out the recorded base SHA (#7542)", () => {
+  it("loads each resolve command from the pushed main SHA (#6952)", () => {
     const actionReferences = [scan, resolve, publish]
       .flatMap((job) => steps(job))
       .map((step) => step.uses)
@@ -74,19 +78,26 @@ describe("PR merge conflict fixer workflow boundary", () => {
       actionReferences.every((reference) => /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}$/u.test(reference)),
     ).toBe(true);
 
-    expect(checkout(scan).with).toMatchObject({
-      "persist-credentials": false,
-      ref: "${{ github.sha }}",
-    });
-    for (const job of [resolve, publish]) {
+    for (const job of [scan, resolve, publish]) {
       expect(checkout(job).with).toMatchObject({
         "persist-credentials": false,
-        ref: "${{ matrix.item.base_sha }}",
+        ref: "${{ github.sha }}",
       });
     }
     expect(namedStep(publish, "Validate and publish the merge commit").run).toContain(
       "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/publish.mts",
     );
+
+    for (const [name, command] of [
+      ["Reproduce the recorded conflict", "prepare"],
+      ["Configure OpenShell inference", "configure"],
+      ["Create the credential-free sandbox", "create"],
+      ["Run one Pi conflict-resolution task", "run"],
+      ["Export the Git patch", "export"],
+      ["Delete the sandbox", "delete"],
+    ]) {
+      expect(namedStep(resolve, name).run).toBe(resolverInvocation(command));
+    }
   });
 
   it("keeps credentials and direct network egress out of Pi (#7542)", () => {
@@ -94,32 +105,15 @@ describe("PR merge conflict fixer workflow boundary", () => {
     expect(configure.env).toEqual({
       OPENAI_API_KEY: "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}",
     });
-    expect(configure.run).toContain("--credential OPENAI_API_KEY");
-    expect(configure.run).toContain("--model azure/openai/gpt-5.6-terra");
-    expect(configure.run).toContain("openshell-gateway generate-certs");
-    expect(configure.run).toContain("allow_unauthenticated_users = true");
-    expect(configure.run).toContain("supervisor_bin =");
-    expect(record(resolve.env).OPENSHELL_GATEWAY_ENDPOINT).toBe("http://127.0.0.1:8080");
+    expect(configure.run).toBe(resolverInvocation("configure"));
 
     const pi = namedStep(resolve, "Run one Pi conflict-resolution task");
     expect(pi.env).toBeUndefined();
-    for (const option of [
-      "--model azure/openai/gpt-5.6-terra",
-      "--no-context-files",
-      "--no-extensions",
-      "--no-prompt-templates",
-      "--no-session",
-      "--no-skills",
-      "--no-themes",
-      "--offline",
-    ]) {
-      expect(pi.run).toContain(option);
-    }
-    expect(pi.run).toContain("--workdir /sandbox/repo");
-    expect(pi.run).toContain("--env PI_CODING_AGENT_DIR=/sandbox/pi-config");
-    expect(pi.run).toContain("/usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
-    expect(pi.run).toContain("--print @/sandbox/pi-config/task.txt");
-    expect(String(pi.run)).not.toContain("GITHUB_TOKEN");
+    expect(pi.run).toBe(resolverInvocation("run"));
+    expect(namedStep(resolve, "Install OpenShell").run).toContain(
+      "env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY",
+    );
+    expect(record(resolve.env).OPENSHELL_GATEWAY_ENDPOINT).toBe("http://127.0.0.1:8080");
     expect(record(resolve.env).PI_IMAGE).toBe(
       "ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd",
     );
@@ -140,30 +134,25 @@ describe("PR merge conflict fixer workflow boundary", () => {
     });
     expect(policy.landlock).toEqual({ compatibility: "hard_requirement" });
     expect(policy.process).toEqual({ run_as_group: "sandbox", run_as_user: "sandbox" });
-
-    const create = namedStep(resolve, "Create the credential-free sandbox");
     expect(record(resolve.env)).toMatchObject({
       ARTIFACT_DIR: "${{ github.workspace }}/resolution-artifact",
       RESOLUTION_WORKDIR: "${{ github.workspace }}/repo",
       RESOLVER_CONFIG_DIR: "${{ github.workspace }}/pi-config",
+      TRUSTED_CHECKOUT: "${{ github.workspace }}/trusted",
     });
     expect(record(publish.env).ARTIFACT_DIR).toBe("${{ github.workspace }}/resolution-artifact");
-    expect(create.run).toContain('--upload "$RESOLUTION_WORKDIR:/sandbox"');
-    expect(create.run).toContain('--upload "$RESOLVER_CONFIG_DIR:/sandbox"');
-    expect(create.run).toContain("-- /usr/bin/git -C /sandbox/repo status --short");
   });
 
   it("publishes only a successfully exported patch and always deletes the sandbox (#7542)", () => {
-    expect(namedStep(resolve, "Create the credential-free sandbox").run).toContain(
-      "--no-git-ignore",
-    );
     const exporter = namedStep(resolve, "Export the Git patch");
-    expect(exporter.run).toContain("--workdir /sandbox/repo");
-    expect(exporter.run).toContain("/sandbox/resolution.patch");
+    expect(exporter.env).toEqual({
+      CONFLICT_TREE: "${{ steps.prepare.outputs.conflict_tree }}",
+    });
+    expect(exporter.run).toBe(resolverInvocation("export"));
 
     const cleanup = namedStep(resolve, "Delete the sandbox");
     expect(cleanup.if).toBe("always()");
-    expect(cleanup.run).toContain("openshell sandbox delete");
+    expect(cleanup.run).toBe(resolverInvocation("delete"));
 
     const upload = namedStep(resolve, "Upload the resolution patch");
     const download = namedStep(publish, "Download the resolution patch");
