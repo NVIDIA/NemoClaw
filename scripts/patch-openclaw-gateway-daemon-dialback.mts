@@ -91,17 +91,22 @@ function countOccurrences(source: string, needle: string): number {
 
 function patchText(source: string, file: string, spec: PatchSpec): PatchTextResult {
   const markerCount = countOccurrences(source, spec.marker);
+  const patchedCount = countOccurrences(source, spec.patched);
   const upstreamCount = countOccurrences(source, spec.upstream);
-  if (markerCount === 1 && upstreamCount === 0) {
+  if (markerCount === 1 && patchedCount === 1 && upstreamCount === 0) {
     return { status: "already-patched", text: source };
   }
-  if (markerCount !== 0 || upstreamCount !== 1) {
+  if (markerCount !== 0 || patchedCount !== 0 || upstreamCount !== 1) {
     throw new Error(
-      `${file}: expected one unpatched or one patched ${spec.label} shape; found ${upstreamCount} upstream and ${markerCount} marker occurrences`,
+      `${file}: expected one unpatched or one patched ${spec.label} shape; found ${upstreamCount} upstream, ${patchedCount} patched, and ${markerCount} marker occurrences`,
     );
   }
   const text = source.replace(spec.upstream, spec.patched);
-  if (countOccurrences(text, spec.marker) !== 1 || countOccurrences(text, spec.upstream) !== 0) {
+  if (
+    countOccurrences(text, spec.marker) !== 1 ||
+    countOccurrences(text, spec.patched) !== 1 ||
+    countOccurrences(text, spec.upstream) !== 0
+  ) {
     throw new Error(`${file}: failed to verify patched ${spec.label} shape`);
   }
   return { status: "patched", text };

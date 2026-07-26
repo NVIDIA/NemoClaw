@@ -250,6 +250,19 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
     ).toThrow(/found 2 upstream/);
   });
 
+  it("fails closed when a marker remains after the patched shape drifts", () => {
+    const patched = patchGatewayCallContextText(CALL_CONTEXT_SOURCE).text;
+    const drifted = patched.replace(
+      " || nemoclawGatewaySelfDialback ? void 0",
+      " || false ? void 0",
+    );
+
+    expect(drifted).toContain(CALL_CONTEXT_MARKER);
+    expect(() => patchGatewayCallContextText(drifted)).toThrow(
+      /found 0 upstream, 0 patched, and 1 marker occurrences/,
+    );
+  });
+
   it("provides an auditable command-line contract", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-cli-"));
     try {

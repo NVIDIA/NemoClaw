@@ -200,15 +200,12 @@ The `2026.7.1` dist changed eight reviewed shapes:
 - strict managed-proxy activation now uses `isStrictManagedProxyActive`; the
   patch still activates only inside OpenShell and only without an explicit
   dispatcher policy;
-- gateway daemon backend calls now ignore the inherited
-  `OPENCLAW_GATEWAY_URL` inside OpenShell so self-dialback uses loopback. The
-  environment variable remains available to descendant agents for
-  private-interface routing. Explicit gateway URL overrides and behavior
-  outside OpenShell are unchanged.
-  `scripts/patch-openclaw-gateway-daemon-dialback.mts` is gated to the exact
-  `2026.7.1` version and rejects missing or ambiguous compiled-dist shapes.
-  Its regression test covers the daemon and descendant boundaries; remove the
-  patch after upstream separates internal and descendant gateway routes;
+- gateway daemon backend calls now ignore the inherited `OPENCLAW_GATEWAY_URL` inside OpenShell so self-dialback uses loopback.
+  The environment variable remains available to descendant agents for private-interface routing.
+  Explicit gateway URL overrides and behavior outside OpenShell are unchanged.
+  `scripts/patch-openclaw-gateway-daemon-dialback.mts` is gated to the exact `2026.7.1` version and rejects missing or ambiguous compiled-dist shapes.
+  Its regression test covers the daemon and descendant boundaries.
+  Remove the patch after upstream separates internal and descendant gateway routes.
 - queued follow-up execution now resolves inbound context before allocating a
   run id; `scripts/patch-openclaw-chat-send.mts` preserves the submitted run id
   at that new boundary. It also suppresses the premature empty final event that
