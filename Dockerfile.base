@@ -270,8 +270,9 @@ RUN apt-get update \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
     && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
     && test "$(perl -MHTTP::Tiny -e 'print HTTP::Tiny->VERSION')" = "0.096" \
-    && test "$(perl -MIO::Uncompress::Unzip -e 'print IO::Uncompress::Unzip->VERSION')" = "2.220" \
-    && test "$(perl -MFile::GlobMapper -e 'print File::GlobMapper->VERSION')" = "2.220" \
+    && test "$(perl -MIO::Compress::Base -e 'print IO::Compress::Base->VERSION')" = "2.223" \
+    && test "$(perl -MIO::Uncompress::Unzip -e 'print IO::Uncompress::Unzip->VERSION')" = "2.223" \
+    && test "$(perl -MFile::GlobMapper -e 'print File::GlobMapper->VERSION')" = "1.001" \
     && perl -MSocket=pack_ip_mreq_source -e \
         'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
     && perl -e \

@@ -106,13 +106,15 @@ Perl 5.44.0 includes these reviewed component versions:
 - `Socket 2.041`;
 - `Storable 3.41`;
 - `HTTP::Tiny 0.096`;
-- `IO::Uncompress::Unzip 2.220`; and
-- `File::GlobMapper 2.220`.
+- `IO::Compress 2.223`;
+- `IO::Uncompress::Unzip 2.223`; and
+- `File::GlobMapper 1.001`.
 
-The image build now checks each version directly. The HTTP::Tiny floor is
-`0.095`; the reviewed IO::Compress fixes are in `2.220`. The core interpreter
-version check also remains the binding for core-language fixes included after
-Perl 5.43.10.
+The image build now checks the IO::Compress distribution version through
+`IO::Compress::Base` and checks each affected module directly. The HTTP::Tiny
+floor is `0.095`; the reviewed IO::Compress fixes are in `2.223`. The core
+interpreter version check also remains the binding for core-language fixes
+included after Perl 5.43.10.
 
 ### Existing jq and Expat packages
 
