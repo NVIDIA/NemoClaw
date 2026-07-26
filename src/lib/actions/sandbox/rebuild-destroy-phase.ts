@@ -7,9 +7,10 @@ import { G, R } from "../../cli/terminal-style";
 import { waitUntil } from "../../core/wait";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { redactFull } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
+import { registryEntryGatewayPort } from "../../state/gateway-registry";
 import * as registry from "../../state/registry";
 import { removeSandboxRegistryEntryWithReceipt } from "./destroy";
 import { isExplicitMissingSandboxGatewayOutput } from "./gateway-state";
@@ -51,6 +52,12 @@ type PostDeleteReconciliation =
   | { state: "intact"; phase: "Ready" | "Running"; status: 0 }
   | { state: "ambiguous"; phase: string | null; status: number | null };
 
+interface RebuildDeleteTarget {
+  gatewayName: string;
+  gatewayPort: number;
+  sandboxName: string;
+}
+
 interface RebuildDeleteAbsenceDeps {
   captureSandboxGet?: (
     sandboxName: string,
@@ -70,6 +77,38 @@ interface RebuildDeleteAbsenceDeps {
 const REBUILD_DELETE_ABSENCE_MAX_ATTEMPTS = 20;
 const REBUILD_DELETE_ABSENCE_INITIAL_INTERVAL_MS = 250;
 const REBUILD_DELETE_ABSENCE_MAX_INTERVAL_MS = 1_000;
+
+function resolveRebuildDeleteTarget(
+  sandboxName: string,
+  sandboxEntry: RebuildSandboxEntry,
+): RebuildDeleteTarget {
+  if (sandboxEntry.name !== sandboxName) {
+    throw new Error("Rebuild sandbox entry does not match the requested delete target.");
+  }
+  const gatewayPort = registryEntryGatewayPort({
+    name: sandboxEntry.name,
+    gatewayName: sandboxEntry.gatewayName,
+    gatewayPort: sandboxEntry.gatewayPort,
+  });
+  return {
+    gatewayName: resolveGatewayName(gatewayPort),
+    gatewayPort,
+    sandboxName,
+  };
+}
+
+function rebuildDeleteTargetMatchesRegistry(expected: RebuildDeleteTarget): boolean {
+  const currentEntry = registry.getSandbox(expected.sandboxName);
+  if (!currentEntry) return false;
+  try {
+    const current = resolveRebuildDeleteTarget(expected.sandboxName, currentEntry);
+    return (
+      current.gatewayName === expected.gatewayName && current.gatewayPort === expected.gatewayPort
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** Wait for explicit absence from the same `sandbox get` boundary used by inner onboard. */
 export function waitForRebuildDeleteAbsence(
@@ -192,7 +231,8 @@ export async function runRebuildDestroyPhase(
     validateAfterMcpPreparation,
     onDeleted,
   } = input;
-  const gatewayName = resolveSandboxGatewayName(input.sandboxEntry);
+  const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
+  const { gatewayName } = deleteTarget;
 
   if (blockRebuildOnPendingBaselineTransition(input.sandboxEntry, sandboxName, bail)) return null;
 
@@ -298,6 +338,23 @@ export async function runRebuildDestroyPhase(
     }
   }
 
+  // MCP preparation can await external systems. Re-read the registry at the
+  // synchronous delete edge so those checks and deletion use one target.
+  if (!rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+    );
+    relockShieldsIfNeeded(true);
+    bail(
+      mcpRecoveryFailure
+        ? `Sandbox delete target changed during rebuild preparation; MCP provider recovery also failed: ${mcpRecoveryFailure}`
+        : "Sandbox delete target changed during rebuild preparation.",
+    );
+    return null;
+  }
+
   log(`Running: openshell sandbox delete -g ${gatewayName} ${sandboxName}`);
   const deleteResult = runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
     ignoreError: true,
@@ -364,6 +421,7 @@ export async function runRebuildDestroyPhase(
     if (backupManifest) {
       console.error("  State backup is preserved at: " + backupManifest.backupPath);
     }
+    input.onDeleteStateAmbiguous?.();
     bail("Sandbox deletion could not be confirmed.");
     return null;
   }
