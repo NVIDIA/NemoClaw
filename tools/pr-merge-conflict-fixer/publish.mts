@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -358,7 +358,6 @@ async function main(): Promise<void> {
   const repositoryName = required(process.env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY");
   const artifactDirectory = required(process.env.ARTIFACT_DIR, "ARTIFACT_DIR");
   const patchPath = path.join(artifactDirectory, "resolution.patch");
-  readFileSync(patchPath);
   const client = githubClient(token);
   const commitSha = await publishResolution({
     entry,

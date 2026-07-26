@@ -36,6 +36,7 @@ function git(repository: string, args: string[]): string {
   return execFileSync("git", args, {
     cwd: repository,
     encoding: "utf8",
+    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 }
@@ -44,6 +45,12 @@ function write(repository: string, file: string, content: string): void {
   const target = path.join(repository, file);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, content);
+}
+
+function required<T>(value: T | null | undefined, message: string): T {
+  expect(value, message).not.toBeNull();
+  expect(value, message).toBeDefined();
+  return value as T;
 }
 
 function createConflictFixture(): {
@@ -88,19 +95,19 @@ function entryFor(fixture: ReturnType<typeof createConflictFixture>): ConflictMa
 function createResolutionPatch(
   fixture: ReturnType<typeof createConflictFixture>,
   patchPath: string,
-  extraFile = false,
+  mutateRepository: (repository: string) => void = () => undefined,
 ): string {
   const repository = path.join(temporaryDirectory(), "resolver");
-  const merge = prepareMerge(fixture.repository, repository, fixture.headSha, fixture.baseSha);
-  expect(merge?.conflictPaths).toEqual(["conflict.txt"]);
+  const merge = required(
+    prepareMerge(fixture.repository, repository, fixture.headSha, fixture.baseSha),
+    "expected a conflicting merge fixture",
+  );
+  expect(merge.conflictPaths).toEqual(["conflict.txt"]);
   write(repository, "conflict.txt", "resolved intent\n");
   git(repository, ["add", "conflict.txt"]);
-  if (extraFile) {
-    write(repository, "unrelated.txt", "not part of the conflict\n");
-    git(repository, ["add", "unrelated.txt"]);
-  }
+  mutateRepository(repository);
   const finalTree = writeTree(repository);
-  const patch = execFileSync("git", ["diff", "--binary", merge?.conflictTree ?? "", finalTree], {
+  const patch = execFileSync("git", ["diff", "--binary", merge.conflictTree, finalTree], {
     cwd: repository,
   });
   fs.writeFileSync(patchPath, patch);
@@ -189,7 +196,10 @@ describe("PR merge conflict fixer", () => {
   it("rejects a patch that changes a non-conflict path (#7542)", () => {
     const fixture = createConflictFixture();
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
-    createResolutionPatch(fixture, patchPath, true);
+    createResolutionPatch(fixture, patchPath, (repository) => {
+      write(repository, "unrelated.txt", "not part of the conflict\n");
+      git(repository, ["add", "unrelated.txt"]);
+    });
 
     expect(() =>
       validateResolutionPatch({
@@ -251,35 +261,36 @@ describe("PR merge conflict fixer", () => {
       },
       variables,
     }));
-    const request = vi.fn(async (method: "GET" | "POST", apiPath: string, body?: unknown) => {
-      requests.push({ body, method, path: apiPath });
-      if (apiPath.endsWith(`/pulls/${entry.pr_number}`)) {
-        return {
-          base: {
-            ref: "main",
-            repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
-          },
-          head: {
-            ref: entry.head_ref,
-            repo: { full_name: "NVIDIA/NemoClaw" },
-          },
-          state: "open",
-        };
-      }
-      if (apiPath.endsWith("/git/ref/heads/main")) {
-        return { object: { sha: entry.base_sha } };
-      }
-      if (apiPath.endsWith("/git/blobs")) {
+    const responseHandlers: Record<string, (body: unknown) => unknown> = {
+      [`/repos/NVIDIA/NemoClaw/pulls/${entry.pr_number}`]: () => ({
+        base: {
+          ref: "main",
+          repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
+        },
+        head: {
+          ref: entry.head_ref,
+          repo: { full_name: "NVIDIA/NemoClaw" },
+        },
+        state: "open",
+      }),
+      "/repos/NVIDIA/NemoClaw/git/ref/heads/main": () => ({
+        object: { sha: entry.base_sha },
+      }),
+      "/repos/NVIDIA/NemoClaw/git/blobs": (body) => {
         const encoded = (body as { content: string }).content;
         const content = Buffer.from(encoded, "base64");
         const header = Buffer.from(`blob ${content.length}\0`);
         return { sha: createHash("sha1").update(header).update(content).digest("hex") };
-      }
-      if (apiPath.endsWith("/git/trees")) return { sha: finalTree };
-      if (apiPath.endsWith("/git/commits")) {
-        return { sha: commitSha, verification: { reason: "valid", verified: true } };
-      }
-      throw new Error(`unexpected request: ${method} ${apiPath}`);
+      },
+      "/repos/NVIDIA/NemoClaw/git/trees": () => ({ sha: finalTree }),
+      "/repos/NVIDIA/NemoClaw/git/commits": () => ({
+        sha: commitSha,
+        verification: { reason: "valid", verified: true },
+      }),
+    };
+    const request = vi.fn(async (method: "GET" | "POST", apiPath: string, body?: unknown) => {
+      requests.push({ body, method, path: apiPath });
+      return required(responseHandlers[apiPath], `unexpected request: ${method} ${apiPath}`)(body);
     });
 
     await expect(

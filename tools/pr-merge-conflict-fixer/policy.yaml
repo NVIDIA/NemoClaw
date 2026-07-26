@@ -4,20 +4,18 @@
 version: 1
 
 filesystem_policy:
-  include_workdir: true
+  include_workdir: false
   read_only:
-    - /usr
-    - /lib
-    - /proc
-    - /dev/urandom
+    - /usr/bin
+    - /usr/lib
+    - /usr/share/git-core
     - /etc
   read_write:
+    - /dev
     - /sandbox
-    - /tmp
-    - /dev/null
 
 landlock:
-  compatibility: best_effort
+  compatibility: hard_requirement
 
 process:
   run_as_user: sandbox

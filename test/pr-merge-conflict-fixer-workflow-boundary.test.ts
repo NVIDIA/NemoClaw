@@ -26,18 +26,23 @@ function steps(job: Record<string, unknown>): Array<Record<string, unknown>> {
   return Array.isArray(job.steps) ? (job.steps as Array<Record<string, unknown>>) : [];
 }
 
+function required<T>(value: T | undefined, message: string): T {
+  expect(value, message).toBeDefined();
+  return value as T;
+}
+
 function namedStep(job: Record<string, unknown>, name: string): Record<string, unknown> {
-  const step = steps(job).find((candidate) => candidate.name === name);
-  if (!step) throw new Error(`Missing workflow step: ${name}`);
-  return step;
+  return required(
+    steps(job).find((candidate) => candidate.name === name),
+    `Missing workflow step: ${name}`,
+  );
 }
 
 function checkout(job: Record<string, unknown>): Record<string, unknown> {
-  const step = steps(job).find((candidate) =>
-    String(candidate.uses ?? "").startsWith("actions/checkout@"),
+  return required(
+    steps(job).find((candidate) => String(candidate.uses ?? "").startsWith("actions/checkout@")),
+    "Missing checkout step",
   );
-  if (!step) throw new Error("Missing checkout step");
-  return step;
 }
 
 describe("PR merge conflict fixer workflow boundary", () => {
@@ -59,12 +64,16 @@ describe("PR merge conflict fixer workflow boundary", () => {
     ).toHaveLength(1);
   });
 
-  it("runs pinned trusted code at the recorded base revisions (#7542)", () => {
-    for (const job of [scan, resolve, publish]) {
-      for (const step of steps(job)) {
-        if (step.uses) expect(step.uses).toMatch(/^[^@\s]+\/[^@\s]+@[0-9a-f]{40}$/u);
-      }
-    }
+  it("pins actions and checks out the recorded base SHA (#7542)", () => {
+    const actionReferences = [scan, resolve, publish]
+      .flatMap((job) => steps(job))
+      .map((step) => step.uses)
+      .filter((reference): reference is string => typeof reference === "string");
+    expect(actionReferences).not.toHaveLength(0);
+    expect(
+      actionReferences.every((reference) => /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}$/u.test(reference)),
+    ).toBe(true);
+
     expect(checkout(scan).with).toMatchObject({
       "persist-credentials": false,
       ref: "${{ github.sha }}",
@@ -80,13 +89,17 @@ describe("PR merge conflict fixer workflow boundary", () => {
     );
   });
 
-  it("keeps credentials and ordinary network access out of Pi (#7542)", () => {
+  it("keeps credentials and direct network egress out of Pi (#7542)", () => {
     const configure = namedStep(resolve, "Configure OpenShell inference");
     expect(configure.env).toEqual({
       OPENAI_API_KEY: "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}",
     });
     expect(configure.run).toContain("--credential OPENAI_API_KEY");
     expect(configure.run).toContain("--model azure/openai/gpt-5.6-terra");
+    expect(configure.run).toContain("openshell-gateway generate-certs");
+    expect(configure.run).toContain("allow_unauthenticated_users = true");
+    expect(configure.run).toContain("supervisor_bin =");
+    expect(record(resolve.env).OPENSHELL_GATEWAY_ENDPOINT).toBe("http://127.0.0.1:8080");
 
     const pi = namedStep(resolve, "Run one Pi conflict-resolution task");
     expect(pi.env).toBeUndefined();
@@ -102,6 +115,10 @@ describe("PR merge conflict fixer workflow boundary", () => {
     ]) {
       expect(pi.run).toContain(option);
     }
+    expect(pi.run).toContain("--workdir /sandbox/repo");
+    expect(pi.run).toContain("--env PI_CODING_AGENT_DIR=/sandbox/pi-config");
+    expect(pi.run).toContain("/usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
+    expect(pi.run).toContain("--print @/sandbox/pi-config/task.txt");
     expect(String(pi.run)).not.toContain("GITHUB_TOKEN");
     expect(record(resolve.env).PI_IMAGE).toBe(
       "ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd",
@@ -113,14 +130,37 @@ describe("PR merge conflict fixer workflow boundary", () => {
       /\b(?:PAT|GitHub App|checks:\s*write|statuses:\s*write)\b/iu,
     );
     expect(policy.network_policies).toEqual({});
-    expect(record(policy.process).run_as_user).toBe("sandbox");
-    expect(record(policy.filesystem_policy).read_write).toContain("/sandbox");
+  });
+
+  it("allows only the resolver runtime and sandbox paths (#7542)", () => {
+    expect(policy.filesystem_policy).toEqual({
+      include_workdir: false,
+      read_only: ["/usr/bin", "/usr/lib", "/usr/share/git-core", "/etc"],
+      read_write: ["/dev", "/sandbox"],
+    });
+    expect(policy.landlock).toEqual({ compatibility: "hard_requirement" });
+    expect(policy.process).toEqual({ run_as_group: "sandbox", run_as_user: "sandbox" });
+
+    const create = namedStep(resolve, "Create the credential-free sandbox");
+    expect(record(resolve.env)).toMatchObject({
+      ARTIFACT_DIR: "${{ github.workspace }}/resolution-artifact",
+      RESOLUTION_WORKDIR: "${{ github.workspace }}/repo",
+      RESOLVER_CONFIG_DIR: "${{ github.workspace }}/pi-config",
+    });
+    expect(record(publish.env).ARTIFACT_DIR).toBe("${{ github.workspace }}/resolution-artifact");
+    expect(create.run).toContain('--upload "$RESOLUTION_WORKDIR:/sandbox"');
+    expect(create.run).toContain('--upload "$RESOLVER_CONFIG_DIR:/sandbox"');
+    expect(create.run).toContain("-- /usr/bin/git -C /sandbox/repo status --short");
   });
 
   it("publishes only a successfully exported patch and always deletes the sandbox (#7542)", () => {
     expect(namedStep(resolve, "Create the credential-free sandbox").run).toContain(
       "--no-git-ignore",
     );
+    const exporter = namedStep(resolve, "Export the Git patch");
+    expect(exporter.run).toContain("--workdir /sandbox/repo");
+    expect(exporter.run).toContain("/sandbox/resolution.patch");
+
     const cleanup = namedStep(resolve, "Delete the sandbox");
     expect(cleanup.if).toBe("always()");
     expect(cleanup.run).toContain("openshell sandbox delete");

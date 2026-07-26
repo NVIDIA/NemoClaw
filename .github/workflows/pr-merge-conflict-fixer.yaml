@@ -52,11 +52,11 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.scan.outputs.matrix) }}
     env:
-      ARTIFACT_DIR: ${{ runner.temp }}/resolution-artifact
-      OPENSHELL_GATEWAY: pr-conflict-fixer
+      ARTIFACT_DIR: ${{ github.workspace }}/resolution-artifact
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
       PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
-      RESOLUTION_WORKDIR: ${{ runner.temp }}/repo
-      RESOLVER_CONFIG_DIR: ${{ runner.temp }}/pi-config
+      RESOLUTION_WORKDIR: ${{ github.workspace }}/repo
+      RESOLVER_CONFIG_DIR: ${{ github.workspace }}/pi-config
       SANDBOX_NAME: pr-conflict-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.item.pr_number }}
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
@@ -91,8 +91,39 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
-          openshell gateway start --name "$OPENSHELL_GATEWAY" --port 8080
-          openshell gateway select "$OPENSHELL_GATEWAY"
+          GATEWAY_DIR="$RUNNER_TEMP/openshell-gateway"
+          mkdir -p "$GATEWAY_DIR"
+          openshell-gateway generate-certs --output-dir "$GATEWAY_DIR"
+          cat >"$GATEWAY_DIR/gateway.toml" <<EOF
+          [openshell]
+          version = 1
+
+          [openshell.gateway]
+          bind_address = "127.0.0.1:8080"
+          compute_drivers = ["docker"]
+          disable_tls = true
+
+          [openshell.gateway.auth]
+          allow_unauthenticated_users = true
+
+          [openshell.gateway.gateway_jwt]
+          signing_key_path = "$GATEWAY_DIR/jwt/signing.pem"
+          public_key_path = "$GATEWAY_DIR/jwt/public.pem"
+          kid_path = "$GATEWAY_DIR/jwt/kid"
+          gateway_id = "pr-conflict-fixer"
+          ttl_secs = 3600
+
+          [openshell.drivers.docker]
+          grpc_endpoint = "http://host.openshell.internal:8080"
+          supervisor_bin = "$(command -v openshell-sandbox)"
+          EOF
+          openshell-gateway --config "$GATEWAY_DIR/gateway.toml" \
+            >"$GATEWAY_DIR/gateway.log" 2>&1 &
+          for _ in {1..30}; do
+            openshell gateway info >/dev/null 2>&1 && break
+            sleep 1
+          done
+          openshell gateway info
           openshell provider create \
             --name terra \
             --type openai \
@@ -115,33 +146,35 @@ jobs:
             --upload "$RESOLVER_CONFIG_DIR:/sandbox" \
             --no-git-ignore \
             --no-tty \
-            -- true
+            -- /usr/bin/git -C /sandbox/repo status --short
 
       - name: Run one Pi conflict-resolution task
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
-          openshell sandbox exec --name "$SANDBOX_NAME" --timeout 1200 -- \
-            env \
-              HOME=/sandbox \
-              PI_CODING_AGENT_DIR=/sandbox/pi-config \
-              PI_OFFLINE=1 \
-            bash -lc '
-              cd /sandbox/repo
-              node /usr/bin/pi \
-                --provider openshell \
-                --model azure/openai/gpt-5.6-terra \
-                --thinking medium \
-                --tools read,bash,edit,write,grep,find,ls \
-                --no-context-files \
-                --no-extensions \
-                --no-prompt-templates \
-                --no-session \
-                --no-skills \
-                --no-themes \
-                --offline \
-                --print "$(cat /sandbox/pi-config/task.txt)"
-            '
+          openshell sandbox exec \
+            --name "$SANDBOX_NAME" \
+            --timeout 1200 \
+            --workdir /sandbox/repo \
+            --env HOME=/sandbox \
+            --env PI_CODING_AGENT_DIR=/sandbox/pi-config \
+            --env PI_OFFLINE=1 \
+            --env TMPDIR=/sandbox \
+            -- \
+            /usr/bin/node \
+              /usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js \
+              --provider openshell \
+              --model azure/openai/gpt-5.6-terra \
+              --thinking medium \
+              --tools read,bash,edit,write,grep,find,ls \
+              --no-context-files \
+              --no-extensions \
+              --no-prompt-templates \
+              --no-session \
+              --no-skills \
+              --no-themes \
+              --offline \
+              --print @/sandbox/pi-config/task.txt
 
       - name: Export the Git patch
         env:
@@ -149,11 +182,13 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
-          openshell sandbox exec --name "$SANDBOX_NAME" -- \
-            env CONFLICT_TREE="$CONFLICT_TREE" \
-            bash -lc '
+          openshell sandbox exec \
+            --name "$SANDBOX_NAME" \
+            --workdir /sandbox/repo \
+            --env CONFLICT_TREE="$CONFLICT_TREE" \
+            -- \
+            /usr/bin/bash -c '
               set -euo pipefail
-              cd /sandbox/repo
               if test -n "$(git ls-files -u)"; then
                 echo "Pi did not stage every resolved conflict." >&2
                 exit 1
@@ -198,7 +233,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.scan.outputs.matrix) }}
     env:
-      ARTIFACT_DIR: ${{ runner.temp }}/resolution-artifact
+      ARTIFACT_DIR: ${{ github.workspace }}/resolution-artifact
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
       - name: Checkout trusted publisher code
