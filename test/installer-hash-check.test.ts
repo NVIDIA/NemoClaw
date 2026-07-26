@@ -235,12 +235,15 @@ const applyHomebrewTrustTransition = (source: string): string => {
       `cleanup_macos_homebrew_formula() {
   local status=$?
   trap - EXIT
-  rm -rf "\${OPENSHELL_HOMEBREW_FORMULA_TMPDIR:-}"
   if [ -n "\${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF:-}" ]; then
     if ! brew untrust --formula "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" >/dev/null; then
       warn "Homebrew could not remove temporary trust for \${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF}"
       status=1
     fi
+  fi
+  if ! rm -rf "\${OPENSHELL_HOMEBREW_FORMULA_TMPDIR:-}"; then
+    warn "Could not remove temporary OpenShell Homebrew formula files"
+    status=1
   fi
   exit "$status"
 }
@@ -329,13 +332,13 @@ install_macos_homebrew_formula() {
 const completeHomebrewTrustTransition = (source: string): string => {
   const marker = `const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
   "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58",
-  "5ddf9956ccbcbdbac82022460645322e80931fd144d5d4b19a99df270410d95c",
+  "24305648faee6152206aaa7f83a63db2f4e5bb574740a8cc723a83eb96457c00",
 ] as const;`;
   assert.ok(source.includes(marker), "Homebrew trust transition allowlist must exist");
   return source.replace(
     marker,
     `const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
-  "5ddf9956ccbcbdbac82022460645322e80931fd144d5d4b19a99df270410d95c",
+  "24305648faee6152206aaa7f83a63db2f4e5bb574740a8cc723a83eb96457c00",
 ] as const;`,
   );
 };
