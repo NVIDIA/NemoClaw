@@ -99,20 +99,58 @@ function createConflictFixture(): {
   git(repository, ["config", "user.email", "conflict-fixer@example.test"]);
   git(repository, ["config", "commit.gpgsign", "false"]);
   write(repository, "conflict.txt", "shared\n");
-  git(repository, ["add", "conflict.txt"]);
+  write(repository, "clean-merge.txt", "first\nkeep-1\nkeep-2\nkeep-3\nkeep-4\nkeep-5\nlast\n");
+  write(repository, "pr-deleted.txt", "delete this on the PR branch\n");
+  git(repository, ["add", "conflict.txt", "clean-merge.txt", "pr-deleted.txt"]);
   git(repository, ["commit", "-m", "test: add shared file"]);
 
   git(repository, ["checkout", "-b", "pull-request"]);
   write(repository, "conflict.txt", "pull request\n");
-  git(repository, ["add", "conflict.txt"]);
+  write(
+    repository,
+    "clean-merge.txt",
+    "pull request\nkeep-1\nkeep-2\nkeep-3\nkeep-4\nkeep-5\nlast\n",
+  );
+  fs.rmSync(path.join(repository, "pr-deleted.txt"));
+  git(repository, ["add", "-A"]);
   git(repository, ["commit", "-m", "test: change PR side"]);
   const headSha = git(repository, ["rev-parse", "HEAD"]);
 
   git(repository, ["checkout", "main"]);
   write(repository, "conflict.txt", "main branch\n");
+  write(
+    repository,
+    "clean-merge.txt",
+    "first\nkeep-1\nkeep-2\nkeep-3\nkeep-4\nkeep-5\nmain branch\n",
+  );
   write(repository, "main-only.txt", "main\n");
-  git(repository, ["add", "conflict.txt", "main-only.txt"]);
+  git(repository, ["add", "conflict.txt", "clean-merge.txt", "main-only.txt"]);
   git(repository, ["commit", "-m", "test: change main side"]);
+  const baseSha = git(repository, ["rev-parse", "HEAD"]);
+  return { baseSha, headSha, repository };
+}
+
+function createMovedFileConflictFixture(): ReturnType<typeof createConflictFixture> {
+  const repository = temporaryDirectory();
+  git(repository, ["init", "--initial-branch=main"]);
+  git(repository, ["config", "user.name", "Conflict Fixer Test"]);
+  git(repository, ["config", "user.email", "conflict-fixer@example.test"]);
+  git(repository, ["config", "commit.gpgsign", "false"]);
+  write(repository, "adapter.js", "shared\n");
+  git(repository, ["add", "adapter.js"]);
+  git(repository, ["commit", "-m", "test: add shared adapter"]);
+
+  git(repository, ["checkout", "-b", "pull-request"]);
+  write(repository, "adapter.js", "pull request intent\n");
+  git(repository, ["add", "adapter.js"]);
+  git(repository, ["commit", "-m", "test: change PR adapter"]);
+  const headSha = git(repository, ["rev-parse", "HEAD"]);
+
+  git(repository, ["checkout", "main"]);
+  fs.rmSync(path.join(repository, "adapter.js"));
+  write(repository, "adapter.mts", "main migration\n");
+  git(repository, ["add", "-A"]);
+  git(repository, ["commit", "-m", "test: move main adapter"]);
   const baseSha = git(repository, ["rev-parse", "HEAD"]);
   return { baseSha, headSha, repository };
 }
@@ -227,7 +265,7 @@ describe("PR merge conflict fixer", () => {
     expect(selected.map((item) => item.pr_number)).toEqual([2]);
   });
 
-  it("accepts a patch that changes only the original conflict paths (#7542)", () => {
+  it("accepts a patch that resolves the original conflict paths (#7542)", () => {
     const fixture = createConflictFixture();
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
     const expectedTree = createResolutionPatch(fixture, patchPath);
@@ -239,27 +277,43 @@ describe("PR merge conflict fixer", () => {
       workDirectory: path.join(temporaryDirectory(), "publisher"),
     });
 
-    expect(result.changedPaths).toEqual(["conflict.txt"]);
     expect(result.finalTree).toBe(expectedTree);
     expect(git(result.repository, ["show", `${result.finalTree}:main-only.txt`])).toBe("main");
   });
 
-  it("rejects a patch that changes a non-conflict path (#7542)", () => {
-    const fixture = createConflictFixture();
+  it("accepts a resolution that moves PR intent to main's replacement path (#7542)", () => {
+    const fixture = createMovedFileConflictFixture();
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
-    createResolutionPatch(fixture, patchPath, (repository) => {
-      write(repository, "unrelated.txt", "not part of the conflict\n");
-      git(repository, ["add", "unrelated.txt"]);
+    const repository = path.join(temporaryDirectory(), "resolver");
+    const merge = required(
+      prepareMerge(fixture.repository, repository, fixture.headSha, fixture.baseSha),
+      "expected a moved-file conflict fixture",
+    );
+    expect(merge.conflictPaths).toEqual(["adapter.js"]);
+    fs.rmSync(path.join(repository, "adapter.js"));
+    write(repository, "adapter.mts", "main migration\npull request intent\n");
+    git(repository, ["add", "-A"]);
+    const expectedTree = writeTree(repository);
+    const patch = execFileSync("git", ["diff", "--binary", merge.conflictTree, expectedTree], {
+      cwd: repository,
+    });
+    fs.writeFileSync(patchPath, patch);
+
+    const result = validateResolutionPatch({
+      entry: {
+        ...entryFor(fixture),
+        conflict_paths: ["adapter.js"],
+      },
+      patchPath,
+      sourceRepository: fixture.repository,
+      workDirectory: path.join(temporaryDirectory(), "publisher"),
     });
 
-    expect(() =>
-      validateResolutionPatch({
-        entry: entryFor(fixture),
-        patchPath,
-        sourceRepository: fixture.repository,
-        workDirectory: path.join(temporaryDirectory(), "publisher"),
-      }),
-    ).toThrow(/non-conflict paths: unrelated\.txt/u);
+    expect(result.finalTree).toBe(expectedTree);
+    expect(git(result.repository, ["show", `${result.finalTree}:adapter.mts`])).toBe(
+      "main migration\npull request intent",
+    );
+    expect(() => git(result.repository, ["show", `${result.finalTree}:adapter.js`])).toThrow();
   });
 
   it("rejects changed main state without comparing the live PR head SHA (#7542)", () => {
@@ -294,8 +348,14 @@ describe("PR merge conflict fixer", () => {
     ).not.toThrow();
   });
 
-  it("creates a verified two-parent commit before the atomic head update (#7542)", async () => {
+  it("creates a verified commit from a main-relative tree before the atomic head update (#7542)", async () => {
     const fixture = createConflictFixture();
+    for (let index = 0; index < 100; index += 1) {
+      write(fixture.repository, `stale-main/${index}.txt`, `main ${index}\n`);
+    }
+    git(fixture.repository, ["add", "stale-main"]);
+    git(fixture.repository, ["commit", "-m", "test: advance main beyond the PR head"]);
+    fixture.baseSha = git(fixture.repository, ["rev-parse", "HEAD"]);
     const entry = entryFor(fixture);
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
     const finalTree = createResolutionPatch(fixture, patchPath);
@@ -357,11 +417,38 @@ describe("PR merge conflict fixer", () => {
       tree: finalTree,
     });
     expect(JSON.stringify(commitRequest?.body)).not.toMatch(/author|committer|signature/u);
+    const treeRequest = required(
+      requests.find((item) => item.path.endsWith("/git/trees")),
+      "missing tree request",
+    );
+    const treeBody = treeRequest.body as {
+      base_tree: string;
+      tree: Array<{ mode: string; path: string; sha: string | null; type: string }>;
+    };
+    expect(treeBody.base_tree).toBe(entry.base_sha);
+    expect(treeBody.tree.map((item) => item.path)).toEqual([
+      "clean-merge.txt",
+      "conflict.txt",
+      "pr-deleted.txt",
+    ]);
+    expect(treeBody.tree.find((item) => item.path === "pr-deleted.txt")).toEqual({
+      mode: "100644",
+      path: "pr-deleted.txt",
+      sha: null,
+      type: "blob",
+    });
+    expect(treeBody.tree.some((item) => item.path.startsWith("stale-main/"))).toBe(false);
     const blobRequests = requests.filter((item) => item.path.endsWith("/git/blobs"));
-    expect(blobRequests).toHaveLength(1);
     expect(
-      Buffer.from((blobRequests[0]?.body as { content: string }).content, "base64").toString(),
-    ).toBe("resolved intent\n");
+      blobRequests
+        .map((item) => Buffer.from((item.body as { content: string }).content, "base64").toString())
+        .sort(),
+    ).toEqual(
+      [
+        "pull request\nkeep-1\nkeep-2\nkeep-3\nkeep-4\nkeep-5\nmain branch\n",
+        "resolved intent\n",
+      ].sort(),
+    );
     expect(graphql).toHaveBeenCalledWith(expect.stringContaining("updateRefs"), {
       input: {
         clientMutationId: commitSha,

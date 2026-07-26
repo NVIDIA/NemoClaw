@@ -372,11 +372,14 @@ describe("state-dir-guard", () => {
     expect(fs.readFileSync(outsideFile, "utf-8")).toBe("untouched\n");
   });
 
-  it("preserves the exact image-owned OpenClaw extension peer link across transitions", () => {
+  it.each([
+    ["slack", "/usr/local/lib/node_modules/openclaw"],
+    ["whatsapp", "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw"],
+  ])("preserves the exact image-owned OpenClaw %s peer link across transitions", (extensionId, target) => {
     const { configDir } = fixture(".openclaw");
-    const peerLink = path.join(configDir, "extensions", "slack", "node_modules", "openclaw");
+    const peerLink = path.join(configDir, "extensions", extensionId, "node_modules", "openclaw");
     fs.mkdirSync(path.dirname(peerLink), { recursive: true });
-    fs.symlinkSync("/usr/local/lib/node_modules/openclaw", peerLink);
+    fs.symlinkSync(target, peerLink);
 
     const preflight = runGuard("preflight", configDir);
     const locked = runGuard("lock", configDir);
@@ -386,7 +389,7 @@ describe("state-dir-guard", () => {
     expect(locked.status, locked.stderr).toBe(0);
     expect(unlocked.status, unlocked.stderr).toBe(0);
     expect(fs.lstatSync(peerLink).isSymbolicLink()).toBe(true);
-    expect(fs.readlinkSync(peerLink)).toBe("/usr/local/lib/node_modules/openclaw");
+    expect(fs.readlinkSync(peerLink)).toBe(target);
     expect(locked.lines.at(-1)).toEqual(
       expect.objectContaining({
         type: "result",
@@ -399,6 +402,12 @@ describe("state-dir-guard", () => {
 
   it.each([
     ["tampered target", "slack", "node_modules/openclaw", "/usr/local/lib/node_modules/other"],
+    [
+      "tampered locked runtime target",
+      "whatsapp",
+      "node_modules/openclaw",
+      "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/other",
+    ],
     [
       "traversal-shaped extension id",
       "%2e%2e",

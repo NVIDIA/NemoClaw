@@ -273,6 +273,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-shared-state-permissions.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-bundled-npm-brace-expansion.mts"),
+    path.join(stagedScriptsDir, "patch-bundled-npm-brace-expansion.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-bundled-npm-tar.mts"),
     path.join(stagedScriptsDir, "patch-bundled-npm-tar.mts"),
   );
