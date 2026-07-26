@@ -25,6 +25,7 @@ const PATCH_SCRIPT = path.join(
   "scripts",
   "patch-openclaw-gateway-daemon-dialback.mts",
 );
+const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
 
 const CALL_CONTEXT_SOURCE = [
   "function trimToUndefined(value) { return value?.trim() || undefined; }",
@@ -83,7 +84,67 @@ function withGatewayEnvironment<T>(
   }
 }
 
+function readGatewayDaemonDialbackBuildCommand(): string {
+  const continuation = String.fromCharCode(92);
+  const newline = String.fromCharCode(10);
+  const expectedBlock = [
+    `RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then ${continuation}`,
+    `      node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts ${continuation}`,
+    `        /usr/local/lib/node_modules/openclaw/dist; ${continuation}`,
+    "    fi",
+  ].join(newline);
+  const dockerfile = fs.readFileSync(DOCKERFILE, "utf8");
+  if (!dockerfile.includes(expectedBlock)) {
+    throw new Error("Dockerfile is missing the exact OpenClaw 2026.7.1 dial-back gate");
+  }
+  return expectedBlock
+    .slice("RUN ".length)
+    .split(`${continuation}${newline}`)
+    .map((line) => line.trim())
+    .join(" ");
+}
+
 describe("OpenClaw gateway daemon dial-back patch", () => {
+  it.each([
+    { expectedCalls: "", version: "2026.3.11" },
+    { expectedCalls: "", version: "2026.4.24" },
+    {
+      expectedCalls:
+        "--experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts /usr/local/lib/node_modules/openclaw/dist\n",
+      version: "2026.7.1",
+    },
+  ])("runs the exact-version Dockerfile gate for $version (#7230)", ({
+    expectedCalls,
+    version,
+  }) => {
+    const shellCommand = readGatewayDaemonDialbackBuildCommand();
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-gate-"));
+    const callLog = path.join(tmp, "node-calls.log");
+    const nodeStub = path.join(tmp, "node");
+    try {
+      fs.writeFileSync(
+        nodeStub,
+        ["#!/bin/sh", `printf "%s\\n" "$*" >> "$PATCH_CALL_LOG"`, ""].join("\n"),
+        { mode: 0o755 },
+      );
+      const result = spawnSync("sh", ["-c", shellCommand], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCLAW_VERSION: version,
+          PATCH_CALL_LOG: callLog,
+          PATH: `${tmp}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf8") : "").toBe(expectedCalls);
+    } finally {
+      fs.rmSync(tmp, { force: true, recursive: true });
+    }
+  });
+
   it("uses loopback only for the OpenShell gateway daemon while descendants keep the private URL", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-runtime-"));
     try {

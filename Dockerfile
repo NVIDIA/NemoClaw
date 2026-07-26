@@ -877,8 +877,10 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-devic
 # self-dialback from descendant agent routing without changing the inherited
 # gateway URL.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts \
-    /usr/local/lib/node_modules/openclaw/dist
+RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
+      node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts \
+        /usr/local/lib/node_modules/openclaw/dist; \
+    fi
 
 # Patch OpenClaw TUI unreachable-inference diagnostics for #4434.
 #
