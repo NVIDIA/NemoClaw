@@ -59,6 +59,12 @@ function fixture(braceExpansionVersion: string) {
   return { npmRoot, replacementRoot };
 }
 
+function expectAffectedTreeUnchanged(target: ReturnType<typeof fixture>): void {
+  expect(
+    fs.existsSync(path.join(target.npmRoot, "node_modules", "brace-expansion", "old.js")),
+  ).toBe(true);
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -148,6 +154,38 @@ describe("npm bundled brace-expansion remediation", () => {
     );
   });
 
+  it("restores the original package when post-swap verification fails", () => {
+    const target = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
+    const livePath = path.join(target.npmRoot, "node_modules", "brace-expansion");
+    const originalRenameSync = fs.renameSync.bind(fs);
+    const renameSpy = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementationOnce((oldPath, newPath) => {
+        originalRenameSync(oldPath, newPath);
+        writeJson(path.join(livePath, "package.json"), {
+          dependencies: { "balanced-match": "^0.0.0" },
+          name: "brace-expansion",
+          version: FIXED_BRACE_EXPANSION_VERSION,
+        });
+      })
+      .mockImplementation(originalRenameSync);
+    syncBuiltinESMExports();
+
+    try {
+      expect(() => patchBundledNpmBraceExpansion(target)).toThrow(
+        "npm bundled brace-expansion identity or dependency layout has drifted",
+      );
+    } finally {
+      renameSpy.mockRestore();
+      syncBuiltinESMExports();
+    }
+
+    expectAffectedTreeUnchanged(target);
+    expect(() => verifyBundledNpmBraceExpansion(target.npmRoot)).toThrow(
+      `affected brace-expansion@${AFFECTED_BRACE_EXPANSION_VERSION}`,
+    );
+  });
+
   it("fails closed on npm layout drift and unsafe replacement members", () => {
     const drifted = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
     writeJson(path.join(drifted.npmRoot, "package.json"), {
@@ -157,10 +195,12 @@ describe("npm bundled brace-expansion remediation", () => {
     expect(() => patchBundledNpmBraceExpansion(drifted)).toThrow(
       "npm package identity has drifted",
     );
+    expectAffectedTreeUnchanged(drifted);
 
     const unsafe = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
     fs.symlinkSync("package.json", path.join(unsafe.replacementRoot, "unsafe-link"));
     expect(() => patchBundledNpmBraceExpansion(unsafe)).toThrow("unsafe member");
+    expectAffectedTreeUnchanged(unsafe);
 
     const symlinkedNpmTree = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
     fs.symlinkSync(
@@ -170,6 +210,7 @@ describe("npm bundled brace-expansion remediation", () => {
     expect(() => patchBundledNpmBraceExpansion(symlinkedNpmTree)).toThrow(
       "npm package contains an unsafe symlink",
     );
+    expectAffectedTreeUnchanged(symlinkedNpmTree);
 
     const escapingBinLink = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
     const outsideNodeModules = path.join(path.dirname(escapingBinLink.npmRoot), "outside.js");
@@ -181,5 +222,6 @@ describe("npm bundled brace-expansion remediation", () => {
     expect(() => patchBundledNpmBraceExpansion(escapingBinLink)).toThrow(
       "npm package contains an unsafe symlink",
     );
+    expectAffectedTreeUnchanged(escapingBinLink);
   });
 });

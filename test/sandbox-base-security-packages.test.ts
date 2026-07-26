@@ -6,37 +6,98 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  BASE_APT_SECURITY_FUNCTIONS,
+  BASE_APT_SECURITY_HASHES,
+  baseAptSecurityFunctions,
   dockerRunCommandBetween,
   runLoggedDockerShell,
 } from "./helpers/base-apt-security-functions";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
+const SECURITY_IMAGES = [
+  {
+    name: "OpenClaw",
+    dockerfile: path.join(ROOT, "Dockerfile.base"),
+    startMarker: "# Trixie has not published fixes",
+    endMarker: "# gosu for privilege separation",
+  },
+  {
+    name: "Hermes",
+    dockerfile: path.join(ROOT, "agents", "hermes", "Dockerfile.base"),
+    startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
+    endMarker: "COPY scripts/lib/reviewed-npm-archive.mts",
+  },
+  {
+    name: "Deep Agents Code",
+    dockerfile: path.join(ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
+    startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
+    endMarker: "# Node remains available",
+  },
+] as const;
+const ARCHITECTURES = ["amd64", "arm64"] as const;
+const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
+  ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
+);
+
+function sandboxSecurityCommand(
+  image: (typeof SECURITY_IMAGES)[number],
+  tmp: string,
+): { command: string; securityDebs: string } {
+  const lists = path.join(tmp, "apt-lists");
+  const securityDebs = path.join(tmp, "security-debs");
+  const fakePython3 = path.join(tmp, "usr-bin", "python3");
+  const fakePythonLink = path.join(tmp, "usr-local-bin", "python");
+  fs.mkdirSync(lists);
+  fs.mkdirSync(path.dirname(fakePython3), { recursive: true });
+  fs.mkdirSync(path.dirname(fakePythonLink), { recursive: true });
+  fs.writeFileSync(fakePython3, "#!/bin/sh\n", { mode: 0o755 });
+
+  const dockerfile = fs.readFileSync(image.dockerfile, "utf-8");
+  const command = dockerRunCommandBetween(dockerfile, image.startMarker, image.endMarker)
+    .replaceAll("/var/lib/apt/lists", lists)
+    .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
+    .replaceAll("/usr/local/bin/python", fakePythonLink)
+    .replaceAll("/usr/bin/python3", fakePython3);
+  return { command, securityDebs };
+}
 
 describe("sandbox base security packages", () => {
-  it("rejects a sandbox security package when its expected checksum changes", () => {
-    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-checksum-"));
-    const untouchedTail = path.join(tmp, "untouched-python-link");
-    const command = dockerRunCommandBetween(
-      dockerfile,
-      "ENV DEBIAN_FRONTEND=noninteractive",
-      "# gosu for privilege separation",
-    )
-      .replace("df928e3a8e4da79408d4b18e8cd80a03dffa90130d0698e50041aab5e14f9397", "0".repeat(64))
-      .replaceAll("/var/lib/apt/lists", tmp)
-      .replaceAll("/tmp/nemoclaw-debian-security", path.join(tmp, "security-debs"))
-      .replaceAll("/usr/local/bin/python", untouchedTail)
-      .replaceAll("/usr/bin/python3", path.join(tmp, "python3"));
+  it.each(
+    SECURITY_CASES,
+  )("executes the exact security package contract for %s on %s", (_name, architecture, image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-security-"));
+    const { command, securityDebs } = sandboxSecurityCommand(image, tmp);
 
     try {
       const result = runLoggedDockerShell(command, tmp, [
         'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
-        ...BASE_APT_SECURITY_FUNCTIONS,
+        ...baseAptSecurityFunctions(architecture),
+      ]);
+      expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+      expect(fs.readFileSync(path.join(tmp, "calls.log"), "utf-8")).toContain("dpkg-install");
+      expect(fs.existsSync(securityDebs)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each(
+    SECURITY_CASES,
+  )("rejects a changed expected checksum before installing packages for %s on %s", (_name, architecture, image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-checksum-"));
+    const prepared = sandboxSecurityCommand(image, tmp);
+    const command = prepared.command.replace(
+      BASE_APT_SECURITY_HASHES[architecture].libexpat,
+      "0".repeat(64),
+    );
+
+    try {
+      const result = runLoggedDockerShell(command, tmp, [
+        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        ...baseAptSecurityFunctions(architecture),
       ]);
       expect(result.status).not.toBe(0);
-      expect(fs.existsSync(untouchedTail)).toBe(false);
+      expect(fs.readFileSync(path.join(tmp, "calls.log"), "utf-8")).not.toContain("dpkg-install");
+      expect(fs.existsSync(prepared.securityDebs)).toBe(true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
