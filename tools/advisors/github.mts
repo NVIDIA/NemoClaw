@@ -14,6 +14,59 @@ export type GitHubRequestOptions = {
   signal?: AbortSignal;
 };
 
+export type GitHubApiFailureKind = "http" | "decode";
+
+const MAX_GITHUB_RESPONSE_EXCERPT_CHARS = 512;
+const GITHUB_REQUEST_ID_PATTERN = /^[A-Za-z0-9:-]{1,128}$/u;
+
+function responseExcerpt(text: string): string {
+  const singleLine = text
+    .replace(/[\r\n\t]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  return singleLine.length > MAX_GITHUB_RESPONSE_EXCERPT_CHARS
+    ? `${singleLine.slice(0, MAX_GITHUB_RESPONSE_EXCERPT_CHARS - 3)}...`
+    : singleLine;
+}
+
+function responseRequestId(response: Response): string | undefined {
+  const requestId = response.headers.get("x-github-request-id")?.trim();
+  return requestId && GITHUB_REQUEST_ID_PATTERN.test(requestId) ? requestId : undefined;
+}
+
+export class GitHubApiError extends Error {
+  readonly kind: GitHubApiFailureKind;
+  readonly method: string;
+  readonly apiPath: string;
+  readonly status: number;
+  readonly requestId?: string;
+  readonly responseExcerpt: string;
+
+  constructor(options: {
+    kind: GitHubApiFailureKind;
+    method: string;
+    apiPath: string;
+    status: number;
+    requestId?: string;
+    responseText: string;
+    cause?: unknown;
+  }) {
+    const excerpt = responseExcerpt(options.responseText);
+    const message =
+      options.kind === "http"
+        ? `GitHub API ${options.apiPath} failed: ${options.status}${excerpt ? ` ${excerpt}` : ""}`
+        : `GitHub API ${options.apiPath} returned invalid JSON: ${options.status}`;
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "GitHubApiError";
+    this.kind = options.kind;
+    this.method = options.method;
+    this.apiPath = options.apiPath;
+    this.status = options.status;
+    this.requestId = options.requestId;
+    this.responseExcerpt = excerpt;
+  }
+}
+
 export async function githubRest<T>(apiPath: string, token: string): Promise<T> {
   const response = await fetch(`https://api.github.com/${apiPath}`, {
     headers: {
@@ -85,8 +138,9 @@ export async function githubApi<T>(
   // lgtm[js/file-access-to-http] Advisor workflows intentionally send normalized
   // artifact summaries and strictly validated dispatch inputs to GitHub APIs.
   // Callers construct apiPath from fixed workflow/comment endpoints, not PR text.
+  const method = options.method || "GET";
   const response = await fetch(`https://api.github.com/${apiPath}`, {
-    method: options.method || "GET",
+    method,
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
@@ -99,9 +153,29 @@ export async function githubApi<T>(
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`GitHub API ${apiPath} failed: ${response.status} ${text}`);
+    throw new GitHubApiError({
+      kind: "http",
+      method,
+      apiPath,
+      status: response.status,
+      requestId: responseRequestId(response),
+      responseText: text,
+    });
   }
-  return (text ? JSON.parse(text) : undefined) as T;
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    throw new GitHubApiError({
+      kind: "decode",
+      method,
+      apiPath,
+      status: response.status,
+      requestId: responseRequestId(response),
+      responseText: text,
+      cause: error,
+    });
+  }
 }
 
 export async function upsertStickyComment({
