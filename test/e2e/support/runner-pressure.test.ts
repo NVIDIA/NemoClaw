@@ -442,24 +442,30 @@ describe("host measurement parsers (#7146)", () => {
 describe("runner pressure collection profiles (#7146)", () => {
   function snapshotSources(
     calls: Array<{ command: string; args: string[]; timeout: number }>,
+    processOrder: string[] = [],
   ): ResourceSnapshotSources {
     return {
       now: () => new Date("2026-07-23T12:00:00.000Z"),
-      readText: (file) =>
-        new Map([
-          ["/proc/stat", "cpu  10 0 5 20 0 0 0 0\ncpu0 1 0 1 2 0 0 0 0\n"],
-          ["/proc/meminfo", MEMINFO_FIXTURE],
-          ["/sys/fs/cgroup/memory.current", "1000\n"],
-          ["/sys/fs/cgroup/memory.peak", "2000\n"],
-          ["/sys/fs/cgroup/memory.max", "max\n"],
-          ["/sys/fs/cgroup/memory.events", "oom 0\noom_kill 0\n"],
-          ["/sys/fs/cgroup/memory.pressure", "full avg10=1.00 avg60=2.00 avg300=1.00 total=1\n"],
-          ["/sys/fs/cgroup/io.pressure", "full avg10=3.00 avg60=4.00 avg300=1.00 total=1\n"],
-          ["/proc/123/stat", procStat(123, "buildkitd")],
-          ["/proc/123/status", BUILDKIT_STATUS],
-        ]).get(file) ?? null,
+      readText: (file) => {
+        processOrder.push(file.startsWith("/proc/123/") ? file : "");
+        return (
+          new Map([
+            ["/proc/stat", "cpu  10 0 5 20 0 0 0 0\ncpu0 1 0 1 2 0 0 0 0\n"],
+            ["/proc/meminfo", MEMINFO_FIXTURE],
+            ["/sys/fs/cgroup/memory.current", "1000\n"],
+            ["/sys/fs/cgroup/memory.peak", "2000\n"],
+            ["/sys/fs/cgroup/memory.max", "max\n"],
+            ["/sys/fs/cgroup/memory.events", "oom 0\noom_kill 0\n"],
+            ["/sys/fs/cgroup/memory.pressure", "full avg10=1.00 avg60=2.00 avg300=1.00 total=1\n"],
+            ["/sys/fs/cgroup/io.pressure", "full avg10=3.00 avg60=4.00 avg300=1.00 total=1\n"],
+            ["/proc/123/stat", procStat(123, "buildkitd")],
+            ["/proc/123/status", BUILDKIT_STATUS],
+          ]).get(file) ?? null
+        );
+      },
       run: (command, args, timeout) => {
         calls.push({ command, args, timeout });
+        processOrder.push(command === "ps" ? "ps" : `${command} ${args[0] ?? ""}`);
         const dockerDisk = [
           JSON.stringify({ Type: "Images", Size: "3GiB" }),
           JSON.stringify({ Type: "Containers", Size: "1GiB" }),
@@ -532,12 +538,21 @@ describe("runner pressure collection profiles (#7146)", () => {
 
   it("retains bounded Docker evidence at phase boundaries", () => {
     const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const processOrder: string[] = [];
     const snapshot = collectResourceSnapshot(
       "rebuild-hermes.export",
       "comparison-phase",
-      snapshotSources(calls),
+      snapshotSources(calls, processOrder),
     );
 
+    expect(processOrder.filter(Boolean)).toEqual([
+      "ps",
+      "/proc/123/stat",
+      "/proc/123/status",
+      "/proc/123/stat",
+      "docker stats",
+      "docker system",
+    ]);
     expect(calls).toEqual([
       { command: "ps", args: ["-eo", "pid=,rss=,comm="], timeout: 1_000 },
       {
@@ -560,6 +575,22 @@ describe("runner pressure collection profiles (#7146)", () => {
       containersBytes: 1024 ** 3,
       buildCacheBytes: 2 * 1024 ** 3,
     });
+  });
+
+  it("enriches the selected process before long full-profile Docker probes", () => {
+    const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const processOrder: string[] = [];
+    collectResourceSnapshot("failure", "full", snapshotSources(calls, processOrder));
+
+    expect(processOrder.filter(Boolean)).toEqual([
+      "ps",
+      "/proc/123/stat",
+      "/proc/123/status",
+      "/proc/123/stat",
+      "docker stats",
+      "docker system",
+    ]);
+    expect(calls.map((call) => call.timeout)).toEqual([15_000, 15_000, 15_000]);
   });
 });
 

@@ -207,6 +207,9 @@ export function collectResourceSnapshot(
     commandPlan.processTimeoutMs === null
       ? null
       : sources.run("ps", ["-eo", "pid=,rss=,comm="], commandPlan.processTimeoutMs);
+  const topProcesses = psText === null ? [] : parseTopProcesses(psText);
+  const largestProcess =
+    psText === null ? null : collectLargestClassifiedProcess(psText, sources.readText);
   const statsText =
     commandPlan.containerTimeoutMs === null
       ? null
@@ -244,9 +247,8 @@ export function collectResourceSnapshot(
           },
     memoryPressure: memoryPressure === null ? null : parsePressure(memoryPressure),
     ioPressure: ioPressure === null ? null : parsePressure(ioPressure),
-    topProcesses: psText === null ? [] : parseTopProcesses(psText),
-    largestProcess:
-      psText === null ? null : collectLargestClassifiedProcess(psText, sources.readText),
+    topProcesses,
+    largestProcess,
     containers: dockerStats.containers,
     maximumContainerCpuPercent: dockerStats.maximumCpuPercent,
     dockerDisk: dfText === null ? null : parseDockerSystemDf(dfText),
