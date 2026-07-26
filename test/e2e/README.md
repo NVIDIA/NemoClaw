@@ -342,7 +342,14 @@ sample metadata, including the explicit target and shard labels. It never
 records process or container names, command lines, child output, or arbitrary
 environment and secret values. Docker memory evidence is reduced to the largest
 retained container value; maximum Docker CPU considers every row in the bounded
-command output.
+command output. When the globally largest process is in the Docker/BuildKit
+class, the collector also reads that process's `VmRSS`, `RssAnon`, `RssFile`,
+`RssShmem`, and optional `VmSwap` values from procfs. PID and exact process
+identity remain private to the collector, and the breakdown is `null` if the
+process exits, its identity changes, procfs denies access, or the resident
+components are incomplete or inconsistent. The outer `rssKb` is the `ps`
+selection and ranking observation; `breakdown.vmRssKb` is the immediately
+following procfs observation and may differ when a live process changes memory.
 
 The finalizer validates the complete ledger before writing
 `runner-comparison-summary.json`. The v2 summary reports the sampled
@@ -356,6 +363,13 @@ intervals ending at a `scenario-start` remain unattributed because they can
 span two tests, and extrema whose selected observation is `initialize` have a
 `null` phase. OOM deltas are also `null` unless both endpoint counters are
 available. Unsupported or unreadable measurements are `null`.
+
+The largest-process summary carries the breakdown from the same sample that
+provided the maximum total RSS; it does not combine per-component maxima from
+different samples. Treat this as an approximate breakdown of one process's RSS,
+not as a Docker/BuildKit process-tree working set: file-backed RSS can count
+shared mappings in more than one process, and this evidence excludes host page
+cache and sibling processes.
 
 The root-cgroup peak is a lifetime counter that includes Docker siblings but
 can also include host activity before the measured window. Compare it only
