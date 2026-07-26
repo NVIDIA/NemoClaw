@@ -290,6 +290,17 @@ describe("sandbox base-image source identity", () => {
     expect(probes).toHaveLength(1);
   });
 
+  it("preserves remote order for comparator-equivalent release tag spellings (#7249)", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v1.2.3.0", "v1.2.3"]);
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v1.2.3"]);
+    expect(probes).toHaveLength(1);
+  });
+
   it("checks the next release only when the newest origin tag is unreachable", () => {
     const root = createGitFixtureWithReachableOriginTags(["v0.0.79"]);
     addUnreachableOriginTag(root, "v0.0.80");
