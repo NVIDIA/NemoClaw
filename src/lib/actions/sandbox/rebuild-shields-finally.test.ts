@@ -32,6 +32,7 @@ describe("rebuild shields relock guard", () => {
   const rebuildWindow = { relocked: false, wasLocked: true };
   const cleanupDcodePreflight = vi.fn();
   const releaseOnboardLock = vi.fn();
+  const revalidateDcodeBeforeDelete = vi.fn(async () => true);
   const relockShields = vi.fn(() => {
     rebuildWindow.relocked = true;
     return true;
@@ -46,7 +47,10 @@ describe("rebuild shields relock guard", () => {
       recreateOptions: { observabilityEnabled: false },
       liveState: { staleRecovery: false, staleRegistrySnapshot: null },
       recoveryManifest: null,
-      dcodePreflight: { cleanup: cleanupDcodePreflight },
+      dcodePreflight: {
+        cleanup: cleanupDcodePreflight,
+        revalidateBeforeDelete: revalidateDcodeBeforeDelete,
+      },
       preparedImage: null,
       releaseOnboardLock,
       log: vi.fn(),
@@ -70,6 +74,24 @@ describe("rebuild shields relock guard", () => {
     expect(phaseMocks.runBackup).toHaveBeenCalledOnce();
     expect(relockShields).toHaveBeenCalledWith(true);
     expect(rebuildWindow.relocked).toBe(true);
+  });
+
+  it("does not relock shields when sandbox deletion remains ambiguous (#7062)", async () => {
+    phaseMocks.runBackup.mockReturnValue({ backupManifest: null });
+    phaseMocks.runDestroy.mockImplementation(
+      ({ onDeleteStateAmbiguous }: { onDeleteStateAmbiguous?: () => void }) => {
+        onDeleteStateAmbiguous?.();
+        throw new Error("Sandbox deletion could not be confirmed.");
+      },
+    );
+
+    await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
+      "Sandbox deletion could not be confirmed.",
+    );
+
+    expect(phaseMocks.runDestroy).toHaveBeenCalledOnce();
+    expect(relockShields).not.toHaveBeenCalled();
+    expect(rebuildWindow.relocked).toBe(false);
   });
 
   it("blocks a pending baseline transition before shields, backup, or destroy phases begin (#7194)", async () => {
