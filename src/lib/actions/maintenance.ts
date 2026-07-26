@@ -26,17 +26,17 @@ import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
+  type BackupShieldsWindowOptions,
+  openBackupShieldsWindow,
+  relockBackupShieldsWindow,
+} from "./sandbox/backup-shields-window";
+import {
   backupStartedSandboxState,
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
-import {
-  type BackupShieldsWindowOptions,
-  openBackupShieldsWindow,
-  relockBackupShieldsWindow,
-} from "./sandbox/backup-shields-window";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -92,6 +92,7 @@ async function backupSandboxWithinShieldsWindow(
   let orphanManifestMessage: string | null = null;
   let backupError: unknown;
   let hasBackupError = false;
+  let relockError: Error | null = null;
   try {
     result = await backup();
   } catch (err: unknown) {
@@ -107,13 +108,27 @@ async function backupSandboxWithinShieldsWindow(
     }
   } finally {
     if (!relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions)) {
-      throw new Error(
+      relockError = new Error(
         `Shields lockdown could not be restored for '${sandboxName}' after backup-all; aborting remaining backups.`,
-        backupError instanceof Error ? { cause: backupError } : undefined,
       );
     }
   }
 
+  if (relockError) {
+    if (hasBackupError) {
+      throw new AggregateError(
+        [backupError, relockError],
+        `Backup for '${sandboxName}' failed and Shields lockdown could not be restored; aborting remaining backups.`,
+      );
+    }
+    if (orphanManifestMessage) {
+      throw new AggregateError(
+        [new Error(orphanManifestMessage), relockError],
+        `Backup for '${sandboxName}' encountered an orphan manifest and Shields lockdown could not be restored; aborting remaining backups.`,
+      );
+    }
+    throw relockError;
+  }
   if (hasBackupError) throw backupError;
   return { result, orphanManifestMessage, shieldsWindowOpened: true };
 }

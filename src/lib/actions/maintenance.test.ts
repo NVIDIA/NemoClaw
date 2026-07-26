@@ -420,6 +420,66 @@ describe("backupAll", () => {
     expect(mocks.openBackupShieldsWindow).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves a backup error when shields restoration also fails (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    const backupError = new Error("EACCES: permission denied, open '/var/backups/state'");
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw backupError;
+    });
+    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const failure = await backupAll().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toContain(
+      "Backup for 'alpha' failed and Shields lockdown could not be restored",
+    );
+    expect((failure as AggregateError).errors).toEqual([
+      backupError,
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "Shields lockdown could not be restored for 'alpha' after backup-all",
+        ),
+      }),
+    ]);
+  });
+
+  it("preserves an orphan-manifest error when shields restoration also fails (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    const orphanMessage = "Agent 'alpha' not found: /agents/alpha/manifest.yaml";
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw new Error(orphanMessage);
+    });
+    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const failure = await backupAll().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toContain(
+      "encountered an orphan manifest and Shields lockdown could not be restored",
+    );
+    expect((failure as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: orphanMessage }),
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "Shields lockdown could not be restored for 'alpha' after backup-all",
+        ),
+      }),
+    ]);
+  });
+
   it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
