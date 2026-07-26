@@ -82,13 +82,15 @@ describe("npm bundled brace-expansion remediation", () => {
   it("does not invoke npm or npx until the private package is replaced and verified", () => {
     const target = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
     const commands: string[] = [];
+    const postPatchAssertions: Record<string, () => void> = {
+      npm: () => expect(verifyBundledNpmBraceExpansion(target.npmRoot).state).toBe("fixed"),
+      npx: () => expect(verifyBundledNpmBraceExpansion(target.npmRoot).state).toBe("fixed"),
+    };
 
     const result = patchBundledNpmBraceExpansionFromRegistry(target.npmRoot, {
       commandRunner(command) {
         commands.push(command);
-        if (command === "npm" || command === "npx") {
-          expect(verifyBundledNpmBraceExpansion(target.npmRoot).state).toBe("fixed");
-        }
+        postPatchAssertions[command]?.();
       },
       prepareReplacement(commandRunner) {
         commandRunner("curl", []);

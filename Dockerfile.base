@@ -255,7 +255,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(jq --version)" = "jq-1.8.2" \
     && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
     && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION" \
-    && vim --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
+    && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
     && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python

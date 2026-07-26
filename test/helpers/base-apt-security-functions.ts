@@ -133,7 +133,7 @@ export const BASE_APT_SECURITY_FUNCTIONS = [
     "}",
   ].join("\n"),
   [
-    "vim() {",
+    "vim.tiny() {",
     '  [[ "$#" -eq 1 && "$1" == "--version" ]] || return 64',
     '  printf "VIM - Vi IMproved 9.2 (2024 Jan 2)\\n"',
     "}",
