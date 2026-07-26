@@ -210,6 +210,13 @@ graph as the live targets:
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
 
+A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
+`targets` selectors is a full dispatch. Each full dispatch uses `github.run_id`
+in its workflow concurrency identity, so another full dispatch cannot supersede
+it while it waits. The protected `staging-brev-launchable` job uses the
+non-cancelling `staging-brev-launchable-cpu` group with `queue: max`, so pending
+qualifications remain queued instead of replacing one another.
+
 ### Hosted-runner recovery
 
 The trusted recovery workflow can request one full rerun of the latest eligible
