@@ -283,7 +283,11 @@ test/e2e/
   `test/e2e/risk-signal-reporter.ts` to live Vitest invocations and suppress PR
   reporting and scorecards. The workflow boundary requires every selected job
   shard to upload its evidence artifact.
-- `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
+- `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
+  four independent shards on each of macOS and WSL. Each macOS shard has a
+  30-minute budget, each WSL shard has a 90-minute budget, and WSL runs its
+  additional root-required contracts on shard 1 only.
+  `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
   `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E targets directly
   for their E2E coverage. Individual repository-hosted targets, including
   `ollama-auth-proxy`, are selected through `.github/workflows/e2e.yaml`.

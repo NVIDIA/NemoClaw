@@ -36,7 +36,11 @@ describe("platform Vitest main workflow", () => {
     const install = step("macos-vitest", "Install macOS test dependencies");
     const run = install.run ?? "";
 
-    expect(job("macos-vitest")["timeout-minutes"]).toBe(60);
+    expect(job("macos-vitest")["timeout-minutes"]).toBe(30);
+    expect(job("macos-vitest").strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: { shard: [1, 2, 3, 4] },
+    });
     expect(checkout.with).toMatchObject({
       "fetch-depth": 0,
       "persist-credentials": false,
@@ -62,6 +66,9 @@ describe("platform Vitest main workflow", () => {
     expect(run).toContain("--only-binary=:all:");
     expect(run).toContain("--require-hashes");
     expect(run).toContain(`--requirement ${MACOS_REQUIREMENTS_PATH}`);
+    expect(step("macos-vitest", "Run full Vitest suite on macOS").run).toContain(
+      '--shard="${{ matrix.shard }}/4"',
+    );
 
     const requirements = readRepoText(MACOS_REQUIREMENTS_PATH);
     expect(requirements).toContain("pyyaml==6.0.3");
@@ -83,6 +90,10 @@ describe("platform Vitest main workflow", () => {
     const rootSuite = step("wsl-vitest", "Run root-required Vitest contracts in WSL").run ?? "";
 
     expect(job("wsl-vitest")["timeout-minutes"]).toBe(90);
+    expect(job("wsl-vitest").strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: { shard: [1, 2, 3, 4] },
+    });
     expect(checkout.with).toMatchObject({
       "fetch-depth": 0,
       "persist-credentials": false,
@@ -96,8 +107,12 @@ describe("platform Vitest main workflow", () => {
     expect(fullSuite).toContain("--user $env:WSL_TEST_USER");
     expect(fullSuite).toContain("NEMOCLAW_EXEC_TIMEOUT=60000");
     expect(fullSuite).toContain("NEMOCLAW_TEST_TIMEOUT=60000");
+    expect(fullSuite).toContain("--shard='${{ matrix.shard }}/4'");
     expect(fullSuite).not.toMatch(/\bsudo\b|sudoers|NOPASSWD/u);
     expect(rootSuite).toContain("--user root");
+    expect(step("wsl-vitest", "Run root-required Vitest contracts in WSL").if).toBe(
+      "${{ matrix.shard == 1 }}",
+    );
     expect([...rootSuite.matchAll(/-t '([^']+)'/gu)].map((match) => match[1])).toEqual([
       "keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state",
       "requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched",
