@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: E2E
-run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
+run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
   schedule:
@@ -15,10 +15,15 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, and jetson-nvmap-gpu are skipped unless selected."
+        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, jetson-nvmap-gpu, and staging-brev-launchable are skipped unless selected."
         required: false
         default: ""
         type: string
+      include_staging_brev_launchable:
+        description: "Include Exact staging Brev Launchable qualification when jobs and targets are empty. Requires the persistent repository readiness gate."
+        required: false
+        default: false
+        type: boolean
       inference_mode:
         description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
         required: false
@@ -85,7 +90,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}
   cancel-in-progress: ${{ inputs.checkout_sha != '' }}
 
 env:
@@ -198,7 +203,7 @@ jobs:
             fi
             larger_runner="${LARGER_RUNNER_LABEL}"
           fi
-          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-dashboard":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}')"
+          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}')"
           printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
       - name: Authenticate controller dispatch
@@ -342,7 +347,7 @@ jobs:
   staging-brev-launchable:
     name: Exact staging Brev Launchable
     needs: generate-matrix
-    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,'))) }}
+    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment:
@@ -352,6 +357,7 @@ jobs:
       contents: read
     concurrency:
       group: staging-brev-launchable-cpu
+      queue: max
       cancel-in-progress: false
     env:
       CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -386,6 +392,37 @@ jobs:
           brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
 
+      - name: Record E2E dispatch identity
+        env:
+          CANDIDATE_SHA: ${{ env.CANDIDATE_SHA }}
+          DISPATCH_JOBS: ${{ inputs.jobs }}
+          DISPATCH_TARGETS: ${{ inputs.targets }}
+          EVENT_NAME: ${{ github.event_name }}
+          INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: |
+          jq -n \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg eventName "$EVENT_NAME" \
+            --arg jobs "$DISPATCH_JOBS" \
+            --arg targets "$DISPATCH_TARGETS" \
+            --arg workflowRunId "$RUN_ID" \
+            --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
+            '{
+              kind: "nemoclaw-e2e-dispatch-v1",
+              candidateSha: $candidateSha,
+              eventName: $eventName,
+              workflowRunId: $workflowRunId,
+              workflowRunAttempt: $workflowRunAttempt,
+              jobs: $jobs,
+              targets: $targets,
+              includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
+              defaultSuiteSelected: ($jobs == "" and $targets == "")
+            }' >"$WORK_DIR/dispatch.json"
+
       - name: Build, deploy, verify, test, and clean up
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
@@ -401,9 +438,23 @@ jobs:
           name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
+            ${{ steps.workspace.outputs.work_dir }}/dispatch.json
             ${{ steps.workspace.outputs.work_dir }}/qualification.json
             ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
+
+  staging-brev-launchable-readiness:
+    name: Require staging Brev Launchable readiness
+    needs: generate-matrix
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && (github.repository != 'NVIDIA/NemoClaw' || github.ref != 'refs/heads/main' || vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED != 'true') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Fail when staging Brev Launchable is not ready
+        run: |
+          echo "::error::Full E2E must run from NVIDIA/NemoClaw main and requires NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED=true. A release administrator must enable it after the protected environment, secrets, staging Launchable ID, and ownership are configured."
+          exit 1
 
   live:
     needs: generate-matrix
@@ -2119,6 +2170,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
+      NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -2128,7 +2180,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,')))) }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))) }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -2442,85 +2494,6 @@ jobs:
         with:
           name: e2e-hermes-gpu-startup-${{ matrix.scenario }}
           path: e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  hermes-dashboard:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-dashboard'] }}
-    timeout-minutes: 85
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "hermes-dashboard"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-dashboard
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: hermes
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-hermes-dashboard
-      NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
-      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
-      - name: Run Hermes dashboard live Vitest test
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-e2e.test.ts
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-
-      - name: Upload Hermes dashboard live Vitest artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -5905,6 +5878,7 @@ jobs:
         base-image-publication,
         generate-matrix,
         staging-brev-launchable,
+        staging-brev-launchable-readiness,
         live,
         shared-e2e,
         openshell-gateway-auth-contract,
@@ -5926,7 +5900,6 @@ jobs:
         sessions-agents-cli,
         hermes-e2e,
         hermes-gpu-startup,
-        hermes-dashboard,
         hermes-slack,
         hermes-discord,
         network-policy,
@@ -5994,6 +5967,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             tools/e2e/report-e2e-results.mts
+            tools/e2e/selector-aliases.mts
           sparse-checkout-cone-mode: false
       - name: Post E2E target results to PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
