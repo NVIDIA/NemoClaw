@@ -1325,11 +1325,16 @@ check_agent_and_inference_conflicts() {
       pid=$1
       ppid=$2
       comm=tolower($3)
+      executable=tolower($4)
+      sub(/^.*\//, "", executable)
       $1=$2=$3=""
       args=tolower($0)
       if (pid == self || pid == parent) next
-      if (comm == "vllm" ||
-          args ~ /(^|[[:space:]\/])vllm([[:space:]:]|\.js([[:space:]]|$)|$)/) {
+      python_module=(comm ~ /^python([0-9]+([.][0-9]+)*)?$/ &&
+                     args ~ /(^|[[:space:]])-m[[:space:]]+vllm([[:space:].]|$)/)
+      docker_init=(comm == "docker-init" &&
+                   args ~ /(^|[[:space:]])--[[:space:]]+([^[:space:]]*\/)?vllm([[:space:]]|$)/)
+      if (comm == "vllm" || executable == "vllm" || python_module || docker_init) {
         print "pid=" pid " process=" comm " stop_command=\047kill -- " pid "\047"
       }
     }

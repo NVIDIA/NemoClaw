@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
 const captureOpenshellMock = vi.fn(() => ({ status: 0, output: "alpha Ready\n" }));
@@ -60,6 +61,7 @@ vi.mock("../../policy", () => ({
   getPresetContentGatewayState: vi.fn(() => "absent"),
   loadPresetForSandbox: vi.fn(() => null),
   removePreset: vi.fn(() => true),
+  resolveAgentBaselinePolicy: resolveTestAgentBaselinePolicy,
 }));
 vi.mock("../../runner", () => ({
   ROOT: "/repo",

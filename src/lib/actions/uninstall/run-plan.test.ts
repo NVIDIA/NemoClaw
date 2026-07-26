@@ -7,7 +7,13 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { buildRunPlan, type RunResult, runUninstallPlan, type UninstallRunDeps } from "./run-plan";
+import {
+  buildRunPlan,
+  type RunResult,
+  type UninstallRunDeps,
+  type UninstallRunOptions,
+  runUninstallPlan as runUninstallPlanBase,
+} from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -15,6 +21,22 @@ function ok(stdout = ""): RunResult {
 
 function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
+}
+
+function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return runUninstallPlanBase(options, {
+    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: gatewayPort === 8080 ? "packaged-service" : "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+    ...deps,
+  });
 }
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
@@ -319,6 +341,7 @@ describe("uninstall run plan", () => {
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
+        commandExists: () => false,
         env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
         log: (line) => logs.push(line),
         readLine: () => "no",
@@ -337,6 +360,7 @@ describe("uninstall run plan", () => {
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
+        commandExists: () => false,
         env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
         log: (line) => logs.push(line),
         readLine: () => null,
@@ -992,6 +1016,11 @@ describe("uninstall run plan", () => {
       fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.json"), "{}");
       fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.lock"), "lock");
       fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.log"), "{}\n");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter.pid"), "1236");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter-token"), "secret");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter.json"), "{}");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter.lock"), "lock");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter.log"), "{}\n");
       fs.mkdirSync(path.join(stateDir, "source"));
       return { tmpHome, stateDir };
     }
@@ -1057,6 +1086,11 @@ describe("uninstall run plan", () => {
         expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.json"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.lock"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.log"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter.pid"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter-token"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter.json"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter.lock"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter.log"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "source"))).toBe(false);
         expect(logs).toContain(
           `Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`,
@@ -1398,12 +1432,12 @@ describe("uninstall run plan", () => {
     });
   });
 
-  it("kills host openshell-gateway process during uninstall (#3516)", () => {
+  it("kills host openshell-gateway process during full uninstall (#3516)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
     const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      { assumeYes: true, deleteModels: false, keepOpenShell: false },
       {
         commandExists: () => true,
         env: { HOME: "/tmp/nemoclaw-uninstall-test-3516" } as NodeJS.ProcessEnv,

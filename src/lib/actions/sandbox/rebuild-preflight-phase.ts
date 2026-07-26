@@ -38,6 +38,7 @@ import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   acquireRebuildOnboardLock,
   assertRebuildEntryUnchanged,
+  blockRebuildOnPendingBaselineTransition,
   checkRebuildGatewaySchemaPreflight,
   expectedRebuildEntryAfterVersionCheck,
   getRebuildSandboxEntryOrBail,
@@ -90,9 +91,10 @@ export async function runRebuildPreflightPhase(
     requestedObservabilityEnabled,
     skipConfirm,
   } = createRebuildCommandContext(options, opts);
-  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
+  if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return null;
+  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   // #6376: refuse a stuck MCP destroy transaction up front — before backup,
   // image prep, or the old-sandbox delete. The only MCP marker check used to
   // live inside the destroy phase, which runs AFTER the backup phase, so a

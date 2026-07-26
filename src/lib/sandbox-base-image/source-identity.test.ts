@@ -115,6 +115,39 @@ function createGitFixtureWithReachableOriginTags(tags: string[]) {
   return root;
 }
 
+function addUnreachableOriginTag(root: string, tag: string) {
+  const originalBranch = git(root, ["branch", "--show-current"]);
+  const branch = `unreachable-${tag.replaceAll(".", "-")}`;
+  git(root, ["switch", "--orphan", branch]);
+  git(root, ["rm", "-rf", "--ignore-unmatch", "."]);
+  writeFixture(root, "unreachable.txt", `${tag}\n`);
+  git(root, ["add", "unreachable.txt"]);
+  git(root, ["commit", "-m", `add ${tag}`]);
+  git(root, ["tag", tag]);
+  git(root, ["push", "origin", `refs/tags/${tag}`]);
+  git(root, ["switch", originalBranch]);
+}
+
+function traceReachabilityProbes<T>(operation: (env: NodeJS.ProcessEnv) => T) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-git-trace-"));
+  tmpRoots.push(root);
+  const traceFile = path.join(root, "trace.jsonl");
+  const result = operation({ ...gitEnv, GIT_TRACE2_EVENT: traceFile });
+  const probes = fs
+    .readFileSync(traceFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter(
+      (event) =>
+        event.event === "start" &&
+        event.argv?.includes("merge-base") &&
+        event.argv.includes("--is-ancestor"),
+    )
+    .map((event) => event.argv ?? []);
+  return { probes, result };
+}
+
 afterEach(() => {
   for (const root of tmpRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -232,12 +265,69 @@ describe("sandbox base-image source identity", () => {
     git(root, ["add", "docs/release.md"]);
     git(root, ["commit", "-m", "release 42"]);
     git(root, ["tag", "-a", "v0.0.42", "-m", "v0.0.42"]);
+    const peeledCommit = git(root, ["rev-parse", "v0.0.42^{}"]);
     git(root, ["push", "origin", "main", "refs/tags/v0.0.42"]);
     git(root, ["tag", "-d", "v0.0.42"]);
 
     expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
     expect(git(root, ["describe", "--tags", "--abbrev=0", "--match", "v*"])).toBe("v0.0.41");
-    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+    expect(result).toEqual(["v0.0.42"]);
+    expect(probes).toHaveLength(1);
+    expect(probes[0]).toContain(peeledCommit);
+  });
+
+  it("stops after the newest reachable origin release tag", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v0.0.77", "v0.0.79"]);
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v0.0.79"]);
+    expect(probes).toHaveLength(1);
+  });
+
+  it("preserves remote order for comparator-equivalent release tag spellings (#7249)", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v1.2.3.0", "v1.2.3"]);
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v1.2.3"]);
+    expect(probes).toHaveLength(1);
+  });
+
+  it("checks the next release only when the newest origin tag is unreachable", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v0.0.79"]);
+    addUnreachableOriginTag(root, "v0.0.80");
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v0.0.79"]);
+    expect(probes).toHaveLength(2);
+  });
+
+  it("preserves the nearest local tag fallback when no origin tag is reachable", () => {
+    const root = createGitFixtureWithRemoteOnlyBaseRef();
+    git(root, ["tag", "v0.0.41"]);
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 42;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "move off tag"]);
+    addUnreachableOriginTag(root, "v0.0.80");
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v0.0.41"]);
+    expect(probes).toHaveLength(1);
   });
 
   it("prefers a stable reachable origin release over a prerelease created later (#6624)", () => {

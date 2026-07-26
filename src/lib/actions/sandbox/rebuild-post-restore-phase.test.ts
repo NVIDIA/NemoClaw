@@ -115,6 +115,29 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
+  it("discloses carried-over baseline exclusions in the successful rebuild summary (#7194)", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
+      {
+        version: 1,
+        agent: "hermes",
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+    ]);
+
+    await runRebuildPostRestorePhase(input());
+
+    expect(
+      logSpy.mock.calls.some(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0].includes("Baseline exclusions carried over: nous_research"),
+      ),
+    ).toBe(true);
+  });
+
   it("points Hermes rebuilds to the replacement API token retrieval command (#7175)", async () => {
     agentName = "hermes";
 

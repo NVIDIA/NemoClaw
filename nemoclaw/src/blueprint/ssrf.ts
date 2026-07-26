@@ -112,11 +112,12 @@ export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoin
 export function safeEndpointUrlForDownstream(validated: ValidatedEndpoint): string {
   if (validated.protocol === "https:" && validated.dnsResolved) {
     throw new Error(
-      `DNS-backed HTTPS endpoint '${validated.hostname}' is not supported yet because ` +
-        "NemoClaw cannot guarantee the downstream provider connects to the same IP " +
-        "that passed SSRF validation across the OpenShell runtime boundary. " +
-        "Use an HTTPS IP-literal endpoint, an HTTP endpoint that can be DNS-pinned, " +
-        "or wait for the runtime-aware HTTPS pinning transport.",
+      `DNS-backed HTTPS endpoint '${validated.hostname}' is not supported at onboarding ` +
+        "time because this path cannot guarantee the downstream provider connects to the " +
+        "same IP that passed SSRF validation across the OpenShell runtime boundary. " +
+        "Use an HTTPS IP-literal endpoint or an HTTP endpoint that can be DNS-pinned to " +
+        "onboard. After onboarding, `inference set --endpoint-url` supports a DNS-backed " +
+        "HTTPS endpoint through the HTTPS Pin Runtime adapter.",
     );
   }
 

@@ -116,12 +116,14 @@ RUN set -eu; \
         elif grep -q '"web"' /opt/hermes/package-lock.json; then \
             npm ci --prefix /opt/hermes --prefer-offline --no-audit --no-fund; \
             npm run build --prefix /opt/hermes --workspace web; \
-            npm ci --omit=dev --prefix /opt/hermes --prefer-offline --no-audit --no-fund; \
+            npm ci --omit=dev --workspaces=false --prefix /opt/hermes \
+                --prefer-offline --no-audit --no-fund; \
         else \
             echo "ERROR: Hermes dashboard at $hermes_web_dir is not covered by a pinned lockfile" >&2; \
             exit 1; \
         fi; \
     fi; \
+    rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp; \
     test -d "$hermes_web_dist"
 
 ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
@@ -489,7 +491,8 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
 RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
-    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
+    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts \
+    && rm -rf /sandbox/.cache
 
 # Install NemoClaw plugin into Hermes
 # hadolint ignore=DL3059
@@ -741,7 +744,16 @@ RUN check_metadata() { \
         [ "$actual" = "$expected" ] \
             || { echo "ERROR: $path metadata is $actual, expected $expected" >&2; return 1; }; \
     }; \
-    check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
+    check_absent() { \
+        path="$1"; \
+        { [ ! -e "$path" ] && [ ! -L "$path" ]; } \
+            || { echo "ERROR: build-only Hermes cache leaked into the final image: $path" >&2; return 1; }; \
+    }; \
+    check_absent /root/.npm \
+    && check_absent /root/.cache/electron \
+    && check_absent /root/.cache/node-gyp \
+    && check_absent /sandbox/.cache \
+    && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \

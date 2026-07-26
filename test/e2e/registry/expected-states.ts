@@ -88,30 +88,25 @@ const onboardingFailurePolicyPresetsRequired: ExpectedState = {
   cli: { installed: true },
 };
 
-// Post-reboot recovery contract for #4423. After the lifecycle phase
-// stops the labeled sandbox container, the host-side invariants this
-// target locks down are:
+// Post-reboot recovery contract. After the lifecycle phase restarts
+// the OpenShell gateway through the required user service, then
+// runs `nemoclaw <sandbox> status`, this target locks down:
 //
 //   * `cli` still installed.
 //   * `localRegistry` entry preserved: this is the user-visible
 //     regression target. The destructive `missing` branch wipes the
-//     entry; preservation here proves #4578's mitigation holds AND
-//     that PR-A's Docker-corroboration path (when added) does not
-//     regress that invariant.
+//     entry; preservation here proves #4578's mitigation and the
+//     Docker-corroboration path hold together.
 //   * `dockerSandboxContainer` still present: any recovery path must
 //     not delete the labeled container or its `*-nemoclaw-gpu-backup-*`
 //     sibling as a side effect.
 //
-// Gateway/sandbox runtime state are intentionally OMITTED from this
-// expected state. The user-visible bug is host-side state
-// destruction; gateway/sandbox liveness on a `ubuntu-latest` runner
-// after `docker stop` is environmental and varies independently of
-// the regression target. Once PR-A lands its Docker-driver recovery
-// helper, a follow-up target can extend the expected state with
-// runtime invariants on a more controlled runner.
+//   * `gateway` healthy: the user-service path must restore the
+//     named OpenShell gateway without `nemoclaw onboard --resume`.
 const postRebootRecoveryReady: ExpectedState = {
   id: "post-reboot-recovery-ready",
   cli: { installed: true },
+  gateway: { expected: "present", health: "healthy" },
   localRegistry: { expected: "present" },
   dockerSandboxContainer: { expected: "present" },
 };

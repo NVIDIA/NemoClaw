@@ -5,7 +5,7 @@ title: "Create Custom Policy Presets"
 sidebar-title: "Create Custom Presets"
 description: "Author and apply a scoped network policy preset for an endpoint that NemoClaw does not include."
 description-agent: "Creates and applies custom policy presets. Use when adding a reviewed endpoint, applying preset files, or allowing a URL-based MCP server."
-keywords: ["nemoclaw custom policy preset", "policy-add from-file", "url mcp network policy"]
+keywords: ["nemoclaw custom policy preset", "policy add from-file", "url mcp network policy"]
 content:
   type: "how_to"
 skill:
@@ -68,8 +68,8 @@ The only exception is the `host.openshell.internal` bridge endpoint for explicit
 Preview the file before you apply it:
 
 ```bash
-$$nemoclaw my-assistant policy-add --from-file ./presets/my-service-api.yaml --dry-run
-$$nemoclaw my-assistant policy-add --from-file ./presets/my-service-api.yaml --yes
+$$nemoclaw my-assistant policy add --from-file ./presets/my-service-api.yaml --dry-run
+$$nemoclaw my-assistant policy add --from-file ./presets/my-service-api.yaml --yes
 ```
 
 NemoClaw records the complete YAML content with the sandbox.
@@ -80,7 +80,7 @@ You can remove the preset later without keeping the original file.
 Apply preset files in lexicographic order:
 
 ```bash
-$$nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+$$nemoclaw my-assistant policy add --from-dir ./presets/ --yes
 ```
 
 Processing stops at the first failure.
@@ -91,13 +91,13 @@ Fix the failing file and run the command again to continue.
 
 Save a maintained local preset under `nemoclaw-blueprint/policies/presets/`.
 The filename without `.yaml` must match `preset.name`.
-The preset catalog reads `preset.name`, while `policy-add <name>` loads `presets/<name>.yaml`.
+The preset catalog reads `preset.name`, while `policy add <name>` loads `presets/<name>.yaml`.
 A mismatch can list a preset that the named command cannot load.
 
 Apply the catalog preset by name:
 
 ```bash
-$$nemoclaw my-assistant policy-add my-service-api
+$$nemoclaw my-assistant policy add my-service-api
 ```
 
 Run the same command after editing the file.
@@ -108,10 +108,10 @@ NemoClaw compares the preset with the live policy and applies changed content.
 Remove the preset by its recorded name:
 
 ```bash
-$$nemoclaw my-assistant policy-remove my-service-api --yes
+$$nemoclaw my-assistant policy remove my-service-api --yes
 ```
 
-Run `$$nemoclaw <name> policy-list` to see every maintained and custom preset recorded for the sandbox.
+Run `$$nemoclaw <name> policy list` to see every maintained and custom preset recorded for the sandbox.
 
 ## Configure a URL-Based MCP Server
 
@@ -160,7 +160,7 @@ Save the file as `nemoclaw-blueprint/policies/presets/my-mcp.yaml`.
 Apply it by name:
 
 ```bash
-$$nemoclaw my-assistant policy-add my-mcp
+$$nemoclaw my-assistant policy add my-mcp
 ```
 
 NemoClaw previews the effective egress scope and prompts for confirmation before applying it.

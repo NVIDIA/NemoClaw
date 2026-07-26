@@ -5,7 +5,7 @@ title: "Apply Policy Presets"
 sidebar-title: "Apply Policy Presets"
 description: "Add, reapply, list, or remove policy presets for a running NemoClaw sandbox."
 description-agent: "Applies and manages policy presets for a running sandbox. Use when adding maintained integration access, previewing preset scope, reapplying an edited preset, or removing access."
-keywords: ["nemoclaw policy presets", "policy-add", "policy-remove"]
+keywords: ["nemoclaw policy presets", "policy add", "policy remove"]
 content:
   type: "how_to"
 skill:
@@ -15,7 +15,7 @@ Use policy presets to add reviewed network access to one running sandbox without
 NemoClaw records applied presets so rebuild and restore operations can replay them.
 
 <Warning>
-Use `$$nemoclaw <name> policy-add` to merge a preset into the running policy.
+Use `$$nemoclaw <name> policy add` to merge a preset into the running policy.
 The OpenShell `policy set` command replaces the live policy instead of merging it.
 Follow [Replace the Live Network Policy](replace-live-network-policy) only when you need full-policy replacement.
 </Warning>
@@ -29,7 +29,7 @@ Messaging channel choices are scoped to the active agent, so unsupported channel
 List the presets available to the sandbox:
 
 ```bash
-$$nemoclaw <name> policy-list
+$$nemoclaw <name> policy list
 ```
 
 For the maintained preset catalog and guided service workflows, refer to [Common Integration Policy Examples](../integration-policy-examples).
@@ -39,14 +39,14 @@ For the maintained preset catalog and guided service workflows, refer to [Common
 Use `--dry-run` to review the endpoints, rules, and binaries before applying the preset:
 
 ```bash
-$$nemoclaw my-assistant policy-add pypi --dry-run
-$$nemoclaw my-assistant policy-add pypi --yes
+$$nemoclaw my-assistant policy add pypi --dry-run
+$$nemoclaw my-assistant policy add pypi --yes
 ```
 
 Omit the preset name to use the interactive picker:
 
 ```bash
-$$nemoclaw my-assistant policy-add
+$$nemoclaw my-assistant policy add
 ```
 
 Pass a preset name with `--yes` for scripted workflows.
@@ -54,7 +54,7 @@ Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to use the same non-interact
 
 ## Reapply an Edited Preset
 
-Run the same `policy-add` command after you edit a maintained or recorded custom preset.
+Run the same `policy add` command after you edit a maintained or recorded custom preset.
 NemoClaw compares the preset with the live policy.
 If the content differs, it applies the changed content.
 You do not need to remove the preset first.
@@ -68,16 +68,16 @@ Existing presets and baseline entries remain in place.
 List every preset recorded for the sandbox:
 
 ```bash
-$$nemoclaw <name> policy-list
+$$nemoclaw <name> policy list
 ```
 
 Remove a preset when the sandbox no longer needs its access:
 
 ```bash
-$$nemoclaw my-assistant policy-remove pypi --yes
+$$nemoclaw my-assistant policy remove pypi --yes
 ```
 
-`policy-remove` accepts maintained and custom preset names.
+`policy remove` accepts maintained and custom preset names.
 
 ## Understand Persistence
 

@@ -10,6 +10,7 @@ import {
   AGENTS_DIR,
   getAgentChoices,
   loadAgent,
+  requireAgentPolicyAdditionsPath,
   resolveAgentName,
   resolveAgentNameAlias,
 } from "./defs";
@@ -39,6 +40,26 @@ describe("agent definitions", () => {
     const choices = getAgentChoices();
     expect(choices[0]?.name).toBe("openclaw");
     expect(choices.map((choice) => choice.name)).toContain("hermes");
+  });
+
+  it("requires a readable regular policy-additions file for non-OpenClaw baselines (#7194)", () => {
+    const agentName = `missing-baseline-${String(Date.now())}`;
+    writeTempAgentManifest(agentName, `name: ${agentName}\ndisplay_name: Missing Baseline\n`);
+    const agent = loadAgent(agentName);
+    const policyPath = path.join(AGENTS_DIR, agentName, "policy-additions.yaml");
+
+    expect(() => requireAgentPolicyAdditionsPath(agent)).toThrow(
+      "Refusing to substitute the OpenClaw baseline",
+    );
+
+    fs.mkdirSync(policyPath);
+    expect(() => requireAgentPolicyAdditionsPath(agent)).toThrow(
+      "Refusing to substitute the OpenClaw baseline",
+    );
+    fs.rmSync(policyPath, { recursive: true });
+    fs.writeFileSync(policyPath, "version: 1\nnetwork_policies: {}\n");
+
+    expect(requireAgentPolicyAdditionsPath(agent)).toBe(policyPath);
   });
 
   it("falls back to openclaw when session references an unknown agent", () => {

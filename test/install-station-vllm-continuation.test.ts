@@ -47,6 +47,57 @@ function runStationPreparationSourced(body: string) {
 }
 
 describe("installer Station Local vLLM continuation", () => {
+  it("ignores diagnostic processes that mention vLLM", () => {
+    const { result, output } = runInstallerSourced(`
+load_station_vllm_conflict_helpers
+ps() {
+  printf '5464 1 grep grep -qi vllm\n'
+  printf '5465 1 rg rg vllm /var/log/station.log\n'
+  printf '5466 1 bash bash -c docker image ls | grep -qi vllm\n'
+}
+docker() { :; }
+if station_vllm_workload_active; then
+  printf 'UNEXPECTED_VLLM_WORKLOAD\n'
+else
+  printf 'NO_VLLM_WORKLOAD status=%s\n' "$?"
+fi
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("NO_VLLM_WORKLOAD status=1");
+    expect(output).not.toContain("UNEXPECTED_VLLM_WORKLOAD");
+  });
+
+  it.each([
+    ["vLLM executable", "998 1 vllm /usr/local/bin/vllm serve hidden-model"],
+    [
+      "Python vLLM module",
+      "999 1 python3 python3 -m vllm.entrypoints.openai.api_server --model hidden-model",
+    ],
+    [
+      "Python vLLM module after interpreter options",
+      "1000 1 python3 python3 -u -X dev -m vllm.entrypoints.openai.api_server --model hidden-model",
+    ],
+    [
+      "docker-init vLLM executable",
+      "1001 1 docker-init docker-init -- /usr/bin/vllm serve hidden-model",
+    ],
+  ])("recognizes an active %s", (_name, processRow) => {
+    const { result, output } = runInstallerSourced(`
+load_station_vllm_conflict_helpers
+ps() { printf '%s\\n' ${JSON.stringify(processRow)}; }
+if station_vllm_workload_active; then
+  printf 'VLLM_WORKLOAD_ACTIVE\n'
+else
+  printf 'VLLM_WORKLOAD_MISSING status=%s\n' "$?"
+fi
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("VLLM_WORKLOAD_ACTIVE");
+    expect(output).not.toContain("VLLM_WORKLOAD_MISSING");
+  });
+
   it("uses Docker stop guidance when a vLLM container is also visible in the host process table", () => {
     const { result, output } = runStationPreparationSourced(`
 MODE=--check
