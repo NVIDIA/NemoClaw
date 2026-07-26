@@ -73,8 +73,7 @@ function reconciliationDeps(
   let clock = SENT_AT_MS;
   const api = vi.fn(async (apiPath: string) => {
     const runMatch = /\/actions\/runs\/([1-9][0-9]*)$/u.exec(apiPath);
-    if (runMatch) return getRun(Number(runMatch[1]));
-    return list();
+    return runMatch ? getRun(Number(runMatch[1])) : list();
   });
   return {
     deps: {
@@ -295,8 +294,9 @@ describe("PR E2E workflow dispatch reconciliation", () => {
     let reads = 0;
     const { deps } = reconciliationDeps(() => {
       reads += 1;
-      if (reads > 1) throw new TypeError("inventory unavailable");
-      return inventory([workflowRun(24, { path: ".github/workflows/other.yaml" })]);
+      return reads > 1
+        ? Promise.reject(new TypeError("inventory unavailable"))
+        : inventory([workflowRun(24, { path: ".github/workflows/other.yaml" })]);
     });
 
     await expect(

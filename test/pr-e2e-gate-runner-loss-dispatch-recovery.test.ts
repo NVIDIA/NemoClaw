@@ -377,11 +377,10 @@ describe("runner-loss retry dispatch reconciliation", () => {
           (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
         ),
       ).toHaveLength(0);
-      if (candidateIds.length === 0) {
-        expect(JSON.stringify(retryCheck)).toContain("nemoclaw-pr-e2e-dispatch:v1:");
-      } else {
-        expect(JSON.stringify(retryCheck)).not.toContain("dispatch-not-observed");
-      }
+      const serializedCheck = JSON.stringify(retryCheck);
+      const dispatchWasNotObserved = candidateIds.length === 0;
+      expect(serializedCheck.includes("nemoclaw-pr-e2e-dispatch:v1:")).toBe(dispatchWasNotObserved);
+      expect(serializedCheck.includes("dispatch-not-observed")).toBe(dispatchWasNotObserved);
       expect(fs.readFileSync(context.outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(context.workDir, { recursive: true, force: true });

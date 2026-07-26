@@ -784,12 +784,12 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
               const correlationId = (
                 dispatch?.body as { inputs?: { correlation_id?: string } } | undefined
               )?.inputs?.correlation_id;
-              if (!correlationId) throw new Error("dispatch correlation was not recorded");
+              expect(correlationId).toMatch(/^[a-f0-9-]{36}$/u);
               return githubResponse({
                 total_count: 2,
                 workflow_runs: [
-                  reconciledForkRun(23, correlationId),
-                  reconciledForkRun(24, correlationId),
+                  reconciledForkRun(23, correlationId!),
+                  reconciledForkRun(24, correlationId!),
                 ],
               });
             },

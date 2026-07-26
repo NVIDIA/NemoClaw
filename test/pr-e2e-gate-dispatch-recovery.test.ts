@@ -1078,6 +1078,6 @@ describe("PR E2E dispatch-not-observed recovery", () => {
 
 function urlRunId(url: string): string {
   const match = /\/check-runs\/([1-9][0-9]*)$/u.exec(url);
-  if (!match) throw new Error("check run URL is invalid");
-  return match[1]!;
+  expect(match).not.toBeNull();
+  return match![1]!;
 }
