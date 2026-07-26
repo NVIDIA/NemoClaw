@@ -133,6 +133,9 @@ export function materializeSandboxCreatePlan({
       additionalPresets: [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
       policyTier: intent.policy.options.policyTier,
+      baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
+        ...exclusion,
+      })),
     },
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,

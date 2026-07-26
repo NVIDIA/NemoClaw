@@ -36,7 +36,11 @@ import type {
   SessionResourceProfile,
   SessionUpdates,
 } from "../../../state/onboard-session";
-import type { SandboxEntry } from "../../../state/registry";
+import {
+  type BaselineExclusionEntry,
+  type SandboxEntry,
+  type SandboxRemovalReceipt,
+} from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
@@ -74,6 +78,10 @@ import {
   isDcodeAgent,
 } from "../../observability-policy-presets";
 import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../sandbox-create-intent-types";
+import {
+  assertBaselineExclusionsMatchCreateIntent,
+  baselineExclusionsForCreate,
+} from "../../sandbox-registration";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -176,7 +184,8 @@ export interface SandboxStateOptions<
     getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
     normalizeHermesToolGatewaySelections(value: unknown): string[];
     stringSetsEqual(left: string[], right: string[]): boolean;
-    removeSandboxFromRegistry(sandboxName: string): void;
+    removeSandboxFromRegistry(sandboxName: string): SandboxRemovalReceipt | null;
+    restoreSandboxRegistryEntryIfMissing(receipt: SandboxRemovalReceipt): boolean;
     repairRecordedSandbox(sandboxName: string | null): void;
     ensureValidatedWebSearchCredential(config: WebSearchConfig): Promise<unknown>;
     isBackToSelection(value: unknown): boolean;
@@ -231,6 +240,7 @@ export interface SandboxStateOptions<
       extraProviders: readonly string[];
       staleExtraProviders: readonly string[];
       policyTier?: string | null;
+      baselineExclusions?: readonly BaselineExclusionEntry[];
       reuseRegisteredCredentials?: boolean;
     }): Promise<ResolvedSandboxCreateIntent>;
     createSandbox(
@@ -1135,6 +1145,7 @@ class SandboxStateFlow<
       hermesToolGateways,
       extraProviders,
       staleExtraProviders,
+      baselineExclusions: baselineExclusionsForCreate(sandboxName),
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
       ...(this.options.authoritativePolicyTier !== undefined
         ? { policyTier: this.options.authoritativePolicyTier }
@@ -1180,16 +1191,19 @@ class SandboxStateFlow<
       this.options.hermesToolGateways,
     );
     const extraProviderPlan = this.deps.planRegisteredExtraProviders(this.options.gatewayName);
-    const createIntent = await this.buildSandboxCreateIntent(
-      state,
-      requestedSandboxName,
-      decision,
-      extraProviderPlan.extraProviders,
-      extraProviderPlan.staleExtraProviders,
-      resourceProfile,
-      effectiveHermesToolGateways,
-    );
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
+      // Build the complete create plan after acquiring the sandbox lock. A
+      // baseline transaction may have started while onboarding waited, and a
+      // pre-lock snapshot must never survive a destructive recreate.
+      const createIntent = await this.buildSandboxCreateIntent(
+        state,
+        requestedSandboxName,
+        decision,
+        extraProviderPlan.extraProviders,
+        extraProviderPlan.staleExtraProviders,
+        resourceProfile,
+        effectiveHermesToolGateways,
+      );
       this.assertGatewayRouteCompatible(requestedSandboxName);
       this.assertCheckpointBindingsStillLive(state);
       this.assertCheckpointCreateInputsStillMatch(
@@ -1206,37 +1220,67 @@ class SandboxStateFlow<
         current.messagingPlan = messagingPlan;
         return current;
       });
-      await applySandboxResumeDecision(decision, state.sandboxName, this.deps);
-      if (this.options.fresh) {
-        this.deps.stopStaleDashboardListenersForSandbox(
-          this.deps.listRegistrySandboxes().sandboxes,
-          requestedSandboxName,
-        );
-      }
-      const sandboxName = await withSandboxPhaseTrace(
+      // Re-read at the destructive edge. The lock prevents cooperating
+      // writers from changing this state; the equality check also catches a
+      // direct registry writer that bypassed the lock.
+      assertBaselineExclusionsMatchCreateIntent(
         requestedSandboxName,
-        this.options.provider,
-        this.options.model,
-        (this.options.agent as { name?: string } | null)?.name,
-        () =>
-          this.deps.createSandbox(
-            this.options.gpu,
-            this.options.model,
-            this.options.provider,
-            this.options.preferredInferenceApi,
-            requestedSandboxName,
-            state.webSearchConfig,
-            state.selectedMessagingChannels,
-            this.options.fromDockerfile,
-            this.options.agent,
-            this.options.controlUiPort,
-            this.options.sandboxGpuConfig,
-            resourceProfile,
-            effectiveHermesToolGateways,
-            this.options.hermesAuthMethod,
-            createIntent,
-          ),
+        createIntent.resolved.policy.options.baselineExclusions,
       );
+      const removalReceipt = await applySandboxResumeDecision(
+        decision,
+        state.sandboxName,
+        this.deps,
+      );
+      let rollbackArmed = removalReceipt !== null;
+      const restoreRemovedRegistryEntry = () => {
+        if (!rollbackArmed || !removalReceipt) return;
+        rollbackArmed = false;
+        this.deps.restoreSandboxRegistryEntryIfMissing(removalReceipt);
+      };
+      if (rollbackArmed) process.once("exit", restoreRemovedRegistryEntry);
+
+      let sandboxName: string;
+      try {
+        if (this.options.fresh) {
+          this.deps.stopStaleDashboardListenersForSandbox(
+            this.deps.listRegistrySandboxes().sandboxes,
+            requestedSandboxName,
+          );
+        }
+        sandboxName = await withSandboxPhaseTrace(
+          requestedSandboxName,
+          this.options.provider,
+          this.options.model,
+          (this.options.agent as { name?: string } | null)?.name,
+          () =>
+            this.deps.createSandbox(
+              this.options.gpu,
+              this.options.model,
+              this.options.provider,
+              this.options.preferredInferenceApi,
+              requestedSandboxName,
+              state.webSearchConfig,
+              state.selectedMessagingChannels,
+              this.options.fromDockerfile,
+              this.options.agent,
+              this.options.controlUiPort,
+              this.options.sandboxGpuConfig,
+              resourceProfile,
+              effectiveHermesToolGateways,
+              this.options.hermesAuthMethod,
+              createIntent,
+            ),
+        );
+        // createSandbox returns only after the replacement row is registered.
+        // From this point the receipt must not overwrite that newer entry.
+        rollbackArmed = false;
+        process.removeListener("exit", restoreRemovedRegistryEntry);
+      } catch (error) {
+        restoreRemovedRegistryEntry();
+        process.removeListener("exit", restoreRemovedRegistryEntry);
+        throw error;
+      }
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
       const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =

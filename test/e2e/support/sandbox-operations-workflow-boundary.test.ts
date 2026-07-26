@@ -140,7 +140,7 @@ describe("sandbox operations workflow boundary", () => {
 
     expect(
       validateCentralWorkflowMutation((source) =>
-        source.replace("permissions:\n  contents: read", "permissions:\n  contents: write"),
+        source.replace("  contents: read", "  contents: write"),
       ),
     ).toContain("workflow permissions.contents must be read");
   });

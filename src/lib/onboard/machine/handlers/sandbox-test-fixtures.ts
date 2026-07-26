@@ -6,6 +6,7 @@ import { vi } from "vitest";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import type { BaselineExclusionEntry, SandboxRemovalReceipt } from "../../../state/registry";
 import type { SandboxStateOptions } from "./sandbox";
 
 export function makeMinimalPlan(
@@ -106,7 +107,8 @@ export function createDeps(
     }),
     persistMessaging: vi.fn(),
     clearPlanEnv: vi.fn(),
-    removeSandbox: vi.fn(),
+    removeSandbox: vi.fn((): SandboxRemovalReceipt | null => null),
+    restoreSandboxRegistryEntryIfMissing: vi.fn(() => false),
     repairSandbox: vi.fn(),
     validateBrave: vi.fn(async () => "brave-key"),
     isBackToSelection: vi.fn(() => false),
@@ -129,6 +131,7 @@ export function createDeps(
         inferenceProvider?: string | null;
         extraProviders: readonly string[];
         staleExtraProviders: readonly string[];
+        baselineExclusions?: readonly BaselineExclusionEntry[];
       }) => ({
         sandboxName: input.sandboxName,
         inferenceProvider: input.inferenceProvider ?? null,
@@ -145,6 +148,8 @@ export function createDeps(
             directGpu: false,
             additionalPresets: [],
             policyTier: null,
+            baselineExclusions:
+              input.baselineExclusions?.map((exclusion) => ({ ...exclusion })) ?? [],
           },
         },
         gpuCreateArgs: [],
@@ -217,6 +222,7 @@ export function createDeps(
       stringSetsEqual: (left: string[], right: string[]) =>
         left.length === right.length && left.every((value) => right.includes(value)),
       removeSandboxFromRegistry: calls.removeSandbox,
+      restoreSandboxRegistryEntryIfMissing: calls.restoreSandboxRegistryEntryIfMissing,
       repairRecordedSandbox: calls.repairSandbox,
       ensureValidatedWebSearchCredential: calls.validateBrave,
       isBackToSelection: calls.isBackToSelection,

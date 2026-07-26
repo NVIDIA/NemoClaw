@@ -6,12 +6,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   addSandboxPolicy: vi.fn().mockResolvedValue(undefined),
   removeSandboxPolicy: vi.fn().mockResolvedValue(undefined),
+  excludeSandboxBaseline: vi.fn().mockResolvedValue(undefined),
+  restoreSandboxBaseline: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../../lib/actions/sandbox/policy-channel", () => mocks);
 
 import PolicyAddCommand from "./add";
+import PolicyExcludeCommand from "./exclude";
 import PolicyRemoveCommand from "./remove";
+import PolicyRestoreCommand from "./restore";
 
 const rootDir = process.cwd();
 
@@ -64,5 +68,33 @@ describe("policy mutation oclif commands", () => {
     ).rejects.toThrow(/from-file|from-dir/);
 
     expect(mocks.addSandboxPolicy).not.toHaveBeenCalled();
+  });
+
+  it("maps policy-exclude args to typed baseline options", async () => {
+    await PolicyExcludeCommand.run(["alpha", "nous_research", "--force"], rootDir);
+
+    expect(mocks.excludeSandboxBaseline).toHaveBeenCalledWith("alpha", {
+      key: "nous_research",
+      yes: false,
+      force: true,
+      dryRun: false,
+    });
+  });
+
+  it("maps policy-restore args to typed baseline options", async () => {
+    await PolicyRestoreCommand.run(["alpha", "nous_research", "--dry-run"], rootDir);
+
+    expect(mocks.restoreSandboxBaseline).toHaveBeenCalledWith("alpha", {
+      key: "nous_research",
+      yes: false,
+      force: false,
+      dryRun: true,
+    });
+  });
+
+  it("requires an explicit baseline key before dispatch", async () => {
+    await expect(PolicyExcludeCommand.run(["alpha"], rootDir)).rejects.toThrow();
+
+    expect(mocks.excludeSandboxBaseline).not.toHaveBeenCalled();
   });
 });

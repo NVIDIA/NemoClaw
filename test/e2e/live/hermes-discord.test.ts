@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
@@ -35,7 +36,6 @@ const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
 const FAKE_DISCORD_HOST = "host.docker.internal";
-const LIVE_TIMEOUT_MS = 75 * 60_000;
 
 function commandEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return phase6Env({
@@ -357,7 +357,7 @@ async function rawTokenSurfaceProbe(
 }
 
 test("hermes-discord: Hermes Discord schema, credential isolation, native gateway rewrite, and rebuild credential reuse", {
-  timeout: LIVE_TIMEOUT_MS,
+  timeout: HERMES_DISCORD_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "prepare clean Hermes Discord runner",

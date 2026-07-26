@@ -34,7 +34,10 @@ type SwapWorkflow = {
 const PROTECTED_JOBS = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "common-egress-agent",
   "hermes-dashboard",
+  "hermes-discord",
   "hermes-e2e",
   "hermes-inference-switch",
   "hermes-shields-config",
@@ -52,12 +55,22 @@ function trustedSwapStep(workflow: SwapWorkflow, jobName: string): WorkflowStep 
 
 type SwapHarnessOptions = {
   activeSwapBytes?: number;
+  checkoutSha?: string;
+  dispatchSha?: string;
   diskBytes?: number;
+  eventName?: string;
+  expectedWorkflowSha?: string;
   failCleanupQuery?: boolean;
   failMkswap?: boolean;
   failSwapoff?: boolean;
   hiddenActivationReads?: number;
   provisionedSwapBytes?: number;
+  ref?: string;
+  repository?: string;
+  runnerArch?: string;
+  runnerEnvironment?: string;
+  runnerOs?: string;
+  workflowSha?: string;
 };
 
 type SwapHarnessResult = {
@@ -79,6 +92,7 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
   const queryCount = path.join(fakeBin, "query-count");
   const swapState = path.join(fakeBin, "swap-state");
   const swapFile = "/mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap";
+  writeFileSync(callLog, "");
   writeFileSync(swapState, "inactive\n");
 
   const commands = new Map<string, string>();
@@ -196,16 +210,18 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
   }
 
   try {
-    const workflowSha = "b".repeat(40);
+    const workflowSha = options.workflowSha ?? "b".repeat(40);
+    const checkoutSha = options.checkoutSha ?? "a".repeat(40);
     const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", script], {
       encoding: "utf8",
       env: {
         BASH_ENV: "/dev/null",
-        CHECKOUT_SHA: "a".repeat(40),
-        DISPATCH_SHA: workflowSha,
+        CHECKOUT_SHA: checkoutSha,
+        DISPATCH_SHA: options.dispatchSha ?? workflowSha,
         ENV: "/dev/null",
-        EVENT_NAME: "workflow_dispatch",
-        EXPECTED_WORKFLOW_SHA: workflowSha,
+        EVENT_NAME: options.eventName ?? "workflow_dispatch",
+        EXPECTED_WORKFLOW_SHA:
+          options.expectedWorkflowSha ?? (checkoutSha === "" ? "" : workflowSha),
         FAKE_ACTIVE_SWAP_BYTES: String(options.activeSwapBytes ?? 0),
         FAKE_CALL_LOG: callLog,
         FAKE_DISK_BYTES: String(options.diskBytes ?? 100_000_000_000),
@@ -219,15 +235,16 @@ function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessRes
         FAKE_SWAP_STATE: swapState,
         LC_ALL: "C",
         PATH: "/usr/bin:/bin",
-        REF: "refs/heads/main",
-        REPOSITORY: "NVIDIA/NemoClaw",
-        RUNNER_ARCH_KIND: "X64",
-        RUNNER_ENVIRONMENT_KIND: "github-hosted",
-        RUNNER_OS_KIND: "Linux",
+        REF: options.ref ?? "refs/heads/main",
+        REPOSITORY: options.repository ?? "NVIDIA/NemoClaw",
+        RUNNER_ARCH_KIND: options.runnerArch ?? "X64",
+        RUNNER_ENVIRONMENT_KIND: options.runnerEnvironment ?? "github-hosted",
+        RUNNER_OS_KIND: options.runnerOs ?? "Linux",
         WORKFLOW_SHA: workflowSha,
       },
     });
-    const calls = readFileSync(callLog, "utf8").trimEnd().split("\n");
+    const callContents = readFileSync(callLog, "utf8").trimEnd();
+    const calls = callContents === "" ? [] : callContents.split("\n");
     return { calls, status: result.status, stderr: result.stderr };
   } finally {
     rmSync(fakeBin, { force: true, recursive: true });
@@ -279,6 +296,116 @@ describe("trusted Hermes swap workflow boundary", () => {
     expect(TRUSTED_HERMES_SWAP_SCRIPT).not.toContain("/usr/sbin/swapon --output");
     expect(TRUSTED_HERMES_SWAP_SCRIPT).not.toContain("/bin/bash -c");
     expect(TRUSTED_HERMES_SWAP_SCRIPT).not.toContain("${{");
+  });
+
+  it.each([
+    "schedule",
+    "workflow_dispatch",
+  ])("accepts the trusted direct main source for %s runs (#7145)", (eventName) => {
+    const result = runTrustedSwapHarness({
+      activeSwapBytes: 34_359_738_368,
+      checkoutSha: "",
+      eventName,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([
+      "stat:-c %F:%u:%g -- /mnt",
+      "swapon:--show=SIZE --bytes --noheadings",
+    ]);
+  });
+
+  it.each([
+    {
+      expected: "direct main runs must not request an alternate checkout or workflow revision",
+      name: "a scheduled run supplies an alternate checkout",
+      options: { checkoutSha: "a".repeat(40), eventName: "schedule" },
+    },
+    {
+      expected: "direct main runs must not request an alternate checkout or workflow revision",
+      name: "a direct dispatch supplies an alternate workflow revision",
+      options: {
+        checkoutSha: "",
+        expectedWorkflowSha: "b".repeat(40),
+      },
+    },
+    {
+      expected: "direct main workflow source must match the run revision",
+      name: "the workflow and run revisions diverge",
+      options: {
+        checkoutSha: "",
+        dispatchSha: "c".repeat(40),
+      },
+    },
+    {
+      expected: "direct main workflow source must match the run revision",
+      name: "the workflow source is malformed",
+      options: {
+        checkoutSha: "",
+        dispatchSha: "b".repeat(40),
+        workflowSha: "not-a-sha",
+      },
+    },
+  ])("rejects trusted direct main mode when $name (#7145)", ({ expected, options }) => {
+    const result = runTrustedSwapHarness(options);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(expected);
+    expect(result.calls).toEqual([]);
+  });
+
+  it.each([
+    {
+      expected: "workflow must run from NVIDIA/NemoClaw main",
+      name: "the repository is not canonical",
+      options: { repository: "example/NemoClaw" },
+    },
+    {
+      expected: "workflow must run from NVIDIA/NemoClaw main",
+      name: "the ref is not main",
+      options: { ref: "refs/heads/candidate" },
+    },
+    {
+      expected: "workflow event must be schedule or workflow_dispatch",
+      name: "the event is not trusted",
+      options: { eventName: "pull_request" },
+    },
+    {
+      expected: "checkout SHA must be lowercase 40-hex",
+      name: "the exact-head checkout SHA is malformed",
+      options: { checkoutSha: "A".repeat(40) },
+    },
+    {
+      expected: "workflow source must match the trusted dispatch revision",
+      name: "the exact-head workflow SHA is missing",
+      options: { expectedWorkflowSha: "" },
+    },
+    {
+      expected: "workflow source must match the trusted dispatch revision",
+      name: "the exact-head workflow SHA differs",
+      options: { expectedWorkflowSha: "c".repeat(40) },
+    },
+    {
+      expected: "swap fallback requires an ephemeral GitHub-hosted Linux x64 runner",
+      name: "the runner is self-hosted",
+      options: { runnerEnvironment: "self-hosted" },
+    },
+    {
+      expected: "swap fallback requires an ephemeral GitHub-hosted Linux x64 runner",
+      name: "the runner OS is not Linux",
+      options: { runnerOs: "Windows" },
+    },
+    {
+      expected: "swap fallback requires an ephemeral GitHub-hosted Linux x64 runner",
+      name: "the runner architecture is not x64",
+      options: { runnerArch: "ARM64" },
+    },
+  ])("rejects identity drift when $name (#7145)", ({ expected, options }) => {
+    const result = runTrustedSwapHarness(options);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(expected);
+    expect(result.calls).toEqual([]);
   });
 
   it("exits before privileged allocation when enough swap is already active (#7145)", () => {
@@ -396,9 +523,18 @@ describe("trusted Hermes swap workflow boundary", () => {
     const bedrockProvision = trustedSwapStep(workflow, "bedrock-runtime-compatible-anthropic");
     bedrockProvision.run = "sudo bash tools/e2e/live-vitest-invocation.mts";
 
+    const channelsProvision = trustedSwapStep(workflow, "channels-stop-start");
+    channelsProvision.if = channelsProvision.if!.replace(" && matrix.agent == 'hermes'", "");
+
+    const commonEgressProvision = trustedSwapStep(workflow, "common-egress-agent");
+    commonEgressProvision.if = commonEgressProvision.if!.replace(
+      " && matrix.scenario == 'hermes-open-reference'",
+      "",
+    );
+
     const hermesE2eProvision = trustedSwapStep(workflow, "hermes-e2e");
     hermesE2eProvision.if = hermesE2eProvision.if!.replace(
-      " && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,'))",
+      " && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,')))",
       "",
     );
 
@@ -411,8 +547,10 @@ describe("trusted Hermes swap workflow boundary", () => {
         "agent-turn-latency trusted Hermes swap job must depend on controller validation",
         "agent-turn-latency trusted Hermes swap step must preserve its fail-closed shape",
         "agent-turn-latency trusted Hermes swap step must run before candidate checkout",
-        "hermes-e2e trusted Hermes swap step must preserve the exact-head main guard",
-        "security-posture trusted Hermes swap step must preserve the exact-head main guard",
+        "hermes-e2e trusted Hermes swap step must preserve the trusted main guard",
+        "channels-stop-start trusted Hermes swap step must preserve the trusted main guard",
+        "common-egress-agent trusted Hermes swap step must preserve the trusted main guard",
+        "security-posture trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must bind only trusted workflow, checkout, and runner identity",
         "bedrock-runtime-compatible-anthropic trusted Hermes swap step must preserve the fixed privileged program",
         "mcp-bridge-dev job must not provision trusted Hermes swap",

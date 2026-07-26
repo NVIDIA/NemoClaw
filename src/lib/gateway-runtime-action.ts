@@ -85,10 +85,18 @@ export function getNamedGatewayLifecycleState(
   const activeGateway = getActiveGatewayName(status.output);
   const connected = /^\s*Status:\s*Connected\b/im.test(cleanStatus);
   const named = hasNamedGateway(gatewayInfo.output, gatewayName);
+  const gatewayInfoUnsupported = /gateway info is not supported by this gateway version/i.test(
+    stripAnsi(gatewayInfo.output),
+  );
   const refusing = /Connection refused|client error \(Connect\)|tcp connect error/i.test(
     cleanStatus,
   );
-  if (connected && activeGateway === gatewayName && named) {
+  // OpenShell 0.0.72 can serve status and sandbox RPCs but does not implement
+  // GetGatewayInfo. The pre-upgrade backup deliberately uses the current CLI
+  // against that existing gateway before replacing it. Accept only the exact
+  // unsupported response when status independently proves the requested
+  // gateway is active and connected; arbitrary info failures remain unhealthy.
+  if (connected && activeGateway === gatewayName && (named || gatewayInfoUnsupported)) {
     return {
       state: "healthy_named",
       status: status.output,
@@ -156,6 +164,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
 
   gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
     ignoreError: true,
+    stdio: "ignore",
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   let after = getNamedGatewayLifecycleState(gatewayName);
@@ -182,6 +191,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     }
     gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
       ignoreError: true,
+      stdio: "ignore",
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     after = getNamedGatewayLifecycleState(gatewayName);

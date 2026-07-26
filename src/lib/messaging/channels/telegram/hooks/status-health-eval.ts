@@ -116,7 +116,7 @@ function policyCoverageSignal(input: TelegramProbeInput): DiagnosticSignal {
       label: "Policy coverage",
       severity: "fail",
       detail: "telegram preset is not applied to the sandbox",
-      hint: "run `nemoclaw <sandbox> policy-add telegram` and rebuild the sandbox",
+      hint: "run `nemoclaw <sandbox> policy add telegram` and rebuild the sandbox",
     };
   }
   if (input.presetOnGateway === null) {
@@ -295,7 +295,7 @@ function buildHints(verdict: TelegramVerdict): string[] {
         "The telegram poller did not start. Check `nemoclaw <sandbox> logs --follow` and rebuild if needed.",
       ];
     case "policy_gap":
-      return ["Run `nemoclaw <sandbox> policy-add telegram`, then rebuild."];
+      return ["Run `nemoclaw <sandbox> policy add telegram`, then rebuild."];
     case "config_gap":
       return ["Run `nemoclaw <sandbox> channels add telegram` to enable the channel."];
     case "probe_failed":

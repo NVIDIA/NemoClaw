@@ -16,7 +16,13 @@ import { redact, run } from "../runner";
 import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
-import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
+import {
+  type AgentDefinition,
+  isTerminalAgent,
+  loadAgent,
+  requireAgentPolicyAdditionsPath,
+  resolveAgentName,
+} from "./defs";
 import { runAgentSmokeCommands } from "./terminal-smoke";
 import { enforceTerminalAgentVersion } from "./terminal-version-enforcement";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
@@ -57,6 +63,22 @@ export function bindLocalAgentBaseImageToPinnedProvenance(
   imageRef: string,
 ): ReturnType<typeof baseImage.bindLocalAgentBaseImageToPinnedProvenance> {
   return baseImage.bindLocalAgentBaseImageToPinnedProvenance(agent, imageRef);
+}
+
+export function bindLocalAgentBaseImageHandoffToResolution(
+  agent: AgentDefinition,
+  sourceRef: string,
+  handoffRef: string,
+  metadata: import("../sandbox-base-image").SandboxBaseImageResolutionMetadata,
+  reusedResolutionHint: import("../sandbox-base-image").SandboxBaseImageResolutionMetadata,
+): ReturnType<typeof baseImage.bindLocalAgentBaseImageHandoffToResolution> {
+  return baseImage.bindLocalAgentBaseImageHandoffToResolution(
+    agent,
+    sourceRef,
+    handoffRef,
+    metadata,
+    reusedResolutionHint,
+  );
 }
 
 export function pinTrustedAgentBaseImageOverrideForOperation(
@@ -111,7 +133,8 @@ export function resolveAgent({
  * Get the agent-specific network policy path, or null to use the default.
  */
 export function getAgentPolicyPath(agent: AgentDefinition): string | null {
-  return agent.policyAdditionsPath || null;
+  if (agent.name === "openclaw") return null;
+  return requireAgentPolicyAdditionsPath(agent);
 }
 
 /**

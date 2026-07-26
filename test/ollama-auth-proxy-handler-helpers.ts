@@ -28,6 +28,7 @@ export interface BackendCapture {
 }
 
 export type StartProxyOptions = {
+  backendUrl?: string;
   onSpawn?: (child: ChildProcess) => void;
   readinessPort?: number;
   readinessTimeoutMs?: number;
@@ -153,6 +154,7 @@ export async function startProxy(
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(proxyPort),
       OLLAMA_BACKEND_PORT: String(backendPort),
+      ...(options.backendUrl ? { OLLAMA_BACKEND_URL: options.backendUrl } : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

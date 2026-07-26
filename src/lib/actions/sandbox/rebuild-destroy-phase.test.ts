@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  captureOpenshell: vi.fn(),
   getSandbox: vi.fn(),
   listSandboxes: vi.fn(),
   prepareMcpForRebuild: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
+  captureOpenshell: mocks.captureOpenshell,
   runOpenshell: mocks.runOpenshell,
 }));
 
@@ -47,7 +49,7 @@ vi.mock("./rebuild-mcp-phase", () => ({
   reattachMcpAfterDeleteFailure: mocks.reattachMcpAfterDeleteFailure,
 }));
 
-import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
+import { runRebuildDestroyPhase, waitForRebuildDeleteAbsence } from "./rebuild-destroy-phase";
 
 describe("rebuild destroy phase", () => {
   beforeEach(() => {
@@ -70,6 +72,45 @@ describe("rebuild destroy phase", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("blocks rebuild before MCP or sandbox mutation when baseline repair is pending (#7178)", async () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: {
+          name: "alpha",
+          baselineExclusionTransition: {
+            id: "tx-1",
+            operation: "restore",
+            exclusion: {
+              version: 1,
+              agent: "openclaw",
+              key: "nous_research",
+              digest: "approved-digest",
+            },
+            targetLiveDigest: "current-digest",
+            startedAt: "2026-07-19T00:00:00.000Z",
+          },
+        },
+        staleRecovery: false,
+        backupManifest: null,
+        log: vi.fn(),
+        bail,
+        relockShieldsIfNeeded: vi.fn(() => true),
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Pending baseline policy restore");
+
+    expect(mocks.prepareMcpForRebuild).not.toHaveBeenCalled();
+    expect(bail).toHaveBeenCalledWith(
+      "Pending baseline policy restore for 'nous_research' blocks rebuild.",
+      1,
+    );
   });
 
   it("retains unexpected delete-edge diagnostics without logging credentials (#6195)", async () => {
@@ -105,24 +146,57 @@ describe("rebuild destroy phase", () => {
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
+  it("bounds delete convergence without treating timeout or gateway errors as absence (#7194)", async () => {
+    const { waitUntil: realWaitUntil } =
+      await vi.importActual<typeof import("../../core/wait")>("../../core/wait");
+    mocks.waitUntil.mockImplementation(realWaitUntil);
+
+    let currentMs = 0;
+    let attempts = 0;
+    const timeout = Object.assign(new Error("sandbox get timed out"), { code: "ETIMEDOUT" });
+    const probeFailures = [
+      { status: null, error: timeout },
+      { status: 1, stderr: "gateway transport unavailable" },
+      { status: 1, stderr: 'status: NotFound, message: "gateway not found"' },
+    ];
+    const captureSandboxGet = vi.fn(() => {
+      const failure = probeFailures[attempts % probeFailures.length];
+      attempts += 1;
+      return failure;
+    });
+    const sleep = vi.fn((milliseconds: number) => {
+      currentMs += milliseconds;
+    });
+
+    expect(
+      waitForRebuildDeleteAbsence("alpha", vi.fn(), {
+        captureSandboxGet,
+        now: () => currentMs,
+        sleep,
+      }),
+    ).toBe(false);
+
+    expect(captureSandboxGet.mock.calls.length).toBeGreaterThan(1);
+    expect(captureSandboxGet.mock.calls.length).toBeLessThanOrEqual(20);
+    expect(sleep).toHaveBeenCalled();
+    expect(currentMs).toBeLessThanOrEqual(15_000);
+  });
+
   it("removes registry state only after the gateway reports the deleted sandbox missing", async () => {
     const events: string[] = [];
     let getAttempts = 0;
-    const deleteResult = () => {
+    mocks.runOpenshell.mockImplementation(() => {
       events.push("delete");
       return { status: 0, stdout: "deleted", stderr: "" };
-    };
-    const getResult = () => {
+    });
+    mocks.captureOpenshell.mockImplementation(() => {
       getAttempts += 1;
       const isFirstProbe = getAttempts === 1;
       events.push(isFirstProbe ? "get-live" : "get-missing");
       return isFirstProbe
         ? { status: 0, stdout: "Name: alpha\nPhase: Terminating", stderr: "" }
         : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
-    };
-    mocks.runOpenshell.mockImplementation((args: string[]) =>
-      args[1] === "delete" ? deleteResult() : getResult(),
-    );
+    });
     mocks.removeSandboxRegistryEntryWithReceipt.mockImplementation(() => {
       events.push("remove-registry");
       return null;
@@ -148,11 +222,12 @@ describe("rebuild destroy phase", () => {
   });
 
   it("preserves backup and registry state when transport failures prevent deletion confirmation", async () => {
-    mocks.runOpenshell.mockImplementation((args: string[]) =>
-      args[1] === "delete"
-        ? { status: 0, stdout: "deleted", stderr: "" }
-        : { status: 1, stdout: "", stderr: "tcp connect error: Connection refused" },
-    );
+    mocks.runOpenshell.mockReturnValue({ status: 0, stdout: "deleted", stderr: "" });
+    mocks.captureOpenshell.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "tcp connect error: Connection refused",
+    });
     const onDeleted = vi.fn();
 
     await expect(
@@ -171,10 +246,11 @@ describe("rebuild destroy phase", () => {
     ).rejects.toThrow("Sandbox deletion could not be confirmed.");
 
     expect(onDeleted).not.toHaveBeenCalled();
-    expect(mocks.runOpenshell).toHaveBeenCalledTimes(4);
+    expect(mocks.runOpenshell).toHaveBeenCalledTimes(1);
+    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(3);
     expect(mocks.waitUntil).toHaveBeenCalledWith(
       expect.any(Function),
-      expect.objectContaining({ deadlineMs: expect.any(Number) }),
+      expect.objectContaining({ deadlineMs: expect.any(Number), maxAttempts: 20 }),
     );
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(mocks.listSandboxes).not.toHaveBeenCalled();

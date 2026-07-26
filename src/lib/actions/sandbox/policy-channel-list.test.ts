@@ -11,10 +11,13 @@ type PresetInfo = {
 const moduleMocks = vi.hoisted(() => ({
   getSandbox: vi.fn<(sandboxName: string) => Record<string, unknown> | null>(),
   getCustomPolicies: vi.fn<(sandboxName: string) => PresetInfo[]>(),
+  getBaselineExclusions: vi.fn(),
+  getBaselineExclusionTransition: vi.fn(),
   listPresets: vi.fn<(options?: { agent?: string | null }) => PresetInfo[]>(),
   listCustomPresets: vi.fn<(sandboxName: string) => PresetInfo[]>(),
   getAppliedPresets: vi.fn<(sandboxName: string) => string[]>(),
   getGatewayPresets: vi.fn<(sandboxName: string) => string[] | null>(),
+  getSandboxBaselineEntryDigest: vi.fn(),
   isDockerRuntimeDown: vi.fn<(sandboxName: string) => boolean>(),
   printDockerRuntimeDownGuidance: vi.fn(),
 }));
@@ -23,6 +26,8 @@ vi.mock("../../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/registry")>()),
   getSandbox: moduleMocks.getSandbox,
   getCustomPolicies: moduleMocks.getCustomPolicies,
+  getBaselineExclusions: moduleMocks.getBaselineExclusions,
+  getBaselineExclusionTransition: moduleMocks.getBaselineExclusionTransition,
 }));
 
 vi.mock("../../policy", async (importOriginal) => ({
@@ -31,6 +36,7 @@ vi.mock("../../policy", async (importOriginal) => ({
   listCustomPresets: moduleMocks.listCustomPresets,
   getAppliedPresets: moduleMocks.getAppliedPresets,
   getGatewayPresets: moduleMocks.getGatewayPresets,
+  getSandboxBaselineEntryDigest: moduleMocks.getSandboxBaselineEntryDigest,
 }));
 
 vi.mock("./gateway-failure-classifier", async (importOriginal) => ({
@@ -87,6 +93,9 @@ beforeEach(() => {
   moduleMocks.listPresets.mockReturnValue(POLICY_PRESETS);
   moduleMocks.listCustomPresets.mockReturnValue([]);
   moduleMocks.isDockerRuntimeDown.mockReturnValue(false);
+  moduleMocks.getBaselineExclusions.mockReturnValue([]);
+  moduleMocks.getBaselineExclusionTransition.mockReturnValue(null);
+  moduleMocks.getSandboxBaselineEntryDigest.mockReturnValue(null);
 });
 
 afterEach(() => {
@@ -94,6 +103,89 @@ afterEach(() => {
 });
 
 describe("listSandboxPolicies provenance", () => {
+  it("discloses an interrupted baseline transaction and exact repair command (#7178)", () => {
+    arrangeListing({
+      appliedNames: [],
+      gatewayNames: [],
+      tier: null,
+      agent: "hermes",
+    });
+    moduleMocks.getBaselineExclusionTransition.mockReturnValue({
+      id: "tx-1",
+      operation: "exclude",
+      exclusion: {
+        version: 1,
+        agent: "hermes",
+        key: "nous_research",
+        digest: "approved",
+      },
+      targetLiveDigest: null,
+      startedAt: "2026-07-19T00:00:00.000Z",
+    });
+
+    listSandboxPolicies("test-sandbox");
+
+    const output = printedText();
+    expect(output).toContain("repair required — interrupted exclude; rebuild blocked");
+    expect(output).toContain("nemoclaw test-sandbox policy exclude nous_research");
+  });
+
+  it.each([
+    "exclude",
+    "restore",
+  ] as const)("keeps an interrupted %s repair visible when the release baseline is unreadable (#7194)", (operation) => {
+    arrangeListing({
+      appliedNames: [],
+      gatewayNames: [],
+      tier: null,
+      agent: "hermes",
+    });
+    moduleMocks.getBaselineExclusions.mockReturnValue([
+      {
+        version: 1,
+        agent: "hermes",
+        key: "another_entry",
+        digest: "c".repeat(64),
+        acknowledgedAt: "2026-07-18T00:00:00.000Z",
+      },
+      {
+        version: 1,
+        agent: "hermes",
+        key: "nous_research",
+        digest: "a".repeat(64),
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+    ]);
+    moduleMocks.getBaselineExclusionTransition.mockReturnValue({
+      id: "00000000-0000-4000-8000-000000000001",
+      operation,
+      exclusion: {
+        version: 1,
+        agent: "hermes",
+        key: "nous_research",
+        digest: "a".repeat(64),
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+      targetLiveDigest: operation === "restore" ? "b".repeat(64) : null,
+      startedAt: "2026-07-19T00:00:00.000Z",
+    });
+    moduleMocks.getSandboxBaselineEntryDigest.mockImplementation(() => {
+      throw new Error("release baseline unavailable");
+    });
+
+    expect(() => listSandboxPolicies("test-sandbox")).not.toThrow();
+
+    const output = printedText();
+    expect(output).toContain("another_entry (release baseline unreadable — inspection required)");
+    expect(output).toContain(`repair required — interrupted ${operation}; rebuild blocked`);
+    expect(output).toContain(`nemoclaw test-sandbox policy ${operation} nous_research`);
+    expect(moduleMocks.getSandboxBaselineEntryDigest).toHaveBeenCalledOnce();
+    expect(moduleMocks.getSandboxBaselineEntryDigest).toHaveBeenCalledWith(
+      "test-sandbox",
+      "another_entry",
+    );
+  });
+
   it("tags active tier-default presets with their tier provenance (#5774)", () => {
     arrangeListing({
       appliedNames: ["npm", "pypi"],
