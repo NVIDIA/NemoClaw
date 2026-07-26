@@ -124,8 +124,74 @@ describe("sandbox image workflow boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
         "build-hermes-sandbox-image step 'Build Hermes production image' must not write images to a registry",
-        "Hermes production image must use a pinned local-load Buildx action with GHA cache",
+        "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
       ]),
+    );
+  });
+
+  it("rejects non-canonical Hermes Buildx action pins", () => {
+    for (const stepName of ["Set up Docker Buildx", "Build Hermes production image"]) {
+      const { imageWorkflow, mainWorkflow } = readWorkflows();
+      const step = imageWorkflow.jobs["build-hermes-sandbox-image"].steps!.find(
+        (candidate) => candidate.name === stepName,
+      )!;
+      step.uses = step.uses!.replace(/@[0-9a-f]{40}$/u, `@${"0".repeat(40)}`);
+
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+        stepName === "Set up Docker Buildx"
+          ? "Hermes producer must use the canonical Docker Buildx setup action exactly once"
+          : "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
+      );
+    }
+  });
+
+  it("rejects a non-canonical Hermes artifact download pin", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const download = imageWorkflow.jobs["test-hermes-sandbox-image"].steps!.find(
+      (step) => step.name === "Download Hermes production image",
+    )!;
+    download.uses = `actions/download-artifact@${"0".repeat(40)}`;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image tests must download and load the producer artifact exactly once with the canonical action",
+    );
+  });
+
+  it("rejects Docker Hub authentication in the Hermes image consumer", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    consumer.steps!.push({
+      ...producer.steps!.find((step) => step.name === "Authenticate to Docker Hub")!,
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image test consumer must not authenticate to Docker Hub",
+    );
+  });
+
+  it("rejects a duplicate Hermes production-image build", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    producer.steps!.push({
+      ...producer.steps!.find((step) => step.name === "Build Hermes production image")!,
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
+    );
+  });
+
+  it("rejects a Hermes cache scope without runner OS and architecture", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const build = imageWorkflow.jobs["build-hermes-sandbox-image"].steps!.find(
+      (step) => step.name === "Build Hermes production image",
+    )!;
+    build.with!["cache-from"] = "type=gha,scope=hermes-production-";
+    build.with!["cache-to"] = "type=gha,mode=max,scope=hermes-production-";
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
     );
   });
 

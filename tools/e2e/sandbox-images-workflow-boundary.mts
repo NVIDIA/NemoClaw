@@ -23,6 +23,15 @@ const HERMES_SECRET_BOUNDARY_STEP_ID = "hermes-secret-boundary";
 const HERMES_ROOT_AFTER_SECRET_CONDITION =
   "${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}";
 const HERMES_EXPORT_SWAP_STEP_NAME = "Add swap for Hermes image export";
+const HERMES_SETUP_BUILDX_ACTION =
+  "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
+const HERMES_BUILD_PUSH_ACTION =
+  "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a";
+const HERMES_DOWNLOAD_ARTIFACT_ACTION =
+  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
+const HERMES_CACHE_TO =
+  "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
@@ -400,25 +409,32 @@ function validateGuardedProductionBuild(
       errors.push(`${contract.label} must validate the guarded build_args shape`);
     }
     const setupBuildx = requireStep(errors, contract.jobName, job, "Set up Docker Buildx");
-    if (!FULL_SHA_ACTION.test(setupBuildx.uses ?? "")) {
-      errors.push("Hermes producer must pin Docker Buildx setup by full action SHA");
+    if (
+      steps(job).filter((step) => step.name === "Set up Docker Buildx").length !== 1 ||
+      setupBuildx.uses !== HERMES_SETUP_BUILDX_ACTION
+    ) {
+      errors.push("Hermes producer must use the canonical Docker Buildx setup action exactly once");
     }
     const action = requireStep(errors, contract.jobName, job, "Build Hermes production image");
     const actionWith = record(action.with);
+    const buildActions = steps(job).filter((step) =>
+      String(step.uses ?? "").startsWith("docker/build-push-action@"),
+    );
     if (
-      !FULL_SHA_ACTION.test(action.uses ?? "") ||
-      !String(action.uses).startsWith("docker/build-push-action@") ||
+      buildActions.length !== 1 ||
+      dockerBuildLines(job).length !== 0 ||
+      action.uses !== HERMES_BUILD_PUSH_ACTION ||
       actionWith.context !== "." ||
       actionWith.file !== "agents/hermes/Dockerfile" ||
       actionWith.load !== true ||
       actionWith.push !== false ||
       actionWith.tags !== contract.target ||
       actionWith["build-args"] !== "BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }}" ||
-      !String(actionWith["cache-from"] ?? "").startsWith("type=gha,scope=hermes-production-") ||
-      !String(actionWith["cache-to"] ?? "").startsWith("type=gha,mode=max,scope=hermes-production-")
+      actionWith["cache-from"] !== HERMES_CACHE_FROM ||
+      actionWith["cache-to"] !== HERMES_CACHE_TO
     ) {
       errors.push(
-        "Hermes production image must use a pinned local-load Buildx action with GHA cache",
+        "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
       );
     }
     return;
@@ -823,6 +839,17 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   if (testJob.needs !== producerName) {
     errors.push("Hermes image tests must depend on the Hermes image producer");
   }
+  if (steps(testJob).some((step) => step.name === AUTH_STEP_NAME)) {
+    errors.push("Hermes image test consumer must not authenticate to Docker Hub");
+  }
+  const consumerBuilds = steps(testJob).filter(
+    (step) =>
+      String(step.uses ?? "").startsWith("docker/build-push-action@") ||
+      /\bdocker\s+(?:build|buildx\s+build)\b/u.test(step.run ?? ""),
+  );
+  if (consumerBuilds.length !== 0) {
+    errors.push("Hermes image test consumer must not rebuild the prebuilt image");
+  }
   for (const stepName of ["Set up Node", "Install root dependencies"]) {
     if (steps(producer).some((step) => step.name === stepName)) {
       errors.push(`${producerName} must not install Node dependencies`);
@@ -893,11 +920,20 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   const download = requireStep(errors, testJobName, testJob, "Download Hermes production image");
   const load = requireStep(errors, testJobName, testJob, "Load Hermes production image");
   if (
-    record(download.with).name !== "hermes-isolation-image" ||
+    steps(testJob).filter((step) => step.name === "Download Hermes production image").length !==
+      1 ||
+    download.uses !== HERMES_DOWNLOAD_ARTIFACT_ACTION ||
+    !isDeepStrictEqual(record(download.with), {
+      name: "hermes-isolation-image",
+      path: "/tmp",
+    }) ||
+    steps(testJob).filter((step) => step.name === "Load Hermes production image").length !== 1 ||
     !(load.run ?? "").includes("/tmp/hermes-isolation-image.tar.gz | docker load") ||
     !(load.run ?? "").includes("docker image inspect nemoclaw-hermes-production")
   ) {
-    errors.push("Hermes image tests must download and load the producer artifact");
+    errors.push(
+      "Hermes image tests must download and load the producer artifact exactly once with the canonical action",
+    );
   }
 
   const save = requireStep(errors, producerName, producer, "Save Hermes production image");
