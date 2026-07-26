@@ -21,9 +21,7 @@ type OnboardModule = typeof import("../src/lib/onboard") & {
 const require = createRequire(import.meta.url);
 const onboard = require("../src/lib/onboard.js") as OnboardModule;
 const onboardSession = onboard.onboardSession;
-const ONBOARD_FIXTURE_PATH = [path.dirname(process.execPath), "/usr/bin", "/bin"].join(
-  path.delimiter,
-);
+const ONBOARD_FIXTURE_PATH = ["/usr/bin", "/bin"].join(path.delimiter);
 const originalHome = process.env.HOME;
 const restoreOriginalHome =
   originalHome === undefined
