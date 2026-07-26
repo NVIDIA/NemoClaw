@@ -134,6 +134,11 @@ jobs:
           stat --version | head -n 1
           awk --version | head -n 1
 
+      - name: Install pinned OpenShell
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
       - name: Install dependencies
         run: |
           npm ci --ignore-scripts
