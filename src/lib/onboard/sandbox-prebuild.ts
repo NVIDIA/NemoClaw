@@ -34,6 +34,11 @@ export interface SandboxPrebuildInput {
   sandboxName: string;
   dockerDriverGateway: boolean;
   origin: SandboxBuildContextOrigin;
+  /**
+   * Refuse to pass the staged Dockerfile to the gateway builder when the
+   * generated image requires a successful local BuildKit build.
+   */
+  gatewayFallback?: "allowed" | "forbidden";
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
@@ -145,7 +150,8 @@ export function sandboxLocalImageRef(sandboxName: string, buildId: string): stri
 /**
  * Build a NemoClaw-generated staged context with BuildKit on the shared local
  * Docker daemon. User-supplied Dockerfiles stay on the OpenShell gateway
- * builder trust boundary, and any failure preserves that original build path.
+ * builder trust boundary. Ordinary callers preserve that path on local build
+ * failure; callers with BuildKit-only generated images fail closed instead.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
  */
@@ -155,10 +161,29 @@ export async function prebuildSandboxImageIfEligible(
   const createArgs = [...input.createArgs];
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
+  const failRequiredBuildKit = (detail: string, nextStep: string): never => {
+    throw new Error(
+      `Local BuildKit is required for this generated sandbox image, but ${detail}. ` +
+        `${nextStep} ` +
+        "Gateway-builder fallback is disabled because this Dockerfile uses BuildKit-only instructions.",
+    );
+  };
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
+    if (input.gatewayFallback === "forbidden") {
+      failRequiredBuildKit(
+        "the local prebuild is disabled or unavailable",
+        "Start Docker, ensure BuildKit and the local prebuild are enabled, then retry.",
+      );
+    }
     return { createArgs, imageRef: null, imageId: null };
   }
   if (input.origin !== "generated") {
+    if (input.gatewayFallback === "forbidden") {
+      failRequiredBuildKit(
+        "the staged build context is not NemoClaw-generated",
+        "Resume onboarding to restage the managed build context, then retry.",
+      );
+    }
     log(
       "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
     );
@@ -171,6 +196,12 @@ export async function prebuildSandboxImageIfEligible(
     !fromDockerfile ||
     path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
   ) {
+    if (input.gatewayFallback === "forbidden") {
+      failRequiredBuildKit(
+        "sandbox create arguments do not select the staged Dockerfile",
+        "Resume onboarding to restage the managed build context, then retry.",
+      );
+    }
     return { createArgs, imageRef: null, imageId: null };
   }
   let trustedContext: TrustedStagedBuildContext | null;
@@ -178,12 +209,24 @@ export async function prebuildSandboxImageIfEligible(
     trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (input.gatewayFallback === "forbidden") {
+      failRequiredBuildKit(
+        `the staged build context could not be inspected (${detail})`,
+        "Resume onboarding to restage the managed build context, then retry.",
+      );
+    }
     log(
       `  Local BuildKit build skipped: staged build context could not be inspected (${detail}); using the gateway builder instead.`,
     );
     return { createArgs, imageRef: null, imageId: null };
   }
   if (!trustedContext) {
+    if (input.gatewayFallback === "forbidden") {
+      failRequiredBuildKit(
+        "the staged build context failed trust validation",
+        "Resume onboarding to restage the managed build context, then retry.",
+      );
+    }
     log(
       "  Local BuildKit build skipped: staged build context failed trust validation; using the gateway builder instead.",
     );
@@ -216,12 +259,24 @@ export async function prebuildSandboxImageIfEligible(
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (input.gatewayFallback === "forbidden") {
+      failRequiredBuildKit(
+        `the local build could not start (${detail})`,
+        "Start Docker, ensure BuildKit is enabled, then retry.",
+      );
+    }
     log(`  Local BuildKit build could not start (${detail}); using the gateway builder instead.`);
     return { createArgs, imageRef: null, imageId: null };
   }
 
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
+    if (input.gatewayFallback === "forbidden") {
+      failRequiredBuildKit(
+        `the local build failed${detail}`,
+        "Inspect the preceding BuildKit output and fix the reported image input or Dockerfile error before retrying.",
+      );
+    }
     log(`  Local BuildKit build failed${detail}; using the gateway builder instead.`);
     return { createArgs, imageRef: null, imageId: null };
   }

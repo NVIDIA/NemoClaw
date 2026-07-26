@@ -68,7 +68,7 @@ export interface SandboxCreateLaunch {
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
   sandboxName: string;
-  prebuild: Omit<SandboxPrebuildInput, "createArgs" | "sandboxName">;
+  prebuild: Omit<SandboxPrebuildInput, "createArgs" | "gatewayFallback" | "sandboxName">;
 }
 
 export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
@@ -220,9 +220,14 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
   input: SandboxCreateLaunchWithPrebuildInput,
 ): Promise<SandboxCreateLaunchWithPrebuild> {
   const { prebuild: prebuildInput, ...launchInput } = input;
+  const generatedHermesRequiresBuildKit =
+    input.agent?.name === "hermes" &&
+    prebuildInput.origin === "generated" &&
+    prebuildInput.dockerDriverGateway;
   const prebuild = await prebuildSandboxImageIfEligible({
     ...prebuildInput,
     createArgs: input.createArgs,
+    gatewayFallback: generatedHermesRequiresBuildKit ? "forbidden" : "allowed",
     sandboxName: input.sandboxName,
   });
   return {

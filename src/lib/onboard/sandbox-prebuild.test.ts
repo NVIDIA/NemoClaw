@@ -339,6 +339,7 @@ describe("sandbox BuildKit prebuild", () => {
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
+      gatewayFallback: "forbidden",
       env: {},
       buildImage,
       inspectImageId: () => IMAGE_ID,
@@ -439,5 +440,85 @@ describe("sandbox BuildKit prebuild", () => {
       log: () => {},
     });
     expect(result).toEqual({ createArgs, imageRef: null, imageId: null });
+  });
+
+  it("fails closed when a required local BuildKit prebuild is disabled (#7140)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        gatewayFallback: "forbidden",
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
+        buildImage,
+      }),
+    ).rejects.toThrow(
+      /Local BuildKit is required.*local prebuild is disabled or unavailable.*Start Docker.*local prebuild are enabled/,
+    );
+    expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a required local BuildKit context is no longer trusted (#7140)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    fs.chmodSync(buildCtx, 0o770);
+    const buildImage = vi.fn(async () => 0);
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        gatewayFallback: "forbidden",
+        env: {},
+        buildImage,
+      }),
+    ).rejects.toThrow(/Local BuildKit is required.*failed trust validation.*Resume onboarding/);
+    expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "exits nonzero",
+      async () => 1,
+      /local build failed \(exit 1\).*Inspect the preceding BuildKit output/,
+    ],
+    [
+      "returns no exit status",
+      async () => null,
+      /local build failed without an exit status.*Inspect the preceding BuildKit output/,
+    ],
+    [
+      "cannot start",
+      async () => {
+        throw new Error("daemon unavailable");
+      },
+      /local build could not start \(daemon unavailable\).*Start Docker.*BuildKit is enabled/,
+    ],
+  ])("fails closed when a required local BuildKit build %s (#7140)", async (_label, buildImage, message) => {
+    const { buildCtx, createArgs } = createBuildContext();
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        gatewayFallback: "forbidden",
+        env: {},
+        buildImage,
+        log: () => {},
+      }),
+    ).rejects.toThrow(message);
   });
 });

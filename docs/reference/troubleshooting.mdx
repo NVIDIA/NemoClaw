@@ -2642,6 +2642,26 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
 For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
 
+### Hermes onboarding reports that local BuildKit is required
+
+Managed Hermes onboarding on a local Docker-driver gateway must complete the host-side BuildKit build.
+The generated Dockerfile contains BuildKit-only instructions, so NemoClaw stops if the local build is disabled, unavailable, or fails validation.
+NemoClaw does not retry that Dockerfile with the OpenShell gateway builder.
+
+Use the detail in the error to choose the next step:
+
+- If the local build is disabled, unavailable, or could not start, start Docker and keep BuildKit and the local prebuild enabled.
+- If the local build exits nonzero, the preceding BuildKit output contains the root cause. Fix the reported base-image, package, network, or Dockerfile error rather than treating it as a builder-selection failure.
+- If staged-context inspection or trust validation fails, resume onboarding to restage the managed context.
+
+Then resume onboarding:
+
+```bash
+nemohermes onboard --resume
+```
+
+A custom Hermes Dockerfile supplied with `--from`, or a Hermes build on a remote gateway, continues through the OpenShell gateway builder.
+
 ### Hermes dashboard config did not converge
 
 `nemohermes inference set` updates the OpenShell route, registry, and `/sandbox/.hermes/config.yaml` before it refreshes the separate dashboard profile.

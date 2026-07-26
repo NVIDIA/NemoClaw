@@ -428,4 +428,75 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(result.createCommand).toContain(`sandbox create --from ${dockerfile} --name demo`);
     expect(result.createCommand).not.toContain("nemoclaw-sandbox-local");
   });
+
+  it("does not hide a generated Hermes BuildKit failure behind the gateway builder (#7140)", async () => {
+    const buildCtx = createTrustedBuildContext();
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+    const openshellShellCommand = vi.fn((args: string[]) => args.join(" "));
+
+    await expect(
+      prepareSandboxCreateLaunchWithPrebuild({
+        agent: { name: "hermes" } as any,
+        chatUiUrl: "",
+        createArgs: ["--from", dockerfile, "--name", "demo"],
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: disabledHermesDashboardState,
+        manageDashboard: false,
+        openshellShellCommand,
+        sandboxName: "demo",
+        buildEnv: () => ({}),
+        prebuild: {
+          buildCtx,
+          buildId: "build-123",
+          dockerDriverGateway: true,
+          env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+          buildImage: async () => 1,
+          log: vi.fn(),
+          origin: "generated",
+        },
+      }),
+    ).rejects.toThrow(/Local BuildKit is required.*local build failed \(exit 1\)/);
+    expect(openshellShellCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a custom Hermes Dockerfile", "custom", true],
+    ["a remote-gateway Hermes image", "generated", false],
+  ] as const)("keeps gateway handling for %s (#7140)", async (_label, origin, dockerDriverGateway) => {
+    const buildCtx = createTrustedBuildContext();
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+    const buildImage = vi.fn(async () => 1);
+    const result = await prepareSandboxCreateLaunchWithPrebuild({
+      agent: { name: "hermes" } as any,
+      chatUiUrl: "",
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      sandboxName: "demo",
+      buildEnv: () => ({}),
+      prebuild: {
+        buildCtx,
+        buildId: "build-123",
+        dockerDriverGateway,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        buildImage,
+        log: vi.fn(),
+        origin,
+      },
+    });
+
+    expect(result.prebuild).toEqual({
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      imageRef: null,
+      imageId: null,
+    });
+    expect(result.createCommand).toContain(`sandbox create --from ${dockerfile} --name demo`);
+    expect(buildImage).not.toHaveBeenCalled();
+  });
 });
