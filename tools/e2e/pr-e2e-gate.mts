@@ -32,6 +32,11 @@ import {
   listNonPassingWorkflowJobs,
   workflowJobEvidenceFingerprint,
 } from "./hosted-runner-loss-github.mts";
+import {
+  type RetryableFailureReason,
+  retryableFailureMarker,
+  retryableFailureReason,
+} from "./pr-e2e-retry-receipt.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
 import {
@@ -61,19 +66,6 @@ const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
 const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
 const FORK_E2E_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run fork E2E";
-const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
-const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
-const RETRYABLE_FAILURE_REASONS = new Set([
-  "prerequisite-ci",
-  "child-cancelled",
-  "evidence-download",
-] as const);
-const NEVER_RETRY_FAILURE_TITLES = new Set([
-  "Authorized E2E run requires reconciliation",
-  "PR base changed",
-  "Controller stopped early",
-  "Run could not start",
-]);
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const CHECK_EXTERNAL_ID_PATTERN =
@@ -312,8 +304,6 @@ export type PrGateVerdict = {
   summary: string;
   retryableFailureReason?: RetryableFailureReason;
 };
-
-type RetryableFailureReason = "prerequisite-ci" | "child-cancelled" | "evidence-download";
 
 class ObsoleteExactDiffError extends Error {
   readonly verdict: PrGateVerdict;
@@ -1034,29 +1024,6 @@ function isPrGateLineage(check: CheckRun, prNumber: number, headSha: string): bo
     (typeof externalId === "string" &&
       externalId.startsWith(`${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:`))
   );
-}
-
-function retryableFailureMarker(reason: RetryableFailureReason): string {
-  return `${RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${RETRYABLE_FAILURE_MARKER_SUFFIX}`;
-}
-
-function retryableFailureReason(check: CheckRun): RetryableFailureReason | undefined {
-  if (check.status !== "completed" || check.conclusion !== "failure") return undefined;
-  if (NEVER_RETRY_FAILURE_TITLES.has(check.output?.title ?? "")) return undefined;
-  const summary = check.output?.summary;
-  if (typeof summary !== "string") return undefined;
-  const markerBoundary = `\n\n${RETRYABLE_FAILURE_MARKER_PREFIX}`;
-  const markerStart = summary.lastIndexOf(markerBoundary);
-  if (markerStart < 0) return undefined;
-  const marker = summary.slice(markerStart + 2);
-  if (!marker.endsWith(RETRYABLE_FAILURE_MARKER_SUFFIX)) return undefined;
-  const reason = marker.slice(
-    RETRYABLE_FAILURE_MARKER_PREFIX.length,
-    -RETRYABLE_FAILURE_MARKER_SUFFIX.length,
-  );
-  if (!RETRYABLE_FAILURE_REASONS.has(reason as RetryableFailureReason)) return undefined;
-  if (marker !== retryableFailureMarker(reason as RetryableFailureReason)) return undefined;
-  return reason as RetryableFailureReason;
 }
 
 function runnerLossChildRunUrl(repository: string, check: CheckRun): string | null {
