@@ -16,13 +16,13 @@ import {
   getBuiltInRenderedConfigParser,
   tryGetMessagingAgentId,
 } from "../../messaging";
+import type { DiagnosticSignal } from "../../messaging/channels/channel-health";
 import type {
   ChannelConfigInputSpec,
   MessagingAgentId,
   MessagingSerializableValue,
   SandboxMessagingInputReference,
 } from "../../messaging/manifest";
-import type { DiagnosticSignal } from "../../sandbox/whatsapp-diagnostics";
 import * as registry from "../../state/registry";
 import {
   booleanConfigValue,

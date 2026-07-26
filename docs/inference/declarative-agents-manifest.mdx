@@ -169,6 +169,8 @@ Workspaces under `/sandbox/.openclaw/workspace-<id>` are preserved across rebuil
 The runtime startup script provisions them on first boot rather than baking their contents.
 
 For ad-hoc per-agent edits inside an existing sandbox without a rebuild, use the in-sandbox CLI, `nemoclaw <name> agents add|delete|list`.
+To reconcile the roster against a manifest, use `nemoclaw <name> agents apply -f <agents.yaml>`.
+See [Apply to an Existing Sandbox](#apply-to-an-existing-sandbox).
 
 Use the manifest for fixed, checked-in layouts.
 Use the CLI passthrough for interactive work.

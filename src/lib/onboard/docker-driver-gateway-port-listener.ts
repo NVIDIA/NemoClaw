@@ -12,11 +12,30 @@ export interface DockerDriverGatewayPortListenerOptions {
   isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
 }
 
-export interface DockerDriverGatewayPortListenerScan {
-  /** Every cmdline-verified listener observed by the primary and complete scans. */
+export interface GatewayPortListenerRawScan {
+  /** Every live listener observed by the complete scan. */
   pids: number[];
   /** False when lsof could not authoritatively enumerate the whole listener set. */
   complete: boolean;
+}
+
+export interface DockerDriverGatewayPortListenerScan extends GatewayPortListenerRawScan {
+  /** Live listener PIDs that could not be verified as this Docker-driver gateway. */
+  unverifiedPids: number[];
+}
+
+export interface DockerDriverGatewayServicePortOwnershipOptions
+  extends DockerDriverGatewayPortListenerOptions {
+  exitOnFailure: boolean;
+  logError?: (message: string) => void;
+  preparePort: (pids: number[]) => void;
+}
+
+export interface DockerDriverGatewayServicePortOwnership {
+  portListenerScan: DockerDriverGatewayPortListenerScan;
+  preparePort(): void;
+  reportUntrustedGatewayPort(message: string): never;
+  validatePortOwner(): void;
 }
 
 interface ListenerCaptureResult {
@@ -46,6 +65,10 @@ function parseListenerPids(output: string): number[] {
 export function createDockerDriverGatewayPortListenerHelpers(
   deps: DockerDriverGatewayPortListenerDeps,
 ): {
+  createGatewayServicePortOwnership(
+    portCheck: PortProbeResult,
+    opts: DockerDriverGatewayServicePortOwnershipOptions,
+  ): DockerDriverGatewayServicePortOwnership;
   getDockerDriverGatewayPortListenerPid(
     portCheck: PortProbeResult,
     opts?: DockerDriverGatewayPortListenerOptions,
@@ -54,6 +77,10 @@ export function createDockerDriverGatewayPortListenerHelpers(
     portCheck: PortProbeResult,
     opts?: DockerDriverGatewayPortListenerOptions,
   ): DockerDriverGatewayPortListenerScan;
+  getGatewayPortListenerRawScan(
+    portCheck: PortProbeResult,
+    opts?: DockerDriverGatewayPortListenerOptions,
+  ): GatewayPortListenerRawScan;
   isDockerDriverGatewayPortListener(
     portCheck: PortProbeResult,
     opts?: DockerDriverGatewayPortListenerOptions,
@@ -86,13 +113,21 @@ export function createDockerDriverGatewayPortListenerHelpers(
     return isGateway(pid, opts.gatewayBin) ? pid : null;
   }
 
-  function getDockerDriverGatewayPortListenerScan(
+  /**
+   * Every live process holding the gateway port, with no assumption about what
+   * kind of gateway it is.
+   *
+   * Docker-driver identity is deliberately not applied here: an externally
+   * supervised gateway (#6576) is an ordinary systemd-run executable with none
+   * of the Docker-driver env markers, so filtering by them would discard the
+   * very listener the caller is trying to recognize. Callers that need
+   * Docker-driver identity use getDockerDriverGatewayPortListenerScan instead.
+   */
+  function getGatewayPortListenerRawScan(
     portCheck: PortProbeResult,
     opts: DockerDriverGatewayPortListenerOptions = {},
-  ): DockerDriverGatewayPortListenerScan {
+  ): GatewayPortListenerRawScan {
     const candidates = new Set<number>();
-    const primaryPid = getDockerDriverGatewayPortListenerPid(portCheck, opts);
-    if (primaryPid !== null) candidates.add(primaryPid);
 
     let result: ListenerCaptureResult;
     try {
@@ -108,21 +143,86 @@ export function createDockerDriverGatewayPortListenerHelpers(
       for (const pid of parseListenerPids(result.stdout)) candidates.add(pid);
     }
 
+    const alive = opts.isPidAliveFn ?? deps.isPidAlive;
+    return { pids: Array.from(candidates).filter((pid) => alive(pid)), complete };
+  }
+
+  function getDockerDriverGatewayPortListenerScan(
+    portCheck: PortProbeResult,
+    opts: DockerDriverGatewayPortListenerOptions = {},
+  ): DockerDriverGatewayPortListenerScan {
+    const raw = getGatewayPortListenerRawScan(portCheck, opts);
+    const candidates = new Set<number>(raw.pids);
+    const primaryPid = getDockerDriverGatewayPortListenerPid(portCheck, opts);
+    if (primaryPid !== null) candidates.add(primaryPid);
+
     const platform = opts.platform ?? process.platform;
     const alive = opts.isPidAliveFn ?? deps.isPidAlive;
     const isGateway =
       opts.isDockerDriverGatewayProcessFn ??
       ((pid: number, gatewayBin?: string | null) =>
         deps.isDockerDriverGatewayProcess(pid, gatewayBin, platform));
+    const livePids = Array.from(candidates).filter((pid) => alive(pid));
+    const verifiedPids = livePids.filter((pid) => isGateway(pid, opts.gatewayBin));
     return {
-      pids: Array.from(candidates).filter((pid) => alive(pid) && isGateway(pid, opts.gatewayBin)),
-      complete,
+      pids: verifiedPids,
+      unverifiedPids: livePids.filter((pid) => !verifiedPids.includes(pid)),
+      complete: raw.complete,
+    };
+  }
+
+  function createGatewayServicePortOwnership(
+    portCheck: PortProbeResult,
+    opts: DockerDriverGatewayServicePortOwnershipOptions,
+  ): DockerDriverGatewayServicePortOwnership {
+    const portListenerScan = getDockerDriverGatewayPortListenerScan(portCheck, opts);
+    const reportUntrustedGatewayPort = (message: string): never => {
+      const detail =
+        `Refusing to start a second OpenShell gateway: ${message}. ` +
+        `Inspect port ${currentGatewayPort()} and stop only its owning process before retrying.`;
+      (opts.logError ?? console.error)(`  ${detail}`);
+      if (opts.exitOnFailure) process.exit(1);
+      throw new Error(detail);
+    };
+    const validatePortOwner = () => {
+      if (!portListenerScan.complete || portListenerScan.unverifiedPids.length > 0) {
+        reportUntrustedGatewayPort(
+          "the gateway port has an unknown or incompletely observed listener",
+        );
+      }
+      if (portCheck.ok) {
+        if (portListenerScan.pids.length > 0) {
+          reportUntrustedGatewayPort(
+            "the gateway port listener changed during ownership validation",
+          );
+        }
+        return;
+      }
+      const primaryPid = Number(portCheck.pid);
+      if (
+        portListenerScan.pids.length === 0 ||
+        (Number.isInteger(primaryPid) &&
+          primaryPid > 0 &&
+          !portListenerScan.pids.includes(primaryPid))
+      ) {
+        reportUntrustedGatewayPort(
+          "the gateway port has an unknown or incompletely observed listener",
+        );
+      }
+    };
+    return {
+      portListenerScan,
+      preparePort: () => opts.preparePort(portListenerScan.pids),
+      reportUntrustedGatewayPort,
+      validatePortOwner,
     };
   }
 
   return {
+    createGatewayServicePortOwnership,
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayPortListenerScan,
+    getGatewayPortListenerRawScan,
     isDockerDriverGatewayPortListener: (portCheck, opts) =>
       getDockerDriverGatewayPortListenerPid(portCheck, opts) !== null,
   };

@@ -10,6 +10,7 @@ import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import {
   type PolicyAddOptions,
+  type PolicyBaselineOptions,
   type PolicyRemoveOptions,
   parsePolicyAddOptions,
 } from "../../domain/policy-channel";
@@ -39,7 +40,15 @@ import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-pre
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { getMessagingToken } from "../../onboard/messaging-token";
 import * as policies from "../../policy";
+import {
+  digestBaselineEntry,
+  getBaselineExclusionFeatureImpact,
+  isProtectedBaselineExclusionKey,
+  listBaselineEntryKeys,
+  renderBaselineEntryScope,
+} from "../../policy/baseline-exclusion";
 import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
+import type { PolicyObject } from "../../policy/preset-parsing";
 import { shellQuote } from "../../runner";
 import {
   type ChannelDef,
@@ -62,6 +71,52 @@ import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 
 const isNonInteractive = isNonInteractiveEnv;
+
+/**
+ * Report that `NEMOCLAW_NON_INTERACTIVE=1` leaves no interactive picker, and
+ * exit non-zero.
+ */
+function exitPresetNameRequired(usage: string): never {
+  console.error("  Non-interactive mode requires a preset name.");
+  console.error(`  Usage: ${usage}`);
+  process.exit(1);
+}
+
+/**
+ * Report that the picker prompt reached stdin EOF, and exit non-zero.
+ *
+ * Separate from `exitPresetNameRequired` because the conditions differ. That
+ * one means the operator set `NEMOCLAW_NON_INTERACTIVE=1`. This one means
+ * stdin closed while that variable was unset, so naming the variable would
+ * misdirect whoever reads the boot-unit log.
+ */
+function exitPromptStdinClosed(usage: string): never {
+  console.error("  No input available on stdin, so the preset picker cannot prompt.");
+  console.error(`  Usage: ${usage}`);
+  process.exit(1);
+}
+
+/**
+ * Await an interactive preset picker and convert a prompt EOF into exit 1.
+ *
+ * A boot unit that pipes or closes stdin without setting
+ * `NEMOCLAW_NON_INTERACTIVE=1` reaches the picker, and the prompt then hits
+ * EOF. Before #7418 the picker promise never settled, so the command exited 0
+ * having changed nothing. Automation could not distinguish an applied preset
+ * from a no-op. Any other failure propagates unchanged.
+ */
+async function pickPresetOrExit(
+  pick: () => Promise<string | null>,
+  usage: string,
+): Promise<string | null> {
+  try {
+    return await pick();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code !== "EOF") throw error;
+    exitPromptStdinClosed(usage);
+  }
+}
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -86,7 +141,11 @@ const YW = useColor ? "\x1b[1;33m" : "";
  * `--yes`/`-y`/`--force` (or `NEMOCLAW_NON_INTERACTIVE=1`) skips the
  * confirmation prompt. `--from-dir` applies non-hidden files in lexicographic
  * order and aborts at the first failure (already-applied presets are not
- * rolled back).
+ * rolled back). Naming an already-applied preset compares the preset content
+ * against the live policy: a match is a successful no-op, while drift (an
+ * edited preset file) re-applies the preset through the normal path (#7323).
+ * Names owned by a custom (--from-file) preset are refused; re-apply those
+ * with `--from-file`.
  */
 export async function addSandboxPolicy(
   sandboxName: string,
@@ -149,6 +208,7 @@ async function addSandboxPolicyUnlocked(
   const applied = policies.getAppliedPresets(sandboxName);
 
   let answer = null;
+  let reapplyState: "drift" | "absent" | null = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();
     const preset = allPresets.find((item: { name: string }) => item.name === normalized);
@@ -160,24 +220,76 @@ async function addSandboxPolicyUnlocked(
       process.exit(1);
     }
     if (applied.includes(preset.name)) {
-      console.error(`  Preset '${preset.name}' is already applied.`);
-      process.exit(1);
+      // #7323: the registry name alone must not block a re-add. Users edit
+      // preset files in place (for example to add `tls: skip` endpoints), so
+      // compare the preset content against the live gateway policy and fall
+      // through to a normal re-apply when it drifted.
+      const customNames = registry
+        .getCustomPolicies(sandboxName)
+        .map((entry: { name: string }) => entry.name);
+      if (customNames.includes(preset.name)) {
+        // A custom preset owns this name, so the built-in content is the
+        // wrong comparison baseline; re-applying it would clobber the custom
+        // policy and double-register the name.
+        console.error(`  Preset '${preset.name}' was applied as a custom preset (--from-file).`);
+        console.error(
+          `  Edit and re-apply it with --from-file, or run '${CLI_NAME} ${sandboxName} policy remove ${preset.name}' first.`,
+        );
+        process.exit(1);
+      }
+      const appliedContent = policies.loadPresetForSandbox(sandboxName, preset.name);
+      if (!appliedContent) {
+        console.error(`  Could not read the content of preset '${preset.name}'.`);
+        process.exit(1);
+      }
+      const appliedState = policies.getPresetContentGatewayState(sandboxName, appliedContent);
+      if (appliedState === "match") {
+        // The desired state already holds: exit 0 so converging scripts can
+        // call `policy add` idempotently, mirroring how applyPreset treats a
+        // byte-identical re-application as a successful no-op.
+        console.log(
+          `  Preset '${preset.name}' is already applied and matches the live policy; nothing to do.`,
+        );
+        return;
+      }
+      if (appliedState === null) {
+        // Live policy unreadable: drift is unverifiable, so refuse rather
+        // than guess.
+        console.error(`  Preset '${preset.name}' is already applied.`);
+        console.error(
+          "  Could not read the live sandbox policy to compare (is the sandbox gateway running?).",
+        );
+        process.exit(1);
+      }
+      // State-only notice: the downstream flow reports the dry-run,
+      // confirmation, and apply outcomes.
+      reapplyState = appliedState;
+      console.log(
+        appliedState === "drift"
+          ? `  Preset '${preset.name}' no longer matches the live policy.`
+          : `  Preset '${preset.name}' is recorded as applied but missing from the live policy.`,
+      );
     }
     answer = preset.name;
   } else {
+    const usage = `${CLI_NAME} <sandbox> policy add <preset> [--yes] [--dry-run]`;
     if (isNonInteractive()) {
-      console.error("  Non-interactive mode requires a preset name.");
-      console.error(`  Usage: ${CLI_NAME} <sandbox> policy-add <preset> [--yes] [--dry-run]`);
-      process.exit(1);
+      exitPresetNameRequired(usage);
     }
-    answer = await policies.selectFromList(allPresets, { applied });
+    answer = await pickPresetOrExit(() => policies.selectFromList(allPresets, { applied }), usage);
   }
   if (!answer) return;
 
   const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) return;
 
-  policies.logPresetScope(presetContent);
+  if (reapplyState) {
+    // A re-add replaces the recorded entries, so use the state-aware heading
+    // instead of the fresh-add "would be opened" preview.
+    policies.logPresetScopeForState(answer, presetContent, reapplyState);
+  } else {
+    policies.logPresetScope(presetContent);
+  }
 
   const presetWarning = policies.getPresetValidationWarning(answer);
   if (presetWarning) {
@@ -296,6 +408,48 @@ export function listSandboxPolicies(sandboxName: string) {
       }),
     );
   });
+
+  const exclusions = registry.getBaselineExclusions(sandboxName);
+  const exclusionTransition = registry.getBaselineExclusionTransition(sandboxName);
+  if (exclusions.length > 0 || exclusionTransition) {
+    console.log("");
+    console.log("  Baseline exclusions (unsupported egress removed):");
+    const listed = new Map(exclusions.map((exclusion) => [exclusion.key, exclusion]));
+    if (exclusionTransition) {
+      listed.set(exclusionTransition.exclusion.key, exclusionTransition.exclusion);
+    }
+    for (const exclusion of listed.values()) {
+      const isPending = exclusionTransition?.exclusion.key === exclusion.key;
+      // A repair command must remain visible even if the current agent
+      // baseline cannot be loaded. Resolving that baseline is part of the
+      // explicit retry, not a prerequisite for displaying the journal.
+      let currentDigest: string | null | undefined;
+      if (isPending) {
+        currentDigest = null;
+      } else {
+        try {
+          currentDigest = policies.getSandboxBaselineEntryDigest(sandboxName, exclusion.key);
+        } catch {
+          currentDigest = undefined;
+        }
+      }
+      const status = isPending
+        ? `${YW}repair required — interrupted ${exclusionTransition.operation}; rebuild blocked${R}`
+        : currentDigest === undefined
+          ? `${YW}release baseline unreadable — inspection required${R}`
+          : currentDigest === null
+            ? `${YW}baseline entry removed — restore to clear${R}`
+            : currentDigest === exclusion.digest
+              ? "active"
+              : `${YW}baseline changed — re-review required${R}`;
+      console.log(`    - ${exclusion.key} (${status})`);
+      if (isPending) {
+        console.log(
+          `      Re-run: ${CLI_NAME} ${sandboxName} policy ${exclusionTransition.operation} ${exclusion.key}`,
+        );
+      }
+    }
+  }
 
   if (gatewayPresets === null) {
     console.log("");
@@ -1317,7 +1471,7 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
         `  ${YW}⚠${R} Channel '${channelName}' bridge removed but its policy preset failed to un-apply.`,
       );
       console.error(
-        `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-remove ${channelName}`,
+        `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
       );
     } else {
       syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
@@ -1327,7 +1481,7 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset: ${msg}`);
     console.error(
-      `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-remove ${channelName}`,
+      `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
     );
   }
 }
@@ -1574,12 +1728,14 @@ async function removeSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
+    const usage = `${CLI_NAME} <sandbox> policy remove <preset> [--yes] [--dry-run]`;
     if (isNonInteractive()) {
-      console.error("  Non-interactive mode requires a preset name.");
-      console.error(`  Usage: ${CLI_NAME} <sandbox> policy-remove <preset> [--yes] [--dry-run]`);
-      process.exit(1);
+      exitPresetNameRequired(usage);
     }
-    answer = await policies.selectForRemoval(allPresets, { applied });
+    answer = await pickPresetOrExit(
+      () => policies.selectForRemoval(allPresets, { applied }),
+      usage,
+    );
   }
   if (!answer) return;
 
@@ -1617,5 +1773,159 @@ async function removeSandboxPolicyUnlocked(
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "remove");
+  refreshSandboxPolicyContextFile(sandboxName);
+}
+
+function printBaselineEntryScope(prefix: string, key: string, entry: PolicyObject): void {
+  console.log(prefix);
+  for (const line of renderBaselineEntryScope(key, entry)) {
+    console.log(line);
+  }
+}
+
+export async function excludeSandboxBaseline(
+  sandboxName: string,
+  options: PolicyBaselineOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    excludeSandboxBaselineUnlocked(sandboxName, options),
+  );
+}
+
+async function excludeSandboxBaselineUnlocked(
+  sandboxName: string,
+  options: PolicyBaselineOptions,
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const explicitAck = Boolean(options.yes || options.force);
+  const key = options.key?.trim();
+  if (!key) {
+    console.error("  A baseline key is required.");
+    console.error(`  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--dry-run]`);
+    process.exit(1);
+  }
+
+  const baseline = policies.resolveSandboxBaselinePolicy(sandboxName);
+  if (!baseline) {
+    console.error(`  Could not read the baseline policy for sandbox '${sandboxName}'.`);
+    process.exit(1);
+  }
+
+  const entry = policies.getSandboxBaselineEntry(sandboxName, key);
+  if (!entry) {
+    console.error(`  Unknown baseline entry '${key}'.`);
+    console.error(
+      `  Valid baseline keys: ${listBaselineEntryKeys(baseline.content).join(", ") || "(none)"}`,
+    );
+    process.exit(1);
+  }
+
+  if (isProtectedBaselineExclusionKey(key)) {
+    console.error(
+      `  Baseline entry '${key}' is required for managed inference and cannot be excluded.`,
+    );
+    process.exit(1);
+  }
+
+  const featureImpact = getBaselineExclusionFeatureImpact(baseline.agent, key);
+  if (!featureImpact) {
+    console.error(
+      `  Baseline entry '${key}' has no supported-feature impact disclosure and cannot be excluded safely.`,
+    );
+    process.exit(1);
+  }
+
+  printBaselineEntryScope(
+    `  Excluding baseline entry '${key}' from '${sandboxName}' removes:`,
+    key,
+    entry,
+  );
+  console.log(`  ${YW}Support impact: ${featureImpact}${R}`);
+
+  const digest = digestBaselineEntry(entry);
+  if (dryRun) {
+    console.log("  --dry-run: no changes applied.");
+    return;
+  }
+
+  if (isNonInteractive() && !explicitAck) {
+    console.error(
+      "  Non-interactive exclusion requires explicit acknowledgement: pass --force (or --yes).",
+    );
+    process.exit(1);
+  }
+  if (!explicitAck) {
+    const confirm = await askPrompt(`  Exclude '${key}' from sandbox '${sandboxName}'? [y/N]: `);
+    if (!confirm.trim().toLowerCase().startsWith("y")) return;
+  }
+
+  if (!policies.excludeBaselineEntry(sandboxName, key, digest)) {
+    // A failed cross-system mutation can leave a durable repair journal. Keep
+    // the in-sandbox context aligned before returning the nonzero result.
+    refreshSandboxPolicyContextFile(sandboxName);
+    process.exit(1);
+  }
+  console.log(`  ${G}✓${R} Excluded baseline entry '${key}' for '${sandboxName}'.`);
+  refreshSandboxPolicyContextFile(sandboxName);
+}
+
+export async function restoreSandboxBaseline(
+  sandboxName: string,
+  options: PolicyBaselineOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    restoreSandboxBaselineUnlocked(sandboxName, options),
+  );
+}
+
+async function restoreSandboxBaselineUnlocked(
+  sandboxName: string,
+  options: PolicyBaselineOptions,
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const key = options.key?.trim();
+  if (!key) {
+    console.error("  A baseline key is required.");
+    console.error(`  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--dry-run]`);
+    process.exit(1);
+  }
+
+  const isExcluded = registry.getBaselineExclusions(sandboxName).some((entry) => entry.key === key);
+  const pendingTransition = registry.getBaselineExclusionTransition(sandboxName);
+  const isPendingForKey = pendingTransition?.exclusion.key === key;
+  if (!isExcluded && !isPendingForKey) {
+    console.error(`  Baseline entry '${key}' is not excluded for '${sandboxName}'.`);
+    process.exit(1);
+  }
+
+  const baseline = policies.resolveSandboxBaselinePolicy(sandboxName);
+  if (!baseline) {
+    console.error(`  Could not read the baseline policy for sandbox '${sandboxName}'.`);
+    process.exit(1);
+  }
+
+  const entry = policies.getSandboxBaselineEntry(sandboxName, key);
+  if (entry) {
+    printBaselineEntryScope(
+      `  Restoring baseline entry '${key}' for '${sandboxName}' re-allows:`,
+      key,
+      entry,
+    );
+  } else {
+    console.log(
+      `  ${YW}⚠${R} The current baseline no longer defines '${key}'; clearing the exclusion record only.`,
+    );
+  }
+
+  if (dryRun) {
+    console.log("  --dry-run: no changes applied.");
+    return;
+  }
+
+  if (!policies.restoreBaselineEntry(sandboxName, key)) {
+    refreshSandboxPolicyContextFile(sandboxName);
+    process.exit(1);
+  }
+  console.log(`  ${G}✓${R} Restored baseline entry '${key}' for '${sandboxName}'.`);
   refreshSandboxPolicyContextFile(sandboxName);
 }

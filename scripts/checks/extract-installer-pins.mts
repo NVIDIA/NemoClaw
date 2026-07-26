@@ -48,7 +48,7 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256 =
-  "a101f002bd8e02aa7b38960ddcb76c9fca419bc3766f6870446f6a7e99e14d78";
+  "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58";
 const TRUSTED_BREV_TEMPLATE_SHA256 =
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a";
 const EXPECTED_INSTALLER_ASSETS = [
@@ -60,6 +60,7 @@ const EXPECTED_INSTALLER_ASSETS = [
   "openshell-gateway-aarch64-apple-darwin.tar.gz",
   "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
   "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
+  "openshell.rb",
 ] as const;
 const EXPECTED_BREV_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",

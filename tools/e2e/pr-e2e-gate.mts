@@ -23,6 +23,15 @@ import {
   riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
+import {
+  type HostedRunnerLossPolicy,
+  verifiedRunnerLossEvidence,
+  type WorkflowJob,
+} from "./hosted-runner-loss.mts";
+import {
+  listNonPassingWorkflowJobs,
+  workflowJobEvidenceFingerprint,
+} from "./hosted-runner-loss-github.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
 import {
@@ -35,13 +44,23 @@ import {
   readFreeStandingJobsInventory,
 } from "./workflow-boundary.mts";
 
+export {
+  listNonPassingWorkflowJobs,
+  workflowJobEvidenceFingerprint,
+} from "./hosted-runner-loss-github.mts";
+
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
-const PR_GATE_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-skip-for-fork-pr";
+const FORK_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-fork-pr";
+const INTERNAL_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-internal-pr";
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
-const CONTROL_PLANE_AUTHORIZATION_TITLE = "Maintainer authorization required to run E2E";
+const RESERVED_CHECK_TITLE = "Waiting for PR CI";
+const RESERVED_CHECK_SUMMARY =
+  "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
+const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
+const FORK_E2E_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run fork E2E";
 const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
 const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
 const RETRYABLE_FAILURE_REASONS = new Set([
@@ -57,6 +76,11 @@ const NEVER_RETRY_FAILURE_TITLES = new Set([
 ]);
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
+const CHECK_EXTERNAL_ID_PATTERN =
+  /^nemoclaw-pr-e2e:v2:([1-9][0-9]*):([0-9a-f]{40}):([0-9a-f]{40})$/u;
+const SELECTED_E2E_RUN_SUMMARY_PATTERN =
+  /^\[Selected E2E run ([1-9][0-9]*)\]\((https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/([1-9][0-9]*))\) concluded /u;
+const SELECTED_E2E_RUN_SUMMARY_PREFIX = "[Selected E2E run ";
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
@@ -74,13 +98,10 @@ const MAX_CONTROLLER_ERROR_CHARS = 512;
 const MAX_PR_FILES = 3000;
 const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
-const MAX_WORKFLOW_JOB_PAGES = 10;
 const MAX_REPORTED_WORKFLOW_JOBS = 10;
 const MAX_WAIVER_REASON_CHARS = 500;
 const MAX_APPROVAL_REVIEWS = 20;
 const MAINTAINER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
-const EVIDENCE_URL_PATTERN =
-  /^https:\/\/github\.com\/NVIDIA\/NemoClaw\/actions\/runs\/[1-9][0-9]*$/u;
 const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "requested",
   "waiting",
@@ -89,6 +110,7 @@ const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "in_progress",
 ] as const;
 const ACTIVE_WORKFLOW_RUN_STATUS_SET = new Set<string>(ACTIVE_WORKFLOW_RUN_STATUSES);
+const PR_E2E_HOSTED_RUNNER_LOSS_POLICY: HostedRunnerLossPolicy = {};
 const TERMINAL_WORKFLOW_RUN_CONCLUSIONS = [
   "success",
   "failure",
@@ -102,7 +124,7 @@ const TERMINAL_WORKFLOW_RUN_CONCLUSIONS = [
 ] as const;
 const TERMINAL_WORKFLOW_RUN_CONCLUSION_SET = new Set<string>(TERMINAL_WORKFLOW_RUN_CONCLUSIONS);
 const WAIT_POLL_INTERVAL_MS = 10_000;
-const WAIT_TIMEOUT_MS = 105 * 60_000;
+const WAIT_TIMEOUT_MS = 140 * 60_000;
 const EVIDENCE_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const EVIDENCE_DOWNLOAD_KILL_GRACE_MS = 30_000;
 const EVIDENCE_LIMITS = {
@@ -116,47 +138,40 @@ type ControllerPaths = {
   evidencePath: string;
 };
 
+type ControllerPathSlot = "initial" | "runner-loss-retry";
+
 type EvidenceStepOutcome = "success" | "failure" | "cancelled" | "skipped";
 
-type ManualForkSkipCommandBase = {
+type ControlPlaneCommandBase = {
   prNumber: number;
   headSha: string;
   baseSha: string;
   workflowSha: string;
-  maintainer: string;
-  reason: string;
-  evidenceUrl?: string;
-};
-
-type ManualForkSkipCommand = ManualForkSkipCommandBase & { mode: "record-fork-e2e-skip" };
-
-type ApprovedForkSkipCommand = {
-  mode: "record-approved-fork-e2e-skip";
-  prNumber: number;
-  headSha: string;
-  baseSha: string;
-  workflowSha: string;
-  approvalRunId: number;
-  approvalRunAttempt: number;
-};
-
-type ControlPlaneDispatchCommand = {
-  mode: "start-control-plane";
-  prNumber: number;
-  headSha: string;
-  baseSha: string;
-  workflowSha: string;
-  maintainer: string;
-  reason: string;
   gateRunId: number;
   workflowRunAttempt: number;
 } & ControllerPaths;
 
-type ForkSkipCommand = ManualForkSkipCommand & {
-  validatedApproval?: {
-    environment: typeof PR_GATE_APPROVAL_ENVIRONMENT;
-    runUrl: string;
-  };
+type ControlPlaneDispatchCommand = ControlPlaneCommandBase & {
+  mode: "start-control-plane";
+  maintainer: string;
+  reason: string;
+};
+
+type ApprovedControlPlaneDispatchCommand = ControlPlaneCommandBase & {
+  mode: "start-approved-control-plane";
+  approvalRunId: number;
+  approvalRunAttempt: number;
+};
+
+type ApprovedForkE2EDispatchCommand = ControlPlaneCommandBase & {
+  mode: "start-approved-fork";
+  approvalRunId: number;
+  approvalRunAttempt: number;
+};
+
+type AuthorizedE2ECommand = ControlPlaneCommandBase & {
+  maintainer: string;
+  reason: string;
 };
 
 export type ControllerCommand =
@@ -182,12 +197,32 @@ export type ControllerCommand =
       evidenceOutcome: EvidenceStepOutcome;
     } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
-  | { mode: "cancel"; prNumber: number }
+  | {
+      mode: "abandon-runner-loss-retry";
+      checkRunId: number;
+      childRunId: number;
+      workflowRunAttempt: number;
+    }
+  | {
+      mode: "cancel";
+      prNumber: number;
+      headSha?: string;
+      supersededHeadSha?: string;
+    }
   | { mode: "wait"; childRunId: number }
   | ({ mode: "download"; childRunId: number } & ControllerPaths)
+  | {
+      mode: "retry-runner-loss";
+      checkRunId: number;
+      childRunId: number;
+      workflowRunAttempt: number;
+      stateHash: string;
+      statePath: string;
+      retryStatePath: string;
+    }
   | ControlPlaneDispatchCommand
-  | ManualForkSkipCommand
-  | ApprovedForkSkipCommand;
+  | ApprovedControlPlaneDispatchCommand
+  | ApprovedForkE2EDispatchCommand;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
 
@@ -210,6 +245,7 @@ type WorkflowRun = {
   workflow_id: number;
   event: string;
   head_sha: string;
+  run_attempt: number;
   status: string;
   conclusion: string | null;
   display_title: string;
@@ -217,17 +253,6 @@ type WorkflowRun = {
 };
 
 type WorkflowRunsResponse = { workflow_runs: WorkflowRun[] };
-type WorkflowJob = {
-  id: number;
-  name: string;
-  status?: string;
-  conclusion: string | null;
-  runnerId?: number | null;
-  runnerName?: string | null;
-  labels?: string[];
-  steps: Array<{ name: string; status?: string; conclusion: string | null }>;
-};
-type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
 type CheckRun = {
   id: number;
   name?: string;
@@ -268,9 +293,10 @@ type WorkflowRunIdentity = {
 };
 
 export type PrGateState = {
-  version: 3;
+  version: 4;
   commitSha: string;
   baseSha: string;
+  checkoutRepository: string;
   workflowSha: string;
   planHash: string;
   correlationId: string;
@@ -406,7 +432,16 @@ function tokenAndRepository(): { token: string; repository: string } {
   return { token, repository };
 }
 
-export function privateControllerPaths(workDir: string): ControllerPaths {
+function parseControllerPathSlot(value: string | undefined): ControllerPathSlot {
+  if (value === undefined || value === "initial") return "initial";
+  if (value === "runner-loss-retry") return value;
+  throw new Error("--slot must be initial or runner-loss-retry");
+}
+
+export function privateControllerPaths(
+  workDir: string,
+  slot: ControllerPathSlot = "initial",
+): ControllerPaths {
   const resolved = path.resolve(workDir);
   const stat = fs.lstatSync(resolved);
   const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
@@ -419,10 +454,14 @@ export function privateControllerPaths(workDir: string): ControllerPaths {
   ) {
     throw new Error("--work-dir must be an owned private absolute directory");
   }
+  const retry = slot === "runner-loss-retry";
   return {
     planPath: path.join(resolved, "risk-plan.json"),
-    statePath: path.join(resolved, "controller-state.json"),
-    evidencePath: path.join(resolved, "evidence"),
+    statePath: path.join(
+      resolved,
+      retry ? "controller-state-runner-loss-retry.json" : "controller-state.json",
+    ),
+    evidencePath: path.join(resolved, retry ? "evidence-runner-loss-retry" : "evidence"),
   };
 }
 
@@ -458,7 +497,10 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
   if (args.mode === "finish") {
     return {
       mode: "finish",
-      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+      ...privateControllerPaths(
+        requiredArgument(args.workDir, "work-dir"),
+        parseControllerPathSlot(args.slot),
+      ),
       checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
       childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
       stateHash: parseHash(args.stateHash, "state-hash"),
@@ -472,10 +514,36 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       childRunId: args.runId ? parsePositiveId(args.runId, "--run-id") : undefined,
     };
   }
+  if (args.mode === "abandon-runner-loss-retry") {
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
+    if (workflowRunAttempt !== 1) {
+      throw new Error("--workflow-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "abandon-runner-loss-retry",
+      checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+      workflowRunAttempt,
+    };
+  }
   if (args.mode === "cancel") {
+    if ((args.head === undefined) !== (args.supersededHead === undefined)) {
+      throw new Error("--head and --superseded-head must be provided together");
+    }
+    if (args.head !== undefined && !SHA_PATTERN.test(args.head)) {
+      throw new Error("--head is invalid");
+    }
+    if (args.supersededHead !== undefined && !SHA_PATTERN.test(args.supersededHead)) {
+      throw new Error("--superseded-head is invalid");
+    }
     return {
       mode: "cancel",
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: args.head,
+      supersededHeadSha: args.supersededHead,
     };
   }
   if (args.mode === "wait") {
@@ -488,7 +556,29 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     return {
       mode: "download",
       childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
-      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+      ...privateControllerPaths(
+        requiredArgument(args.workDir, "work-dir"),
+        parseControllerPathSlot(args.slot),
+      ),
+    };
+  }
+  if (args.mode === "retry-runner-loss") {
+    const workDir = requiredArgument(args.workDir, "work-dir");
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
+    if (workflowRunAttempt !== 1) {
+      throw new Error("--workflow-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "retry-runner-loss",
+      checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+      workflowRunAttempt,
+      stateHash: parseHash(args.stateHash, "state-hash"),
+      statePath: privateControllerPaths(workDir).statePath,
+      retryStatePath: privateControllerPaths(workDir, "runner-loss-retry").statePath,
     };
   }
   if (args.mode === "start-control-plane") {
@@ -514,49 +604,64 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
   }
-  if (args.mode === "record-fork-e2e-skip") {
-    const maintainer = requiredArgument(args.maintainer, "maintainer");
-    if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
-    const evidenceUrl = args.evidenceUrl?.trim();
-    if (evidenceUrl && !EVIDENCE_URL_PATTERN.test(evidenceUrl)) {
-      throw new Error(
-        "Evidence URL must be an Actions run URL such as https://github.com/NVIDIA/NemoClaw/actions/runs/123. PR, issue, comment, job, and external URLs are not accepted. Leave the field blank if no run exists.",
-      );
-    }
-    return {
-      mode: args.mode,
-      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
-      headSha: requiredArgument(args.head, "head"),
-      baseSha: requiredArgument(args.base, "base"),
-      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
-      maintainer,
-      reason: normalizedWaiverReason(requiredArgument(args.reason, "reason")),
-      ...(evidenceUrl ? { evidenceUrl } : {}),
-    };
-  }
-  if (args.mode === "record-approved-fork-e2e-skip") {
+  if (args.mode === "start-approved-control-plane") {
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
     const approvalRunAttempt = parsePositiveId(
       requiredArgument(args.approvalRunAttempt, "approval-run-attempt"),
       "--approval-run-attempt",
     );
-    if (approvalRunAttempt !== 1) {
-      throw new Error("--approval-run-attempt must be exactly 1");
+    if (workflowRunAttempt !== 1 || approvalRunAttempt !== 1) {
+      throw new Error("workflow and approval run attempts must be exactly 1");
     }
     return {
-      mode: "record-approved-fork-e2e-skip",
+      mode: "start-approved-control-plane",
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
       headSha: requiredArgument(args.head, "head"),
       baseSha: requiredArgument(args.base, "base"),
       workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
+      gateRunId: parsePositiveId(requiredArgument(args.gateRunId, "gate-run-id"), "--gate-run-id"),
+      workflowRunAttempt,
       approvalRunId: parsePositiveId(
         requiredArgument(args.approvalRunId, "approval-run-id"),
         "--approval-run-id",
       ),
       approvalRunAttempt,
+      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+    };
+  }
+  if (args.mode === "start-approved-fork") {
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
+    const approvalRunAttempt = parsePositiveId(
+      requiredArgument(args.approvalRunAttempt, "approval-run-attempt"),
+      "--approval-run-attempt",
+    );
+    if (workflowRunAttempt !== 1 || approvalRunAttempt !== 1) {
+      throw new Error("workflow and approval run attempts must be exactly 1");
+    }
+    return {
+      mode: "start-approved-fork",
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: requiredArgument(args.head, "head"),
+      baseSha: requiredArgument(args.base, "base"),
+      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
+      gateRunId: parsePositiveId(requiredArgument(args.gateRunId, "gate-run-id"), "--gate-run-id"),
+      workflowRunAttempt,
+      approvalRunId: parsePositiveId(
+        requiredArgument(args.approvalRunId, "approval-run-id"),
+        "--approval-run-id",
+      ),
+      approvalRunAttempt,
+      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, finish, abandon, cancel, wait, download, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
+    "--mode must be seed, start, start-control-plane, start-approved-control-plane, start-approved-fork, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, or retry-runner-loss",
   );
 }
 
@@ -565,7 +670,7 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
 }
 
 export function validatePrGateState(value: unknown): PrGateState {
-  if (!isObjectRecord(value) || value.version !== 3) {
+  if (!isObjectRecord(value) || value.version !== 4) {
     throw new Error("State version is invalid");
   }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
@@ -574,6 +679,10 @@ export function validatePrGateState(value: unknown): PrGateState {
   if (typeof value.baseSha !== "string" || !SHA_PATTERN.test(value.baseSha)) {
     throw new Error("State base SHA is invalid");
   }
+  if (typeof value.checkoutRepository !== "string") {
+    throw new Error("State checkout repository is invalid");
+  }
+  assertRepository(value.checkoutRepository, "state checkout repository");
   if (typeof value.workflowSha !== "string" || !SHA_PATTERN.test(value.workflowSha)) {
     throw new Error("State workflow SHA is invalid");
   }
@@ -629,6 +738,15 @@ export function validatePrGateState(value: unknown): PrGateState {
     }
   }
   return value as PrGateState;
+}
+
+function readBoundPrGateState(statePath: string, stateHash: string): PrGateState {
+  if (!HASH_PATTERN.test(stateHash)) throw new Error("controller state hash is invalid");
+  const serializedState = readPrivateRegularFile(statePath, { maxBytes: MAX_PLAN_BYTES })!;
+  if (sha256(serializedState) !== stateHash) {
+    throw new Error("controller state changed after E2E dispatch");
+  }
+  return validatePrGateState(JSON.parse(serializedState));
 }
 
 export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string>): RiskPlan {
@@ -811,13 +929,18 @@ function appendOutput(name: string, value: string): void {
   const output = process.env.GITHUB_OUTPUT;
   if (!output) return;
   const validators: Readonly<Record<string, (candidate: string) => boolean>> = {
+    approval_base_sha: (candidate) => SHA_PATTERN.test(candidate),
+    approval_environment: (candidate) =>
+      candidate === INTERNAL_E2E_APPROVAL_ENVIRONMENT ||
+      candidate === FORK_E2E_APPROVAL_ENVIRONMENT,
+    approval_head_sha: (candidate) => SHA_PATTERN.test(candidate),
+    approval_mode: (candidate) =>
+      candidate === "start-approved-control-plane" || candidate === "start-approved-fork",
+    approval_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     check_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     dispatched: (candidate) => /^(?:true|false)$/u.test(candidate),
-    fork_skip_base_sha: (candidate) => SHA_PATTERN.test(candidate),
-    fork_skip_head_sha: (candidate) => SHA_PATTERN.test(candidate),
-    fork_skip_mode: (candidate) => candidate === "record-fork-e2e-skip",
-    fork_skip_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     finalized: (candidate) => /^(?:true|false)$/u.test(candidate),
+    runner_loss_retry_authorized: (candidate) => candidate === "true",
     run_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     state_hash: (candidate) => HASH_PATTERN.test(candidate),
   };
@@ -840,6 +963,20 @@ function appendOutput(name: string, value: string): void {
   }
 }
 
+function emitE2EApprovalOutputs(
+  mode: "start-approved-control-plane" | "start-approved-fork",
+  environment: typeof INTERNAL_E2E_APPROVAL_ENVIRONMENT | typeof FORK_E2E_APPROVAL_ENVIRONMENT,
+  prNumber: number,
+  headSha: string,
+  baseSha: string,
+): void {
+  appendOutput("approval_mode", mode);
+  appendOutput("approval_environment", environment);
+  appendOutput("approval_pr_number", String(prNumber));
+  appendOutput("approval_head_sha", headSha);
+  appendOutput("approval_base_sha", baseSha);
+}
+
 export function prGateExternalId(prNumber: number, headSha: string, baseSha: string): string {
   if (
     !Number.isSafeInteger(prNumber) ||
@@ -850,18 +987,6 @@ export function prGateExternalId(prNumber: number, headSha: string, baseSha: str
     throw new Error("PR gate check identity is invalid");
   }
   return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:${baseSha}`;
-}
-
-function emitForkSkipOutputs(
-  mode: ManualForkSkipCommand["mode"],
-  prNumber: number,
-  headSha: string,
-  baseSha: string,
-): void {
-  appendOutput("fork_skip_mode", mode);
-  appendOutput("fork_skip_pr_number", String(prNumber));
-  appendOutput("fork_skip_head_sha", headSha);
-  appendOutput("fork_skip_base_sha", baseSha);
 }
 
 function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
@@ -934,12 +1059,36 @@ function retryableFailureReason(check: CheckRun): RetryableFailureReason | undef
   return reason as RetryableFailureReason;
 }
 
+function runnerLossChildRunUrl(repository: string, check: CheckRun): string | null {
+  if (retryableFailureReason(check) !== "child-cancelled") return null;
+  const summary = check.output?.summary ?? "";
+  const selectedRun = SELECTED_E2E_RUN_SUMMARY_PATTERN.exec(summary);
+  if (selectedRun) {
+    const [, labelRunId, linkedUrl, linkedRunId] = selectedRun;
+    if (labelRunId !== linkedRunId) return null;
+    const expectedUrl = `https://github.com/${repository}/actions/runs/${labelRunId}`;
+    if (linkedUrl !== expectedUrl) return null;
+    const canonicalCheckUrl = `https://github.com/${repository}/runs/${check.id}`;
+    return check.details_url === expectedUrl || check.details_url === canonicalCheckUrl
+      ? expectedUrl
+      : null;
+  }
+  if (summary.includes(SELECTED_E2E_RUN_SUMMARY_PREFIX)) return null;
+
+  const prefix = `https://github.com/${repository}/actions/runs/`;
+  const detailsUrl = check.details_url;
+  return typeof detailsUrl === "string" &&
+    detailsUrl.startsWith(prefix) &&
+    /^[1-9][0-9]*$/u.test(detailsUrl.slice(prefix.length))
+    ? detailsUrl
+    : null;
+}
+
 function priorRunnerLossRunUrls(
   repository: string,
   history: readonly CheckRun[],
   currentCheckId: number,
 ): string[] {
-  const prefix = `https://github.com/${repository}/actions/runs/`;
   const priorRunnerLossChecks = history.filter(
     (check) => check.id !== currentCheckId && retryableFailureReason(check) === "child-cancelled",
   );
@@ -947,16 +1096,23 @@ function priorRunnerLossRunUrls(
     throw new Error("Runner-loss retry history exceeds the single permitted retry");
   }
   return priorRunnerLossChecks.map((check) => {
-    const url = check.details_url;
-    if (
-      typeof url !== "string" ||
-      !url.startsWith(prefix) ||
-      !/^[1-9][0-9]*$/u.test(url.slice(prefix.length))
-    ) {
+    const url = runnerLossChildRunUrl(repository, check);
+    if (!url) {
       throw new Error("Runner-loss retry history has an invalid child-run URL");
     }
     return url;
   });
+}
+
+function runnerLossLineageSummary(
+  priorRunUrls: readonly string[],
+  currentRunUrl: string,
+): string | undefined {
+  if (priorRunUrls.length === 0) return undefined;
+  const links = [...priorRunUrls, currentRunUrl].map(
+    (url, index) => `[attempt ${index + 1}](${url})`,
+  );
+  return `Runner-loss retry lineage: ${links.join(" → ")}.`;
 }
 
 function withRunnerLossLineage(
@@ -964,13 +1120,11 @@ function withRunnerLossLineage(
   priorRunUrls: readonly string[],
   currentRunUrl: string,
 ): PrGateVerdict {
-  if (priorRunUrls.length === 0) return verdict;
-  const links = [...priorRunUrls, currentRunUrl].map(
-    (url, index) => `[attempt ${index + 1}](${url})`,
-  );
+  const lineage = runnerLossLineageSummary(priorRunUrls, currentRunUrl);
+  if (!lineage) return verdict;
   return {
     ...verdict,
-    summary: `${verdict.summary}\nRunner-loss retry lineage: ${links.join(" → ")}.`,
+    summary: `${verdict.summary}\n${lineage}`,
   };
 }
 
@@ -978,17 +1132,20 @@ function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => left.id - right.id);
   if (new Set(ordered.map((check) => check.id)).size !== ordered.length) {
-    throw new Error("Duplicate exact-diff PR gate check IDs exist");
+    throw new Error("Duplicate PR gate check IDs exist for one PR/base SHA pair");
   }
   const active = ordered.filter((check) => check.status !== "completed");
-  if (active.length > 1) throw new Error("Multiple active exact-diff PR gate checks exist");
+  if (active.length > 1)
+    throw new Error("Multiple active PR gate checks exist for one PR/base SHA pair");
   const history = ordered.slice(0, -1);
   if (history.some((check) => retryableFailureReason(check) === undefined)) {
-    throw new Error("Exact-diff PR gate history contains a non-retryable older check");
+    throw new Error(
+      "PR gate history contains a non-retryable older check for one PR/base SHA pair",
+    );
   }
   const current = ordered.at(-1)!;
   if (active[0] && active[0].id !== current.id) {
-    throw new Error("Exact-diff PR gate history contains an older active check");
+    throw new Error("PR gate history for one PR/base SHA pair contains an older active check");
   }
   return current;
 }
@@ -1074,9 +1231,8 @@ async function createPrGateCheck(options: {
   prNumber: number;
 }): Promise<CheckRun> {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
-  const title = "Waiting for PR CI";
-  const summary =
-    "This exact PR head and base revision is reserved for deterministic E2E planning after CI completes.";
+  const title = RESERVED_CHECK_TITLE;
+  const summary = RESERVED_CHECK_SUMMARY;
   const check = await githubApi<unknown>(`repos/${options.repository}/check-runs`, options.token, {
     method: "POST",
     body: {
@@ -1120,15 +1276,8 @@ async function ensurePrGateCheck(options: {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
   const existing = lineage.filter((check) => check.external_id === externalId);
   const current = currentExactDiffCheck(existing);
-  for (const stale of lineage.filter((check) => check.external_id !== externalId)) {
-    if (stale.status === "completed") continue;
-    await completeCheck({ repository: options.repository, checkRunId: stale.id }, options.token, {
-      conclusion: "failure",
-      title: "PR base changed",
-      summary:
-        "This check was computed for an earlier PR base and cannot authorize the current diff.",
-    });
-  }
+  // A base retarget can create another exact identity after this caller's live
+  // PR validation. Never mutate checks owned by a different base from here.
   if (
     current &&
     !(options.replaceRetryableCompleted && retryableFailureReason(current) !== undefined)
@@ -1156,7 +1305,7 @@ export async function seedPrGate(
     prNumber,
   });
   console.log(
-    `Exact-diff gate reserved: pr=${prNumber} head=${headSha} base=${baseSha} check=${checkRunId}`,
+    `PR gate reserved: pr=${prNumber} pr_sha=${headSha} base_sha=${baseSha} check=${checkRunId}`,
   );
   return checkRunId;
 }
@@ -1190,12 +1339,19 @@ async function markCheckInProgress(
 
 function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string): void {
   if (!check) return;
-  if (check.status === "in_progress" && check.conclusion === null) return;
+  if (
+    check.status === "in_progress" &&
+    check.conclusion === null &&
+    check.output?.title === RESERVED_CHECK_TITLE &&
+    check.output.summary === RESERVED_CHECK_SUMMARY
+  ) {
+    return;
+  }
   const reason = retryableFailureReason(check);
   if (ciConclusion === "success" && reason) return;
   const title = normalizedCiMetadata(check.output?.title ?? "untitled", "untitled");
   throw new Error(
-    `Existing exact-diff PR gate state is not retryable: status=${check.status ?? "unknown"} conclusion=${check.conclusion ?? "none"} title=${title}`,
+    `Existing PR gate state for this PR/base SHA pair is not retryable: status=${check.status ?? "unknown"} conclusion=${check.conclusion ?? "none"} title=${title}`,
   );
 }
 
@@ -1248,7 +1404,7 @@ async function updateRunningCheck(
   const childRunUrl = `https://github.com/${context.repository}/actions/runs/${options.childRunId}`;
   const selectionCount = options.jobs.length + options.targets.length;
   const title = `Running ${selectionCount} E2E ${selectionCount === 1 ? "check" : "checks"}`;
-  const summary = `Risk plan ${options.planHash} selected jobs: ${options.jobs.join(", ") || "none"}; targets: ${options.targets.join(", ") || "none"}.`;
+  const summary = `Risk plan ${options.planHash} selected jobs: ${options.jobs.join(", ") || "none"}; targets: ${options.targets.join(", ") || "none"}. Child run: ${childRunUrl}.`;
   const check = await githubApi<unknown>(
     `repos/${context.repository}/check-runs/${context.checkRunId}`,
     token,
@@ -1473,108 +1629,6 @@ export async function resolvePullRequest(options: {
   return detail;
 }
 
-function validateWorkflowJob(value: unknown): WorkflowJob {
-  if (
-    !isObjectRecord(value) ||
-    !Number.isSafeInteger(value.id) ||
-    (value.id as number) < 1 ||
-    typeof value.name !== "string" ||
-    value.name.length === 0 ||
-    (value.status !== undefined && typeof value.status !== "string") ||
-    (value.conclusion !== null && typeof value.conclusion !== "string") ||
-    (value.runner_id !== undefined &&
-      value.runner_id !== null &&
-      (!Number.isSafeInteger(value.runner_id) || (value.runner_id as number) < 1)) ||
-    (value.runner_name !== undefined &&
-      value.runner_name !== null &&
-      typeof value.runner_name !== "string") ||
-    (value.labels !== undefined &&
-      (!Array.isArray(value.labels) || value.labels.some((label) => typeof label !== "string"))) ||
-    (value.steps !== undefined && !Array.isArray(value.steps))
-  ) {
-    throw new Error("GitHub returned an invalid workflow job");
-  }
-  const steps = (value.steps ?? []).map((step) => {
-    if (
-      !isObjectRecord(step) ||
-      typeof step.name !== "string" ||
-      step.name.length === 0 ||
-      (step.status !== undefined && typeof step.status !== "string") ||
-      (step.conclusion !== null && typeof step.conclusion !== "string")
-    ) {
-      throw new Error("GitHub returned an invalid workflow job step");
-    }
-    return {
-      name: step.name,
-      ...(step.status === undefined ? {} : { status: step.status }),
-      conclusion: step.conclusion,
-    };
-  });
-  return {
-    id: value.id as number,
-    name: value.name,
-    ...(value.status === undefined ? {} : { status: value.status }),
-    conclusion: value.conclusion,
-    ...(value.runner_id === undefined ? {} : { runnerId: value.runner_id as number | null }),
-    ...(value.runner_name === undefined ? {} : { runnerName: value.runner_name }),
-    ...(value.labels === undefined ? {} : { labels: value.labels as string[] }),
-    steps,
-  };
-}
-
-function validateWorkflowJobsPage(value: unknown): WorkflowJobsPage {
-  if (
-    !isObjectRecord(value) ||
-    !Number.isSafeInteger(value.total_count) ||
-    (value.total_count as number) < 0 ||
-    !Array.isArray(value.jobs)
-  ) {
-    throw new Error("GitHub returned an invalid workflow job listing");
-  }
-  return {
-    totalCount: value.total_count as number,
-    jobs: value.jobs.map(validateWorkflowJob),
-  };
-}
-
-async function listNonPassingWorkflowJobs(
-  repository: string,
-  token: string,
-  runId: number,
-  runAttempt?: number,
-): Promise<{ jobs: WorkflowJob[]; complete: boolean }> {
-  const jobs: WorkflowJob[] = [];
-  let totalCount: number | undefined;
-  for (let page = 1; page <= MAX_WORKFLOW_JOB_PAGES; page += 1) {
-    const runPath = runAttempt ? `runs/${runId}/attempts/${runAttempt}` : `runs/${runId}`;
-    const response = validateWorkflowJobsPage(
-      await githubApi<unknown>(
-        `repos/${repository}/actions/${runPath}/jobs?per_page=100&page=${page}`,
-        token,
-        { userAgent: USER_AGENT },
-      ),
-    );
-    totalCount ??= response.totalCount;
-    if (response.totalCount !== totalCount || jobs.length + response.jobs.length > totalCount) {
-      throw new Error("GitHub returned an invalid workflow job count");
-    }
-    jobs.push(...response.jobs);
-    if (jobs.length === totalCount) {
-      return {
-        jobs: jobs.filter(
-          (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
-        ),
-        complete: true,
-      };
-    }
-    if (response.jobs.length < 100) break;
-  }
-  return {
-    jobs: jobs.filter((job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? "")),
-    complete: jobs.length === totalCount,
-  };
-}
-
 function normalizedCiMetadata(value: string, fallback: string): string {
   const normalized = value
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
@@ -1694,66 +1748,6 @@ function ciFailureReport(options: {
     summary: summary.join("\n"),
     errorMessage: `${options.prNumber ? `PR #${options.prNumber}: ${prUrl}` : "Triggering PR unavailable"}; CI run attempt ${options.ciRunAttempt}: ${ciRunUrl}; CI / Pull Request concluded ${conclusion}; jobs that did not pass: ${jobMessage}${truncationMessage}`,
     ciRunUrl,
-  };
-}
-
-const GITHUB_HOSTED_RUNNER_NAME_PATTERN = /^GitHub Actions [1-9][0-9]*$/u;
-
-/**
- * GitHub records a lost hosted runner as a completed failed job whose active
- * step never received a terminal conclusion. This is stronger than a
- * cancellation: user and concurrency cancellations finish the active step and
- * run cleanup, while the release-run failures tracked by #7146 retained one
- * `in_progress` step after the job itself became terminal.
- */
-function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
-  if (
-    job.status !== "completed" ||
-    job.conclusion !== "failure" ||
-    !Number.isSafeInteger(job.runnerId) ||
-    (job.runnerId ?? 0) < 1 ||
-    typeof job.runnerName !== "string" ||
-    !GITHUB_HOSTED_RUNNER_NAME_PATTERN.test(job.runnerName) ||
-    !Array.isArray(job.labels) ||
-    job.labels.includes("self-hosted")
-  ) {
-    return false;
-  }
-  const strandedSteps = job.steps.filter(
-    (step) => step.status === "in_progress" && step.conclusion === null,
-  );
-  return (
-    strandedSteps.length === 1 &&
-    job.steps.every(
-      (step) =>
-        step.conclusion === "success" ||
-        (step.conclusion === null && ["in_progress", "pending"].includes(step.status ?? "")),
-    )
-  );
-}
-
-function verifiedRunnerLossEvidence(options: {
-  workflowConclusion: string | null;
-  jobs: readonly WorkflowJob[];
-  jobDetailsAvailable: boolean;
-  jobDetailsComplete: boolean;
-}): WorkflowAttemptEvidence | null {
-  if (
-    !options.jobDetailsAvailable ||
-    !options.jobDetailsComplete ||
-    options.jobs.length === 0 ||
-    !["failure", "cancelled"].includes(options.workflowConclusion ?? "")
-  ) {
-    return null;
-  }
-  const runnerLostMarkerCount = options.jobs.filter(hasTrustedHostedRunnerLossMarker).length;
-  const ordinaryFailureEvidencePresent = options.jobs.some(
-    (job) => job.conclusion === "failure" && !hasTrustedHostedRunnerLossMarker(job),
-  );
-  return {
-    terminalClassificationPresent: ordinaryFailureEvidencePresent,
-    jobConclusion: options.workflowConclusion as "failure" | "cancelled",
-    runnerLostMarkerCount,
   };
 }
 
@@ -2076,6 +2070,7 @@ export function assertCorrelatedWorkflowRun(
   requireEqual("id", identity.childRunId, child.id);
   requireEqual("path", E2E_WORKFLOW_PATH, child.path);
   requireEqual("event", "workflow_dispatch", child.event);
+  requireEqual("run_attempt", 1, child.run_attempt);
   requireEqual("html_url", childRunUrl, child.html_url);
   requireEqual(
     "display_title",
@@ -2095,9 +2090,33 @@ export function assertCorrelatedWorkflowRun(
   }
 }
 
+async function requireUnchangedCompletedWorkflowRun(
+  repository: string,
+  token: string,
+  child: WorkflowRun,
+  identity: WorkflowRunIdentity,
+): Promise<void> {
+  const confirmed = await githubApi<WorkflowRun>(
+    `repos/${repository}/actions/runs/${identity.childRunId}`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  assertCorrelatedWorkflowRun(confirmed, identity);
+  if (
+    confirmed.status !== "completed" ||
+    confirmed.status !== child.status ||
+    confirmed.conclusion !== child.conclusion ||
+    confirmed.workflow_id !== child.workflow_id
+  ) {
+    throw new Error("E2E run changed while its hosted-runner-loss evidence was authenticated");
+  }
+}
+
 export async function dispatchPrGate(options: {
   repository: string;
+  checkoutRepository: string;
   token: string;
+  controllerCheckId: number;
   jobs: readonly string[];
   targets?: readonly string[];
   prNumber: number;
@@ -2108,6 +2127,7 @@ export async function dispatchPrGate(options: {
   correlationId: string;
 }): Promise<{ runId: number; workflowSha: string }> {
   assertRepository(options.repository, "repository");
+  assertRepository(options.checkoutRepository, "checkout repository");
   const targets = options.targets ?? [];
   if (
     !options.token ||
@@ -2117,6 +2137,8 @@ export async function dispatchPrGate(options: {
     new Set(targets).size !== targets.length ||
     targets.some((target) => !JOB_PATTERN.test(target) || !isPrE2eTypedTargetId(target)) ||
     options.jobs.some((job) => targets.includes(job)) ||
+    !Number.isSafeInteger(options.controllerCheckId) ||
+    options.controllerCheckId < 1 ||
     !Number.isSafeInteger(options.prNumber) ||
     options.prNumber < 1 ||
     !SHA_PATTERN.test(options.commitSha) ||
@@ -2142,8 +2164,10 @@ export async function dispatchPrGate(options: {
         inputs: {
           jobs: options.jobs.join(","),
           targets: targets.join(","),
+          controller_check_id: String(options.controllerCheckId),
           pr_number: String(options.prNumber),
           checkout_sha: options.commitSha,
+          checkout_repository: options.checkoutRepository,
           base_sha: options.baseSha,
           workflow_sha: workflowSha,
           plan_hash: options.planHash,
@@ -2327,9 +2351,15 @@ async function dispatchSelectedPrGate(options: {
   if (!CORRELATION_PATTERN.test(correlationId)) {
     throw new Error("generated correlation ID is invalid");
   }
+  const checkoutRepository = options.pull.head.repo?.full_name;
+  if (!checkoutRepository) {
+    throw new Error("PR head repository is unavailable");
+  }
   const dispatch = await dispatchPrGate({
     repository: options.repository,
+    checkoutRepository,
     token: options.token,
+    controllerCheckId: options.checkRunId,
     jobs,
     targets,
     prNumber: options.pull.number,
@@ -2343,9 +2373,10 @@ async function dispatchSelectedPrGate(options: {
   try {
     appendOutput("run_id", String(childRunId));
     const state: PrGateState = {
-      version: 3,
+      version: 4,
       commitSha: options.pull.head.sha,
       baseSha: options.baseSha,
+      checkoutRepository,
       workflowSha: dispatch.workflowSha,
       planHash: options.plan.planHash,
       correlationId,
@@ -2393,6 +2424,297 @@ async function dispatchSelectedPrGate(options: {
   }
 }
 
+async function dispatchRunnerLossRetry(options: {
+  repository: string;
+  token: string;
+  state: PrGateState;
+  checkRunId: number;
+  retryStatePath: string;
+}): Promise<void> {
+  const correlationId = randomUUID();
+  if (!CORRELATION_PATTERN.test(correlationId)) {
+    throw new Error("generated correlation ID is invalid");
+  }
+  const dispatch = await dispatchPrGate({
+    repository: options.repository,
+    checkoutRepository: options.state.checkoutRepository,
+    token: options.token,
+    controllerCheckId: options.checkRunId,
+    jobs: options.state.expectedJobs,
+    targets: options.state.expectedTargets,
+    prNumber: options.state.prNumber,
+    commitSha: options.state.commitSha,
+    baseSha: options.state.baseSha,
+    workflowSha: options.state.workflowSha,
+    planHash: options.state.planHash,
+    correlationId,
+  });
+  const childRunId = dispatch.runId;
+  try {
+    appendOutput("run_id", String(childRunId));
+    const retryState: PrGateState = {
+      ...options.state,
+      workflowSha: dispatch.workflowSha,
+      correlationId,
+    };
+    const serializedState = `${JSON.stringify(retryState, null, 2)}\n`;
+    writePrivateRegularFile(options.retryStatePath, serializedState);
+    await updateRunningCheck(
+      {
+        repository: options.repository,
+        checkRunId: options.checkRunId,
+        prNumber: retryState.prNumber,
+        headSha: retryState.commitSha,
+        baseSha: retryState.baseSha,
+      },
+      options.token,
+      {
+        childRunId,
+        jobs: retryState.expectedJobs,
+        targets: retryState.expectedTargets,
+        planHash: retryState.planHash,
+      },
+    );
+    appendOutput("state_hash", sha256(serializedState));
+    appendOutput("dispatched", "true");
+    console.log(
+      `Runner-loss retry dispatched: pr=${retryState.prNumber} run=${childRunId} plan=${retryState.planHash} jobs=${retryState.expectedJobs.join(",")} targets=${retryState.expectedTargets.join(",")} url=https://github.com/${options.repository}/actions/runs/${childRunId}`,
+    );
+  } catch (error) {
+    try {
+      await cancelChildRun(options.repository, options.token, childRunId);
+    } catch (cancelError) {
+      throw new DispatchedChildRunError(
+        `${controllerErrorMessage(error)}; retry child cancellation failed: ${controllerErrorMessage(cancelError)}`,
+        childRunId,
+      );
+    }
+    throw new DispatchedChildRunError(
+      `${controllerErrorMessage(error)}; retry child cancellation requested`,
+      childRunId,
+    );
+  }
+}
+
+export async function retryRunnerLossPrGate(
+  command: Extract<ControllerCommand, { mode: "retry-runner-loss" }>,
+): Promise<void> {
+  if (command.workflowRunAttempt !== 1) {
+    throw new Error("runner-loss retry must use the first controller workflow run attempt");
+  }
+  const { token, repository } = tokenAndRepository();
+  const originalRunUrl = `https://github.com/${repository}/actions/runs/${command.childRunId}`;
+  let retryCheckRunId: number | undefined;
+  try {
+    const state = readBoundPrGateState(command.statePath, command.stateHash);
+    const history = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    const current = history.at(-1);
+    if (current?.id !== command.checkRunId) {
+      throw new Error("runner-loss retry source is not the current PR gate check");
+    }
+    if (!current || runnerLossChildRunUrl(repository, current) !== originalRunUrl) {
+      throw new Error("PR gate check does not authorize this runner-loss retry");
+    }
+    if (priorRunnerLossRunUrls(repository, history, command.checkRunId).length !== 0) {
+      throw new Error("runner-loss retry was already consumed for this PR/base SHA pair");
+    }
+
+    const historySize = history.length;
+    const retryCheck = await createPrGateCheck({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    retryCheckRunId = retryCheck.id;
+    appendOutput("check_id", String(retryCheckRunId));
+    const retryHistory = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    if (retryHistory.length !== historySize + 1 || retryHistory.at(-1)?.id !== retryCheckRunId) {
+      throw new Error("runner-loss retry did not acquire the current PR gate check");
+    }
+    await markCheckInProgress(
+      {
+        repository,
+        checkRunId: retryCheckRunId,
+        prNumber: state.prNumber,
+        headSha: state.commitSha,
+        baseSha: state.baseSha,
+      },
+      token,
+      "Preparing one-time hosted-runner-loss retry",
+      `Revalidating the exact PR/base SHA and risk plan after [attempt 1](${originalRunUrl}) lost its GitHub-hosted runner.`,
+    );
+
+    const child = await githubApi<WorkflowRun>(
+      `repos/${repository}/actions/runs/${command.childRunId}`,
+      token,
+      { userAgent: USER_AGENT },
+    );
+    assertCorrelatedWorkflowRun(child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    if (
+      child.status !== "completed" ||
+      !["failure", "cancelled"].includes(child.conclusion ?? "")
+    ) {
+      throw new Error("runner-loss retry requires a terminal failed or cancelled child run");
+    }
+
+    const jobDetails = await listNonPassingWorkflowJobs(repository, token, command.childRunId, 1, {
+      includeAnnotations: true,
+      hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
+    });
+    await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    const jobEvidenceFingerprint = workflowJobEvidenceFingerprint(jobDetails);
+    const runnerLossEvidence = verifiedRunnerLossEvidence({
+      repository,
+      workflowSha: state.workflowSha,
+      workflowConclusion: child.conclusion,
+      jobs: jobDetails.jobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: jobDetails.complete,
+      policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
+    });
+    const retryDecision = runnerLossEvidence
+      ? decideRetry({
+          runnerLoss: detectRunnerLoss(runnerLossEvidence),
+          classification: null,
+          attempt: 1,
+        })
+      : { retry: false, reason: "runner-loss evidence is incomplete" };
+    if (!retryDecision.retry) {
+      throw new Error(`runner-loss retry is not authorized: ${retryDecision.reason}`);
+    }
+
+    const pull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: state.prNumber,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+    });
+    if (pull.head.repo?.full_name !== state.checkoutRepository) {
+      throw new Error("runner-loss retry checkout repository no longer matches the PR");
+    }
+
+    const confirmedJobDetails = await listNonPassingWorkflowJobs(
+      repository,
+      token,
+      command.childRunId,
+      1,
+      {
+        includeAnnotations: true,
+        hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
+      },
+    );
+    await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    if (workflowJobEvidenceFingerprint(confirmedJobDetails) !== jobEvidenceFingerprint) {
+      throw new Error("hosted-runner-loss evidence changed before retry dispatch");
+    }
+    const confirmedRunnerLossEvidence = verifiedRunnerLossEvidence({
+      repository,
+      workflowSha: state.workflowSha,
+      workflowConclusion: child.conclusion,
+      jobs: confirmedJobDetails.jobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: confirmedJobDetails.complete,
+      policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
+    });
+    const confirmedRetryDecision = confirmedRunnerLossEvidence
+      ? decideRetry({
+          runnerLoss: detectRunnerLoss(confirmedRunnerLossEvidence),
+          classification: null,
+          attempt: 1,
+        })
+      : { retry: false, reason: "runner-loss evidence is incomplete" };
+    if (!confirmedRetryDecision.retry) {
+      throw new Error(
+        `runner-loss retry lost authorization before dispatch: ${confirmedRetryDecision.reason}`,
+      );
+    }
+    const currentPull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: state.prNumber,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+    });
+    assertPullUnchanged(pull, currentPull);
+    const dispatchHistory = await matchingPrGateHistory({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    const dispatchSource = dispatchHistory.find((check) => check.id === command.checkRunId);
+    if (
+      dispatchHistory.length !== historySize + 1 ||
+      dispatchHistory.at(-1)?.id !== retryCheckRunId ||
+      !dispatchSource ||
+      runnerLossChildRunUrl(repository, dispatchSource) !== originalRunUrl ||
+      priorRunnerLossRunUrls(repository, dispatchHistory, retryCheckRunId).length !== 1
+    ) {
+      throw new Error("runner-loss retry lost the current PR gate check before dispatch");
+    }
+    await dispatchRunnerLossRetry({
+      repository,
+      token,
+      state,
+      checkRunId: retryCheckRunId,
+      retryStatePath: command.retryStatePath,
+    });
+  } catch (error) {
+    if (retryCheckRunId !== undefined) {
+      const retryRunId = error instanceof DispatchedChildRunError ? error.childRunId : undefined;
+      const closed = await completeFailureAfterControllerError(
+        { repository, checkRunId: retryCheckRunId },
+        token,
+        "Runner-loss retry could not start",
+        {
+          error,
+          detailsUrl: retryRunId
+            ? `https://github.com/${repository}/actions/runs/${retryRunId}`
+            : originalRunUrl,
+          recovery:
+            "The original runner-loss evidence remains linked. This exact PR/base SHA pair will not receive another automatic retry.",
+        },
+      );
+      if (closed) appendOutput("finalized", "true");
+    }
+    throw error;
+  }
+}
+
 export async function startPrGate(
   command: Extract<ControllerCommand, { mode: "start" }>,
 ): Promise<void> {
@@ -2419,11 +2741,10 @@ export async function startPrGate(
     prNumber: ciIdentity.prNumber,
   });
   if (existingChecks.length > 1) {
-    throw new Error("Multiple exact-diff PR gate checks already exist");
+    throw new Error("Multiple PR gate checks already exist for this PR/base SHA pair");
   }
   const existingCheckRunId =
     existingChecks[0]?.status === "in_progress" ? existingChecks[0].id : undefined;
-  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   let pull: PullRequest;
   try {
     pull = await requireLiveExactDiff({
@@ -2435,7 +2756,12 @@ export async function startPrGate(
     });
   } catch (error) {
     if (!(error instanceof ObsoleteExactDiffError)) throw error;
-    if (existingCheckRunId) {
+    if (
+      existingCheckRunId &&
+      existingChecks[0]?.output?.title === RESERVED_CHECK_TITLE &&
+      existingChecks[0].output.summary === RESERVED_CHECK_SUMMARY
+    ) {
+      appendOutput("check_id", String(existingCheckRunId));
       await completeCheck({ repository, checkRunId: existingCheckRunId }, token, error.verdict);
     }
     appendOutput("dispatched", "false");
@@ -2452,6 +2778,7 @@ export async function startPrGate(
     throw new Error("PR repository or branch does not match the triggering CI run");
   }
   assertCheckCanStart(existingChecks[0], command.ciConclusion);
+  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   const checkRunId = await ensurePrGateCheck({
     repository,
     token,
@@ -2471,7 +2798,7 @@ export async function startPrGate(
     },
     token,
     "Evaluating PR commit",
-    "Validating the exact PR revision and selecting deterministic E2E jobs and typed targets.",
+    "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
   );
 
   let finalized = false;
@@ -2549,32 +2876,43 @@ export async function startPrGate(
     if (command.headRepository !== repository && selections.length > 0) {
       const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
-      await completeCheck(
-        { repository, checkRunId },
-        token,
+      await markCheckInProgress(
         {
-          conclusion: "failure",
-          title: "Maintainer approval required to skip credentialed E2E",
-          summary: [
-            `This fork PR diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E checks (${selectionSummary}).`,
-            "The selected jobs and targets were not run. No fork code received repository secrets.",
-            `Open ${gateRunLink}, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment to record this skip. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it, update the PR to create a new head, and trigger fresh PR CI. GitHub records the reviewer and optional comment. The manual \`approve-fork-e2e-skip\` workflow operation remains available as fallback.`,
-          ].join("\n\n"),
+          repository,
+          checkRunId,
+          prNumber: ciIdentity.prNumber,
+          headSha: command.headSha,
+          baseSha: ciIdentity.baseSha,
         },
-        gateRunUrl,
+        token,
+        FORK_E2E_AUTHORIZATION_TITLE,
+        [
+          `Review scope: PR #${pull.number}; head repository \`${command.headRepository}\`; head SHA \`${command.headSha}\`; base SHA \`${ciIdentity.baseSha}\`; ${selectionSummary}; deterministic plan \`${plan.planHash}\`.`,
+          "No selected E2E job or target ran. No repository credential was exposed to fork code.",
+          `An authorized E2E reviewer must review the exact fork code and risk plan. Open ${gateRunLink}, choose Review deployments, and approve the \`${FORK_E2E_APPROVAL_ENVIRONMENT}\` environment. Approval authorizes the selected fork code to run with E2E credentials. GitHub records the reviewer and optional comment.`,
+          "If Review deployments is absent, configure the protected environment. Then, update the PR to create a new PR SHA and run fresh PR CI.",
+        ].join("\n\n"),
       );
-      emitForkSkipOutputs("record-fork-e2e-skip", pull.number, command.headSha, ciIdentity.baseSha);
+      emitE2EApprovalOutputs(
+        "start-approved-fork",
+        FORK_E2E_APPROVAL_ENVIRONMENT,
+        pull.number,
+        command.headSha,
+        ciIdentity.baseSha,
+      );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
       finalized = true;
       console.log(
-        `Fork not dispatched: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
+        `Fork authorization required: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
       );
       return;
     }
     const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
     if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
       const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW_PATH}`;
+      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
+      const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await markCheckInProgress(
         {
           repository,
@@ -2586,11 +2924,19 @@ export async function startPrGate(
         token,
         CONTROL_PLANE_AUTHORIZATION_TITLE,
         [
-          `This exact internal diff (head \`${command.headSha}\`, base \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
+          `This internal diff (PR SHA \`${command.headSha}\`, base SHA \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
           "No selected E2E job or target ran and no repository secret was exposed.",
-          `A repository maintainer or administrator must review this exact revision, then open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, exact head and base SHAs, and a review reason. That authorized run dispatches the selected jobs and targets in one bound workflow run, and this gate passes only if their exact-SHA evidence verifies successfully.`,
+          `An authorized E2E reviewer must review PR SHA \`${command.headSha}\` against base SHA \`${ciIdentity.baseSha}\`. Open ${gateRunLink}, choose Review deployments, and approve the \`${INTERNAL_E2E_APPROVAL_ENVIRONMENT}\` environment. GitHub records the reviewer and optional comment, then the trusted controller dispatches this exact plan. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it, update the PR to create a new head, and trigger fresh PR CI.`,
+          `The manual maintainer fallback remains available from the [${WORKFLOW_NAME}](${workflowUrl}) workflow through \`run-control-plane\`. This gate passes only if the dispatched evidence references both SHAs and verifies successfully.`,
           `Deterministic plan: \`${plan.planHash}\`.`,
         ].join("\n\n"),
+      );
+      emitE2EApprovalOutputs(
+        "start-approved-control-plane",
+        INTERNAL_E2E_APPROVAL_ENVIRONMENT,
+        pull.number,
+        command.headSha,
+        ciIdentity.baseSha,
       );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
@@ -2637,7 +2983,10 @@ export async function startPrGate(
   }
 }
 
-export async function startControlPlanePrGate(command: ControlPlaneDispatchCommand): Promise<void> {
+async function startAuthorizedPrGate(
+  command: AuthorizedE2ECommand,
+  authorizationKind: "internal-control-plane" | "fork",
+): Promise<void> {
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
   if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
@@ -2647,15 +2996,11 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
     throw new Error("gate run ID is invalid");
   }
   if (command.workflowRunAttempt !== 1) {
-    throw new Error("control-plane authorization must use the first workflow run attempt");
+    throw new Error("E2E authorization must use the first workflow run attempt");
   }
   const reason = normalizedWaiverReason(command.reason);
-  await requireMaintainerPermission(
-    repository,
-    token,
-    command.maintainer,
-    "Control-plane E2E authorization",
-  );
+  const pendingTitle =
+    authorizationKind === "fork" ? FORK_E2E_AUTHORIZATION_TITLE : CONTROL_PLANE_AUTHORIZATION_TITLE;
 
   let checkRunId: number | undefined;
   try {
@@ -2666,8 +3011,12 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
       headSha: command.headSha,
       baseSha: command.baseSha,
     });
-    if (pull.head.repo?.full_name !== repository) {
+    const isFork = pull.head.repo?.full_name !== repository;
+    if (authorizationKind === "internal-control-plane" && isFork) {
       throw new Error("control-plane E2E authorization requires an internal pull request");
+    }
+    if (authorizationKind === "fork" && !isFork) {
+      throw new Error("fork E2E authorization requires a fork pull request");
     }
     const changedFiles = await pullChangedFiles(repository, pull, token);
     const inventory = readFreeStandingJobsInventory();
@@ -2679,13 +3028,16 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
       }),
       new Set(inventory.allowedJobs),
     );
-    if (!requiresCredentialedE2eAuthorization(plan)) {
+    if (
+      authorizationKind === "internal-control-plane" &&
+      !requiresCredentialedE2eAuthorization(plan)
+    ) {
       throw new Error("pull request does not require credentialed E2E authorization");
     }
     const jobs = riskPlanRequiredJobIds(plan);
     const targets = riskPlanRequiredTargetIds(plan);
     if (jobs.length + targets.length === 0) {
-      throw new Error("authorized control-plane plan selected no E2E jobs or targets");
+      throw new Error("authorized plan selected no E2E jobs or targets");
     }
     writePrivateRegularFile(command.planPath, `${JSON.stringify(plan, null, 2)}\n`);
     const currentPull = await requireLiveExactDiff({
@@ -2705,12 +3057,14 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
       prNumber: command.prNumber,
     });
     if (matchingChecks.length !== 1) {
-      throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
+      throw new Error(
+        `Expected one PR gate check for the PR/base SHA pair; found ${matchingChecks.length}`,
+      );
     }
     const check = matchingChecks[0]!;
     const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
-    if (!pendingAuthorization || check.output?.title !== CONTROL_PLANE_AUTHORIZATION_TITLE) {
-      throw new Error("PR gate must have the matching pending control-plane authorization state");
+    if (!pendingAuthorization || check.output?.title !== pendingTitle) {
+      throw new Error("PR gate must have the matching pending E2E authorization state");
     }
     checkRunId = check.id;
     appendOutput("check_id", String(checkRunId));
@@ -2757,7 +3111,7 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
             error,
             detailsUrl: `https://github.com/${repository}/actions/runs/${error.childRunId}`,
             recovery:
-              "A credential-bearing child run was dispatched, so this exact-diff authorization cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again.",
+              "A credential-bearing child run was dispatched, so this authorization for the PR/base SHA pair cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again.",
           },
         );
         if (closed) appendOutput("finalized", "true");
@@ -2773,22 +3127,133 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
               baseSha: command.baseSha,
             },
             token,
-            CONTROL_PLANE_AUTHORIZATION_TITLE,
+            pendingTitle,
             [
               `The authorized E2E attempt did not produce an accepted result: \`${reason}\`.`,
-              "Review the controller error and any linked child run, then launch a fresh first-attempt `run-control-plane` workflow for this exact revision.",
+              authorizationKind === "fork"
+                ? "Review the controller error and any linked child run. Then, update the PR to create a new PR SHA and run fresh PR CI."
+                : "Review the controller error and any linked child run. Then, launch a first-attempt `run-control-plane` workflow for the PR/base SHA pair.",
             ].join("\n\n"),
           );
           appendOutput("finalized", "true");
         } catch (restoreError) {
           console.error(
-            `Failed to restore control-plane authorization after controller error: ${controllerErrorMessage(restoreError)}`,
+            `Failed to restore E2E authorization after controller error: ${controllerErrorMessage(restoreError)}`,
           );
         }
       }
     }
     throw error;
   }
+}
+
+export async function startControlPlanePrGate(command: ControlPlaneDispatchCommand): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  await requireMaintainerPermission(
+    repository,
+    token,
+    command.maintainer,
+    "Control-plane E2E authorization",
+  );
+  await startAuthorizedPrGate(command, "internal-control-plane");
+}
+
+function approvedE2EReason(comment: string | null): string {
+  const normalizedComment = (comment ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  const baseReason = "Protected environment approval confirmed for this credentialed E2E run.";
+  const commentPrefix = " Reviewer comment: ";
+  const maxCommentChars = MAX_WAIVER_REASON_CHARS - baseReason.length - commentPrefix.length;
+  const boundedComment = normalizedComment.slice(0, maxCommentChars);
+  return normalizedWaiverReason(
+    boundedComment ? `${baseReason}${commentPrefix}${boundedComment}` : baseReason,
+  );
+}
+
+export async function startApprovedControlPlanePrGate(
+  command: ApprovedControlPlaneDispatchCommand,
+): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
+    throw new Error("approval run ID is invalid");
+  }
+  if (command.approvalRunAttempt !== 1 || command.workflowRunAttempt !== 1) {
+    throw new Error("approval and workflow run attempts must be exactly 1");
+  }
+  if (command.gateRunId !== command.approvalRunId) {
+    throw new Error("approval run ID must match the gate run ID");
+  }
+  validateApprovalWorkflowRun(
+    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
+      userAgent: USER_AGENT,
+    }),
+    {
+      repository,
+      runId: command.approvalRunId,
+      runAttempt: command.approvalRunAttempt,
+      workflowSha: command.workflowSha,
+    },
+  );
+  const review = validateApprovalReview(
+    await githubApi<unknown>(
+      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
+      token,
+      { userAgent: USER_AGENT },
+    ),
+    INTERNAL_E2E_APPROVAL_ENVIRONMENT,
+  );
+  await startAuthorizedPrGate(
+    {
+      ...command,
+      maintainer: review.reviewer,
+      reason: approvedE2EReason(review.comment),
+    },
+    "internal-control-plane",
+  );
+}
+
+export async function startApprovedForkPrGate(
+  command: ApprovedForkE2EDispatchCommand,
+): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
+    throw new Error("approval run ID is invalid");
+  }
+  if (command.approvalRunAttempt !== 1 || command.workflowRunAttempt !== 1) {
+    throw new Error("approval and workflow run attempts must be exactly 1");
+  }
+  if (command.gateRunId !== command.approvalRunId) {
+    throw new Error("approval run ID must match the gate run ID");
+  }
+  validateApprovalWorkflowRun(
+    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
+      userAgent: USER_AGENT,
+    }),
+    {
+      repository,
+      runId: command.approvalRunId,
+      runAttempt: command.approvalRunAttempt,
+      workflowSha: command.workflowSha,
+    },
+  );
+  const review = validateApprovalReview(
+    await githubApi<unknown>(
+      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
+      token,
+      { userAgent: USER_AGENT },
+    ),
+    FORK_E2E_APPROVAL_ENVIRONMENT,
+  );
+  await startAuthorizedPrGate(
+    {
+      ...command,
+      maintainer: review.reviewer,
+      reason: approvedE2EReason(review.comment),
+    },
+    "fork",
+  );
 }
 
 export function findSignalFiles(
@@ -2856,14 +3321,7 @@ export async function finishPrGate(options: {
   let finalized = false;
   let controllerFailureRetryReason: RetryableFailureReason | undefined;
   try {
-    if (!HASH_PATTERN.test(options.stateHash)) throw new Error("controller state hash is invalid");
-    const serializedState = readPrivateRegularFile(options.statePath, {
-      maxBytes: MAX_PLAN_BYTES,
-    })!;
-    if (sha256(serializedState) !== options.stateHash) {
-      throw new Error("controller state changed after E2E dispatch");
-    }
-    const state = validatePrGateState(JSON.parse(serializedState));
+    const state = readBoundPrGateState(options.statePath, options.stateHash);
     const child = await githubApi<WorkflowRun>(
       `repos/${repository}/actions/runs/${options.childRunId}`,
       token,
@@ -2892,7 +3350,7 @@ export async function finishPrGate(options: {
       prNumber: state.prNumber,
     });
     if (matchingHistory.at(-1)?.id !== options.checkRunId) {
-      throw new Error("controller state does not match the exact PR gate check");
+      throw new Error("controller state does not match the PR gate check");
     }
     const priorRunnerLossUrls = priorRunnerLossRunUrls(
       repository,
@@ -2929,7 +3387,8 @@ export async function finishPrGate(options: {
     let verdict: PrGateVerdict;
     if (workflowConclusion === "success") {
       if (options.evidenceOutcome !== "success") {
-        controllerFailureRetryReason = "evidence-download";
+        controllerFailureRetryReason =
+          priorRunnerLossUrls.length === 0 ? "evidence-download" : undefined;
         const error = new Error(
           `Evidence download did not complete (outcome: ${options.evidenceOutcome}) after selected E2E run ${options.childRunId} succeeded. The controller could not verify its artifacts; inspect the Download evidence step and rerun the gate.`,
         );
@@ -2940,6 +3399,7 @@ export async function finishPrGate(options: {
           {
             error,
             detailsUrl: childRunUrl,
+            recovery: runnerLossLineageSummary(priorRunnerLossUrls, childRunUrl),
             retryableFailureReason: controllerFailureRetryReason,
           },
         );
@@ -2971,7 +3431,17 @@ export async function finishPrGate(options: {
       let jobDetailsAvailable = true;
       let jobDetailsComplete = false;
       try {
-        const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId);
+        const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId, 1, {
+          includeAnnotations: true,
+          hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
+        });
+        await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+          childRunId: options.childRunId,
+          correlationId: state.correlationId,
+          prNumber: state.prNumber,
+          repository,
+          workflowSha: state.workflowSha,
+        });
         jobs = details.jobs;
         jobDetailsComplete = details.complete;
       } catch (error) {
@@ -2987,18 +3457,24 @@ export async function finishPrGate(options: {
         jobDetailsComplete,
         runnerLossAttempt,
         runnerLossEvidence: verifiedRunnerLossEvidence({
+          repository,
+          workflowSha: state.workflowSha,
           workflowConclusion,
           jobs,
           jobDetailsAvailable,
           jobDetailsComplete,
+          policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
         }),
       });
     }
     verdict = withRunnerLossLineage(verdict, priorRunnerLossUrls, childRunUrl);
     if (await finalizeObsoleteExactDiff()) return;
+    if (priorRunnerLossUrls.length === 0 && verdict.retryableFailureReason === "child-cancelled") {
+      appendOutput("runner_loss_retry_authorized", "true");
+    }
     await completeCheck(context, token, verdict, childRunUrl);
-    appendOutput("finalized", "true");
     finalized = true;
+    appendOutput("finalized", "true");
     console.log(
       `Run completed: run=${options.childRunId} conclusion=${verdict.conclusion} title=${verdict.title} url=${childRunUrl}`,
     );
@@ -3022,6 +3498,25 @@ export async function finishPrGate(options: {
 
 export async function abandonPrGate(checkRunId: number, childRunId?: number): Promise<void> {
   const { token, repository } = tokenAndRepository();
+  const existingCheck = await githubApi<unknown>(
+    `repos/${repository}/check-runs/${checkRunId}`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  if (
+    !isObjectRecord(existingCheck) ||
+    existingCheck.id !== checkRunId ||
+    existingCheck.name !== CHECK_NAME ||
+    !isObjectRecord(existingCheck.app) ||
+    existingCheck.app.id !== GITHUB_ACTIONS_APP_ID ||
+    typeof existingCheck.status !== "string"
+  ) {
+    throw new Error("GitHub returned a mismatched PR gate check during abandonment");
+  }
+  if (existingCheck.status === "completed") {
+    appendOutput("finalized", "true");
+    return;
+  }
   let cancellationError: unknown;
   if (childRunId) {
     try {
@@ -3042,6 +3537,101 @@ export async function abandonPrGate(checkRunId: number, childRunId?: number): Pr
   if (cancellationError) throw cancellationError;
 }
 
+export async function abandonRunnerLossRetrySource(
+  checkRunId: number,
+  childRunId: number,
+  workflowRunAttempt: number,
+): Promise<void> {
+  if (workflowRunAttempt !== 1) {
+    throw new Error("runner-loss retry cleanup must use the first controller workflow run attempt");
+  }
+  if (!Number.isSafeInteger(checkRunId) || checkRunId < 1) {
+    throw new Error("runner-loss retry source check ID is invalid");
+  }
+  if (!Number.isSafeInteger(childRunId) || childRunId < 1) {
+    throw new Error("runner-loss retry source run ID is invalid");
+  }
+  const { token, repository } = tokenAndRepository();
+  const childRunUrl = `https://github.com/${repository}/actions/runs/${childRunId}`;
+  const value = await githubApi<unknown>(`repos/${repository}/check-runs/${checkRunId}`, token, {
+    userAgent: USER_AGENT,
+  });
+  if (!isObjectRecord(value)) {
+    throw new Error("GitHub returned an invalid runner-loss retry source check");
+  }
+  const source = value as CheckRun;
+  const externalIdMatch =
+    typeof source.external_id === "string"
+      ? CHECK_EXTERNAL_ID_PATTERN.exec(source.external_id)
+      : null;
+  if (
+    source.id !== checkRunId ||
+    source.name !== CHECK_NAME ||
+    source.app?.id !== GITHUB_ACTIONS_APP_ID ||
+    source.status !== "completed" ||
+    source.conclusion !== "failure" ||
+    runnerLossChildRunUrl(repository, source) !== childRunUrl ||
+    !externalIdMatch
+  ) {
+    throw new Error("completed check does not match the exact runner-loss retry source");
+  }
+
+  const [, prNumberText, headSha, baseSha] = externalIdMatch;
+  const history = await matchingPrGateHistory({
+    repository,
+    token,
+    prNumber: parsePositiveId(prNumberText!, "runner-loss retry source PR number"),
+    headSha: headSha!,
+    baseSha: baseSha!,
+  });
+  const sourceIndex = history.findIndex((check) => check.id === checkRunId);
+  const current = history.at(-1);
+  if (sourceIndex < 0) {
+    throw new Error("runner-loss retry source is absent from its exact check history");
+  }
+  if (current?.id !== checkRunId) {
+    const sourceImmediatelyPrecedesCurrent = sourceIndex === history.length - 2;
+    const canonicalReservedReplacement =
+      current?.status === "in_progress" &&
+      current.conclusion === null &&
+      (current.details_url === null ||
+        current.details_url === undefined ||
+        current.details_url === `https://github.com/${repository}/runs/${current.id}`) &&
+      current.output?.title === RESERVED_CHECK_TITLE &&
+      current.output.summary === RESERVED_CHECK_SUMMARY;
+    if (!sourceImmediatelyPrecedesCurrent || !canonicalReservedReplacement) {
+      throw new Error("runner-loss retry source has an ambiguous replacement check history");
+    }
+    await completeCheck(
+      { repository, checkRunId: current.id },
+      token,
+      {
+        conclusion: "failure",
+        title: "Runner-loss retry could not start",
+        summary: `The one-time automatic retry controller stopped after reserving this replacement check. The original runner-loss evidence remains linked at [attempt 1](${childRunUrl}); inspect the controller job before retrying the gate.`,
+      },
+      childRunUrl,
+    );
+    appendOutput("finalized", "true");
+    return;
+  }
+
+  const markerBoundary = `\n\n${retryableFailureMarker("child-cancelled")}`;
+  const sourceSummary = source.output!.summary!;
+  const evidenceSummary = sourceSummary.slice(0, -markerBoundary.length);
+  await completeCheck(
+    { repository, checkRunId },
+    token,
+    {
+      conclusion: "failure",
+      title: "Runner-loss retry could not start",
+      summary: `${evidenceSummary}\n\nThe one-time automatic retry controller stopped before it reserved a replacement check. The original runner-loss run remains linked; inspect the controller job before retrying the gate.`,
+    },
+    childRunUrl,
+  );
+  appendOutput("finalized", "true");
+}
+
 function validateApprovalWorkflowRun(
   value: unknown,
   options: {
@@ -3055,7 +3645,9 @@ function validateApprovalWorkflowRun(
   const expectedUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
   const valid =
     value.id === options.runId &&
-    value.name === WORKFLOW_NAME &&
+    // The Actions REST API exposes the evaluated `run-name` as `name`, not the
+    // workflow's top-level name. Bind authority to the immutable workflow path
+    // and trusted workflow SHA below instead of mutable display text.
     value.event === "workflow_run" &&
     value.path === PR_GATE_WORKFLOW_PATH &&
     value.head_branch === "main" &&
@@ -3071,13 +3663,16 @@ function validateApprovalWorkflowRun(
   return expectedUrl;
 }
 
-function validateApprovalReview(value: unknown): { maintainer: string; comment: string | null } {
+function validateApprovalReview(
+  value: unknown,
+  environment: typeof FORK_E2E_APPROVAL_ENVIRONMENT | typeof INTERNAL_E2E_APPROVAL_ENVIRONMENT,
+): { reviewer: string; comment: string | null } {
   if (!Array.isArray(value)) {
     throw new Error("GitHub returned malformed environment approval history");
   }
   if (value.length === 0) {
     throw new Error(
-      `No required-reviewer approval was recorded for ${PR_GATE_APPROVAL_ENVIRONMENT}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, update the PR to create a new head, then trigger fresh PR CI, or use the manual approve-fork-e2e-skip fallback.`,
+      `No required-reviewer approval was recorded for ${environment}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, update the PR to create a new PR SHA, then run fresh PR CI.`,
     );
   }
   if (value.length > MAX_APPROVAL_REVIEWS) {
@@ -3106,11 +3701,11 @@ function validateApprovalReview(value: unknown): { maintainer: string; comment: 
       state: candidate.state,
       comment: candidate.comment,
       environments: candidate.environments as Array<{ name: string }>,
-      maintainer: candidate.user.login,
+      reviewer: candidate.user.login,
     };
   });
   const matching = reviews.filter((review) =>
-    review.environments.some((environment) => environment.name === PR_GATE_APPROVAL_ENVIRONMENT),
+    review.environments.some((candidate) => candidate.name === environment),
   );
   if (matching.length !== 1) {
     throw new Error("expected exactly one protected-environment approval review");
@@ -3118,25 +3713,12 @@ function validateApprovalReview(value: unknown): { maintainer: string; comment: 
   const review = matching[0]!;
   if (
     review.environments.length !== 1 ||
-    review.environments[0]!.name !== PR_GATE_APPROVAL_ENVIRONMENT ||
+    review.environments[0]!.name !== environment ||
     review.state !== "approved"
   ) {
-    throw new Error("protected-environment review did not approve only the skip environment");
+    throw new Error(`protected-environment review did not approve only ${environment}`);
   }
-  return { maintainer: review.maintainer, comment: review.comment };
-}
-
-function approvedWaiverReason(comment: string | null): string {
-  const normalizedComment = (comment ?? "")
-    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
-    .replace(/\s{2,}/gu, " ")
-    .trim();
-  const baseReason = "Protected environment approval confirmed for this credentialed E2E skip.";
-  const commentPrefix = " Reviewer comment: ";
-  const maxCommentChars = MAX_WAIVER_REASON_CHARS - baseReason.length - commentPrefix.length;
-  const boundedComment = normalizedComment.slice(0, maxCommentChars);
-  const reason = boundedComment ? `${baseReason}${commentPrefix}${boundedComment}` : baseReason;
-  return normalizedWaiverReason(reason);
+  return { reviewer: review.reviewer, comment: review.comment };
 }
 
 async function requireMaintainerPermission(
@@ -3159,184 +3741,67 @@ async function requireMaintainerPermission(
   }
 }
 
-async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
-  const { token, repository } = tokenAndRepository();
-  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
-  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
-  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
-  if (!MAINTAINER_PATTERN.test(command.maintainer)) throw new Error("maintainer login is invalid");
-  const reason = normalizedWaiverReason(command.reason);
-  if (command.evidenceUrl && !EVIDENCE_URL_PATTERN.test(command.evidenceUrl)) {
-    throw new Error("evidence URL must name an NVIDIA/NemoClaw Actions run");
+async function activeSupersededPrGateChecks(options: {
+  repository: string;
+  token: string;
+  prNumber: number;
+  headSha?: string;
+  supersededHeadSha?: string;
+}): Promise<CheckRun[]> {
+  if (!options.headSha && !options.supersededHeadSha) return [];
+  if (!options.headSha || !options.supersededHeadSha) {
+    throw new Error("current and superseded PR head SHAs must be provided together");
   }
-
-  await requireMaintainerPermission(
-    repository,
-    token,
-    command.maintainer,
-    "credentialed E2E skip approvals",
-  );
+  if (!SHA_PATTERN.test(options.headSha)) throw new Error("current PR head SHA is invalid");
+  if (!SHA_PATTERN.test(options.supersededHeadSha)) {
+    throw new Error("superseded PR head SHA is invalid");
+  }
+  if (options.headSha === options.supersededHeadSha) return [];
+  const supersededHeadSha = options.supersededHeadSha;
 
   const pull = validatePullRequest(
-    await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
-      userAgent: USER_AGENT,
-    }),
-  );
-  if (
-    pull.state !== "open" ||
-    pull.base.repo.full_name !== repository ||
-    !pull.head.repo ||
-    pull.head.sha !== command.headSha ||
-    pull.base.sha !== command.baseSha
-  ) {
-    throw new Error("pull request no longer matches the reviewed exact head and base SHAs");
-  }
-  const isFork = pull.head.repo.full_name !== repository;
-  if (!isFork) {
-    throw new Error("credentialed E2E skips require a fork pull request");
-  }
-
-  const changedFiles = await pullChangedFiles(repository, pull, token);
-  const inventory = readFreeStandingJobsInventory();
-  const allowedJobs = new Set(inventory.allowedJobs);
-  const plan = validateRiskPlan(
-    buildRiskPlan({
-      headSha: command.headSha,
-      changedFiles,
-      focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
-    }),
-    allowedJobs,
-  );
-  const jobs = riskPlanRequiredJobIds(plan);
-  const targets = riskPlanRequiredTargetIds(plan);
-  if (jobs.length + targets.length === 0) {
-    throw new Error("pull request does not require a credentialed E2E skip");
-  }
-  const currentPull = validatePullRequest(
-    await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
-      userAgent: USER_AGENT,
-    }),
-  );
-  assertPullUnchanged(pull, currentPull);
-
-  const matchingChecks = await matchingPrGateChecks({
-    repository,
-    token,
-    headSha: command.headSha,
-    baseSha: command.baseSha,
-    prNumber: command.prNumber,
-  });
-  if (matchingChecks.length !== 1) {
-    throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
-  }
-  const check = matchingChecks[0]!;
-  if (
-    check.status !== "completed" ||
-    check.conclusion !== "failure" ||
-    check.output?.title !== "Maintainer approval required to skip credentialed E2E"
-  ) {
-    throw new Error("PR gate must first complete with the matching skip-approval failure");
-  }
-
-  const safeReason = reason.replace(/`/gu, "'");
-  const evidence = command.validatedApproval
-    ? `Validated environment approval run for \`${command.validatedApproval.environment}\`: [${command.validatedApproval.runUrl}](${command.validatedApproval.runUrl}).`
-    : command.evidenceUrl
-      ? `Maintainer-supplied Actions reference (not validated by this controller): [${command.evidenceUrl}](${command.evidenceUrl}).`
-      : "Approval source: manual fallback; no supporting Actions run was supplied.";
-  const title = `Credentialed E2E skipped for fork PR — approved by @${command.maintainer}`;
-  const approval = `Maintainer @${command.maintainer} approved skipping credentialed E2E for fork head \`${command.headSha}\` on base \`${command.baseSha}\`.`;
-  const nonExecution = `Selected jobs and targets not run: ${riskPlanSelectionSummary(plan)}.`;
-  await compatibleMainWorkflowCommit(repository, token, command.workflowSha);
-  const finalPull = await requireLiveExactDiff({
-    repository,
-    token,
-    prNumber: command.prNumber,
-    headSha: command.headSha,
-    baseSha: command.baseSha,
-  });
-  assertPullUnchanged(pull, finalPull);
-  await completeCheck(
-    { repository, checkRunId: check.id },
-    token,
-    {
-      conclusion: "success",
-      title,
-      summary: [
-        "**Outcome: APPROVED SKIP — credentialed E2E did not run.**",
-        approval,
-        nonExecution,
-        `Reason: ${safeReason}`,
-        evidence,
-        `Deterministic plan: \`${plan.planHash}\`.`,
-      ].join("\n\n"),
-    },
-    command.validatedApproval?.runUrl ??
-      command.evidenceUrl ??
-      `https://github.com/${repository}/pull/${pull.number}`,
-  );
-  console.log(
-    `Credentialed E2E skip recorded: mode=${command.mode} pr=${pull.number} head=${command.headSha} base=${command.baseSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
-  );
-}
-
-export async function recordManualForkE2ESkip(
-  command: Extract<ManualForkSkipCommand, { mode: "record-fork-e2e-skip" }>,
-): Promise<void> {
-  await completeForkE2ESkip(command);
-}
-
-export async function recordApprovedForkE2ESkip(command: ApprovedForkSkipCommand): Promise<void> {
-  const { token, repository } = tokenAndRepository();
-  if (!Number.isSafeInteger(command.prNumber) || command.prNumber < 1) {
-    throw new Error("PR number is invalid");
-  }
-  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
-  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
-  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
-  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
-    throw new Error("approval run ID is invalid");
-  }
-  if (command.approvalRunAttempt !== 1) {
-    throw new Error("approval run attempt must be exactly 1");
-  }
-
-  const runUrl = validateApprovalWorkflowRun(
-    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
-      userAgent: USER_AGENT,
-    }),
-    {
-      repository,
-      runId: command.approvalRunId,
-      runAttempt: command.approvalRunAttempt,
-      workflowSha: command.workflowSha,
-    },
-  );
-  const review = validateApprovalReview(
     await githubApi<unknown>(
-      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
-      token,
+      `repos/${options.repository}/pulls/${options.prNumber}`,
+      options.token,
       { userAgent: USER_AGENT },
     ),
   );
-  await completeForkE2ESkip({
-    mode: "record-fork-e2e-skip",
-    prNumber: command.prNumber,
-    headSha: command.headSha,
-    baseSha: command.baseSha,
-    workflowSha: command.workflowSha,
-    maintainer: review.maintainer,
-    reason: approvedWaiverReason(review.comment),
-    validatedApproval: {
-      environment: PR_GATE_APPROVAL_ENVIRONMENT,
-      runUrl,
-    },
-  });
+  if (
+    pull.number !== options.prNumber ||
+    pull.head.sha !== options.headSha ||
+    !pull.head.repo ||
+    pull.base.repo.full_name !== options.repository
+  ) {
+    throw new Error("current pull request identity does not match the cancellation event");
+  }
+
+  const lineage = (
+    await listPrGateChecks({
+      repository: options.repository,
+      token: options.token,
+      headSha: supersededHeadSha,
+    })
+  ).filter((check) => isPrGateLineage(check, options.prNumber, supersededHeadSha));
+  if (lineage.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
+    throw new Error("superseded PR gate check identity was claimed by an unexpected GitHub App");
+  }
+  return lineage.filter((check) => check.status !== "completed");
 }
 
-export async function cancelPrGate(prNumber: number): Promise<number> {
+export async function cancelPrGate(
+  prNumber: number,
+  headSha?: string,
+  supersededHeadSha?: string,
+): Promise<number> {
   const { token, repository } = tokenAndRepository();
   if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("PR number is invalid");
+  const supersededChecks = await activeSupersededPrGateChecks({
+    repository,
+    token,
+    prNumber,
+    headSha,
+    supersededHeadSha,
+  });
   const titlePrefix = `E2E PR #${prNumber} (`;
   const active = new Map<number, WorkflowRun>();
   for (const status of ACTIVE_WORKFLOW_RUN_STATUSES) {
@@ -3373,6 +3838,14 @@ export async function cancelPrGate(prNumber: number): Promise<number> {
       `Cancelled superseded run: pr=${prNumber} run=${run.id} url=https://github.com/${repository}/actions/runs/${run.id}`,
     );
   }
+  for (const check of supersededChecks) {
+    await completeCheck({ repository, checkRunId: check.id }, token, {
+      conclusion: "cancelled",
+      title: "Superseded by PR update",
+      summary: `[PR #${prNumber}](https://github.com/${repository}/pull/${prNumber}) moved to head \`${headSha!.slice(0, 7)}\`. This check for superseded head \`${supersededHeadSha!.slice(0, 7)}\` no longer applies.`,
+    });
+    console.log(`Closed superseded PR gate check: pr=${prNumber} check=${check.id}`);
+  }
   if (active.size === 0) {
     console.log(`No active E2E runs found for PR #${prNumber}`);
   }
@@ -3402,6 +3875,18 @@ async function main(): Promise<void> {
     await startControlPlanePrGate(command);
     return;
   }
+  if (command.mode === "start-approved-control-plane") {
+    await startApprovedControlPlanePrGate(command);
+    return;
+  }
+  if (command.mode === "start-approved-fork") {
+    await startApprovedForkPrGate(command);
+    return;
+  }
+  if (command.mode === "retry-runner-loss") {
+    await retryRunnerLossPrGate(command);
+    return;
+  }
   if (command.mode === "finish") {
     await finishPrGate({
       statePath: command.statePath,
@@ -3417,6 +3902,14 @@ async function main(): Promise<void> {
     await abandonPrGate(command.checkRunId, command.childRunId);
     return;
   }
+  if (command.mode === "abandon-runner-loss-retry") {
+    await abandonRunnerLossRetrySource(
+      command.checkRunId,
+      command.childRunId,
+      command.workflowRunAttempt,
+    );
+    return;
+  }
   if (command.mode === "wait") {
     await waitForChildRun(command.childRunId);
     return;
@@ -3425,15 +3918,7 @@ async function main(): Promise<void> {
     await downloadChildRunEvidence(command.childRunId, command.evidencePath);
     return;
   }
-  if (command.mode === "record-fork-e2e-skip") {
-    await completeForkE2ESkip(command);
-    return;
-  }
-  if (command.mode === "record-approved-fork-e2e-skip") {
-    await recordApprovedForkE2ESkip(command);
-    return;
-  }
-  await cancelPrGate(command.prNumber);
+  await cancelPrGate(command.prNumber, command.headSha, command.supersededHeadSha);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
@@ -35,7 +36,6 @@ const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
 const FAKE_DISCORD_HOST = "host.docker.internal";
-const LIVE_TIMEOUT_MS = 75 * 60_000;
 
 function commandEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return phase6Env({
@@ -357,8 +357,20 @@ async function rawTokenSurfaceProbe(
 }
 
 test("hermes-discord: Hermes Discord schema, credential isolation, native gateway rewrite, and rebuild credential reuse", {
-  timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets }) => {
+  timeout: HERMES_DISCORD_TEST_TIMEOUT_MS,
+  meta: {
+    e2ePhases: [
+      "prepare clean Hermes Discord runner",
+      "install Hermes Discord sandbox",
+      "validate Discord provider and Hermes health",
+      "validate Discord config and placeholders",
+      "exercise native Discord gateway rewrite",
+      "verify Discord token isolation and REST boundary",
+      "rebuild without host inference credentials",
+      "finalize Hermes Discord resources",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = commandEnv(apiKey);
   const redactionValues = redactions(apiKey);
@@ -415,6 +427,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
     process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE ?? env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE,
   ).toBe("1");
 
+  progress.phase("install Hermes Discord sandbox");
   const install = await host.command("bash", ["install.sh", "--non-interactive"], {
     artifactName: "phase-1-install-hermes-discord",
     cwd: REPO_ROOT,
@@ -442,6 +455,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
   expectExitZero(cliProbe, "nemoclaw and openshell installed");
   expect(cliProbe.stdout).toContain("nemoclaw");
 
+  progress.phase("validate Discord provider and Hermes health");
   const list = await host.command("nemoclaw", ["list"], {
     artifactName: "phase-2-nemoclaw-list",
     env,
@@ -482,6 +496,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
   expect(health?.exitCode, health ? resultText(health) : "missing health result").toBe(0);
   expect(resultText(health!)).toMatch(/"ok"/i);
 
+  progress.phase("validate Discord config and placeholders");
   const expectedRequireMention = DISCORD_REQUIRE_MENTION === "0" ? "false" : "true";
   const configProbe = await sandboxShWithArgs(
     sandbox,
@@ -559,6 +574,7 @@ PY`,
   expectExitZero(envProbe, "Hermes Discord .env shape");
   expect(envProbe.stdout.trim()).toBe("OK");
 
+  progress.phase("exercise native Discord gateway rewrite");
   const fakeGateway = await startHermesFakeDiscordGateway(
     host,
     cleanup,
@@ -588,6 +604,7 @@ PY`,
   expect(resultText(nativeGateway)).not.toContain("IMPORT_DISCORD_FAILED");
   assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
 
+  progress.phase("verify Discord token isolation and REST boundary");
   await assertRawTokenAbsentFromFiles(sandbox, DISCORD_TOKEN, redactionValues);
 
   const envSurface = await rawTokenSurfaceProbe(
@@ -706,6 +723,7 @@ done`,
   expectExitZero(bridgeResidue, "no local Discord bridge residue probe");
   expect(bridgeResidue.stdout.trim()).toBe("");
 
+  progress.phase("rebuild without host inference credentials");
   await bestEffortLifecycleCleanup(() =>
     host.command("docker", ["rm", "-f", fakeGateway.container], {
       artifactName: "phase-8-remove-fake-discord-container-before-rebuild",
@@ -745,6 +763,7 @@ done`,
   expectExitZero(rebuild, "Hermes rebuild without NVIDIA_INFERENCE_API_KEY");
   expect(resultText(rebuild)).not.toMatch(/provider credential not found/i);
 
+  progress.phase("finalize Hermes Discord resources");
   await (async (): Promise<void> => {
     switch (process.env.NEMOCLAW_E2E_KEEP_SANDBOX) {
       case "1":

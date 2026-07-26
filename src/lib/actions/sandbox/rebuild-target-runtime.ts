@@ -214,6 +214,7 @@ export async function preflightRebuildTargetRuntime(
       hermesToolGateways: target.hermesToolGateways,
       sandboxGpuConfig,
       localPrebuildEnabled: resolveSandboxPrebuildEnabled(process.env, dockerDriverGateway),
+      preResolvedBaseImageMetadata: recreateOptions.preResolvedBaseImageMetadata ?? null,
       gatewayPort: recreateOptions.targetGatewayPort,
       chatUiUrl: managesDashboard
         ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}`

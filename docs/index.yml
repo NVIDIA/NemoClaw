@@ -37,9 +37,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.openclaw.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.openclaw.generated.mdx
@@ -276,19 +278,43 @@ navigation:
               - page: "Customize the Network Policy"
                 path: _build/agent-variants/network-policy/customize-network-policy.openclaw.generated.mdx
                 slug: customize-network-policy
+              - section: "Configure Policies"
+                slug: configure-policies
+                contents:
+                  - page: "Change the Baseline Policy"
+                    path: _build/agent-variants/network-policy/change-baseline-network-policy.openclaw.generated.mdx
+                    slug: change-baseline-network-policy
+                  - page: "Apply Policy Presets"
+                    path: _build/agent-variants/network-policy/apply-policy-presets.openclaw.generated.mdx
+                    slug: apply-policy-presets
+                  - page: "Create Custom Presets"
+                    path: _build/agent-variants/network-policy/create-custom-policy-presets.openclaw.generated.mdx
+                    slug: create-custom-policy-presets
+                  - page: "Configure Raw TLS"
+                    path: _build/agent-variants/network-policy/configure-raw-tls-passthrough.openclaw.generated.mdx
+                    slug: configure-raw-tls-passthrough
+                  - page: "Replace the Live Policy"
+                    path: _build/agent-variants/network-policy/replace-live-network-policy.openclaw.generated.mdx
+                    slug: replace-live-network-policy
+              - page: "Explain Policy to Agents"
+                path: _build/agent-variants/network-policy/explain-network-policy-to-agents.openclaw.generated.mdx
+                slug: explain-network-policy-to-agents
               - page: "Integration Policy Examples"
                 path: _build/agent-variants/network-policy/integration-policy-examples.openclaw.generated.mdx
                 slug: integration-policy-examples
+              - page: "Set Up Gmail With an App Password"
+                path: _build/agent-variants/network-policy/set-up-gmail-with-an-app-password.openclaw.generated.mdx
+                slug: set-up-gmail-with-an-app-password
           - section: "Deployment"
             slug: deployment
             collapsed: open-by-default
             contents:
-              - page: "Deploy to Remote GPU Instances"
-                path: deployment/deploy-to-remote-gpu.mdx
-                slug: deploy-to-remote-gpu
-              - page: "Brev Web UI"
-                path: deployment/brev-web-ui.mdx
-                slug: brev-web-ui
+              - page: "Deploy to a Headless Server"
+                path: _build/agent-variants/deployment/deploy-to-headless-server.openclaw.generated.mdx
+                slug: deploy-to-headless-server
+              - page: "Gateway Lifecycle Authority"
+                path: deployment/gateway-lifecycle-authority.mdx
+                slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default
@@ -402,9 +428,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.deepagents.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.deepagents.generated.mdx
@@ -565,6 +593,29 @@ navigation:
                   - page: "Transfer State Manually"
                     path: _build/agent-variants/manage-sandboxes/transfer-state-manually.deepagents.generated.mdx
                     slug: transfer-state-manually
+          - section: "Deployment"
+            slug: deployment
+            collapsed: open-by-default
+            contents:
+              - page: "Deploy to a Headless Server"
+                path: _build/agent-variants/deployment/deploy-to-headless-server.deepagents.generated.mdx
+                slug: deploy-to-headless-server
+          - section: "Monitoring"
+            slug: monitoring
+            collapsed: open-by-default
+            contents:
+              - page: "Understand Trace Export"
+                path: monitoring/understand-deepagents-trace-export.mdx
+                slug: understand-deepagents-trace-export
+              - page: "Set Up Trace Export"
+                path: monitoring/set-up-deepagents-trace-export.mdx
+                slug: set-up-deepagents-trace-export
+              - page: "Verify Trace Export"
+                path: monitoring/verify-deepagents-trace-export.mdx
+                slug: verify-deepagents-trace-export
+              - page: "Manage Trace Export"
+                path: monitoring/manage-deepagents-trace-export.mdx
+                slug: manage-deepagents-trace-export
           - section: "Security"
             slug: security
             collapsed: open-by-default
@@ -653,9 +704,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.hermes.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.hermes.generated.mdx
@@ -877,9 +930,40 @@ navigation:
               - page: "Customize the Network Policy"
                 path: _build/agent-variants/network-policy/customize-network-policy.hermes.generated.mdx
                 slug: customize-network-policy
+              - section: "Configure Policies"
+                slug: configure-policies
+                contents:
+                  - page: "Change the Baseline Policy"
+                    path: _build/agent-variants/network-policy/change-baseline-network-policy.hermes.generated.mdx
+                    slug: change-baseline-network-policy
+                  - page: "Apply Policy Presets"
+                    path: _build/agent-variants/network-policy/apply-policy-presets.hermes.generated.mdx
+                    slug: apply-policy-presets
+                  - page: "Create Custom Presets"
+                    path: _build/agent-variants/network-policy/create-custom-policy-presets.hermes.generated.mdx
+                    slug: create-custom-policy-presets
+                  - page: "Configure Raw TLS"
+                    path: _build/agent-variants/network-policy/configure-raw-tls-passthrough.hermes.generated.mdx
+                    slug: configure-raw-tls-passthrough
+                  - page: "Replace the Live Policy"
+                    path: _build/agent-variants/network-policy/replace-live-network-policy.hermes.generated.mdx
+                    slug: replace-live-network-policy
+              - page: "Explain Policy to Agents"
+                path: _build/agent-variants/network-policy/explain-network-policy-to-agents.hermes.generated.mdx
+                slug: explain-network-policy-to-agents
               - page: "Integration Policy Examples"
                 path: _build/agent-variants/network-policy/integration-policy-examples.hermes.generated.mdx
                 slug: integration-policy-examples
+              - page: "Set Up Gmail With an App Password"
+                path: _build/agent-variants/network-policy/set-up-gmail-with-an-app-password.hermes.generated.mdx
+                slug: set-up-gmail-with-an-app-password
+          - section: "Deployment"
+            slug: deployment
+            collapsed: open-by-default
+            contents:
+              - page: "Deploy to a Headless Server"
+                path: _build/agent-variants/deployment/deploy-to-headless-server.hermes.generated.mdx
+                slug: deploy-to-headless-server
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default

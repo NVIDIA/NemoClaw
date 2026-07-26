@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
@@ -15,9 +16,29 @@ const META_JOBS = new Set(["report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
+const DOWNLOAD_ARTIFACT_ACTION =
+  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
+const PUBLICATION_REQUIRED_CONDITION = "${{ steps.publication_mode.outputs.required == '1' }}";
+const PUBLICATION_CLASSIFIER_SCRIPT =
+  [
+    "set -euo pipefail",
+    'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
+    "  NVIDIA/NemoClaw:refs/heads/main:schedule:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    "    required=1",
+    "    ;;",
+    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
+    "    required=0",
+    "    ;;",
+    "  *)",
+    '    echo "::error::base-image publication mode is not trusted" >&2',
+    "    exit 1",
+    "    ;;",
+    "esac",
+    'printf \'required=%s\\n\' "${required}" >> "${GITHUB_OUTPUT}"',
+  ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
   /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
@@ -29,6 +50,7 @@ const GENERIC_ISSUE_GRAPHQL_MUTATION =
   /github\.graphql\s*\(\s*["'`]\s*mutation\b[\s\S]*?\b(?:addComment|closeIssue|createIssue|reopenIssue|updateIssue)\b/u;
 
 type WorkflowStep = {
+  "continue-on-error"?: boolean;
   env?: Record<string, unknown>;
   if?: string;
   name?: string;
@@ -44,7 +66,9 @@ type WorkflowJob = {
   if?: string;
   needs?: unknown;
   permissions?: WorkflowPermissions;
+  "runs-on"?: unknown;
   steps?: WorkflowStep[];
+  "timeout-minutes"?: unknown;
 };
 
 export type OperationsWorkflow = {
@@ -111,12 +135,107 @@ function requireNode24GithubScript(errors: string[], step: WorkflowStep, owner: 
   }
 }
 
+function validateControllerAuthorization(
+  errors: string[],
+  workflow: OperationsWorkflow,
+  matrixJob: WorkflowJob,
+): void {
+  if (permissionMap(workflow.permissions).checks !== "read") {
+    errors.push("E2E workflow must grant read-only check access for controller authentication");
+  }
+  const steps = matrixJob.steps ?? [];
+  const authenticationIndex = steps.findIndex(
+    (step) => step.name === "Authenticate controller dispatch",
+  );
+  const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+  const validationIndex = steps.findIndex((step) => step.name === "Validate controller dispatch");
+  const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
+  if (authentication.if !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("Controller authentication must be activated only by checkout_sha");
+  }
+  if (
+    authenticationIndex < 0 ||
+    checkoutIndex < 0 ||
+    validationIndex < 0 ||
+    authenticationIndex >= checkoutIndex ||
+    checkoutIndex >= validationIndex
+  ) {
+    errors.push("Controller authentication must run before untrusted checkout and PR validation");
+  }
+  const expectedEnvironment = {
+    ACTOR: "${{ github.actor }}",
+    BASE_SHA: "${{ inputs.base_sha }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    CONTROLLER_CHECK_ID: "${{ inputs.controller_check_id }}",
+    CORRELATION_ID: "${{ inputs.correlation_id }}",
+    JOBS: "${{ inputs.jobs }}",
+    PLAN_HASH: "${{ inputs.plan_hash }}",
+    PR_NUMBER: "${{ inputs.pr_number }}",
+    RUN_ATTEMPT: "${{ github.run_attempt }}",
+    RUN_ID: "${{ github.run_id }}",
+    TARGETS: "${{ inputs.targets }}",
+  };
+  for (const [name, value] of Object.entries(expectedEnvironment)) {
+    if (authentication.env?.[name] !== value) {
+      errors.push(`Controller authentication must bind ${name}`);
+    }
+  }
+  const source = String(authentication.run ?? "");
+  for (const fragment of [
+    '"$ACTOR" == "github-actions[bot]"',
+    '"$RUN_ATTEMPT" == "1"',
+    '"$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$',
+    "nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}",
+    "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}",
+    "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}",
+    '--header "Cache-Control: no-cache"',
+    "Child run: ${expected_run_url}.",
+    `[[ "$(jq -r '.output.summary // ""' <<< "$check_json")" == "$expected_summary" ]]`,
+    '.name == "E2E / PR Gate Coordination"',
+    ".app.id == 15368",
+    '.app.slug == "github-actions"',
+    ".external_id == $external_id",
+    '.status == "in_progress"',
+    ".conclusion == null",
+    ".output.summary == $summary",
+  ]) {
+    if (!source.includes(fragment)) {
+      errors.push(`Controller authentication must retain ${fragment}`);
+    }
+  }
+  const maxAttempts = Number.parseInt(
+    source.match(/controller_auth_max_attempts=(\d+)/u)?.[1] ?? "",
+    10,
+  );
+  const pollSeconds = Number.parseInt(
+    source.match(/controller_auth_poll_seconds=(\d+)/u)?.[1] ?? "",
+    10,
+  );
+  if (maxAttempts !== 45) {
+    errors.push("Controller authentication must use exactly 45 polling attempts");
+  }
+  if (pollSeconds !== 2) {
+    errors.push("Controller authentication must use two-second polling intervals");
+  }
+  if (
+    !Number.isSafeInteger(maxAttempts) ||
+    !Number.isSafeInteger(pollSeconds) ||
+    (maxAttempts - 1) * pollSeconds <= 60
+  ) {
+    errors.push(
+      "Controller authentication polling window must exceed GitHub's 60-second check cache",
+    );
+  }
+}
+
 function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow): void {
   const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
   for (const name of [
     "jobs",
     "pr_number",
     "checkout_sha",
+    "checkout_repository",
+    "controller_check_id",
     "base_sha",
     "workflow_sha",
     "plan_hash",
@@ -154,6 +273,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
+  validateControllerAuthorization(errors, workflow, matrixJob);
   const steps = matrixJob.steps ?? [];
   const validationIndex = steps.findIndex((step) => step.name === "Validate controller dispatch");
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
@@ -166,6 +286,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   }
   const expectedStepEnvironment = {
     BASE_SHA: "${{ inputs.base_sha }}",
+    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     JOBS: "${{ inputs.jobs }}",
@@ -184,6 +305,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
@@ -196,6 +318,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "'.state'",
     "'.head.repo.full_name // \"\"'",
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
   ]) {
@@ -215,16 +338,100 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
         jobName === "report-to-pr" &&
         step.name === "Check out the trusted E2E reporting helper" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedLaunchableLaneCheckout =
+        jobName === "staging-brev-launchable" &&
+        step.name === "Checkout trusted Launchable lane" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedPublicationCheckout =
+        jobName === "base-image-publication" &&
+        step.name === "Check out trusted E2E workflow" &&
+        step.if === PUBLICATION_REQUIRED_CONDITION &&
+        step.with?.ref === "${{ github.sha }}";
+      const trustedCheckout =
+        trustedHermesFixtureCheckout ||
+        trustedReportHelperCheckout ||
+        trustedLaunchableLaneCheckout ||
+        trustedPublicationCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
-        !trustedHermesFixtureCheckout &&
-        !trustedReportHelperCheckout
+        !trustedCheckout
       ) {
         errors.push(`${jobName} checkout must use the selected PR commit`);
       }
+      if (
+        step.uses?.startsWith("actions/checkout@") &&
+        !trustedCheckout &&
+        step.with?.repository !== "${{ inputs.checkout_repository || github.repository }}"
+      ) {
+        errors.push(`${jobName} checkout must use the selected PR head repository`);
+      }
     }
   }
+}
+
+export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): string[] {
+  const errors: string[] = [];
+  const job = workflow.jobs["base-image-publication"] ?? {};
+  const expectedJob = {
+    "runs-on": "ubuntu-latest",
+    "timeout-minutes": 55,
+    permissions: {
+      actions: "read",
+      contents: "read",
+    },
+    steps: [
+      {
+        id: "publication_mode",
+        name: "Classify base-image publication requirement",
+        env: {
+          CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+          EVENT_NAME: "${{ github.event_name }}",
+          REF: "${{ github.ref }}",
+          REPOSITORY: "${{ github.repository }}",
+        },
+        shell: "bash",
+        run: PUBLICATION_CLASSIFIER_SCRIPT,
+      },
+      {
+        name: "Check out trusted E2E workflow",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        uses: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
+        with: {
+          ref: "${{ github.sha }}",
+          "fetch-depth": 0,
+          "persist-credentials": false,
+        },
+      },
+      {
+        name: "Set up Node for publication verification",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+        with: {
+          "node-version": 22,
+        },
+      },
+      {
+        name: "Verify applicable base-image publication",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        env: {
+          EXPECTED_SHA: "${{ github.sha }}",
+          GITHUB_TOKEN: "${{ github.token }}",
+        },
+        run: "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+      },
+    ],
+  };
+
+  if (!isDeepStrictEqual(job, expectedJob)) {
+    errors.push(
+      "base-image-publication job must preserve its exact trusted-mode classifier, minimal permissions, pinned checkout, and verifier boundary",
+    );
+  }
+  if (!needs(workflow.jobs["generate-matrix"] ?? {}).includes("base-image-publication")) {
+    errors.push("generate-matrix must wait for base-image-publication");
+  }
+  return errors;
 }
 
 function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsWorkflow): void {
@@ -420,11 +627,27 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     .map((entry) => entry.trim())
     .filter(Boolean);
   if (
-    sparseCheckout.length !== 2 ||
+    sparseCheckout.length !== 3 ||
     !sparseCheckout.includes("ci/onboard-performance-budget.json") ||
+    !sparseCheckout.includes("scripts/audit-test-runtime.mts") ||
     !sparseCheckout.includes("scripts/scorecard")
   ) {
-    errors.push("scorecard checkout must be limited to scorecard builders and budget config");
+    errors.push(
+      "scorecard checkout must be limited to runtime and scorecard builders and budget config",
+    );
+  }
+
+  const download = findStep(job, "Download E2E progress artifacts");
+  requirePinnedAction(errors, download, "scorecard artifact download");
+  if (
+    download.uses !== DOWNLOAD_ARTIFACT_ACTION ||
+    download["continue-on-error"] !== true ||
+    download.with?.pattern !== "e2e-*" ||
+    download.with?.path !== "${{ runner.temp }}/e2e-runtime-audit"
+  ) {
+    errors.push(
+      "scorecard must download this run's E2E artifacts into the runtime audit directory",
+    );
   }
 
   const generate = findStep(job, "Generate E2E scorecard");
@@ -440,6 +663,12 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "core.warning(trace.budgetWarningMessage)",
     "scripts/scorecard/summarize-jobs.mts",
     "scorecardJobs.loadWorkflowRunJobs",
+    "scripts/audit-test-runtime.mts",
+    "runtimeAudit.auditTestRuntime",
+    "runtimeAudit.collectRuntimeHistorySamples",
+    "runtimeAudit.formatRuntimeAuditSummary",
+    "scripts/scorecard/analyze-runtime-history.mts",
+    "runtimeHistory.buildRuntimeHistory",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -451,6 +680,12 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     generate.env?.EXPLICIT_ONLY_JOBS !== "${{ needs.generate-matrix.outputs.explicit_only_jobs }}"
   ) {
     errors.push("scorecard generator must derive explicit-only jobs from workflow inventory");
+  }
+  if (generate.env?.RUNTIME_ARTIFACTS !== "${{ runner.temp }}/e2e-runtime-audit") {
+    errors.push("scorecard generator must read the downloaded runtime audit directory");
+  }
+  if (generate.env?.RUNTIME_SUMMARY_FILE !== "${{ runner.temp }}/e2e-runtime-summary.json") {
+    errors.push("scorecard generator must write the bounded runtime summary under runner temp");
   }
 
   const slack = findStep(job, "Post scorecard to Slack");
@@ -492,6 +727,20 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     if (slackScript.includes(forbidden)) {
       errors.push(`scorecard Slack publisher must not execute workflow-ref code via ${forbidden}`);
     }
+  }
+
+  const runtimeUpload = findStep(job, "Upload E2E runtime summary");
+  requirePinnedAction(errors, runtimeUpload, "scorecard runtime summary upload");
+  if (
+    !String(runtimeUpload.uses ?? "").startsWith(E2E_ARTIFACT_ACTION) ||
+    runtimeUpload.if !==
+      "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}" ||
+    runtimeUpload.with?.name !== "e2e-runtime-summary" ||
+    runtimeUpload.with?.path !== "${{ runner.temp }}/e2e-runtime-summary.json"
+  ) {
+    errors.push(
+      "scorecard must upload only the bounded scheduled runtime summary through the canonical E2E uploader",
+    );
   }
 }
 
@@ -593,6 +842,7 @@ export function validateE2eOperationsWorkflow(
   advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
   const errors: string[] = [];
+  errors.push(...validateBaseImagePublicationGate(workflow));
   validatePrGateDispatch(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);

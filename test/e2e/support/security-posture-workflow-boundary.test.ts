@@ -66,7 +66,6 @@ describe("security posture workflow boundary", () => {
     const workflow = readSecurityPostureWorkflow();
     const job = (workflow.jobs as Record<string, Record<string, unknown>>)["security-posture"];
     const env = job.env as Record<string, unknown>;
-    job["runs-on"] = "self-hosted";
     job["timeout-minutes"] = 30;
     (job.strategy as Record<string, unknown>)["fail-fast"] = true;
     delete env.NEMOCLAW_E2E_SECURITY_POSTURE;
@@ -88,7 +87,6 @@ describe("security posture workflow boundary", () => {
     expect(install).toBeTruthy();
     install!.run = "bash scripts/install-openshell.sh";
     const errors = validateSecurityPostureWorkflow(workflow);
-    expect(errors).toContain("security-posture must run on ubuntu-latest");
     expect(errors).toContain("security-posture must retain its 75 minute two-agent budget");
     expect(errors).toContain("security-posture matrix must keep fail-fast disabled");
     expect(errors).toContain("security-posture must set NEMOCLAW_E2E_SECURITY_POSTURE=1");

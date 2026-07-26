@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawn, dockerSpawnSync } from "../adapters/docker/exec";
+import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
 import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import { ROOT } from "../runner";
 import {
@@ -230,7 +231,11 @@ export async function prebuildSandboxImageIfEligible(
     input.buildImage ??
     ((args, options) =>
       new Promise<number | null>((resolve, reject) => {
-        const child = dockerSpawn(args, { ...options, shell: false });
+        const child = dockerSpawn(args, {
+          ...options,
+          stdio: redirectInheritedChildStdoutToStderr(options.stdio),
+          shell: false,
+        });
         child.once("error", reject);
         child.once("close", resolve);
       }));

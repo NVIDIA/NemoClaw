@@ -34,9 +34,14 @@ describe("platform Vitest main workflow", () => {
     const checkout = step("macos-vitest", "Checkout");
     const setupPython = step("macos-vitest", "Setup Python");
     const install = step("macos-vitest", "Install macOS test dependencies");
+    const installOpenShell = step("macos-vitest", "Install pinned OpenShell");
     const run = install.run ?? "";
 
-    expect(job("macos-vitest")["timeout-minutes"]).toBe(60);
+    expect(job("macos-vitest")["timeout-minutes"]).toBe(30);
+    expect(job("macos-vitest").strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: { shard: [1, 2, 3, 4] },
+    });
     expect(checkout.with).toMatchObject({
       "fetch-depth": 0,
       "persist-credentials": false,
@@ -45,9 +50,12 @@ describe("platform Vitest main workflow", () => {
       stepNames.indexOf("Install macOS test dependencies"),
     );
     expect(stepNames.indexOf("Install macOS test dependencies")).toBeLessThan(
+      stepNames.indexOf("Install pinned OpenShell"),
+    );
+    expect(stepNames.indexOf("Install pinned OpenShell")).toBeLessThan(
       stepNames.indexOf("Run full Vitest suite on macOS"),
     );
-    expect(setupPython.uses).toBe("actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1");
+    expect(setupPython.uses).toBe("actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97");
     expect(setupPython.with).toMatchObject({
       "python-version": "3.14",
       cache: "pip",
@@ -62,6 +70,15 @@ describe("platform Vitest main workflow", () => {
     expect(run).toContain("--only-binary=:all:");
     expect(run).toContain("--require-hashes");
     expect(run).toContain(`--requirement ${MACOS_REQUIREMENTS_PATH}`);
+    expect(installOpenShell.env).toMatchObject({
+      NEMOCLAW_NON_INTERACTIVE: "1",
+    });
+    expect(installOpenShell.run).toBe(
+      "env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh",
+    );
+    expect(step("macos-vitest", "Run full Vitest suite on macOS").run).toContain(
+      '--shard="${{ matrix.shard }}/4"',
+    );
 
     const requirements = readRepoText(MACOS_REQUIREMENTS_PATH);
     expect(requirements).toContain("pyyaml==6.0.3");
@@ -82,7 +99,11 @@ describe("platform Vitest main workflow", () => {
     const fullSuite = step("wsl-vitest", "Run full Vitest suite in WSL").run ?? "";
     const rootSuite = step("wsl-vitest", "Run root-required Vitest contracts in WSL").run ?? "";
 
-    expect(job("wsl-vitest")["timeout-minutes"]).toBe(60);
+    expect(job("wsl-vitest")["timeout-minutes"]).toBe(90);
+    expect(job("wsl-vitest").strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: { shard: [1, 2, 3, 4] },
+    });
     expect(checkout.with).toMatchObject({
       "fetch-depth": 0,
       "persist-credentials": false,
@@ -96,8 +117,12 @@ describe("platform Vitest main workflow", () => {
     expect(fullSuite).toContain("--user $env:WSL_TEST_USER");
     expect(fullSuite).toContain("NEMOCLAW_EXEC_TIMEOUT=60000");
     expect(fullSuite).toContain("NEMOCLAW_TEST_TIMEOUT=60000");
+    expect(fullSuite).toContain("--shard='${{ matrix.shard }}/4'");
     expect(fullSuite).not.toMatch(/\bsudo\b|sudoers|NOPASSWD/u);
     expect(rootSuite).toContain("--user root");
+    expect(step("wsl-vitest", "Run root-required Vitest contracts in WSL").if).toBe(
+      "${{ matrix.shard == 1 }}",
+    );
     expect([...rootSuite.matchAll(/-t '([^']+)'/gu)].map((match) => match[1])).toEqual([
       "keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state",
       "requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched",

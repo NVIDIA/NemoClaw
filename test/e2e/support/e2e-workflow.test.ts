@@ -38,6 +38,121 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("rejects staging Launchable protected-environment and secret-guard drift", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          if?: string;
+          environment?: Record<string, unknown>;
+          steps?: Array<{ env?: Record<string, string>; name?: string }>;
+        }
+      >;
+    };
+    const job = workflow.jobs["staging-brev-launchable"]!;
+    job.environment = { name: "unprotected" };
+    const prepare = job.steps!.find((step) => step.name === "Prepare the trusted lane")!;
+    prepare.env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "staging-brev-launchable must use its protected non-deployment environment",
+        "staging-brev-launchable BREV_API_KEY must use the trusted-run secret guard",
+      ]),
+    );
+  });
+
+  it("keeps network-policy scenarios isolated with cleanup reserve", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, unknown>;
+          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
+          strategy: {
+            "fail-fast": boolean;
+            matrix: { include: Array<Record<string, string>> };
+          };
+          "timeout-minutes": number;
+        }
+      >;
+    };
+    const job = workflow.jobs["network-policy"]!;
+    const source = fs.readFileSync("test/e2e/live/network-policy.test.ts", "utf8");
+    expect(source).toContain("const TEST_TIMEOUT_MS = 65 * 60_000;");
+
+    job["timeout-minutes"] = 65;
+    job.strategy["fail-fast"] = true;
+    job.strategy.matrix.include.pop();
+    job.env.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts/live/network-policy";
+    delete job.env.NEMOCLAW_E2E_SHARD;
+    delete job.env.NEMOCLAW_SANDBOX_NAME;
+    const run = job.steps.find((step) => step.name === "Run network-policy live test")!;
+    run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
+    const upload = job.steps.find((step) => step.name === "Upload network-policy artifacts")!;
+    delete upload.with;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "network-policy scenario jobs must keep the 90 minute timeout",
+        "network-policy scenario matrix must disable fail-fast",
+        "network-policy job must keep the two isolated scenario shards",
+        "network-policy job must isolate artifacts by matrix.scenario",
+        "network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
+        "network-policy job must bind its sandbox name to matrix.sandbox",
+        `step 'Run network-policy live test' run script must include --selector "\${{ matrix.selector }}"`,
+        "network-policy upload-e2e-artifacts invocation must not override its contract",
+        "network-policy upload-e2e-artifacts must preserve its explicit name/path contract",
+      ]),
+    );
+  });
+
+  it("keeps common-egress scenarios isolated with bounded concurrency and cleanup reserve", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, unknown>;
+          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
+          strategy: {
+            "fail-fast": boolean;
+            "max-parallel": number;
+            matrix: { include: Array<Record<string, string>> };
+          };
+          "timeout-minutes": number;
+        }
+      >;
+    };
+    const job = workflow.jobs["common-egress-agent"]!;
+    const source = fs.readFileSync("test/e2e/live/common-egress-agent.test.ts", "utf8");
+    expect(source).toContain("const TEST_TIMEOUT_MS = 40 * 60_000;");
+
+    job["timeout-minutes"] = 40;
+    job.strategy["fail-fast"] = true;
+    job.strategy["max-parallel"] = 3;
+    job.strategy.matrix.include.pop();
+    job.env.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts/live/common-egress-agent";
+    delete job.env.NEMOCLAW_E2E_SHARD;
+    const run = job.steps.find((step) => step.name === "Run common-egress agent live test")!;
+    run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
+    const upload = job.steps.find((step) => step.name === "Upload common-egress agent artifacts")!;
+    delete upload.with;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "common-egress-agent scenario jobs must keep the 60 minute timeout",
+        "common-egress-agent scenario matrix must disable fail-fast",
+        "common-egress-agent scenario matrix must cap concurrency at two",
+        "common-egress-agent job must keep the three isolated scenario shards",
+        "common-egress-agent job must isolate artifacts by matrix.scenario",
+        "common-egress-agent job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
+        `step 'Run common-egress agent live test' run script must include --selector "\${{ matrix.selector }}"`,
+        "common-egress-agent upload-e2e-artifacts invocation must not override its contract",
+        "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
+      ]),
+    );
+  });
+
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
@@ -103,6 +218,23 @@ describe("e2e workflow boundary", () => {
 
     expect(validateE2eWorkflow(workflow)).toContain(
       "step 'Generate E2E target matrix' run script must include --ci-output",
+    );
+  });
+
+  it("keeps orchestration jobs within bounded timeouts", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { "timeout-minutes"?: number }>;
+    };
+    workflow.jobs["generate-matrix"]!["timeout-minutes"] = 11;
+    delete workflow.jobs["report-to-pr"]!["timeout-minutes"];
+    workflow.jobs.scorecard!["timeout-minutes"] = 16;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "generate-matrix job must keep the 10 minute timeout",
+        "report-to-pr job must keep the 15 minute timeout",
+        "scorecard job must keep the 15 minute timeout",
+      ]),
     );
   });
 
@@ -233,26 +365,49 @@ describe("e2e workflow boundary", () => {
     }
   });
 
-  // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
+  // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes and mutable tunnel tooling
   it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+      jobs: Record<
+        string,
+        { steps?: Array<{ name?: string; run?: string; env?: Record<string, string> }> }
+      >;
     };
     const run = workflow.jobs["inference-routing"]?.steps?.find(
       (step) => step.name === "Run inference routing live test",
     );
     expect(run).toBeDefined();
     run!.run = "npx vitest run --project e2e-live inference-routing-provider-smoke.test.ts";
+    const prerequisite = workflow.jobs["inference-routing"]?.steps?.find(
+      (step) => step.name === "Install and verify cloudflared prerequisite",
+    );
+    expect(prerequisite?.env).toBeDefined();
+    prerequisite!.env!.CLOUDFLARED_VERSION = "latest";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    const digestWorkflowPath = path.join(tmp, "digest-workflow.yaml");
+    const digestWorkflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ name?: string; env?: Record<string, string> }> }>;
+    };
+    const digestPrerequisite = digestWorkflow.jobs["inference-routing"]?.steps?.find(
+      (step) => step.name === "Install and verify cloudflared prerequisite",
+    );
+    expect(digestPrerequisite?.env).toBeDefined();
+    digestPrerequisite!.env!.CLOUDFLARED_DEB_SHA256 = "mutable";
+    fs.writeFileSync(digestWorkflowPath, YAML.stringify(digestWorkflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "step 'Run inference routing live test' run script must include test/e2e/live/inference-routing.test.ts",
           "step 'Run inference routing live test' run script must not include inference-routing-provider-smoke.test.ts",
+          "inference-routing cloudflared prerequisite step must pin CLOUDFLARED_VERSION=2026.6.1",
         ]),
+      );
+      expect(validateE2eWorkflowBoundary(digestWorkflowPath)).toContain(
+        "inference-routing cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

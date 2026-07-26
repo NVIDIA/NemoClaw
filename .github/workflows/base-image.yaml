@@ -23,15 +23,24 @@ on:
       # takes effect immediately after merge instead of waiting for another tag.
       - ".github/workflows/base-image.yaml"
       - "Dockerfile.base"
+      - "agents/openclaw/openclaw-runtime/package.json"
+      - "agents/openclaw/openclaw-runtime/package-lock.json"
+      - "scripts/lib/reviewed-npm-archive.mts"
       - "agents/hermes/Dockerfile.base"
       - "agents/langchain-deepagents-code/Dockerfile.base"
       - "agents/langchain-deepagents-code/manifest.yaml"
       - "agents/langchain-deepagents-code/requirements.lock"
       - "agents/openclaw/mcporter-runtime/package.json"
       - "agents/openclaw/mcporter-runtime/package-lock.json"
+      - "ci/npm-audit-exceptions.json"
       # Dockerfile.base validates min_openclaw_version from this file at build time.
       - "nemoclaw-blueprint/blueprint.yaml"
-      - "scripts/lib/reviewed-npm-archive.mts"
+      - "scripts/lib/openclaw-npm-remediation.mts"
+      - "scripts/lib/reviewed-npm-audit.mts"
+      - "scripts/checks/node-tar-image-scan.mts"
+      - "scripts/patch-bundled-npm-brace-expansion.mts"
+      - "scripts/patch-bundled-npm-tar.mts"
+      - "scripts/upgrade-bundled-npm.mts"
       - "scripts/lib/sandbox-rlimits.sh"
   workflow_dispatch:
     inputs:
@@ -52,21 +61,130 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  # Keep one declarative publisher configuration while giving each base image
-  # an independently observable matrix job and registry cache namespace.
-  build-and-push:
-    name: Build and push ${{ matrix.display_name }} base image
+  # Build OpenClaw on native runners because its complete Perl regression suite
+  # is prohibitively slow under QEMU. Publish only immutable per-platform
+  # digests here; the dependent manifest job updates user-facing tags atomically.
+  build-openclaw-platforms:
+    name: Build OpenClaw base image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - agent: openclaw
-            display_name: OpenClaw
+            arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
             dockerfile: Dockerfile.base
             image: nvidia/nemoclaw/sandbox-base
+          - agent: openclaw
+            arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            dockerfile: Dockerfile.base
+            image: nvidia/nemoclaw/sandbox-base
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,prefix=,format=short
+
+      - name: Validate production Docker build args
+        id: production-build-args
+        env:
+          AGENT: ${{ matrix.agent }}
+          OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw_version }}
+        run: |
+          set -euo pipefail
+          build_args=()
+          openclaw_build_arg=""
+          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
+            openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"
+            build_args+=(--build-arg "$openclaw_build_arg")
+          fi
+          if [ "${#build_args[@]}" -gt 0 ]; then
+            scripts/check-production-build-args.sh "${build_args[@]}"
+          else
+            scripts/check-production-build-args.sh
+          fi
+          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
+            if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
+              echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2
+              exit 1
+            fi
+            if [[ ! "$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+              echo "ERROR: OpenClaw version must be a whole decimal dotted version (for example, 2026.6.10)." >&2
+              exit 1
+            fi
+          fi
+          printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push platform digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.arch }},mode=max
+          build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
+
+      - name: Export platform digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: build did not return a valid sha256 digest: $DIGEST" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload platform digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-base-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Hermes and Deep Agents Code still use the existing QEMU multi-platform
+  # publisher. Their build behavior and timeout remain unchanged.
+  build-and-push:
+    name: Build and push ${{ matrix.display_name }} base image
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
           - agent: hermes
             display_name: Hermes
             dockerfile: agents/hermes/Dockerfile.base
@@ -146,3 +264,89 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache,mode=max
           build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
+
+  # Preserve the established required-check name while making tag publication
+  # contingent on both native platform builds succeeding.
+  build-and-push-openclaw:
+    name: Build and push OpenClaw base image
+    if: github.repository == 'NVIDIA/NemoClaw'
+    needs: build-openclaw-platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download platform digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: openclaw-base-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
+        with:
+          images: ${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,prefix=,format=short
+
+      - name: Create and verify multi-platform manifest
+        env:
+          IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          digest_files=("$RUNNER_TEMP"/digests/*)
+          if [ "${#digest_files[@]}" -ne 2 ]; then
+            echo "ERROR: expected exactly two platform digests, found ${#digest_files[@]}." >&2
+            exit 1
+          fi
+
+          sources=()
+          for digest_file in "${digest_files[@]}"; do
+            digest="$(basename "$digest_file")"
+            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "ERROR: invalid platform digest artifact: $digest" >&2
+              exit 1
+            fi
+            sources+=("$IMAGE@sha256:$digest")
+          done
+
+          mapfile -t tags <<< "$TAGS"
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            if [ -n "$tag" ]; then
+              tag_args+=(--tag "$tag")
+            fi
+          done
+          if [ "${#tag_args[@]}" -eq 0 ]; then
+            echo "ERROR: metadata did not produce any publication tags." >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
+          first_tag="${tags[0]}"
+          actual_platforms="$(
+            docker buildx imagetools inspect "$first_tag" --raw \
+              | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
+              | sort -u \
+              | paste -sd, -
+          )"
+          if [ "$actual_platforms" != "amd64,arm64" ]; then
+            echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
+            exit 1
+          fi

@@ -31,6 +31,8 @@ import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-snapshot";
 validateSandboxName(SANDBOX_NAME);
+const CLONE_SANDBOX_NAME = `${SANDBOX_NAME}-clone`;
+validateSandboxName(CLONE_SANDBOX_NAME);
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
 const BACKUP_DIR = path.resolve(BACKUP_ROOT, SANDBOX_NAME);
 if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
@@ -38,7 +40,8 @@ if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
 }
 const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
-const LIVE_TIMEOUT_MS = 30 * 60_000;
+const BASELINE_EXCLUSION_KEY = "openclaw_docs";
+const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
 
@@ -57,20 +60,24 @@ async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
 async function precleanSnapshotSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
+  sandboxName: string,
   label: string,
 ): Promise<void> {
-  await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
+  await host.bestEffortCleanupSandbox(sandboxName, {
     artifactName: `${label}-nemoclaw-destroy`,
     env: commandEnv(),
     timeoutMs: 120_000,
   });
   await bestEffortPreclean(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+    sandbox.openshell(["sandbox", "delete", sandboxName], {
       artifactName: `${label}-openshell-sandbox-delete`,
       env: commandEnv(),
       timeoutMs: 60_000,
     }),
   );
+}
+
+async function precleanSnapshotGateway(sandbox: SandboxClient, label: string): Promise<void> {
   await bestEffortPreclean(() =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: `${label}-openshell-gateway-destroy`,
@@ -82,17 +89,53 @@ async function precleanSnapshotSandbox(
 
 async function expectSandboxFileContent(
   sandbox: SandboxClient,
+  sandboxName: string,
   filePath: string,
   expected: string,
   artifactName: string,
 ): Promise<void> {
-  const result = await sandbox.exec(SANDBOX_NAME, ["cat", filePath], {
+  const result = await sandbox.exec(sandboxName, ["cat", filePath], {
     artifactName,
     env: commandEnv(),
     timeoutMs: 30_000,
   });
   expect(result.exitCode, resultText(result)).toBe(0);
   expect(result.stdout.trim()).toBe(expected);
+}
+
+async function expectBaselineExclusionAgreement(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactPrefix: string,
+): Promise<void> {
+  const status = await host.command("nemoclaw", [sandboxName, "status", "--json"], {
+    artifactName: `${artifactPrefix}-nemoclaw-status-json`,
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(status.exitCode, resultText(status)).toBe(0);
+  const statusJson = JSON.parse(status.stdout) as { baselineExclusions: string[] };
+  expect(statusJson.baselineExclusions).toContain(BASELINE_EXCLUSION_KEY);
+
+  const policyList = await host.command("nemoclaw", [sandboxName, "policy", "list"], {
+    artifactName: `${artifactPrefix}-nemoclaw-policy-list`,
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(policyList.exitCode, resultText(policyList)).toBe(0);
+  expect(resultText(policyList)).toMatch(
+    new RegExp(`^[ \\t]+- ${BASELINE_EXCLUSION_KEY} \\(active\\)`, "m"),
+  );
+
+  const livePolicy = await sandbox.openshell(["policy", "get", "--base", sandboxName], {
+    artifactName: `${artifactPrefix}-openshell-policy-get-base`,
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(livePolicy.exitCode, resultText(livePolicy)).toBe(0);
+  expect(resultText(livePolicy)).toMatch(/^[ \t]+managed_inference:/m);
+  expect(resultText(livePolicy)).not.toMatch(new RegExp(`^[ \\t]+${BASELINE_EXCLUSION_KEY}:`, "m"));
 }
 
 function firstSnapshotTimestamp(listOutput: string): string {
@@ -116,7 +159,19 @@ function snapshotManifestDirectories(): string[] {
 
 test("snapshot commands preserve create/list/latest restore/targeted restore/no-leak lifecycle", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Docker and start hermetic inference",
+      "onboard the snapshot sandbox",
+      "create and list the first snapshot",
+      "create a second snapshot from changed workspace",
+      "restore latest and timestamped snapshots",
+      "audit snapshot credentials and command help",
+      "back up a stopped sandbox and restore its snapshot",
+      "record snapshot lifecycle evidence",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await artifacts.target.declare({
     id: "snapshot-commands",
     boundary: "install.sh + nemoclaw snapshot commands + openshell sandbox exec",
@@ -127,6 +182,8 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "onboard authenticates to a hermetic compatible inference endpoint",
       "snapshot create reports Snapshot v<N> created",
       "snapshot list shows versioned snapshots and parseable timestamps",
+      "baseline exclusions remain active in registry and live policy across rebuild",
+      "snapshot restore --to carries baseline exclusions into clone registry and live policy",
       "latest snapshot restore recovers latest workspace state",
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
@@ -151,6 +208,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     apiKey: INFERENCE_API_KEY,
     host: "0.0.0.0",
     model: INFERENCE_MODEL,
+    progress,
     publicHost: "host.openshell.internal",
     requireAuth: true,
     requireAuthModels: true,
@@ -182,10 +240,25 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     env: commandEnv(),
     timeoutMs: 120_000,
   });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${CLONE_SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(CLONE_SANDBOX_NAME, {
+      artifactName: "cleanup-clone-openshell-sandbox-delete",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, CLONE_SANDBOX_NAME, {
+    artifactName: "cleanup-clone-nemoclaw-destroy",
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
 
-  await precleanSnapshotSandbox(host, sandbox, "pre-cleanup");
+  await precleanSnapshotSandbox(host, sandbox, CLONE_SANDBOX_NAME, "pre-cleanup-clone");
+  await precleanSnapshotSandbox(host, sandbox, SANDBOX_NAME, "pre-cleanup");
+  await precleanSnapshotGateway(sandbox, "pre-cleanup");
   fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
 
+  progress.phase("onboard the snapshot sandbox");
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
     artifactName: "phase-1-install-nemoclaw",
     cwd: REPO_ROOT,
@@ -237,6 +310,26 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(cliProbe.stdout).toContain("nemoclaw");
   expect(cliProbe.stdout).toContain("openshell");
 
+  const excludeBaseline = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "policy", "exclude", BASELINE_EXCLUSION_KEY, "--force"],
+    {
+      artifactName: "phase-2-policy-exclude-baseline",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(excludeBaseline.exitCode, resultText(excludeBaseline)).toBe(0);
+  await expectBaselineExclusionAgreement(host, sandbox, SANDBOX_NAME, "phase-2-after-exclude");
+
+  const rebuild = await host.command("nemoclaw", [SANDBOX_NAME, "rebuild", "--yes"], {
+    artifactName: "phase-2-rebuild-with-baseline-exclusion",
+    env: commandEnv(),
+    timeoutMs: 15 * 60_000,
+  });
+  expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
+  await expectBaselineExclusionAgreement(host, sandbox, SANDBOX_NAME, "phase-2-after-rebuild");
+
   const markerContent = `SNAPSHOT_E2E_${Date.now()}`;
   const secondContent = `SNAPSHOT_E2E_SECOND_${Date.now()}`;
 
@@ -254,8 +347,15 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     },
   );
   expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
-  await expectSandboxFileContent(sandbox, MARKER_FILE, markerContent, "phase-2-read-marker");
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    MARKER_FILE,
+    markerContent,
+    "phase-2-read-marker",
+  );
 
+  progress.phase("create and list the first snapshot");
   const firstCreate = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "create"], {
     artifactName: "phase-3-snapshot-create-first",
     env: commandEnv(),
@@ -275,6 +375,38 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   const timestamp = firstSnapshotTimestamp(resultText(list));
   await artifacts.writeJson("phase-4-first-snapshot.json", { timestamp });
 
+  const cloneRestore = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "snapshot", "restore", timestamp, "--to", CLONE_SANDBOX_NAME, "--yes"],
+    {
+      artifactName: "phase-4-snapshot-restore-to-clone",
+      env: commandEnv(),
+      timeoutMs: 5 * 60_000,
+    },
+  );
+  expect(cloneRestore.exitCode, resultText(cloneRestore)).toBe(0);
+  expect(resultText(cloneRestore)).toContain("Restored");
+  await expectSandboxFileContent(
+    sandbox,
+    CLONE_SANDBOX_NAME,
+    MARKER_FILE,
+    markerContent,
+    "phase-4-read-clone-marker",
+  );
+  await expectBaselineExclusionAgreement(
+    host,
+    sandbox,
+    CLONE_SANDBOX_NAME,
+    "phase-4-clone-baseline-exclusion",
+  );
+  const destroyClone = await host.command("nemoclaw", [CLONE_SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "phase-4-destroy-clone",
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  expect(destroyClone.exitCode, resultText(destroyClone)).toBe(0);
+
+  progress.phase("create a second snapshot from changed workspace");
   const modify = await sandbox.exec(
     SANDBOX_NAME,
     ["sh", "-lc", `rm -f ${MARKER_FILE} && printf '%s' '${secondContent}' > ${SECOND_MARKER}`],
@@ -312,6 +444,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   );
   expect(perturb.exitCode, resultText(perturb)).toBe(0);
 
+  progress.phase("restore latest and timestamped snapshots");
   const latestRestore = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "restore"], {
     artifactName: "phase-6-snapshot-restore-latest",
     env: commandEnv(),
@@ -321,6 +454,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(resultText(latestRestore)).toContain("Restored");
   await expectSandboxFileContent(
     sandbox,
+    SANDBOX_NAME,
     SECOND_MARKER,
     secondContent,
     "phase-6-read-second-marker-after-latest-restore",
@@ -349,6 +483,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(resultText(targetedRestore)).toContain("Restored");
   await expectSandboxFileContent(
     sandbox,
+    SANDBOX_NAME,
     MARKER_FILE,
     markerContent,
     "phase-7-read-first-marker-after-targeted-restore",
@@ -360,6 +495,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   });
   expect(secondGone.exitCode, resultText(secondGone)).toBe(0);
 
+  progress.phase("audit snapshot credentials and command help");
   const credentialLeaks = scanSnapshotCredentialLeaks(BACKUP_DIR);
   await artifacts.writeJson("phase-8-credential-scan.json", {
     backupDir: BACKUP_DIR,
@@ -377,6 +513,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(resultText(help)).toContain("snapshot list");
   expect(resultText(help)).toContain("snapshot restore");
 
+  progress.phase("back up a stopped sandbox and restore its snapshot");
   const snapshotsBeforeStoppedBackup = snapshotManifestDirectories();
   const containerLookup = await host.command(
     "docker",
@@ -484,6 +621,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(resultText(restoreStoppedBackup)).toContain("Restored");
   await expectSandboxFileContent(
     sandbox,
+    SANDBOX_NAME,
     MARKER_FILE,
     markerContent,
     "phase-10-read-marker-after-stopped-backup-restore",
@@ -495,10 +633,13 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     stoppedBackupTimestamp,
   });
 
+  progress.phase("record snapshot lifecycle evidence");
   await artifacts.target.complete({
     id: "snapshot-commands",
     status: "passed",
     firstSnapshotTimestamp: timestamp,
+    baselineExclusionKey: BASELINE_EXCLUSION_KEY,
+    cloneSandboxName: CLONE_SANDBOX_NAME,
     stoppedBackupTimestamp,
     backupDir: BACKUP_DIR,
   });

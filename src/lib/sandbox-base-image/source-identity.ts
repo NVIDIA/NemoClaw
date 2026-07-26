@@ -13,7 +13,12 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "scripts/lib/sandbox-rlimits.sh",
   "agents/openclaw/mcporter-runtime/package.json",
   "agents/openclaw/mcporter-runtime/package-lock.json",
+  "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/checks/node-tar-image-scan.mts",
+  "scripts/patch-bundled-npm-brace-expansion.mts",
+  "scripts/patch-bundled-npm-tar.mts",
+  "scripts/upgrade-bundled-npm.mts",
 ];
 
 export function normalizeBaseImageInputPaths(rootDir: string, paths: string[] = []): string[] {
@@ -54,6 +59,31 @@ export function getSourceShortShaTags(
   };
 
   push(env.GITHUB_SHA);
+  if (!fs.existsSync(path.join(rootDir, ".git"))) return Array.from(new Set(values));
+  const git = spawnSync("git", ["-C", rootDir, "rev-parse", "HEAD"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+  });
+  if (git.status === 0) push(git.stdout);
+
+  return Array.from(new Set(values));
+}
+
+export function getSourceRevisionIds(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const values: string[] = [];
+  const push = (value: string | null | undefined) => {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase();
+    if (/^[0-9a-f]{40,64}$/.test(normalized)) values.push(normalized);
+  };
+
+  push(env.GITHUB_SHA);
+  if (!fs.existsSync(path.join(rootDir, ".git"))) return Array.from(new Set(values));
   const git = spawnSync("git", ["-C", rootDir, "rev-parse", "HEAD"], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "ignore"],
@@ -170,15 +200,13 @@ function gitRemoteReachableVersionTag(rootDir: string, env: NodeJS.ProcessEnv): 
     if (peeled || !tags.has(tag)) tags.set(tag, commit);
   }
 
-  return (
-    [...tags]
-      .filter(
-        ([, commit]) =>
-          gitStatus(rootDir, ["merge-base", "--is-ancestor", commit, "HEAD"], env) === 0,
-      )
-      .map(([tag]) => tag)
-      .sort(compareVersionTagsDesc)[0] ?? null
-  );
+  const candidates = [...tags].sort(([left], [right]) => compareVersionTagsDesc(left, right));
+  for (const [tag, commit] of candidates) {
+    if (gitStatus(rootDir, ["merge-base", "--is-ancestor", commit, "HEAD"], env) === 0) {
+      return tag;
+    }
+  }
+  return null;
 }
 
 function versionFileTag(rootDir: string): string | null {

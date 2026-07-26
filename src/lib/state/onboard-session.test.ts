@@ -211,6 +211,24 @@ describe("onboard session", () => {
     expect(summary.endpointUrl).toBe(loaded.endpointUrl);
   });
 
+  it("clears a spark Express intent once provider selection completes (#7231)", () => {
+    session.saveSession(
+      session.createSession({
+        mode: "non-interactive",
+        stationExpressIntent: { version: 1, kind: "spark", sandboxName: "my-assistant" },
+      }),
+    );
+    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+      provider: "vllm-local",
+      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      sandboxName: "my-assistant",
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.stationExpressIntent).toBeNull();
+    expect(loaded.provider).toBe("vllm-local");
+  });
+
   it("marks steps started, completed, and failed", () => {
     session.saveSession(session.createSession());
     markStepStartedLegacy(session, stepMutation, "gateway");

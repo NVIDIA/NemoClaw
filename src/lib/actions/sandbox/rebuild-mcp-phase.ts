@@ -9,21 +9,61 @@ import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
+  prepareMcpBridgesForExecUnavailableRebuild,
   prepareMcpBridgesForRebuild,
   reattachMcpProvidersAfterRebuildAbort,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge";
+import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
 
+function canExecuteMcpPreparation(sandboxName: string): boolean {
+  // Live MCP preparation uses both transports: SSH-backed adapter
+  // inspection/mutation and OpenShell-mediated adapter/provider operations.
+  // Prove both before any mutation. A direct Docker fallback would not prove
+  // that the OpenShell transport itself can run.
+  const sshProbe = executeSandboxCommand(sandboxName, ":");
+  const execProbe = executeSandboxExecCommand(sandboxName, ":", undefined, {
+    allowLocalDockerFallback: false,
+  });
+  return sshProbe !== null && sshProbe.status === 0 && execProbe !== null && execProbe.status === 0;
+}
+
 export async function prepareMcpForRebuild(
   sandboxName: string,
   staleRecovery: boolean,
+  force: boolean,
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
-  bail: (message: string, code?: number) => never,
+  bail: RebuildBail,
 ): Promise<McpRebuildPreparation | null> {
+  // invalidState: OpenShell still reports a live sandbox, but the
+  // side-effect-free `:` command cannot cross every transport required by live
+  // MCP preparation. Every nonzero result is non-authoritative, so interpreting
+  // selected exit codes as proof teardown can run would cross the delete edge.
+  // sourceBoundary: the pinned OpenShell sandbox-exec and SSH transports own
+  // these liveness signals; NemoClaw owns only explicit --force recovery policy.
+  // whyNotSourceFix: an unreachable retained image cannot be repaired before
+  // rebuild, and OpenShell v0.0.85 exposes no stronger adapter-health proof.
+  // regressionTest: rebuild-mcp-phase.test.ts exercises null and representative
+  // nonzero results through this exact force-only branch.
+  // removalCondition: remove this fallback only when OpenShell exposes an
+  // attested read-only adapter snapshot that is safe without sandbox transport.
+  if (force && !staleRecovery && !canExecuteMcpPreparation(sandboxName)) {
+    console.error(`  ${YW}⚠${R} MCP transport probe failed; --force using host-side MCP recovery`);
+    try {
+      return await prepareMcpBridgesForExecUnavailableRebuild(sandboxName);
+    } catch (error) {
+      relockShieldsIfNeeded(true);
+      bail(
+        `Failed to preserve MCP bridges before rebuild (--force host-side recovery): ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
   try {
     return await (staleRecovery
       ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName)

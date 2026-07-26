@@ -2,29 +2,46 @@
 // SPDX-License-Identifier: Apache-2.0
 // @module-tag e2e/credential-free
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterAll, describe, expect, it } from "vitest";
-
+import { describe, expect } from "vitest";
+import { spawnObservedChild } from "./e2e/fixtures/observed-child-process.ts";
+import type { TestProgress, TestProgressCapability } from "./e2e/fixtures/progress.ts";
+import { test as it } from "./e2e/fixtures/workflow-e2e-test.ts";
 import { nodeOptionsWithoutSourceLoader } from "./helpers/source-loader-options";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const ARTIFACT_ROOT = process.env.E2E_ARTIFACT_DIR;
-const WORK_ROOT = (() => {
+let workRoot: string | null = null;
+
+function createGatewayDriftWorkRoot(): string {
   const parent = ARTIFACT_ROOT ?? os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
   return fs.mkdtempSync(path.join(parent, "nemoclaw-gateway-drift-preflight-"));
-})();
+}
+
+function gatewayDriftWorkRoot(): string {
+  workRoot ??= createGatewayDriftWorkRoot();
+  return workRoot;
+}
+
 const commandTimeoutMs = 45_000;
+const GATEWAY_DRIFT_PHASES = [
+  "prepare gateway drift fixtures",
+  "exercise container-backed gateway drift cases",
+  "exercise host-process gateway drift cases",
+  "verify stale gateway marker fallback",
+  "release gateway drift fixtures",
+] as const;
 
 const liveGatewayPids: number[] = [];
 
-afterAll(() => {
+function releaseGatewayDriftFixtures(): void {
   for (const pid of liveGatewayPids.splice(0)) {
     try {
       process.kill(pid, "SIGTERM");
@@ -32,8 +49,11 @@ afterAll(() => {
       // Already exited.
     }
   }
-  if (!ARTIFACT_ROOT) fs.rmSync(WORK_ROOT, { recursive: true, force: true });
-});
+  if (!ARTIFACT_ROOT && workRoot) {
+    fs.rmSync(workRoot, { recursive: true, force: true });
+    workRoot = null;
+  }
+}
 
 type CommandResult = {
   caseDir: string;
@@ -212,7 +232,7 @@ function writeHostProcessMarker(home: string, gatewayBin: string, pid = 999999):
 }
 
 function prepareCase(name: string): { binDir: string; caseDir: string; home: string } {
-  const caseDir = path.join(WORK_ROOT, name);
+  const caseDir = path.join(gatewayDriftWorkRoot(), name);
   const home = path.join(caseDir, "home");
   const binDir = path.join(caseDir, "bin");
   fs.mkdirSync(home, { recursive: true });
@@ -251,6 +271,7 @@ function runCli(caseDir: string, home: string, binDir: string, args: string[]): 
         "openshell-docker-gateway",
       ),
     },
+    killSignal: "SIGKILL",
     timeout: commandTimeoutMs,
   });
   return {
@@ -270,11 +291,22 @@ function runBackupCase(
   return runCli(caseDir, home, binDir, ["backup-all"]);
 }
 
-function runLiveHostProcessCase(name: string): CommandResult {
+function runLiveHostProcessCase(
+  name: string,
+  progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability,
+): CommandResult {
   const { binDir, caseDir, home } = prepareCase(name);
   writeFakeDockerNoCluster(binDir);
   const gatewayBin = writeFakeGatewayBinary(binDir, "0.0.43");
-  const child = spawn(gatewayBin, ["serve"], { detached: false, stdio: "ignore" });
+  progress.event("fake gateway process started");
+  const child = spawnObservedChild(gatewayBin, ["serve"], {
+    activityLabel: "command: fake-gateway-serve",
+    progress,
+    spawn: { detached: false, stdio: "ignore" },
+  });
+  child.once("close", () => {
+    progress.event("fake gateway process stopped");
+  });
   expect(child.pid, "fake gateway process must have a pid").toBeTypeOf("number");
   const pid = child.pid as number;
   liveGatewayPids.push(pid);
@@ -326,12 +358,14 @@ function expectSandboxListCalled(result: CommandResult, expected: boolean): void
 }
 
 describe("gateway drift preflight E2E migration", () => {
-  it(
-    "fails closed before unsafe sandbox state mutation when gateway schema or binary drift is detected",
-    testTimeoutOptions(180_000),
-    () => {
+  it("fails closed before unsafe sandbox state mutation when gateway schema or binary drift is detected", {
+    ...testTimeoutOptions(180_000),
+    meta: { e2ePhases: GATEWAY_DRIFT_PHASES },
+  }, ({ progress }) => {
+    try {
       expect(fs.existsSync(CLI_ENTRYPOINT), "repo CLI entrypoint must exist").toBe(true);
 
+      progress.phase("exercise container-backed gateway drift cases");
       const protobuf = runBackupCase("protobuf-mismatch", {
         gatewayImage: "ghcr.io/nvidia/openshell/cluster:0.0.37",
         gatewayRunning: "false",
@@ -377,7 +411,8 @@ describe("gateway drift preflight E2E migration", () => {
       );
       expectSandboxListCalled(imageDrift, false);
 
-      const hostBackup = runLiveHostProcessCase("host-process-backup");
+      progress.phase("exercise host-process gateway drift cases");
+      const hostBackup = runLiveHostProcessCase("host-process-backup", progress);
       expect(hostBackup.status, hostBackup.output).not.toBe(0);
       expectContains(
         hostBackup,
@@ -416,6 +451,7 @@ describe("gateway drift preflight E2E migration", () => {
       );
       expectSandboxListCalled(noMarker, false);
 
+      progress.phase("verify stale gateway marker fallback");
       const stale = (() => {
         const { binDir, caseDir, home } = prepareCase("host-process-stale-marker");
         const oldInstall = path.join(caseDir, "old-install");
@@ -432,6 +468,9 @@ describe("gateway drift preflight E2E migration", () => {
         "stale marker binary is not used to fabricate drift",
       );
       expectSandboxListCalled(stale, true);
-    },
-  );
+    } finally {
+      progress.phase("release gateway drift fixtures");
+      releaseGatewayDriftFixtures();
+    }
+  });
 });

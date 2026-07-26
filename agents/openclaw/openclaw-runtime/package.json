@@ -1,0 +1,14 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "name": "nemoclaw-openclaw-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Locked production dependency graph for the OpenClaw runtime",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "openclaw": "2026.7.1"
+  },
+  "engines": {
+    "node": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"
+  }
+}

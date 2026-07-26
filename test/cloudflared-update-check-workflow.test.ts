@@ -40,7 +40,7 @@ function pinValues(source: string, name: string): string[] {
 function writePinFixture(file: string, version: string, sha256: string): void {
   fs.writeFileSync(
     file,
-    ["one", "two", "three"]
+    ["one", "two", "three", "four"]
       .map(
         (job) =>
           `  ${job}:\n    env:\n      CLOUDFLARED_VERSION: "${version}"\n      CLOUDFLARED_DEB_SHA256: "${sha256}"`,
@@ -149,11 +149,11 @@ describe("cloudflared update-check workflow contract", () => {
     expect(checkout?.with?.["persist-credentials"]).toBe(false);
   });
 
-  it("extracts exactly three identical reviewed version and SHA256 pins", () => {
+  it("extracts exactly four identical reviewed version and SHA256 pins", () => {
     const versions = pinValues(e2e, "CLOUDFLARED_VERSION");
     const hashes = pinValues(e2e, "CLOUDFLARED_DEB_SHA256");
-    expect(versions).toHaveLength(3);
-    expect(hashes).toHaveLength(3);
+    expect(versions).toHaveLength(4);
+    expect(hashes).toHaveLength(4);
     expect(new Set(versions).size).toBe(1);
     expect(new Set(hashes).size).toBe(1);
     expect(versions[0]).toMatch(/^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$/u);
@@ -203,7 +203,7 @@ describe("cloudflared update-check workflow contract", () => {
       );
       expect(fixture.result.stderr).toContain("CLOUDFLARED_VERSION lines:");
       expect(fixture.result.stderr).toContain("CLOUDFLARED_DEB_SHA256 lines:");
-      expect(fixture.result.stderr).toContain("Set all three version/SHA256 pairs");
+      expect(fixture.result.stderr).toContain("Set all four version/SHA256 pairs");
     } finally {
       fs.rmSync(fixture.tempDir, { recursive: true, force: true });
     }

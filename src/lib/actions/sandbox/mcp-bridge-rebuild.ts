@@ -42,7 +42,13 @@ export interface McpRebuildPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
   scrubbedAdapterEntries: McpBridgeEntry[];
+  /** Full read-only target, policy, provider, and registry proof before delete. */
+  revalidateBeforeDelete?: () => Promise<void>;
+  /** Final synchronous registry-only proof immediately before delete. */
+  assertDeleteEdgeUnchanged?: () => void;
 }
+
+export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild-exec-unavailable";
 
 async function getCompleteMcpRebuildEntries(
   sandboxName: string,

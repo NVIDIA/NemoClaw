@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
@@ -9,12 +9,14 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import {
   closeServer,
   writeJsonResponse as jsonResponse,
   listenServer as listenOnRandomPort,
   readRequestBody,
 } from "../fixtures/http-protocol.ts";
+import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 
 type TestServer = http.Server | https.Server;
 
@@ -190,41 +192,64 @@ export function buildCloudflaredQuickTunnelArgs(port: number): string[] {
   ];
 }
 
-async function probePublicTunnel(origin: string): Promise<{
+async function probePublicTunnel(
+  origin: string,
+  readinessPath: string,
+  readinessStatus: number,
+): Promise<{
   ready: boolean;
   diagnostic: string;
 }> {
   try {
-    const response = await fetch(`${origin}/mcp`, {
+    const response = await fetch(`${origin}${readinessPath}`, {
       method: "HEAD",
       redirect: "manual",
       signal: AbortSignal.timeout(5_000),
     });
     await response.body?.cancel();
     return {
-      ready: response.status === 405,
-      diagnostic: `public HEAD /mcp returned HTTP ${response.status}`,
+      ready: response.status === readinessStatus,
+      diagnostic: `public HEAD ${readinessPath} returned HTTP ${response.status}`,
     };
   } catch (error) {
     return {
       ready: false,
       // Avoid reflecting request URLs or child output here. The error class is
       // enough to distinguish DNS/transport failure without risking headers.
-      diagnostic: `public HEAD /mcp failed (${error instanceof Error ? error.name : "unknown error"})`,
+      diagnostic: `public HEAD ${readinessPath} failed (${error instanceof Error ? error.name : "unknown error"})`,
     };
   }
 }
 
+/**
+ * Publishes a local HTTPS origin behind a real `trycloudflare.com` quick
+ * tunnel: a genuinely public, DNS-resolvable, publicly-trusted-certificate
+ * endpoint. Named for its original MCP-bridge fixture caller; reused as-is
+ * (via the optional readiness override below) for the HTTPS-pin runtime
+ * adapter's live coverage, since both need the identical real-tunnel proof
+ * and only differ in which local path/status means "ready".
+ */
 export async function startPublicMcpHttpsTunnel(options: {
   cleanup: TunnelCleanupRegistry;
   label: string;
+  progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   server: StartedHttpServer;
   cloudflaredBin?: string;
+  readinessPath?: string;
+  readinessStatus?: number;
 }): Promise<StartedPublicMcpTunnel> {
+  const readinessPath = options.readinessPath ?? "/mcp";
+  const readinessStatus = options.readinessStatus ?? 405;
   const args = buildCloudflaredQuickTunnelArgs(options.server.port);
   let lastFailure = "cloudflared did not publish a quick-tunnel URL";
 
   for (let attempt = 1; attempt <= QUICK_TUNNEL_ATTEMPTS; attempt += 1) {
+    const progressName = `cloudflared quick tunnel attempt ${attempt}`;
+    try {
+      options.progress.event(`${progressName} started`);
+    } catch {
+      // Progress diagnostics must never change tunnel setup.
+    }
     let origin: string | null = null;
     let consecutiveReadyProbes = 0;
     let childOutputSeen = false;
@@ -238,10 +263,14 @@ export async function startPublicMcpHttpsTunnel(options: {
         carry = candidate.slice(-QUICK_TUNNEL_DISCOVERY_CARRY_LIMIT);
       };
     };
-    const child = spawn(options.cloudflaredBin ?? "cloudflared", args, {
-      detached: true,
-      env: buildCloudflaredSubprocessEnv(),
-      stdio: ["ignore", "pipe", "pipe"],
+    const child = spawnObservedChild(options.cloudflaredBin ?? "cloudflared", args, {
+      activityLabel: `command: ${progressName}`,
+      progress: options.progress,
+      spawn: {
+        detached: true,
+        env: buildCloudflaredSubprocessEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     });
     const exited = waitForExit(child);
     child.stdout?.setEncoding("utf8");
@@ -250,6 +279,13 @@ export async function startPublicMcpHttpsTunnel(options: {
     child.stderr?.on("data", inspectOutputForOrigin());
     child.once("error", (error) => {
       spawnError = error;
+    });
+    child.once("close", () => {
+      try {
+        options.progress.event(`${progressName} stopped`);
+      } catch {
+        // Progress diagnostics must never change tunnel cleanup.
+      }
     });
 
     let closePromise: Promise<void> | undefined;
@@ -269,7 +305,7 @@ export async function startPublicMcpHttpsTunnel(options: {
         break;
       }
       if (origin) {
-        const probe = await probePublicTunnel(origin);
+        const probe = await probePublicTunnel(origin, readinessPath, readinessStatus);
         if (probe.ready) {
           consecutiveReadyProbes += 1;
           if (consecutiveReadyProbes >= QUICK_TUNNEL_CONSECUTIVE_READY_PROBES) {

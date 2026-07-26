@@ -29,6 +29,7 @@ export type DestroyHarness = {
   prepareMcpBridgesForDestroySpy: MockInstance;
   promptSpy: MockInstance;
   removeSandboxSpy: MockInstance;
+  revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   selectGatewaySpy: MockInstance;
@@ -44,6 +45,7 @@ type DestroyHarnessOptions = {
   deleteOutput?: string;
   deleteStatus?: number;
   dockerPsOutput?: string;
+  endpointUrl?: string;
   finalizeMcpError?: string;
   liveListOutput?: string;
   mcpAddState?: "prepared";
@@ -113,6 +115,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const sandboxProviderCleanup = requireDist("../../onboard/sandbox-provider-cleanup.js");
   const nim = requireDist("../../inference/nim.js");
   const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
+  const httpsPinRuntimeAdapter = requireDist("../../inference/https-pin-runtime-adapter.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
@@ -134,6 +137,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     ...sandboxEntry,
     agent: options.agent ?? sandboxEntry.agent,
+    ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
     ...(options.mcpServers?.length
       ? {
           mcp: {
@@ -160,6 +164,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
     return true;
   });
+  const revokeHttpsPinRuntimeAdapterRouteSpy = vi
+    .spyOn(httpsPinRuntimeAdapter, "revokeHttpsPinRuntimeAdapterRoute")
+    .mockResolvedValue(true);
   vi.spyOn(onboardSession, "loadSession").mockReturnValue({
     sandboxName: "alpha",
   });
@@ -319,6 +326,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     prepareMcpBridgesForDestroySpy,
     promptSpy,
     removeSandboxSpy,
+    revokeHttpsPinRuntimeAdapterRouteSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,
     runOpenshellSpy,
     selectGatewaySpy,

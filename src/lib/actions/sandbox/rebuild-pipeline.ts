@@ -16,9 +16,11 @@ import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-h
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
+import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
@@ -35,6 +37,14 @@ import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
 
 export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
+
+function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): void {
+  try {
+    if (cleanup() === false) console.warn(warning);
+  } catch {
+    console.warn(warning);
+  }
+}
 
 /**
  * Rebuild a live sandbox while preserving registered agent state and policies.
@@ -113,17 +123,18 @@ async function rebuildSandboxUnlocked(
   let recoveryManifest = validatedRecoveryManifest;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
-  let recoveryRegistrySnapshot = preparedBackupRecovery
-    ? JSON.parse(JSON.stringify(registry.load()))
-    : liveState.staleRegistrySnapshot;
-  const registryRollback = createRebuildRegistryRollback({
-    sandboxName,
-    preparedBackupRecovery,
-    staleRecovery,
-    getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
-    log,
-  });
   try {
+    if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return;
+    let recoveryRegistrySnapshot = preparedBackupRecovery
+      ? JSON.parse(JSON.stringify(registry.load()))
+      : liveState.staleRegistrySnapshot;
+    const registryRollback = createRebuildRegistryRollback({
+      sandboxName,
+      preparedBackupRecovery,
+      staleRecovery,
+      getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
+      log,
+    });
     const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
       recoveryRecreate,
@@ -137,6 +148,7 @@ async function rebuildSandboxUnlocked(
       relock: relockShieldsIfNeeded,
     } = shieldsPhase;
     let sandboxStillExists = true;
+    let sandboxExistenceAmbiguous = false;
 
     try {
       const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
@@ -203,6 +215,7 @@ async function rebuildSandboxUnlocked(
         sandboxEntry,
         staleRecovery,
         backupManifest: backup.backupManifest,
+        force: normalized.force,
         log,
         bail,
         relockShieldsIfNeeded,
@@ -240,6 +253,9 @@ async function rebuildSandboxUnlocked(
         },
         onDeleted: () => {
           sandboxStillExists = false;
+        },
+        onDeleteStateAmbiguous: () => {
+          sandboxExistenceAmbiguous = true;
         },
       });
       if (!mcpPreparation) return;
@@ -332,12 +348,24 @@ async function rebuildSandboxUnlocked(
         bail,
       });
     } finally {
-      if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
+      if (!rebuildShieldsWindow.relocked && !sandboxExistenceAmbiguous) {
+        relockShieldsIfNeeded(sandboxStillExists);
+      }
     }
   } finally {
-    dcodePreflight.cleanup();
-    if (preparedImage && !disposePreparedBuildContext(preparedImage)) {
-      console.warn("  Warning: temporary rebuild image inputs could not be fully removed.");
+    runBestEffortRebuildCleanup(
+      dcodePreflight.cleanup,
+      "  Warning: temporary DCode rebuild inputs could not be fully removed.",
+    );
+    runBestEffortRebuildCleanup(
+      () => disposeRebuildAgentBaseImagePreflight(baseImagePreflight),
+      "  Warning: temporary rebuild base-image handoff could not be removed.",
+    );
+    if (preparedImage) {
+      runBestEffortRebuildCleanup(
+        () => disposePreparedBuildContext(preparedImage),
+        "  Warning: temporary rebuild image inputs could not be fully removed.",
+      );
     }
     process.removeListener("exit", releaseOnboardLock);
     releaseOnboardLock();

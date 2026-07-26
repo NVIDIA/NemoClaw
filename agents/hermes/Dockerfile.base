@@ -15,7 +15,8 @@
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. gosu upgrade             — update URL, checksum, and version
 #   4. node:24-trixie-slim digest rot — update-docker-pin.sh updates all
-#   5. New .hermes subdirectory — add mkdir/chmod below
+#   5. npm upgrade              — update upgrade-bundled-npm.mts
+#   6. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
 
 FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c
@@ -39,6 +40,9 @@ ARG UV_VERSION=0.11.8
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
 # tools again after install.
+# Install the reviewed libexpat, jq, and Vim packages from the same immutable,
+# checksum-bound Debian snapshot used by the OpenClaw base image.
+# hadolint ignore=DL3001,DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
         python3=3.13.5-1 \
@@ -57,9 +61,115 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
         socat=1.8.0.3-1 \
         "dos2unix=7.5.2-1*" \
-        jq=1.7.1-6+deb13u2 \
-        vim-tiny=2:9.1.1230-2 \
+    && arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) \
+            libexpat_sha256="37d24b40a745107941f823d1f22c38f197f01981f7f0783777fe0026af016463"; \
+            libonig_sha256="3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c"; \
+            libjq_sha256="9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941"; \
+            jq_sha256="b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0"; \
+            vim_tiny_sha256="0e6e231d6d2430a92cf76f8a78506090418fa37758c33b31ed50dfbfc76e22ed" \
+            ;; \
+        arm64) \
+            libexpat_sha256="df928e3a8e4da79408d4b18e8cd80a03dffa90130d0698e50041aab5e14f9397"; \
+            libonig_sha256="137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f"; \
+            libjq_sha256="eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e"; \
+            jq_sha256="c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696"; \
+            vim_tiny_sha256="be30f7e9de0b872bec0128ccd890452c0e0e29d99017d16c0f3aa74164f6700d" \
+            ;; \
+        *) echo "Unsupported architecture for Debian security packages: $arch" >&2; exit 1 ;; \
+    esac \
+    && security_deb_dir="/tmp/nemoclaw-debian-security" \
+    && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
+    && vim_common_sha256="6b063038246492c4a20e0a212c896dde4d5aa9f59d6fb43ff33d10080bc53a39" \
+    && mkdir -p "$security_deb_dir" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libexpat1.deb" \
+        "$snapshot_url/e/expat/libexpat1_2.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libonig5.deb" \
+        "$snapshot_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libjq1.deb" \
+        "$snapshot_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/jq.deb" \
+        "$snapshot_url/j/jq/jq_1.8.2-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/vim-common.deb" \
+        "$snapshot_url/v/vim/vim-common_9.2.0782-1_all.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/vim-tiny.deb" \
+        "$snapshot_url/v/vim/vim-tiny_9.2.0782-1_${arch}.deb" \
+    && printf '%s  %s\n' \
+        "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
+        "$libonig_sha256" "$security_deb_dir/libonig5.deb" \
+        "$libjq_sha256" "$security_deb_dir/libjq1.deb" \
+        "$jq_sha256" "$security_deb_dir/jq.deb" \
+        "$vim_common_sha256" "$security_deb_dir/vim-common.deb" \
+        "$vim_tiny_sha256" "$security_deb_dir/vim-tiny.deb" \
+        | sha256sum -c - \
+    && dpkg -i \
+        "$security_deb_dir/libexpat1.deb" \
+        "$security_deb_dir/libonig5.deb" \
+        "$security_deb_dir/libjq1.deb" \
+        "$security_deb_dir/jq.deb" \
+        "$security_deb_dir/vim-common.deb" \
+        "$security_deb_dir/vim-tiny.deb" \
+    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
+    && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1" \
+    && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1" \
+    && test "$(jq --version)" = "jq-1.8.2" \
+    && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
+    && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
+    && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION" \
+    && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
+    && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
+    && printf '%s\n' \
+        "architecture=$arch" \
+        "libexpat1=2.8.2-1" \
+        "libonig5=6.9.9-1+b1" \
+        "libjq1=1.8.2-1" \
+        "jq=1.8.2-1" \
+        "vim-common=2:9.2.0782-1" \
+        "vim-tiny=2:9.2.0782-1" \
+        > /usr/local/share/nemoclaw/security-packages.txt \
+    && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
+    && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
+
+# npm 11.13.0 in the pinned Node 24 image bundles an affected node-tar copy.
+# Patch that private package after curl is installed and before npm processes
+# the reviewed npm archive.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# Upgrade the complete private npm tree before npm processes the
+# checksum-pinned Hermes release lockfiles.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# Replace npm 11.18.0's private brace-expansion 5.0.7 package with the
+# registry- and SRI-pinned 5.0.8 release.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+    --npm-root /usr/local/lib/node_modules/npm
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Identical to OpenClaw base — pinned to 1.19 with checksum.
@@ -213,7 +323,9 @@ RUN set -eu; \
         echo "Error: Hermes ${HERMES_VERSION} tarball declares version ${tarball_semver}, expected ${HERMES_SEMVER}" >&2; \
         exit 1; \
     fi; \
-    registry_integrity=$(npm view "hermes-agent@${HERMES_SEMVER}" dist.integrity); \
+    npm_integrity_cache=/tmp/hermes-npm-integrity-cache; \
+    registry_integrity=$(npm_config_cache="$npm_integrity_cache" npm view "hermes-agent@${HERMES_SEMVER}" dist.integrity); \
+    rm -rf "$npm_integrity_cache"; \
     if [ "$registry_integrity" != "${HERMES_NPM_INTEGRITY}" ]; then \
         echo "Error: hermes-agent ${HERMES_SEMVER} npm integrity mismatch" >&2; \
         echo "Expected: ${HERMES_NPM_INTEGRITY}" >&2; \
@@ -230,9 +342,13 @@ WORKDIR /opt/hermes
 # the sha256-verified tarball — the workspace branch below additionally
 # requires the UI dir to appear in the pinned root lockfile before building.
 # Re-review the lockfiles on every HERMES_VERSION/HERMES_TARBALL_SHA256 bump.
-# The final `npm ci --omit=dev` drops the UI build toolchain (vite, tsc,
-# eslint) from node_modules again — the dashboard bundle is already in
-# hermes_cli/web_dist and the TUI keeps its runtime (non-dev) deps.
+# A root `npm ci --omit=dev` still installs production dependencies for every
+# workspace. The dashboard and TUI are self-contained build artifacts, so
+# retaining their workspace trees only increases the image exported by every
+# Hermes E2E. Recreate root node_modules from the pinned lockfile with
+# workspaces disabled; this keeps browser tooling without either UI build tree.
+# Root npm, Electron, and node-gyp caches are build-only. Remove them in the
+# same RUN that creates them so Docker cannot retain their bytes in this layer.
 # hadolint ignore=SC2086
 RUN set -eu; \
     set --; \
@@ -259,8 +375,15 @@ RUN set -eu; \
     else \
         echo "Skipping optional Hermes bridge ${bridge_dir}: no package manifest found"; \
     fi \
-    && npm ci --omit=dev --prefer-offline --no-audit --no-fund \
-    && rm -rf ui-tui/node_modules web/node_modules /tmp/camoufox-* \
+    && rm -rf node_modules ui-tui/node_modules web/node_modules \
+    && npm ci --omit=dev --workspaces=false --prefer-offline --no-audit --no-fund \
+    && rm -rf \
+        ui-tui/node_modules \
+        web/node_modules \
+        /root/.npm \
+        /root/.cache/electron \
+        /root/.cache/node-gyp \
+        /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
@@ -292,5 +415,36 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 RUN /usr/local/bin/hermes --version \
+    && test -x /opt/hermes/node_modules/.bin/agent-browser \
+    && /opt/hermes/node_modules/.bin/agent-browser --version \
+    && /opt/hermes/.venv/bin/python -c \
+        'from tools import browser_tool; expected = "/opt/hermes/node_modules/.bin/agent-browser"; assert browser_tool._find_agent_browser() == expected' \
+    && test -s "${HERMES_TUI_DIR}/dist/entry.js" \
+    && test -s "${HERMES_WEB_DIST}/index.html" \
+    && test ! -e /opt/hermes/.node_modules.runtime \
+    && mv /opt/hermes/node_modules /opt/hermes/.node_modules.runtime \
+    && mkdir /opt/hermes/node_modules \
+    && timeout 30s node "${HERMES_TUI_DIR}/dist/entry.js" --help \
+    && rmdir /opt/hermes/node_modules \
+    && mv /opt/hermes/.node_modules.runtime /opt/hermes/node_modules \
     && /opt/hermes/.venv/bin/python -c \
         'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
+
+RUN chmod -R a+rX /opt/hermes/.venv \
+    && test -r /opt/hermes/.venv/pyvenv.cfg \
+    && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
+
+# Gate the exact completed base filesystem before it can be published.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN set -eu; \
+    for build_cache in /root/.npm /root/.cache/electron /root/.cache/node-gyp; do \
+        if [ -e "$build_cache" ] || [ -L "$build_cache" ]; then \
+            echo "ERROR: build-only Hermes cache leaked into the base image: $build_cache" >&2; \
+            exit 1; \
+        fi; \
+    done; \
+    install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:hermes-base \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json

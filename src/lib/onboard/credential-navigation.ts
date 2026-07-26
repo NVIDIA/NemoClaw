@@ -67,12 +67,14 @@ export async function replaceNamedCredential({
   label,
   helpUrl = null,
   validator = null,
+  allowEmpty = false,
   exitOnboardFromPrompt,
 }: {
   envName: string;
   label: string;
   helpUrl?: string | null;
   validator?: ((value: string) => string | null) | null;
+  allowEmpty?: boolean;
   exitOnboardFromPrompt: () => never;
 }): Promise<string | BackToSelection> {
   if (helpUrl) {
@@ -85,6 +87,7 @@ export async function replaceNamedCredential({
     const key = await readCredentialValue(`  ${label}: `, exitOnboardFromPrompt);
     if (isBackToSelection(key)) return key;
     if (!key) {
+      if (allowEmpty) return "";
       console.error(`  ${label} is required.`);
       continue;
     }
@@ -107,12 +110,14 @@ export async function ensureNamedCredential({
   label,
   helpUrl = null,
   validator = null,
+  allowEmpty = false,
   exitOnboardFromPrompt,
 }: {
   envName: string | null;
   label: string;
   helpUrl?: string | null;
   validator?: ((value: string) => string | null) | null;
+  allowEmpty?: boolean;
   exitOnboardFromPrompt: () => never;
 }): Promise<string | BackToSelection> {
   if (!envName) {
@@ -128,7 +133,8 @@ export async function ensureNamedCredential({
     }
     console.error(validationError);
   }
-  return replaceNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt });
+  // biome-ignore format: keep optional credential forwarding together.
+  return replaceNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt });
 }
 
 export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never): {
@@ -144,6 +150,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     label: string,
     helpUrl?: string | null,
     validator?: ((value: string) => string | null) | null,
+    allowEmpty?: boolean,
   ) => Promise<string | BackToSelection>;
   shouldReturnToProviderSelection: (result: unknown) => boolean;
   returningToProviderSelection: (result: unknown) => result is BackNavigationResult;
@@ -152,8 +159,8 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     readValue: (question) => readCredentialValue(question, exitOnboardFromPrompt),
     replaceNamedCredential: (envName, label, helpUrl = null, validator = null) =>
       replaceNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt }),
-    ensureNamedCredential: (envName, label, helpUrl = null, validator = null) =>
-      ensureNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt }),
+    // biome-ignore format: keep optional credential forwarding together.
+    ensureNamedCredential: (envName, label, helpUrl = null, validator = null, allowEmpty = false) => ensureNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt }),
     shouldReturnToProviderSelection: (result) =>
       shouldReturnToProviderSelection(result, exitOnboardFromPrompt),
     returningToProviderSelection: (result) =>

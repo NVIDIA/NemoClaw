@@ -6,9 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../state/registry", () => ({
   getSandbox: vi.fn(),
   getCustomPolicies: vi.fn(() => []),
+  getBaselineExclusions: vi.fn(() => []),
 }));
 
 vi.mock(".", () => ({
+  getBaselineExclusionRuntimeStatus: vi.fn(() => "excluded"),
   getPresetEndpoints: vi.fn(),
   getGatewayPresets: vi.fn(() => null),
   listCustomPresets: vi.fn(),
@@ -23,8 +25,8 @@ vi.mock("./tiers", () => ({
 
 import * as registry from "../state/registry";
 import * as policies from ".";
-import { getTier } from "./tiers";
 import { buildPolicyContext, renderPolicyContextMarkdown } from "./context";
+import { getTier } from "./tiers";
 
 const SANDBOX = "alpha";
 
@@ -101,6 +103,10 @@ function resetMocks() {
   vi.mocked(policies.getPresetEndpoints).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReturnValue(null);
+  vi.mocked(registry.getBaselineExclusions).mockReset();
+  vi.mocked(registry.getBaselineExclusions).mockReturnValue([]);
+  vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReset();
+  vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("excluded");
   vi.mocked(getTier).mockReset();
 }
 
@@ -125,9 +131,13 @@ describe("buildPolicyContext", () => {
     expect(ctx.activePresets[0].redactedHostCount).toBe(0);
     expect(ctx.activePresets[0].verification).toBe("gateway-unavailable");
     expect(ctx.knownUnappliedPresets.map((p) => p.name)).toEqual(["github"]);
-    expect(ctx.approvalPath.inspect).toBe(`nemoclaw ${SANDBOX} policy-list`);
-    expect(ctx.approvalPath.add).toBe(`nemoclaw ${SANDBOX} policy-add <preset>`);
-    expect(ctx.approvalPath.remove).toBe(`nemoclaw ${SANDBOX} policy-remove <preset>`);
+    expect(ctx.approvalPath.inspect).toBe(`nemoclaw ${SANDBOX} policy list`);
+    expect(ctx.approvalPath.add).toBe(`nemoclaw ${SANDBOX} policy add <preset>`);
+    expect(ctx.approvalPath.remove).toBe(`nemoclaw ${SANDBOX} policy remove <preset>`);
+    expect(ctx.approvalPath.excludeBaseline).toBe(
+      `nemoclaw ${SANDBOX} policy exclude <key> --dry-run`,
+    );
+    expect(ctx.approvalPath.restoreBaseline).toBe(`nemoclaw ${SANDBOX} policy restore <key>`);
     expect(ctx.supportBoundaries.some((b) => b.capability === "host allowlist enforcement")).toBe(
       true,
     );
@@ -242,6 +252,170 @@ describe("buildPolicyContext", () => {
     const internal = ctx.activePresets.find((p) => p.name === "internal");
     expect(internal?.allowedHostCategories).toEqual(["internal.example.com"]);
   });
+
+  it("reports baseline exclusions with a status per current digest agreement (#7194)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    vi.mocked(getTier).mockReturnValue(null);
+    stubRegistry({ policies: [], policyTier: undefined });
+    vi.mocked(registry.getBaselineExclusions).mockReturnValue([
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "changed_entry",
+        digest: "digest-stale",
+        acknowledgedAt: "2026-07-18T00:00:00.000Z",
+      },
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "dropped_entry",
+        digest: "digest-2",
+        acknowledgedAt: "2026-07-17T00:00:00.000Z",
+      },
+    ]);
+    const statuses: Record<string, "excluded" | "content-changed" | "no-longer-in-baseline"> = {
+      nous_research: "excluded",
+      changed_entry: "content-changed",
+      dropped_entry: "no-longer-in-baseline",
+    };
+    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockImplementation(
+      (_sandbox, entry) => statuses[entry.key],
+    );
+
+    const ctx = buildPolicyContext(SANDBOX);
+
+    expect(ctx.baselineExclusions).toEqual([
+      {
+        key: "changed_entry",
+        digest: "digest-stale",
+        acknowledgedAt: "2026-07-18T00:00:00.000Z",
+        status: "content-changed",
+        supportImpact:
+          "Excluded egress leaves dependent agent features unsupported for this sandbox.",
+      },
+      {
+        key: "dropped_entry",
+        digest: "digest-2",
+        acknowledgedAt: "2026-07-17T00:00:00.000Z",
+        status: "no-longer-in-baseline",
+        supportImpact:
+          "Excluded egress leaves dependent agent features unsupported for this sandbox.",
+      },
+      {
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+        status: "excluded",
+        supportImpact:
+          "Excluded egress leaves dependent agent features unsupported for this sandbox.",
+      },
+    ]);
+  });
+
+  it("surfaces an interrupted live-policy transaction as repair-required (#7178)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    vi.mocked(getTier).mockReturnValue(null);
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      name: SANDBOX,
+      policies: [],
+      baselineExclusionTransition: {
+        id: "tx-1",
+        operation: "exclude",
+        exclusion: {
+          version: 1,
+          agent: "openclaw",
+          key: "nous_research",
+          digest: "digest-1",
+          acknowledgedAt: "2026-07-19T00:00:00.000Z",
+        },
+        targetLiveDigest: null,
+        startedAt: "2026-07-19T00:00:00.000Z",
+      },
+    });
+
+    const ctx = buildPolicyContext(SANDBOX);
+
+    expect(ctx.baselineExclusions).toEqual([
+      expect.objectContaining({
+        key: "nous_research",
+        status: "pending-exclude-repair",
+      }),
+    ]);
+    const markdown = renderPolicyContextMarkdown(ctx);
+    expect(markdown).toContain("repair-required");
+    expect(markdown).toContain("exclude transaction was interrupted");
+    expect(markdown).toContain("rebuild blocked");
+  });
+
+  it.each([
+    "exclude",
+    "restore",
+  ] as const)("surfaces pending %s repair even when the release baseline is unreadable (#7194)", (operation) => {
+    resetMocks();
+    mockBuiltinPresets();
+    vi.mocked(getTier).mockReturnValue(null);
+    vi.mocked(registry.getBaselineExclusions).mockReturnValue([
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "another_entry",
+        digest: "c".repeat(64),
+        acknowledgedAt: "2026-07-18T00:00:00.000Z",
+      },
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "nous_research",
+        digest: "a".repeat(64),
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+    ]);
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      name: SANDBOX,
+      policies: [],
+      baselineExclusionTransition: {
+        id: "00000000-0000-4000-8000-000000000001",
+        operation,
+        exclusion: {
+          version: 1,
+          agent: "openclaw",
+          key: "nous_research",
+          digest: "a".repeat(64),
+          acknowledgedAt: "2026-07-19T00:00:00.000Z",
+        },
+        targetLiveDigest: operation === "restore" ? "b".repeat(64) : null,
+        startedAt: "2026-07-19T00:00:00.000Z",
+      },
+    });
+    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("baseline-unreadable");
+
+    const ctx = buildPolicyContext(SANDBOX);
+
+    expect(ctx.baselineExclusions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "another_entry", status: "baseline-unreadable" }),
+        expect.objectContaining({
+          key: "nous_research",
+          status: operation === "exclude" ? "pending-exclude-repair" : "pending-restore-repair",
+        }),
+      ]),
+    );
+    expect(ctx.baselineExclusions).toHaveLength(2);
+    expect(policies.getBaselineExclusionRuntimeStatus).toHaveBeenCalledOnce();
+    expect(policies.getBaselineExclusionRuntimeStatus).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.objectContaining({ key: "another_entry" }),
+    );
+  });
 });
 
 describe("renderPolicyContextMarkdown", () => {
@@ -273,5 +447,42 @@ describe("renderPolicyContextMarkdown", () => {
       buildPolicyContext(SANDBOX, { gatewayPresets: ["slack"] }),
     );
     expect(md).toContain("status: verified");
+  });
+
+  it("discloses excluded baseline entries and their support impact (#7194)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+    vi.mocked(registry.getBaselineExclusions).mockReturnValue([
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+    ]);
+    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("excluded");
+
+    const md = renderPolicyContextMarkdown(buildPolicyContext(SANDBOX));
+
+    expect(md).toContain("## Baseline exclusions");
+    expect(md).toContain("`nous_research`");
+    expect(md).toContain("status: excluded");
+    expect(md).toContain("Excluded egress leaves dependent agent features unsupported");
+    expect(md).toContain("policy restore nous_research");
+  });
+
+  it("reports no baseline exclusions when none are recorded", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+
+    const md = renderPolicyContextMarkdown(buildPolicyContext(SANDBOX));
+
+    expect(md).toContain("## Baseline exclusions");
+    expect(md).toMatch(/## Baseline exclusions\n- none/);
   });
 });

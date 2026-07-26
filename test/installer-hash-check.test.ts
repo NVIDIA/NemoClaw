@@ -52,8 +52,12 @@ const ASSET_DIGESTS = new Map([
     "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
     "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
   ],
+  ["openshell.rb", "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23"],
 ]);
-const ASSETS = [...ASSET_DIGESTS.keys()];
+const FORMULA_ASSET = "openshell.rb";
+const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
+const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
+const INSTALLER_ASSETS = [...ASSETS, FORMULA_ASSET];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
@@ -80,7 +84,9 @@ type FixtureMode =
   | "brev-sha-command-bypass"
   | "complete"
   | "duplicate-brev-pin"
+  | "duplicate-installer-pin"
   | "failure"
+  | "formula-mismatch"
   | "incomplete-trusted-allowlist"
   | "installer-max-version-drift"
   | "installer-bypassed-comparison"
@@ -218,6 +224,15 @@ const mutateSandboxBuildFunction = (
 };
 
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "duplicate-installer-pin": (source) => {
+    const asset = ASSETS[0];
+    const digest = ASSET_DIGESTS.get(asset ?? "") ?? "missing";
+    const arm = `    v0.0.72:${asset})
+      printf '%s\\n' "${digest}"
+      ;;`;
+    assert.ok(source.includes(arm), "installer duplicate-pin fixture arm must exist");
+    return source.replace(arm, `${arm}\n${arm}`);
+  },
   "installer-bypassed-comparison": (source) =>
     source.replace('[ "$release_sha" = "$expected_sha" ]', "true"),
   "installer-changed-asset": (source) =>
@@ -477,11 +492,11 @@ function renderPinFunction(
 function replacePinFunction(
   source: string,
   functionName: string,
-  nextFunctionName: string,
+  nextMarker: string,
   replacement: string,
 ): string {
   const start = source.indexOf(`${functionName}() {`);
-  const next = source.indexOf(`\n${nextFunctionName}() {`, start);
+  const next = source.indexOf(`\n${nextMarker}`, start);
   expect(start, `${functionName} template start`).not.toBe(-1);
   expect(next, `${functionName} template end`).not.toBe(-1);
   return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
@@ -500,7 +515,7 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
   const withPinFunction = replacePinFunction(
     selected,
     "openshell_pinned_sha256",
-    "openshell_checksum_line",
+    "openshell_checksum_line() {",
     pinFunction,
   );
   const sandboxFunctionStart = withPinFunction.indexOf("pinned_sandbox_build_version() {");
@@ -524,7 +539,7 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
   return replacePinFunction(
     selected,
     "openshell_cli_pinned_sha256",
-    "openshell_checksum_line",
+    "openshell_checksum_line() {",
     pinFunction,
   );
 }
@@ -561,7 +576,7 @@ function createFixture(
     path.join(scriptsDir, "install-openshell.sh"),
     renderInstallerTemplate(
       openshellVersion,
-      renderPinFunction("openshell_pinned_sha256", ASSETS, openshellVersion, formatting),
+      renderPinFunction("openshell_pinned_sha256", INSTALLER_ASSETS, openshellVersion, formatting),
     ),
   );
   fs.writeFileSync(
@@ -613,13 +628,37 @@ case "$url" in
       openshell-sandbox-checksums-sha256.txt)
         printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
         ;;
+      openshell.rb)
+        printf '%s\n' 'class Openshell < Formula; end' >"$output"
+        ;;
     esac
     ;;
-  *) exit 22 ;;
 esac
 `,
   );
   fs.chmodSync(path.join(binDir, "curl"), 0o755);
+  fs.writeFileSync(
+    path.join(binDir, "sha256sum"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  */openshell.rb)
+    case "\${NEMOCLAW_TEST_CURL_MODE:-}" in
+      formula-mismatch) digest='${"0".repeat(64)}' ;;
+      *) digest='${FORMULA_DIGEST}' ;;
+    esac
+    printf '%s  %s\\n' "$digest" "$1"
+    ;;
+  *)
+    case "$(uname -s)" in
+      Darwin) /usr/bin/shasum -a 256 "$@" ;;
+      *) /usr/bin/sha256sum "$@" ;;
+    esac
+    ;;
+esac
+`,
+  );
+  fs.chmodSync(path.join(binDir, "sha256sum"), 0o755);
   return fixtureRoot;
 }
 
@@ -693,6 +732,24 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("verifies the pinned Homebrew formula", () => {
+    const result = runFixture("complete", undefined, true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`OK: installer ${FORMULA_ASSET} (${FORMULA_DIGEST})`);
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("fails closed when the Homebrew formula digest does not match", () => {
+    const result = runFixture("formula-mismatch", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "STALE: installer openshell.rb digest does not match the pinned v0.0.72 release asset",
+    );
+    expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
   it("derives the release version from matching static installer pin tables", () => {
@@ -934,6 +991,17 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
+  it("fails closed when the installer pin table contains a duplicate asset", () => {
+    const result = runFixture("duplicate-installer-pin", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain(
+      `openshell_pinned_sha256 contains duplicate assets: ${ASSETS[0]}`,
+    );
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
   it("does not let a pull request replace the trusted verifier with a success stub", () => {
     const result = runFixture("pr-checker-bypass", undefined, true);
 
@@ -983,7 +1051,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
-    expect(result.stdout).toContain("14 OpenShell release-asset check(s) failed");
+    expect(result.stdout).toContain("15 OpenShell release-asset check(s) failed");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -992,7 +1060,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("digest does not match the pinned v0.0.72 release asset");
-    expect(result.stdout).toContain("expected all 10 pinned asset references");
+    expect(result.stdout).toContain("expected all 11 pinned asset references");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 

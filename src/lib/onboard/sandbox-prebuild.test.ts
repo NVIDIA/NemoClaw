@@ -1,12 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({ dockerSpawn: vi.fn() }));
+
+vi.mock("../adapters/docker/exec", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/docker/exec")>()),
+  dockerSpawn: mocks.dockerSpawn,
+}));
+
+import { withStdoutRedirectedToStderr } from "../cli/stdout-guard";
 import { ROOT } from "../runner";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
@@ -41,6 +50,7 @@ function createBuildContext(
 
 describe("sandbox BuildKit prebuild", () => {
   afterEach(() => {
+    mocks.dockerSpawn.mockReset();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     for (const directory of temporaryDirectories.splice(0)) {
@@ -472,6 +482,44 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
       }),
     ).rejects.toThrow(/verified legacy builder/);
+  });
+
+  it("routes default Docker build stdout only while JSONL owns stdout (#6403)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    mocks.dockerSpawn.mockImplementation(() => {
+      const child = new EventEmitter();
+      process.nextTick(() => child.emit("close", 0));
+      return child;
+    });
+    const build = () =>
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        inspectImageId: () => IMAGE_ID,
+        log: () => {},
+      });
+
+    await expect(build()).resolves.toEqual(
+      expect.objectContaining({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" }),
+    );
+    expect(mocks.dockerSpawn).toHaveBeenCalledWith(
+      expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.objectContaining({ shell: false, stdio: "inherit" }),
+    );
+
+    mocks.dockerSpawn.mockClear();
+    await expect(withStdoutRedirectedToStderr(build)).resolves.toEqual(
+      expect.objectContaining({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" }),
+    );
+    expect(mocks.dockerSpawn).toHaveBeenCalledWith(
+      expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.objectContaining({ shell: false, stdio: ["inherit", process.stderr, "inherit"] }),
+    );
   });
 
   it.each([

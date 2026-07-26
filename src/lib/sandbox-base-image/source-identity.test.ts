@@ -13,6 +13,7 @@ import {
   baseImageInputsDirty,
   buildLocalBaseTag,
   getNearestVersionedBaseImageTags,
+  getSourceRevisionIds,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
   normalizeBaseImageInputPaths,
@@ -76,6 +77,7 @@ function createGitFixture() {
   writeFixture(root, "Dockerfile.base", "FROM node:22\n");
   writeFixture(root, "agents/langchain-deepagents-code/Dockerfile.base", "FROM python:3.13\n");
   writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.4.24\n");
+  writeFixture(root, "scripts/lib/openclaw-npm-remediation.mts", "export const version = 1;\n");
   writeFixture(root, "src/other.ts", "export const value = 1;\n");
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "initial"]);
@@ -113,6 +115,39 @@ function createGitFixtureWithReachableOriginTags(tags: string[]) {
   return root;
 }
 
+function addUnreachableOriginTag(root: string, tag: string) {
+  const originalBranch = git(root, ["branch", "--show-current"]);
+  const branch = `unreachable-${tag.replaceAll(".", "-")}`;
+  git(root, ["switch", "--orphan", branch]);
+  git(root, ["rm", "-rf", "--ignore-unmatch", "."]);
+  writeFixture(root, "unreachable.txt", `${tag}\n`);
+  git(root, ["add", "unreachable.txt"]);
+  git(root, ["commit", "-m", `add ${tag}`]);
+  git(root, ["tag", tag]);
+  git(root, ["push", "origin", `refs/tags/${tag}`]);
+  git(root, ["switch", originalBranch]);
+}
+
+function traceReachabilityProbes<T>(operation: (env: NodeJS.ProcessEnv) => T) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-git-trace-"));
+  tmpRoots.push(root);
+  const traceFile = path.join(root, "trace.jsonl");
+  const result = operation({ ...gitEnv, GIT_TRACE2_EVENT: traceFile });
+  const probes = fs
+    .readFileSync(traceFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter(
+      (event) =>
+        event.event === "start" &&
+        event.argv?.includes("merge-base") &&
+        event.argv.includes("--is-ancestor"),
+    )
+    .map((event) => event.argv ?? []);
+  return { probes, result };
+}
+
 afterEach(() => {
   for (const root of tmpRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -141,7 +176,12 @@ describe("sandbox base-image source identity", () => {
       "scripts/lib/sandbox-rlimits.sh",
       "agents/openclaw/mcporter-runtime/package.json",
       "agents/openclaw/mcporter-runtime/package-lock.json",
+      "scripts/lib/openclaw-npm-remediation.mts",
       "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/checks/node-tar-image-scan.mts",
+      "scripts/patch-bundled-npm-brace-expansion.mts",
+      "scripts/patch-bundled-npm-tar.mts",
+      "scripts/upgrade-bundled-npm.mts",
       agentDockerfile,
     ]);
   });
@@ -164,6 +204,15 @@ describe("sandbox base-image source identity", () => {
       GITHUB_SHA: "1E94F2E207C5456EBC35E2BD5BB380D4430292C6",
     } as NodeJS.ProcessEnv);
     expect(tags).toEqual(["1e94f2e2", "1e94f2e"]);
+  });
+
+  it("retains the full source revision for build provenance", () => {
+    const revision = "1E94F2E207C5456EBC35E2BD5BB380D4430292C6";
+    expect(
+      getSourceRevisionIds("/definitely/not/a/git/repo", {
+        GITHUB_SHA: revision,
+      } as NodeJS.ProcessEnv),
+    ).toEqual([revision.toLowerCase()]);
   });
 
   it("derives versioned sandbox-base tags from pinned install refs", () => {
@@ -217,12 +266,69 @@ describe("sandbox base-image source identity", () => {
     git(root, ["add", "docs/release.md"]);
     git(root, ["commit", "-m", "release 42"]);
     git(root, ["tag", "-a", "v0.0.42", "-m", "v0.0.42"]);
+    const peeledCommit = git(root, ["rev-parse", "v0.0.42^{}"]);
     git(root, ["push", "origin", "main", "refs/tags/v0.0.42"]);
     git(root, ["tag", "-d", "v0.0.42"]);
 
     expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
     expect(git(root, ["describe", "--tags", "--abbrev=0", "--match", "v*"])).toBe("v0.0.41");
-    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+    expect(result).toEqual(["v0.0.42"]);
+    expect(probes).toHaveLength(1);
+    expect(probes[0]).toContain(peeledCommit);
+  });
+
+  it("stops after the newest reachable origin release tag", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v0.0.77", "v0.0.79"]);
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v0.0.79"]);
+    expect(probes).toHaveLength(1);
+  });
+
+  it("preserves remote order for comparator-equivalent release tag spellings (#7249)", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v1.2.3.0", "v1.2.3"]);
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v1.2.3"]);
+    expect(probes).toHaveLength(1);
+  });
+
+  it("checks the next release only when the newest origin tag is unreachable", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v0.0.79"]);
+    addUnreachableOriginTag(root, "v0.0.80");
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v0.0.79"]);
+    expect(probes).toHaveLength(2);
+  });
+
+  it("preserves the nearest local tag fallback when no origin tag is reachable", () => {
+    const root = createGitFixtureWithRemoteOnlyBaseRef();
+    git(root, ["tag", "v0.0.41"]);
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 42;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "move off tag"]);
+    addUnreachableOriginTag(root, "v0.0.80");
+
+    const { probes, result } = traceReachabilityProbes((env) =>
+      getNearestVersionedBaseImageTags(root, env),
+    );
+
+    expect(result).toEqual(["v0.0.41"]);
+    expect(probes).toHaveLength(1);
   });
 
   it("prefers a stable reachable origin release over a prerelease created later (#6624)", () => {
@@ -243,6 +349,17 @@ describe("sandbox base-image source identity", () => {
     writeFixture(root, "Dockerfile.base", "FROM node:22\nRUN echo changed\n");
     git(root, ["add", "Dockerfile.base"]);
     git(root, ["commit", "-m", "change base"]);
+
+    expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("detects committed npm remediation helper changes relative to origin/main", () => {
+    const root = createGitFixture();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "scripts/lib/openclaw-npm-remediation.mts", "export const version = 2;\n");
+    git(root, ["add", "scripts/lib/openclaw-npm-remediation.mts"]);
+    git(root, ["commit", "-m", "change remediation helper"]);
 
     expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);

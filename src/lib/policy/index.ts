@@ -3,6 +3,7 @@
 //
 // Policy preset management — list, load, merge, and apply presets.
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,8 @@ import YAML from "yaml";
 
 // Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import * as openshellResolveModule from "../adapters/openshell/resolve";
-import { loadAgent } from "../agent/defs";
+import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
+import { CLI_NAME } from "../cli/branding";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -22,8 +24,18 @@ import {
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
 } from "../messaging/channels";
+import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { ROOT, run, runCapture } from "../runner";
 import * as registry from "../state/registry";
+import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
+import {
+  digestBaselineEntry,
+  evaluateBaselineExclusionRuntimeStatus,
+  getBaselineEntry,
+  mergeBaselineEntryIntoPolicy,
+  removeBaselineEntryFromPolicy,
+} from "./baseline-exclusion";
 import {
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
@@ -46,6 +58,7 @@ import {
   parseNetworkPolicies,
 } from "./preset-parsing";
 import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
+import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
@@ -72,6 +85,7 @@ type PresetListOptions = {
 
 type MergePresetNamesOptions = {
   agent?: string | null;
+  excludedBaselineKeys?: readonly string[];
 };
 
 type SetupPolicyPresetSupportOptions = {
@@ -185,6 +199,30 @@ function parsePresetPolicyKeys(presetContent: string | null | undefined): string
 function parsePresetPolicyKeysForOwnership(presetContent: string): string[] | null {
   const networkPolicies = parseNetworkPolicies(presetContent);
   return networkPolicies === null ? null : Object.keys(networkPolicies);
+}
+
+function findExcludedBaselineKeyForPolicy(
+  sandboxName: string,
+  presetContent: string,
+): string | null {
+  const excludedKeys = new Set(
+    registry.getBaselineExclusions(sandboxName).map((exclusion) => exclusion.key),
+  );
+  const transition = registry.getBaselineExclusionTransition(sandboxName);
+  if (transition?.operation === "exclude") excludedKeys.add(transition.exclusion.key);
+  return parsePresetPolicyKeys(presetContent).find((key) => excludedKeys.has(key)) ?? null;
+}
+
+function findAppliedPolicyOwnerForKey(sandboxName: string, key: string): string | null {
+  const sandbox = registry.getSandbox(sandboxName);
+  for (const presetName of sandbox?.policies ?? []) {
+    const content = loadPresetForSandbox(sandboxName, presetName);
+    if (content && parsePresetPolicyKeys(content).includes(key)) return presetName;
+  }
+  for (const custom of registry.getCustomPolicies(sandboxName)) {
+    if (parsePresetPolicyKeys(custom.content).includes(key)) return custom.name;
+  }
+  return null;
 }
 
 const AGENT_PRESET_KEY_ALIASES: Readonly<Record<string, readonly string[]>> =
@@ -465,10 +503,11 @@ function assertOpenshellResolvable(options: { nonFatal?: boolean } = {}): boolea
 function setPolicyFile(
   policyFile: string,
   sandboxName: string,
-  options: { nonFatal?: boolean } = {},
+  options: { nonFatal?: boolean; gatewayName?: string } = {},
 ): boolean {
   const result = run(buildPolicySetCommand(policyFile, sandboxName), {
     ignoreError: options.nonFatal === true,
+    ...(options.gatewayName ? { env: { OPENSHELL_GATEWAY: options.gatewayName } } : {}),
   });
   if (!options.nonFatal) return true;
   if (!result.error && result.status === 0) return true;
@@ -637,6 +676,14 @@ function mergePresetNamesIntoPolicy(
     if (!presetEntries) {
       missingPresets.push(presetName);
       continue;
+    }
+
+    const excludedKeys = new Set(options.excludedBaselineKeys ?? []);
+    const collision = parsePresetPolicyKeys(presetContent).find((key) => excludedKeys.has(key));
+    if (collision) {
+      throw new Error(
+        `Cannot compose policy preset '${presetName}': network policy key '${collision}' is reserved by a baseline exclusion. Restore that baseline key before applying the preset.`,
+      );
     }
 
     merged = mergePresetIntoPolicy(merged, presetEntries);
@@ -836,59 +883,684 @@ function removePreset(
   return true;
 }
 
-/**
- * Interactive preset picker for the `policy-remove` command. Prompts on
- * stderr and resolves to the chosen preset name, or `null` if the user
- * cancels or enters an invalid selection.
- */
-function selectForRemoval(
-  items: PresetInfo[],
-  { applied = [] }: SelectionOptions = {},
-): Promise<string | null> {
-  return new Promise<string | null>((resolve) => {
-    const appliedItems = items.filter((item) => applied.includes(item.name));
-    if (appliedItems.length === 0) {
-      process.stderr.write("\n  No presets are currently applied.\n\n");
-      resolve(null);
-      return;
+/** Push a policy YAML body to a sandbox's live gateway via a private temp file. */
+function pushPolicyYaml(
+  sandboxName: string,
+  updatedPolicy: string,
+  options: { nonFatal?: boolean; gatewayName?: string } = {},
+): boolean {
+  if (!assertOpenshellResolvable(options)) return false;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+  const tmpFile = path.join(tmpDir, "policy.yaml");
+  fs.writeFileSync(tmpFile, updatedPolicy, { encoding: "utf-8", mode: 0o600 });
+  try {
+    return setPolicyFile(tmpFile, sandboxName, options);
+  } finally {
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* ignored */
     }
-    process.stderr.write("\n  Applied presets:\n");
-    appliedItems.forEach((item, i) => {
-      const description = item.description ? ` — ${item.description}` : "";
-      process.stderr.write(`    ${i + 1}) ${item.name}${description}\n`);
+    try {
+      fs.rmdirSync(tmpDir);
+    } catch {
+      /* ignored */
+    }
+  }
+}
+
+/** Round-trippable live policy body from `--base`, or null when unreadable. */
+function readCurrentSandboxPolicy(sandboxName: string, gatewayName?: string): string | null {
+  let rawPolicy = "";
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), {
+      ...(gatewayName ? { env: { OPENSHELL_GATEWAY: gatewayName } } : {}),
     });
-    process.stderr.write("\n");
-    const question = "  Choose preset to remove: ";
+  } catch {
+    /* ignored */
+  }
+  return parseCurrentPolicyOrEmpty(rawPolicy) || null;
+}
+
+/** Resolve and validate one agent's reviewed baseline policy source. */
+function resolveAgentBaselinePolicy(
+  agentName: string | null | undefined,
+): { agent: string; policyPath: string; content: string } | null {
+  const resolvedAgent = agentName || "openclaw";
+  const usesOpenClawBaseline = !agentName || agentName === "openclaw";
+  const policyPath = usesOpenClawBaseline
+    ? path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml")
+    : requireAgentPolicyAdditionsPath(loadAgent(resolvedAgent));
+  let content: string;
+  try {
+    content = fs.readFileSync(policyPath, "utf-8");
+  } catch {
+    if (!usesOpenClawBaseline) {
+      throw new Error(
+        `Agent '${resolvedAgent}' baseline policy became unreadable. Refusing to substitute the OpenClaw baseline.`,
+      );
+    }
+    return null;
+  }
+  parseAndValidateSandboxPolicy(content);
+  return { agent: resolvedAgent, policyPath, content };
+}
+
+/** Resolve the reviewed baseline policy source recorded for a sandbox. */
+function resolveSandboxBaselinePolicy(
+  sandboxName: string,
+): { agent: string; policyPath: string; content: string } | null {
+  return resolveAgentBaselinePolicy(registry.getSandbox(sandboxName)?.agent);
+}
+
+/** The current baseline entry for a key, or null when the baseline omits it. */
+function getSandboxBaselineEntry(sandboxName: string, key: string): PolicyObject | null {
+  const baseline = resolveSandboxBaselinePolicy(sandboxName);
+  return baseline ? getBaselineEntry(baseline.content, key) : null;
+}
+
+/** Content digest of a sandbox's current baseline entry, or null when absent. */
+function getSandboxBaselineEntryDigest(sandboxName: string, key: string): string | null {
+  const entry = getSandboxBaselineEntry(sandboxName, key);
+  return entry ? digestBaselineEntry(entry) : null;
+}
+
+/** Digest of an observed live policy key, null when absent, or throw when unreadable. */
+function getLiveSandboxPolicyEntryDigest(sandboxName: string, key: string): string | null {
+  assertNoOpenShellGatewayEndpointOverride();
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered.`);
+  const gatewayName = resolveSandboxGatewayName(sandbox);
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) throw new Error(`Live policy for '${sandboxName}' is unreadable.`);
+  const live = inspectLiveBaselineEntry(currentPolicy, key);
+  if (live.state === "invalid") {
+    throw new Error(`Live policy key '${key}' for '${sandboxName}' is malformed.`);
+  }
+  return live.digest;
+}
+
+/** Three-way status across agent source, reviewed baseline, and observed live policy. */
+function getBaselineExclusionRuntimeStatus(
+  sandboxName: string,
+  exclusion: registry.BaselineExclusionEntry,
+): BaselineExclusionRuntimeStatus {
+  const currentAgent = registry.getSandbox(sandboxName)?.agent || "openclaw";
+  if (exclusion.agent !== currentAgent) return "agent-changed";
+  let currentBaselineDigest: string | null;
+  try {
+    currentBaselineDigest = getSandboxBaselineEntryDigest(sandboxName, exclusion.key);
+  } catch {
+    return "baseline-unreadable";
+  }
+  const baselineStatus = evaluateBaselineExclusionRuntimeStatus(
+    exclusion,
+    currentAgent,
+    currentBaselineDigest,
+    undefined,
+  );
+  if (baselineStatus !== "live-policy-unreadable") return baselineStatus;
+  try {
+    const liveDigest = getLiveSandboxPolicyEntryDigest(sandboxName, exclusion.key);
+    return evaluateBaselineExclusionRuntimeStatus(
+      exclusion,
+      currentAgent,
+      currentBaselineDigest,
+      liveDigest,
+    );
+  } catch {
+    return "live-policy-unreadable";
+  }
+}
+
+/** Run one baseline transaction against the sandbox's durable gateway binding. */
+function withRecordedSandboxGateway(
+  sandboxName: string,
+  operation: (gatewayName: string) => boolean,
+): boolean {
+  assertNoOpenShellGatewayEndpointOverride();
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) {
+    console.error(`  Sandbox '${sandboxName}' is not registered; no policy changes were made.`);
+    return false;
+  }
+  const gatewayName = resolveSandboxGatewayName(sandbox);
+  // Never rewrite process.env here: two sandbox operations may run in the
+  // same CLI process. Every live read/write receives this binding explicitly.
+  return operation(gatewayName);
+}
+
+type BaselineTransitionReconciliation =
+  | { state: "none" }
+  | { state: "excluded" | "restored" }
+  | { state: "resume"; transition: registry.BaselineExclusionTransition };
+
+function registryTransitionStep(action: () => boolean, failureMessage: string): boolean {
+  try {
+    if (action()) return true;
+  } catch {
+    // The durable journal remains authoritative; do not hide it with a second
+    // best-effort mutation after a persistence exception.
+  }
+  console.error(`  ${failureMessage}`);
+  return false;
+}
+
+type LiveBaselineEntryState =
+  | { state: "absent"; digest: null }
+  | { state: "present"; digest: string }
+  | { state: "invalid"; digest: null };
+
+function inspectLiveBaselineEntry(policy: string, key: string): LiveBaselineEntryState {
+  try {
+    const document = YAML.parse(policy);
+    if (!isPolicyDocument(document)) {
+      return { state: "invalid", digest: null };
+    }
+    if (document.network_policies === undefined || document.network_policies === null) {
+      return { state: "absent", digest: null };
+    }
+    if (!isPolicyObject(document.network_policies)) return { state: "invalid", digest: null };
+    if (!Object.prototype.hasOwnProperty.call(document.network_policies, key)) {
+      return { state: "absent", digest: null };
+    }
+    const entry = document.network_policies[key];
+    return isPolicyObject(entry)
+      ? { state: "present", digest: digestBaselineEntry(entry) }
+      : { state: "invalid", digest: null };
+  } catch {
+    return { state: "invalid", digest: null };
+  }
+}
+
+/**
+ * Recover an interrupted registry/live-policy transaction from exact live
+ * state. The journal is finalized only at its exact target and rolled back
+ * only at its exact source; any third state remains visible and fail-closed.
+ */
+function reconcileBaselineExclusionTransition(
+  sandboxName: string,
+  requestedKey: string,
+  gatewayName: string,
+): BaselineTransitionReconciliation | null {
+  const transition = registry.getBaselineExclusionTransition(sandboxName);
+  if (!transition) return { state: "none" };
+  const key = transition.exclusion.key;
+  if (key !== requestedKey) {
+    console.error(
+      `  Baseline policy repair for '${key}' is still pending. Re-run 'policy ${transition.operation} ${key}' before changing another baseline entry.`,
+    );
+    return null;
+  }
+  if (transition.operation === "restore") {
+    const committed = registry
+      .getBaselineExclusions(sandboxName)
+      .find((entry) => entry.key === transition.exclusion.key);
+    if (!committed || !isDeepStrictEqual(committed, transition.exclusion)) {
+      console.error(
+        `  The durable exclusion for '${key}' changed during the pending restore. The journal was preserved; inspect registry intent before retrying.`,
+      );
+      return null;
+    }
+  }
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) {
+    console.error(
+      `  Could not inspect the live policy needed to repair the pending '${transition.operation}' for '${key}'. The journal remains pending and rebuild is blocked.`,
+    );
+    return null;
+  }
+  const live = inspectLiveBaselineEntry(currentPolicy, key);
+  const atTarget =
+    transition.targetLiveDigest === null
+      ? live.state === "absent"
+      : live.state === "present" && live.digest === transition.targetLiveDigest;
+  if (atTarget) {
+    if (!finalizeBaselineExclusionTransition(sandboxName, transition)) return null;
+    return { state: transition.operation === "exclude" ? "excluded" : "restored" };
+  }
+
+  const atSource =
+    transition.operation === "exclude"
+      ? live.state === "present" && live.digest === transition.exclusion.digest
+      : live.state === "absent";
+  if (atSource) {
+    const committed = registry
+      .getBaselineExclusions(sandboxName)
+      .some((entry) => entry.key === transition.exclusion.key);
+    // A re-exclude can begin from a pre-existing inconsistent record. Preserve
+    // its journal and resume the exact live mutation instead of hiding that
+    // divergence by returning to the already-inconsistent committed state.
+    if (transition.operation === "exclude" && committed) {
+      return { state: "resume", transition };
+    }
+    if (
+      !registryTransitionStep(
+        () => registry.clearBaselineExclusionTransition(sandboxName, transition.id),
+        `The live policy remains at the pre-${transition.operation} state for '${key}', but the durable journal could not be rolled back. Re-run the same command; rebuild remains blocked.`,
+      )
+    ) {
+      return null;
+    }
+    return { state: transition.operation === "exclude" ? "restored" : "excluded" };
+  }
+
+  console.error(
+    `  Live baseline entry '${key}' matches neither side of the pending '${transition.operation}' transaction. The journal was preserved; inspect the live policy and repair it before rebuilding.`,
+  );
+  return null;
+}
+
+function beginBaselineExclusionTransition(
+  sandboxName: string,
+  operation: registry.BaselineExclusionTransitionOperation,
+  exclusion: registry.BaselineExclusionEntry,
+  targetLiveDigest: string | null,
+): registry.BaselineExclusionTransition | null {
+  const transition: registry.BaselineExclusionTransition = {
+    id: randomUUID(),
+    operation,
+    exclusion,
+    targetLiveDigest,
+    startedAt: new Date().toISOString(),
+  };
+  return registryTransitionStep(
+    () => registry.beginBaselineExclusionTransition(sandboxName, transition),
+    `Could not record the pending baseline '${operation}' for '${sandboxName}'; no live policy changes were made.`,
+  )
+    ? transition
+    : null;
+}
+
+function restoreTransitionCanFinalize(
+  sandboxName: string,
+  transition: registry.BaselineExclusionTransition,
+): boolean {
+  if (transition.operation !== "restore") return true;
+  const committed = registry
+    .getBaselineExclusions(sandboxName)
+    .find((entry) => entry.key === transition.exclusion.key);
+  if (!committed || !isDeepStrictEqual(committed, transition.exclusion)) {
+    console.error(
+      `  The durable exclusion for '${transition.exclusion.key}' no longer matches the pending restore. The journal was preserved; rebuild remains blocked.`,
+    );
+    return false;
+  }
+  let currentBaselineDigest: string | null;
+  try {
+    currentBaselineDigest = getSandboxBaselineEntryDigest(sandboxName, transition.exclusion.key);
+  } catch {
+    console.error(
+      `  The current release baseline for '${transition.exclusion.key}' is unreadable. The pending restore was not finalized; rebuild remains blocked.`,
+    );
+    return false;
+  }
+  if (currentBaselineDigest !== transition.targetLiveDigest) {
+    console.error(
+      `  The current release baseline for '${transition.exclusion.key}' changed during the pending restore. The journal was preserved; re-review the current scope before repairing it.`,
+    );
+    return false;
+  }
+  return true;
+}
+
+function finalizeBaselineExclusionTransition(
+  sandboxName: string,
+  transition: registry.BaselineExclusionTransition,
+): boolean {
+  if (!restoreTransitionCanFinalize(sandboxName, transition)) return false;
+  return registryTransitionStep(
+    () => registry.commitBaselineExclusionTransition(sandboxName, transition.id),
+    `The live policy was updated for '${transition.exclusion.key}', but the durable journal could not be finalized. Re-run 'policy ${transition.operation} ${transition.exclusion.key}' to reconcile it; rebuild remains blocked.`,
+  );
+}
+
+function compensateBaselineExclusionTransition(
+  sandboxName: string,
+  transition: registry.BaselineExclusionTransition,
+): boolean {
+  return registryTransitionStep(
+    () => registry.clearBaselineExclusionTransition(sandboxName, transition.id),
+    `Failed to roll back the pending baseline '${transition.operation}' for '${transition.exclusion.key}'. The durable journal was preserved; re-run the same command before rebuilding '${sandboxName}'.`,
+  );
+}
+
+function settleBaselineExclusionTransitionAfterPush(
+  sandboxName: string,
+  transition: registry.BaselineExclusionTransition,
+  pushSucceeded: boolean,
+  canRollbackAtSource: boolean,
+  gatewayName: string,
+): boolean {
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) {
+    console.error(
+      `  Could not verify the live '${transition.operation}' result for '${transition.exclusion.key}'. The durable journal was preserved and rebuild remains blocked.`,
+    );
+    return false;
+  }
+  const live = inspectLiveBaselineEntry(currentPolicy, transition.exclusion.key);
+  const atTarget =
+    transition.targetLiveDigest === null
+      ? live.state === "absent"
+      : live.state === "present" && live.digest === transition.targetLiveDigest;
+  if (atTarget) {
+    return finalizeBaselineExclusionTransition(sandboxName, transition);
+  }
+  const atSource =
+    transition.operation === "exclude"
+      ? live.state === "present" && live.digest === transition.exclusion.digest
+      : live.state === "absent";
+  if (!pushSucceeded && atSource && canRollbackAtSource) {
+    compensateBaselineExclusionTransition(sandboxName, transition);
+    return false;
+  }
+  const state = atSource ? "the pre-mutation state" : "an unexpected third state";
+  console.error(
+    `  Live baseline entry '${transition.exclusion.key}' is in ${state} after the '${transition.operation}' attempt. The durable journal was preserved; re-run the same command before rebuilding.`,
+  );
+  return false;
+}
+
+function attemptBaselineTransitionPolicyPush(
+  sandboxName: string,
+  updatedPolicy: string,
+  options: { nonFatal?: boolean },
+  gatewayName: string,
+): boolean {
+  try {
+    return pushPolicyYaml(sandboxName, updatedPolicy, {
+      ...options,
+      nonFatal: true,
+      gatewayName,
+    });
+  } catch {
+    console.error(
+      `  The live policy update for '${sandboxName}' raised an unexpected error; verifying the journal before deciding whether it applied.`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Exclude a baseline entry from the running sandbox policy and record the
+ * approval, bound to `digest`, in the registry so create/rebuild replay it.
+ */
+function excludeBaselineEntry(
+  sandboxName: string,
+  key: string,
+  digest: string,
+  options: { nonFatal?: boolean } = {},
+): boolean {
+  return withRecordedSandboxGateway(sandboxName, (gatewayName) =>
+    excludeBaselineEntryOnGateway(sandboxName, key, digest, options, gatewayName),
+  );
+}
+
+function excludeBaselineEntryOnGateway(
+  sandboxName: string,
+  key: string,
+  digest: string,
+  options: { nonFatal?: boolean },
+  gatewayName: string,
+): boolean {
+  const reconciled = reconcileBaselineExclusionTransition(sandboxName, key, gatewayName);
+  if (!reconciled) return false;
+  if (reconciled.state === "excluded") return true;
+  if (reconciled.state === "resume" && reconciled.transition.operation !== "exclude") {
+    console.error(`  Finish the pending baseline restore for '${key}' before excluding it again.`);
+    return false;
+  }
+  const appliedOwner = findAppliedPolicyOwnerForKey(sandboxName, key);
+  if (appliedOwner) {
+    console.error(
+      `  Baseline entry '${key}' is also owned by applied policy '${appliedOwner}'. Remove that policy before excluding the baseline key; no policy changes were made.`,
+    );
+    return false;
+  }
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) {
+    console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
+    return false;
+  }
+  const live = inspectLiveBaselineEntry(currentPolicy, key);
+  if (live.state === "invalid") {
+    console.error(
+      `  Live baseline entry '${key}' could not be classified safely; no policy changes were made.`,
+    );
+    return false;
+  }
+  if (live.state === "present" && live.digest !== digest) {
+    console.error(
+      `  Baseline entry '${key}' changed after preview. Re-run the command to review its current scope; no policy changes were made.`,
+    );
+    return false;
+  }
+  const { policy: updated, removed } = removeBaselineEntryFromPolicy(currentPolicy, key);
+  const previousExclusion = registry
+    .getBaselineExclusions(sandboxName)
+    .find((entry) => entry.key === key);
+  const sandbox = registry.getSandbox(sandboxName);
+  const appliedAgentVersion = sandbox?.agentVersion ?? null;
+  const exclusion: registry.BaselineExclusionEntry = {
+    version: 1,
+    agent: sandbox?.agent || "openclaw",
+    key,
+    digest,
+    acknowledgedAt: new Date().toISOString(),
+    appliedAgentVersion,
+  };
+  if (!removed) {
+    if (reconciled.state === "resume") {
+      return finalizeBaselineExclusionTransition(sandboxName, reconciled.transition);
+    }
+    return registryTransitionStep(
+      () => registry.addBaselineExclusion(sandboxName, exclusion),
+      `The already-narrow live policy could not be recorded for '${sandboxName}'.`,
+    );
+  }
+  const transition =
+    reconciled.state === "resume"
+      ? reconciled.transition
+      : beginBaselineExclusionTransition(sandboxName, "exclude", exclusion, null);
+  if (!transition) return false;
+  const pushSucceeded = attemptBaselineTransitionPolicyPush(
+    sandboxName,
+    updated,
+    options,
+    gatewayName,
+  );
+  // When this was a fresh exclusion, a failed push that verifies at the exact
+  // source can clear the journal. A re-exclude that began with committed/live
+  // divergence must retain it until the live side reaches the target.
+  return settleBaselineExclusionTransitionAfterPush(
+    sandboxName,
+    transition,
+    pushSucceeded,
+    !previousExclusion,
+    gatewayName,
+  );
+}
+
+/**
+ * Restore a previously excluded baseline entry against the current release
+ * baseline and drop its recorded exclusion. When the release removed the entry
+ * entirely, only the registry record is cleared.
+ */
+function restoreBaselineEntry(
+  sandboxName: string,
+  key: string,
+  options: { nonFatal?: boolean } = {},
+): boolean {
+  return withRecordedSandboxGateway(sandboxName, (gatewayName) =>
+    restoreBaselineEntryOnGateway(sandboxName, key, options, gatewayName),
+  );
+}
+
+function restoreBaselineEntryOnGateway(
+  sandboxName: string,
+  key: string,
+  options: { nonFatal?: boolean },
+  gatewayName: string,
+): boolean {
+  const reconciled = reconcileBaselineExclusionTransition(sandboxName, key, gatewayName);
+  if (!reconciled) return false;
+  if (reconciled.state === "restored") return true;
+  if (reconciled.state === "resume" && reconciled.transition.operation !== "restore") {
+    console.error(`  Finish the pending baseline exclusion for '${key}' before restoring it.`);
+    return false;
+  }
+  const recordedExclusion = registry
+    .getBaselineExclusions(sandboxName)
+    .find((entry) => entry.key === key);
+  if (!recordedExclusion) {
+    console.error(
+      `  The exclusion for '${key}' is not recorded; no live policy changes were made.`,
+    );
+    return false;
+  }
+  // Resolve the current agent baseline before changing either durable or live
+  // state. A missing non-OpenClaw baseline must not be mistaken for a release
+  // that intentionally removed this key.
+  const entry = getSandboxBaselineEntry(sandboxName, key);
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) {
+    console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
+    return false;
+  }
+  if (!entry) {
+    return registryTransitionStep(
+      () => registry.removeBaselineExclusion(sandboxName, key),
+      `The obsolete exclusion for '${key}' could not be cleared; no live policy changes were made.`,
+    );
+  }
+  const targetDigest = digestBaselineEntry(entry);
+  const live = inspectLiveBaselineEntry(currentPolicy, key);
+  if (live.state === "invalid") {
+    console.error(
+      `  Live baseline entry '${key}' could not be classified safely; no policy changes were made.`,
+    );
+    return false;
+  }
+  if (live.state === "present" && live.digest !== targetDigest) {
+    console.error(
+      `  Live baseline entry '${key}' differs from the current release baseline. Refusing to overwrite it; repair the live policy before restoring this exclusion.`,
+    );
+    return false;
+  }
+  if (live.state === "present" && live.digest === targetDigest) {
+    if (reconciled.state === "resume") {
+      return finalizeBaselineExclusionTransition(sandboxName, reconciled.transition);
+    }
+    return registryTransitionStep(
+      () => registry.removeBaselineExclusion(sandboxName, key),
+      `The restored live policy could not be recorded for '${sandboxName}'.`,
+    );
+  }
+  const transition =
+    reconciled.state === "resume"
+      ? reconciled.transition
+      : beginBaselineExclusionTransition(sandboxName, "restore", recordedExclusion, targetDigest);
+  if (!transition) return false;
+  const updated = mergeBaselineEntryIntoPolicy(currentPolicy, key, entry);
+  const pushSucceeded = attemptBaselineTransitionPolicyPush(
+    sandboxName,
+    updated,
+    options,
+    gatewayName,
+  );
+  return settleBaselineExclusionTransitionAfterPush(
+    sandboxName,
+    transition,
+    pushSucceeded,
+    true,
+    gatewayName,
+  );
+}
+
+/**
+ * Ask one preset-picker question on stderr and resolve to the raw answer.
+ *
+ * Rejects with `code: "EOF"` when readline closes before the question is
+ * answered. A boot unit runs `nemoclaw <sandbox> policy-add < /dev/null`, and
+ * the `question` callback then never fires. Without this handler the picker
+ * promise never settles and the command exits 0 having applied nothing
+ * (#7418).
+ *
+ * `finish` marks the prompt done before closing readline, because
+ * `rl.close()` itself emits `close`. Only a close that arrives before an
+ * answer rejects.
+ *
+ * Rejects with `code: "SIGINT"` when the operator presses Ctrl-C, and
+ * re-raises the signal so the process dies by SIGINT. Readline emits `close`
+ * for an interrupt as well as for EOF, so without a SIGINT listener an
+ * interrupt would be reported as a closed stdin.
+ *
+ * This matches the `prompt()` contract in `credentials/store.ts` (#5976).
+ */
+function askPreset(question: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     // Re-attach stdin to the event loop — unref() on exit is sticky and
     // would otherwise leave a follow-up prompt waiting on a detached handle.
     if (typeof process.stdin.ref === "function") process.stdin.ref();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer: string) => {
+    let finished = false;
+    const finish = (settle: () => void) => {
+      if (finished) return;
+      finished = true;
       rl.close();
       // pause+unref so the process exits naturally after the last prompt.
       // The matching ref() above keeps subsequent prompts working.
       if (typeof process.stdin.pause === "function") process.stdin.pause();
       if (typeof process.stdin.unref === "function") process.stdin.unref();
-      const trimmed = answer.trim();
-      if (!trimmed) {
-        resolve(null);
-        return;
-      }
-      if (!/^\d+$/.test(trimmed)) {
-        process.stderr.write("\n  Invalid preset number.\n");
-        resolve(null);
-        return;
-      }
-      const num = Number(trimmed);
-      const item = appliedItems[num - 1];
-      if (!item) {
-        process.stderr.write("\n  Invalid preset number.\n");
-        resolve(null);
-        return;
-      }
-      resolve(item.name);
+      settle();
+    };
+    // Runs before the `close` listener below, so an interrupt settles as
+    // SIGINT and the close that follows is ignored.
+    rl.on("SIGINT", () => {
+      finish(() => reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" })));
+      process.kill(process.pid, "SIGINT");
     });
+    rl.on("close", () =>
+      finish(() => reject(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }))),
+    );
+    rl.question(question, (answer: string) => finish(() => resolve(answer)));
   });
+}
+
+/**
+ * Interactive preset picker for the `policy-remove` command. Prompts on
+ * stderr and resolves to the chosen preset name, or `null` if the user
+ * cancels or enters an invalid selection. Rejects with `code: "EOF"` when
+ * stdin closes before an answer (see `askPreset`).
+ */
+async function selectForRemoval(
+  items: PresetInfo[],
+  { applied = [] }: SelectionOptions = {},
+): Promise<string | null> {
+  const appliedItems = items.filter((item) => applied.includes(item.name));
+  if (appliedItems.length === 0) {
+    process.stderr.write("\n  No presets are currently applied.\n\n");
+    return null;
+  }
+  process.stderr.write("\n  Applied presets:\n");
+  appliedItems.forEach((item, i) => {
+    const description = item.description ? ` — ${item.description}` : "";
+    process.stderr.write(`    ${i + 1}) ${item.name}${description}\n`);
+  });
+  process.stderr.write("\n");
+  const trimmed = (await askPreset("  Choose preset to remove: ")).trim();
+  if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  const item = appliedItems[Number(trimmed) - 1];
+  if (!item) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  return item.name;
 }
 
 /**
@@ -955,6 +1627,13 @@ function applyPresetContent(
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
+    return false;
+  }
+  const excludedCollision = findExcludedBaselineKeyForPolicy(sandboxName, presetContent);
+  if (excludedCollision) {
+    console.error(
+      `  Network policy key '${excludedCollision}' is reserved by a baseline exclusion. Restore that baseline key before applying '${presetName}'.`,
+    );
     return false;
   }
 
@@ -1078,7 +1757,7 @@ function applyPresetContent(
     console.error(
       `  Warning: '${presetName}' was applied to the gateway but could not be ` +
         `recorded locally because sandbox '${sandboxName}' is not in the ` +
-        `registry, so it will not appear in policy-list or status. Recover or ` +
+        `registry, so it will not appear in policy list or status. Recover or ` +
         `re-onboard the sandbox, then re-apply.`,
     );
     return false;
@@ -1158,6 +1837,13 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
       console.error(`  Preset ${presetName} has no network_policies section.`);
+      return false;
+    }
+    const excludedCollision = findExcludedBaselineKeyForPolicy(sandboxName, presetContent);
+    if (excludedCollision) {
+      console.error(
+        `  Network policy key '${excludedCollision}' is reserved by a baseline exclusion. Restore that baseline key before applying '${presetName}'.`,
+      );
       return false;
     }
 
@@ -1493,61 +2179,47 @@ function presetContentMatchesGateway(sandboxName: string, presetContent: string)
 }
 
 /**
- * Interactive preset picker for the `policy-add` command. Prints the
+ * Interactive preset picker for the `policy add` command. Prints the
  * presets on stderr (● applied, ○ not applied), prompts for a number, and
- * resolves to the chosen preset name or `null` on cancel.
+ * resolves to the chosen preset name or `null` on cancel. Rejects with
+ * `code: "EOF"` when stdin closes before an answer (see `askPreset`).
  */
-function selectFromList(
+async function selectFromList(
   items: PresetInfo[],
   { applied = [] }: SelectionOptions = {},
 ): Promise<string | null> {
-  return new Promise<string | null>((resolve) => {
-    process.stderr.write("\n  Available presets:\n");
-    items.forEach((item, i) => {
-      const marker = applied.includes(item.name) ? "●" : "○";
-      const description = item.description ? ` — ${item.description}` : "";
-      process.stderr.write(`    ${i + 1}) ${marker} ${item.name}${description}\n`);
-    });
-    process.stderr.write("\n  ● applied, ○ not applied\n\n");
-    const defaultIdx = items.findIndex((item) => !applied.includes(item.name));
-    const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
-    const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
-    // Re-attach stdin to the event loop — unref() on exit is sticky and
-    // would otherwise leave a follow-up prompt waiting on a detached handle.
-    if (typeof process.stdin.ref === "function") process.stdin.ref();
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer: string) => {
-      rl.close();
-      // pause+unref so the process exits naturally after the last prompt.
-      // The matching ref() above keeps subsequent prompts working.
-      if (typeof process.stdin.pause === "function") process.stdin.pause();
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      const trimmed = answer.trim();
-      const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
-      if (!effectiveInput) {
-        resolve(null);
-        return;
-      }
-      if (!/^\d+$/.test(effectiveInput)) {
-        process.stderr.write("\n  Invalid preset number.\n");
-        resolve(null);
-        return;
-      }
-      const num = Number(effectiveInput);
-      const item = items[num - 1];
-      if (!item) {
-        process.stderr.write("\n  Invalid preset number.\n");
-        resolve(null);
-        return;
-      }
-      if (applied.includes(item.name)) {
-        process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
-        resolve(null);
-        return;
-      }
-      resolve(item.name);
-    });
+  process.stderr.write("\n  Available presets:\n");
+  items.forEach((item, i) => {
+    const marker = applied.includes(item.name) ? "●" : "○";
+    const description = item.description ? ` — ${item.description}` : "";
+    process.stderr.write(`    ${i + 1}) ${marker} ${item.name}${description}\n`);
   });
+  process.stderr.write("\n  ● applied, ○ not applied\n\n");
+  const defaultIdx = items.findIndex((item) => !applied.includes(item.name));
+  const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
+  const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
+  const trimmed = (await askPreset(question)).trim();
+  const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
+  if (!effectiveInput) return null;
+  if (!/^\d+$/.test(effectiveInput)) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  const item = items[Number(effectiveInput) - 1];
+  if (!item) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  if (applied.includes(item.name)) {
+    // The picker has no live-policy context to classify drift; the named
+    // path (`policy add <preset>`) re-applies edited presets (#7323).
+    process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
+    process.stderr.write(
+      `  If its preset file changed, run '${CLI_NAME} <sandbox> policy add ${item.name}' to re-apply it.\n`,
+    );
+    return null;
+  }
+  return item.name;
 }
 
 const PERMISSIVE_POLICY_PATH = path.join(
@@ -1611,13 +2283,18 @@ export {
   buildPolicySetCommand,
   clampSetupPolicyPresetNames,
   customPresetOwnsNetworkPolicyKey,
+  excludeBaselineEntry,
   extractPresetEntries,
   filterSetupPolicyPresets,
   getAppliedPresets,
+  getBaselineExclusionRuntimeStatus,
   getGatewayPresets,
+  getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState,
   getPresetEndpoints,
   getPresetValidationWarning,
+  getSandboxBaselineEntry,
+  getSandboxBaselineEntryDigest,
   isMessagingChannelPolicyPreset,
   listCustomPresets,
   listPresets,
@@ -1640,7 +2317,10 @@ export {
   removePreset,
   removePresetFromPolicy,
   renderPresetScope,
+  resolveAgentBaselinePolicy,
   resolvePermissivePolicyPath,
+  resolveSandboxBaselinePolicy,
+  restoreBaselineEntry,
   selectForRemoval,
   selectFromList,
   setupPolicyPresetSupported,

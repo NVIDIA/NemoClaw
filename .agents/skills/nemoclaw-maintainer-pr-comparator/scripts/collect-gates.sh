@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Collect Tier 0 gate state for a PR and emit JSON for downstream scoring.
-# Covers gates 1-5 (state, CI on latest SHA, mergeable, contributor compliance,
+# Covers gates 1-5 (state, CI on PR SHA, mergeable, contributor compliance,
 # branch protection). Gate 6 (CodeRabbit threads) is handled by
 # check-coderabbit-threads.sh.
 #
@@ -51,7 +51,7 @@ raw=$(gh pr view "$pr" "${repo_args[@]}" \
 state=$(printf '%s' "$raw" | jq -r .state)
 gate_state_open=$([ "$state" = "OPEN" ] && echo true || echo false)
 
-# Gate 2: CI green on latest head SHA. statusCheckRollup contains the latest run.
+# Gate 2: CI passes on the PR SHA. statusCheckRollup contains the run for that SHA.
 # Fail closed when required checks are missing, including an empty rollup.
 required_checks='["checks","check-hash","changes","commit-lint","dco-check","E2E / PR Gate"]'
 observed_checks=$(printf '%s' "$raw" | jq -c '[(.statusCheckRollup // [])[] | (.name // .context // empty)] | unique')
@@ -185,7 +185,7 @@ jq -n \
     head_sha: $head_sha,
     gates: {
       state_open: $gate_state_open,
-      ci_green_latest_sha: $gate_ci_green,
+      ci_green_sha: $gate_ci_green,
       mergeable: $gate_mergeable,
       contributor_compliance: $gate_contributor_compliance,
       branch_protection: $gate_branch_protection

@@ -34,8 +34,12 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 | Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
 | Platform   | Refer to [Platforms](#platforms) below |
 
-On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
-If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
+On Linux, the installer checks Docker before it installs the NemoClaw CLI.
+The installer can install Docker, start the Docker service, and add your user to the `docker` group.
+When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
+In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
+If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
+
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
@@ -82,18 +86,18 @@ Refer to the [troubleshooting guide](../reference/troubleshooting) for the overr
 
 ## Platforms
 
-The following table lists tested platforms and deferred platforms with a documented preparation path.
-A Deferred row is available for evaluation only and is not a support claim.
+The following table lists platforms with a documented installation path.
+A Tested with limitations row applies only to the configuration in its notes.
 The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
 
 {/* platform-matrix:begin */}
 | OS | Container runtime | Status | Notes |
 |----|-------------------|--------|-------|
 | DGX OS (Spark) | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
-| DGX OS (Station) | Docker | Deferred | Deferred. For evaluation on a qualifying DGX Station GB300, see [Additional Setup for DGX Station](prerequisites/dgx-station-preparation) before the Quickstart. |
+| DGX OS (Station) | Docker | Tested with limitations | Tested with limitations across qualified profiles on one physical DGX Station GB300; see [Additional Setup for DGX Station](additional-setup/dgx-station-preparation) for accepted profiles, the pending no-OTA DGX OS `7.6.x` end-to-end qualification, runtime gates, and current dual-Station and dedicated CI limitations. |
 | Linux | Docker | Tested | Primary tested path. Ubuntu 24.04 has host-level onboarding validation. A digest-pinned Ubuntu 26.04 userspace lane builds the CLI and runs preflight, installer, and platform contracts on eligible main pushes; Docker-host, AppArmor, Landlock, and live onboarding validation on 26.04 remain pending. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before running the installer. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight. |
-| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](prerequisites/windows-preparation) before the Quickstart. |
+| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before running the installer. When Homebrew is available, OpenShell uses its official formula and the gateway appears in `brew services list` as `openshell`; without Homebrew, NemoClaw uses the standalone OpenShell install and detached gateway fallback. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight. |
+| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart. |
 
 For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).
 {/* platform-matrix:end */}
@@ -105,12 +109,11 @@ Use only the page that matches your host.
 
 ### DGX Station Express Preparation
 
-DGX Station remains Deferred.
-If you are evaluating a qualifying DGX Station GB300, follow [Prepare DGX Station to Install NemoClaw](prerequisites/dgx-station-preparation) before the Quickstart.
+If you are using a qualifying DGX Station GB300, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation) before the Quickstart.
 
 ### Windows Preparation
 
-If you are using Windows, follow [Prepare a Windows Machine to Install NemoClaw](prerequisites/windows-preparation) before the Quickstart.
+If you are using Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation) before the Quickstart.
 
 ## Next Steps
 
