@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
@@ -51,7 +52,7 @@ function extractHermesRuntimeGuard(dockerfile: string): string {
     .replace(/\\\n/g, " ");
 }
 
-function runLoggedShell(command: string, tmp: string) {
+function runLoggedShell(command: string, tmp: string, functionDefs: string[] = []) {
   const logPath = path.join(tmp, "calls.log");
   const scriptPath = path.join(tmp, "run-hermes-apt-layer.sh");
   const script = [
@@ -59,6 +60,7 @@ function runLoggedShell(command: string, tmp: string) {
     "set -euo pipefail",
     `call_log=${JSON.stringify(logPath)}`,
     'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+    ...functionDefs,
     command,
   ].join("\n");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -189,11 +191,14 @@ describe("Hermes share mount package parity (#2947)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-share-apt-"));
     const lists = path.join(tmp, "apt-lists");
+    const securityDebs = path.join(tmp, "security-debs");
     fs.mkdirSync(lists);
 
     try {
-      const command = extractAptInstallCommand(dockerfile).replaceAll("/var/lib/apt/lists", lists);
-      const { result, calls } = runLoggedShell(command, tmp);
+      const command = extractAptInstallCommand(dockerfile)
+        .replaceAll("/var/lib/apt/lists", lists)
+        .replaceAll("/tmp/nemoclaw-debian-security", securityDebs);
+      const { result, calls } = runLoggedShell(command, tmp, BASE_APT_SECURITY_FUNCTIONS);
 
       expect(result.status).toBe(0);
       expect(calls).toContain("apt-get update");
