@@ -870,7 +870,7 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("rejects the legacy installer template after completing the trust transition (#7451)", () => {
+  it("rejects the legacy installer template after completing the trust transition", () => {
     const legacy = runFixture(
       "installer-homebrew-trust-transition-complete-current",
       undefined,
@@ -881,7 +881,7 @@ describe("installer hash verification", () => {
     expect(legacy.stdout).toContain("installer operational template is not base-trusted");
   });
 
-  it("rejects cleanup that deletes the formula after untrust fails (#7451)", () => {
+  it("rejects cleanup that deletes the formula after untrust fails", () => {
     const result = runFixture("installer-homebrew-untrust-cleanup-drift", undefined, true);
 
     expect(result.status).toBe(1);
