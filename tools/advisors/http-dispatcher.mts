@@ -9,6 +9,8 @@ const ADVISOR_HTTP_IDLE_TIMEOUT_MS = 300_000;
 const originalGlobalFetch = globalThis.fetch;
 let installedGlobalFetch: typeof globalThis.fetch | undefined;
 
+// Undici can emit a dispatcher error while the corresponding fetch rejects normally.
+// Handle that duplicate EventEmitter path without swallowing the fetch rejection.
 const ignoreUndiciDispatcherError = (_error: unknown): void => {};
 
 function withUndiciErrorListener<T extends undici.Dispatcher>(dispatcher: T): T {

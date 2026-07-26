@@ -47,7 +47,15 @@ describe("advisor HTTP dispatcher", () => {
       if (globalThis.fetch === originalFetch) {
         throw new Error("advisor transport did not install npm Undici fetch");
       }
-      await fetch("https://advisor-transport.invalid/v1").catch(() => undefined);
+      let fetchRejected = false;
+      try {
+        await fetch("https://advisor-transport.invalid/v1");
+      } catch {
+        fetchRejected = true;
+      }
+      if (!fetchRejected) {
+        throw new Error("advisor transport swallowed a failed fetch");
+      }
     `;
     const child = spawn(
       process.execPath,
