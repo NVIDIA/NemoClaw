@@ -92,6 +92,7 @@ describe("PR E2E typed-target gate (#7031)", () => {
         workflowSha: WORKFLOW_SHA,
         planHash: "c".repeat(64),
         correlationId: CORRELATION_ID,
+        expectedCheckTitle: "Evaluating PR commit",
       }),
     ).rejects.toThrow(/Controller dispatch inputs are invalid/u);
   });

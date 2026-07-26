@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 
 import YAML from "yaml";
 
-import { githubApi, githubRestPaginated } from "../advisors/github.mts";
+import { githubApi, githubApiWithResponse, githubRestPaginated } from "../advisors/github.mts";
 import { parseArgs } from "../advisors/io.mts";
 import {
   buildRiskPlan,
@@ -32,6 +32,18 @@ import {
   listNonPassingWorkflowJobs,
   workflowJobEvidenceFingerprint,
 } from "./hosted-runner-loss-github.mts";
+import {
+  assertDispatchStillNotObserved,
+  DispatchNotObservedError,
+  DispatchReconciliationError,
+  dispatchWorkflowWithReconciliation,
+} from "./pr-e2e-dispatch-reconciliation.mts";
+import {
+  dispatchNotObservedReceiptFromSummary,
+  type RetryableFailureReason,
+  retryableFailureMarker,
+  retryableFailureReason,
+} from "./pr-e2e-retry-receipt.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
 import {
@@ -48,6 +60,7 @@ export {
   listNonPassingWorkflowJobs,
   workflowJobEvidenceFingerprint,
 } from "./hosted-runner-loss-github.mts";
+export { validateWorkflowDispatchDetails } from "./pr-e2e-dispatch-reconciliation.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
@@ -61,19 +74,10 @@ const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
 const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
 const FORK_E2E_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run fork E2E";
-const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
-const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
-const RETRYABLE_FAILURE_REASONS = new Set([
-  "prerequisite-ci",
-  "child-cancelled",
-  "evidence-download",
-] as const);
-const NEVER_RETRY_FAILURE_TITLES = new Set([
-  "Authorized E2E run requires reconciliation",
-  "PR base changed",
-  "Controller stopped early",
-  "Run could not start",
-]);
+const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
+const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
+const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
+const CHILD_CANCELLATION_TIMEOUT_MS = 5_000;
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const CHECK_EXTERNAL_ID_PATTERN =
@@ -278,12 +282,6 @@ type CollaboratorPermission = {
   user?: { login?: string };
 };
 
-type WorkflowDispatchDetails = {
-  workflow_run_id: number;
-  run_url: string;
-  html_url: string;
-};
-
 type WorkflowRunIdentity = {
   childRunId: number;
   correlationId: string;
@@ -312,8 +310,6 @@ export type PrGateVerdict = {
   summary: string;
   retryableFailureReason?: RetryableFailureReason;
 };
-
-type RetryableFailureReason = "prerequisite-ci" | "child-cancelled" | "evidence-download";
 
 class ObsoleteExactDiffError extends Error {
   readonly verdict: PrGateVerdict;
@@ -1014,12 +1010,13 @@ async function listPrGateChecks(options: {
   repository: string;
   token: string;
   headSha: string;
+  signal?: AbortSignal;
 }): Promise<CheckRun[]> {
   const response = validateCheckRunsResponse(
     await githubApi<unknown>(
       `repos/${options.repository}/commits/${options.headSha}/check-runs?check_name=${encodeURIComponent(CHECK_NAME)}&filter=all&per_page=100`,
       options.token,
-      { userAgent: USER_AGENT },
+      { userAgent: USER_AGENT, signal: options.signal },
     ),
   );
   return response.check_runs.filter(
@@ -1034,29 +1031,6 @@ function isPrGateLineage(check: CheckRun, prNumber: number, headSha: string): bo
     (typeof externalId === "string" &&
       externalId.startsWith(`${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:`))
   );
-}
-
-function retryableFailureMarker(reason: RetryableFailureReason): string {
-  return `${RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${RETRYABLE_FAILURE_MARKER_SUFFIX}`;
-}
-
-function retryableFailureReason(check: CheckRun): RetryableFailureReason | undefined {
-  if (check.status !== "completed" || check.conclusion !== "failure") return undefined;
-  if (NEVER_RETRY_FAILURE_TITLES.has(check.output?.title ?? "")) return undefined;
-  const summary = check.output?.summary;
-  if (typeof summary !== "string") return undefined;
-  const markerBoundary = `\n\n${RETRYABLE_FAILURE_MARKER_PREFIX}`;
-  const markerStart = summary.lastIndexOf(markerBoundary);
-  if (markerStart < 0) return undefined;
-  const marker = summary.slice(markerStart + 2);
-  if (!marker.endsWith(RETRYABLE_FAILURE_MARKER_SUFFIX)) return undefined;
-  const reason = marker.slice(
-    RETRYABLE_FAILURE_MARKER_PREFIX.length,
-    -RETRYABLE_FAILURE_MARKER_SUFFIX.length,
-  );
-  if (!RETRYABLE_FAILURE_REASONS.has(reason as RetryableFailureReason)) return undefined;
-  if (marker !== retryableFailureMarker(reason as RetryableFailureReason)) return undefined;
-  return reason as RetryableFailureReason;
 }
 
 function runnerLossChildRunUrl(repository: string, check: CheckRun): string | null {
@@ -1156,6 +1130,7 @@ async function matchingPrGateHistory(options: {
   headSha: string;
   baseSha: string;
   prNumber: number;
+  signal?: AbortSignal;
 }): Promise<CheckRun[]> {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
   const sameIdentity = (await listPrGateChecks(options)).filter(
@@ -1405,32 +1380,110 @@ async function updateRunningCheck(
   const selectionCount = options.jobs.length + options.targets.length;
   const title = `Running ${selectionCount} E2E ${selectionCount === 1 ? "check" : "checks"}`;
   const summary = `Risk plan ${options.planHash} selected jobs: ${options.jobs.join(", ") || "none"}; targets: ${options.targets.join(", ") || "none"}. Child run: ${childRunUrl}.`;
-  const check = await githubApi<unknown>(
-    `repos/${context.repository}/check-runs/${context.checkRunId}`,
-    token,
-    {
-      method: "PATCH",
-      body: {
-        status: "in_progress",
-        details_url: childRunUrl,
-        output: {
-          title,
-          summary,
-        },
-      },
-      userAgent: USER_AGENT,
-    },
-  );
-  validatePrGateMutationResponse(check, {
-    checkRunId: context.checkRunId,
-    status: "in_progress",
-    conclusion: null,
-    prNumber: context.prNumber,
-    headSha: context.headSha,
-    baseSha: context.baseSha,
-    title,
-    summary,
-  });
+  const validatePublishedCheck = (value: unknown): void => {
+    const check = validatePrGateMutationResponse(value, {
+      checkRunId: context.checkRunId,
+      status: "in_progress",
+      conclusion: null,
+      prNumber: context.prNumber,
+      headSha: context.headSha,
+      baseSha: context.baseSha,
+      title,
+      summary,
+    });
+    if (check.details_url !== childRunUrl) {
+      throw new Error("GitHub did not bind the controller check to the selected child run");
+    }
+  };
+  try {
+    validatePublishedCheck(
+      await boundedControllerOperation(
+        "Child authorization publication",
+        CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS,
+        (signal) =>
+          githubApi<unknown>(
+            `repos/${context.repository}/check-runs/${context.checkRunId}`,
+            token,
+            {
+              method: "PATCH",
+              body: {
+                status: "in_progress",
+                details_url: childRunUrl,
+                output: {
+                  title,
+                  summary,
+                },
+              },
+              userAgent: USER_AGENT,
+              signal,
+            },
+          ),
+      ),
+    );
+    return;
+  } catch (publicationError) {
+    try {
+      validatePublishedCheck(
+        await boundedControllerOperation(
+          "Child authorization confirmation",
+          CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS,
+          (signal) =>
+            githubApi<unknown>(
+              `repos/${context.repository}/check-runs/${context.checkRunId}`,
+              token,
+              { userAgent: USER_AGENT, signal },
+            ),
+        ),
+      );
+      return;
+    } catch (confirmationError) {
+      const revocationTitle = "Child authorization publication was not confirmed";
+      const revocationSummary = `The controller could not confirm authorization for [child run ${options.childRunId}](${childRunUrl}). Coordination was closed before child cancellation.`;
+      try {
+        const revoked = await boundedControllerOperation(
+          "Child authorization revocation",
+          CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS,
+          (signal) =>
+            githubApi<unknown>(
+              `repos/${context.repository}/check-runs/${context.checkRunId}`,
+              token,
+              {
+                method: "PATCH",
+                body: {
+                  status: "completed",
+                  conclusion: "failure",
+                  completed_at: new Date().toISOString(),
+                  details_url: childRunUrl,
+                  output: {
+                    title: revocationTitle,
+                    summary: revocationSummary,
+                  },
+                },
+                userAgent: USER_AGENT,
+                signal,
+              },
+            ),
+        );
+        validatePrGateMutationResponse(revoked, {
+          checkRunId: context.checkRunId,
+          status: "completed",
+          conclusion: "failure",
+          prNumber: context.prNumber,
+          headSha: context.headSha,
+          baseSha: context.baseSha,
+          title: revocationTitle,
+          summary: revocationSummary,
+        });
+      } catch (revocationError) {
+        throw new Error(
+          `${controllerErrorMessage(publicationError)}; authorization confirmation failed: ${controllerErrorMessage(confirmationError)}; authorization revocation failed: ${controllerErrorMessage(revocationError)}`,
+        );
+      }
+      throw new Error(
+        `${controllerErrorMessage(publicationError)}; authorization confirmation failed: ${controllerErrorMessage(confirmationError)}; authorization revocation requested`,
+      );
+    }
+  }
 }
 
 function controllerErrorMessage(error: unknown): string {
@@ -1444,6 +1497,26 @@ function controllerErrorMessage(error: unknown): string {
     : singleLine;
 }
 
+async function boundedControllerOperation<T>(
+  label: string,
+  timeoutMs: number,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), timeout]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
+
 async function completeFailureAfterControllerError(
   context: { repository: string; checkRunId: number },
   token: string,
@@ -1453,6 +1526,7 @@ async function completeFailureAfterControllerError(
     detailsUrl?: string;
     recovery?: string;
     retryableFailureReason?: RetryableFailureReason;
+    receiptMarker?: string;
   },
 ): Promise<boolean> {
   const reason = controllerErrorMessage(options.error).replace(/`/gu, "'");
@@ -1467,6 +1541,7 @@ async function completeFailureAfterControllerError(
           "The controller could not complete the check.",
           options.recovery,
           `Controller error: \`${reason}\``,
+          options.receiptMarker,
         ]
           .filter((paragraph): paragraph is string => Boolean(paragraph))
           .join("\n\n"),
@@ -1479,6 +1554,20 @@ async function completeFailureAfterControllerError(
     console.error(`Failed to close check after controller error: ${controllerErrorMessage(error)}`);
     return false;
   }
+}
+
+async function completeDispatchNotObserved(
+  context: { repository: string; checkRunId: number },
+  token: string,
+  error: DispatchNotObservedError,
+): Promise<boolean> {
+  return completeFailureAfterControllerError(context, token, "Workflow dispatch was not observed", {
+    error,
+    recovery:
+      "GitHub accepted no observable child run during the bounded reconciliation window. A later controller may create a fresh check and correlation only after rechecking this receipt.",
+    retryableFailureReason: "dispatch-not-observed",
+    receiptMarker: error.marker(),
+  });
 }
 
 function validatePullRequestIdentity(
@@ -1536,6 +1625,7 @@ async function requireLiveExactDiff(options: {
   prNumber: number;
   headSha: string;
   baseSha: string;
+  signal?: AbortSignal;
 }): Promise<PullRequest> {
   const pull = validatePullRequest(
     await githubApi<unknown>(
@@ -1543,6 +1633,7 @@ async function requireLiveExactDiff(options: {
       options.token,
       {
         userAgent: USER_AGENT,
+        signal: options.signal,
       },
     ),
     { allowClosed: true },
@@ -1945,23 +2036,6 @@ export function expectedSignalShards(
   };
 }
 
-export function validateWorkflowDispatchDetails(
-  value: unknown,
-  repository: string,
-): WorkflowDispatchDetails {
-  if (!isObjectRecord(value)) throw new Error("GitHub returned invalid workflow dispatch details");
-  const runId = value.workflow_run_id;
-  if (!Number.isSafeInteger(runId) || (runId as number) < 1) {
-    throw new Error("GitHub returned an invalid dispatched workflow run id");
-  }
-  const expectedApiUrl = `https://api.github.com/repos/${repository}/actions/runs/${runId}`;
-  const expectedHtmlUrl = `https://github.com/${repository}/actions/runs/${runId}`;
-  if (value.run_url !== expectedApiUrl || value.html_url !== expectedHtmlUrl) {
-    throw new Error("GitHub returned mismatched workflow dispatch URLs");
-  }
-  return value as WorkflowDispatchDetails;
-}
-
 function validateMainReference(value: unknown): string {
   if (
     !isObjectRecord(value) ||
@@ -2112,6 +2186,136 @@ async function requireUnchangedCompletedWorkflowRun(
   }
 }
 
+function isValidExpectedPreDispatchTitle(title: string): boolean {
+  const authorizationPrefix = "E2E execution authorized by @";
+  return (
+    title === "Evaluating PR commit" ||
+    title === "Preparing one-time hosted-runner-loss retry" ||
+    (title.startsWith(authorizationPrefix) &&
+      MAINTAINER_PATTERN.test(title.slice(authorizationPrefix.length)))
+  );
+}
+
+function assertCurrentPreDispatchCheck(
+  history: readonly CheckRun[],
+  options: { repository: string; controllerCheckId: number; expectedCheckTitle: string },
+): void {
+  const current = history.at(-1);
+  const canonicalCheckUrl = `https://github.com/${options.repository}/runs/${options.controllerCheckId}`;
+  if (
+    current?.id !== options.controllerCheckId ||
+    current.status !== "in_progress" ||
+    current.conclusion !== null ||
+    current.output?.title !== options.expectedCheckTitle ||
+    (current.details_url !== undefined &&
+      current.details_url !== null &&
+      current.details_url !== canonicalCheckUrl)
+  ) {
+    throw new Error("Controller check is not in the exact pre-dispatch state");
+  }
+}
+
+async function requireDirectPreDispatchCheck(options: {
+  repository: string;
+  token: string;
+  controllerCheckId: number;
+  prNumber: number;
+  commitSha: string;
+  baseSha: string;
+  expectedCheckTitle: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const value = await githubApi<unknown>(
+    `repos/${options.repository}/check-runs/${options.controllerCheckId}`,
+    options.token,
+    { userAgent: USER_AGENT, signal: options.signal },
+  );
+  if (!isObjectRecord(value) || value.id !== options.controllerCheckId) {
+    throw new Error("GitHub returned an invalid current controller check");
+  }
+  const check = value as CheckRun;
+  if (
+    check.name !== CHECK_NAME ||
+    check.head_sha !== options.commitSha ||
+    check.external_id !== prGateExternalId(options.prNumber, options.commitSha, options.baseSha) ||
+    check.app?.id !== GITHUB_ACTIONS_APP_ID
+  ) {
+    throw new Error("Current controller check identity changed before dispatch");
+  }
+  assertCurrentPreDispatchCheck([check], options);
+}
+
+async function requireBoundedDirectPreDispatchCheck(
+  options: Omit<Parameters<typeof requireDirectPreDispatchCheck>[0], "signal">,
+): Promise<void> {
+  await boundedControllerOperation(
+    "Pre-dispatch controller check read",
+    PRE_DISPATCH_CHECK_READ_TIMEOUT_MS,
+    (signal) => requireDirectPreDispatchCheck({ ...options, signal }),
+  );
+}
+
+async function recheckDispatchHistoryBeforePost(options: {
+  repository: string;
+  token: string;
+  controllerCheckId: number;
+  prNumber: number;
+  commitSha: string;
+  baseSha: string;
+  expectedCheckTitle: string;
+}): Promise<void> {
+  const historyOptions = {
+    repository: options.repository,
+    token: options.token,
+    headSha: options.commitSha,
+    baseSha: options.baseSha,
+    prNumber: options.prNumber,
+  };
+  const history = await matchingPrGateHistory(historyOptions);
+  const currentListed = history.at(-1)?.id === options.controllerCheckId;
+  if (!currentListed && history.some((check) => check.status !== "completed")) {
+    throw new Error("A different active controller check exists before dispatch");
+  }
+  await requireBoundedDirectPreDispatchCheck(options);
+  const historicalChecks = currentListed ? history.slice(0, -1) : history;
+  const receipts = historicalChecks.flatMap((check) => {
+    if (retryableFailureReason(check) !== "dispatch-not-observed") return [];
+    const summary = check.output?.summary;
+    const receipt =
+      typeof summary === "string" ? dispatchNotObservedReceiptFromSummary(summary) : undefined;
+    if (!receipt) {
+      throw new Error("Dispatch-not-observed history has an invalid receipt");
+    }
+    return [receipt];
+  });
+  for (const receipt of receipts) {
+    await assertDispatchStillNotObserved({
+      repository: options.repository,
+      token: options.token,
+      prNumber: options.prNumber,
+      receipt,
+    });
+  }
+  if (receipts.length > 0) {
+    const confirmedHistory = await matchingPrGateHistory(historyOptions);
+    const originalIds = history.map((check) => check.id);
+    const confirmedIds = confirmedHistory.map((check) => check.id);
+    const currentBecameVisible =
+      !currentListed &&
+      confirmedIds.length === originalIds.length + 1 &&
+      confirmedIds.at(-1) === options.controllerCheckId &&
+      JSON.stringify(confirmedIds.slice(0, -1)) === JSON.stringify(originalIds);
+    if (JSON.stringify(confirmedIds) !== JSON.stringify(originalIds) && !currentBecameVisible) {
+      throw new Error("Controller check history changed during dispatch reconciliation");
+    }
+    const confirmedCurrentListed = confirmedHistory.at(-1)?.id === options.controllerCheckId;
+    if (!confirmedCurrentListed && confirmedHistory.some((check) => check.status !== "completed")) {
+      throw new Error("A different active controller check appeared before dispatch");
+    }
+    await requireBoundedDirectPreDispatchCheck(options);
+  }
+}
+
 export async function dispatchPrGate(options: {
   repository: string;
   checkoutRepository: string;
@@ -2125,6 +2329,7 @@ export async function dispatchPrGate(options: {
   workflowSha: string;
   planHash: string;
   correlationId: string;
+  expectedCheckTitle: string;
 }): Promise<{ runId: number; workflowSha: string }> {
   assertRepository(options.repository, "repository");
   assertRepository(options.checkoutRepository, "checkout repository");
@@ -2145,7 +2350,8 @@ export async function dispatchPrGate(options: {
     !SHA_PATTERN.test(options.baseSha) ||
     !SHA_PATTERN.test(options.workflowSha) ||
     !HASH_PATTERN.test(options.planHash) ||
-    !CORRELATION_PATTERN.test(options.correlationId)
+    !CORRELATION_PATTERN.test(options.correlationId) ||
+    !isValidExpectedPreDispatchTitle(options.expectedCheckTitle)
   ) {
     throw new Error("Controller dispatch inputs are invalid");
   }
@@ -2154,40 +2360,129 @@ export async function dispatchPrGate(options: {
     options.token,
     options.workflowSha,
   );
-  const details = await githubApi<unknown>(
-    `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`,
-    options.token,
-    {
-      method: "POST",
-      body: {
-        ref: "main",
-        inputs: {
-          jobs: options.jobs.join(","),
-          targets: targets.join(","),
-          controller_check_id: String(options.controllerCheckId),
-          pr_number: String(options.prNumber),
-          checkout_sha: options.commitSha,
-          checkout_repository: options.checkoutRepository,
-          base_sha: options.baseSha,
-          workflow_sha: workflowSha,
-          plan_hash: options.planHash,
-          correlation_id: options.correlationId,
+  await recheckDispatchHistoryBeforePost(options);
+  const dispatch = await dispatchWorkflowWithReconciliation({
+    repository: options.repository,
+    token: options.token,
+    workflowSha,
+    correlationId: options.correlationId,
+    prNumber: options.prNumber,
+    dispatch: (signal) =>
+      githubApiWithResponse<unknown>(
+        `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`,
+        options.token,
+        {
+          method: "POST",
+          body: {
+            ref: "main",
+            inputs: {
+              jobs: options.jobs.join(","),
+              targets: targets.join(","),
+              controller_check_id: String(options.controllerCheckId),
+              pr_number: String(options.prNumber),
+              checkout_sha: options.commitSha,
+              checkout_repository: options.checkoutRepository,
+              base_sha: options.baseSha,
+              workflow_sha: workflowSha,
+              plan_hash: options.planHash,
+              correlation_id: options.correlationId,
+            },
+            return_run_details: true,
+          },
+          userAgent: USER_AGENT,
+          signal,
         },
-        return_run_details: true,
-      },
-      userAgent: USER_AGENT,
-    },
-  );
-  const runId = validateWorkflowDispatchDetails(details, options.repository).workflow_run_id;
-  return { runId, workflowSha };
+      ),
+  }).catch(async (error: unknown) => {
+    if (!(error instanceof DispatchReconciliationError) || error.candidateRunIds.length === 0) {
+      throw error;
+    }
+    const cancellationFailures = (
+      await Promise.all(
+        error.candidateRunIds.map(async (runId) => {
+          try {
+            await cancelChildRun(options.repository, options.token, runId);
+            return undefined;
+          } catch (cancelError) {
+            return `run ${runId}: ${controllerErrorMessage(cancelError)}`;
+          }
+        }),
+      )
+    ).filter((failure): failure is string => failure !== undefined);
+    if (cancellationFailures.length > 0) {
+      throw new DispatchReconciliationError(
+        `${error.message}; candidate cancellation failed: ${cancellationFailures.join("; ")}`,
+        error.candidateRunIds,
+        error,
+      );
+    }
+    console.warn(
+      `Workflow dispatch reconciliation cleanup: correlation=${options.correlationId} candidate_runs=${error.candidateRunIds.join(",")} cancellation=requested`,
+    );
+    throw error;
+  });
+  if (dispatch.source === "workflow-run-inventory") {
+    try {
+      await boundedControllerOperation(
+        "Reconciled child validation",
+        RECONCILED_CHILD_VALIDATION_TIMEOUT_MS,
+        async (signal) => {
+          const pull = await requireLiveExactDiff({
+            repository: options.repository,
+            token: options.token,
+            prNumber: options.prNumber,
+            headSha: options.commitSha,
+            baseSha: options.baseSha,
+            signal,
+          });
+          if (pull.head.repo?.full_name !== options.checkoutRepository) {
+            throw new Error("PR head repository changed before child adoption");
+          }
+          const history = await matchingPrGateHistory({
+            repository: options.repository,
+            token: options.token,
+            headSha: options.commitSha,
+            baseSha: options.baseSha,
+            prNumber: options.prNumber,
+            signal,
+          });
+          const currentListed = history.at(-1)?.id === options.controllerCheckId;
+          if (!currentListed && history.some((check) => check.status !== "completed")) {
+            throw new Error("A different active controller check exists before child adoption");
+          }
+          await requireDirectPreDispatchCheck({ ...options, signal });
+        },
+      );
+    } catch (error) {
+      try {
+        await cancelChildRun(options.repository, options.token, dispatch.runId);
+      } catch (cancelError) {
+        throw new DispatchedChildRunError(
+          `${controllerErrorMessage(error)}; reconciled child cancellation failed: ${controllerErrorMessage(cancelError)}`,
+          dispatch.runId,
+        );
+      }
+      throw new DispatchedChildRunError(
+        `${controllerErrorMessage(error)}; reconciled child cancellation requested`,
+        dispatch.runId,
+      );
+    }
+  }
+  return { runId: dispatch.runId, workflowSha };
 }
 
 async function cancelChildRun(repository: string, token: string, runId: number): Promise<void> {
   try {
-    await githubApi(`repos/${repository}/actions/runs/${runId}/cancel`, token, {
-      method: "POST",
-      userAgent: USER_AGENT,
-    });
+    await boundedControllerOperation(
+      "Child cancellation",
+      CHILD_CANCELLATION_TIMEOUT_MS,
+      (signal) =>
+        githubApi(`repos/${repository}/actions/runs/${runId}/cancel`, token, {
+          method: "POST",
+          userAgent: USER_AGENT,
+          signal,
+        }),
+    );
   } catch (error) {
     if (/failed: 409\b/u.test(controllerErrorMessage(error))) return;
     throw error;
@@ -2342,6 +2637,7 @@ async function dispatchSelectedPrGate(options: {
   workflowSha: string;
   plan: RiskPlan;
   checkRunId: number;
+  expectedCheckTitle: string;
   paths: ControllerPaths;
 }): Promise<void> {
   const jobs = riskPlanRequiredJobIds(options.plan);
@@ -2368,6 +2664,7 @@ async function dispatchSelectedPrGate(options: {
     workflowSha: options.workflowSha,
     planHash: options.plan.planHash,
     correlationId,
+    expectedCheckTitle: options.expectedCheckTitle,
   });
   const childRunId = dispatch.runId;
   try {
@@ -2448,6 +2745,7 @@ async function dispatchRunnerLossRetry(options: {
     workflowSha: options.state.workflowSha,
     planHash: options.state.planHash,
     correlationId,
+    expectedCheckTitle: "Preparing one-time hosted-runner-loss retry",
   });
   const childRunId = dispatch.runId;
   try {
@@ -2696,19 +2994,26 @@ export async function retryRunnerLossPrGate(
   } catch (error) {
     if (retryCheckRunId !== undefined) {
       const retryRunId = error instanceof DispatchedChildRunError ? error.childRunId : undefined;
-      const closed = await completeFailureAfterControllerError(
-        { repository, checkRunId: retryCheckRunId },
-        token,
-        "Runner-loss retry could not start",
-        {
-          error,
-          detailsUrl: retryRunId
-            ? `https://github.com/${repository}/actions/runs/${retryRunId}`
-            : originalRunUrl,
-          recovery:
-            "The original runner-loss evidence remains linked. This exact PR/base SHA pair will not receive another automatic retry.",
-        },
-      );
+      const closed =
+        error instanceof DispatchNotObservedError
+          ? await completeDispatchNotObserved(
+              { repository, checkRunId: retryCheckRunId },
+              token,
+              error,
+            )
+          : await completeFailureAfterControllerError(
+              { repository, checkRunId: retryCheckRunId },
+              token,
+              "Runner-loss retry could not start",
+              {
+                error,
+                detailsUrl: retryRunId
+                  ? `https://github.com/${repository}/actions/runs/${retryRunId}`
+                  : originalRunUrl,
+                recovery:
+                  "The original runner-loss evidence remains linked. This exact PR/base SHA pair will not receive another automatic retry.",
+              },
+            );
       if (closed) appendOutput("finalized", "true");
     }
     throw error;
@@ -2778,6 +3083,20 @@ export async function startPrGate(
     throw new Error("PR repository or branch does not match the triggering CI run");
   }
   assertCheckCanStart(existingChecks[0], command.ciConclusion);
+  if (retryableFailureReason(existingChecks[0] ?? {}) === "dispatch-not-observed") {
+    const summary = existingChecks[0]?.output?.summary;
+    const receipt =
+      typeof summary === "string" ? dispatchNotObservedReceiptFromSummary(summary) : undefined;
+    if (!receipt) {
+      throw new Error("Dispatch-not-observed retry history has an invalid receipt");
+    }
+    await assertDispatchStillNotObserved({
+      repository,
+      token,
+      prNumber: ciIdentity.prNumber,
+      receipt,
+    });
+  }
   if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   const checkRunId = await ensurePrGateCheck({
     repository,
@@ -2967,16 +3286,20 @@ export async function startPrGate(
       workflowSha: command.workflowSha,
       plan,
       checkRunId,
+      expectedCheckTitle: "Evaluating PR commit",
       paths: command,
     });
   } catch (error) {
     if (!finalized) {
-      const closed = await completeFailureAfterControllerError(
-        { repository, checkRunId },
-        token,
-        "Run could not start",
-        { error },
-      );
+      const closed =
+        error instanceof DispatchNotObservedError
+          ? await completeDispatchNotObserved({ repository, checkRunId }, token, error)
+          : await completeFailureAfterControllerError(
+              { repository, checkRunId },
+              token,
+              "Run could not start",
+              { error },
+            );
       if (closed) appendOutput("finalized", "true");
     }
     throw error;
@@ -3098,20 +3421,33 @@ async function startAuthorizedPrGate(
       workflowSha: command.workflowSha,
       plan,
       checkRunId,
+      expectedCheckTitle: `E2E execution authorized by @${command.maintainer}`,
       paths: command,
     });
   } catch (error) {
     if (checkRunId) {
-      if (error instanceof DispatchedChildRunError) {
+      if (error instanceof DispatchNotObservedError) {
+        const closed = await completeDispatchNotObserved({ repository, checkRunId }, token, error);
+        if (closed) appendOutput("finalized", "true");
+      } else if (
+        error instanceof DispatchedChildRunError ||
+        error instanceof DispatchReconciliationError
+      ) {
+        const candidateRunId =
+          error instanceof DispatchedChildRunError ? error.childRunId : error.candidateRunIds[0];
         const closed = await completeFailureAfterControllerError(
           { repository, checkRunId },
           token,
           "Authorized E2E run requires reconciliation",
           {
             error,
-            detailsUrl: `https://github.com/${repository}/actions/runs/${error.childRunId}`,
+            detailsUrl: candidateRunId
+              ? `https://github.com/${repository}/actions/runs/${candidateRunId}`
+              : undefined,
             recovery:
-              "A credential-bearing child run was dispatched, so this authorization for the PR/base SHA pair cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again.",
+              error instanceof DispatchedChildRunError
+                ? "A credential-bearing child run was dispatched, so this authorization for the PR/base SHA pair cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again."
+                : "A credential-bearing child run may have been dispatched, so this authorization for the PR/base SHA pair cannot be reused. Inspect any candidate runs, then update the PR and run fresh CI before authorizing again.",
           },
         );
         if (closed) appendOutput("finalized", "true");

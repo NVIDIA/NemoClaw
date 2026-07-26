@@ -17,6 +17,10 @@ import {
   retryableGithubRead,
   waitForRequiredGate,
 } from "../tools/e2e/pr-e2e-required.mts";
+import {
+  dispatchNotObservedReceiptMarker,
+  retryableFailureMarker,
+} from "../tools/e2e/pr-e2e-retry-receipt.mts";
 import { createGitHubFetchRouter, githubFetchRoute } from "./support/github-fetch-router.ts";
 
 const HEAD_SHA = "a".repeat(40);
@@ -220,6 +224,41 @@ describe("native PR E2E required job", () => {
     );
 
     await expect(findCoordinationCheck(identity)).resolves.toMatchObject({ id: 18 });
+  });
+
+  it("waits only for a dispatch-not-observed failure with a validated receipt", () => {
+    const receipt = dispatchNotObservedReceiptMarker({
+      correlationId: "123e4567-e89b-42d3-a456-426614174000",
+      workflowSha: "d".repeat(40),
+      sentAtMs: 1_785_050_400_000,
+      deadlineAtMs: 1_785_050_445_000,
+      result: "not-observed",
+      failureKind: "http",
+      status: 500,
+      requestId: "ABCD:1234",
+    });
+    const valid = check(undefined, {
+      conclusion: "failure",
+      output: {
+        title: "Workflow dispatch was not observed",
+        summary: `No child was observed.\n\n${receipt}\n\n${retryableFailureMarker("dispatch-not-observed")}`,
+      },
+    });
+    const missingReceipt = check(undefined, {
+      conclusion: "failure",
+      output: {
+        title: "Workflow dispatch was not observed",
+        summary: `No child was observed.\n\n${retryableFailureMarker("dispatch-not-observed")}`,
+      },
+    });
+
+    expect(classifyCoordinationCheck(valid, identity.repository)).toMatchObject({
+      state: "waiting",
+    });
+    expect(classifyCoordinationCheck(missingReceipt, identity.repository)).toMatchObject({
+      state: "complete",
+      result: { conclusion: "failure" },
+    });
   });
 
   it.each([
