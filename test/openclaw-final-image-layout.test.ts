@@ -18,7 +18,7 @@ describe("OpenClaw final image layout", () => {
     const payloads = [
       {
         stage: "openclaw-dependency-payload",
-        copies: 11,
+        copies: 12,
         metadata: "/ /usr /usr/local /usr/local/lib",
       },
       {
@@ -70,6 +70,7 @@ describe("OpenClaw final image layout", () => {
       "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
     ]);
     for (const metadataContract of [
+      "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root:755'",
       "/opt/nemoclaw/openclaw.plugin.json 'root:root:644'",
       "/usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755'",
@@ -86,6 +87,13 @@ describe("OpenClaw final image layout", () => {
     );
     expect(dependency).toBeLessThan(
       finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
+    );
+    expect(
+      finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
+    ).toBeLessThan(
+      finalStage.indexOf(
+        "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      ),
     );
     expect(plugin).toBeGreaterThan(finalStage.indexOf("RUN npm ci --omit=dev"));
     expect(plugin).toBeLessThan(

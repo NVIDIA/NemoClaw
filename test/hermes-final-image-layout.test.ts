@@ -199,6 +199,7 @@ describe("Hermes final image layout", () => {
       finalStage.indexOf("RUN check_metadata()"),
     );
     for (const metadataContract of [
+      "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
       "/opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444'",
       "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",

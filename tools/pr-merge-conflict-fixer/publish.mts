@@ -161,11 +161,7 @@ function treeEntry(repository: string, tree: string, filePath: string): GitTreeE
   return entry;
 }
 
-function parentContainsBlob(
-  repository: string,
-  parent: string,
-  entry: GitTreeEntry,
-): boolean {
+function parentContainsBlob(repository: string, parent: string, entry: GitTreeEntry): boolean {
   const parentEntry = optionalTreeEntry(repository, parent, entry.path);
   return parentEntry?.type === "blob" && parentEntry.sha === entry.sha;
 }
@@ -179,8 +175,8 @@ async function createGitHubTree(input: {
   request: GitHubRequest;
 }): Promise<string> {
   const entries: GitTreeEntry[] = [];
-  for (const change of changedPathStatuses(input.repository, input.headSha, input.finalTree)) {
-    const sourceTree = change.status === "D" ? input.headSha : input.finalTree;
+  for (const change of changedPathStatuses(input.repository, input.baseSha, input.finalTree)) {
+    const sourceTree = change.status === "D" ? input.baseSha : input.finalTree;
     const entry = treeEntry(input.repository, sourceTree, change.path);
     if (change.status === "D") {
       entries.push({ ...entry, sha: null });
@@ -204,7 +200,7 @@ async function createGitHubTree(input: {
   }
 
   const created = (await input.request("POST", `/repos/${input.repositoryName}/git/trees`, {
-    base_tree: input.headSha,
+    base_tree: input.baseSha,
     tree: entries,
   })) as { sha?: string };
   if (created.sha !== input.finalTree) {
