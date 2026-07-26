@@ -497,29 +497,23 @@ describe("native PR E2E required job", () => {
     });
 
     it("retries a transient read with deterministic bounded delay", async () => {
-      let calls = 0;
       const sleepCalls: number[] = [];
+      const read = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("fetch failed"))
+        .mockResolvedValue("success");
 
       await expect(
-        retryableGithubRead(
-          "coordination checks",
-          async () => {
-            calls += 1;
-            if (calls === 1) throw new TypeError("fetch failed");
-            return "success";
+        retryableGithubRead("coordination checks", read, null, {
+          baseDelayMs: 100,
+          random: () => 0,
+          sleep: async (milliseconds) => {
+            sleepCalls.push(milliseconds);
           },
-          null,
-          {
-            baseDelayMs: 100,
-            random: () => 0,
-            sleep: async (milliseconds) => {
-              sleepCalls.push(milliseconds);
-            },
-          },
-        ),
+        }),
       ).resolves.toBe("success");
 
-      expect(calls).toBe(2);
+      expect(read).toHaveBeenCalledTimes(2);
       expect(sleepCalls).toEqual([50]);
     });
 
@@ -568,20 +562,18 @@ describe("native PR E2E required job", () => {
 
     it("logs a retry class without reflecting the GitHub response body", async () => {
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      let calls = 0;
+      const read = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new Error("GitHub API repos/x/check-runs failed: 503 credential-like-body"),
+        )
+        .mockResolvedValue("success");
 
-      await retryableGithubRead(
-        "coordination checks",
-        async () => {
-          calls += 1;
-          if (calls === 1) {
-            throw new Error("GitHub API repos/x/check-runs failed: 503 credential-like-body");
-          }
-          return "success";
-        },
-        null,
-        { baseDelayMs: 1, random: () => 0, sleep: async () => {} },
-      );
+      await retryableGithubRead("coordination checks", read, null, {
+        baseDelayMs: 1,
+        random: () => 0,
+        sleep: async () => {},
+      });
 
       expect(log).toHaveBeenCalledWith("E2E / PR Gate [coordination checks] attempt 1/3: http");
       expect(log.mock.calls.flat().join(" ")).not.toContain("credential-like-body");
@@ -629,36 +621,28 @@ describe("native PR E2E required job", () => {
     });
 
     it("proves exact PR identity through transient revalidation before retrying", async () => {
-      let calls = 0;
-      let identityCalls = 0;
       const sleepCalls: number[] = [];
-      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
-        identityCalls += 1;
-        if (identityCalls === 1) throw new TypeError("identity fetch failed");
-        return githubResponse(pullRequest());
-      });
+      const identityRead = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValueOnce(new TypeError("identity fetch failed"))
+        .mockResolvedValue(githubResponse(pullRequest()));
+      const coordinationRead = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("coordination fetch failed"))
+        .mockResolvedValue("success");
 
       await expect(
-        retryableGithubRead(
-          "coordination checks",
-          async () => {
-            calls += 1;
-            if (calls === 1) throw new TypeError("coordination fetch failed");
-            return "success";
+        retryableGithubRead("coordination checks", coordinationRead, identity, {
+          baseDelayMs: 100,
+          random: () => 0,
+          sleep: async (milliseconds) => {
+            sleepCalls.push(milliseconds);
           },
-          identity,
-          {
-            baseDelayMs: 100,
-            random: () => 0,
-            sleep: async (milliseconds) => {
-              sleepCalls.push(milliseconds);
-            },
-          },
-        ),
+        }),
       ).resolves.toBe("success");
 
-      expect(calls).toBe(2);
-      expect(identityCalls).toBe(2);
+      expect(coordinationRead).toHaveBeenCalledTimes(2);
+      expect(identityRead).toHaveBeenCalledTimes(2);
       expect(sleepCalls).toEqual([50, 50]);
     });
 
