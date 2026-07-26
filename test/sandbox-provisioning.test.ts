@@ -1056,8 +1056,6 @@ describe("sandbox provisioning: base runtime tools", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
     const securityDebs = path.join(tmp, "security-debs");
-    const inventoryDirectory = path.join(tmp, "security-inventory");
-    const inventory = path.join(inventoryDirectory, "security-packages.txt");
     const fakePy3 = path.join(tmp, "usr-bin", "python3");
     const fakePyLink = path.join(tmp, "usr-local-bin", "python");
     fs.mkdirSync(lists);
@@ -1071,8 +1069,7 @@ describe("sandbox provisioning: base runtime tools", () => {
     )
       .replaceAll("/var/lib/apt/lists", lists)
       .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
-      .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
-      .replaceAll("/usr/local/share/nemoclaw", inventoryDirectory)
+      .replaceAll("/usr/local/share/nemoclaw", path.join(tmp, "security-inventory"))
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
     try {
@@ -1097,8 +1094,6 @@ describe("sandbox provisioning: base runtime tools", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-pysymlink-"));
     const lists = path.join(tmp, "apt-lists");
     const securityDebs = path.join(tmp, "security-debs");
-    const inventoryDirectory = path.join(tmp, "security-inventory");
-    const inventory = path.join(inventoryDirectory, "security-packages.txt");
     const fakePy3 = path.join(tmp, "usr-bin", "python3");
     const fakePyLink = path.join(tmp, "usr-local-bin", "python");
     fs.mkdirSync(lists, { recursive: true });
@@ -1112,8 +1107,7 @@ describe("sandbox provisioning: base runtime tools", () => {
     )
       .replaceAll("/var/lib/apt/lists", lists)
       .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
-      .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
-      .replaceAll("/usr/local/share/nemoclaw", inventoryDirectory)
+      .replaceAll("/usr/local/share/nemoclaw", path.join(tmp, "security-inventory"))
       .replaceAll("/usr/local/bin/python", fakePyLink)
       .replaceAll("/usr/bin/python3", fakePy3);
     try {
