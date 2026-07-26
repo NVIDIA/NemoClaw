@@ -3,7 +3,12 @@
 
 /** Canonical runner-comparison sample and ledger schema. */
 
-import { PROCESS_CLASSES, type ProcessClass } from "./runner-pressure-core.mts";
+import {
+  isCoherentProcessMemoryBreakdown,
+  PROCESS_CLASSES,
+  type ProcessClass,
+  type ProcessMemoryBreakdown,
+} from "./runner-pressure-core.mts";
 
 export const RUNNER_COMPARISON_LEDGER_FILE = "runner-comparison.jsonl";
 export const RUNNER_COMPARISON_SUMMARY_FILE = "runner-comparison-summary.json";
@@ -97,6 +102,7 @@ export interface RunnerComparisonSample extends RunnerComparisonIdentity {
   largestProcess: {
     class: RunnerComparisonProcessClass;
     rssKb: number;
+    breakdown?: ProcessMemoryBreakdown | null;
   } | null;
 }
 
@@ -382,17 +388,47 @@ function parseDocker(value: unknown): RunnerComparisonSample["docker"] {
 function parseLargestProcess(value: unknown): RunnerComparisonSample["largestProcess"] {
   if (value === null) return null;
   const process = record(value, "sample.largestProcess");
-  exactKeys(process, ["class", "rssKb"], "sample.largestProcess");
+  const hasBreakdown = Object.hasOwn(process, "breakdown");
+  exactKeys(
+    process,
+    hasBreakdown ? ["class", "rssKb", "breakdown"] : ["class", "rssKb"],
+    "sample.largestProcess",
+  );
   if (
     typeof process.class !== "string" ||
     !PROCESS_CLASSES.includes(process.class as RunnerComparisonProcessClass)
   ) {
     throw new Error("sample.largestProcess.class must be a supported fixed value");
   }
-  return {
+  const parsed = {
     class: process.class as RunnerComparisonProcessClass,
     rssKb: nonNegativeInteger(process.rssKb, "sample.largestProcess.rssKb"),
   };
+  if (!hasBreakdown) return parsed;
+  if (parsed.class !== "docker-buildkit") {
+    throw new Error("sample.largestProcess.breakdown is only supported for docker-buildkit");
+  }
+  return {
+    ...parsed,
+    breakdown: parseProcessMemoryBreakdown(process.breakdown, "sample.largestProcess.breakdown"),
+  };
+}
+
+function parseProcessMemoryBreakdown(value: unknown, field: string): ProcessMemoryBreakdown | null {
+  if (value === null) return null;
+  const breakdown = record(value, field);
+  exactKeys(breakdown, ["vmRssKb", "rssAnonKb", "rssFileKb", "rssShmemKb", "vmSwapKb"], field);
+  const parsed = {
+    vmRssKb: nonNegativeInteger(breakdown.vmRssKb, `${field}.vmRssKb`),
+    rssAnonKb: nonNegativeInteger(breakdown.rssAnonKb, `${field}.rssAnonKb`),
+    rssFileKb: nonNegativeInteger(breakdown.rssFileKb, `${field}.rssFileKb`),
+    rssShmemKb: nonNegativeInteger(breakdown.rssShmemKb, `${field}.rssShmemKb`),
+    vmSwapKb: nullableInteger(breakdown.vmSwapKb, `${field}.vmSwapKb`),
+  };
+  if (!isCoherentProcessMemoryBreakdown(parsed)) {
+    throw new Error(`${field} resident components must sum to vmRssKb`);
+  }
+  return parsed;
 }
 
 function parseSampleObject(parsed: UnknownRecord, line: string): ParsedRunnerComparisonSample {

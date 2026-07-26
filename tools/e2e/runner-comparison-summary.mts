@@ -11,7 +11,11 @@ import {
   type RunnerComparisonSample,
   type RunnerComparisonSampleV1,
 } from "./runner-comparison-schema.mts";
-import { PROCESS_CLASSES } from "./runner-pressure-core.mts";
+import {
+  isCoherentProcessMemoryBreakdown,
+  PROCESS_CLASSES,
+  type ProcessMemoryBreakdown,
+} from "./runner-pressure-core.mts";
 
 export interface RunnerComparisonSummaryV1 extends RunnerComparisonIdentity {
   v: 1;
@@ -95,6 +99,7 @@ export interface RunnerComparisonSummary extends RunnerComparisonIdentity {
     rssKb: number | null;
     class: RunnerComparisonProcessClass | null;
     phase: string | null;
+    breakdown?: ProcessMemoryBreakdown | null;
   };
 }
 
@@ -295,6 +300,7 @@ function summarizeCurrent(samples: readonly RunnerComparisonSample[]): RunnerCom
     rssKb: number;
     class: RunnerComparisonProcessClass;
     phase: string | null;
+    breakdown?: ProcessMemoryBreakdown | null;
   } | null>((selected, sample, index) => {
     if (sample.largestProcess === null) return selected;
     if (selected !== null && selected.rssKb >= sample.largestProcess.rssKb) return selected;
@@ -396,6 +402,9 @@ function summarizeCurrent(samples: readonly RunnerComparisonSample[]): RunnerCom
       rssKb: maximumProcess?.rssKb ?? null,
       class: maximumProcess?.class ?? null,
       phase: maximumProcess?.phase ?? null,
+      ...(maximumProcess !== null && Object.hasOwn(maximumProcess, "breakdown")
+        ? { breakdown: maximumProcess.breakdown }
+        : {}),
     },
   };
 }
@@ -496,6 +505,25 @@ function signedInteger(value: unknown, field: string): number | null {
     throw new Error(`${field} must be a safe integer or null`);
   }
   return value;
+}
+
+function validateProcessMemoryBreakdown(value: unknown, field: string): void {
+  if (value === null) return;
+  const breakdown = object(value, field, [
+    "vmRssKb",
+    "rssAnonKb",
+    "rssFileKb",
+    "rssShmemKb",
+    "vmSwapKb",
+  ]);
+  const vmRssKb = integer(breakdown.vmRssKb, `${field}.vmRssKb`, false)!;
+  const rssAnonKb = integer(breakdown.rssAnonKb, `${field}.rssAnonKb`, false)!;
+  const rssFileKb = integer(breakdown.rssFileKb, `${field}.rssFileKb`, false)!;
+  const rssShmemKb = integer(breakdown.rssShmemKb, `${field}.rssShmemKb`, false)!;
+  integer(breakdown.vmSwapKb, `${field}.vmSwapKb`);
+  if (!isCoherentProcessMemoryBreakdown({ vmRssKb, rssAnonKb, rssFileKb, rssShmemKb })) {
+    throw new Error(`${field} resident components must sum to vmRssKb`);
+  }
 }
 
 function validateLegacy(value: unknown): asserts value is RunnerComparisonSummaryV1 {
@@ -823,11 +851,18 @@ function validateCurrent(value: unknown): asserts value is RunnerComparisonSumma
       key === "maximumContainerCpu" ? number_ : integer,
     );
   }
-  const largest = object(root.largestProcess, "summary.largestProcess", [
-    "rssKb",
-    "class",
-    "phase",
-  ]);
+  const largestValue =
+    typeof root.largestProcess === "object" &&
+    root.largestProcess !== null &&
+    !Array.isArray(root.largestProcess)
+      ? (root.largestProcess as UnknownRecord)
+      : {};
+  const hasBreakdown = Object.hasOwn(largestValue, "breakdown");
+  const largest = object(
+    root.largestProcess,
+    "summary.largestProcess",
+    hasBreakdown ? ["rssKb", "class", "phase", "breakdown"] : ["rssKb", "class", "phase"],
+  );
   const rssKb = integer(largest.rssKb, "summary.largestProcess.rssKb");
   const class_ = largest.class;
   if (
@@ -843,6 +878,12 @@ function validateCurrent(value: unknown): asserts value is RunnerComparisonSumma
   const processPhase = label(largest.phase, "summary.largestProcess.phase");
   if ((rssKb === null) !== (processPhase === null)) {
     throw new Error("summary largest process RSS and phase must be present together");
+  }
+  if (hasBreakdown) {
+    if (class_ !== "docker-buildkit") {
+      throw new Error("summary.largestProcess.breakdown is only supported for docker-buildkit");
+    }
+    validateProcessMemoryBreakdown(largest.breakdown, "summary.largestProcess.breakdown");
   }
 }
 

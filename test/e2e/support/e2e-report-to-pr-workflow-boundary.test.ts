@@ -398,6 +398,44 @@ it("renders comment content from job evidence without a live GitHub mutation", (
   expect(report.body).toContain("All requested tests passed");
 });
 
+it.each([
+  {
+    env: { JOB_TARGETS: "", JOBS: "hermes-dashboard" },
+    label: "test ID",
+    requestedLine: "**Requested test IDs:** `hermes-e2e`",
+  },
+  {
+    env: { JOB_TARGETS: "hermes-dashboard", JOBS: "" },
+    label: "target",
+    requestedLine: "**Requested targets:** `hermes-e2e`",
+  },
+])("reports the canonical Hermes result for a retired dashboard $label selector", ({
+  env,
+  requestedLine,
+}) => {
+  const report = renderE2eReport({
+    needs: {
+      "generate-matrix": { result: "success" },
+      "hermes-e2e": { result: "success" },
+    },
+    env: {
+      EXPLICIT_ONLY_JOBS: "",
+      TEST_MATRIX: "[]",
+      JOB_PR_NUMBER: "42",
+      ...env,
+    },
+    apiJobs: [{ conclusion: "success", name: "hermes-e2e", status: "completed" }],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.fatal).toBeUndefined();
+  expect(report.body).toContain(requestedLine);
+  expect(report.body).toContain("| hermes-e2e | ✅ success | — |");
+  expect(report.body).not.toContain("| hermes-dashboard |");
+  expect(report.body).not.toContain("not reported");
+});
+
 it("fails closed on an invalid test matrix without rendering a comment", () => {
   const report = renderE2eReport({
     needs: {

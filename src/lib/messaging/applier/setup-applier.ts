@@ -29,9 +29,41 @@ import {
   type MessagingSetupEnvOptions,
 } from "./types";
 
+function canonicalizeJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeJsonValue(item));
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, canonicalizeJsonValue(record[key])]),
+  );
+}
+
+function canonicalJsonStringify(value: unknown): string {
+  // Preserve JSON.stringify's validation and value-normalization semantics
+  // before sorting keys. In particular, cyclic plans must still fail instead
+  // of being silently truncated or recursed indefinitely.
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new TypeError("Expected a JSON-serializable messaging plan.");
+  }
+  return JSON.stringify(canonicalizeJsonValue(JSON.parse(serialized)));
+}
+
 export class MessagingSetupApplier {
   static encodePlan(plan: SandboxMessagingPlan): string {
     return Buffer.from(JSON.stringify(plan), "utf8").toString("base64");
+  }
+
+  static encodePlanForImageBuild(plan: SandboxMessagingPlan): string {
+    const { workflow: _workflow, ...imageBuildPlan } = plan;
+    return Buffer.from(canonicalJsonStringify(imageBuildPlan), "utf8").toString("base64");
   }
 
   static decodePlan(encoded: string): SandboxMessagingPlan {
