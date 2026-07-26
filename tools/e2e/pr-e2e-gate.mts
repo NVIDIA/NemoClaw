@@ -23,6 +23,15 @@ import {
   riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
+import {
+  type HostedRunnerLossPolicy,
+  verifiedRunnerLossEvidence,
+  type WorkflowJob,
+} from "./hosted-runner-loss.mts";
+import {
+  listNonPassingWorkflowJobs,
+  workflowJobEvidenceFingerprint,
+} from "./hosted-runner-loss-github.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
 import {
@@ -35,10 +44,15 @@ import {
   readFreeStandingJobsInventory,
 } from "./workflow-boundary.mts";
 
+export {
+  listNonPassingWorkflowJobs,
+  workflowJobEvidenceFingerprint,
+} from "./hosted-runner-loss-github.mts";
+
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
-const FORK_SKIP_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-skip-for-fork-pr";
+const FORK_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-fork-pr";
 const INTERNAL_E2E_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-for-internal-pr";
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
@@ -46,6 +60,7 @@ const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
 const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
+const FORK_E2E_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run fork E2E";
 const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
 const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
 const RETRYABLE_FAILURE_REASONS = new Set([
@@ -83,35 +98,10 @@ const MAX_CONTROLLER_ERROR_CHARS = 512;
 const MAX_PR_FILES = 3000;
 const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
-const MAX_WORKFLOW_JOB_PAGES = 10;
-const MAX_JOB_ANNOTATION_PAGES = 1;
-const MAX_RUNNER_LOSS_JOB_ANNOTATIONS = 20;
-const MAX_JOB_ANNOTATION_IDENTITY_BYTES = 8 * 1024;
-const MAX_JOB_ANNOTATION_TEXT_BYTES = 16 * 1024;
-const MAX_RUNNER_LOSS_JOB_ANNOTATION_BYTES = 64 * 1024;
-const HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE =
-  "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.";
-const HOSTED_RUNNER_SHUTDOWN_MESSAGE =
-  "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
-const HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE = "The operation was canceled.";
-const HOSTED_RUNNER_EXIT_143_MESSAGE = "Process completed with exit code 143.";
-const HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE = "Cleaning up orphan processes";
-const MAX_RUNNER_LOSS_JOB_INSPECTIONS = 20;
-const MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES = 64 * 1024;
-const MAX_RUNNER_LOSS_ORPHAN_PROCESSES = 64;
-const RUNNER_LOSS_JOB_LOG_TIMEOUT_MS = 30_000;
-const JOB_LOG_DOWNLOAD_HOST_PATTERN = /^productionresultssa[0-9]+\.blob\.core\.windows\.net$/u;
-const JOB_LOG_TIMESTAMPED_LINE_PATTERN =
-  /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{7}Z) (.*)$/u;
-const JOB_LOG_ORPHAN_PROCESS_PATTERN =
-  /^Terminate orphan process: pid \(([1-9][0-9]*)\) \(([A-Za-z0-9._+ -]{1,128})\)$/u;
-const GITHUB_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/u;
 const MAX_REPORTED_WORKFLOW_JOBS = 10;
 const MAX_WAIVER_REASON_CHARS = 500;
 const MAX_APPROVAL_REVIEWS = 20;
 const MAINTAINER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
-const EVIDENCE_URL_PATTERN =
-  /^https:\/\/github\.com\/NVIDIA\/NemoClaw\/actions\/runs\/[1-9][0-9]*$/u;
 const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "requested",
   "waiting",
@@ -120,6 +110,7 @@ const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "in_progress",
 ] as const;
 const ACTIVE_WORKFLOW_RUN_STATUS_SET = new Set<string>(ACTIVE_WORKFLOW_RUN_STATUSES);
+const PR_E2E_HOSTED_RUNNER_LOSS_POLICY: HostedRunnerLossPolicy = {};
 const TERMINAL_WORKFLOW_RUN_CONCLUSIONS = [
   "success",
   "failure",
@@ -151,28 +142,6 @@ type ControllerPathSlot = "initial" | "runner-loss-retry";
 
 type EvidenceStepOutcome = "success" | "failure" | "cancelled" | "skipped";
 
-type ManualForkSkipCommandBase = {
-  prNumber: number;
-  headSha: string;
-  baseSha: string;
-  workflowSha: string;
-  maintainer: string;
-  reason: string;
-  evidenceUrl?: string;
-};
-
-type ManualForkSkipCommand = ManualForkSkipCommandBase & { mode: "record-fork-e2e-skip" };
-
-type ApprovedForkSkipCommand = {
-  mode: "record-approved-fork-e2e-skip";
-  prNumber: number;
-  headSha: string;
-  baseSha: string;
-  workflowSha: string;
-  approvalRunId: number;
-  approvalRunAttempt: number;
-};
-
 type ControlPlaneCommandBase = {
   prNumber: number;
   headSha: string;
@@ -194,16 +163,15 @@ type ApprovedControlPlaneDispatchCommand = ControlPlaneCommandBase & {
   approvalRunAttempt: number;
 };
 
-type AuthorizedControlPlaneCommand = ControlPlaneCommandBase & {
-  maintainer: string;
-  reason: string;
+type ApprovedForkE2EDispatchCommand = ControlPlaneCommandBase & {
+  mode: "start-approved-fork";
+  approvalRunId: number;
+  approvalRunAttempt: number;
 };
 
-type ForkSkipCommand = ManualForkSkipCommand & {
-  validatedApproval?: {
-    environment: typeof FORK_SKIP_APPROVAL_ENVIRONMENT;
-    runUrl: string;
-  };
+type AuthorizedE2ECommand = ControlPlaneCommandBase & {
+  maintainer: string;
+  reason: string;
 };
 
 export type ControllerCommand =
@@ -254,8 +222,7 @@ export type ControllerCommand =
     }
   | ControlPlaneDispatchCommand
   | ApprovedControlPlaneDispatchCommand
-  | ManualForkSkipCommand
-  | ApprovedForkSkipCommand;
+  | ApprovedForkE2EDispatchCommand;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
 
@@ -286,61 +253,6 @@ type WorkflowRun = {
 };
 
 type WorkflowRunsResponse = { workflow_runs: WorkflowRun[] };
-type WorkflowJobAnnotation = {
-  path: string;
-  blobHref: string;
-  startLine: number;
-  startColumn: number | null;
-  endLine: number;
-  endColumn: number | null;
-  annotationLevel: string;
-  title: string;
-  message: string;
-  rawDetails: string;
-};
-type WorkflowJobLogEvidence = {
-  etag: string;
-  totalBytes: number;
-  tail: string;
-};
-type HostedRunnerShutdownLogMarker = {
-  shutdownTimestamp: string;
-  terminalTimestamp: string;
-  cleanupTimestamp: string;
-  lastTimestamp: string;
-  annotationMessage: string;
-  interruptedStepConclusion: "cancelled" | "failure";
-};
-type WorkflowJob = {
-  id: number;
-  name: string;
-  runId?: number;
-  runAttempt?: number;
-  headSha?: string;
-  runUrl?: string;
-  apiUrl?: string;
-  htmlUrl?: string;
-  checkRunUrl?: string;
-  status?: string;
-  conclusion: string | null;
-  runnerId?: number | null;
-  runnerName?: string | null;
-  runnerGroupId?: number | null;
-  runnerGroupName?: string | null;
-  labels?: string[];
-  annotations?: WorkflowJobAnnotation[];
-  logEvidence?: WorkflowJobLogEvidence;
-  startedAt?: string | null;
-  completedAt?: string | null;
-  steps: Array<{
-    name: string;
-    status?: string;
-    conclusion: string | null;
-    startedAt?: string | null;
-    completedAt?: string | null;
-  }>;
-};
-type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
 type CheckRun = {
   id: number;
   name?: string;
@@ -381,9 +293,10 @@ type WorkflowRunIdentity = {
 };
 
 export type PrGateState = {
-  version: 3;
+  version: 4;
   commitSha: string;
   baseSha: string;
+  checkoutRepository: string;
   workflowSha: string;
   planHash: string;
   correlationId: string;
@@ -719,49 +632,36 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
   }
-  if (args.mode === "record-fork-e2e-skip") {
-    const maintainer = requiredArgument(args.maintainer, "maintainer");
-    if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
-    const evidenceUrl = args.evidenceUrl?.trim();
-    if (evidenceUrl && !EVIDENCE_URL_PATTERN.test(evidenceUrl)) {
-      throw new Error(
-        "Evidence URL must be an Actions run URL such as https://github.com/NVIDIA/NemoClaw/actions/runs/123. PR, issue, comment, job, and external URLs are not accepted. Leave the field blank if no run exists.",
-      );
-    }
-    return {
-      mode: args.mode,
-      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
-      headSha: requiredArgument(args.head, "head"),
-      baseSha: requiredArgument(args.base, "base"),
-      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
-      maintainer,
-      reason: normalizedWaiverReason(requiredArgument(args.reason, "reason")),
-      ...(evidenceUrl ? { evidenceUrl } : {}),
-    };
-  }
-  if (args.mode === "record-approved-fork-e2e-skip") {
+  if (args.mode === "start-approved-fork") {
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
     const approvalRunAttempt = parsePositiveId(
       requiredArgument(args.approvalRunAttempt, "approval-run-attempt"),
       "--approval-run-attempt",
     );
-    if (approvalRunAttempt !== 1) {
-      throw new Error("--approval-run-attempt must be exactly 1");
+    if (workflowRunAttempt !== 1 || approvalRunAttempt !== 1) {
+      throw new Error("workflow and approval run attempts must be exactly 1");
     }
     return {
-      mode: "record-approved-fork-e2e-skip",
+      mode: "start-approved-fork",
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
       headSha: requiredArgument(args.head, "head"),
       baseSha: requiredArgument(args.base, "base"),
       workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
+      gateRunId: parsePositiveId(requiredArgument(args.gateRunId, "gate-run-id"), "--gate-run-id"),
+      workflowRunAttempt,
       approvalRunId: parsePositiveId(
         requiredArgument(args.approvalRunId, "approval-run-id"),
         "--approval-run-id",
       ),
       approvalRunAttempt,
+      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, retry-runner-loss, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
+    "--mode must be seed, start, start-control-plane, start-approved-control-plane, start-approved-fork, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, or retry-runner-loss",
   );
 }
 
@@ -770,7 +670,7 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
 }
 
 export function validatePrGateState(value: unknown): PrGateState {
-  if (!isObjectRecord(value) || value.version !== 3) {
+  if (!isObjectRecord(value) || value.version !== 4) {
     throw new Error("State version is invalid");
   }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
@@ -779,6 +679,10 @@ export function validatePrGateState(value: unknown): PrGateState {
   if (typeof value.baseSha !== "string" || !SHA_PATTERN.test(value.baseSha)) {
     throw new Error("State base SHA is invalid");
   }
+  if (typeof value.checkoutRepository !== "string") {
+    throw new Error("State checkout repository is invalid");
+  }
+  assertRepository(value.checkoutRepository, "state checkout repository");
   if (typeof value.workflowSha !== "string" || !SHA_PATTERN.test(value.workflowSha)) {
     throw new Error("State workflow SHA is invalid");
   }
@@ -1025,16 +929,16 @@ function appendOutput(name: string, value: string): void {
   const output = process.env.GITHUB_OUTPUT;
   if (!output) return;
   const validators: Readonly<Record<string, (candidate: string) => boolean>> = {
+    approval_base_sha: (candidate) => SHA_PATTERN.test(candidate),
+    approval_environment: (candidate) =>
+      candidate === INTERNAL_E2E_APPROVAL_ENVIRONMENT ||
+      candidate === FORK_E2E_APPROVAL_ENVIRONMENT,
+    approval_head_sha: (candidate) => SHA_PATTERN.test(candidate),
+    approval_mode: (candidate) =>
+      candidate === "start-approved-control-plane" || candidate === "start-approved-fork",
+    approval_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     check_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
-    control_plane_approval_base_sha: (candidate) => SHA_PATTERN.test(candidate),
-    control_plane_approval_head_sha: (candidate) => SHA_PATTERN.test(candidate),
-    control_plane_approval_mode: (candidate) => candidate === "start-approved-control-plane",
-    control_plane_approval_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     dispatched: (candidate) => /^(?:true|false)$/u.test(candidate),
-    fork_skip_base_sha: (candidate) => SHA_PATTERN.test(candidate),
-    fork_skip_head_sha: (candidate) => SHA_PATTERN.test(candidate),
-    fork_skip_mode: (candidate) => candidate === "record-fork-e2e-skip",
-    fork_skip_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     finalized: (candidate) => /^(?:true|false)$/u.test(candidate),
     runner_loss_retry_authorized: (candidate) => candidate === "true",
     run_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
@@ -1059,11 +963,18 @@ function appendOutput(name: string, value: string): void {
   }
 }
 
-function emitControlPlaneApprovalOutputs(prNumber: number, headSha: string, baseSha: string): void {
-  appendOutput("control_plane_approval_mode", "start-approved-control-plane");
-  appendOutput("control_plane_approval_pr_number", String(prNumber));
-  appendOutput("control_plane_approval_head_sha", headSha);
-  appendOutput("control_plane_approval_base_sha", baseSha);
+function emitE2EApprovalOutputs(
+  mode: "start-approved-control-plane" | "start-approved-fork",
+  environment: typeof INTERNAL_E2E_APPROVAL_ENVIRONMENT | typeof FORK_E2E_APPROVAL_ENVIRONMENT,
+  prNumber: number,
+  headSha: string,
+  baseSha: string,
+): void {
+  appendOutput("approval_mode", mode);
+  appendOutput("approval_environment", environment);
+  appendOutput("approval_pr_number", String(prNumber));
+  appendOutput("approval_head_sha", headSha);
+  appendOutput("approval_base_sha", baseSha);
 }
 
 export function prGateExternalId(prNumber: number, headSha: string, baseSha: string): string {
@@ -1076,18 +987,6 @@ export function prGateExternalId(prNumber: number, headSha: string, baseSha: str
     throw new Error("PR gate check identity is invalid");
   }
   return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:${baseSha}`;
-}
-
-function emitForkSkipOutputs(
-  mode: ManualForkSkipCommand["mode"],
-  prNumber: number,
-  headSha: string,
-  baseSha: string,
-): void {
-  appendOutput("fork_skip_mode", mode);
-  appendOutput("fork_skip_pr_number", String(prNumber));
-  appendOutput("fork_skip_head_sha", headSha);
-  appendOutput("fork_skip_base_sha", baseSha);
 }
 
 function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
@@ -1505,7 +1404,7 @@ async function updateRunningCheck(
   const childRunUrl = `https://github.com/${context.repository}/actions/runs/${options.childRunId}`;
   const selectionCount = options.jobs.length + options.targets.length;
   const title = `Running ${selectionCount} E2E ${selectionCount === 1 ? "check" : "checks"}`;
-  const summary = `Risk plan ${options.planHash} selected jobs: ${options.jobs.join(", ") || "none"}; targets: ${options.targets.join(", ") || "none"}.`;
+  const summary = `Risk plan ${options.planHash} selected jobs: ${options.jobs.join(", ") || "none"}; targets: ${options.targets.join(", ") || "none"}. Child run: ${childRunUrl}.`;
   const check = await githubApi<unknown>(
     `repos/${context.repository}/check-runs/${context.checkRunId}`,
     token,
@@ -1730,531 +1629,6 @@ export async function resolvePullRequest(options: {
   return detail;
 }
 
-function isOptionalGitHubTimestamp(value: unknown): boolean {
-  return (
-    value === undefined ||
-    value === null ||
-    (typeof value === "string" && GITHUB_TIMESTAMP_PATTERN.test(value))
-  );
-}
-
-function validateWorkflowJob(value: unknown): WorkflowJob {
-  if (
-    !isObjectRecord(value) ||
-    !Number.isSafeInteger(value.id) ||
-    (value.id as number) < 1 ||
-    typeof value.name !== "string" ||
-    value.name.length === 0 ||
-    (value.run_id !== undefined &&
-      (!Number.isSafeInteger(value.run_id) || (value.run_id as number) < 1)) ||
-    (value.run_attempt !== undefined &&
-      (!Number.isSafeInteger(value.run_attempt) || (value.run_attempt as number) < 1)) ||
-    (value.head_sha !== undefined &&
-      (typeof value.head_sha !== "string" || !SHA_PATTERN.test(value.head_sha))) ||
-    (value.run_url !== undefined && typeof value.run_url !== "string") ||
-    (value.url !== undefined && typeof value.url !== "string") ||
-    (value.html_url !== undefined && typeof value.html_url !== "string") ||
-    (value.check_run_url !== undefined && typeof value.check_run_url !== "string") ||
-    (value.status !== undefined && typeof value.status !== "string") ||
-    (value.conclusion !== null && typeof value.conclusion !== "string") ||
-    !isOptionalGitHubTimestamp(value.started_at) ||
-    !isOptionalGitHubTimestamp(value.completed_at) ||
-    (value.runner_id !== undefined &&
-      value.runner_id !== null &&
-      (!Number.isSafeInteger(value.runner_id) || (value.runner_id as number) < 1)) ||
-    (value.runner_name !== undefined &&
-      value.runner_name !== null &&
-      typeof value.runner_name !== "string") ||
-    (value.runner_group_id !== undefined &&
-      value.runner_group_id !== null &&
-      (!Number.isSafeInteger(value.runner_group_id) || (value.runner_group_id as number) < 0)) ||
-    (value.runner_group_name !== undefined &&
-      value.runner_group_name !== null &&
-      typeof value.runner_group_name !== "string") ||
-    (value.labels !== undefined &&
-      (!Array.isArray(value.labels) || value.labels.some((label) => typeof label !== "string"))) ||
-    (value.steps !== undefined && !Array.isArray(value.steps))
-  ) {
-    throw new Error("GitHub returned an invalid workflow job");
-  }
-  const steps = (value.steps ?? []).map((step) => {
-    if (
-      !isObjectRecord(step) ||
-      typeof step.name !== "string" ||
-      step.name.length === 0 ||
-      (step.status !== undefined && typeof step.status !== "string") ||
-      (step.conclusion !== null && typeof step.conclusion !== "string") ||
-      !isOptionalGitHubTimestamp(step.started_at) ||
-      !isOptionalGitHubTimestamp(step.completed_at)
-    ) {
-      throw new Error("GitHub returned an invalid workflow job step");
-    }
-    return {
-      name: step.name,
-      ...(step.status === undefined ? {} : { status: step.status }),
-      conclusion: step.conclusion,
-      ...(step.started_at === undefined ? {} : { startedAt: step.started_at as string | null }),
-      ...(step.completed_at === undefined
-        ? {}
-        : { completedAt: step.completed_at as string | null }),
-    };
-  });
-  return {
-    id: value.id as number,
-    name: value.name,
-    ...(value.run_id === undefined ? {} : { runId: value.run_id as number }),
-    ...(value.run_attempt === undefined ? {} : { runAttempt: value.run_attempt as number }),
-    ...(value.head_sha === undefined ? {} : { headSha: value.head_sha }),
-    ...(value.run_url === undefined ? {} : { runUrl: value.run_url }),
-    ...(value.url === undefined ? {} : { apiUrl: value.url }),
-    ...(value.html_url === undefined ? {} : { htmlUrl: value.html_url }),
-    ...(value.check_run_url === undefined ? {} : { checkRunUrl: value.check_run_url }),
-    ...(value.status === undefined ? {} : { status: value.status }),
-    conclusion: value.conclusion,
-    ...(value.runner_id === undefined ? {} : { runnerId: value.runner_id as number | null }),
-    ...(value.runner_name === undefined ? {} : { runnerName: value.runner_name }),
-    ...(value.runner_group_id === undefined
-      ? {}
-      : { runnerGroupId: value.runner_group_id as number | null }),
-    ...(value.runner_group_name === undefined ? {} : { runnerGroupName: value.runner_group_name }),
-    ...(value.labels === undefined ? {} : { labels: value.labels as string[] }),
-    ...(value.started_at === undefined ? {} : { startedAt: value.started_at as string | null }),
-    ...(value.completed_at === undefined
-      ? {}
-      : { completedAt: value.completed_at as string | null }),
-    steps,
-  };
-}
-
-function validateWorkflowJobAnnotation(value: unknown): WorkflowJobAnnotation {
-  if (
-    !isObjectRecord(value) ||
-    typeof value.path !== "string" ||
-    value.path.length === 0 ||
-    Buffer.byteLength(value.path, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
-    typeof value.blob_href !== "string" ||
-    Buffer.byteLength(value.blob_href, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
-    !Number.isSafeInteger(value.start_line) ||
-    (value.start_line as number) < 1 ||
-    (value.start_column !== null &&
-      (!Number.isSafeInteger(value.start_column) || (value.start_column as number) < 1)) ||
-    !Number.isSafeInteger(value.end_line) ||
-    (value.end_line as number) < (value.start_line as number) ||
-    (value.end_column !== null &&
-      (!Number.isSafeInteger(value.end_column) || (value.end_column as number) < 1)) ||
-    typeof value.annotation_level !== "string" ||
-    Buffer.byteLength(value.annotation_level, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
-    typeof value.title !== "string" ||
-    Buffer.byteLength(value.title, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
-    typeof value.message !== "string" ||
-    Buffer.byteLength(value.message, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
-    typeof value.raw_details !== "string" ||
-    Buffer.byteLength(value.raw_details, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES
-  ) {
-    throw new Error("GitHub returned an invalid workflow job annotation");
-  }
-  return {
-    path: value.path,
-    blobHref: value.blob_href,
-    startLine: value.start_line as number,
-    startColumn: value.start_column as number | null,
-    endLine: value.end_line as number,
-    endColumn: value.end_column as number | null,
-    annotationLevel: value.annotation_level,
-    title: value.title,
-    message: value.message,
-    rawDetails: value.raw_details,
-  };
-}
-
-async function listWorkflowJobAnnotations(
-  repository: string,
-  token: string,
-  job: WorkflowJob,
-  runId: number,
-  runAttempt: number,
-): Promise<WorkflowJobAnnotation[]> {
-  const apiRepository = `https://api.github.com/repos/${repository}`;
-  const webRepository = `https://github.com/${repository}`;
-  const expectedRunUrl = `${apiRepository}/actions/runs/${runId}`;
-  const expectedJobUrl = `${apiRepository}/actions/jobs/${job.id}`;
-  const expectedCheckRunUrl = `${apiRepository}/check-runs/${job.id}`;
-  const expectedHtmlUrl = `${webRepository}/actions/runs/${runId}/job/${job.id}`;
-  if (
-    !job.headSha ||
-    job.runId !== runId ||
-    job.runAttempt !== runAttempt ||
-    job.runUrl !== expectedRunUrl ||
-    job.apiUrl !== expectedJobUrl ||
-    job.htmlUrl !== expectedHtmlUrl ||
-    job.checkRunUrl !== expectedCheckRunUrl
-  ) {
-    throw new Error("workflow job identity does not match its exact run attempt");
-  }
-  const check = await githubApi<unknown>(`repos/${repository}/check-runs/${job.id}`, token, {
-    userAgent: USER_AGENT,
-  });
-  const expectedAnnotationsUrl = `${expectedCheckRunUrl}/annotations`;
-  if (
-    !isObjectRecord(check) ||
-    check.id !== job.id ||
-    check.name !== job.name ||
-    check.head_sha !== job.headSha ||
-    check.url !== expectedCheckRunUrl ||
-    check.html_url !== expectedHtmlUrl ||
-    check.details_url !== expectedHtmlUrl ||
-    check.status !== "completed" ||
-    check.conclusion !== "failure" ||
-    !isObjectRecord(check.app) ||
-    check.app.id !== GITHUB_ACTIONS_APP_ID ||
-    !isObjectRecord(check.output) ||
-    !Number.isSafeInteger(check.output.annotations_count) ||
-    (check.output.annotations_count as number) < 0 ||
-    check.output.annotations_url !== expectedAnnotationsUrl
-  ) {
-    throw new Error("workflow job check run does not match the exact failed job");
-  }
-  const expectedCount = check.output.annotations_count as number;
-  if (expectedCount > MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
-    throw new Error("workflow job annotation count exceeds the hosted-runner-loss limit");
-  }
-  const annotations: WorkflowJobAnnotation[] = [];
-  const fingerprints = new Set<string>();
-  let annotationBytes = 0;
-  for (let page = 1; page <= MAX_JOB_ANNOTATION_PAGES; page += 1) {
-    const value = await githubApi<unknown>(
-      `repos/${repository}/check-runs/${job.id}/annotations?per_page=${MAX_RUNNER_LOSS_JOB_ANNOTATIONS}&page=${page}`,
-      token,
-      { userAgent: USER_AGENT },
-    );
-    if (!Array.isArray(value) || value.length > MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
-      throw new Error("GitHub returned an invalid workflow job annotation listing");
-    }
-    const pageAnnotations = value.map(validateWorkflowJobAnnotation);
-    for (const annotation of pageAnnotations) {
-      const fingerprint = JSON.stringify(annotation);
-      if (fingerprints.has(fingerprint)) {
-        throw new Error("GitHub returned duplicate workflow job annotations");
-      }
-      fingerprints.add(fingerprint);
-      annotationBytes += Buffer.byteLength(fingerprint, "utf8");
-      if (annotationBytes > MAX_RUNNER_LOSS_JOB_ANNOTATION_BYTES) {
-        throw new Error("workflow job annotation evidence exceeds its byte limit");
-      }
-      annotations.push(annotation);
-    }
-    if (annotations.length > expectedCount) {
-      throw new Error("workflow job annotation listing exceeds the trusted annotation count");
-    }
-    if (annotations.length === expectedCount) return annotations;
-    if (value.length < MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
-      throw new Error("workflow job annotation listing is incomplete");
-    }
-  }
-  throw new Error("workflow job annotation listing exceeded its page limit");
-}
-
-function parseJobLogContentLength(value: string | null, label: string): number {
-  if (!value || !/^(?:0|[1-9][0-9]*)$/u.test(value)) {
-    throw new Error(`${label} did not provide a valid content length`);
-  }
-  const length = Number(value);
-  if (!Number.isSafeInteger(length) || length < 0) {
-    throw new Error(`${label} content length is outside the safe integer range`);
-  }
-  return length;
-}
-
-function validateJobLogEtag(value: string | null): string {
-  if (!value || value.length > 130 || !/^"[^"\r\n]{1,128}"$/u.test(value)) {
-    throw new Error("job log download did not provide a strong bounded ETag");
-  }
-  return value;
-}
-
-function validateJobLogDownloadUrl(value: string | null): URL {
-  let url: URL;
-  try {
-    url = new URL(value ?? "");
-  } catch {
-    throw new Error("job log API returned an invalid signed download URL");
-  }
-  if (
-    url.protocol !== "https:" ||
-    url.username !== "" ||
-    url.password !== "" ||
-    url.port !== "" ||
-    !JOB_LOG_DOWNLOAD_HOST_PATTERN.test(url.hostname) ||
-    !url.pathname.startsWith("/actions-results/") ||
-    url.search.length < 2 ||
-    url.hash !== ""
-  ) {
-    throw new Error("job log API returned an untrusted signed download URL");
-  }
-  return url;
-}
-
-function assertPlainUnencodedJobLog(response: Response, label: string): void {
-  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
-  if (contentType !== "text/plain" || response.headers.get("content-encoding") !== null) {
-    throw new Error(`${label} did not return unencoded plain text`);
-  }
-}
-
-async function cancelJobLogResponseBody(response: Response): Promise<void> {
-  await response.body?.cancel().catch(() => undefined);
-}
-
-async function readExactJobLogRange(
-  response: Response,
-  expectedBytes: number,
-  discardPartialFirstLine: boolean,
-): Promise<string> {
-  if (!response.body) throw new Error("job log range response did not include a body");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let receivedBytes = 0;
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      receivedBytes += chunk.value.byteLength;
-      if (receivedBytes > expectedBytes || receivedBytes > MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES) {
-        throw new Error("job log range response exceeded its authenticated byte bound");
-      }
-      chunks.push(chunk.value);
-    }
-  } catch (error) {
-    await reader.cancel().catch(() => undefined);
-    throw error;
-  } finally {
-    reader.releaseLock();
-  }
-  if (receivedBytes !== expectedBytes) {
-    throw new Error("job log range response was incomplete");
-  }
-  const bytes = new Uint8Array(receivedBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  const firstLineFeed = discardPartialFirstLine ? bytes.indexOf(0x0a) : -1;
-  if (discardPartialFirstLine && firstLineFeed < 0) {
-    throw new Error("job log range did not contain a complete record");
-  }
-  const completeRecords = firstLineFeed < 0 ? bytes : bytes.subarray(firstLineFeed + 1);
-  return new TextDecoder("utf-8", { fatal: true }).decode(completeRecords);
-}
-
-async function downloadWorkflowJobLogTail(
-  repository: string,
-  token: string,
-  jobId: number,
-): Promise<WorkflowJobLogEvidence> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RUNNER_LOSS_JOB_LOG_TIMEOUT_MS);
-  const apiUrl = `https://api.github.com/repos/${repository}/actions/jobs/${jobId}/logs`;
-  try {
-    const redirect = await fetch(apiUrl, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "User-Agent": USER_AGENT,
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      redirect: "manual",
-      signal: controller.signal,
-    });
-    if (redirect.status !== 302) {
-      await cancelJobLogResponseBody(redirect);
-      throw new Error(`job log API returned unexpected status ${redirect.status}`);
-    }
-    const location = redirect.headers.get("location");
-    await cancelJobLogResponseBody(redirect);
-    const downloadUrl = validateJobLogDownloadUrl(location);
-
-    const downloadHeaders = {
-      Accept: "text/plain",
-      "Accept-Encoding": "identity",
-      "User-Agent": USER_AGENT,
-    };
-    const metadata = await fetch(downloadUrl, {
-      method: "HEAD",
-      headers: downloadHeaders,
-      redirect: "error",
-      signal: controller.signal,
-    });
-    if (metadata.status !== 200) {
-      await cancelJobLogResponseBody(metadata);
-      throw new Error(`job log metadata returned unexpected status ${metadata.status}`);
-    }
-    let totalBytes: number;
-    let etag: string;
-    try {
-      assertPlainUnencodedJobLog(metadata, "job log metadata");
-      totalBytes = parseJobLogContentLength(
-        metadata.headers.get("content-length"),
-        "job log metadata",
-      );
-      if (totalBytes < 1) throw new Error("job log is empty");
-      etag = validateJobLogEtag(metadata.headers.get("etag"));
-    } catch (error) {
-      await cancelJobLogResponseBody(metadata);
-      throw error;
-    }
-    await cancelJobLogResponseBody(metadata);
-
-    const rangeStart = Math.max(0, totalBytes - MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES);
-    const rangeEnd = totalBytes - 1;
-    const expectedBytes = rangeEnd - rangeStart + 1;
-    const range = await fetch(downloadUrl, {
-      headers: {
-        ...downloadHeaders,
-        "If-Match": etag,
-        Range: `bytes=${rangeStart}-${rangeEnd}`,
-      },
-      redirect: "error",
-      signal: controller.signal,
-    });
-    if (range.status !== 206) {
-      await cancelJobLogResponseBody(range);
-      throw new Error(`job log range returned unexpected status ${range.status}`);
-    }
-    try {
-      assertPlainUnencodedJobLog(range, "job log range");
-      if (
-        range.headers.get("etag") !== etag ||
-        range.headers.get("content-range") !== `bytes ${rangeStart}-${rangeEnd}/${totalBytes}` ||
-        parseJobLogContentLength(range.headers.get("content-length"), "job log range") !==
-          expectedBytes
-      ) {
-        throw new Error("job log range did not match its authenticated metadata");
-      }
-    } catch (error) {
-      await cancelJobLogResponseBody(range);
-      throw error;
-    }
-    return {
-      etag,
-      totalBytes,
-      tail: await readExactJobLogRange(range, expectedBytes, rangeStart > 0),
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function validateWorkflowJobsPage(value: unknown): WorkflowJobsPage {
-  if (
-    !isObjectRecord(value) ||
-    !Number.isSafeInteger(value.total_count) ||
-    (value.total_count as number) < 0 ||
-    !Array.isArray(value.jobs)
-  ) {
-    throw new Error("GitHub returned an invalid workflow job listing");
-  }
-  return {
-    totalCount: value.total_count as number,
-    jobs: value.jobs.map(validateWorkflowJob),
-  };
-}
-
-async function listNonPassingWorkflowJobs(
-  repository: string,
-  token: string,
-  runId: number,
-  runAttempt: number,
-  options: { includeAnnotations?: boolean } = {},
-): Promise<{ jobs: WorkflowJob[]; complete: boolean }> {
-  if (
-    !Number.isSafeInteger(runId) ||
-    runId < 1 ||
-    !Number.isSafeInteger(runAttempt) ||
-    runAttempt < 1
-  ) {
-    throw new Error("workflow run and attempt IDs must be positive safe integers");
-  }
-  const jobs: WorkflowJob[] = [];
-  const jobIds = new Set<number>();
-  let totalCount: number | undefined;
-  for (let page = 1; page <= MAX_WORKFLOW_JOB_PAGES; page += 1) {
-    const response = validateWorkflowJobsPage(
-      await githubApi<unknown>(
-        `repos/${repository}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100&page=${page}`,
-        token,
-        { userAgent: USER_AGENT },
-      ),
-    );
-    totalCount ??= response.totalCount;
-    if (response.totalCount !== totalCount || jobs.length + response.jobs.length > totalCount) {
-      throw new Error("GitHub returned an invalid workflow job count");
-    }
-    for (const job of response.jobs) {
-      if (jobIds.has(job.id)) {
-        throw new Error("GitHub returned duplicate workflow job IDs across the job listing");
-      }
-      jobIds.add(job.id);
-    }
-    jobs.push(...response.jobs);
-    if (jobs.length === totalCount) {
-      const nonPassingJobs = jobs.filter(
-        (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
-      );
-      if (options.includeAnnotations) {
-        const runnerLossCandidates = nonPassingJobs.filter(
-          hasTrustedHostedRunnerLossInspectionStepShape,
-        );
-        if (runnerLossCandidates.length > MAX_RUNNER_LOSS_JOB_INSPECTIONS) {
-          throw new Error("workflow run exceeded the hosted-runner-loss inspection limit");
-        }
-        for (const job of runnerLossCandidates) {
-          job.annotations = await listWorkflowJobAnnotations(
-            repository,
-            token,
-            job,
-            runId,
-            runAttempt,
-          );
-          const workflowSha = job.headSha ?? "";
-          if (
-            !hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha) &&
-            (hasCompatibleHostedRunnerShutdownAnnotations(
-              job,
-              repository,
-              workflowSha,
-              HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE,
-            ) ||
-              hasCompatibleHostedRunnerShutdownAnnotations(
-                job,
-                repository,
-                workflowSha,
-                HOSTED_RUNNER_EXIT_143_MESSAGE,
-              ))
-          ) {
-            try {
-              job.logEvidence = await downloadWorkflowJobLogTail(repository, token, job.id);
-            } catch {
-              console.warn(
-                `Could not authenticate hosted-runner shutdown log for job ${job.id}; automatic retry remains disabled`,
-              );
-            }
-          }
-        }
-      }
-      return {
-        jobs: nonPassingJobs,
-        complete: true,
-      };
-    }
-    if (response.jobs.length < 100) break;
-  }
-  return {
-    jobs: jobs.filter((job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? "")),
-    complete: jobs.length === totalCount,
-  };
-}
-
 function normalizedCiMetadata(value: string, fallback: string): string {
   const normalized = value
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
@@ -2374,332 +1748,6 @@ function ciFailureReport(options: {
     summary: summary.join("\n"),
     errorMessage: `${options.prNumber ? `PR #${options.prNumber}: ${prUrl}` : "Triggering PR unavailable"}; CI run attempt ${options.ciRunAttempt}: ${ciRunUrl}; CI / Pull Request concluded ${conclusion}; jobs that did not pass: ${jobMessage}${truncationMessage}`,
     ciRunUrl,
-  };
-}
-
-const GITHUB_HOSTED_RUNNER_NAME_PATTERN = /^GitHub Actions [1-9][0-9]*$/u;
-
-function trustedWorkflowJobAnnotations(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-): WorkflowJobAnnotation[] | null {
-  if (job.headSha !== workflowSha || !Array.isArray(job.annotations)) return null;
-  const blobPrefix = `https://github.com/${repository}/blob/${workflowSha}/`;
-  if (
-    job.annotations.some((annotation) => annotation.blobHref !== `${blobPrefix}${annotation.path}`)
-  ) {
-    return null;
-  }
-  return job.annotations;
-}
-
-/**
- * GitHub records a lost hosted runner as a completed failed job with no
- * ordinary failed step. Older Jobs API responses left the interrupted step
- * `in_progress`; current responses can terminalize it as `cancelled`, skip the
- * remaining cleanup, and append the synthetic successful `Complete job` step.
- * A user or concurrency cancellation concludes the job itself as `cancelled`,
- * while an ordinary assertion records a failed step. The step shape must be
- * paired with either a canonical GitHub runner-loss annotation or an
- * authenticated exact terminal shutdown log.
- */
-function hasTrustedHostedRunnerLossAnnotation(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-): boolean {
-  const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
-  if (!annotations) return false;
-  const failures = annotations.filter((annotation) => annotation.annotationLevel === "failure");
-  return (
-    failures.length === 1 &&
-    failures[0]?.path === ".github" &&
-    failures[0].startLine === 1 &&
-    failures[0].startColumn === null &&
-    failures[0].endLine === 1 &&
-    failures[0].endColumn === null &&
-    failures[0].title === "" &&
-    failures[0].rawDetails === "" &&
-    failures[0].message === HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE
-  );
-}
-
-function hasCompatibleHostedRunnerShutdownAnnotations(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-  expectedMessage: string,
-): boolean {
-  const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
-  if (!annotations) return false;
-  const failures = annotations.filter((annotation) => annotation.annotationLevel === "failure");
-  const failure = failures[0];
-  return (
-    failures.length === 1 &&
-    failure?.path === ".github" &&
-    failure.startLine === failure.endLine &&
-    failure.startColumn === null &&
-    failure.endColumn === null &&
-    failure.title === "" &&
-    failure.rawDetails === "" &&
-    failure.message === expectedMessage
-  );
-}
-
-function jobLogTimestampSecond(timestamp: string): string | null {
-  const second = `${timestamp.slice(0, 19)}Z`;
-  const milliseconds = Date.parse(second);
-  return Number.isFinite(milliseconds) &&
-    new Date(milliseconds).toISOString().slice(0, 19) === timestamp.slice(0, 19)
-    ? second
-    : null;
-}
-
-function parseHostedRunnerShutdownLogTail(logTail: string): HostedRunnerShutdownLogMarker | null {
-  if (!logTail.endsWith("\n") || logTail.endsWith("\n\n")) return null;
-  const lines = logTail.slice(0, -1).split("\n");
-  const shutdownMessage = `##[error]${HOSTED_RUNNER_SHUTDOWN_MESSAGE}`;
-  const shutdownIndex = lines
-    .map((line) => JOB_LOG_TIMESTAMPED_LINE_PATTERN.exec(line)?.[2] ?? "")
-    .lastIndexOf(shutdownMessage);
-  if (shutdownIndex < 0) return null;
-  const terminalLines = lines.slice(shutdownIndex);
-  if (terminalLines.length < 3 || terminalLines.length > 3 + MAX_RUNNER_LOSS_ORPHAN_PROCESSES) {
-    return null;
-  }
-  if (terminalLines.some((line) => line.includes("\r"))) return null;
-  const parsed = terminalLines.map((line) => JOB_LOG_TIMESTAMPED_LINE_PATTERN.exec(line));
-  if (parsed.some((line) => line === null)) return null;
-  const timestamps = parsed.map((line) => line?.[1] ?? "");
-  const timestampSeconds = timestamps.map(jobLogTimestampSecond);
-  const messages = parsed.map((line) => line?.[2] ?? "");
-  const terminalMessage = messages[1];
-  const interruptedStepConclusion =
-    terminalMessage === `##[error]${HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE}`
-      ? "cancelled"
-      : terminalMessage === `##[error]${HOSTED_RUNNER_EXIT_143_MESSAGE}`
-        ? "failure"
-        : null;
-  if (
-    timestampSeconds.some((timestamp) => timestamp === null) ||
-    messages[0] !== shutdownMessage ||
-    interruptedStepConclusion === null ||
-    messages[2] !== HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE ||
-    timestamps[0]! >= timestamps[1]! ||
-    timestamps.slice(1).some((timestamp, index) => timestamp < timestamps[index]!)
-  ) {
-    return null;
-  }
-  const orphanProcesses = messages
-    .slice(3)
-    .map((message) => JOB_LOG_ORPHAN_PROCESS_PATTERN.exec(message));
-  const orphanProcessIds = orphanProcesses.map((process) => process?.[1] ?? "");
-  if (
-    orphanProcesses.some((process) => process === null) ||
-    new Set(orphanProcessIds).size !== orphanProcessIds.length
-  ) {
-    return null;
-  }
-  return {
-    shutdownTimestamp: timestamps[0]!,
-    terminalTimestamp: timestamps[1]!,
-    cleanupTimestamp: timestamps[2]!,
-    lastTimestamp: timestamps.at(-1)!,
-    annotationMessage: terminalMessage!.slice("##[error]".length),
-    interruptedStepConclusion,
-  };
-}
-
-function isBoundedWorkflowJobLogEvidence(evidence: WorkflowJobLogEvidence): boolean {
-  const tailBytes = Buffer.byteLength(evidence.tail, "utf8");
-  return (
-    /^"[^"\r\n]{1,128}"$/u.test(evidence.etag) &&
-    Number.isSafeInteger(evidence.totalBytes) &&
-    evidence.totalBytes > 0 &&
-    tailBytes > 0 &&
-    tailBytes <= evidence.totalBytes &&
-    tailBytes <= MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES
-  );
-}
-
-function hasTrustedHostedRunnerShutdownLog(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-): boolean {
-  const evidence = job.logEvidence;
-  if (!evidence || !isBoundedWorkflowJobLogEvidence(evidence)) return false;
-  const marker = parseHostedRunnerShutdownLogTail(evidence.tail);
-  if (
-    !marker ||
-    !hasCompatibleHostedRunnerShutdownAnnotations(
-      job,
-      repository,
-      workflowSha,
-      marker.annotationMessage,
-    ) ||
-    !hasTrustedHostedRunnerLossStepShapeForConclusion(job, marker.interruptedStepConclusion, {
-      allowLegacyStrandedStep: false,
-    })
-  ) {
-    return false;
-  }
-  const interruptedSteps = job.steps.filter(
-    (step) => step.status === "completed" && step.conclusion === marker.interruptedStepConclusion,
-  );
-  const interruptedStep = interruptedSteps[0];
-  if (
-    interruptedSteps.length !== 1 ||
-    !job.startedAt ||
-    !job.completedAt ||
-    !interruptedStep?.startedAt ||
-    !interruptedStep.completedAt
-  ) {
-    return false;
-  }
-  const shutdownSecond = jobLogTimestampSecond(marker.shutdownTimestamp);
-  const terminalSecond = jobLogTimestampSecond(marker.terminalTimestamp);
-  const cleanupSecond = jobLogTimestampSecond(marker.cleanupTimestamp);
-  const lastSecond = jobLogTimestampSecond(marker.lastTimestamp);
-  return (
-    shutdownSecond !== null &&
-    terminalSecond !== null &&
-    cleanupSecond !== null &&
-    lastSecond !== null &&
-    job.startedAt <= interruptedStep.startedAt &&
-    interruptedStep.startedAt <= shutdownSecond &&
-    terminalSecond === interruptedStep.completedAt &&
-    interruptedStep.completedAt <= cleanupSecond &&
-    cleanupSecond <= lastSecond &&
-    lastSecond <= job.completedAt
-  );
-}
-
-function hasTrustedHostedRunnerLossStepShapeForConclusion(
-  job: WorkflowJob,
-  interruptedStepConclusion: "cancelled" | "failure",
-  options: { allowLegacyStrandedStep: boolean },
-): boolean {
-  if (
-    job.status !== "completed" ||
-    job.conclusion !== "failure" ||
-    !Number.isSafeInteger(job.runnerId) ||
-    (job.runnerId ?? 0) < 1 ||
-    typeof job.runnerName !== "string" ||
-    !GITHUB_HOSTED_RUNNER_NAME_PATTERN.test(job.runnerName) ||
-    job.runnerGroupId !== 0 ||
-    job.runnerGroupName !== "GitHub Actions" ||
-    !Array.isArray(job.labels) ||
-    !job.labels.includes("ubuntu-latest") ||
-    job.labels.includes("self-hosted")
-  ) {
-    return false;
-  }
-  const strandedSteps = job.steps.filter(
-    (step) => step.status === "in_progress" && step.conclusion === null,
-  );
-  const strandedIndex = job.steps.findIndex(
-    (step) => step.status === "in_progress" && step.conclusion === null,
-  );
-  const legacyStrandedStep =
-    strandedSteps.length === 1 &&
-    job.steps
-      .slice(0, strandedIndex)
-      .every(
-        (step) =>
-          step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
-      ) &&
-    job.steps
-      .slice(strandedIndex + 1)
-      .every((step) => step.status === "pending" && step.conclusion === null);
-  if (
-    options.allowLegacyStrandedStep &&
-    interruptedStepConclusion === "cancelled" &&
-    legacyStrandedStep
-  ) {
-    return true;
-  }
-
-  const interruptedStepIndexes = job.steps.flatMap((step, index) =>
-    step.status === "completed" && step.conclusion === interruptedStepConclusion ? [index] : [],
-  );
-  if (interruptedStepIndexes.length !== 1) return false;
-  const interruptedIndex = interruptedStepIndexes[0]!;
-  if (job.steps[interruptedIndex]?.name === "Complete job") return false;
-  const beforeInterruption = job.steps.slice(0, interruptedIndex);
-  const afterInterruption = job.steps.slice(interruptedIndex + 1);
-  const syntheticCompletion = afterInterruption.at(-1);
-  const skippedCleanup = afterInterruption.slice(0, -1);
-  return (
-    beforeInterruption.every(
-      (step) =>
-        step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
-    ) &&
-    skippedCleanup.length > 0 &&
-    skippedCleanup.every(
-      (step) =>
-        step.name !== "Complete job" &&
-        step.status === "completed" &&
-        step.conclusion === "skipped",
-    ) &&
-    syntheticCompletion?.name === "Complete job" &&
-    syntheticCompletion.status === "completed" &&
-    syntheticCompletion.conclusion === "success"
-  );
-}
-
-function hasTrustedHostedRunnerLossStepShape(job: WorkflowJob): boolean {
-  return hasTrustedHostedRunnerLossStepShapeForConclusion(job, "cancelled", {
-    allowLegacyStrandedStep: true,
-  });
-}
-
-function hasTrustedHostedRunnerLossInspectionStepShape(job: WorkflowJob): boolean {
-  return (
-    hasTrustedHostedRunnerLossStepShape(job) ||
-    hasTrustedHostedRunnerLossStepShapeForConclusion(job, "failure", {
-      allowLegacyStrandedStep: false,
-    })
-  );
-}
-
-function hasTrustedHostedRunnerLossMarker(
-  job: WorkflowJob,
-  repository: string,
-  workflowSha: string,
-): boolean {
-  return (
-    (hasTrustedHostedRunnerLossStepShape(job) &&
-      hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha)) ||
-    hasTrustedHostedRunnerShutdownLog(job, repository, workflowSha)
-  );
-}
-
-export function verifiedRunnerLossEvidence(options: {
-  repository: string;
-  workflowSha: string;
-  workflowConclusion: string | null;
-  jobs: readonly WorkflowJob[];
-  jobDetailsAvailable: boolean;
-  jobDetailsComplete: boolean;
-}): WorkflowAttemptEvidence | null {
-  if (
-    !options.jobDetailsAvailable ||
-    !options.jobDetailsComplete ||
-    options.jobs.length === 0 ||
-    options.workflowConclusion !== "failure"
-  ) {
-    return null;
-  }
-  const hasTrustedMarker = (job: WorkflowJob): boolean =>
-    hasTrustedHostedRunnerLossMarker(job, options.repository, options.workflowSha);
-  const runnerLostMarkerCount = options.jobs.filter(hasTrustedMarker).length;
-  const otherNonPassingEvidencePresent = options.jobs.some((job) => !hasTrustedMarker(job));
-  return {
-    terminalClassificationPresent: otherNonPassingEvidencePresent,
-    jobConclusion: "failure",
-    runnerLostMarkerCount,
   };
 }
 
@@ -3064,36 +2112,11 @@ async function requireUnchangedCompletedWorkflowRun(
   }
 }
 
-function workflowJobEvidenceFingerprint(details: {
-  jobs: readonly WorkflowJob[];
-  complete: boolean;
-}): string {
-  const jobs = [...details.jobs]
-    .sort((left, right) => left.id - right.id)
-    .map((job) => {
-      const { annotations, logEvidence, ...metadata } = job;
-      return {
-        ...metadata,
-        ...(annotations === undefined
-          ? {}
-          : { annotations: annotations.map((annotation) => JSON.stringify(annotation)).sort() }),
-        ...(logEvidence === undefined
-          ? {}
-          : {
-              logEvidence: {
-                etag: logEvidence.etag,
-                totalBytes: logEvidence.totalBytes,
-                tailHash: sha256(logEvidence.tail),
-              },
-            }),
-      };
-    });
-  return sha256(JSON.stringify({ complete: details.complete, jobs }));
-}
-
 export async function dispatchPrGate(options: {
   repository: string;
+  checkoutRepository: string;
   token: string;
+  controllerCheckId: number;
   jobs: readonly string[];
   targets?: readonly string[];
   prNumber: number;
@@ -3104,6 +2127,7 @@ export async function dispatchPrGate(options: {
   correlationId: string;
 }): Promise<{ runId: number; workflowSha: string }> {
   assertRepository(options.repository, "repository");
+  assertRepository(options.checkoutRepository, "checkout repository");
   const targets = options.targets ?? [];
   if (
     !options.token ||
@@ -3113,6 +2137,8 @@ export async function dispatchPrGate(options: {
     new Set(targets).size !== targets.length ||
     targets.some((target) => !JOB_PATTERN.test(target) || !isPrE2eTypedTargetId(target)) ||
     options.jobs.some((job) => targets.includes(job)) ||
+    !Number.isSafeInteger(options.controllerCheckId) ||
+    options.controllerCheckId < 1 ||
     !Number.isSafeInteger(options.prNumber) ||
     options.prNumber < 1 ||
     !SHA_PATTERN.test(options.commitSha) ||
@@ -3138,8 +2164,10 @@ export async function dispatchPrGate(options: {
         inputs: {
           jobs: options.jobs.join(","),
           targets: targets.join(","),
+          controller_check_id: String(options.controllerCheckId),
           pr_number: String(options.prNumber),
           checkout_sha: options.commitSha,
+          checkout_repository: options.checkoutRepository,
           base_sha: options.baseSha,
           workflow_sha: workflowSha,
           plan_hash: options.planHash,
@@ -3323,9 +2351,15 @@ async function dispatchSelectedPrGate(options: {
   if (!CORRELATION_PATTERN.test(correlationId)) {
     throw new Error("generated correlation ID is invalid");
   }
+  const checkoutRepository = options.pull.head.repo?.full_name;
+  if (!checkoutRepository) {
+    throw new Error("PR head repository is unavailable");
+  }
   const dispatch = await dispatchPrGate({
     repository: options.repository,
+    checkoutRepository,
     token: options.token,
+    controllerCheckId: options.checkRunId,
     jobs,
     targets,
     prNumber: options.pull.number,
@@ -3339,9 +2373,10 @@ async function dispatchSelectedPrGate(options: {
   try {
     appendOutput("run_id", String(childRunId));
     const state: PrGateState = {
-      version: 3,
+      version: 4,
       commitSha: options.pull.head.sha,
       baseSha: options.baseSha,
+      checkoutRepository,
       workflowSha: dispatch.workflowSha,
       planHash: options.plan.planHash,
       correlationId,
@@ -3402,7 +2437,9 @@ async function dispatchRunnerLossRetry(options: {
   }
   const dispatch = await dispatchPrGate({
     repository: options.repository,
+    checkoutRepository: options.state.checkoutRepository,
     token: options.token,
+    controllerCheckId: options.checkRunId,
     jobs: options.state.expectedJobs,
     targets: options.state.expectedTargets,
     prNumber: options.state.prNumber,
@@ -3542,6 +2579,7 @@ export async function retryRunnerLossPrGate(
 
     const jobDetails = await listNonPassingWorkflowJobs(repository, token, command.childRunId, 1, {
       includeAnnotations: true,
+      hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
     });
     await requireUnchangedCompletedWorkflowRun(repository, token, child, {
       childRunId: command.childRunId,
@@ -3558,6 +2596,7 @@ export async function retryRunnerLossPrGate(
       jobs: jobDetails.jobs,
       jobDetailsAvailable: true,
       jobDetailsComplete: jobDetails.complete,
+      policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
     });
     const retryDecision = runnerLossEvidence
       ? decideRetry({
@@ -3577,8 +2616,8 @@ export async function retryRunnerLossPrGate(
       headSha: state.commitSha,
       baseSha: state.baseSha,
     });
-    if (pull.head.repo?.full_name !== repository) {
-      throw new Error("runner-loss retry requires an internal pull request");
+    if (pull.head.repo?.full_name !== state.checkoutRepository) {
+      throw new Error("runner-loss retry checkout repository no longer matches the PR");
     }
 
     const confirmedJobDetails = await listNonPassingWorkflowJobs(
@@ -3586,7 +2625,10 @@ export async function retryRunnerLossPrGate(
       token,
       command.childRunId,
       1,
-      { includeAnnotations: true },
+      {
+        includeAnnotations: true,
+        hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
+      },
     );
     await requireUnchangedCompletedWorkflowRun(repository, token, child, {
       childRunId: command.childRunId,
@@ -3605,6 +2647,7 @@ export async function retryRunnerLossPrGate(
       jobs: confirmedJobDetails.jobs,
       jobDetailsAvailable: true,
       jobDetailsComplete: confirmedJobDetails.complete,
+      policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
     });
     const confirmedRetryDecision = confirmedRunnerLossEvidence
       ? decideRetry({
@@ -3833,26 +2876,35 @@ export async function startPrGate(
     if (command.headRepository !== repository && selections.length > 0) {
       const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
-      await completeCheck(
-        { repository, checkRunId },
-        token,
+      await markCheckInProgress(
         {
-          conclusion: "failure",
-          title: "Maintainer approval required to skip credentialed E2E",
-          summary: [
-            `This fork PR diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E checks (${selectionSummary}).`,
-            "The selected jobs and targets were not run. No fork code received repository secrets.",
-            `Open ${gateRunLink}, choose Review deployments, and approve the \`${FORK_SKIP_APPROVAL_ENVIRONMENT}\` environment to record this skip. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it, update the PR to create a new head, and trigger fresh PR CI. GitHub records the reviewer and optional comment. The manual \`approve-fork-e2e-skip\` workflow operation remains available as fallback.`,
-          ].join("\n\n"),
+          repository,
+          checkRunId,
+          prNumber: ciIdentity.prNumber,
+          headSha: command.headSha,
+          baseSha: ciIdentity.baseSha,
         },
-        gateRunUrl,
+        token,
+        FORK_E2E_AUTHORIZATION_TITLE,
+        [
+          `Review scope: PR #${pull.number}; head repository \`${command.headRepository}\`; head SHA \`${command.headSha}\`; base SHA \`${ciIdentity.baseSha}\`; ${selectionSummary}; deterministic plan \`${plan.planHash}\`.`,
+          "No selected E2E job or target ran. No repository credential was exposed to fork code.",
+          `An authorized E2E reviewer must review the exact fork code and risk plan. Open ${gateRunLink}, choose Review deployments, and approve the \`${FORK_E2E_APPROVAL_ENVIRONMENT}\` environment. Approval authorizes the selected fork code to run with E2E credentials. GitHub records the reviewer and optional comment.`,
+          "If Review deployments is absent, configure the protected environment. Then, update the PR to create a new PR SHA and run fresh PR CI.",
+        ].join("\n\n"),
       );
-      emitForkSkipOutputs("record-fork-e2e-skip", pull.number, command.headSha, ciIdentity.baseSha);
+      emitE2EApprovalOutputs(
+        "start-approved-fork",
+        FORK_E2E_APPROVAL_ENVIRONMENT,
+        pull.number,
+        command.headSha,
+        ciIdentity.baseSha,
+      );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
       finalized = true;
       console.log(
-        `Fork not dispatched: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
+        `Fork authorization required: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
       );
       return;
     }
@@ -3879,7 +2931,13 @@ export async function startPrGate(
           `Deterministic plan: \`${plan.planHash}\`.`,
         ].join("\n\n"),
       );
-      emitControlPlaneApprovalOutputs(pull.number, command.headSha, ciIdentity.baseSha);
+      emitE2EApprovalOutputs(
+        "start-approved-control-plane",
+        INTERNAL_E2E_APPROVAL_ENVIRONMENT,
+        pull.number,
+        command.headSha,
+        ciIdentity.baseSha,
+      );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
       finalized = true;
@@ -3925,8 +2983,9 @@ export async function startPrGate(
   }
 }
 
-async function startAuthorizedControlPlanePrGate(
-  command: AuthorizedControlPlaneCommand,
+async function startAuthorizedPrGate(
+  command: AuthorizedE2ECommand,
+  authorizationKind: "internal-control-plane" | "fork",
 ): Promise<void> {
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
@@ -3937,9 +2996,11 @@ async function startAuthorizedControlPlanePrGate(
     throw new Error("gate run ID is invalid");
   }
   if (command.workflowRunAttempt !== 1) {
-    throw new Error("control-plane authorization must use the first workflow run attempt");
+    throw new Error("E2E authorization must use the first workflow run attempt");
   }
   const reason = normalizedWaiverReason(command.reason);
+  const pendingTitle =
+    authorizationKind === "fork" ? FORK_E2E_AUTHORIZATION_TITLE : CONTROL_PLANE_AUTHORIZATION_TITLE;
 
   let checkRunId: number | undefined;
   try {
@@ -3950,8 +3011,12 @@ async function startAuthorizedControlPlanePrGate(
       headSha: command.headSha,
       baseSha: command.baseSha,
     });
-    if (pull.head.repo?.full_name !== repository) {
+    const isFork = pull.head.repo?.full_name !== repository;
+    if (authorizationKind === "internal-control-plane" && isFork) {
       throw new Error("control-plane E2E authorization requires an internal pull request");
+    }
+    if (authorizationKind === "fork" && !isFork) {
+      throw new Error("fork E2E authorization requires a fork pull request");
     }
     const changedFiles = await pullChangedFiles(repository, pull, token);
     const inventory = readFreeStandingJobsInventory();
@@ -3963,13 +3028,16 @@ async function startAuthorizedControlPlanePrGate(
       }),
       new Set(inventory.allowedJobs),
     );
-    if (!requiresCredentialedE2eAuthorization(plan)) {
+    if (
+      authorizationKind === "internal-control-plane" &&
+      !requiresCredentialedE2eAuthorization(plan)
+    ) {
       throw new Error("pull request does not require credentialed E2E authorization");
     }
     const jobs = riskPlanRequiredJobIds(plan);
     const targets = riskPlanRequiredTargetIds(plan);
     if (jobs.length + targets.length === 0) {
-      throw new Error("authorized control-plane plan selected no E2E jobs or targets");
+      throw new Error("authorized plan selected no E2E jobs or targets");
     }
     writePrivateRegularFile(command.planPath, `${JSON.stringify(plan, null, 2)}\n`);
     const currentPull = await requireLiveExactDiff({
@@ -3995,8 +3063,8 @@ async function startAuthorizedControlPlanePrGate(
     }
     const check = matchingChecks[0]!;
     const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
-    if (!pendingAuthorization || check.output?.title !== CONTROL_PLANE_AUTHORIZATION_TITLE) {
-      throw new Error("PR gate must have the matching pending control-plane authorization state");
+    if (!pendingAuthorization || check.output?.title !== pendingTitle) {
+      throw new Error("PR gate must have the matching pending E2E authorization state");
     }
     checkRunId = check.id;
     appendOutput("check_id", String(checkRunId));
@@ -4059,16 +3127,18 @@ async function startAuthorizedControlPlanePrGate(
               baseSha: command.baseSha,
             },
             token,
-            CONTROL_PLANE_AUTHORIZATION_TITLE,
+            pendingTitle,
             [
               `The authorized E2E attempt did not produce an accepted result: \`${reason}\`.`,
-              "Review the controller error and any linked child run. Then, launch a first-attempt `run-control-plane` workflow for the PR/base SHA pair.",
+              authorizationKind === "fork"
+                ? "Review the controller error and any linked child run. Then, update the PR to create a new PR SHA and run fresh PR CI."
+                : "Review the controller error and any linked child run. Then, launch a first-attempt `run-control-plane` workflow for the PR/base SHA pair.",
             ].join("\n\n"),
           );
           appendOutput("finalized", "true");
         } catch (restoreError) {
           console.error(
-            `Failed to restore control-plane authorization after controller error: ${controllerErrorMessage(restoreError)}`,
+            `Failed to restore E2E authorization after controller error: ${controllerErrorMessage(restoreError)}`,
           );
         }
       }
@@ -4085,10 +3155,10 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
     command.maintainer,
     "Control-plane E2E authorization",
   );
-  await startAuthorizedControlPlanePrGate(command);
+  await startAuthorizedPrGate(command, "internal-control-plane");
 }
 
-function approvedControlPlaneReason(comment: string | null): string {
+function approvedE2EReason(comment: string | null): string {
   const normalizedComment = (comment ?? "")
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
     .replace(/\s{2,}/gu, " ")
@@ -4134,11 +3204,56 @@ export async function startApprovedControlPlanePrGate(
     ),
     INTERNAL_E2E_APPROVAL_ENVIRONMENT,
   );
-  await startAuthorizedControlPlanePrGate({
-    ...command,
-    maintainer: review.reviewer,
-    reason: approvedControlPlaneReason(review.comment),
-  });
+  await startAuthorizedPrGate(
+    {
+      ...command,
+      maintainer: review.reviewer,
+      reason: approvedE2EReason(review.comment),
+    },
+    "internal-control-plane",
+  );
+}
+
+export async function startApprovedForkPrGate(
+  command: ApprovedForkE2EDispatchCommand,
+): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
+    throw new Error("approval run ID is invalid");
+  }
+  if (command.approvalRunAttempt !== 1 || command.workflowRunAttempt !== 1) {
+    throw new Error("approval and workflow run attempts must be exactly 1");
+  }
+  if (command.gateRunId !== command.approvalRunId) {
+    throw new Error("approval run ID must match the gate run ID");
+  }
+  validateApprovalWorkflowRun(
+    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
+      userAgent: USER_AGENT,
+    }),
+    {
+      repository,
+      runId: command.approvalRunId,
+      runAttempt: command.approvalRunAttempt,
+      workflowSha: command.workflowSha,
+    },
+  );
+  const review = validateApprovalReview(
+    await githubApi<unknown>(
+      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
+      token,
+      { userAgent: USER_AGENT },
+    ),
+    FORK_E2E_APPROVAL_ENVIRONMENT,
+  );
+  await startAuthorizedPrGate(
+    {
+      ...command,
+      maintainer: review.reviewer,
+      reason: approvedE2EReason(review.comment),
+    },
+    "fork",
+  );
 }
 
 export function findSignalFiles(
@@ -4318,6 +3433,7 @@ export async function finishPrGate(options: {
       try {
         const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId, 1, {
           includeAnnotations: true,
+          hostedRunnerLossPolicy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
         });
         await requireUnchangedCompletedWorkflowRun(repository, token, child, {
           childRunId: options.childRunId,
@@ -4347,6 +3463,7 @@ export async function finishPrGate(options: {
           jobs,
           jobDetailsAvailable,
           jobDetailsComplete,
+          policy: PR_E2E_HOSTED_RUNNER_LOSS_POLICY,
         }),
       });
     }
@@ -4548,14 +3665,14 @@ function validateApprovalWorkflowRun(
 
 function validateApprovalReview(
   value: unknown,
-  environment: typeof FORK_SKIP_APPROVAL_ENVIRONMENT | typeof INTERNAL_E2E_APPROVAL_ENVIRONMENT,
+  environment: typeof FORK_E2E_APPROVAL_ENVIRONMENT | typeof INTERNAL_E2E_APPROVAL_ENVIRONMENT,
 ): { reviewer: string; comment: string | null } {
   if (!Array.isArray(value)) {
     throw new Error("GitHub returned malformed environment approval history");
   }
   if (value.length === 0) {
     throw new Error(
-      `No required-reviewer approval was recorded for ${environment}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, update the PR to create a new head, then trigger fresh PR CI, or use the manual maintainer fallback.`,
+      `No required-reviewer approval was recorded for ${environment}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, update the PR to create a new PR SHA, then run fresh PR CI.`,
     );
   }
   if (value.length > MAX_APPROVAL_REVIEWS) {
@@ -4604,19 +3721,6 @@ function validateApprovalReview(
   return { reviewer: review.reviewer, comment: review.comment };
 }
 
-function approvedWaiverReason(comment: string | null): string {
-  const normalizedComment = (comment ?? "")
-    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
-    .replace(/\s{2,}/gu, " ")
-    .trim();
-  const baseReason = "Protected environment approval confirmed for this credentialed E2E skip.";
-  const commentPrefix = " Reviewer comment: ";
-  const maxCommentChars = MAX_WAIVER_REASON_CHARS - baseReason.length - commentPrefix.length;
-  const boundedComment = normalizedComment.slice(0, maxCommentChars);
-  const reason = boundedComment ? `${baseReason}${commentPrefix}${boundedComment}` : baseReason;
-  return normalizedWaiverReason(reason);
-}
-
 async function requireMaintainerPermission(
   repository: string,
   token: string,
@@ -4635,186 +3739,6 @@ async function requireMaintainerPermission(
   ) {
     throw new Error(`${operation} requires a repository maintainer or administrator`);
   }
-}
-
-async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
-  const { token, repository } = tokenAndRepository();
-  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
-  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
-  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
-  if (!MAINTAINER_PATTERN.test(command.maintainer)) throw new Error("maintainer login is invalid");
-  const reason = normalizedWaiverReason(command.reason);
-  if (command.evidenceUrl && !EVIDENCE_URL_PATTERN.test(command.evidenceUrl)) {
-    throw new Error("evidence URL must name an NVIDIA/NemoClaw Actions run");
-  }
-
-  if (!command.validatedApproval) {
-    await requireMaintainerPermission(
-      repository,
-      token,
-      command.maintainer,
-      "credentialed E2E skip approvals",
-    );
-  }
-
-  const pull = validatePullRequest(
-    await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
-      userAgent: USER_AGENT,
-    }),
-  );
-  if (
-    pull.state !== "open" ||
-    pull.base.repo.full_name !== repository ||
-    !pull.head.repo ||
-    pull.head.sha !== command.headSha ||
-    pull.base.sha !== command.baseSha
-  ) {
-    throw new Error("pull request no longer matches the reviewed PR SHA and base SHA");
-  }
-  const isFork = pull.head.repo.full_name !== repository;
-  if (!isFork) {
-    throw new Error("credentialed E2E skips require a fork pull request");
-  }
-
-  const changedFiles = await pullChangedFiles(repository, pull, token);
-  const inventory = readFreeStandingJobsInventory();
-  const allowedJobs = new Set(inventory.allowedJobs);
-  const plan = validateRiskPlan(
-    buildRiskPlan({
-      headSha: command.headSha,
-      changedFiles,
-      focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
-    }),
-    allowedJobs,
-  );
-  const jobs = riskPlanRequiredJobIds(plan);
-  const targets = riskPlanRequiredTargetIds(plan);
-  if (jobs.length + targets.length === 0) {
-    throw new Error("pull request does not require a credentialed E2E skip");
-  }
-  const currentPull = validatePullRequest(
-    await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
-      userAgent: USER_AGENT,
-    }),
-  );
-  assertPullUnchanged(pull, currentPull);
-
-  const matchingChecks = await matchingPrGateChecks({
-    repository,
-    token,
-    headSha: command.headSha,
-    baseSha: command.baseSha,
-    prNumber: command.prNumber,
-  });
-  if (matchingChecks.length !== 1) {
-    throw new Error(
-      `Expected one PR gate check for the PR/base SHA pair; found ${matchingChecks.length}`,
-    );
-  }
-  const check = matchingChecks[0]!;
-  if (
-    check.status !== "completed" ||
-    check.conclusion !== "failure" ||
-    check.output?.title !== "Maintainer approval required to skip credentialed E2E"
-  ) {
-    throw new Error("PR gate must first complete with the matching skip-approval failure");
-  }
-
-  const safeReason = reason.replace(/`/gu, "'");
-  const evidence = command.validatedApproval
-    ? `Validated environment approval run for \`${command.validatedApproval.environment}\`: [${command.validatedApproval.runUrl}](${command.validatedApproval.runUrl}).`
-    : command.evidenceUrl
-      ? `Maintainer-supplied Actions reference (not validated by this controller): [${command.evidenceUrl}](${command.evidenceUrl}).`
-      : "Approval source: manual fallback; no supporting Actions run was supplied.";
-  const title = `Credentialed E2E skipped for fork PR — approved by @${command.maintainer}`;
-  const approval = `Maintainer @${command.maintainer} approved skipping credentialed E2E for fork head \`${command.headSha}\` on base \`${command.baseSha}\`.`;
-  const nonExecution = `Selected jobs and targets not run: ${riskPlanSelectionSummary(plan)}.`;
-  await compatibleMainWorkflowCommit(repository, token, command.workflowSha);
-  const finalPull = await requireLiveExactDiff({
-    repository,
-    token,
-    prNumber: command.prNumber,
-    headSha: command.headSha,
-    baseSha: command.baseSha,
-  });
-  assertPullUnchanged(pull, finalPull);
-  await completeCheck(
-    { repository, checkRunId: check.id },
-    token,
-    {
-      conclusion: "success",
-      title,
-      summary: [
-        "**Outcome: APPROVED SKIP — credentialed E2E did not run.**",
-        approval,
-        nonExecution,
-        `Reason: ${safeReason}`,
-        evidence,
-        `Deterministic plan: \`${plan.planHash}\`.`,
-      ].join("\n\n"),
-    },
-    command.validatedApproval?.runUrl ??
-      command.evidenceUrl ??
-      `https://github.com/${repository}/pull/${pull.number}`,
-  );
-  console.log(
-    `Credentialed E2E skip recorded: mode=${command.mode} pr=${pull.number} head=${command.headSha} base=${command.baseSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
-  );
-}
-
-export async function recordManualForkE2ESkip(
-  command: Extract<ManualForkSkipCommand, { mode: "record-fork-e2e-skip" }>,
-): Promise<void> {
-  await completeForkE2ESkip(command);
-}
-
-export async function recordApprovedForkE2ESkip(command: ApprovedForkSkipCommand): Promise<void> {
-  const { token, repository } = tokenAndRepository();
-  if (!Number.isSafeInteger(command.prNumber) || command.prNumber < 1) {
-    throw new Error("PR number is invalid");
-  }
-  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
-  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
-  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
-  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
-    throw new Error("approval run ID is invalid");
-  }
-  if (command.approvalRunAttempt !== 1) {
-    throw new Error("approval run attempt must be exactly 1");
-  }
-
-  const runUrl = validateApprovalWorkflowRun(
-    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
-      userAgent: USER_AGENT,
-    }),
-    {
-      repository,
-      runId: command.approvalRunId,
-      runAttempt: command.approvalRunAttempt,
-      workflowSha: command.workflowSha,
-    },
-  );
-  const review = validateApprovalReview(
-    await githubApi<unknown>(
-      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
-      token,
-      { userAgent: USER_AGENT },
-    ),
-    FORK_SKIP_APPROVAL_ENVIRONMENT,
-  );
-  await completeForkE2ESkip({
-    mode: "record-fork-e2e-skip",
-    prNumber: command.prNumber,
-    headSha: command.headSha,
-    baseSha: command.baseSha,
-    workflowSha: command.workflowSha,
-    maintainer: review.reviewer,
-    reason: approvedWaiverReason(review.comment),
-    validatedApproval: {
-      environment: FORK_SKIP_APPROVAL_ENVIRONMENT,
-      runUrl,
-    },
-  });
 }
 
 async function activeSupersededPrGateChecks(options: {
@@ -4845,7 +3769,7 @@ async function activeSupersededPrGateChecks(options: {
   if (
     pull.number !== options.prNumber ||
     pull.head.sha !== options.headSha ||
-    pull.head.repo?.full_name !== options.repository ||
+    !pull.head.repo ||
     pull.base.repo.full_name !== options.repository
   ) {
     throw new Error("current pull request identity does not match the cancellation event");
@@ -4955,6 +3879,10 @@ async function main(): Promise<void> {
     await startApprovedControlPlanePrGate(command);
     return;
   }
+  if (command.mode === "start-approved-fork") {
+    await startApprovedForkPrGate(command);
+    return;
+  }
   if (command.mode === "retry-runner-loss") {
     await retryRunnerLossPrGate(command);
     return;
@@ -4988,14 +3916,6 @@ async function main(): Promise<void> {
   }
   if (command.mode === "download") {
     await downloadChildRunEvidence(command.childRunId, command.evidencePath);
-    return;
-  }
-  if (command.mode === "record-fork-e2e-skip") {
-    await completeForkE2ESkip(command);
-    return;
-  }
-  if (command.mode === "record-approved-fork-e2e-skip") {
-    await recordApprovedForkE2ESkip(command);
     return;
   }
   await cancelPrGate(command.prNumber, command.headSha, command.supersededHeadSha);

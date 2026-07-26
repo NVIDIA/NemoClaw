@@ -20,6 +20,7 @@ import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
@@ -123,6 +124,7 @@ async function rebuildSandboxUnlocked(
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
+    if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return;
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;
@@ -146,6 +148,7 @@ async function rebuildSandboxUnlocked(
       relock: relockShieldsIfNeeded,
     } = shieldsPhase;
     let sandboxStillExists = true;
+    let sandboxExistenceAmbiguous = false;
 
     try {
       const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
@@ -212,6 +215,7 @@ async function rebuildSandboxUnlocked(
         sandboxEntry,
         staleRecovery,
         backupManifest: backup.backupManifest,
+        force: normalized.force,
         log,
         bail,
         relockShieldsIfNeeded,
@@ -249,6 +253,9 @@ async function rebuildSandboxUnlocked(
         },
         onDeleted: () => {
           sandboxStillExists = false;
+        },
+        onDeleteStateAmbiguous: () => {
+          sandboxExistenceAmbiguous = true;
         },
       });
       if (!mcpPreparation) return;
@@ -341,7 +348,9 @@ async function rebuildSandboxUnlocked(
         bail,
       });
     } finally {
-      if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
+      if (!rebuildShieldsWindow.relocked && !sandboxExistenceAmbiguous) {
+        relockShieldsIfNeeded(sandboxStillExists);
+      }
     }
   } finally {
     runBestEffortRebuildCleanup(

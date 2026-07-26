@@ -25,11 +25,19 @@ export const SANDBOX_ROUTE_OVERRIDES: Record<string, readonly string[]> = {
   "sandbox:hosts:add": ["hosts-add"],
   "sandbox:hosts:list": ["hosts-list"],
   "sandbox:hosts:remove": ["hosts-remove"],
-  "sandbox:policy:add": ["policy-add"],
-  "sandbox:policy:explain": ["policy-explain"],
-  "sandbox:policy:get": ["policy-get"],
-  "sandbox:policy:list": ["policy-list"],
-  "sandbox:policy:remove": ["policy-remove"],
+};
+
+// Legacy public spellings still accepted at parse time but no longer canonical.
+// The `policy` group canonicalized to the two-token `policy <verb>` grammar;
+// the original hyphenated forms keep working so existing scripts and docs do
+// not break, but help, completion, and display advertise only the canonical
+// two-token form.
+export const SANDBOX_LEGACY_ROUTE_ALIASES: Record<string, readonly (readonly string[])[]> = {
+  "sandbox:policy:add": [["policy-add"]],
+  "sandbox:policy:explain": [["policy-explain"]],
+  "sandbox:policy:get": [["policy-get"]],
+  "sandbox:policy:list": [["policy-list"]],
+  "sandbox:policy:remove": [["policy-remove"]],
 };
 
 function commandIdTokens(commandId: string): string[] {
@@ -55,4 +63,17 @@ export function sandboxRouteTokens(commandId: string): string[] | null {
   if (override) return [...override];
   const tokens = commandIdTokens(commandId.slice("sandbox:".length));
   return tokens.length > 0 ? tokens : null;
+}
+
+/**
+ * Every accepted public route for a sandbox command: the canonical route first,
+ * then any legacy spellings still parsed for backward compatibility. Argv
+ * translation matches all variants; display and completion use only the
+ * canonical route from `sandboxRouteTokens`.
+ */
+export function sandboxRouteTokenVariants(commandId: string): string[][] {
+  const canonical = sandboxRouteTokens(commandId);
+  if (!canonical) return [];
+  const legacy = SANDBOX_LEGACY_ROUTE_ALIASES[commandId] ?? [];
+  return [canonical, ...legacy.map((tokens) => [...tokens])];
 }

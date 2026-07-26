@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
@@ -26,6 +27,13 @@ import {
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
+import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
+import {
+  getNemoclawOpenShellGatewayUserServicePath,
+  getOpenShellUserConfigHome,
+  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
+} from "../../onboard/docker-driver-gateway-service";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
 import { isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
@@ -43,7 +51,10 @@ import {
 } from "../../state/gateway-registry";
 import { GATEWAYS_SUBDIR } from "../../state/state-root";
 import { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
-import { stopOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
+import {
+  stopHttpsPinRuntimeAdapter,
+  stopOpenRouterRuntimeAdapter,
+} from "./openrouter-runtime-adapter-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
 export interface RunResult {
@@ -69,6 +80,8 @@ export interface UninstallRunDeps {
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log?: (message: string) => void;
+  openRegularFile?: typeof openRegularFileNoFollow;
+  platform?: NodeJS.Platform;
   readProcessArgv?: (pid: number) => readonly string[] | null;
   readLine?: () => string | null;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
@@ -126,6 +139,10 @@ function splitNonEmptyLines(output: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function pathEntryExists(target: string, runtime: Pick<UninstallRuntime, "existsSync">): boolean {
@@ -213,6 +230,14 @@ const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
   "sandboxes.json",
 ];
 
+const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
+  "https-pin-runtime-adapter.pid",
+  "https-pin-runtime-adapter-token",
+  "https-pin-runtime-adapter.json",
+  "https-pin-runtime-adapter.lock",
+  "https-pin-runtime-adapter.log",
+];
+
 // These entries can exist in the shared root without representing a running
 // default-port environment. Any other shared-root entry is treated
 // conservatively as default-port state when uninstalling a non-default port.
@@ -221,6 +246,7 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   "source",
   GATEWAYS_SUBDIR,
   "managed_swap",
+  ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
 ]);
 
 function removePathExcept(
@@ -300,6 +326,8 @@ interface UninstallRuntime {
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log: (message: string) => void;
+  openRegularFile: typeof openRegularFileNoFollow;
+  platform: NodeJS.Platform;
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readLine: () => string | null;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
@@ -330,6 +358,8 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
+    openRegularFile: deps.openRegularFile ?? openRegularFileNoFollow,
+    platform: deps.platform ?? process.platform,
     readProcessArgv: deps.readProcessArgv,
     readLine: deps.readLine ?? readLineFromStdin,
     resolveGatewayTeardownAuthority:
@@ -772,6 +802,115 @@ function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
     if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL"))
       runtime.log(`Stopped orphaned openshell process ${pid}`);
     else runtime.warn(`Failed to stop orphaned openshell process ${pid}`);
+  }
+}
+
+function removeNemoclawOpenShellGatewayUserService(runtime: UninstallRuntime): boolean {
+  if (runtime.platform !== "linux") return true;
+  const servicePath = getNemoclawOpenShellGatewayUserServicePath(
+    runtime.env.HOME || os.homedir(),
+    runtime.env,
+  );
+  if (!runtime.existsSync(servicePath)) return true;
+
+  let serviceFile: OpenRegularFile;
+  try {
+    serviceFile = runtime.openRegularFile(servicePath);
+  } catch (error) {
+    runtime.warn(
+      isErrnoException(error) && error.code === "ELOOP"
+        ? `Leaving ${servicePath} in place because it is a symbolic link.`
+        : `Failed to read ${servicePath}; leaving gateway user service in place.`,
+    );
+    return false;
+  }
+  let managed = false;
+  try {
+    managed = serviceFile
+      .readUtf8()
+      .split(/\r?\n/)
+      .some((line) => line.trimEnd() === NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE);
+  } catch {
+    runtime.warn(`Failed to read ${servicePath}; leaving gateway user service in place.`);
+    return false;
+  } finally {
+    serviceFile.close();
+  }
+  if (!managed) {
+    runtime.warn(`Leaving ${servicePath} in place because it is not NemoClaw-managed.`);
+    return true;
+  }
+
+  const hasSystemctl = runtime.commandExists("systemctl");
+  if (hasSystemctl) {
+    const disabled = runtime.run(
+      "systemctl",
+      ["--user", "disable", "--now", NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
+      { env: runtime.env, stdio: "ignore" },
+    );
+    if (disabled.status !== 0) {
+      runtime.warn(`Failed to disable ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
+      return false;
+    }
+    runtime.log(`Disabled ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
+  } else {
+    runtime.warn("systemctl not found; removing NemoClaw gateway user service file only.");
+  }
+  try {
+    runtime.rmSync(servicePath, { force: true });
+    runtime.log(`Removed ${servicePath}`);
+  } catch (error) {
+    runtime.warn(
+      `Failed to remove ${servicePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
+  if (hasSystemctl) {
+    const reloaded = runtime.run("systemctl", ["--user", "daemon-reload"], {
+      env: runtime.env,
+      stdio: "ignore",
+    });
+    if (reloaded.status !== 0) {
+      runtime.warn("Failed to reload the user systemd manager.");
+      return false;
+    }
+  }
+  return true;
+}
+
+function removeNemoclawOpenShellGatewayEnv(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+): { keptUnrelatedContent: boolean; ok: boolean } {
+  const envPath = path.join(paths.openshellConfigDir, "gateway.env");
+  if (!runtime.existsSync(envPath)) return { keptUnrelatedContent: false, ok: true };
+  let envFile: OpenRegularFile;
+  try {
+    envFile = runtime.openRegularFile(envPath, { writable: true });
+  } catch (error) {
+    runtime.warn(
+      isErrnoException(error) && error.code === "ELOOP"
+        ? `Leaving ${envPath} in place because it is a symbolic link.`
+        : `Failed to clean ${envPath}: ${formatError(error)}`,
+    );
+    return { keptUnrelatedContent: true, ok: false };
+  }
+  try {
+    const preserved = buildDockerGatewayDebEnvFile(envFile.readUtf8(), {});
+    if (preserved.trim()) {
+      envFile.replaceUtf8(preserved, 0o600);
+      runtime.log(`Removed NemoClaw gateway settings from ${envPath}`);
+      return { keptUnrelatedContent: true, ok: true };
+    }
+    envFile.close();
+    runtime.rmSync(envPath, { force: true });
+    runtime.log(`Removed ${envPath}`);
+    return { keptUnrelatedContent: false, ok: true };
+  } catch (error) {
+    runtime.warn(`Failed to clean ${envPath}: ${formatError(error)}`);
+    return { keptUnrelatedContent: true, ok: false };
+  } finally {
+    envFile.close();
   }
 }
 
@@ -1369,46 +1508,74 @@ function executePlan(
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     if (step.name === "Stopping services") {
+      if (
+        !options.keepOpenShell &&
+        !externallySupervised &&
+        GATEWAY_PORT === DEFAULT_GATEWAY_PORT
+      ) {
+        if (!removeNemoclawOpenShellGatewayUserService(runtime)) ok = false;
+      }
       if (!scopedToSelectedGateway) {
         stopHelperServices(paths, runtime);
         removeGlob(paths.helperServiceGlob, runtime);
-        stopMatchingPids(
-          `openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`,
-          runtime,
-          "local OpenShell forward processes",
-        );
-        stopStaleDashboardListeners({
-          run: runtime.run,
-          kill: runtime.kill,
-          env: runtime.env,
-          log: runtime.log,
-          warn: runtime.warn,
-          commandExists: runtime.commandExists,
-        });
-        stopOrphanedOpenShell(runtime);
-      } else {
-        runtime.log("Sibling gateways remain; kept shared helper services and sibling forwards.");
-      }
-      if (!stopHermesForwardWatchers(paths.nemoclawStateDir, runtime)) return { ok: false };
-      if (!scopedToSelectedGateway && !externallySupervised) {
-        stopHostGatewayProcesses(
-          {
+        if (options.keepOpenShell) {
+          runtime.log(
+            "Keeping OpenShell gateway service, configuration, and processes as requested.",
+          );
+        } else {
+          stopMatchingPids(
+            `openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`,
+            runtime,
+            "local OpenShell forward processes",
+          );
+          stopStaleDashboardListeners({
             run: runtime.run,
             kill: runtime.kill,
             env: runtime.env,
             log: runtime.log,
             warn: runtime.warn,
             commandExists: runtime.commandExists,
-          },
-          { logNoProcesses: true },
-        );
-      } else if (externallySupervised) {
+          });
+          stopOrphanedOpenShell(runtime);
+          if (!externallySupervised) {
+            stopHostGatewayProcesses(
+              {
+                run: runtime.run,
+                kill: runtime.kill,
+                env: runtime.env,
+                log: runtime.log,
+                warn: runtime.warn,
+                commandExists: runtime.commandExists,
+              },
+              GATEWAY_PORT === DEFAULT_GATEWAY_PORT
+                ? { logNoProcesses: true }
+                : {
+                    gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
+                    logNoProcesses: true,
+                    openShellGatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+                    openShellGatewayPort: GATEWAY_PORT,
+                    preserveRuntimeFilesOnNonMatching: true,
+                    stateDir: paths.selectedGatewayLocalStateDir,
+                  },
+            );
+          }
+        }
+      } else {
+        runtime.log("Sibling gateways remain; kept shared helper services and sibling forwards.");
+      }
+      if (!stopHermesForwardWatchers(paths.nemoclawStateDir, runtime)) return { ok: false };
+      if (externallySupervised) {
         runtime.log("Kept the externally supervised OpenShell gateway process running.");
       }
       stopOllamaAuthProxy(paths, runtime, !scopedToSelectedGateway);
       stopOpenRouterRuntimeAdapter(paths, runtime, {
         scanOrphans: !scopedToSelectedGateway,
       });
+      if (scopedToSelectedGateway) {
+        runtime.log("Sibling gateways remain; kept the shared HTTPS Pin Runtime adapter.");
+      } else {
+        stopHttpsPinRuntimeAdapter(paths, runtime);
+      }
       stopModelRouter(paths, runtime, !scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
       if (
@@ -1422,7 +1589,7 @@ function executePlan(
       ) {
         return { ok: false };
       }
-      if (scopedToSelectedGateway && !externallySupervised) {
+      if (scopedToSelectedGateway && !options.keepOpenShell && !externallySupervised) {
         stopHostGatewayProcesses(
           {
             run: runtime.run,
@@ -1486,9 +1653,12 @@ function executePlan(
               ? "Keeping OpenShell binaries used by the externally supervised gateway."
               : "Keeping OpenShell binaries as requested.",
           );
-        } else
+        } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
+          runtime.log("Keeping OpenShell binaries used by the default gateway service.");
+        } else {
           for (const target of paths.openshellInstallPaths)
             removeFileWithOptionalSudo(target, runtime);
+        }
       } else {
         runtime.log("Sibling gateways remain; kept shared runtime files and OpenShell binaries.");
       }
@@ -1517,6 +1687,7 @@ function executePlan(
               ? [GATEWAYS_SUBDIR, path.basename(paths.managedSwapMarkerPath)]
               : []),
             ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
+            ...(scopedToSelectedGateway ? HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES : []),
           ],
           runtime,
         )
@@ -1524,10 +1695,24 @@ function executePlan(
         ok = false;
       if (scopedToSelectedGateway) {
         removePath(paths.selectedGatewayLocalStateDir, runtime);
+        if (GATEWAY_PORT === DEFAULT_GATEWAY_PORT && !options.keepOpenShell) {
+          const envCleanup = removeNemoclawOpenShellGatewayEnv(paths, runtime);
+          if (!envCleanup.ok) ok = false;
+        }
         runtime.log("Sibling gateways remain; kept shared OpenShell and NemoClaw config.");
       } else {
         removePath(paths.gatewayLocalStateDir, runtime);
-        removePath(paths.openshellConfigDir, runtime);
+        if (options.keepOpenShell)
+          runtime.log("Keeping OpenShell gateway configuration as requested.");
+        else if (GATEWAY_PORT === DEFAULT_GATEWAY_PORT) {
+          const envCleanup = removeNemoclawOpenShellGatewayEnv(paths, runtime);
+          if (!envCleanup.ok) ok = false;
+          if (envCleanup.keptUnrelatedContent) {
+            if (!removePathExcept(paths.openshellConfigDir, ["gateway.env"], runtime)) ok = false;
+          } else {
+            removePath(paths.openshellConfigDir, runtime);
+          }
+        } else runtime.log("Keeping OpenShell configuration used by the default gateway service.");
         removePath(paths.nemoclawConfigDir, runtime);
       }
     }
@@ -1541,12 +1726,15 @@ export function buildRunPlan(
 ): { paths: UninstallPaths; plan: UninstallPlan } {
   const env = { ...process.env, ...(deps.env ?? {}) };
   const home = env.HOME || os.homedir();
-  const paths = defaultUninstallPaths({
-    home,
-    repoRoot: path.resolve(__dirname, "..", "..", ".."),
-    tmpDir: env.TMPDIR,
-    xdgBinHome: env.XDG_BIN_HOME,
-  });
+  const paths = {
+    ...defaultUninstallPaths({
+      home,
+      repoRoot: path.resolve(__dirname, "..", "..", ".."),
+      tmpDir: env.TMPDIR,
+      xdgBinHome: env.XDG_BIN_HOME,
+    }),
+    openshellConfigDir: path.join(getOpenShellUserConfigHome(home, env), "openshell"),
+  };
   const gatewayName = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
   const plan = buildUninstallPlan(paths, {
     deleteModels: options.deleteModels,

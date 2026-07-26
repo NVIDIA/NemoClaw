@@ -229,6 +229,67 @@ describe("promptOllamaModel installed-model fit filter", () => {
   });
 });
 
+describe("promptOllamaModel size and memory annotations", () => {
+  let active: { restore: () => void } | null = null;
+  let logSpy: ReturnType<typeof vi.spyOn> | null = null;
+  afterEach(() => {
+    logSpy?.mockRestore();
+    logSpy = null;
+    active?.restore();
+    active = null;
+  });
+
+  it("annotates each model with download size and required VRAM and shows available memory", async () => {
+    const setup = loadProxyWithMocks({ installed: ["qwen3.5:9b"], promptValues: [""] });
+    active = setup;
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await setup.proxy.promptOllamaModel({
+      type: "nvidia",
+      totalMemoryMB: 131_072,
+      availableMemoryMB: 131_072,
+    });
+    const menu = logSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
+    expect(result).toBe("qwen3.5:9b");
+    expect(menu).toContain("Available GPU memory: 128.00 GB");
+    expect(menu).toContain("6.15 GB download");
+    expect(menu).toContain("~11.72 GB VRAM");
+  });
+
+  it("labels total memory separately when available memory is unknown", async () => {
+    const setup = loadProxyWithMocks({ installed: ["qwen3.5:9b"], promptValues: [""] });
+    active = setup;
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await setup.proxy.promptOllamaModel({
+      type: "nvidia",
+      totalMemoryMB: 8_000,
+    });
+    const menu = logSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
+    expect(result).toBe("qwen3.5:9b");
+    expect(menu).toContain("Total GPU memory: 7.81 GB");
+    expect(menu).toContain("exceeds total memory");
+    expect(menu).toContain("fits the host's total GPU memory");
+    expect(menu).toContain("may not fit total GPU memory; choose a smaller model");
+    expect(menu).not.toContain("Available GPU memory");
+    expect(menu).not.toContain("exceeds available memory");
+    expect(menu).not.toContain("currently available");
+  });
+
+  it("renders name-only for an installed tag the registry does not know", async () => {
+    const setup = loadProxyWithMocks({ installed: ["my-custom:model"], promptValues: [""] });
+    active = setup;
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await setup.proxy.promptOllamaModel({
+      type: "nvidia",
+      totalMemoryMB: 131_072,
+      availableMemoryMB: 131_072,
+    });
+    const menu = logSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
+    expect(result).toBe("my-custom:model");
+    expect(menu).toContain("1) my-custom:model");
+    expect(menu).not.toContain("my-custom:model  (");
+  });
+});
+
 describe("prepareOllamaModel post-pull discovery", () => {
   let active: { restore: () => void } | null = null;
   afterEach(() => {

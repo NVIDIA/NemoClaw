@@ -16,6 +16,7 @@ import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
+import { describeIgnoredReasoningEnv } from "../../reasoning-mode";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -490,10 +491,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
       });
-      compatibleEndpointReasoning =
-        provider === "compatible-endpoint"
-          ? await deps.configureCompatibleEndpointReasoning(compatibleEndpointReasoning)
-          : deps.clearCompatibleEndpointReasoning();
+      if (provider === "compatible-endpoint") {
+        // Report before configuring: configureCompatibleEndpointReasoning
+        // overwrites process.env.NEMOCLAW_REASONING with the recorded value.
+        const ignoredReasoning = describeIgnoredReasoningEnv(
+          compatibleEndpointReasoning,
+          deps.cliName(),
+        );
+        if (ignoredReasoning) deps.log(ignoredReasoning);
+        compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
+          compatibleEndpointReasoning,
+        );
+      } else {
+        compatibleEndpointReasoning = deps.clearCompatibleEndpointReasoning();
+      }
       const localInferenceRepairOptions = {
         provider,
         model,

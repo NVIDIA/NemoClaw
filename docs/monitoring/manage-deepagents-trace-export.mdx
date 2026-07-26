@@ -36,7 +36,7 @@ While the collector is stopped, trace delivery fails open and Deep Agents Code c
 Remove the policy preset to revoke collector reachability immediately:
 
 ```bash
-nemo-deepagents "$SANDBOX_NAME" policy-remove observability-otlp-local --yes
+nemo-deepagents "$SANDBOX_NAME" policy remove observability-otlp-local --yes
 ```
 
 Removing the preset does not clear the recorded observability choice.

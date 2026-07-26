@@ -3743,18 +3743,17 @@ openclaw() {
           esac
           ;;
         *)
-          echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
+          _nemoclaw_channel_operation_hint="<operation>"
+          case "${2:-}" in add | remove) _nemoclaw_channel_operation_hint="$2" ;; esac
+          _nemoclaw_channel_name_hint="<channel>"
+          case "${3:-}" in
+            discord | slack | teams | telegram | wechat | whatsapp)
+              _nemoclaw_channel_name_hint="$3"
+              ;;
+          esac
+          echo "Error: 'openclaw channels $_nemoclaw_channel_operation_hint' cannot modify channels inside the sandbox." >&2
           echo "Changes inside the sandbox do not persist across rebuilds." >&2
-          echo "" >&2
-          echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-          echo "  nemoclaw <sandbox> channels add <channel>" >&2
-          echo "  nemoclaw <sandbox> channels remove <channel>" >&2
-          echo "" >&2
-          echo "These stage the change and rebuild the sandbox to apply it." >&2
-          echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
-          echo "  openclaw channels login --channel whatsapp" >&2
-          echo "WeChat captures its token via a host-side QR during the host-side" >&2
-          echo "'channels add wechat' flow — no in-sandbox login step." >&2
+          echo "Run 'nemoclaw $(_nemoclaw_policy_denial_hint_label) channels $_nemoclaw_channel_operation_hint $_nemoclaw_channel_name_hint' on the host." >&2
           return 1
           ;;
       esac

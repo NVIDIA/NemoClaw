@@ -309,6 +309,46 @@ console.log(JSON.stringify(records));
     expect(missingProvider.thinking).toBe(false);
   });
 
+  it("preload removes the runtime provider marker from URL-form Node requests (#6913)", () => {
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const http = require('http');
+const https = require('https');
+${preload}
+function inspectHeaders(mod, url, headers) {
+  const request = mod.request(url, { headers });
+  const actualHeaders = request.getHeaders();
+  request.on('error', () => {});
+  request.destroy();
+  return actualHeaders;
+}
+const headers = [
+  inspectHeaders(http, 'http://127.0.0.1:9/v1/models', {
+    'X-NemoClaw-Upstream-Provider': 'nvidia-prod',
+    'X-Keep': 'http',
+  }),
+  inspectHeaders(https, new URL('https://127.0.0.1:9/v1/models'), {
+    'x-nemoclaw-upstream-provider': 'compatible-endpoint',
+    'X-Keep': 'https',
+  }),
+];
+console.log(JSON.stringify(headers));
+`;
+
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const headers = JSON.parse(result.stdout.trim());
+
+    expect(headers).toHaveLength(2);
+    expect(headers[0]["x-nemoclaw-upstream-provider"]).toBeUndefined();
+    expect(headers[0]["x-keep"]).toBe("http");
+    expect(headers[1]["x-nemoclaw-upstream-provider"]).toBeUndefined();
+    expect(headers[1]["x-keep"]).toBe("https");
+  });
+
   it("preload also injects model-specific kwargs for stubbed fetch requests", () => {
     const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
     const harness = `
