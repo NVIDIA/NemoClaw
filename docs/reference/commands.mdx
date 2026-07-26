@@ -1060,6 +1060,8 @@ $$nemoclaw my-assistant config get --key model --format yaml
 
 #### `$$nemoclaw <name> config set`
 
+<AgentOnly variant="openclaw,hermes">
+
 Write one value into the agent configuration in a sandbox.
 The command validates every HTTP and HTTPS URL in the value, including URLs nested inside JSON objects or arrays.
 It pins an HTTP host to the validated IP address.
@@ -1081,9 +1083,19 @@ The command treats a dotpath that does not already exist in the config as a poss
 An interactive run asks for confirmation before writing the new dotpath.
 A run without a TTY, or a run with `NEMOCLAW_NON_INTERACTIVE=1`, refuses the write.
 Pass `--config-accept-new-path`, or set `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1`, to write the new dotpath without the confirmation.
+If the confirmation reaches the end of input, for example when you press `Ctrl-D` or run the command from a harness that closes stdin, the command exits non-zero without writing and repeats the same guidance.
 
 The command refuses to write `gateway` or any dotpath under `gateway.`, which holds credentials.
 Use `$$nemoclaw <name> config rotate-token` for those changes.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+For Deep Agents sandboxes, `config set` is unavailable because the `dcode` configuration is baked into the sandbox image at build time.
+Run `$$nemoclaw onboard --agent dcode --name <sandbox-name> --fresh` when you need to change it.
+Use `$$nemoclaw <name> config get` to read the current values.
+
+</AgentOnly>
 
 #### `$$nemoclaw <name> shields`
 
