@@ -20,9 +20,15 @@ const { spawnExitCode } = processExit;
 export const LIVE_VITEST_PROJECT = "e2e-live";
 export const LIVE_TEST_ROOT = "test/e2e/live/";
 export const RISK_SIGNAL_REPORTER = "test/e2e/risk-signal-reporter.ts";
+export const MCP_BRIDGE_TEST_PATH = "test/e2e/live/mcp-bridge.test.ts";
 
 const SHELL_METACHARACTER = /[^A-Za-z0-9_./^$=:@+-]/u;
 const TEST_PATH_PATTERN = /^[A-Za-z0-9_./-]+$/u;
+const MCP_BRIDGE_SELECTOR_BY_AGENT = {
+  deepagents: "^mcp-bridge-deepagents$",
+  hermes: "^mcp-bridge-hermes$",
+  openclaw: "^mcp-bridge$",
+} as const;
 
 export interface LiveVitestInvocation {
   testPath: string | undefined;
@@ -120,6 +126,29 @@ export function validateLiveSelector(selector: string | undefined): string | und
   return value;
 }
 
+export function resolveLiveSelector(
+  testPath: string,
+  selector: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const validated = validateLiveSelector(selector);
+  if (testPath !== MCP_BRIDGE_TEST_PATH) return validated;
+
+  // Exact-head E2E executes trusted base-branch YAML with this helper from the
+  // tested checkout, so keep the reviewed shard mapping effective pre-merge.
+  const agent = env.NEMOCLAW_MCP_BRIDGE_AGENT ?? "openclaw";
+  const expected = MCP_BRIDGE_SELECTOR_BY_AGENT[agent as keyof typeof MCP_BRIDGE_SELECTOR_BY_AGENT];
+  if (!expected) {
+    throw new Error(`unsupported NEMOCLAW_MCP_BRIDGE_AGENT ${JSON.stringify(agent)}`);
+  }
+  if (validated && validated !== expected) {
+    throw new Error(
+      `MCP bridge selector ${JSON.stringify(validated)} does not match agent ${JSON.stringify(agent)}`,
+    );
+  }
+  return expected;
+}
+
 export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] {
   const project = validateLiveProject(invocation.project);
   const testPath = validateLiveTestPath(invocation.testPath);
@@ -143,21 +172,30 @@ function spawnResultExitCode(result: LiveVitestSpawnResult): number {
   return spawnExitCode(result);
 }
 
-export function runLiveVitestCli(cliArgs: string[], spawn: LiveVitestSpawner = spawnSync): number {
+export function runLiveVitestCli(
+  cliArgs: string[],
+  spawn: LiveVitestSpawner = spawnSync,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
   const invocation = parseLiveVitestArgs(cliArgs);
   const testPath = validateLiveTestPath(invocation.testPath);
-  const argv = buildLiveVitestArgs({ ...invocation, testPath });
+  const selector = resolveLiveSelector(testPath, invocation.selector, env);
+  const argv = buildLiveVitestArgs({ ...invocation, testPath, selector });
   return spawnResultExitCode(spawn("npx", argv, { stdio: "inherit" }));
 }
 
-export function runLiveVitestCommand(argv: string[], spawn: LiveVitestSpawner = spawnSync): number {
+export function runLiveVitestCommand(
+  argv: string[],
+  spawn: LiveVitestSpawner = spawnSync,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
   const [command, ...cliArgs] = argv;
   if (command !== "run") {
     throw new Error(
       `unsupported live Vitest command ${JSON.stringify(command ?? "")}; expected "run"`,
     );
   }
-  return runLiveVitestCli(cliArgs, spawn);
+  return runLiveVitestCli(cliArgs, spawn, env);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

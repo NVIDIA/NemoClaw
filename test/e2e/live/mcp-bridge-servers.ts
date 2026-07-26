@@ -47,7 +47,7 @@ type TunnelCleanupRegistry = Pick<CleanupRegistry, "add">;
 interface McpRequestPayload {
   id?: unknown;
   method?: unknown;
-  params?: { name?: unknown; arguments?: { challenge?: unknown } };
+  params?: { name?: unknown; arguments?: { challenge?: unknown }; cursor?: unknown };
 }
 
 const MCP_NOTIFICATION_METHODS = new Set([
@@ -684,20 +684,40 @@ export async function startFakeMcpHttpsServer(options: {
         serverInfo: { name: "fake", version: "1.0.0" },
       };
     } else if (parsedPayload.method === "tools/list") {
-      result = {
-        tools: [
-          {
-            name: "fake_echo",
-            description: "Returns an authenticated MCP proof token",
-            inputSchema: {
-              type: "object",
-              properties: { challenge: { type: "string" } },
-              required: ["challenge"],
-              additionalProperties: false,
+      if (parsedPayload.params?.cursor === undefined) {
+        result = {
+          tools: [
+            {
+              name: "fake_echo",
+              description: "Returns an authenticated MCP proof token",
+              inputSchema: {
+                type: "object",
+                properties: { challenge: { type: "string" } },
+                required: ["challenge"],
+                additionalProperties: false,
+              },
             },
-          },
-        ],
-      };
+          ],
+          nextCursor: "fake-page-2",
+        };
+      } else if (parsedPayload.params.cursor === "fake-page-2") {
+        result = {
+          tools: [
+            {
+              name: "fake_status",
+              description: "Returns fixture status",
+              inputSchema: { type: "object", properties: {}, additionalProperties: false },
+            },
+          ],
+        };
+      } else {
+        jsonResponse(res, 200, {
+          jsonrpc: "2.0",
+          id: parsedPayload.id ?? 1,
+          error: { code: -32602, message: "invalid tools/list cursor" },
+        });
+        return;
+      }
     } else if (parsedPayload.method === "tools/call") {
       const challenge = parsedPayload.params?.arguments?.challenge;
       if (
