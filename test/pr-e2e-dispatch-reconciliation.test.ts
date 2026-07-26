@@ -426,6 +426,22 @@ describe("PR E2E workflow dispatch reconciliation", () => {
     expect(api).toHaveBeenCalledTimes(2);
   });
 
+  it("accepts a complete stale receipt inventory at GitHub's filtered-result cap", async () => {
+    const runs = Array.from({ length: 1_000 }, (_value, index) =>
+      unrelatedWorkflowRun(index + 100),
+    );
+    const api = paginatedInventoryApi(runs);
+
+    await expect(
+      assertDispatchStillNotObserved(oldReceiptOptions(), {
+        api,
+        now: () => SENT_AT_MS + WINDOW_MS + 2_000,
+        clockSkewMs: 10,
+      }),
+    ).resolves.toBeUndefined();
+    expect(api).toHaveBeenCalledTimes(10);
+  });
+
   it("blocks replacement when the old correlation appears after the first inventory page", async () => {
     const recheckTime = SENT_AT_MS + WINDOW_MS + 2_000;
     const runs = [
