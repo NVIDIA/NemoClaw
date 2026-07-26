@@ -203,7 +203,8 @@ export async function retryableGithubRead<T>(
     try {
       return await read();
     } catch (error: unknown) {
-      if (!isRetryableGithubReadError(error) || attempt === maxAttempts) {
+      const retryable = isRetryableGithubReadError(error);
+      if (!retryable || attempt === maxAttempts) {
         const errorClass =
           error instanceof TypeError
             ? "network"
@@ -213,7 +214,7 @@ export async function retryableGithubRead<T>(
         if (errorClass) {
           throw new Error(
             `E2E / PR Gate [${operation}] attempt ${attempt}/${maxAttempts}: ${errorClass}`,
-            { cause: firstError ?? error },
+            { cause: retryable ? (firstError ?? error) : error },
           );
         }
         throw error;

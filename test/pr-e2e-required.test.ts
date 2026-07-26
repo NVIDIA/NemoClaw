@@ -560,6 +560,29 @@ describe("native PR E2E required job", () => {
       expect(log).not.toHaveBeenCalled();
     });
 
+    it("uses a later terminal failure as the cause after a transient failure", async () => {
+      const read = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("fetch failed"))
+        .mockRejectedValueOnce(
+          new Error("GitHub API repos/x/pulls/1 failed: 404 terminal response"),
+        );
+
+      const error = await retryableGithubRead("coordination checks", read, null, {
+        baseDelayMs: 1,
+        random: () => 0,
+        sleep: async () => {},
+      }).catch((caught: unknown) => caught);
+
+      expect(read).toHaveBeenCalledTimes(2);
+      expect((error as Error).message).toBe(
+        "E2E / PR Gate [coordination checks] attempt 2/3: http",
+      );
+      expect((error as Error & { cause?: Error }).cause?.message).toBe(
+        "GitHub API repos/x/pulls/1 failed: 404 terminal response",
+      );
+    });
+
     it("logs a retry class without reflecting the GitHub response body", async () => {
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const read = vi
