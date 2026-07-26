@@ -14,7 +14,7 @@ It also improves onboarding and recovery diagnostics, locks OpenClaw production 
   For more information, refer to [Network Policies](/user-guide/openclaw/reference/network-policies) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - `nemoclaw inference set --endpoint-url` now routes public DNS-backed HTTPS custom endpoints through a host-side HTTPS Pin Runtime adapter.
   Each route receives a separate sandbox-facing credential, while the upstream endpoint and credential remain host-only.
-  Exact loopback OpenAI-compatible endpoints can use no authentication, and URL-form Node.js requests no longer forward the internal provider marker.
+  OpenAI-compatible HTTP endpoints on exact loopback hosts `localhost`, `127.0.0.1`, or `[::1]` can use no authentication on ports `8000`, `11434`, or `11435`, and URL-form Node.js requests no longer forward the internal provider marker.
   A failed compatible-provider update attempts to restore the previous provider and model.
   For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint), and [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers).
 - The default OpenShell gateway on port `8080` now uses a validated host service on Linux and Apple Silicon macOS when the platform provides the supported service manager.
