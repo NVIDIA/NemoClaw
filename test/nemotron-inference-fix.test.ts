@@ -314,42 +314,25 @@ console.log(JSON.stringify(records));
     const harness = `
 const http = require('http');
 const https = require('https');
-const records = [];
-function installStub(mod) {
-  mod.request = function (url, options) {
-    const record = {
-      url: String(url),
-      headers: { ...(options && options.headers) },
-      removed: [],
-    };
-    records.push(record);
-    return {
-      end() { return true; },
-      removeHeader(name) {
-        record.removed.push(name);
-        for (const key of Object.keys(record.headers)) {
-          if (key.toLowerCase() === String(name).toLowerCase()) delete record.headers[key];
-        }
-      },
-    };
-  };
-}
-installStub(http);
-installStub(https);
 ${preload}
-http.request('http://inference.local/v1/models', {
-  headers: {
+function inspectHeaders(mod, url, headers) {
+  const request = mod.request(url, { headers });
+  const actualHeaders = request.getHeaders();
+  request.on('error', () => {});
+  request.destroy();
+  return actualHeaders;
+}
+const headers = [
+  inspectHeaders(http, 'http://127.0.0.1:9/v1/models', {
     'X-NemoClaw-Upstream-Provider': 'nvidia-prod',
     'X-Keep': 'http',
-  },
-}).end();
-https.request(new URL('https://inference.local/v1/models'), {
-  headers: {
+  }),
+  inspectHeaders(https, new URL('https://127.0.0.1:9/v1/models'), {
     'x-nemoclaw-upstream-provider': 'compatible-endpoint',
     'X-Keep': 'https',
-  },
-}).end();
-console.log(JSON.stringify(records));
+  }),
+];
+console.log(JSON.stringify(headers));
 `;
 
     const result = spawnSync(process.execPath, ["-e", harness], {
@@ -357,13 +340,13 @@ console.log(JSON.stringify(records));
       timeout: 5000,
     });
     expect(result.status, result.stderr).toBe(0);
-    const records = JSON.parse(result.stdout.trim());
+    const headers = JSON.parse(result.stdout.trim());
 
-    expect(records).toHaveLength(2);
-    expect(records[0].headers).toEqual({ "X-Keep": "http" });
-    expect(records[0].removed).toContain("x-nemoclaw-upstream-provider");
-    expect(records[1].headers).toEqual({ "X-Keep": "https" });
-    expect(records[1].removed).toContain("x-nemoclaw-upstream-provider");
+    expect(headers).toHaveLength(2);
+    expect(headers[0]["x-nemoclaw-upstream-provider"]).toBeUndefined();
+    expect(headers[0]["x-keep"]).toBe("http");
+    expect(headers[1]["x-nemoclaw-upstream-provider"]).toBeUndefined();
+    expect(headers[1]["x-keep"]).toBe("https");
   });
 
   it("preload also injects model-specific kwargs for stubbed fetch requests", () => {
