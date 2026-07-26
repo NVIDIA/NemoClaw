@@ -437,9 +437,10 @@ describe("runner comparison v2 schema", () => {
     });
     const historicalLine = JSON.stringify(historical);
     const parsedHistorical = parseRunnerComparisonSample(historicalLine);
-    if (parsedHistorical.v !== 2) throw new Error("expected a v2 sample");
-    expect(JSON.stringify(parsedHistorical)).toBe(historicalLine);
-    expect(parsedHistorical.largestProcess).not.toHaveProperty("breakdown");
+    expect(parsedHistorical.v).toBe(2);
+    const parsedCurrent = parsedHistorical as RunnerComparisonSample;
+    expect(JSON.stringify(parsedCurrent)).toBe(historicalLine);
+    expect(parsedCurrent.largestProcess).not.toHaveProperty("breakdown");
 
     const enriched = currentSample({
       sequence: 1,
@@ -1037,10 +1038,8 @@ describe("runner comparison summary", () => {
         breakdown: ProcessMemoryBreakdown & { token: string };
       };
     };
-    if (poisoned.largestProcess.breakdown === null) {
-      throw new Error("expected an enriched summary");
-    }
-    poisoned.largestProcess.breakdown.token = "ghp_summary_secret";
+    expect(poisoned.largestProcess.breakdown).not.toBeNull();
+    poisoned.largestProcess.breakdown!.token = "ghp_summary_secret";
     expect(() => parseRunnerComparisonSummary(`${JSON.stringify(poisoned, null, 2)}\n`)).toThrow(
       "unsupported shape",
     );

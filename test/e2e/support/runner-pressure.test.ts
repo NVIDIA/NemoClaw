@@ -315,15 +315,15 @@ describe("host measurement parsers (#7146)", () => {
 
   it("keeps PID and comm private while enriching only the globally largest Docker process", () => {
     const paths: string[] = [];
+    const procfs = new Map([
+      ["/proc/42/stat", procStat(42, "buildkitd")],
+      ["/proc/42/status", `${BUILDKIT_STATUS}\nToken: ghp_status_secret\n`],
+    ]);
     const selected = collectLargestClassifiedProcess(
       "41 12000 openshelld\n42 13000 buildkitd\n",
       (file) => {
         paths.push(file);
-        if (file === "/proc/42/stat") return procStat(42, "buildkitd");
-        if (file === "/proc/42/status") {
-          return `${BUILDKIT_STATUS}\nToken: ghp_status_secret\n`;
-        }
-        return null;
+        return procfs.get(file) ?? null;
       },
     );
     expect(selected).toEqual({
