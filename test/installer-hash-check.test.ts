@@ -228,30 +228,114 @@ const mutateSandboxBuildFunction = (
 };
 
 const applyHomebrewTrustTransition = (source: string): string => {
-  const marker = `  formula_ref="\${HOMEBREW_TAP}/\${HOMEBREW_FORMULA_NAME}"
-  if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then`;
-  assert.ok(source.includes(marker), "installer Homebrew formula marker must exist");
-  return source.replace(
-    marker,
-    `  formula_ref="\${HOMEBREW_TAP}/\${HOMEBREW_FORMULA_NAME}"
-  if [ "$RELEASE_TAG" != "dev" ] && brew help trust >/dev/null 2>&1; then
+  const replacements = [
+    [
+      `install_macos_homebrew_formula() {
+  local tmpdir formula_file tap_formula_file formula_ref expected_sha actual_sha brew_prefix openshell_bin`,
+      `cleanup_macos_homebrew_formula() {
+  local status=$?
+  trap - EXIT
+  rm -rf "\${OPENSHELL_HOMEBREW_FORMULA_TMPDIR:-}"
+  if [ -n "\${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF:-}" ]; then
+    if ! brew untrust --formula "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" >/dev/null; then
+      warn "Homebrew could not remove temporary trust for \${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF}"
+      status=1
+    fi
+  fi
+  exit "$status"
+}
+
+install_macos_homebrew_formula() {
+  local tmpdir formula_file tap_formula_file formula_ref expected_sha actual_sha brew_prefix openshell_bin
+  local formula_checksum_verified=0 homebrew_trust_supported=0`,
+      "cleanup function",
+    ],
+    [
+      `  tmpdir="$(mktemp -d)"
+  OPENSHELL_HOMEBREW_FORMULA_TMPDIR="$tmpdir"
+  trap \x27rm -rf "\${OPENSHELL_HOMEBREW_FORMULA_TMPDIR:-}"\x27 EXIT`,
+      `  tmpdir="$(mktemp -d)"
+  OPENSHELL_HOMEBREW_FORMULA_TMPDIR="$tmpdir"
+  OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF=""
+  trap cleanup_macos_homebrew_formula EXIT`,
+      "cleanup trap",
+    ],
+    [
+      `    [ "$actual_sha" = "$expected_sha" ] \\
+      || fail "OpenShell Homebrew formula checksum does not match NemoClaw-pinned $RELEASE_TAG digest"
+  fi`,
+      `    [ "$actual_sha" = "$expected_sha" ] \\
+      || fail "OpenShell Homebrew formula checksum does not match NemoClaw-pinned $RELEASE_TAG digest"
+    formula_checksum_verified=1
+  fi`,
+      "checksum state",
+    ],
+    [
+      `  tap_formula_file="$(homebrew_formula_path "$HOMEBREW_TAP" "$HOMEBREW_FORMULA_NAME")"
+  info "staging Homebrew formula in tap \${HOMEBREW_TAP}..."`,
+      `  formula_ref="\${HOMEBREW_TAP}/\${HOMEBREW_FORMULA_NAME}"
+  tap_formula_file="$(homebrew_formula_path "$HOMEBREW_TAP" "$HOMEBREW_FORMULA_NAME")"
+  if brew help trust >/dev/null 2>&1; then
+    homebrew_trust_supported=1
+  fi
+  if [ "$formula_checksum_verified" = "0" ] && [ "$homebrew_trust_supported" = "1" ]; then
+    brew help untrust >/dev/null 2>&1 \\
+      || fail "Homebrew supports formula trust but not the required untrust cleanup"
+    brew untrust --formula "$formula_ref" >/dev/null \\
+      || fail "Homebrew refused to remove inherited trust for the unverified OpenShell dev formula \${formula_ref}"
+    OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF="$formula_ref"
+  fi
+
+  info "staging Homebrew formula in tap \${HOMEBREW_TAP}..."`,
+      "pre-staging trust cleanup",
+    ],
+    [
+      `  formula_ref="\${HOMEBREW_TAP}/\${HOMEBREW_FORMULA_NAME}"
+  if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then`,
+      `  if [ "$formula_checksum_verified" = "1" ] && [ "$homebrew_trust_supported" = "1" ]; then
     brew trust --formula "$formula_ref" \\
       || fail "Homebrew refused to trust the checksum-verified OpenShell formula \${formula_ref}"
   fi
   if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then`,
-  );
+      "stable trust",
+    ],
+    [
+      `  else
+    info "installing OpenShell with Homebrew..."
+    brew install --formula "$formula_ref"
+  fi
+
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"`,
+      `  else
+    info "installing OpenShell with Homebrew..."
+    brew install --formula "$formula_ref"
+  fi
+  if [ -n "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" ]; then
+    brew untrust --formula "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" >/dev/null \\
+      || fail "Homebrew refused to remove temporary trust for the unverified OpenShell dev formula \${formula_ref}"
+    OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF=""
+  fi
+
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"`,
+      "post-install trust cleanup",
+    ],
+  ] as const;
+  return replacements.reduce((current, [marker, replacement, label]) => {
+    assert.ok(current.includes(marker), `installer Homebrew ${label} marker must exist`);
+    return current.replace(marker, replacement);
+  }, source);
 };
 
 const completeHomebrewTrustTransition = (source: string): string => {
   const marker = `const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
   "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58",
-  "30c092af249b5ab62a1232aa1d19997c125c4cf9c8cea69b6800dd6bed5a5628",
+  "5ddf9956ccbcbdbac82022460645322e80931fd144d5d4b19a99df270410d95c",
 ] as const;`;
   assert.ok(source.includes(marker), "Homebrew trust transition allowlist must exist");
   return source.replace(
     marker,
     `const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
-  "30c092af249b5ab62a1232aa1d19997c125c4cf9c8cea69b6800dd6bed5a5628",
+  "5ddf9956ccbcbdbac82022460645322e80931fd144d5d4b19a99df270410d95c",
 ] as const;`,
   );
 };
