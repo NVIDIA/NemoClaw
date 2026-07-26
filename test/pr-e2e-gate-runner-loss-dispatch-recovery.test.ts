@@ -312,6 +312,10 @@ describe("runner-loss retry dispatch reconciliation", () => {
             },
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/18") && method === "GET",
+            () => githubResponse(retryCheck),
+          ),
+          githubFetchRoute(
             ({ url, method }) => url.endsWith("/git/ref/heads/main") && method === "GET",
             () =>
               githubResponse({

@@ -75,6 +75,7 @@ const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
 const CONTROL_PLANE_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run E2E";
 const FORK_E2E_AUTHORIZATION_TITLE = "E2E reviewer authorization required to run fork E2E";
+const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
 const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
 const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
 const CHILD_CANCELLATION_TIMEOUT_MS = 5_000;
@@ -2245,6 +2246,16 @@ async function requireDirectPreDispatchCheck(options: {
   assertCurrentPreDispatchCheck([check], options);
 }
 
+async function requireBoundedDirectPreDispatchCheck(
+  options: Omit<Parameters<typeof requireDirectPreDispatchCheck>[0], "signal">,
+): Promise<void> {
+  await boundedControllerOperation(
+    "Pre-dispatch controller check read",
+    PRE_DISPATCH_CHECK_READ_TIMEOUT_MS,
+    (signal) => requireDirectPreDispatchCheck({ ...options, signal }),
+  );
+}
+
 async function recheckDispatchHistoryBeforePost(options: {
   repository: string;
   token: string;
@@ -2266,15 +2277,7 @@ async function recheckDispatchHistoryBeforePost(options: {
   if (!currentListed && history.some((check) => check.status !== "completed")) {
     throw new Error("A different active controller check exists before dispatch");
   }
-  if (currentListed) {
-    try {
-      assertCurrentPreDispatchCheck(history, options);
-    } catch {
-      await requireDirectPreDispatchCheck(options);
-    }
-  } else {
-    await requireDirectPreDispatchCheck(options);
-  }
+  await requireBoundedDirectPreDispatchCheck(options);
   const historicalChecks = currentListed ? history.slice(0, -1) : history;
   const receipts = historicalChecks.flatMap((check) => {
     if (retryableFailureReason(check) !== "dispatch-not-observed") return [];
@@ -2310,15 +2313,7 @@ async function recheckDispatchHistoryBeforePost(options: {
     if (!confirmedCurrentListed && confirmedHistory.some((check) => check.status !== "completed")) {
       throw new Error("A different active controller check appeared before dispatch");
     }
-    if (confirmedCurrentListed) {
-      try {
-        assertCurrentPreDispatchCheck(confirmedHistory, options);
-      } catch {
-        await requireDirectPreDispatchCheck(options);
-      }
-    } else {
-      await requireDirectPreDispatchCheck(options);
-    }
+    await requireBoundedDirectPreDispatchCheck(options);
   }
 }
 
@@ -2456,15 +2451,7 @@ export async function dispatchPrGate(options: {
           if (!currentListed && history.some((check) => check.status !== "completed")) {
             throw new Error("A different active controller check exists before child adoption");
           }
-          if (currentListed) {
-            try {
-              assertCurrentPreDispatchCheck(history, options);
-            } catch {
-              await requireDirectPreDispatchCheck({ ...options, signal });
-            }
-          } else {
-            await requireDirectPreDispatchCheck({ ...options, signal });
-          }
+          await requireDirectPreDispatchCheck({ ...options, signal });
         },
       );
     } catch (error) {

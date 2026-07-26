@@ -121,6 +121,14 @@ function existingPrGateCheckRunsRoute(overrides: Record<string, unknown> = {}) {
   );
 }
 
+function directPrGateCheckRoute(overrides: Record<string, unknown> = {}) {
+  const check = exactPrGateCheck(overrides);
+  return githubFetchRoute(
+    ({ url, method }) => url.endsWith(`/check-runs/${String(check.id)}`) && method === "GET",
+    () => githubResponse(check),
+  );
+}
+
 function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Response {
   const body = (request.body ?? {}) as Record<string, unknown>;
   return githubResponse(exactPrGateCheck({ id, ...body }));
@@ -398,6 +406,14 @@ describe("PR E2E controller", () => {
               "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
           },
         }),
+        directPrGateCheckRoute({
+          id: 101,
+          output: {
+            title: "Evaluating PR commit",
+            summary:
+              "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+          },
+        }),
         githubFetchRoute(
           ({ url }) => url.endsWith("/actions/workflows/e2e.yaml/dispatches"),
           () =>
@@ -486,6 +502,14 @@ describe("PR E2E controller", () => {
               }),
           ),
           existingPrGateCheckRunsRoute({
+            id: 101,
+            output: {
+              title: "Evaluating PR commit",
+              summary:
+                "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+            },
+          }),
+          directPrGateCheckRoute({
             id: 101,
             output: {
               title: "Evaluating PR commit",
@@ -1281,6 +1305,13 @@ describe("PR E2E controller", () => {
               return githubResponse(workflowRun(gate!));
             },
           ),
+          directPrGateCheckRoute({
+            output: {
+              title: "Evaluating PR commit",
+              summary:
+                "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+            },
+          }),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => prGateMutationResponse(request),

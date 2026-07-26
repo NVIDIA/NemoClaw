@@ -269,6 +269,46 @@ describe("PR E2E workflow dispatch reconciliation", () => {
     expect(dispatch).toHaveBeenCalledOnce();
   });
 
+  it("keeps collecting correlated run IDs after a malformed child", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const dispatch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    let reads = 0;
+    const malformedRun = workflowRun(24, { path: ".github/workflows/other.yaml" });
+    const { deps } = reconciliationDeps(() => {
+      reads += 1;
+      return inventory(reads === 1 ? [malformedRun] : [malformedRun, workflowRun(23)]);
+    });
+
+    await expect(
+      dispatchWorkflowWithReconciliation(dispatchOptions(dispatch), deps),
+    ).rejects.toMatchObject({
+      name: "DispatchReconciliationError",
+      message: expect.stringMatching(/failed path validation/u),
+      candidateRunIds: [23, 24],
+    });
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it("retains malformed correlated run IDs when a later inventory read fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const dispatch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    let reads = 0;
+    const { deps } = reconciliationDeps(() => {
+      reads += 1;
+      if (reads > 1) throw new TypeError("inventory unavailable");
+      return inventory([workflowRun(24, { path: ".github/workflows/other.yaml" })]);
+    });
+
+    await expect(
+      dispatchWorkflowWithReconciliation(dispatchOptions(dispatch), deps),
+    ).rejects.toMatchObject({
+      name: "DispatchReconciliationError",
+      message: expect.stringMatching(/complete run inventory/u),
+      candidateRunIds: [24],
+    });
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["run name", { name: "E2E" }],
     ["display title", { display_title: "E2E unrelated" }],

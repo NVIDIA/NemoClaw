@@ -388,7 +388,9 @@ function scanInventory(
     upperBoundMs: number;
   },
   candidates: Map<number, WorkflowRun>,
+  correlatedRunIds: Set<number>,
 ): string | undefined {
+  let contradiction: string | undefined;
   for (const run of inventory.runs) {
     if (
       !run.name.includes(options.correlationId) &&
@@ -396,15 +398,20 @@ function scanInventory(
     ) {
       continue;
     }
+    correlatedRunIds.add(run.id);
     const mismatch = candidateMismatch(run, options);
-    if (mismatch) return `correlated workflow run failed ${mismatch} validation`;
+    if (mismatch) {
+      contradiction ??= `correlated workflow run failed ${mismatch} validation`;
+      continue;
+    }
     const existing = candidates.get(run.id);
     if (existing && workflowRunIdentity(existing) !== workflowRunIdentity(run)) {
-      return "correlated workflow run identity changed between inventory reads";
+      contradiction ??= "correlated workflow run identity changed between inventory reads";
+      continue;
     }
     candidates.set(run.id, run);
   }
-  return undefined;
+  return contradiction;
 }
 
 function dispatchDiagnostics(error: unknown): DispatchDiagnostics {
@@ -469,6 +476,7 @@ async function reconcileWorkflowDispatch(
   const lowerBoundMs = options.sentAtMs - clockSkewMs;
   const upperBoundMs = deadlineAtMs + clockSkewMs;
   const candidates = new Map<number, WorkflowRun>();
+  const correlatedRunIds = new Set<number>();
   let contradiction: string | undefined;
 
   console.warn(
@@ -491,11 +499,11 @@ async function reconcileWorkflowDispatch(
     } catch (error) {
       throw new DispatchReconciliationError(
         `Workflow dispatch reconciliation could not read a complete run inventory (${diagnosticsText(options.diagnostics)})`,
-        [...candidates.keys()],
+        [...correlatedRunIds].sort((left, right) => left - right),
         error,
       );
     }
-    contradiction ??= scanInventory(
+    const inventoryContradiction = scanInventory(
       inventory,
       {
         repository: options.repository,
@@ -506,13 +514,15 @@ async function reconcileWorkflowDispatch(
         upperBoundMs,
       },
       candidates,
+      correlatedRunIds,
     );
+    contradiction ??= inventoryContradiction;
     const currentTime = now();
     if (currentTime >= deadlineAtMs) break;
     await sleep(Math.min(pollIntervalMs, deadlineAtMs - currentTime));
   }
 
-  const candidateRunIds = [...candidates.keys()].sort((left, right) => left - right);
+  const candidateRunIds = [...correlatedRunIds].sort((left, right) => left - right);
   if (contradiction || candidateRunIds.length > 1) {
     throw new DispatchReconciliationError(
       `Workflow dispatch reconciliation is ambiguous: ${contradiction ?? "multiple correlated runs were observed"} (${diagnosticsText(options.diagnostics)})`,
@@ -691,6 +701,7 @@ export async function assertDispatchStillNotObserved(
   const recheckUpperBoundMs =
     Math.max((deps.now ?? Date.now)(), options.receipt.deadlineAtMs) + clockSkewMs;
   const candidates = new Map<number, WorkflowRun>();
+  const correlatedRunIds = new Set<number>();
   let inventory: WorkflowRunInventory;
   try {
     inventory = await readInventory(
@@ -722,11 +733,12 @@ export async function assertDispatchStillNotObserved(
       upperBoundMs: recheckUpperBoundMs,
     },
     candidates,
+    correlatedRunIds,
   );
-  if (contradiction || candidates.size > 0) {
+  if (contradiction || correlatedRunIds.size > 0) {
     throw new DispatchReconciliationError(
       `The earlier dispatch correlation is no longer unobserved: ${contradiction ?? "a correlated run appeared"}`,
-      [...candidates.keys()],
+      [...correlatedRunIds].sort((left, right) => left - right),
     );
   }
 }

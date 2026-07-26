@@ -298,6 +298,10 @@ function successfulApprovedForkRoutes(approvals: unknown, requests: RecordedGitH
       },
     ),
     githubFetchRoute(
+      ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+      () => githubResponse(check),
+    ),
+    githubFetchRoute(
       ({ url, method }) =>
         url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
       () =>
@@ -764,6 +768,10 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
             },
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
+          ),
+          githubFetchRoute(
             ({ url, method }) =>
               url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
             () => githubResponse({ message: "dispatch response lost" }, 500),
@@ -959,6 +967,10 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
             },
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/18") && method === "GET",
+            () => githubResponse(currentCheck),
+          ),
+          githubFetchRoute(
             ({ url, method }) =>
               url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
             () =>
@@ -1085,6 +1097,10 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
                 ? githubResponse({ message: "simulated update failure" }, 500)
                 : githubResponse(check);
             },
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
           ),
           githubFetchRoute(
             ({ url, method }) =>

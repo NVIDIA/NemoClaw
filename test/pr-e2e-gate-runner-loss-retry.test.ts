@@ -45,7 +45,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-
 function githubResponse(value?: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -448,8 +447,9 @@ function retryRoutes(
         (request) => mutationResponse(request),
       ),
       githubFetchRoute(
-        ({ url, method }) => url.endsWith("/check-runs/18") && method === "PATCH",
-        (request) => mutationResponse(request),
+        ({ url }) => url.endsWith("/check-runs/18"),
+        (request) =>
+          request.method === "GET" ? githubResponse(retryCheck) : mutationResponse(request),
       ),
       githubFetchRoute(
         ({ url, method }) => url.endsWith("/git/ref/heads/main") && method === "GET",
@@ -617,7 +617,7 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
       expect(
         new Set(
           requests
-            .filter((request) => request.url.endsWith("/check-runs/18"))
+            .filter((request) => request.url.endsWith("/check-runs/18") && request.body)
             .map((request) => (request.body as { output?: { title?: string } }).output?.title),
         ),
       ).toEqual(new Set(["Preparing one-time hosted-runner-loss retry", "Running 2 E2E checks"]));

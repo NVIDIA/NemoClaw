@@ -180,6 +180,10 @@ describe("PR E2E protected internal approval", () => {
             },
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
+          ),
+          githubFetchRoute(
             ({ url, method }) =>
               url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
             () =>
@@ -301,6 +305,10 @@ describe("PR E2E protected internal approval", () => {
               check = { ...check, ...((request.body ?? {}) as Record<string, unknown>) };
               return githubResponse(check);
             },
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
           ),
           githubFetchRoute(
             ({ url, method }) =>

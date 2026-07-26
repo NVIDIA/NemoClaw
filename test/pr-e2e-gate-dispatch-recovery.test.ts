@@ -202,6 +202,134 @@ describe("PR E2E dispatch-not-observed recovery", () => {
     expect(dispatchIndex).toBeGreaterThan(directIndex);
   });
 
+  it("rejects a stale matching list when the exact check advanced before dispatch", async () => {
+    const requests: RecordedGitHubRequest[] = [];
+    const listedCheck = reservedCheck(17, {
+      output: {
+        title: "Evaluating PR commit",
+        summary: "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+      },
+    });
+    const advancedCheck = reservedCheck(17, {
+      details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/22",
+      output: {
+        title: "Running 1 E2E check",
+        summary: "Selected E2E is running.",
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/git/ref/heads/main") && method === "GET",
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [listedCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(advancedCheck),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () => githubResponse({ workflow_run_id: 23 }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(
+      dispatchPrGate({
+        repository: "NVIDIA/NemoClaw",
+        checkoutRepository: "NVIDIA/NemoClaw",
+        token: "token",
+        controllerCheckId: 17,
+        jobs: ["onboard-repair"],
+        prNumber: 42,
+        commitSha: HEAD_SHA,
+        baseSha: BASE_SHA,
+        workflowSha: WORKFLOW_SHA,
+        planHash: "c".repeat(64),
+        correlationId: CORRELATION_ID,
+        expectedCheckTitle: "Evaluating PR commit",
+      }),
+    ).rejects.toThrow(/exact pre-dispatch state/u);
+
+    expect(requests.filter((request) => request.url.endsWith("/check-runs/17"))).toHaveLength(1);
+    expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(0);
+  });
+
+  it("bounds the authoritative check read before dispatch", async () => {
+    vi.useFakeTimers();
+    const requests: RecordedGitHubRequest[] = [];
+    const listedCheck = reservedCheck(17, {
+      output: {
+        title: "Evaluating PR commit",
+        summary: "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/git/ref/heads/main") && method === "GET",
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [listedCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => new Promise<Response>(() => undefined),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () => githubResponse({ workflow_run_id: 23 }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    const attempt = dispatchPrGate({
+      repository: "NVIDIA/NemoClaw",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      token: "token",
+      controllerCheckId: 17,
+      jobs: ["onboard-repair"],
+      prNumber: 42,
+      commitSha: HEAD_SHA,
+      baseSha: BASE_SHA,
+      workflowSha: WORKFLOW_SHA,
+      planHash: "c".repeat(64),
+      correlationId: CORRELATION_ID,
+      expectedCheckTitle: "Evaluating PR commit",
+    });
+    const result = expect(attempt).rejects.toThrow(
+      /Pre-dispatch controller check read timed out after 5000ms/u,
+    );
+    await vi.runAllTimersAsync();
+    await result;
+
+    expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(0);
+  });
+
   it("revalidates the exact PR and current check before adopting a reconciled child", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(START_TIME);
@@ -302,6 +430,199 @@ describe("PR E2E dispatch-not-observed recovery", () => {
           request.method === "POST",
       ),
     ).toHaveLength(1);
+  });
+
+  it("cancels an adopted child when the exact check advanced behind a stale list", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(START_TIME);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const requests: RecordedGitHubRequest[] = [];
+    let directReads = 0;
+    const listedCheck = reservedCheck(17, {
+      output: {
+        title: "Evaluating PR commit",
+        summary: "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+      },
+    });
+    const advancedCheck = reservedCheck(17, {
+      details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/22",
+      output: {
+        title: "Running 1 E2E check",
+        summary: "A different child was authorized.",
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/git/ref/heads/main") && method === "GET",
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [listedCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => {
+              directReads += 1;
+              return githubResponse(directReads === 1 ? listedCheck : advancedCheck);
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () => githubResponse({ message: "Failed to run workflow dispatch" }, 500),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/workflows/e2e.yaml/runs?") && method === "GET",
+            () => githubResponse({ total_count: 1, workflow_runs: [reconciledWorkflowRun()] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(reconciledWorkflowRun()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    const attempt = dispatchPrGate({
+      repository: "NVIDIA/NemoClaw",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      token: "token",
+      controllerCheckId: 17,
+      jobs: ["onboard-repair"],
+      prNumber: 42,
+      commitSha: HEAD_SHA,
+      baseSha: BASE_SHA,
+      workflowSha: WORKFLOW_SHA,
+      planHash: "c".repeat(64),
+      correlationId: CORRELATION_ID,
+      expectedCheckTitle: "Evaluating PR commit",
+    });
+    const result = expect(attempt).rejects.toThrow(/reconciled child cancellation requested/u);
+    await vi.runAllTimersAsync();
+    await result;
+
+    const directIndexes = requests.flatMap((request, index) =>
+      request.url.endsWith("/check-runs/17") && request.method === "GET" ? [index] : [],
+    );
+    const cancelIndex = requests.findIndex(
+      (request) => request.url.endsWith("/actions/runs/23/cancel") && request.method === "POST",
+    );
+    expect(directIndexes).toHaveLength(2);
+    expect(cancelIndex).toBeGreaterThan(directIndexes[1]!);
+    expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
+  });
+
+  it("cancels every correlation-bearing run after mixed inventory validation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(START_TIME);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const requests: RecordedGitHubRequest[] = [];
+    const preDispatchCheck = reservedCheck(17, {
+      output: {
+        title: "Evaluating PR commit",
+        summary: "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+      },
+    });
+    const validRun = reconciledWorkflowRun();
+    const malformedRun = {
+      ...reconciledWorkflowRun(),
+      id: 24,
+      path: ".github/workflows/other.yaml",
+      url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/24",
+      html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/24",
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/git/ref/heads/main") && method === "GET",
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [preDispatchCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(preDispatchCheck),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () => githubResponse({ message: "Failed to run workflow dispatch" }, 500),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/workflows/e2e.yaml/runs?") && method === "GET",
+            () =>
+              githubResponse({
+                total_count: 2,
+                workflow_runs: [malformedRun, validRun],
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              /\/actions\/runs\/(?:23|24)\/cancel$/u.test(url) && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    const attempt = dispatchPrGate({
+      repository: "NVIDIA/NemoClaw",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      token: "token",
+      controllerCheckId: 17,
+      jobs: ["onboard-repair"],
+      prNumber: 42,
+      commitSha: HEAD_SHA,
+      baseSha: BASE_SHA,
+      workflowSha: WORKFLOW_SHA,
+      planHash: "c".repeat(64),
+      correlationId: CORRELATION_ID,
+      expectedCheckTitle: "Evaluating PR commit",
+    });
+    const result = expect(attempt).rejects.toThrow(/failed path validation/u);
+    await vi.runAllTimersAsync();
+    await result;
+
+    expect(
+      requests
+        .filter(
+          (request) =>
+            /\/actions\/runs\/(?:23|24)\/cancel$/u.test(request.url) && request.method === "POST",
+        )
+        .map((request) => request.url)
+        .sort(),
+    ).toEqual([
+      "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23/cancel",
+      "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/24/cancel",
+    ]);
   });
 
   it("accepts an exact child authorization after the PATCH response is lost", async () => {
@@ -437,6 +758,10 @@ describe("PR E2E dispatch-not-observed recovery", () => {
             },
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
+          ),
+          githubFetchRoute(
             ({ url, method }) =>
               url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
             () =>
@@ -512,6 +837,11 @@ describe("PR E2E dispatch-not-observed recovery", () => {
             };
             return githubResponse(checks[index]);
           },
+        ),
+        githubFetchRoute(
+          ({ url, method }) => /\/check-runs\/(?:17|18)$/u.test(url) && method === "GET",
+          (request) =>
+            githubResponse(checks.find((check) => check.id === Number(urlRunId(request.url)))),
         ),
         githubFetchRoute(
           ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
@@ -665,6 +995,19 @@ describe("PR E2E dispatch-not-observed recovery", () => {
                   }),
                 ],
               }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () =>
+              githubResponse(
+                reservedCheck(17, {
+                  output: {
+                    title: "Evaluating PR commit",
+                    summary:
+                      "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+                  },
+                }),
+              ),
           ),
           githubFetchRoute(
             ({ url, method }) =>
