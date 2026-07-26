@@ -740,7 +740,7 @@ test(STALE_BASE_REBUILD
     cleanupHermesDiscordProvider(host, apiKey),
   );
   cleanup.trackDisposable("stop Hermes dashboard and API forwards", async () => {
-    if (dashboardPort !== null) observedForwardPorts.add(dashboardPort);
+    trackOptionalRebuildHermesDashboardPort(observedForwardPorts, dashboardPort);
     const recordedPort = readJsonFileOr<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]
       ?.dashboardPort;
     trackOptionalRebuildHermesDashboardPort(observedForwardPorts, recordedPort);
