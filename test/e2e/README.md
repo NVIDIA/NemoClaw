@@ -335,7 +335,9 @@ class, the collector also reads that process's `VmRSS`, `RssAnon`, `RssFile`,
 `RssShmem`, and optional `VmSwap` values from procfs. PID and exact process
 identity remain private to the collector, and the breakdown is `null` if the
 process exits, its identity changes, procfs denies access, or the resident
-components are incomplete or inconsistent.
+components are incomplete or inconsistent. The outer `rssKb` is the `ps`
+selection and ranking observation; `breakdown.vmRssKb` is the immediately
+following procfs observation and may differ when a live process changes memory.
 
 The finalizer validates the complete ledger before writing
 `runner-comparison-summary.json`. The v2 summary reports the sampled
