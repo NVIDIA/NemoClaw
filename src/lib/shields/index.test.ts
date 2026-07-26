@@ -1099,13 +1099,19 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     expect(fs.existsSync(markerPath)).toBe(false);
   });
 
-  it("isShieldsDown fails closed when shields state is corrupt", async () => {
+  it("isShieldsDown and shieldsDown fail closed when shields state is corrupt", async () => {
     const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
-    const { isShieldsDown } = await import(sourceModulePath);
+    const { isShieldsDown, shieldsDown } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(path.join(stateDir, "shields-openclaw.json"), "{broken-json");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const corruptState = "{broken-json";
+    fs.writeFileSync(statePath, corruptState);
 
     expect(isShieldsDown("openclaw")).toBe(false);
+    expect(() => shieldsDown("openclaw", { throwOnError: true })).toThrow(
+      "Shields state is corrupt for openclaw",
+    );
+    expect(fs.readFileSync(statePath, "utf8")).toBe(corruptState);
   });
 });

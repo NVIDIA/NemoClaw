@@ -2590,6 +2590,13 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
+  if (state._isCorrupt) {
+    console.error("  Shields state is corrupt; refusing to unlock.");
+    console.error(
+      `  Recovery: inspect the reported state error, restore trusted state, or rebuild ${sandboxName} before retrying.`,
+    );
+    return failShieldsCommand(`Shields state is corrupt for ${sandboxName}`, opts.throwOnError);
+  }
   if (state.shieldsDown) {
     console.error(
       `  Config is already unlocked for ${sandboxName} (since ${state.shieldsDownAt}).`,

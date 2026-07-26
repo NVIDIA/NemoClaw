@@ -67,6 +67,24 @@ describe("rebuild shields window", () => {
       throwOnError: true,
     });
   });
+  it("does not open a backup window when corrupt Shields state blocks unlock (#6455)", () => {
+    shieldsMock.isShieldsDown.mockReturnValue(false);
+    shieldsMock.shieldsDown.mockImplementation(() => {
+      throw new Error("Shields state is corrupt for locked-sandbox");
+    });
+    const options = {
+      operation: "backup-all",
+      reason: "auto-unlock for backup-all",
+      retryCommand: "nemoclaw backup-all",
+      shieldsUpCommand: "nemoclaw locked-sandbox shields up",
+    };
+
+    expect(openBackupShieldsWindow("locked-sandbox", options)).toBeNull();
+    expect(shieldsMock.shieldsUp).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Shields state is corrupt for locked-sandbox"),
+    );
+  });
 
   it("relocks a previously locked sandbox and records the closed window", () => {
     const window = { relocked: false, wasLocked: true };
