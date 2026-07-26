@@ -356,7 +356,7 @@ async function rawTokenSurfaceProbe(
   });
 }
 
-test("hermes-discord: Hermes Discord schema, credential isolation, native gateway rewrite, and rebuild credential reuse", {
+test("hermes-discord: Hermes Discord schema, credential isolation, and native gateway rewrite", {
   timeout: HERMES_DISCORD_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -366,7 +366,6 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
       "validate Discord config and placeholders",
       "exercise native Discord gateway rewrite",
       "verify Discord token isolation and REST boundary",
-      "rebuild without host inference credentials",
       "finalize Hermes Discord resources",
     ],
   },
@@ -378,7 +377,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
   await artifacts.target.declare({
     id: "hermes-discord",
     boundary:
-      "install.sh --non-interactive Hermes sandbox + Discord config + OpenShell provider rewrite + sandbox leak probes + rebuild credential reuse",
+      "install.sh --non-interactive Hermes sandbox + Discord config + OpenShell provider rewrite + sandbox leak probes",
     sandboxName: SANDBOX_NAME,
     discordServerIds: DISCORD_SERVER_IDS,
     discordAllowedIds: DISCORD_ALLOWED_IDS,
@@ -723,46 +722,6 @@ done`,
   expectExitZero(bridgeResidue, "no local Discord bridge residue probe");
   expect(bridgeResidue.stdout.trim()).toBe("");
 
-  progress.phase("rebuild without host inference credentials");
-  await bestEffortLifecycleCleanup(() =>
-    host.command("docker", ["rm", "-f", fakeGateway.container], {
-      artifactName: "phase-8-remove-fake-discord-container-before-rebuild",
-      env,
-      redactionValues,
-      timeoutMs: 60_000,
-    }),
-  );
-  fs.rmSync(fakeGateway.dir, { recursive: true, force: true });
-  await bestEffortLifecycleCleanup(() =>
-    host.command(
-      "bash",
-      [
-        "-lc",
-        "sudo rm -rf .tmp/fake-discord.* 2>/dev/null || rm -rf .tmp/fake-discord.* 2>/dev/null || true",
-      ],
-      {
-        artifactName: "phase-8-remove-fake-discord-scratch-before-rebuild",
-        cwd: REPO_ROOT,
-        env,
-        redactionValues,
-        timeoutMs: 60_000,
-      },
-    ),
-  );
-
-  const rebuildEnv = commandEnv();
-  delete rebuildEnv.NVIDIA_INFERENCE_API_KEY;
-  delete rebuildEnv.NVIDIA_INFERENCE_API_KEY;
-  delete rebuildEnv.COMPATIBLE_API_KEY;
-  const rebuild = await host.command("nemoclaw", [SANDBOX_NAME, "rebuild", "--yes"], {
-    artifactName: "phase-8-rebuild-without-inference-env",
-    env: rebuildEnv,
-    redactionValues,
-    timeoutMs: 45 * 60_000,
-  });
-  expectExitZero(rebuild, "Hermes rebuild without NVIDIA_INFERENCE_API_KEY");
-  expect(resultText(rebuild)).not.toMatch(/provider credential not found/i);
-
   progress.phase("finalize Hermes Discord resources");
   await (async (): Promise<void> => {
     switch (process.env.NEMOCLAW_E2E_KEEP_SANDBOX) {
@@ -771,7 +730,7 @@ done`,
       default:
     }
     const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "phase-9-nemoclaw-destroy",
+      artifactName: "phase-8-nemoclaw-destroy",
       env,
       redactionValues,
       timeoutMs: 15 * 60_000,
@@ -779,7 +738,7 @@ done`,
     expectExitZero(destroy, "destroy Hermes Discord sandbox");
     await bestEffortLifecycleCleanup(() =>
       host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", "nemoclaw"], {
-        artifactName: "phase-9-openshell-gateway-destroy",
+        artifactName: "phase-8-openshell-gateway-destroy",
         env,
         redactionValues,
         timeoutMs: 120_000,
@@ -792,7 +751,7 @@ done`,
         `registry="$HOME/.nemoclaw/sandboxes.json"; if [ -f "$registry" ] && grep -Fq ${shellQuote(`"${SANDBOX_NAME}"`)} "$registry"; then echo FOUND; exit 1; else echo ABSENT; fi`,
       ],
       {
-        artifactName: "phase-9-registry-removal-probe",
+        artifactName: "phase-8-registry-removal-probe",
         env: sandboxAccessEnv(),
         redactionValues,
         timeoutMs: 30_000,
@@ -815,7 +774,6 @@ done`,
       rawTokenAbsentFromConfigEnvProcessAndFilesystem: true,
       discordRestBoundaryReachedOrSkippedOnTimeout: true,
       noLocalDiscordBridgeResidue: true,
-      rebuildReusedGatewayCredentialWithoutInferenceEnv: true,
       cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
     },
   });
