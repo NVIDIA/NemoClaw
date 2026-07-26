@@ -106,6 +106,8 @@ type FixtureMode =
   | "installer-min-version-drift"
   | "installer-homebrew-trust-transition"
   | "installer-homebrew-trust-transition-drift"
+  | "installer-homebrew-trust-transition-complete-current"
+  | "installer-homebrew-trust-transition-complete-future"
   | "installer-pin-selector-drift"
   | "installer-sandbox-build-control-flow"
   | "installer-sandbox-build-duplicate-digest"
@@ -240,6 +242,20 @@ const applyHomebrewTrustTransition = (source: string): string => {
   );
 };
 
+const completeHomebrewTrustTransition = (source: string): string => {
+  const marker = `const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
+  "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58",
+  "30c092af249b5ab62a1232aa1d19997c125c4cf9c8cea69b6800dd6bed5a5628",
+] as const;`;
+  assert.ok(source.includes(marker), "Homebrew trust transition allowlist must exist");
+  return source.replace(
+    marker,
+    `const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
+  "30c092af249b5ab62a1232aa1d19997c125c4cf9c8cea69b6800dd6bed5a5628",
+] as const;`,
+  );
+};
+
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "duplicate-installer-pin": (source) => {
     const asset = ASSETS[0];
@@ -299,6 +315,7 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "installer-min-version-drift": (source) =>
     source.replace('MIN_VERSION="0.0.72"', 'MIN_VERSION="0.0.85"'),
   "installer-homebrew-trust-transition": applyHomebrewTrustTransition,
+  "installer-homebrew-trust-transition-complete-future": applyHomebrewTrustTransition,
   "installer-homebrew-trust-transition-drift": (source) =>
     applyHomebrewTrustTransition(source).replace(
       'brew trust --formula "$formula_ref" \\',
@@ -368,6 +385,11 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
   "runtime-consumers-newer-than-tables": (source) =>
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
+};
+
+const TRUSTED_PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "installer-homebrew-trust-transition-complete-current": completeHomebrewTrustTransition,
+  "installer-homebrew-trust-transition-complete-future": completeHomebrewTrustTransition,
 };
 type InputMutationContext = {
   blueprint: string;
@@ -708,6 +730,11 @@ function runFixture(
     path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
     trustedParserPath,
   );
+  const mutateTrustedParser = TRUSTED_PARSER_MUTATIONS[mode] ?? ((source: string) => source);
+  fs.writeFileSync(
+    trustedParserPath,
+    mutateTrustedParser(fs.readFileSync(trustedParserPath, "utf8")),
+  );
   fs.writeFileSync(
     targetChecker,
     trustedChecker
@@ -778,6 +805,24 @@ describe("installer hash verification", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("installer operational template is not base-trusted");
     expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("models completed trust transition by rejecting the legacy installer template (#7555)", () => {
+    const legacy = runFixture(
+      "installer-homebrew-trust-transition-complete-current",
+      undefined,
+      true,
+    );
+    const trustEnabled = runFixture(
+      "installer-homebrew-trust-transition-complete-future",
+      undefined,
+      true,
+    );
+
+    expect(legacy.status).toBe(1);
+    expect(legacy.stdout).toContain("installer operational template is not base-trusted");
+    expect(trustEnabled.status, trustEnabled.stdout).toBe(0);
+    expect(trustEnabled.stdout).toContain("All installer hashes are current");
   });
 
   it("fails closed when the Homebrew formula digest does not match", () => {

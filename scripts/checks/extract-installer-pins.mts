@@ -48,9 +48,10 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
 // This transition accepts the current installer and the reviewed Homebrew
-// trust change. Tighten this back to the trust-enabled installer hash when its
-// consumer lands; base-trusted CI must validate both the prerequisite branch
-// and the dependent pull request.
+// trust change consumed by #7555 (`fix(installer): trust verified Homebrew
+// formula`). After this prerequisite merges, #7555 must remove the legacy hash
+// and keep only the trust-enabled installer hash before it can merge.
+// Base-trusted CI must validate both the prerequisite branch and #7555.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
   "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58",
   "30c092af249b5ab62a1232aa1d19997c125c4cf9c8cea69b6800dd6bed5a5628",
