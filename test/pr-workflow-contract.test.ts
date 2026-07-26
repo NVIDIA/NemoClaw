@@ -1375,6 +1375,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
+      SANDBOX_IMAGES_E2E_RESULT: "success",
       STATIC_RESULT: "success",
       WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
@@ -1409,9 +1410,9 @@ describe("pull request and main workflow contracts", () => {
       mainGate,
       {
         ...successfulMain,
-        REAL_OPENCLAW_DIST_HARNESS_RESULT: "failure",
+        SANDBOX_IMAGES_E2E_RESULT: "failure",
       },
-      workflowJobListing([workflowJob(301, "real-openclaw-dist-harness", "failure")]),
+      workflowJobListing([workflowJob(302, "sandbox-images-and-e2e", "failure")]),
     );
     const malformedFailure = runWorkflowShellStepWithJobs(
       prGate,
@@ -1437,9 +1438,9 @@ describe("pull request and main workflow contracts", () => {
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);
     expect(mainFailure.status).not.toBe(0);
-    expect(mainFailure.stdout).toContain("real-openclaw-dist-harness failed");
+    expect(mainFailure.stdout).toContain("sandbox-images-and-e2e failed");
     expect(mainFailure.stdout).toContain(
-      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/301",
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/302",
     );
     expect(malformedFailure.status).not.toBe(0);
     expect(malformedFailure.stdout).toContain(
