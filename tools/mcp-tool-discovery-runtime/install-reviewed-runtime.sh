@@ -17,7 +17,8 @@ if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then
     exit 1
   }
   install -d -m 0755 /usr/local/share/nemoclaw
-  decoded=/tmp/nemoclaw-mcp-runtime-ca.decoded
+  decoded=$(mktemp)
+  trap 'rm -f "$decoded"' EXIT
   ca_file=/usr/local/share/nemoclaw/mcp-runtime-corporate-ca.pem
   if ! printf '%s' "$NEMOCLAW_CORPORATE_CA_B64" | base64 --decode >"$decoded" 2>/dev/null; then
     echo "[nemoclaw] the corporate CA for the MCP discovery runtime is not valid base64" >&2
@@ -26,6 +27,7 @@ if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then
   awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}' \
     "$decoded" >"$ca_file"
   rm -f "$decoded"
+  trap - EXIT
   if ! node -e '
     const fs = require("node:fs");
     const { X509Certificate } = require("node:crypto");

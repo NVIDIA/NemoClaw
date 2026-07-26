@@ -208,9 +208,10 @@ export async function runMcpToolDiscoverySession(session: McpToolDiscoverySessio
     // lifetime. SDK cleanup can reject once the transport has failed, so the
     // client cannot prove remote reclamation. Attempt both cleanup operations
     // without replacing the bounded, credential-safe diagnostic result.
-    // mcp-tool-discovery-runtime.test.ts pins the failed-discovery path. Remove
-    // this fallback when the SDK guarantees idempotent non-throwing cleanup or
-    // exposes a bounded cleanup outcome that the diagnostic can report safely.
+    // mcp-tool-discovery-runtime.test.ts pins successful and failed connected
+    // paths. Remove this fallback when the SDK guarantees idempotent
+    // non-throwing cleanup or exposes a bounded cleanup outcome that the
+    // diagnostic can report safely.
     if (session.hasSession()) {
       try {
         await session.terminateSession();

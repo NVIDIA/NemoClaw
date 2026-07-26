@@ -150,6 +150,38 @@ describe("shared MCP tool discovery runtime", () => {
     });
   });
 
+  it("attempts session termination before closing after successful discovery", async () => {
+    const lifecycle: string[] = [];
+    const publishResult = vi.fn(() => {
+      lifecycle.push("publish");
+    });
+    const terminateSession = vi.fn(async () => {
+      lifecycle.push("terminate");
+    });
+    const close = vi.fn(async () => {
+      lifecycle.push("close");
+    });
+
+    await runMcpToolDiscoverySession({
+      connect: vi.fn(async () => undefined),
+      loadPage: vi.fn(async () => ({ tools: [{ name: "alpha" }] })),
+      hasSession: () => true,
+      terminateSession,
+      close,
+      publishResult,
+    });
+
+    expect(publishResult).toHaveBeenCalledWith({
+      ok: true,
+      count: 1,
+      tools: ["alpha"],
+      truncated: false,
+    });
+    expect(terminateSession).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(lifecycle).toEqual(["publish", "terminate", "close"]);
+  });
+
   it("attempts both cleanup operations after failed connected discovery", async () => {
     const terminateSession = vi.fn(async () => {
       throw new Error("untrusted terminate failure");

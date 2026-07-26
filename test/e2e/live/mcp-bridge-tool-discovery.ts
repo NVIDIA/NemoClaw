@@ -121,12 +121,14 @@ export async function assertAuthenticatedMcpToolDiscovery(
   );
   expect(toolListRequests).toHaveLength(2);
   expect(discoveryRequests.some((request) => request.rpcMethod === "tools/call")).toBe(false);
-  expect(
-    discoveryProtocolRequests.some(
-      (request) =>
-        request.method === "DELETE" &&
-        request.sessionId === initializedRequest.sessionId &&
-        request.protocolVersion === initializedRequest.protocolVersion,
-    ),
-  ).toBe(true);
+  for (const request of discoveryProtocolRequests.filter(
+    (candidate) => candidate.method === "DELETE",
+  )) {
+    expect(request.sessionId).toBe(initializedRequest.sessionId);
+    expect(request.protocolVersion).toBe(initializedRequest.protocolVersion);
+  }
+  // The method-filtered OpenShell MCP policy does not authorize raw transport
+  // DELETE, so SDK session termination is intentionally best effort at this
+  // boundary. Unit coverage pins that cleanup attempt; protected E2E proves the
+  // negotiated metadata on every post-initialize JSON-RPC request.
 }
