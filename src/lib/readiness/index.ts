@@ -3,6 +3,7 @@
 
 export { checkSystemReadinessSchemaVersion } from "./compatibility.js";
 export type { SchemaCompatibility } from "./compatibility.js";
+export { getSystemReadinessReferenceErrors } from "./references.js";
 export {
   SUPPORTED_SYSTEM_READINESS_SCHEMA_MAJOR,
   SYSTEM_READINESS_SCHEMA_VERSION,
