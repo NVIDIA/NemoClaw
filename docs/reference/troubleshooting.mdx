@@ -2642,6 +2642,22 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
 For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
 
+### Managed Hermes local image build fails
+
+For a managed Hermes image on a local Docker-driver gateway, NemoClaw may first attempt the image build with host-side BuildKit.
+If that exact staged build starts and fails with a nonzero exit status or no exit status, NemoClaw preserves the BuildKit failure instead of retrying the managed Dockerfile with the incompatible gateway builder.
+The preceding BuildKit output contains the root cause.
+Fix the reported base-image, package, network, or Dockerfile error rather than treating it as a builder-selection failure.
+
+Then resume onboarding:
+
+```bash
+nemohermes onboard --resume
+```
+
+A disabled or unavailable local prebuild retains the existing gateway path.
+A custom Hermes Dockerfile supplied with `--from`, an OpenClaw image, or a build on a remote gateway also retains its existing builder behavior.
+
 ### Hermes dashboard config did not converge
 
 `nemohermes inference set` updates the OpenShell route, registry, and `/sandbox/.hermes/config.yaml` before it refreshes the separate dashboard profile.
