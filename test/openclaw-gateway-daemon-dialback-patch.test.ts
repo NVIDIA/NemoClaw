@@ -94,9 +94,7 @@ function readGatewayDaemonDialbackBuildCommand(): string {
     "    fi",
   ].join(newline);
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf8");
-  if (!dockerfile.includes(expectedBlock)) {
-    throw new Error("Dockerfile is missing the exact OpenClaw 2026.7.1 dial-back gate");
-  }
+  expect(dockerfile).toContain(expectedBlock);
   return expectedBlock
     .slice("RUN ".length)
     .split(`${continuation}${newline}`)
