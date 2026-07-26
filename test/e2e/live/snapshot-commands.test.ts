@@ -233,7 +233,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "snapshot directory excludes credential-bearing env/json files",
       "snapshot help advertises create/list/restore",
       "strict backup-all starts a stopped Docker sandbox, creates a snapshot, and returns it to exited state",
-      "backup-all backs up root-owned credentials without storing the credential and restores Shields UP",
+      "backup-all stores a sanitized copy of root-owned credentials, restores Shields UP, and does not store the API key",
     ],
   });
 
