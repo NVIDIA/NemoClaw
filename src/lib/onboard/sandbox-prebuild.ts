@@ -34,11 +34,7 @@ export interface SandboxPrebuildInput {
   sandboxName: string;
   dockerDriverGateway: boolean;
   origin: SandboxBuildContextOrigin;
-  /**
-   * Refuse to pass the staged Dockerfile to the gateway builder when the
-   * generated image requires a successful local BuildKit build.
-   */
-  gatewayFallback?: "allowed" | "forbidden";
+  managedHermesBuildFailureCapability?: ManagedHermesBuildFailureCapability;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
@@ -58,6 +54,115 @@ export interface SandboxPrebuildResult {
 interface TrustedStagedBuildContext {
   buildCtx: string;
   dockerfile: string;
+}
+
+interface StagedPathIdentity {
+  path: string;
+  device: number;
+  inode: number;
+}
+
+export interface ManagedHermesBuildFailureCapability {
+  readonly buildCtx: StagedPathIdentity;
+  readonly dockerfile: StagedPathIdentity;
+  readonly buildId: string;
+}
+
+export interface ManagedHermesBuildFailureCapabilityInput {
+  agentName: string | null;
+  fromDockerfile: string | null;
+  origin: SandboxBuildContextOrigin;
+  dockerDriverGateway: boolean;
+  buildCtx: string;
+  stagedDockerfile: string;
+  buildId: string;
+}
+
+const issuedManagedHermesBuildFailureCapabilities = new WeakSet<object>();
+
+function readStagedPathIdentity(
+  filePath: string,
+  expected: "directory" | "file",
+): StagedPathIdentity {
+  const resolved = fs.realpathSync(filePath);
+  const stat = fs.statSync(resolved);
+  const matchesExpectedKind = expected === "directory" ? stat.isDirectory() : stat.isFile();
+  if (!matchesExpectedKind) {
+    throw new Error(
+      `Cannot bind managed Hermes build provenance: ${resolved} is not a ${expected}.`,
+    );
+  }
+  return Object.freeze({ path: resolved, device: stat.dev, inode: stat.ino });
+}
+
+function stagedPathIdentityMatches(
+  filePath: string,
+  identity: StagedPathIdentity,
+  expected: "directory" | "file",
+): boolean {
+  try {
+    const current = readStagedPathIdentity(filePath, expected);
+    return (
+      current.path === identity.path &&
+      current.device === identity.device &&
+      current.inode === identity.inode
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Issue an in-memory capability only for the managed, no-custom-image Hermes
+ * path. The capability is bound to the staged context, Dockerfile, and build
+ * identity so it cannot authorize failure handling for another build.
+ */
+export function issueManagedHermesBuildFailureCapability(
+  input: ManagedHermesBuildFailureCapabilityInput,
+): ManagedHermesBuildFailureCapability | undefined {
+  if (
+    input.agentName !== "hermes" ||
+    input.fromDockerfile !== null ||
+    input.origin !== "generated" ||
+    !input.dockerDriverGateway
+  ) {
+    return undefined;
+  }
+
+  try {
+    const buildCtx = readStagedPathIdentity(input.buildCtx, "directory");
+    const dockerfile = readStagedPathIdentity(input.stagedDockerfile, "file");
+    if (
+      path.dirname(dockerfile.path) !== buildCtx.path ||
+      path.basename(dockerfile.path) !== "Dockerfile"
+    ) {
+      return undefined;
+    }
+
+    const capability = Object.freeze({ buildCtx, dockerfile, buildId: input.buildId });
+    issuedManagedHermesBuildFailureCapabilities.add(capability);
+    return capability;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasExactManagedHermesBuildFailureCapability(
+  input: SandboxPrebuildInput,
+  fromDockerfile: string | undefined,
+): boolean {
+  const capability = input.managedHermesBuildFailureCapability;
+  if (!capability) return false;
+
+  return (
+    issuedManagedHermesBuildFailureCapabilities.has(capability) &&
+    input.origin === "generated" &&
+    input.dockerDriverGateway &&
+    input.buildId === capability.buildId &&
+    stagedPathIdentityMatches(input.buildCtx, capability.buildCtx, "directory") &&
+    typeof fromDockerfile === "string" &&
+    stagedPathIdentityMatches(fromDockerfile, capability.dockerfile, "file")
+  );
 }
 
 /**
@@ -150,8 +255,9 @@ export function sandboxLocalImageRef(sandboxName: string, buildId: string): stri
 /**
  * Build a NemoClaw-generated staged context with BuildKit on the shared local
  * Docker daemon. User-supplied Dockerfiles stay on the OpenShell gateway
- * builder trust boundary. Ordinary callers preserve that path on local build
- * failure; callers with BuildKit-only generated images fail closed instead.
+ * builder trust boundary, and ordinary failures preserve that original build
+ * path. An exact managed-Hermes capability preserves an attempted BuildKit
+ * failure instead of replacing it with a known-incompatible builder error.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
  */
@@ -161,69 +267,43 @@ export async function prebuildSandboxImageIfEligible(
   const createArgs = [...input.createArgs];
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
-  const failRequiredBuildKit = (detail: string, nextStep: string, cause?: unknown): never => {
-    throw new Error(
-      `Local BuildKit is required for this generated sandbox image, but ${detail}. ` +
-        `${nextStep} ` +
-        "Gateway-builder fallback is disabled because this Dockerfile uses BuildKit-only instructions.",
-      cause === undefined ? undefined : { cause },
-    );
-  };
-  const skipOrFailRequiredBuildKit = (
-    detail: string,
-    nextStep: string,
-    skipMessage?: string,
-    cause?: unknown,
-  ): SandboxPrebuildResult => {
-    if (input.gatewayFallback === "forbidden") {
-      failRequiredBuildKit(detail, nextStep, cause);
-    }
-    if (skipMessage) log(skipMessage);
-    return { createArgs, imageRef: null, imageId: null };
-  };
-  if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
-    return skipOrFailRequiredBuildKit(
-      "the local prebuild is disabled or unavailable",
-      "Start Docker, ensure BuildKit and the local prebuild are enabled, then retry.",
-    );
-  }
-  if (input.origin !== "generated") {
-    return skipOrFailRequiredBuildKit(
-      "the staged build context is not NemoClaw-generated",
-      "Resume onboarding to restage the managed build context, then retry.",
-      "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
-    );
-  }
   const fromIndex = createArgs.indexOf("--from");
   const fromDockerfile = createArgs[fromIndex + 1];
+  const preserveManagedHermesBuildFailure = hasExactManagedHermesBuildFailureCapability(
+    input,
+    fromDockerfile,
+  );
+  if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
+    return { createArgs, imageRef: null, imageId: null };
+  }
+  if (input.origin !== "generated") {
+    log(
+      "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
+    );
+    return { createArgs, imageRef: null, imageId: null };
+  }
   if (
     fromIndex < 0 ||
     !fromDockerfile ||
     path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
   ) {
-    return skipOrFailRequiredBuildKit(
-      "sandbox create arguments do not select the staged Dockerfile",
-      "Resume onboarding to restage the managed build context, then retry.",
-    );
+    return { createArgs, imageRef: null, imageId: null };
   }
   let trustedContext: TrustedStagedBuildContext | null;
   try {
     trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return skipOrFailRequiredBuildKit(
-      `the staged build context could not be inspected (${detail})`,
-      "Resume onboarding to restage the managed build context, then retry.",
+    log(
       `  Local BuildKit build skipped: staged build context could not be inspected (${detail}); using the gateway builder instead.`,
-      error,
     );
+    return { createArgs, imageRef: null, imageId: null };
   }
   if (!trustedContext) {
-    return skipOrFailRequiredBuildKit(
-      "the staged build context failed trust validation",
-      "Resume onboarding to restage the managed build context, then retry.",
+    log(
       "  Local BuildKit build skipped: staged build context failed trust validation; using the gateway builder instead.",
     );
+    return { createArgs, imageRef: null, imageId: null };
   }
 
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId);
@@ -252,21 +332,21 @@ export async function prebuildSandboxImageIfEligible(
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return skipOrFailRequiredBuildKit(
-      `the local build could not start (${detail})`,
-      "Start Docker, ensure BuildKit is enabled, then retry.",
-      `  Local BuildKit build could not start (${detail}); using the gateway builder instead.`,
-      error,
-    );
+    log(`  Local BuildKit build could not start (${detail}); using the gateway builder instead.`);
+    return { createArgs, imageRef: null, imageId: null };
   }
 
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
-    return skipOrFailRequiredBuildKit(
-      `the local build failed${detail}`,
-      "Inspect the preceding BuildKit output and fix the reported image input or Dockerfile error before retrying.",
-      `  Local BuildKit build failed${detail}; using the gateway builder instead.`,
-    );
+    if (preserveManagedHermesBuildFailure) {
+      throw new Error(
+        `Managed Hermes local BuildKit build failed${detail}. ` +
+          "Inspect the preceding BuildKit output and fix the reported image input or Dockerfile error. " +
+          "Gateway-builder fallback is disabled for this exact staged build because the managed Hermes Dockerfile uses BuildKit-only instructions.",
+      );
+    }
+    log(`  Local BuildKit build failed${detail}; using the gateway builder instead.`);
+    return { createArgs, imageRef: null, imageId: null };
   }
 
   createArgs[fromIndex + 1] = imageRef;

@@ -2705,6 +2705,16 @@ async function createSandboxWithBaseImageResolution(
       ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
       gatewayPort: GATEWAY_PORT,
     });
+  const managedHermesBuildFailureCapability =
+    sandboxCreateLaunch.issueManagedHermesBuildFailureCapability({
+      agentName: agent?.name ?? null,
+      fromDockerfile,
+      origin,
+      dockerDriverGateway,
+      buildCtx,
+      stagedDockerfile,
+      buildId,
+    });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createArgv, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
     await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
@@ -2722,7 +2732,13 @@ async function createSandboxWithBaseImageResolution(
       manageDashboard,
       openshellShellCommand,
       openshellArgv,
-      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
+      prebuild: {
+        buildCtx,
+        buildId,
+        dockerDriverGateway,
+        origin,
+        managedHermesBuildFailureCapability,
+      },
     });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
