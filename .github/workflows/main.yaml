@@ -258,6 +258,7 @@ jobs:
       - real-openclaw-dist-harness
       - cli-tests
       - plugin-tests
+      - sandbox-images-and-e2e
     if: always()
     permissions:
       actions: read
@@ -275,6 +276,7 @@ jobs:
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           GH_TOKEN: ${{ github.token }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          SANDBOX_IMAGES_E2E_RESULT: ${{ needs['sandbox-images-and-e2e'].result }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -312,7 +314,7 @@ jobs:
             local job_id=""
             dependency_url="$RUN_URL"
             case "$name" in
-              static-checks|build-typecheck|installer-integration|wechat-runtime-audit|reviewed-npm-audit|real-openclaw-dist-harness|cli-tests|plugin-tests) ;;
+              static-checks|build-typecheck|installer-integration|wechat-runtime-audit|reviewed-npm-audit|real-openclaw-dist-harness|cli-tests|plugin-tests|sandbox-images-and-e2e) ;;
               *) return ;;
             esac
             load_job_listing
@@ -355,11 +357,12 @@ jobs:
           require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
           require_success "cli-tests" "$CLI_TESTS_RESULT"
           require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
+          require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"
 
           [ "$failed" -eq 0 ]
 
   sandbox-images-and-e2e:
-    needs: checks
+    needs: [static-checks, build-typecheck]
     uses: ./.github/workflows/sandbox-images-and-e2e.yaml
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
