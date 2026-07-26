@@ -25,7 +25,7 @@
       "packageSpec": "openclaw@2026.7.1",
       "event": "postinstall",
       "manifestCommand": "node scripts/postinstall-bundled-plugins.mjs",
-      "explicitCommand": "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs"
+      "explicitCommand": "node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs"
     }
   ]
 }

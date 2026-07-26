@@ -147,11 +147,8 @@ check_openshell_release_assets() {
     esac
   done <<<"$pin_records"
 
-  # Transitional trust anchor: accept the current archive set and the same set
-  # plus openshell.rb. Tighten this to nine assets when the formula consumer
-  # lands. The base-trusted parser still rejects every other asset set.
-  if [[ "$count" -ne 8 && "$count" -ne 9 ]]; then
-    echo "  STALE: expected 8 or 9 pinned OpenShell v${release_version:-unknown} assets, found ${count}."
+  if [[ "$count" -ne 9 ]]; then
+    echo "  STALE: expected 9 pinned OpenShell v${release_version:-unknown} assets, found ${count}."
     failures=$((failures + 1))
   fi
   if [[ "$brev_count" -ne 2 ]]; then

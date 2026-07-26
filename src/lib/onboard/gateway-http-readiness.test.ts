@@ -90,10 +90,36 @@ describe("isGatewayHttpReady abort handling", () => {
   });
 });
 
+describe("isDockerDriverGatewayHttpReady TLS env", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses the supplied gateway env when loading Docker-driver mTLS client files", async () => {
+    const tlsDir = path.join("/tmp", "nemoclaw-probe-tls");
+    const readPaths: string[] = [];
+    const readFileSync = vi.spyOn(fs, "readFileSync").mockImplementation((filePath) => {
+      readPaths.push(String(filePath));
+      throw new Error("missing test TLS material");
+    });
+
+    await expect(
+      isDockerDriverGatewayHttpReady(1, "https://127.0.0.1:1/openshell.v1.OpenShell/Health", {
+        OPENSHELL_LOCAL_TLS_DIR: tlsDir,
+      }),
+    ).resolves.toBe(false);
+
+    expect(readFileSync).toHaveBeenCalled();
+    expect(readPaths[0]).toBe(path.join(tlsDir, "ca.crt"));
+  });
+});
+
 describe("isDockerDriverGatewayHttpReady TLS servername", () => {
   const tlsDirs: string[] = [];
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     for (const dir of tlsDirs.splice(0)) {
       fs.rmSync(dir, { force: true, recursive: true });
     }

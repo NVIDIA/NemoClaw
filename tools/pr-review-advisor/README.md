@@ -170,7 +170,13 @@ the normalized advisory tier, not merge requirements. Rendered comments label th
 the independent PR E2E controller does not consume advisor output.
 Findings can also include safe simplification metadata with delete, stdlib,
 native, YAGNI, or shrink tags; those suggestions must keep validation, security, data-loss prevention,
-and required tests intact. Only blockers set a blocking advisory recommendation; results without
-blockers are info-only unless superseded. That recommendation is review input, never merge
-authorization. Warnings do not block. Suggestions do not require a response. Every result includes
-limitations and requires maintainer review.
+and required tests intact.
+The canonical ledger normalizer reports `merge_as_is` only when a completed, non-low-confidence review
+has no open findings.
+It reports `merge_after_fixes` when any blocker, warning, or suggestion remains open.
+It reserves `info_only` for skipped, unavailable, incomplete, or low-confidence review evidence, and reports
+`superseded` when competing work replaces the PR.
+These recommendations describe advisor findings only.
+They never approve a PR, replace required human review, or change the repository's merge gates.
+Maintainers still decide whether a warning blocks, and suggestions do not require a response.
+Every result includes limitations and requires maintainer review.
