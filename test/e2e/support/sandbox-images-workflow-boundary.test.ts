@@ -247,6 +247,18 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("rejects an assigned Buildx push flag in an image consumer", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["state-dir-guard-metadata"].steps!.push({
+      name: "Publish from metadata consumer",
+      run: "docker buildx build --push=true -t registry.example.invalid/nemoclaw .",
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "state-dir-guard-metadata step \x27Publish from metadata consumer\x27 must not write images to a registry",
+    );
+  });
+
   it("requires the Hermes artifact download before its load", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];

@@ -64,7 +64,7 @@ const EXPECTED_AUTH_ENV = {
 };
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const REGISTRY_WRITE =
-  /(?:\bdocker\s+(?:image\s+)?push\b|\bdocker\s+buildx\s+build\b[^\n]*\s--push(?:\s|$)|\b(?:oras|crane)\s+push\b|\bskopeo\s+copy\b)/u;
+  /(?:\bdocker\s+(?:image\s+)?push\b|\bdocker\s+buildx\s+build\b[^\n]*\s--push(?:=(?:1|[tT](?:[rR][uU][eE])?))?(?=$|[\s;&|<>()])|\b(?:oras|crane)\s+push\b|\bskopeo\s+copy\b)/u;
 
 function normalizeShellContinuations(run: string): string {
   return run.replace(/\\\r?\n[ \t]*/gu, " ");
