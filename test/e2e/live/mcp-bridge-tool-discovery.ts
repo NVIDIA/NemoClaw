@@ -82,13 +82,17 @@ export async function assertAuthenticatedMcpToolDiscovery(
   });
   expect(status.stdout).not.toContain(options.hostSecret);
   const discoveryRequests = fakeMcp.requests.slice(requestOffset);
-  const discoveryRpcRequests = discoveryRequests.filter(
+  const discoveryProtocolRequests = discoveryRequests.filter(
+    (request) =>
+      (request.method === "POST" || request.method === "DELETE") && request.path === "/mcp",
+  );
+  expect(discoveryProtocolRequests.length).toBeGreaterThan(0);
+  expect(
+    discoveryProtocolRequests.every((request) => request.auth === `Bearer ${options.hostSecret}`),
+  ).toBe(true);
+  const discoveryRpcRequests = discoveryProtocolRequests.filter(
     (request) => request.method === "POST" && request.path === "/mcp",
   );
-  expect(discoveryRpcRequests.length).toBeGreaterThan(0);
-  expect(
-    discoveryRpcRequests.every((request) => request.auth === `Bearer ${options.hostSecret}`),
-  ).toBe(true);
   const authenticatedRpcMethods = discoveryRpcRequests.map((request) => request.rpcMethod);
   const initializeIndex = authenticatedRpcMethods.indexOf("initialize");
   const initializedIndex = authenticatedRpcMethods.indexOf("notifications/initialized");
@@ -104,10 +108,25 @@ export async function assertAuthenticatedMcpToolDiscovery(
     firstToolListIndex,
     "authenticated MCP discovery must finish initialization before listing tools",
   ).toBeGreaterThan(initializedIndex);
+  const initializedRequest = discoveryRpcRequests[initializedIndex];
+  expect(initializedRequest.sessionId).toMatch(/^fake-session-\d+$/u);
+  expect(initializedRequest.protocolVersion).not.toBe("");
+  for (const request of discoveryRpcRequests.slice(initializedIndex)) {
+    expect(request.sessionId).toBe(initializedRequest.sessionId);
+    expect(request.protocolVersion).toBe(initializedRequest.protocolVersion);
+  }
 
   const toolListRequests = discoveryRequests.filter(
     (request) => request.rpcMethod === "tools/list",
   );
   expect(toolListRequests).toHaveLength(2);
   expect(discoveryRequests.some((request) => request.rpcMethod === "tools/call")).toBe(false);
+  expect(
+    discoveryProtocolRequests.some(
+      (request) =>
+        request.method === "DELETE" &&
+        request.sessionId === initializedRequest.sessionId &&
+        request.protocolVersion === initializedRequest.protocolVersion,
+    ),
+  ).toBe(true);
 }
