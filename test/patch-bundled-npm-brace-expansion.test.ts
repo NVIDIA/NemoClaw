@@ -190,16 +190,16 @@ describe("npm bundled brace-expansion remediation", () => {
     const target = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
     const originalRmSync = fs.rmSync.bind(fs);
     let injectedCleanupFailure = false;
+    const failPartialBackupCleanup = (targetPath: fs.PathLike): never => {
+      injectedCleanupFailure = true;
+      originalRmSync(path.join(String(targetPath), "old.js"), { force: true });
+      throw new Error("injected partial backup cleanup failure");
+    };
     const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation((targetPath, options) => {
-      if (
-        !injectedCleanupFailure &&
+      return !injectedCleanupFailure &&
         String(targetPath).includes("brace-expansion.nemoclaw-backup-")
-      ) {
-        injectedCleanupFailure = true;
-        originalRmSync(path.join(String(targetPath), "old.js"), { force: true });
-        throw new Error("injected partial backup cleanup failure");
-      }
-      originalRmSync(targetPath, options);
+        ? failPartialBackupCleanup(targetPath)
+        : originalRmSync(targetPath, options);
     });
     syncBuiltinESMExports();
 
