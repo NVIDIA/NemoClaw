@@ -105,6 +105,7 @@ type FixtureMode =
   | "installer-literalized-pin-input"
   | "installer-min-version-drift"
   | "installer-homebrew-trust-transition"
+  | "installer-homebrew-trust-transition-drift"
   | "installer-pin-selector-drift"
   | "installer-sandbox-build-control-flow"
   | "installer-sandbox-build-duplicate-digest"
@@ -224,6 +225,21 @@ const mutateSandboxBuildFunction = (
   return `${source.slice(0, start)}${mutated}${source.slice(end)}`;
 };
 
+const applyHomebrewTrustTransition = (source: string): string => {
+  const marker = `  formula_ref="\${HOMEBREW_TAP}/\${HOMEBREW_FORMULA_NAME}"
+  if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then`;
+  assert.ok(source.includes(marker), "installer Homebrew formula marker must exist");
+  return source.replace(
+    marker,
+    `  formula_ref="\${HOMEBREW_TAP}/\${HOMEBREW_FORMULA_NAME}"
+  if [ "$RELEASE_TAG" != "dev" ] && brew help trust >/dev/null 2>&1; then
+    brew trust --formula "$formula_ref" \\
+      || fail "Homebrew refused to trust the checksum-verified OpenShell formula \${formula_ref}"
+  fi
+  if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then`,
+  );
+};
+
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "duplicate-installer-pin": (source) => {
     const asset = ASSETS[0];
@@ -282,20 +298,12 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
     source.replace('local release_tag="$1" asset="$2"', "local release_tag='$1' asset='$2'"),
   "installer-min-version-drift": (source) =>
     source.replace('MIN_VERSION="0.0.72"', 'MIN_VERSION="0.0.85"'),
-  "installer-homebrew-trust-transition": (source) => {
-    const marker = `  formula_ref="\${HOMEBREW_TAP}/\${HOMEBREW_FORMULA_NAME}"
-  if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then`;
-    assert.ok(source.includes(marker), "installer Homebrew formula marker must exist");
-    return source.replace(
-      marker,
-      `  formula_ref="\${HOMEBREW_TAP}/\${HOMEBREW_FORMULA_NAME}"
-  if brew help trust >/dev/null 2>&1; then
-    brew trust --formula "$formula_ref" \\
-      || fail "Homebrew refused to trust the checksum-verified OpenShell formula \${formula_ref}"
-  fi
-  if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then`,
-    );
-  },
+  "installer-homebrew-trust-transition": applyHomebrewTrustTransition,
+  "installer-homebrew-trust-transition-drift": (source) =>
+    applyHomebrewTrustTransition(source).replace(
+      'brew trust --formula "$formula_ref" \\',
+      'brew trust --formula "$HOMEBREW_TAP" \\',
+    ),
   "installer-max-version-drift": (source) =>
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
   "installer-pin-selector-drift": (source) =>
@@ -762,6 +770,14 @@ describe("installer hash verification", () => {
 
     expect(result.status, result.stdout).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("rejects drift from the reviewed Homebrew trust transition", () => {
+    const result = runFixture("installer-homebrew-trust-transition-drift", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("installer operational template is not base-trusted");
+    expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
   it("fails closed when the Homebrew formula digest does not match", () => {
