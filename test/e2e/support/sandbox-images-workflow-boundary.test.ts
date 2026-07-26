@@ -22,6 +22,30 @@ describe("sandbox image workflow boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual([]);
   });
 
+  it("rejects late sandbox scheduling or omission from the final main gate", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    mainWorkflow.jobs["sandbox-images-and-e2e"].needs = "checks";
+    mainWorkflow.jobs.checks.needs = (mainWorkflow.jobs.checks.needs as string[]).filter(
+      (dependency) => dependency !== "sandbox-images-and-e2e",
+    );
+    const gate = mainWorkflow.jobs.checks.steps!.find(
+      (step) => step.name === "Verify required main checks",
+    )!;
+    delete gate.env!.SANDBOX_IMAGES_E2E_RESULT;
+    gate.run = gate.run!.replace(
+      'require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"',
+      "",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "main sandbox image workflow must start after the cheap preflight jobs",
+        "main checks must wait for the sandbox image workflow",
+        "main checks must require the sandbox image workflow result",
+      ]),
+    );
+  });
+
   it("rejects auth ordering drift, incomplete cleanup, and registry writes", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];

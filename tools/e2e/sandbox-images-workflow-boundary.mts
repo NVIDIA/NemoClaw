@@ -232,6 +232,9 @@ function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflo
   if (caller.uses !== "./.github/workflows/sandbox-images-and-e2e.yaml") {
     errors.push("main workflow must call the local sandbox image workflow");
   }
+  if (!isDeepStrictEqual(caller.needs, ["static-checks", "build-typecheck"])) {
+    errors.push("main sandbox image workflow must start after the cheap preflight jobs");
+  }
   const callerSecrets = record(caller.secrets);
   const expectedSecrets = {
     DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
@@ -241,6 +244,21 @@ function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflo
     errors.push(
       "main sandbox image caller must map only the optional Docker Hub secrets explicitly",
     );
+  }
+
+  const checks = record(record(mainWorkflow.jobs).checks);
+  if (!Array.isArray(checks.needs) || !checks.needs.includes("sandbox-images-and-e2e")) {
+    errors.push("main checks must wait for the sandbox image workflow");
+  }
+  const gate = requireStep(errors, "main checks", checks, "Verify required main checks");
+  if (
+    record(gate.env).SANDBOX_IMAGES_E2E_RESULT !==
+      "${{ needs['sandbox-images-and-e2e'].result }}" ||
+    !(gate.run ?? "").includes(
+      'require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"',
+    )
+  ) {
+    errors.push("main checks must require the sandbox image workflow result");
   }
 }
 
