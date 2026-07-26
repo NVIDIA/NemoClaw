@@ -440,6 +440,11 @@ describe("PR E2E workflow dispatch reconciliation", () => {
       }),
     ).resolves.toBeUndefined();
     expect(api).toHaveBeenCalledTimes(10);
+    expect(
+      api.mock.calls.map(([apiPath]) =>
+        Number(new URL(`https://api.github.com/${apiPath}`).searchParams.get("page")),
+      ),
+    ).toEqual(Array.from({ length: 10 }, (_value, index) => index + 1));
   });
 
   it("blocks replacement when the old correlation appears after the first inventory page", async () => {
