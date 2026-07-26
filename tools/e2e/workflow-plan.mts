@@ -10,6 +10,7 @@ import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
 } from "./credential-free-tests.mts";
+import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
 
 export type WorkflowPlanSelectors = {
@@ -118,7 +119,7 @@ function selectorIds(value: string | undefined, label: "jobs" | "targets"): stri
       `Invalid ${label} input; use comma-separated ids containing only letters, numbers, underscores, and hyphens`,
     );
   }
-  return value.split(",");
+  return normalizeE2eSelectorIds(value.split(","));
 }
 
 function selectTestRows(
@@ -208,9 +209,10 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
 }
 
 function expectedHermesSelection(selectors: WorkflowPlanSelectors): boolean {
-  const selected = [selectors.jobs, selectors.targets]
-    .filter((value): value is string => !!value)
-    .flatMap((value) => value.split(","));
+  const selected = [
+    ...selectorIds(selectors.jobs, "jobs"),
+    ...selectorIds(selectors.targets, "targets"),
+  ];
   return selected.length === 0 || selected.includes(HERMES_JOB_ID);
 }
 

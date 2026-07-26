@@ -710,11 +710,11 @@ process.exit(0);
       const existingDirs = ["agents", "extensions", "workspace"];
       fs.mkdirSync(binDir, { recursive: true });
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
-
       const auditLines = [
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal\t../qrcode-terminal/bin/qrcode-terminal.js",
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
         "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
+        "l\t/sandbox/.openclaw/extensions/whatsapp/node_modules/openclaw\t/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
         "l\t/sandbox/.openclaw/extensions/weather/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
       ].join("\n");
 

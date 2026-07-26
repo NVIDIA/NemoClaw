@@ -396,7 +396,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         name: "Check out trusted E2E workflow",
         if: PUBLICATION_REQUIRED_CONDITION,
-        uses: "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         with: {
           ref: "${{ github.sha }}",
           "fetch-depth": 0,
