@@ -12,7 +12,6 @@ import { type ConflictMatrixEntry, parseConflictMatrixEntry } from "./discover.m
 import {
   applyResolutionPatch,
   ConflictFixerError,
-  listTreeChanges,
   prepareMerge,
   replaceWithTree,
   requireSha,
@@ -82,7 +81,6 @@ export function validateResolutionPatch(input: {
   sourceRepository: string;
   workDirectory: string;
 }): {
-  changedPaths: string[];
   finalTree: string;
   repository: string;
 } {
@@ -100,15 +98,7 @@ export function validateResolutionPatch(input: {
   replaceWithTree(merge.repository, merge.conflictTree);
   applyResolutionPatch(merge.repository, input.patchPath);
   const finalTree = writeTree(merge.repository);
-  const changedPaths = listTreeChanges(merge.repository, merge.conflictTree, finalTree);
-  const allowedPaths = new Set(merge.conflictPaths);
-  const extraPaths = changedPaths.filter((file) => !allowedPaths.has(file));
-  if (extraPaths.length > 0) {
-    throw new ConflictFixerError(
-      `The resolution patch changes non-conflict paths: ${extraPaths.join(", ")}`,
-    );
-  }
-  return { changedPaths, finalTree, repository: merge.repository };
+  return { finalTree, repository: merge.repository };
 }
 
 function gitBuffer(repository: string, args: readonly string[]): Buffer {
@@ -149,8 +139,13 @@ function changedPathStatuses(
   return results;
 }
 
-function treeEntry(repository: string, tree: string, filePath: string): GitTreeEntry {
+function optionalTreeEntry(
+  repository: string,
+  tree: string,
+  filePath: string,
+): GitTreeEntry | null {
   const output = gitBuffer(repository, ["ls-tree", "-z", tree, "--", filePath]).toString("utf8");
+  if (!output) return null;
   const separator = output.indexOf("\t");
   if (separator < 0) throw new ConflictFixerError(`Git tree does not contain ${filePath}`);
   const [mode, type, sha] = output.slice(0, separator).split(" ");
@@ -160,15 +155,29 @@ function treeEntry(repository: string, tree: string, filePath: string): GitTreeE
   return { mode, path: filePath, sha, type };
 }
 
+function treeEntry(repository: string, tree: string, filePath: string): GitTreeEntry {
+  const entry = optionalTreeEntry(repository, tree, filePath);
+  if (!entry) throw new ConflictFixerError(`Git tree does not contain ${filePath}`);
+  return entry;
+}
+
+function parentContainsBlob(
+  repository: string,
+  parent: string,
+  entry: GitTreeEntry,
+): boolean {
+  const parentEntry = optionalTreeEntry(repository, parent, entry.path);
+  return parentEntry?.type === "blob" && parentEntry.sha === entry.sha;
+}
+
 async function createGitHubTree(input: {
-  changedPaths: readonly string[];
+  baseSha: string;
   finalTree: string;
   headSha: string;
   repository: string;
   repositoryName: string;
   request: GitHubRequest;
 }): Promise<string> {
-  const changedPaths = new Set(input.changedPaths);
   const entries: GitTreeEntry[] = [];
   for (const change of changedPathStatuses(input.repository, input.headSha, input.finalTree)) {
     const sourceTree = change.status === "D" ? input.headSha : input.finalTree;
@@ -177,7 +186,11 @@ async function createGitHubTree(input: {
       entries.push({ ...entry, sha: null });
       continue;
     }
-    if (entry.type === "blob" && changedPaths.has(entry.path)) {
+    if (
+      entry.type === "blob" &&
+      !parentContainsBlob(input.repository, input.headSha, entry) &&
+      !parentContainsBlob(input.repository, input.baseSha, entry)
+    ) {
       const content = gitBuffer(input.repository, ["cat-file", "blob", entry.sha ?? ""]);
       const created = (await input.request("POST", `/repos/${input.repositoryName}/git/blobs`, {
         content: content.toString("base64"),
@@ -201,7 +214,6 @@ async function createGitHubTree(input: {
 }
 
 async function publishValidatedTree(input: {
-  changedPaths: readonly string[];
   entry: ConflictMatrixEntry;
   finalTree: string;
   graphql: GraphqlRequest;
@@ -211,7 +223,7 @@ async function publishValidatedTree(input: {
   request: GitHubRequest;
 }): Promise<string> {
   const tree = await createGitHubTree({
-    changedPaths: input.changedPaths,
+    baseSha: input.entry.base_sha,
     finalTree: input.finalTree,
     headSha: input.entry.head_sha,
     repository: input.repository,
@@ -335,7 +347,6 @@ export async function publishResolution(input: {
       workDirectory: path.join(temporaryDirectory, "repository"),
     });
     return await publishValidatedTree({
-      changedPaths: validated.changedPaths,
       entry: input.entry,
       finalTree: validated.finalTree,
       graphql: input.graphql,
