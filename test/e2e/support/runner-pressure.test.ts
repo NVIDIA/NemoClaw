@@ -265,6 +265,8 @@ describe("host measurement parsers (#7146)", () => {
     expect(top[0]).toEqual({ rssKb: 900000 });
     expect(JSON.stringify(top)).not.toContain("node");
     expect(top.map((p) => p.rssKb)).toEqual([...top.map((p) => p.rssKb)].sort((a, b) => b - a));
+    expect(parseTopProcesses("123\n")).toEqual([]);
+    expect(parseTopProcesses("123 45678\n")).toEqual([{ rssKb: 45678 }]);
   });
 
   it("reduces the largest process name to a fixed class", () => {

@@ -406,7 +406,7 @@ export function collectLargestClassifiedProcess(
 export function parseTopProcesses(text: string, limit = TOP_PROCESS_LIMIT): ProcessSample[] {
   const rows: ProcessSample[] = [];
   for (const line of text.split("\n")) {
-    const match = /^\s*\d+\s+(\d+)\s+.+?\s*$/u.exec(line) ?? /^\s*(\d+)(?:\s+.+?)?\s*$/u.exec(line);
+    const match = /^\s*\d+\s+(\d+)(?:\s+.+?)?\s*$/u.exec(line);
     if (!match) continue;
     const rssKb = Number(match[1]);
     if (!Number.isSafeInteger(rssKb) || rssKb < 0) continue;
