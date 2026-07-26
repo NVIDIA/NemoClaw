@@ -51,10 +51,10 @@ describe("probeTerminalRuntimeCgroupOom", () => {
     listSandboxNames: () => ["alpha"],
   };
 
-  it("reads cgroup OOM counters from the host rather than inside the sandbox", () => {
-    const calls: Array<{ args: readonly string[]; binary: string }> = [];
-    const run = vi.fn((binary: string, args: readonly string[]) => {
-      calls.push({ args, binary });
+  it("reads cgroup OOM counters from the host rather than inside the sandbox (#5796)", () => {
+    const calls: Array<readonly string[]> = [];
+    const run = vi.fn((args: readonly string[]) => {
+      calls.push(args);
       return {
         status: 0,
         stdout: "oom_kill=1\nsource=/sys/fs/cgroup/memory.events\n",
@@ -70,12 +70,9 @@ describe("probeTerminalRuntimeCgroupOom", () => {
       source: "/sys/fs/cgroup/memory.events",
     });
     expect(run).toHaveBeenCalledTimes(1);
-    const firstCall = calls[0];
-    expect(firstCall).toBeDefined();
-    const { args, binary } = firstCall as { args: readonly string[]; binary: string };
+    const args = calls[0] ?? [];
     // The sandbox exec transport runs the probe under the sandbox policy, which
-    // denies /sys/fs/cgroup and hid every real OOM behind unavailable (#5796).
-    expect(binary).toBe("docker");
+    // denies /sys/fs/cgroup and hid every real OOM behind unavailable.
     expect(args.slice(0, 4)).toEqual(["exec", "openshell-alpha", "sh", "-lc"]);
     expect(args[4]).toContain("/sys/fs/cgroup/memory.events");
     expect(args[4]).toContain("/sys/fs/cgroup/memory.oom_control");
@@ -146,5 +143,18 @@ describe("probeTerminalRuntimeCgroupOom", () => {
         run: () => ({ status: 0, stdout: "oom_kill=1\n" }),
       }),
     ).toEqual({ kind: "unavailable", detail: "sandbox container owner unresolved" });
+  });
+
+  it("returns unavailable when sandbox ownership registry lookup fails", () => {
+    const run = vi.fn(() => ({ status: 0, stdout: "oom_kill=1\n" }));
+
+    expect(
+      probeTerminalRuntimeCgroupOom("alpha", {
+        ...dockerSandbox,
+        listSandboxNames: () => undefined,
+        run,
+      }),
+    ).toEqual({ kind: "unavailable", detail: "sandbox ownership registry unavailable" });
+    expect(run).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-
+import { dockerSpawnSync } from "../../adapters/docker";
 import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
 import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
@@ -49,10 +48,7 @@ export type TerminalRuntimeOomProbeResult =
   | { kind: "degraded"; oomKillCount: number; source?: string }
   | { kind: "unavailable"; detail?: string };
 
-export type TerminalRuntimeOomProbeRunner = (
-  binary: string,
-  args: readonly string[],
-) => {
+export type TerminalRuntimeOomProbeRunner = (args: readonly string[]) => {
   status: number | null;
   stdout?: string | Buffer;
   stderr?: string | Buffer;
@@ -82,7 +78,7 @@ const PROBE_TIMEOUT_MS = 5_000;
 export interface TerminalRuntimeOomProbeDeps {
   getSandboxDriver: (name: string) => string | null | undefined;
   listLabeledContainerNames: (name: string) => string[];
-  listSandboxNames: () => string[];
+  listSandboxNames: () => string[] | undefined;
   run: TerminalRuntimeOomProbeRunner;
 }
 
@@ -96,13 +92,21 @@ function readSandboxDriver(name: string): string | null | undefined {
   }
 }
 
+function readSandboxNames(): string[] | undefined {
+  try {
+    return registry.listSandboxes().sandboxes.map((entry) => entry.name);
+  } catch {
+    return undefined;
+  }
+}
+
 const defaultDeps: TerminalRuntimeOomProbeDeps = {
   getSandboxDriver: readSandboxDriver,
   listLabeledContainerNames: (name) =>
     findLabeledSandboxContainers(name).map((container) => container.name),
-  listSandboxNames: () => registry.listSandboxes().sandboxes.map((entry) => entry.name),
-  run: (cmd, args) =>
-    spawnSync(cmd, args, {
+  listSandboxNames: readSandboxNames,
+  run: (args) =>
+    dockerSpawnSync(args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: PROBE_TIMEOUT_MS,
@@ -129,14 +133,18 @@ export function probeTerminalRuntimeCgroupOom(
           : "ambiguous sandbox container ownership",
     };
   }
+  const sandboxNames = deps.listSandboxNames();
+  if (!sandboxNames) {
+    return { kind: "unavailable", detail: "sandbox ownership registry unavailable" };
+  }
   const containerName = resolveSandboxContainerOwner(
     labeledContainerNames[0] ?? "",
     sandboxName,
-    deps.listSandboxNames(),
+    sandboxNames,
   );
   if (!containerName) return { kind: "unavailable", detail: "sandbox container owner unresolved" };
 
-  const result = deps.run("docker", ["exec", containerName, "sh", "-lc", CGROUP_OOM_PROBE_SCRIPT]);
+  const result = deps.run(["exec", containerName, "sh", "-lc", CGROUP_OOM_PROBE_SCRIPT]);
   if (result.error) return { kind: "unavailable", detail: result.error.message };
   if (result.status !== 0) {
     const stderr = Buffer.isBuffer(result.stderr)
