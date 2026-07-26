@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createGatewayHostRuntime, type GatewayHostRuntimeDeps } from "./gateway-host-runtime";
 import { GATEWAY_MANAGEMENT_ENV_VAR } from "./gateway-management";
@@ -28,6 +28,10 @@ const DECLARATION = {
 };
 
 const ORIGINAL_ENV = { ...process.env };
+
+beforeEach(() => {
+  vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+});
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
