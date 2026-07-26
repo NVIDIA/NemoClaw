@@ -191,6 +191,21 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("rejects a continued Buildx rebuild in the Hermes image consumer", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    imageWorkflow.jobs["test-hermes-sandbox-image"].steps!.push({
+      name: "Rebuild Hermes production image",
+      run: [
+        "docker buildx \\",
+        "  build --load -f agents/hermes/Dockerfile -t nemoclaw-hermes-production .",
+      ].join("\n"),
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image test consumer must not rebuild the prebuilt image",
+    );
+  });
+
   it("rejects a duplicate Hermes production-image build", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];

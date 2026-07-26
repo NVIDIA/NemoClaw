@@ -865,7 +865,7 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   const consumerBuilds = steps(testJob).filter(
     (step) =>
       String(step.uses ?? "").startsWith("docker/build-push-action@") ||
-      /\bdocker\s+(?:build|buildx\s+build)\b/u.test(step.run ?? ""),
+      /\bdocker\s+(?:build|buildx\s+build)\b/u.test(normalizeShellContinuations(step.run ?? "")),
   );
   if (consumerBuilds.length !== 0) {
     errors.push("Hermes image test consumer must not rebuild the prebuilt image");
