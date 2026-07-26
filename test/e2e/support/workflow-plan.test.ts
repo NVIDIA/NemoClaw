@@ -50,6 +50,35 @@ describe("E2E workflow plan", () => {
     expect(plan.hermesSelected).toBe(true);
   });
 
+  it.each([
+    "jobs",
+    "targets",
+  ] as const)("maps the retired Hermes dashboard %s selector to the canonical lane", (kind) => {
+    const legacyPlan = buildE2eWorkflowPlan({ [kind]: "hermes-dashboard" });
+    const canonicalPlan = buildE2eWorkflowPlan({ [kind]: "hermes-e2e" });
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-alias-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        { [kind]: "hermes-dashboard" },
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+        },
+      );
+
+      expect(legacyPlan).toEqual(canonicalPlan);
+      expect(legacyPlan.hermesSelected).toBe(true);
+      expect(readFileSync(output, "utf8")).toContain("hermes_selected=true\n");
+      expect(readFreeStandingJobsInventory().allowedJobs).not.toContain("hermes-dashboard");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("routes a registry target into the live matrix", () => {
     const registryId = firstId(buildLiveTargetMatrix(), "supported registry target");
     const plan = buildE2eWorkflowPlan({ targets: registryId });
@@ -68,10 +97,11 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix.map((row) => row.id)).toEqual([testId]);
   });
 
-  it("rejects an unknown job", () => {
-    expect(() => buildE2eWorkflowPlan({ jobs: "definitely-unknown-e2e-job" })).toThrow(
-      "Unknown E2E test ID: definitely-unknown-e2e-job",
-    );
+  it.each([
+    "definitely-unknown-e2e-job",
+    "constructor",
+  ])("rejects unknown job %s without consulting inherited alias properties", (job) => {
+    expect(() => buildE2eWorkflowPlan({ jobs: job })).toThrow(`Unknown E2E test ID: ${job}`);
   });
 
   it("maps the trusted-main bootstrap job during a PR controller checkout", () => {

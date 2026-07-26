@@ -39,10 +39,6 @@ const COMPARISON_JOBS: ReadonlyMap<string, { initializeIf: string; finalizeIf: s
     { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
   ],
   [
-    "hermes-dashboard",
-    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
-  ],
-  [
     "hermes-discord",
     { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
   ],
@@ -144,7 +140,7 @@ function publicationIndex(jobSteps: readonly WorkflowStep[]): number {
 }
 
 /**
- * Keep runner diagnostics to 14 routed workflow lane identities / 17 concrete
+ * Keep runner diagnostics to 13 routed workflow lane identities / 16 concrete
  * trusted-main job executions. Telemetry is best-effort, but it must span the
  * complete stable-capacity job and finish before evidence is scanned or
  * uploaded. Rebuild jobs establish their fixed swap capacity first because the
