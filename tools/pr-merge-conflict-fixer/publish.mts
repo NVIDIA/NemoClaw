@@ -161,12 +161,14 @@ function treeEntry(repository: string, tree: string, filePath: string): GitTreeE
 }
 
 async function createGitHubTree(input: {
+  changedPaths: readonly string[];
   finalTree: string;
   headSha: string;
   repository: string;
   repositoryName: string;
   request: GitHubRequest;
 }): Promise<string> {
+  const changedPaths = new Set(input.changedPaths);
   const entries: GitTreeEntry[] = [];
   for (const change of changedPathStatuses(input.repository, input.headSha, input.finalTree)) {
     const sourceTree = change.status === "D" ? input.headSha : input.finalTree;
@@ -175,7 +177,7 @@ async function createGitHubTree(input: {
       entries.push({ ...entry, sha: null });
       continue;
     }
-    if (entry.type === "blob") {
+    if (entry.type === "blob" && changedPaths.has(entry.path)) {
       const content = gitBuffer(input.repository, ["cat-file", "blob", entry.sha ?? ""]);
       const created = (await input.request("POST", `/repos/${input.repositoryName}/git/blobs`, {
         content: content.toString("base64"),
@@ -199,6 +201,7 @@ async function createGitHubTree(input: {
 }
 
 async function publishValidatedTree(input: {
+  changedPaths: readonly string[];
   entry: ConflictMatrixEntry;
   finalTree: string;
   graphql: GraphqlRequest;
@@ -208,6 +211,7 @@ async function publishValidatedTree(input: {
   request: GitHubRequest;
 }): Promise<string> {
   const tree = await createGitHubTree({
+    changedPaths: input.changedPaths,
     finalTree: input.finalTree,
     headSha: input.entry.head_sha,
     repository: input.repository,
@@ -229,18 +233,17 @@ async function publishValidatedTree(input: {
     );
   }
 
+  const clientMutationId = commitSha;
   const mutation = `
     mutation UpdateConflictFixerRef($input: UpdateRefsInput!) {
       updateRefs(input: $input) {
-        refUpdates {
-          afterOid
-          name
-        }
+        clientMutationId
       }
     }
   `;
   const result = (await input.graphql(mutation, {
     input: {
+      clientMutationId,
       refUpdates: [
         {
           afterOid: commitSha,
@@ -252,10 +255,9 @@ async function publishValidatedTree(input: {
       repositoryId: input.pullRequest.base.repo.node_id,
     },
   })) as {
-    updateRefs?: { refUpdates?: Array<{ afterOid?: string; name?: string }> };
+    updateRefs?: { clientMutationId?: string };
   };
-  const update = result.updateRefs?.refUpdates?.[0];
-  if (update?.afterOid !== commitSha || update.name !== `refs/heads/${input.entry.head_ref}`) {
+  if (result.updateRefs?.clientMutationId !== clientMutationId) {
     throw new ConflictFixerError("GitHub did not confirm the atomic PR branch update");
   }
   return commitSha;
@@ -333,6 +335,7 @@ export async function publishResolution(input: {
       workDirectory: path.join(temporaryDirectory, "repository"),
     });
     return await publishValidatedTree({
+      changedPaths: validated.changedPaths,
       entry: input.entry,
       finalTree: validated.finalTree,
       graphql: input.graphql,

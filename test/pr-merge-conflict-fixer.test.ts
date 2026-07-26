@@ -211,6 +211,22 @@ describe("PR merge conflict fixer", () => {
     expect(selected.map((item) => item.pr_number)).toEqual([1, 2]);
   });
 
+  it("skips GitHub workflow conflicts before model selection (#7542)", () => {
+    const selected = selectConflictingPullRequests(
+      [pullRequest({ number: 1 }), pullRequest({ number: 2 })],
+      "NVIDIA/NemoClaw",
+      "b".repeat(40),
+      {
+        checkConflict: (candidate) =>
+          candidate.number === 1
+            ? ["conflict.txt", ".github/workflows/e2e.yaml"]
+            : ["conflict.txt"],
+      },
+    );
+
+    expect(selected.map((item) => item.pr_number)).toEqual([2]);
+  });
+
   it("accepts a patch that changes only the original conflict paths (#7542)", () => {
     const fixture = createConflictFixture();
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
@@ -287,12 +303,7 @@ describe("PR merge conflict fixer", () => {
     const requests: Array<{ body: unknown; method: string; path: string }> = [];
     const graphql = vi.fn(async (_query: string, variables: Record<string, unknown>) => ({
       updateRefs: {
-        refUpdates: [
-          {
-            afterOid: commitSha,
-            name: `refs/heads/${entry.head_ref}`,
-          },
-        ],
+        clientMutationId: commitSha,
       },
       variables,
     }));
@@ -346,8 +357,14 @@ describe("PR merge conflict fixer", () => {
       tree: finalTree,
     });
     expect(JSON.stringify(commitRequest?.body)).not.toMatch(/author|committer|signature/u);
+    const blobRequests = requests.filter((item) => item.path.endsWith("/git/blobs"));
+    expect(blobRequests).toHaveLength(1);
+    expect(
+      Buffer.from((blobRequests[0]?.body as { content: string }).content, "base64").toString(),
+    ).toBe("resolved intent\n");
     expect(graphql).toHaveBeenCalledWith(expect.stringContaining("updateRefs"), {
       input: {
+        clientMutationId: commitSha,
         refUpdates: [
           {
             afterOid: commitSha,
