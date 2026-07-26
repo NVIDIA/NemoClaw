@@ -61,6 +61,7 @@ interface RebuildDeleteAbsenceDeps {
     stdout?: string;
     stderr?: string;
     error?: Error;
+    signal?: NodeJS.Signals | null;
   };
   now?: () => number;
   sleep?: (milliseconds: number) => void;
@@ -69,8 +70,6 @@ interface RebuildDeleteAbsenceDeps {
 const REBUILD_DELETE_ABSENCE_MAX_ATTEMPTS = 20;
 const REBUILD_DELETE_ABSENCE_INITIAL_INTERVAL_MS = 250;
 const REBUILD_DELETE_ABSENCE_MAX_INTERVAL_MS = 1_000;
-const MISSING_SANDBOX_GET_OUTPUT =
-  /\b(?:no such sandbox|sandbox(?:\s+['"`]?[A-Za-z0-9._-]+['"`]?)?\s+(?:(?:was|is)\s+)?(?:not found|not present|does not exist|has no spec))\b/i;
 
 /** Wait for explicit absence from the same `sandbox get` boundary used by inner onboard. */
 export function waitForRebuildDeleteAbsence(
@@ -103,9 +102,10 @@ export function waitForRebuildDeleteAbsence(
       const combinedOutput = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
       const state =
         !probe.error &&
+        !probe.signal &&
         probe.status !== null &&
         probe.status !== 0 &&
-        MISSING_SANDBOX_GET_OUTPUT.test(combinedOutput)
+        isExplicitMissingSandboxGatewayOutput(combinedOutput, sandboxName)
           ? "absent"
           : probe.status === 0 && stdout.length > 0
             ? "present"

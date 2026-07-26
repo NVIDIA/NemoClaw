@@ -652,6 +652,67 @@ describe("rebuild destroy phase", () => {
     expect(currentMs).toBeLessThanOrEqual(15_000);
   });
 
+  it.each([
+    ["another sandbox", { status: 1, stderr: "sandbox beta not found" }],
+    [
+      "a missing gateway",
+      { status: 1, stderr: 'status: NotFound, message: "gateway nemoclaw not found"' },
+    ],
+    [
+      "a missing provider",
+      { status: 1, stderr: 'status: NotFound, message: "provider alpha-mcp-github not found"' },
+    ],
+    [
+      "mixed gateway and sandbox diagnostics",
+      {
+        status: 1,
+        stderr:
+          'status: NotFound, message: "gateway nemoclaw not found"\nstatus: Internal, message: "sandbox has no spec"',
+      },
+    ],
+    [
+      "a signal-terminated probe with a missing-sandbox diagnostic",
+      {
+        status: 1,
+        signal: "SIGTERM" as NodeJS.Signals,
+        stderr: "Error: sandbox alpha not found",
+      },
+    ],
+  ])("does not continue deletion after convergence reports %s", async (_label, probe) => {
+    mocks.getSandbox.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      nimContainer: "nim-alpha",
+    });
+    mocks.runOpenshell.mockReturnValue({ status: 0, stdout: "deleted", stderr: "" });
+    mocks.captureOpenshell.mockReturnValue({
+      stdout: "",
+      ...probe,
+    });
+    const onDeleted = vi.fn();
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        onDeleted,
+      }),
+    ).rejects.toThrow("Sandbox deletion could not be confirmed.");
+
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
+  });
+
   it("removes registry state only after the gateway reports the deleted sandbox missing", async () => {
     const events: string[] = [];
     let getAttempts = 0;
