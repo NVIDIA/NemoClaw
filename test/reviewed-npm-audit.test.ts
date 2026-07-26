@@ -253,29 +253,26 @@ describe("reviewed npm audit gate", () => {
 
   it("retries a timed-out scanner process within the same budget", () => {
     const delays: number[] = [];
+    const timeoutResult = {
+      error: Object.assign(new Error("spawnSync npm ETIMEDOUT"), { code: "ETIMEDOUT" }),
+      status: null,
+      stderr: "",
+      stdout: "",
+    };
+    const completeResult = {
+      status: 0,
+      stderr: "",
+      stdout: JSON.stringify({
+        metadata: {
+          vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+        },
+      }),
+    };
+    const responses = [timeoutResult, timeoutResult, completeResult];
     let attempts = 0;
 
     const audit = runNpmAuditWithRetry({
-      run: () => {
-        attempts += 1;
-        if (attempts < 3) {
-          return {
-            error: Object.assign(new Error("spawnSync npm ETIMEDOUT"), { code: "ETIMEDOUT" }),
-            status: null,
-            stderr: "",
-            stdout: "",
-          };
-        }
-        return {
-          status: 0,
-          stderr: "",
-          stdout: JSON.stringify({
-            metadata: {
-              vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
-            },
-          }),
-        };
-      },
+      run: () => responses[attempts++]!,
       wait: (delayMs) => delays.push(delayMs),
       warn: () => {},
     });
