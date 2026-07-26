@@ -74,7 +74,7 @@ describe("assessHost Podman docker-compat detection (#7320)", () => {
   it.each([
     ["an empty JSON object", "{}"],
     ["unexpected plain text", "unexpected version output"],
-  ])("keeps the Podman info backstop for %s from the version probe", (_case, versionOutput) => {
+  ])("rejects a Podman-compatible runtime when version output is %s (#7320)", (_case, versionOutput) => {
     const result = assessHost({
       platform: "darwin",
       env: {},
