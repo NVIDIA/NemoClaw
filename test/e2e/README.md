@@ -572,11 +572,44 @@ projects each controller-selected target into a fixed target ID and hosted
 runner mapping. The generated live matrix must exactly match those trusted IDs
 and runners, and only the trusted projection can configure credential-bearing
 typed-target jobs. Ordinary branch dispatch is not an acceptable substitute.
-The controller uses GitHub's returned run ID for
-waiting, evidence download, and completion, then revalidates that the PR is
-still open with the PR SHA, base SHA, and coordination identity before
-recording a final result. The native observer revalidates the live revision
-before mirroring that terminal result.
+Immediately before the dispatch request, the controller also requires the
+coordination check to remain in the exact phase expected by that path.
+Regardless of the list result, a bounded direct check read must confirm the
+same identity and exact phase; pending, reserved, stale, or mismatched
+authorization state fails closed.
+The normal dispatch path uses GitHub's returned run ID for waiting, evidence
+download, and completion. A transport failure, HTTP 5xx response, invalid JSON,
+or malformed success response instead starts a 45-second read-only
+reconciliation window. The dispatch request is capped at 10 seconds, each
+inventory read is capped at 5 seconds, and the bounded adoption checks plus
+authorization publication keep the full path within the child's authorization
+window. The controller never sends a second dispatch request in that attempt.
+It waits for the full settling window and adopts exactly one
+correlated child only after validating its title, workflow path and SHA, `main`
+branch, first attempt, repository, canonical URLs, creation time, and GitHub
+Actions actor identities. It then rereads that run and revalidates the exact PR
+head, base, head repository, and unchanged pre-dispatch coordination check
+before publishing the run-specific authorization. If the authorization update
+response is lost or malformed, a bounded direct read accepts only the exact
+persisted child binding. Otherwise, the controller attempts to revoke
+coordination before requesting cancellation of the candidate child. If
+revocation itself fails,
+the controller still attempts cancellation and reports both failures. HTTP 4xx
+responses remain definitive dispatch rejections.
+
+Zero correlated runs produce the retryable `Workflow dispatch was not
+observed` result and a versioned receipt. Multiple or malformed correlated
+runs, incomplete or failed inventory reads, and identity drift fail closed as
+terminal reconciliation errors. Dispatch-reconciliation logs contain only the
+correlation ID, failure kind, optional HTTP status and safe GitHub request ID,
+and the `reconciling`, `adopted`, or `not-observed` result. API response
+excerpts are normalized to one line and limited to 512 characters. Dispatch
+inputs and tokens are not logged.
+
+After a child is selected, the controller revalidates that the PR is still open
+with the PR SHA, base SHA, and coordination identity before recording a final
+result. The native observer revalidates the live revision before mirroring that
+terminal result.
 
 An internal revision whose control-plane matches include a file outside the
 trusted controller and observer boundaries leaves coordination in progress
@@ -618,18 +651,23 @@ maintainer or administrator chooses **Run workflow** on `main`, selects
 as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
 and a specific 10–500-character `review_reason`. This path additionally
 revalidates the triggering actor's `maintain` or `admin` permission and uses the
-same exact-revision and deterministic-plan checks. If authorization
-fails before a child run is dispatched, the controller restores the
-authorization title and leaves coordination in progress. A maintainer can then
-launch a fresh first-attempt manual authorization. To use the protected path
-again, correct its environment configuration, update the PR to create a new
-head, and trigger fresh PR CI. After a child is dispatched, a startup failure
-requests cancellation. Whether or not cancellation is confirmed, the
-controller completes coordination as
-`Authorized E2E run requires reconciliation`; that authorization for the PR/base SHA pair
-cannot be retried because the child may still execute and a retry could start
-duplicate credential-bearing work. Inspect the linked run, then update the PR
-and run fresh CI before authorizing again.
+same exact-revision and deterministic-plan checks. An ordinary validation
+failure before dispatch restores the authorization title and leaves
+coordination in progress. A maintainer can then launch a fresh first-attempt
+manual authorization. To use the protected path again, correct its environment
+configuration, update the PR to create a new head, and trigger fresh PR CI.
+
+An uncertain dispatch that completes the bounded window with zero correlated
+runs instead completes coordination as `Workflow dispatch was not observed`
+with a validated receipt on the trusted GitHub Actions-owned coordination
+check. Ambiguous reconciliation or a startup failure after a possible child
+dispatch completes coordination as `Authorized E2E run requires
+reconciliation`. The controller requests cancellation for every fully validated
+candidate child and every schema-valid run ID that carries the correlation,
+including identity-invalid candidates. That authorization for the PR/base SHA
+pair cannot be reused because a child may still execute and another dispatch
+could start duplicate credential-bearing work. Inspect any linked or candidate
+run, then update the PR and run fresh CI before authorizing again.
 The native required job treats authorization and running titles as intermediate
 waiting states only while coordination remains in progress. It also keeps
 polling when the current PR/base SHA coordination check is a completed failure
@@ -640,21 +678,28 @@ later eligible `CI / Pull Request` run can create a fresh coordination check for
 the same unchanged open head and base only when the newest failed coordination
 check carries a current-version retry reason:
 `prerequisite-ci` after the later CI run succeeds, `child-cancelled` after a
-conclusively cancelled child, or `evidence-download` after a successful child
-whose evidence download failed, was cancelled, or was skipped. The trusted
-controller leaves the completed check as audit history, creates and validates a
-new `in_progress` check with the same PR/base SHA external identity, and rebuilds
-the deterministic plan before exposing a fresh authorization state. The
+conclusively cancelled child, `evidence-download` after a successful child
+whose evidence download failed, was cancelled, or was skipped, or
+`dispatch-not-observed` after an uncertain dispatch completes its bounded
+zero-match window and records a validated receipt. Before replacing a
+`dispatch-not-observed` check, the next controller rereads the old correlation
+and fails closed if a late child, incomplete inventory, or contradiction
+appears. The trusted controller leaves the completed check as audit history,
+creates and validates a new `in_progress` check with the same PR/base SHA
+external identity and a fresh correlation, and rebuilds the deterministic plan
+before exposing a fresh authorization state. The
 controller and native observer select the highest check-run ID only when every
 older duplicate is a completed failure with a recognized versioned retry
 marker. An unexpected app or mismatched mutation identity, duplicate ID, older
 unmarked or otherwise non-retryable terminal state, or multiple active
 candidates fails closed. Selected-job product or
 assertion failures, evidence policy or integrity failures, schema or identity
-mismatches, traversal or provenance failures, reconciliation, controller
-errors, unknown states, and failures recorded before retry reasons existed
-remain terminal for that PR/base SHA pair. Update the PR and run fresh CI for
-terminal outcomes. The
+mismatches, traversal or provenance failures, ambiguous, incomplete, or
+identity-invalid reconciliation, controller errors, unknown states, and
+failures recorded before retry reasons existed remain terminal for that
+PR/base SHA pair. A validated `dispatch-not-observed` receipt on a trusted
+GitHub Actions check is the only retryable reconciliation result. Update the PR
+and run fresh CI for terminal outcomes. The
 normal wait, evidence download, and finish path is the only path that can record
 success; the authorization itself cannot make the gate green. A changed head or
 base requires a new authorization.
