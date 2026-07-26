@@ -1,0 +1,587 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+  ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
+  advisorInferenceBaseUrl,
+  openAiAdvisorProviderConfig,
+} from "../tools/advisors/session.mts";
+import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
+import {
+  collectGitHubReviewContext,
+  MAX_PREPARED_GITHUB_CONTEXT_BYTES,
+  readPreparedGitHubContext,
+  serializePreparedGitHubContext,
+} from "../tools/pr-review-advisor/github-context.mts";
+import {
+  configureAdvisorOpenShellInference,
+  createAdvisorSandbox,
+  deleteAdvisorSandbox,
+  downloadAdvisorArtifacts,
+  prepareAdvisorSandboxInputs,
+  runAdvisorSandbox,
+  sealAdvisorSandboxInputs,
+  writeUnavailableAdvisorArtifacts,
+} from "../tools/pr-review-advisor/openshell.mts";
+import { runPrReviewAdvisorAnalysis } from "../tools/pr-review-advisor/run-analysis.mts";
+
+const temporaryDirectories: string[] = [];
+const ROOT = path.resolve(import.meta.dirname, "..");
+
+function temporaryDirectory(): string {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pr-advisor-openshell-"));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+function advisorEnvironment(): NodeJS.ProcessEnv {
+  const root = temporaryDirectory();
+  const advisorDirectory = path.join(root, "advisor");
+  const workDirectory = path.join(root, "pr-workdir");
+  const workspace = path.join(root, "workspace");
+  const runnerTemp = path.join(root, "runner-temp");
+  for (const directory of [advisorDirectory, workDirectory, workspace, runnerTemp]) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+  return {
+    ADVISOR_DIR: advisorDirectory,
+    ADVISOR_WORKDIR: workDirectory,
+    BASE_REF: "target/base",
+    GH_TOKEN: "github-host-secret",
+    GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+    GITHUB_TOKEN: "github-default-secret",
+    GITHUB_WORKSPACE: workspace,
+    HEAD_REF: "HEAD",
+    HOME: path.join(root, "home"),
+    OPENAI_API_KEY: "model-host-secret",
+    OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
+    PATH: "/usr/bin",
+    PI_IMAGE: "pinned-pi-image",
+    PR_NUMBER: "7542",
+    PR_REVIEW_ADVISOR_API_KEY: "advisor-host-secret",
+    PR_REVIEW_ADVISOR_ARTIFACT_DIR: "pr-review-advisor",
+    PR_REVIEW_ADVISOR_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+    PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS: "2100",
+    RUNNER_TEMP: runnerTemp,
+    SANDBOX_NAME: "pr-advisor-test",
+    TARGET_REPO: "NVIDIA/NemoClaw",
+  };
+}
+
+function advisorTools(runImplementation?: OpenShellTools["run"]): OpenShellTools {
+  return {
+    run: vi.fn(
+      runImplementation ??
+        ((command) => (command === "which" ? "/trusted/bin/openshell-sandbox" : "")),
+    ),
+    start: vi.fn(),
+    wait: vi.fn(async () => undefined),
+  };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const directory of temporaryDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+describe("PR review advisor OpenShell wrapper", () => {
+  it("keeps credential-bearing host commands out of the Pi SDK import graph", () => {
+    for (const relativePath of [
+      "tools/pr-review-advisor/openshell.mts",
+      "tools/pr-review-advisor/github-context.mts",
+      "tools/advisors/provider-constants.mts",
+      "tools/advisors/github.mts",
+      "tools/advisors/json.mts",
+      "tools/openshell-agent/runtime.mts",
+    ]) {
+      const source = fs.readFileSync(path.resolve(import.meta.dirname, "..", relativePath), "utf8");
+      expect(source, relativePath).not.toMatch(
+        /(?:@earendil-works\/pi-coding-agent|\btypebox\b|\/session\.mts|\/analyze\.mts)/u,
+      );
+    }
+  });
+
+  it("allows only the hosted service and OpenShell inference gateway", () => {
+    expect(advisorInferenceBaseUrl({})).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
+    expect(
+      advisorInferenceBaseUrl({
+        PR_REVIEW_ADVISOR_BASE_URL: ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
+      }),
+    ).toBe(ADVISOR_OPENSHELL_INFERENCE_BASE_URL);
+    expect(
+      (
+        openAiAdvisorProviderConfig(
+          "PR_REVIEW_ADVISOR_API_KEY",
+          ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
+        ) as { baseUrl: string }
+      ).baseUrl,
+    ).toBe(ADVISOR_OPENSHELL_INFERENCE_BASE_URL);
+    expect(() =>
+      advisorInferenceBaseUrl({
+        PR_REVIEW_ADVISOR_BASE_URL: "https://attacker.example/v1",
+      }),
+    ).toThrow("must use an approved advisor inference endpoint");
+  });
+
+  it("recognizes advisor models declared in the extracted provider constants", () => {
+    const runNode = vi.fn(
+      (_script: string, _args: string[], _env: NodeJS.ProcessEnv, _cwd: string) => 0,
+    );
+    const appendEnv = vi.fn();
+
+    runPrReviewAdvisorAnalysis(
+      {
+        advisorDir: ROOT,
+        advisorWorkdir: ROOT,
+        outDir: path.join(temporaryDirectory(), "artifacts"),
+        baseRef: "origin/main",
+        headRef: "HEAD",
+        model: "nvidia/nvidia/nemotron-3-ultra",
+        title: "PR Review Advisor",
+        runAnalysis: "0",
+      },
+      { appendEnv, runNode },
+    );
+
+    expect(appendEnv).toHaveBeenCalledWith("PR_REVIEW_ADVISOR_SUPPORTED", "1");
+    expect(runNode).toHaveBeenCalledTimes(1);
+    expect(runNode.mock.calls[0]?.[2].PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBeUndefined();
+  });
+
+  it("loads host-prepared GitHub context without a GitHub token", async () => {
+    const directory = temporaryDirectory();
+    const contextPath = path.join(directory, "github-context.json");
+    const context = {
+      repo: "NVIDIA/NemoClaw",
+      prNumber: 7542,
+      pullRequest: { title: "Wrap the advisor" },
+    };
+    fs.writeFileSync(contextPath, JSON.stringify(context), { mode: 0o600 });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      collectGitHubReviewContext({
+        GITHUB_REPOSITORY: "NVIDIA/workflow-repository",
+        PR_NUMBER: String(context.prNumber),
+        PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: contextPath,
+        TARGET_REPO: context.repo,
+      }),
+    ).resolves.toEqual(context);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves GitHub field names and marks bounded context explicitly", async () => {
+    const longBody = `${"head ".repeat(10_000)}binding decision at the tail`;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const payload = url.endsWith("/pulls/7542")
+        ? {
+            number: 7542,
+            title: "Wrap the advisor",
+            body: longBody,
+            author_association: "MEMBER",
+            created_at: "2026-07-26T00:00:00Z",
+            head: { ref: "feature", sha: "b".repeat(40), repo: { full_name: "NVIDIA/NemoClaw" } },
+            base: { ref: "main", sha: "a".repeat(40), repo: { full_name: "NVIDIA/NemoClaw" } },
+          }
+        : [];
+      return {
+        ok: true,
+        json: async () => payload,
+      } as Response;
+    });
+
+    const context = await collectGitHubReviewContext({
+      GH_TOKEN: "host-token",
+      GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+      PR_NUMBER: "7542",
+      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
+    });
+    const pullRequest = context?.pullRequest as Record<string, unknown>;
+    expect(pullRequest.author_association).toBe("MEMBER");
+    expect(pullRequest).not.toHaveProperty("authorAssociation");
+    expect((pullRequest.head as { repo: Record<string, unknown> }).repo.full_name).toBe(
+      "NVIDIA/NemoClaw",
+    );
+    expect(String(pullRequest.body)).toContain("PR Review Advisor truncated content");
+    expect(String(pullRequest.body)).toContain("binding decision at the tail");
+    expect(Buffer.byteLength(serializePreparedGitHubContext(context), "utf8")).toBeLessThanOrEqual(
+      MAX_PREPARED_GITHUB_CONTEXT_BYTES,
+    );
+  });
+
+  it("bounds large overlap path sets before serializing sandbox context", async () => {
+    const longFiles = Array.from({ length: 300 }, (_, index) => ({
+      filename: `deep/${String(index).padStart(3, "0")}/${"segment/".repeat(480)}file.ts`,
+    }));
+    const openPulls = Array.from({ length: 5 }, (_, index) => ({
+      number: 8_000 + index,
+      title: `Overlapping PR ${index}`,
+      body: "",
+      labels: [],
+    }));
+    expect(
+      Buffer.byteLength(JSON.stringify(openPulls.map(() => longFiles)), "utf8"),
+    ).toBeGreaterThan(MAX_PREPARED_GITHUB_CONTEXT_BYTES);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      let payload: unknown = [];
+      if (url.endsWith("/pulls/7542")) {
+        payload = {
+          number: 7542,
+          title: "Current PR",
+          body: "",
+          head: { ref: "feature", sha: "b".repeat(40) },
+          base: { ref: "main", sha: "a".repeat(40) },
+        };
+      } else if (url.includes("/pulls?state=open")) {
+        payload = openPulls;
+      } else if (url.includes("/files?")) {
+        payload = longFiles;
+      }
+      return {
+        ok: true,
+        json: async () => payload,
+      } as Response;
+    });
+
+    const context = await collectGitHubReviewContext({
+      GH_TOKEN: "host-token",
+      GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+      PR_NUMBER: "7542",
+      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
+    });
+    expect(context?.openPrOverlaps).toHaveLength(5);
+    for (const overlap of context?.openPrOverlaps ?? []) {
+      expect(overlap.sameFileCount).toBe(300);
+      expect(overlap.sameFiles).toHaveLength(20);
+      expect(overlap.sameFiles.every((file) => file.length <= 300)).toBe(true);
+    }
+    expect(() => serializePreparedGitHubContext(context)).not.toThrow();
+  });
+
+  it("rejects substituted or non-regular prepared GitHub context", () => {
+    const directory = temporaryDirectory();
+    const contextPath = path.join(directory, "github-context.json");
+    const symlinkPath = path.join(directory, "github-context-link.json");
+    fs.writeFileSync(contextPath, JSON.stringify({ repo: "NVIDIA/NemoClaw", prNumber: 7542 }), {
+      mode: 0o600,
+    });
+    fs.symlinkSync(contextPath, symlinkPath);
+
+    expect(() =>
+      readPreparedGitHubContext(contextPath, {
+        repo: "NVIDIA/NemoClaw",
+        prNumber: 9999,
+      }),
+    ).toThrow("pull request does not match");
+    expect(() =>
+      readPreparedGitHubContext(contextPath, {
+        repo: "attacker/NemoClaw",
+        prNumber: 7542,
+      }),
+    ).toThrow("repository does not match");
+    expect(() => readPreparedGitHubContext(symlinkPath)).toThrow("must be a regular file");
+  });
+
+  it("bounds prepared GitHub context before parsing", () => {
+    const contextPath = path.join(temporaryDirectory(), "github-context.json");
+    fs.writeFileSync(contextPath, Buffer.alloc(5 * 1024 * 1024 + 1, 0x20));
+
+    expect(() => readPreparedGitHubContext(contextPath)).toThrow("exceeds the 5 MiB limit");
+  });
+
+  it("materializes bounded host context and pinned read tools for sandbox upload", async () => {
+    const env = advisorEnvironment();
+    env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH = "/untrusted/recursive-context.json";
+    const binaries = path.join(temporaryDirectory(), "binaries");
+    fs.mkdirSync(binaries);
+    for (const name of ["rg", "fdfind"]) {
+      const executable = path.join(binaries, name);
+      fs.writeFileSync(executable, `${name}\n`, { mode: 0o755 });
+    }
+    const collectContext = vi.fn(async (contextEnv: NodeJS.ProcessEnv) => {
+      expect(contextEnv.GH_TOKEN).toBe("github-host-secret");
+      expect(contextEnv.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBeUndefined();
+      return {
+        repo: "NVIDIA/NemoClaw",
+        prNumber: 7542,
+        pullRequest: { title: "Wrap the advisor" },
+      };
+    });
+
+    await prepareAdvisorSandboxInputs(env, {
+      collectContext,
+      resolveExecutable: (name) => path.join(binaries, name),
+    });
+
+    const runnerTemp = env.RUNNER_TEMP as string;
+    const contextPath = path.join(runnerTemp, "pr-review-advisor-context", "github-context.json");
+    expect(JSON.parse(fs.readFileSync(contextPath, "utf8"))).toMatchObject({
+      repo: "NVIDIA/NemoClaw",
+      prNumber: 7542,
+    });
+    expect(fs.statSync(contextPath).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(contextPath, "utf8")).not.toContain("github-host-secret");
+    expect(
+      fs.statSync(path.join(runnerTemp, "pr-review-advisor-runtime", "artifacts")).isDirectory(),
+    ).toBe(true);
+    for (const name of ["rg", "fdfind", "fd"]) {
+      const executable = path.join(runnerTemp, "pr-review-advisor-tools", name);
+      expect(fs.statSync(executable).mode & 0o111).not.toBe(0);
+    }
+  });
+
+  it("rejects oversized prepared context before writing a sandbox input", async () => {
+    const env = advisorEnvironment();
+
+    await expect(
+      prepareAdvisorSandboxInputs(env, {
+        collectContext: async () => ({
+          repo: "NVIDIA/NemoClaw",
+          prNumber: 7542,
+          pullRequest: { body: "x".repeat(MAX_PREPARED_GITHUB_CONTEXT_BYTES) },
+        }),
+      }),
+    ).rejects.toThrow("Prepared GitHub context exceeds the 5 MiB limit");
+    expect(
+      fs.existsSync(
+        path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
+      ),
+    ).toBe(false);
+  });
+
+  it("registers the selected model while confining the upstream key to provider creation", async () => {
+    const env = advisorEnvironment();
+    const tools = advisorTools();
+
+    await configureAdvisorOpenShellInference(env, tools);
+
+    const calls = vi.mocked(tools.run).mock.calls;
+    expect(calls).toContainEqual([
+      "openshell",
+      [
+        "inference",
+        "set",
+        "--provider",
+        "advisor",
+        "--model",
+        "nvidia/nvidia/nemotron-3-ultra",
+        "--timeout",
+        "900",
+      ],
+      expect.anything(),
+    ]);
+    const providerCalls = calls.filter(
+      ([command, args]) =>
+        command === "openshell" && args.slice(0, 2).join(" ") === "provider create",
+    );
+    expect(providerCalls).toHaveLength(1);
+    expect(providerCalls[0]?.[2].env.OPENAI_API_KEY).toBe("model-host-secret");
+    for (const [command, args, options] of calls) {
+      expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
+      expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
+      expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
+    }
+    expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
+    expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();
+    const gatewayConfig = fs.readFileSync(
+      path.join(env.RUNNER_TEMP as string, "openshell-gateway", "gateway.toml"),
+      "utf8",
+    );
+    expect(gatewayConfig).not.toContain("model-host-secret");
+  });
+
+  it("seals uploaded input trees before running the sandbox verification probe", () => {
+    const root = temporaryDirectory();
+    const directories = ["advisor", "pr-workdir", "context", "tools"].map((name) => {
+      const directory = path.join(root, name);
+      fs.mkdirSync(directory);
+      fs.writeFileSync(path.join(directory, "input.txt"), "input\n", { mode: 0o600 });
+      return directory;
+    });
+    const verify = vi.fn(() => {
+      for (const directory of directories) {
+        expect(fs.statSync(directory).mode & 0o222).toBe(0);
+        expect(fs.statSync(path.join(directory, "input.txt")).mode & 0o222).toBe(0);
+      }
+    });
+
+    try {
+      sealAdvisorSandboxInputs(directories, verify);
+      expect(verify).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.chmodSync(root, 0o700);
+      for (const directory of directories) {
+        fs.chmodSync(directory, 0o700);
+        fs.chmodSync(path.join(directory, "input.txt"), 0o600);
+      }
+    }
+  });
+
+  it("writes unavailable artifacts through a credential-free trusted host fallback", () => {
+    const env = advisorEnvironment();
+    env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
+    const tools = advisorTools();
+
+    writeUnavailableAdvisorArtifacts(env, tools);
+
+    expect(tools.run).toHaveBeenCalledTimes(1);
+    const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
+    expect(command).toBe(process.execPath);
+    expect(args).toEqual([
+      "--experimental-strip-types",
+      "--no-warnings",
+      path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
+    ]);
+    expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
+    expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe("provider configuration failed");
+    expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
+      path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
+    );
+    for (const name of [
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+      "OPENAI_API_KEY",
+      "PR_REVIEW_ADVISOR_API_KEY",
+    ]) {
+      expect(options.env[name]).toBeUndefined();
+    }
+  });
+
+  it("creates, runs, downloads, and deletes the sandbox without host credentials", () => {
+    const env = advisorEnvironment();
+    const tools = advisorTools((command, args) => {
+      if (command === "openshell" && args.slice(0, 3).join(" ") === "sandbox list --names") {
+        return "pr-advisor-test\n";
+      }
+      return "";
+    });
+
+    createAdvisorSandbox(env, tools);
+    runAdvisorSandbox(env, tools);
+    downloadAdvisorArtifacts(env, tools);
+    deleteAdvisorSandbox(env, tools);
+
+    const calls = vi.mocked(tools.run).mock.calls;
+    const createArgs =
+      calls.find(
+        ([command, args]) =>
+          command === "openshell" && args.slice(0, 2).join(" ") === "sandbox create",
+      )?.[1] ?? [];
+    expect(createArgs).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "create",
+        "--name",
+        "pr-advisor-test",
+        "--from",
+        "pinned-pi-image",
+        "--policy",
+        path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "openshell-policy.yaml"),
+        "--upload",
+        `${env.ADVISOR_DIR}:/sandbox`,
+        "--upload",
+        `${env.ADVISOR_WORKDIR}:/sandbox`,
+        "/sandbox/advisor/tools/pr-review-advisor/openshell.mts",
+        "seal",
+      ]),
+    );
+    expect(createArgs.slice(-6)).toEqual([
+      "--",
+      "/usr/bin/node",
+      "--experimental-strip-types",
+      "--no-warnings",
+      "/sandbox/advisor/tools/pr-review-advisor/openshell.mts",
+      "seal",
+    ]);
+    expect(calls.some(([, args]) => args.slice(0, 2).join(" ") === "policy set")).toBe(false);
+
+    const sandboxExecCalls = calls.filter(
+      ([command, args]) => command === "openshell" && args.slice(0, 2).join(" ") === "sandbox exec",
+    );
+    const runArgs =
+      sandboxExecCalls.find(([, args]) =>
+        args.includes("/sandbox/advisor/tools/pr-review-advisor/run-analysis.mts"),
+      )?.[1] ?? [];
+    expect(runArgs).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "exec",
+        "--name",
+        "pr-advisor-test",
+        "--timeout",
+        "2100",
+        "--workdir",
+        "/sandbox/pr-workdir",
+        "PR_REVIEW_ADVISOR_API_KEY=unused",
+        "PR_REVIEW_ADVISOR_BASE_URL=https://inference.local/v1",
+        "PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH=/sandbox/pr-review-advisor-context/github-context.json",
+        "TARGET_REPO=NVIDIA/NemoClaw",
+        "/sandbox/advisor/tools/pr-review-advisor/run-analysis.mts",
+      ]),
+    );
+    expect(runArgs.join("\n")).not.toContain("github-host-secret");
+    expect(runArgs.join("\n")).not.toContain("model-host-secret");
+    expect(runArgs.join("\n")).not.toContain("advisor-host-secret");
+
+    expect(
+      calls.find(
+        ([command, args]) =>
+          command === "openshell" && args.slice(0, 2).join(" ") === "sandbox download",
+      )?.[1],
+    ).toEqual([
+      "sandbox",
+      "download",
+      "pr-advisor-test",
+      "/sandbox/pr-review-advisor-runtime/artifacts/pr-review-advisor",
+      path.join(env.GITHUB_WORKSPACE as string, "artifacts", "pr-review-advisor"),
+    ]);
+    expect(
+      fs
+        .statSync(path.join(env.GITHUB_WORKSPACE as string, "artifacts", "pr-review-advisor"))
+        .isDirectory(),
+    ).toBe(true);
+    expect(
+      calls.find(
+        ([command, args]) =>
+          command === "openshell" && args.slice(0, 3).join(" ") === "sandbox list --names",
+      )?.[1],
+    ).toEqual(["sandbox", "list", "--names"]);
+    expect(
+      calls.find(
+        ([command, args]) =>
+          command === "openshell" && args.slice(0, 2).join(" ") === "sandbox delete",
+      )?.[1],
+    ).toEqual(["sandbox", "delete", "pr-advisor-test"]);
+    for (const [command, args, options] of calls) {
+      expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
+      expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
+      expect(options.env.OPENAI_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
+      expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
+    }
+  });
+
+  it("rejects artifact paths that could escape the sandbox runtime directory", () => {
+    const env = advisorEnvironment();
+    env.PR_REVIEW_ADVISOR_ARTIFACT_DIR = "../../advisor";
+    const tools = advisorTools();
+
+    expect(() => runAdvisorSandbox(env, tools)).toThrow(
+      "PR_REVIEW_ADVISOR_ARTIFACT_DIR must be a simple directory name",
+    );
+    expect(() => downloadAdvisorArtifacts(env, tools)).toThrow(
+      "PR_REVIEW_ADVISOR_ARTIFACT_DIR must be a simple directory name",
+    );
+    expect(tools.run).not.toHaveBeenCalled();
+  });
+});
