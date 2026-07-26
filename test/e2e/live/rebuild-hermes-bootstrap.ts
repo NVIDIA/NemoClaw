@@ -400,6 +400,24 @@ export function trackRebuildHermesCleanupPort(
   }
 }
 
+export async function cleanupRebuildHermesTrackedForwards(
+  ports: Set<number>,
+  recordedDashboardPort: unknown,
+  cleanupForward: (port: number) => Promise<unknown>,
+  writeEvidence: (evidence: {
+    rejectedPort: RebuildHermesRejectedDashboardPort | null;
+  }) => Promise<unknown>,
+): Promise<void> {
+  const rejectedPort = trackRebuildHermesCleanupPort(ports, recordedDashboardPort);
+  try {
+    for (const port of ports) {
+      await cleanupForward(port);
+    }
+  } finally {
+    await writeEvidence({ rejectedPort });
+  }
+}
+
 export function resolveRebuildHermesDashboardPort(
   options: RebuildHermesDashboardPortOptions,
 ): CreateSandboxDashboardPortResult {

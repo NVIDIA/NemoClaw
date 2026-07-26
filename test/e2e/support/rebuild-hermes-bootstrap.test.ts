@@ -12,6 +12,7 @@ import {
   buildRebuildHermesCurrentBaseScript,
   buildRebuildHermesGatewayBootstrapScript,
   cleanupRebuildHermesForward,
+  cleanupRebuildHermesTrackedForwards,
   GATEWAY_BOOTSTRAP_MARKER,
   parseRebuildHermesCurrentBaseResult,
   requirePublishedRebuildHermesCurrentBase,
@@ -330,6 +331,49 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(unavailable.command).toHaveBeenCalledTimes(1);
   });
 
+  it("records malformed captured ports without stopping foreign forwards (#7144)", async () => {
+    const foreign = fakeHost([
+      probe("SANDBOX BIND PORT PID STATUS\nother-box 127.0.0.1 18789 43 running"),
+    ]);
+    const writeEvidence = vi.fn(async (_evidence: unknown) => undefined);
+
+    await cleanupRebuildHermesTrackedForwards(
+      new Set([18789]),
+      "not-a-port",
+      (port) =>
+        cleanupRebuildHermesForward(foreign.host, envFactory, "secret", "hermes-box", port, [
+          "secret",
+        ]),
+      writeEvidence,
+    );
+
+    expect(foreign.command).toHaveBeenCalledTimes(1);
+    expect(writeEvidence).toHaveBeenCalledWith({
+      rejectedPort: {
+        source: "cleanup registry dashboardPort",
+        received: "not-a-port",
+        error: expect.stringMatching(/valid non-API dashboard port/),
+      },
+    });
+  });
+
+  it("releases tracked forwards before propagating cleanup artifact failures (#7144)", async () => {
+    const cleanupForward = vi.fn(async (_port: number) => undefined);
+    const writeEvidence = vi.fn(async (_evidence: unknown) => {
+      throw new Error("artifact disk full");
+    });
+
+    await expect(
+      cleanupRebuildHermesTrackedForwards(
+        new Set([18789]),
+        undefined,
+        cleanupForward,
+        writeEvidence,
+      ),
+    ).rejects.toThrow(/artifact disk full/);
+    expect(cleanupForward).toHaveBeenCalledWith(18789);
+  });
+
   it("keeps the live rebuild free of a disposable current sandbox (#7144)", () => {
     const liveSource = fs.readFileSync(
       path.resolve(import.meta.dirname, "../live/rebuild-hermes.test.ts"),
@@ -345,6 +389,13 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(liveSource).not.toContain("phase-1-stop-hermes-forward");
     expect(liveSource).not.toContain('"--cleanup-gateway"');
     expect(liveSource).toContain("observedForwardPorts.add(dashboardPort)");
+    expect(liveSource).toContain("cleanupRegistryDashboardPort = seededRegistry.dashboardPort");
+    const failedRebuildPortCapture = liveSource.indexOf(
+      "cleanupRegistryDashboardPort = readJsonFileOr<RegistryData>",
+    );
+    const rebuildExitAssertion = liveSource.indexOf('expectExitZero(rebuild, "nemoclaw rebuild');
+    expect(failedRebuildPortCapture).toBeGreaterThanOrEqual(0);
+    expect(failedRebuildPortCapture).toBeLessThan(rebuildExitAssertion);
     expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 18789 "$SANDBOX_NAME"');
     expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 8642 "$SANDBOX_NAME"');
     expect(liveSource).toContain('artifacts.writeJson("cleanup-dashboard-port.json"');

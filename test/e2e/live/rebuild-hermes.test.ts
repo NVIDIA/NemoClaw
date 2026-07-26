@@ -39,11 +39,11 @@ import {
 import {
   bootstrapRebuildHermesGateway,
   cleanupRebuildHermesForward as cleanupHermesForward,
+  cleanupRebuildHermesTrackedForwards,
   requireRebuildHermesDashboardPort,
   requireRebuildHermesHostedInferenceRoute,
   requireRebuildHermesOpenshellBin,
   resolveRebuildHermesCurrentBase,
-  trackRebuildHermesCleanupPort,
 } from "./rebuild-hermes-bootstrap.ts";
 import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
@@ -714,8 +714,8 @@ test(STALE_BASE_REBUILD
     activeOpenshellBin,
     "pre-cleanup-hermes-rebuild-resources",
   );
-
   const observedForwardPorts = new Set<number>([8642]);
+  let cleanupRegistryDashboardPort: unknown;
   let dashboardPort: number | null = null;
   let currentBaseReuseTag: string | null = null;
   let currentBaseSourceInspect: ShellProbeResult | null = null;
@@ -741,15 +741,14 @@ test(STALE_BASE_REBUILD
   cleanup.trackDisposable(`remove Hermes Discord provider for ${SANDBOX_NAME}`, () =>
     cleanupHermesDiscordProvider(host, apiKey, activeOpenshellBin),
   );
-  cleanup.trackDisposable("stop Hermes dashboard and API forwards", async () => {
-    const recordedPort = readJsonFileOr<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]
-      ?.dashboardPort;
-    const rejectedPort = trackRebuildHermesCleanupPort(observedForwardPorts, recordedPort);
-    await artifacts.writeJson("cleanup-dashboard-port.json", { rejectedPort });
-    for (const port of observedForwardPorts) {
-      await cleanupHermesForward(host, testEnv, apiKey, SANDBOX_NAME, port, redactionValues);
-    }
-  });
+  cleanup.trackDisposable("stop Hermes dashboard and API forwards", () =>
+    cleanupRebuildHermesTrackedForwards(
+      observedForwardPorts,
+      cleanupRegistryDashboardPort,
+      (port) => cleanupHermesForward(host, testEnv, apiKey, SANDBOX_NAME, port, redactionValues),
+      (evidence) => artifacts.writeJson("cleanup-dashboard-port.json", evidence),
+    ),
+  );
   // Cleanup is LIFO: remove the sandbox before reclaiming its exact image tags,
   // while the gateway/provider/forward remain available for sandbox teardown.
   cleanup.trackDisposable("remove old derived Hermes fixture image", () =>
@@ -1128,7 +1127,6 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(preEnv, "read pre-rebuild Hermes .env");
   expect(preEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
-
   const preConfig = await host.command(
     activeOpenshellBin,
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/config.yaml"],
@@ -1141,12 +1139,12 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(preConfig, "read pre-rebuild Hermes config.yaml");
   expect(preConfig.stdout).toContain("discord:");
-
   const sessionSummary = seedRegistryAndSession(
     dashboardPort ?? fail("Hermes dashboard port allocation disappeared before registry seeding"),
     seededOldSandboxImageState,
   );
   const seededRegistry = registrySandbox();
+  cleanupRegistryDashboardPort = seededRegistry.dashboardPort;
   expect(
     seededRegistry.imageTag,
     "curated rebuild registry must retain the exact old derived image tag for cleanup",
@@ -1200,7 +1198,6 @@ test(STALE_BASE_REBUILD
     redactionValues,
   );
   await artifacts.writeJson("phase-5-inference-route-before-rebuild.json", routeBeforeRebuild);
-
   progress.phase("rebuild the Hermes sandbox");
   const rebuildEnv = testEnv(undefined, {
     NEMOCLAW_REBUILD_VERBOSE: "1",
@@ -1217,6 +1214,9 @@ test(STALE_BASE_REBUILD
     captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
     onOutput: progress.onOutput,
   });
+  cleanupRegistryDashboardPort = readJsonFileOr<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[
+    SANDBOX_NAME
+  ]?.dashboardPort;
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
   const rebuiltRegistry = registrySandbox();
   const rebuiltDashboardPort = requireRebuildHermesDashboardPort(
