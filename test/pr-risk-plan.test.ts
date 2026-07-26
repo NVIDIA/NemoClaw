@@ -28,7 +28,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(4);
+    expect(first.version).toBe(6);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -115,6 +115,33 @@ describe("deterministic PR risk plan", () => {
     expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
+  it("selects the Deep Agents Code target for its managed runtime changes (#7463)", () => {
+    const changedFiles = [
+      "agents/langchain-deepagents-code/dependency-review.md",
+      "agents/langchain-deepagents-code/patch-managed-deepagents-code.py",
+      "test/langchain-deepagents-code-managed-model-params.test.ts",
+      "test/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+    ];
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles });
+    const docsAndTestsOnly = plan(
+      "agents/langchain-deepagents-code/dependency-review.md",
+      "agents/langchain-deepagents-code/runtime-notes.mdx",
+      "agents/langchain-deepagents-code/resolver.test.ts",
+      "test/langchain-deepagents-code-managed-model-params.test.ts",
+    );
+
+    expect(riskPlanRequiredTargetIds(result)).toEqual(PR_E2E_TYPED_TARGET_IDS);
+    expect(result.requiredTargets).toEqual([
+      expect.objectContaining({
+        id: PR_E2E_TYPED_TARGET_IDS[0],
+        families: ["focused-e2e"],
+        matchedFiles: ["agents/langchain-deepagents-code/patch-managed-deepagents-code.py"],
+      }),
+    ]);
+    expect(result.tier).toBe(2);
+    expect(riskPlanRequiredTargetIds(docsAndTestsOnly)).toEqual([]);
+  });
+
   it("does not infer security or inference risk from unrelated path substrings", () => {
     const result = plan("src/lib/actions/sandbox/mcp-bridge-provider.ts", "src/lib/secretary.ts");
 
@@ -188,6 +215,19 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((item) => item.id)).toContain(family);
     expect(riskPlanRequiredJobIds(result)).toEqual(expect.arrayContaining(jobs));
+  });
+
+  it("selects cold full E2E for repository-root OpenClaw image changes (#6660)", () => {
+    const rootImage = plan("Dockerfile");
+    const adjacentImage = plan("Dockerfile.base");
+
+    expect(rootImage.families.map((family) => family.id)).toEqual([
+      "platform-install",
+      "openclaw-image",
+    ]);
+    expect(riskPlanRequiredJobIds(rootImage)).toEqual(["cloud-onboard", "full-e2e"]);
+    expect(adjacentImage.families.map((family) => family.id)).toEqual(["platform-install"]);
+    expect(riskPlanRequiredJobIds(adjacentImage)).toEqual(["cloud-onboard"]);
   });
 
   it.each([

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -29,10 +30,7 @@ export function registerRebuildFlowTargetCredentialsTests(): void {
       ).rejects.toThrow("Brave Search credential preflight failed");
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
     });
 
     it("rejects recorded web search when the target agent does not support it", async () => {
@@ -73,10 +71,7 @@ export function registerRebuildFlowTargetCredentialsTests(): void {
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
     });
 
     it("preserves legacy Brave web search during a nonmatching-session rebuild", async () => {

@@ -10,9 +10,9 @@ type Preset = { name: string; access?: string };
 function policies(
   options: { applied?: string[]; custom?: string[]; customOwnsObservability?: boolean } = {},
 ) {
-  const setupPresets = ["npm", "brave", "tavily", "observability-otlp-local"].map((name) => ({
-    name,
-  }));
+  const setupPresets = ["npm", "brave", "tavily", "slack", "observability-otlp-local"].map(
+    (name) => ({ name }),
+  );
   const customPresets = (options.custom ?? []).map((name) => ({ name }));
   return {
     setupPolicyPresetSupported: () => true,
@@ -83,6 +83,21 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
     );
 
     expect(result.policyPresets).toEqual(["brave", "tavily"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+});
+
+describe("preparePolicyPresetResumeSelection required preset reconciliation", () => {
+  it("marks an empty recording for reconciliation when Slack becomes required (#6042)", () => {
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: [],
+      enabledChannels: ["slack"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+
+    expect(result.policyPresets).toEqual(["slack"]);
     expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
   });
 });

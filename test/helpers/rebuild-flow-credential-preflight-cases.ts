@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import { createRebuildFlowHarness, installRebuildFlowTestHooks } from "./rebuild-flow-test-harness";
 
 type Harness = ReturnType<typeof createRebuildFlowHarness>;
@@ -30,7 +31,7 @@ function providerRuntime(
 ) {
   return (args: string[]) => {
     if (args[0] !== "provider" || args[1] !== "get") {
-      return { status: 0, output: "", stdout: "", stderr: "" };
+      return undefined;
     }
     const provider = args[2];
     if (!registeredProviders.includes(provider)) {
@@ -210,7 +211,10 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
           preferredInferenceApi: "openai-completions",
         },
         hydrateCredentialEnv: () => "host-provider-key",
-        runOpenshell: (args) => (providerLookups.shift() ?? registeredProvider)(args),
+        runOpenshell: (args) =>
+          args[0] === "provider"
+            ? (providerLookups.shift() ?? registeredProvider)(args)
+            : undefined,
         staleRecovery: true,
       });
       configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
@@ -225,10 +229,7 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
         }),
       ).rejects.toThrow("changed during rebuild preflight");
 
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
@@ -261,10 +262,7 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
         }),
       ).rejects.toThrow("became unavailable before sandbox deletion");
 
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
@@ -286,7 +284,10 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
           preferredInferenceApi: "openai-completions",
         },
         hydrateCredentialEnv: () => "host-provider-key",
-        runOpenshell: (args) => (providerLookups.shift() ?? indeterminateProvider)(args),
+        runOpenshell: (args) =>
+          args[0] === "provider"
+            ? (providerLookups.shift() ?? indeterminateProvider)(args)
+            : undefined,
         staleRecovery: true,
       });
       configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
@@ -301,10 +302,7 @@ export function registerRebuildFlowCredentialPreflightTests(): void {
         }),
       ).rejects.toThrow("could not be verified before sandbox deletion");
 
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 

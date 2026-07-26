@@ -16,7 +16,9 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/reviewed-npm-archive.mts",
   "scripts/checks/node-tar-image-scan.mts",
+  "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
+  "scripts/upgrade-bundled-npm.mts",
 ];
 
 export function normalizeBaseImageInputPaths(rootDir: string, paths: string[] = []): string[] {
@@ -198,15 +200,13 @@ function gitRemoteReachableVersionTag(rootDir: string, env: NodeJS.ProcessEnv): 
     if (peeled || !tags.has(tag)) tags.set(tag, commit);
   }
 
-  return (
-    [...tags]
-      .filter(
-        ([, commit]) =>
-          gitStatus(rootDir, ["merge-base", "--is-ancestor", commit, "HEAD"], env) === 0,
-      )
-      .map(([tag]) => tag)
-      .sort(compareVersionTagsDesc)[0] ?? null
-  );
+  const candidates = [...tags].sort(([left], [right]) => compareVersionTagsDesc(left, right));
+  for (const [tag, commit] of candidates) {
+    if (gitStatus(rootDir, ["merge-base", "--is-ancestor", commit, "HEAD"], env) === 0) {
+      return tag;
+    }
+  }
+  return null;
 }
 
 function versionFileTag(rootDir: string): string | null {

@@ -1,15 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({ dockerSpawn: vi.fn() }));
+
+vi.mock("../adapters/docker/exec", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/docker/exec")>()),
+  dockerSpawn: mocks.dockerSpawn,
+}));
+
+import { withStdoutRedirectedToStderr } from "../cli/stdout-guard";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   dockerBuildSubprocessEnv,
+  issueManagedHermesBuildFailureCapability,
   prebuildSandboxImageIfEligible,
   resolveSandboxPrebuildEnabled,
   sandboxLocalImageRef,
@@ -36,6 +46,7 @@ function createBuildContext(
 
 describe("sandbox BuildKit prebuild", () => {
   afterEach(() => {
+    mocks.dockerSpawn.mockReset();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     for (const directory of temporaryDirectories.splice(0)) {
@@ -356,6 +367,44 @@ describe("sandbox BuildKit prebuild", () => {
     });
   });
 
+  it("routes default Docker build stdout only while JSONL owns stdout (#6403)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    mocks.dockerSpawn.mockImplementation(() => {
+      const child = new EventEmitter();
+      process.nextTick(() => child.emit("close", 0));
+      return child;
+    });
+    const build = () =>
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        inspectImageId: () => IMAGE_ID,
+        log: () => {},
+      });
+
+    await expect(build()).resolves.toEqual(
+      expect.objectContaining({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" }),
+    );
+    expect(mocks.dockerSpawn).toHaveBeenCalledWith(
+      expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.objectContaining({ shell: false, stdio: "inherit" }),
+    );
+
+    mocks.dockerSpawn.mockClear();
+    await expect(withStdoutRedirectedToStderr(build)).resolves.toEqual(
+      expect.objectContaining({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" }),
+    );
+    expect(mocks.dockerSpawn).toHaveBeenCalledWith(
+      expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.objectContaining({ shell: false, stdio: ["inherit", process.stderr, "inherit"] }),
+    );
+  });
+
   it.each([
     ["nonzero result", async () => 1],
     ["missing exit status", async () => null],
@@ -375,8 +424,16 @@ describe("sandbox BuildKit prebuild", () => {
     expect(result).toEqual({ createArgs, imageRef: null, imageId: null });
   });
 
-  it("falls back to OpenShell when the Docker helper throws", async () => {
-    const { buildCtx, createArgs } = createBuildContext();
+  it("preserves optional fallback when an exact managed Hermes build cannot start", async () => {
+    const { buildCtx, createArgs, dockerfile } = createBuildContext();
+    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
+      agentName: "hermes",
+      origin: "generated",
+      dockerDriverGateway: true,
+      buildCtx,
+      stagedDockerfile: dockerfile,
+      buildId: BUILD_ID,
+    });
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
@@ -384,6 +441,7 @@ describe("sandbox BuildKit prebuild", () => {
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
+      managedHermesBuildFailureCapability,
       env: {},
       buildImage: async () => {
         throw new Error("unavailable");
@@ -391,5 +449,222 @@ describe("sandbox BuildKit prebuild", () => {
       log: () => {},
     });
     expect(result).toEqual({ createArgs, imageRef: null, imageId: null });
+  });
+
+  it("issues failure capability only for an exact managed local Hermes context (#7140)", () => {
+    const { buildCtx, dockerfile } = createBuildContext();
+    const base = {
+      agentName: "hermes",
+      origin: "generated",
+      dockerDriverGateway: true,
+      buildCtx,
+      stagedDockerfile: dockerfile,
+      buildId: BUILD_ID,
+    } as const;
+
+    expect(issueManagedHermesBuildFailureCapability(base)).toBeDefined();
+    expect(
+      issueManagedHermesBuildFailureCapability({ ...base, agentName: "openclaw" }),
+    ).toBeUndefined();
+    expect(issueManagedHermesBuildFailureCapability({ ...base, origin: "custom" })).toBeUndefined();
+    expect(
+      issueManagedHermesBuildFailureCapability({ ...base, dockerDriverGateway: false }),
+    ).toBeUndefined();
+    expect(
+      issueManagedHermesBuildFailureCapability({
+        ...base,
+        stagedDockerfile: path.join(buildCtx, "missing-Dockerfile"),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("preserves optional fallback when the exact managed Hermes prebuild is disabled (#7140)", async () => {
+    const { buildCtx, createArgs, dockerfile } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
+      agentName: "hermes",
+      origin: "generated",
+      dockerDriverGateway: true,
+      buildCtx,
+      stagedDockerfile: dockerfile,
+      buildId: BUILD_ID,
+    });
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        managedHermesBuildFailureCapability,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
+        buildImage,
+      }),
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "exits nonzero",
+      async (): Promise<number> => 1,
+      /local BuildKit build failed \(exit 1\).*Inspect the preceding BuildKit output/,
+    ],
+    [
+      "returns no exit status",
+      async (): Promise<null> => null,
+      /local BuildKit build failed without an exit status.*Inspect the preceding BuildKit output/,
+    ],
+  ] as const)("preserves an exact managed Hermes BuildKit failure when the build %s (#7140)", async (_label, buildImage, message) => {
+    const { buildCtx, createArgs, dockerfile } = createBuildContext();
+    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
+      agentName: "hermes",
+      origin: "generated",
+      dockerDriverGateway: true,
+      buildCtx,
+      stagedDockerfile: dockerfile,
+      buildId: BUILD_ID,
+    });
+    const failure = prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      managedHermesBuildFailureCapability,
+      env: {},
+      buildImage,
+      log: () => {},
+    });
+
+    await expect(failure).rejects.toThrow(message);
+  });
+
+  it("does not authorize fail-fast after managed Hermes build identity drift (#7140)", async () => {
+    const { buildCtx, createArgs, dockerfile } = createBuildContext();
+    const buildImage = vi.fn(async () => 1);
+    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
+      agentName: "hermes",
+      origin: "generated",
+      dockerDriverGateway: true,
+      buildCtx,
+      stagedDockerfile: dockerfile,
+      buildId: BUILD_ID,
+    });
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: "different-build",
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        managedHermesBuildFailureCapability,
+        env: {},
+        buildImage,
+        log: () => {},
+      }),
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    expect(buildImage).toHaveBeenCalledOnce();
+  });
+
+  it("does not authorize fail-fast for another staged context (#7140)", async () => {
+    const issued = createBuildContext();
+    const selected = createBuildContext();
+    const buildImage = vi.fn(async () => 1);
+    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
+      agentName: "hermes",
+      origin: "generated",
+      dockerDriverGateway: true,
+      buildCtx: issued.buildCtx,
+      stagedDockerfile: issued.dockerfile,
+      buildId: BUILD_ID,
+    });
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx: selected.buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs: selected.createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        managedHermesBuildFailureCapability,
+        env: {},
+        buildImage,
+        log: () => {},
+      }),
+    ).resolves.toEqual({
+      createArgs: selected.createArgs,
+      imageRef: null,
+      imageId: null,
+    });
+    expect(buildImage).toHaveBeenCalledOnce();
+  });
+
+  it("does not authorize fail-fast after the staged Dockerfile identity changes (#7140)", async () => {
+    const { buildCtx, createArgs, dockerfile } = createBuildContext();
+    const buildImage = vi.fn(async () => 1);
+    const managedHermesBuildFailureCapability = issueManagedHermesBuildFailureCapability({
+      agentName: "hermes",
+      origin: "generated",
+      dockerDriverGateway: true,
+      buildCtx,
+      stagedDockerfile: dockerfile,
+      buildId: BUILD_ID,
+    });
+    fs.renameSync(dockerfile, `${dockerfile}.original`);
+    fs.writeFileSync(dockerfile, "FROM scratch\n");
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        managedHermesBuildFailureCapability,
+        env: {},
+        buildImage,
+        log: () => {},
+      }),
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    expect(buildImage).toHaveBeenCalledOnce();
+  });
+
+  it("does not authorize fail-fast for a copied capability token (#7140)", async () => {
+    const { buildCtx, createArgs, dockerfile } = createBuildContext();
+    const buildImage = vi.fn(async () => 1);
+    const issuedCapability = issueManagedHermesBuildFailureCapability({
+      agentName: "hermes",
+      origin: "generated",
+      dockerDriverGateway: true,
+      buildCtx,
+      stagedDockerfile: dockerfile,
+      buildId: BUILD_ID,
+    });
+    expect(issuedCapability).toBeDefined();
+    const copiedCapability = { ...issuedCapability } as NonNullable<typeof issuedCapability>;
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        managedHermesBuildFailureCapability: copiedCapability,
+        env: {},
+        buildImage,
+        log: () => {},
+      }),
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    expect(buildImage).toHaveBeenCalledOnce();
   });
 });

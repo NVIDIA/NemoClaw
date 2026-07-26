@@ -38,7 +38,7 @@ jobs:
 
   build-sandbox-images:
     runs-on: linux-amd64-cpu4
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,7 +79,7 @@ jobs:
 
   build-sandbox-images-arm64:
     runs-on: linux-arm64-cpu4
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

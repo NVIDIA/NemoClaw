@@ -11,8 +11,15 @@ import { createOpenAiLikeAuthConfig } from "../../../src/lib/adapters/http/auth-
 import { runCurlProbe } from "../../../src/lib/adapters/http/probe";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { commandEnv, installDeviceAuthSandbox } from "../live/device-auth-health-helpers.ts";
+
+const NOOP_PROGRESS = startTestProgress(
+  "device auth support",
+  ["serve device auth endpoint", "verify device auth endpoint"],
+  { logLine: () => undefined },
+);
 
 function okResult(command: string[]): ShellProbeResult {
   return {
@@ -75,6 +82,7 @@ describe("device auth health fixture inference wiring", () => {
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: inference.apiKey,
       model: inference.model,
+      progress: NOOP_PROGRESS,
       requireAuth: true,
     });
     const authConfig = createOpenAiLikeAuthConfig(inference.apiKey);

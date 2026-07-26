@@ -70,7 +70,7 @@ describe("ShellCheck SARIF workflow boundary", () => {
     expect(checkout.with?.["persist-credentials"]).toBe(false);
 
     const trustedCheckout = requiredStep("Check out the trusted ShellCheck converter");
-    expect(trustedCheckout.uses).toBe("actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10");
+    expect(trustedCheckout.uses).toBe("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1");
     expect(trustedCheckout.with).toMatchObject({
       ref: "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.workflow_sha }}",
       path: "trusted-shellcheck-converter",
@@ -89,7 +89,7 @@ describe("ShellCheck SARIF workflow boundary", () => {
 
     const setupNode = requiredStep("Setup Node.js");
     expect(setupNode.if).toBe("steps.converter.outputs.present == 'true'");
-    expect(setupNode.uses).toBe("actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e");
+    expect(setupNode.uses).toBe("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020");
     expect(setupNode.with?.["node-version"]).toBe("22.19.0");
 
     const install = requiredStep("Install ShellCheck");

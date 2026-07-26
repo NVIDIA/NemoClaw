@@ -18,6 +18,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/gateway-guard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-dashboard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-workflow-boundary.test.ts",
+  "test/hosted-runner-recovery-workflow.test.ts",
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
@@ -34,6 +35,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/spark-install-workflow-boundary.test.ts",
+  "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
   "test/e2e/support/tunnel-lifecycle-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
   "test/e2e/support/workflow-plan.test.ts",
@@ -95,6 +97,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-e2e-gate\.yaml$/,
     testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts", "test/pr-e2e-required.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
+    testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|wsl-e2e|macos-e2e|platform-vitest-main)\.yaml$/,
+    testsToRun: runTests("test/hosted-runner-recovery-workflow.test.ts"),
   },
   {
     pattern:

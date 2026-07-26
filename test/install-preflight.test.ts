@@ -3404,7 +3404,7 @@ exit 0`,
     expect(result.status).not.toBe(0);
     expect(output).toMatch(/Requested install ref 'v9\.9\.9' is not available/);
     expect(output).toMatch(/Check NEMOCLAW_INSTALL_TAG\/NEMOCLAW_INSTALL_REF/);
-    expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/fetch --quiet --depth 1 origin v9\.9\.9/);
+    expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/\+v9\.9\.9:refs\/nemoclaw-install\/target/);
   });
 
   it("falls back to the legacy root installer when the selected ref only has the old scripts/install.sh wrapper", () => {

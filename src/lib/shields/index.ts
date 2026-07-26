@@ -764,20 +764,13 @@ function ensureConfigHashSensitiveFile<T extends AgentConfigTarget>(target: T): 
   return { ...target, sensitiveFiles: [...sensitiveFiles, hashPath] } as T;
 }
 
-class DeferredShieldsExit extends Error {
-  readonly exitCode: number;
-
-  constructor(message: string, exitCode: number) {
-    super(message);
-    this.name = "DeferredShieldsExit";
-    this.exitCode = exitCode;
-  }
-}
+const { DeferredShieldsExit }: typeof import("./deferred-exit") = require("./deferred-exit");
 
 function failShieldsCommand(message: string, _shouldThrow?: boolean): never {
   // Never terminate while a transition-lock callback is active: process.exit
-  // skips finally blocks and would strand the canonical lock. Public command
-  // wrappers translate this sentinel only after the lock has been released.
+  // skips finally blocks and would strand the canonical lock. NemoClawCommand
+  // translates this sentinel into an exit code after the lock has been
+  // released (isDeferredShieldsExit in ./deferred-exit).
   throw new DeferredShieldsExit(message, 1);
 }
 

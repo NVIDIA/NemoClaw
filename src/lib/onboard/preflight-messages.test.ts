@@ -72,6 +72,9 @@ describe("onboard preflight severity messages (#6004)", () => {
     expect(lines(err)[0]).toContain("✗");
     expect(lines(err)[0]).toContain("Docker driver");
     expect(lines(err).join("\n")).toContain("Switch to Docker Engine");
+    // macOS reporters use Docker Desktop or Colima, not native Docker Engine (#7320).
+    expect(lines(err).join("\n")).toContain("Docker Desktop");
+    expect(lines(err).join("\n")).toContain("Colima");
   });
 
   it("prints the under-provisioned warning to stderr with a ⚠ marker and colima resize", () => {

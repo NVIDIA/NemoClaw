@@ -313,6 +313,37 @@ describe("sandbox oclif command adapters", () => {
     expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
   });
 
+  it("translates shields exit sentinels into exit codes without a traceback (#7382)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.shieldsUp.mockImplementationOnce(() => {
+        throw Object.assign(new Error("Config not locked: OpenClaw config guard lock failed"), {
+          name: "DeferredShieldsExit",
+          exitCode: 1,
+        });
+      });
+      mocks.shieldsDown.mockImplementationOnce(() => {
+        throw Object.assign(new Error("Config remains unlocked — manual intervention required"), {
+          name: "DeferredShieldsExit",
+          exitCode: 1,
+        });
+      });
+
+      await expect(ShieldsUpCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(1);
+
+      process.exitCode = undefined;
+      await expect(ShieldsDownCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(1);
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+
   it("sets a nonzero JSON exit when doctor reports inference.local failure (#6192)", async () => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -335,6 +366,39 @@ describe("sandbox oclif command adapters", () => {
     try {
       await SandboxDoctorCliCommand.run(["alpha", "--json"], rootDir);
       expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("redacts token-shaped values from the doctor --json report", async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    mocks.runSandboxDoctor.mockResolvedValueOnce({
+      schemaVersion: 1,
+      sandbox: "alpha",
+      status: "fail",
+      failed: 1,
+      warnings: 0,
+      checks: [
+        {
+          group: "Gateway",
+          label: "Gateway status",
+          status: "fail",
+          detail: "connect failed: Authorization: Bearer sk-abc123DEF456ghi789 (HTTP 401)",
+        },
+      ],
+    });
+
+    try {
+      const report = (await SandboxDoctorCliCommand.run(["alpha", "--json"], rootDir)) as {
+        checks: Array<{ detail: string }>;
+      };
+      expect(process.exitCode).toBe(1);
+      expect(report.checks[0]?.detail).toBe(
+        "connect failed: Authorization: Bearer <REDACTED> (HTTP 401)",
+      );
+      expect(JSON.stringify(report)).not.toContain("sk-abc123DEF456ghi789");
     } finally {
       process.exitCode = previousExitCode;
     }

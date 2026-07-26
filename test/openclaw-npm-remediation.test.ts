@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRemediatedOpenClawArchive,
   hashPackageTree,
+  patchCurrentOpenClawCorePackageGraph,
   patchLegacyOpenClawCorePackageGraph,
   patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawPluginPackageGraph,
@@ -132,6 +133,73 @@ function writeLegacyCoreFixture(tarVersion = "7.5.11"): string {
         name: "openclaw",
         version: "2026.3.11",
         dependencies: { commander: "14.0.3", tar: tarVersion },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return directory;
+}
+
+function writeCurrentCoreFixture(
+  braceExpansionVersion = "5.0.7",
+  fastUriVersion = "3.1.2",
+): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-current-openclaw-core-remediation-"));
+  temporaryDirectories.push(directory);
+  writeFileSync(
+    path.join(directory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "openclaw",
+        version: "2026.7.1",
+        dependencies: {
+          "@modelcontextprotocol/sdk": "1.29.0",
+          minimatch: "10.2.5",
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    path.join(directory, "npm-shrinkwrap.json"),
+    `${JSON.stringify(
+      {
+        name: "openclaw",
+        version: "2026.7.1",
+        lockfileVersion: 3,
+        packages: {
+          "": {
+            name: "openclaw",
+            version: "2026.7.1",
+            dependencies: {
+              "@modelcontextprotocol/sdk": "1.29.0",
+              minimatch: "10.2.5",
+            },
+          },
+          "node_modules/ajv": {
+            version: "8.20.0",
+            dependencies: { "fast-uri": "^3.0.1" },
+          },
+          "node_modules/brace-expansion": {
+            version: braceExpansionVersion,
+            resolved: `https://registry.npmjs.org/brace-expansion/-/brace-expansion-${braceExpansionVersion}.tgz`,
+            integrity:
+              "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
+            dependencies: { "balanced-match": "^4.0.2" },
+          },
+          "node_modules/fast-uri": {
+            version: fastUriVersion,
+            resolved: `https://registry.npmjs.org/fast-uri/-/fast-uri-${fastUriVersion}.tgz`,
+            integrity:
+              "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==",
+          },
+          "node_modules/minimatch": {
+            version: "10.2.5",
+            dependencies: { "brace-expansion": "^5.0.5" },
+          },
+        },
       },
       null,
       2,
@@ -349,6 +417,40 @@ describe("OpenClaw npm remediation", () => {
     expect(() => patchLegacyOpenClawCorePackageGraph(directory)).toThrow(
       "must declare reviewed tar@7.5.11 before remediation",
     );
+  });
+
+  it("replaces the reviewed current OpenClaw transitive resolutions", () => {
+    const directory = writeCurrentCoreFixture();
+
+    patchCurrentOpenClawCorePackageGraph(directory);
+
+    const shrinkwrap = readJson<{
+      packages: Record<string, { integrity?: string; resolved?: string; version?: string }>;
+    }>(path.join(directory, "npm-shrinkwrap.json"));
+    expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
+      version: "5.0.8",
+      resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz",
+      integrity:
+        "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==",
+    });
+    expect(shrinkwrap.packages["node_modules/fast-uri"]).toMatchObject({
+      version: "3.1.4",
+      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz",
+      integrity:
+        "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==",
+    });
+  });
+
+  it.each([
+    ["brace-expansion", "5.0.6", "brace-expansion layout changed after review"],
+    ["fast-uri", "3.1.1", "fast-uri layout changed after review"],
+  ])("rejects a current OpenClaw %s graph that changed after review", (dependency, version, error) => {
+    const directory =
+      dependency === "brace-expansion"
+        ? writeCurrentCoreFixture(version)
+        : writeCurrentCoreFixture("5.0.7", version);
+
+    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(error);
   });
 
   it("rebuilds the legacy fixture archive with the reviewed tar package bundled", () => {

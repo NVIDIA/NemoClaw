@@ -51,14 +51,20 @@ The release candidate is the full `origin/main` commit SHA captured by the gener
 
 Before asking for the release confirmation phrase, build and show an evidence ledger for that SHA:
 
+- Run `nemoclaw-maintainer-e2e` in full mode when no applicable full-mode run exists for the candidate SHA.
+- Require one workflow run for the candidate SHA that includes the default-enabled suite and a successful `Exact staging Brev Launchable` job.
+- Require the trusted dispatch receipt to bind that run and attempt to empty selectors and `include_staging_brev_launchable=true`.
+- Require the qualification receipt to identify the candidate SHA in the repository and provision records.
+- Require the cleanup receipt to identify the qualified workspace and report `ABSENT`.
 - Every E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection and every expanded matrix execution.
 - Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
 - Green evidence may accumulate across multiple workflow runs, selective runs, reruns, and attempts. A later failure does not erase an earlier successful execution for the same test and SHA.
 - Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence.
 - Map each test with green evidence to its successful run or job URL and attempt number.
-- If a test has no successful execution, the tag may still proceed at maintainer discretion only with an itemized maintainer exception that records the test identifier, relevant run links or available evidence, the current result or failure summary, and the rationale for proceeding.
+- Each test without a successful execution requires its own itemized maintainer exception. Record the test identifier, relevant run links or available evidence, the current result or failure summary, and the rationale.
+- Missing or invalid exact Brev Launchable qualification requires a separate itemized maintainer exception. Record the run and job URLs, the current result or missing receipt, and the rationale.
 
-Every test must have either green evidence or an itemized maintainer exception before the release confirmation is requested. If the candidate SHA changes, discard the ledger and its exceptions, regenerate the release plan, and repeat the review for the new SHA.
+Each test and the exact Brev Launchable qualification must have successful evidence or its own itemized maintainer exception before release confirmation. If the candidate SHA changes, discard the ledger and its exceptions, including qualification evidence. Regenerate the release plan and repeat the review for the new SHA. No release-note-only delta exception is currently defined.
 
 ## Carry Forward
 

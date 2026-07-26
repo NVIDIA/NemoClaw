@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { StdioOptions } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { withStdoutRedirectedToStderr } from "../src/lib/cli/stdout-guard.js";
+import {
+  redirectInheritedChildStdoutToStderr,
+  withStdoutRedirectedToStderr,
+} from "../src/lib/cli/stdout-guard.js";
 
 describe("withStdoutRedirectedToStderr", () => {
   let restore: (() => void) | null = null;
@@ -57,5 +61,36 @@ describe("withStdoutRedirectedToStderr", () => {
       }),
     ).rejects.toThrow("boom");
     expect(process.stdout.write).toBe(before);
+  });
+
+  it("keeps stdout redirected until the outermost nested callback completes", async () => {
+    const before = process.stdout.write;
+
+    await withStdoutRedirectedToStderr(async () => {
+      const redirected = process.stdout.write;
+      await withStdoutRedirectedToStderr(async () => {
+        expect(process.stdout.write).toBe(redirected);
+      });
+      expect(process.stdout.write).toBe(redirected);
+    });
+
+    expect(process.stdout.write).toBe(before);
+  });
+
+  it("routes inherited child stdout to stderr only while machine output owns stdout", async () => {
+    const inherited: StdioOptions = ["ignore", "inherit", "inherit"];
+    expect(redirectInheritedChildStdoutToStderr(inherited)).toBe(inherited);
+
+    await withStdoutRedirectedToStderr(async () => {
+      expect(redirectInheritedChildStdoutToStderr("inherit")).toEqual([
+        "inherit",
+        process.stderr,
+        "inherit",
+      ]);
+      const redirected = redirectInheritedChildStdoutToStderr([...inherited]);
+      expect(Array.isArray(redirected) && redirected[1]).toBe(process.stderr);
+    });
+
+    expect(redirectInheritedChildStdoutToStderr(inherited)).toBe(inherited);
   });
 });

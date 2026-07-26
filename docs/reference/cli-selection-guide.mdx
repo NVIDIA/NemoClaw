@@ -64,9 +64,9 @@ For a completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` 
 - Add or remove NemoClaw policy presets:
 
   ```bash
-  $$nemoclaw my-assistant policy-add pypi --yes
-  $$nemoclaw my-assistant policy-list
-  $$nemoclaw my-assistant policy-remove pypi --yes
+  $$nemoclaw my-assistant policy add pypi --yes
+  $$nemoclaw my-assistant policy list
+  $$nemoclaw my-assistant policy remove pypi --yes
   ```
 
 - Manage NemoClaw credentials, diagnostics, and cleanup:
@@ -142,7 +142,7 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
 
   ```bash
-  $$nemoclaw <sandbox-name> policy-get > current-policy.yaml
+  $$nemoclaw <sandbox-name> policy get > current-policy.yaml
   ```
 
   NemoClaw strips the OpenShell metadata header and exits non-zero if it cannot validate the base policy.
@@ -156,7 +156,7 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
 
 `openshell policy update` merges specific endpoint and rule changes into the live sandbox policy.
 `openshell policy set` replaces the live policy with the file you provide.
-For normal NemoClaw network access changes, prefer `$$nemoclaw <name> policy-add` so NemoClaw preserves presets and records the change for rebuilds.
+For normal NemoClaw network access changes, prefer `$$nemoclaw <name> policy add` so NemoClaw preserves presets and records the change for rebuilds.
 
 ## Common Decisions
 
@@ -259,11 +259,11 @@ $$nemoclaw <name> status
 
 ### Update Network Policy
 
-Use `$$nemoclaw <name> policy-add` or `policy-remove` for NemoClaw presets and custom preset files.
+Use `$$nemoclaw <name> policy add` or `policy remove` for NemoClaw presets and custom preset files.
 NemoClaw merges the new policy with the live policy and reapplies presets during rebuilds.
 
 Use `openshell policy update` for precise live endpoint or REST rule changes.
-Use `$$nemoclaw <name> policy-get` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the round-trippable base policy.
+Use `$$nemoclaw <name> policy get` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the round-trippable base policy.
 Use `openshell policy get --full <name>` only to inspect the effective policy, including provider-composed rules.
 
 ### Move Workspace Files
