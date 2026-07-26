@@ -2645,7 +2645,7 @@ For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart
 ### Managed Hermes local image build fails
 
 For a managed Hermes image on a local Docker-driver gateway, NemoClaw may first attempt the image build with host-side BuildKit.
-If that exact staged build starts and exits nonzero, NemoClaw preserves the BuildKit failure instead of retrying the managed Dockerfile with the incompatible gateway builder.
+If that exact staged build starts and fails with a nonzero exit status or no exit status, NemoClaw preserves the BuildKit failure instead of retrying the managed Dockerfile with the incompatible gateway builder.
 The preceding BuildKit output contains the root cause.
 Fix the reported base-image, package, network, or Dockerfile error rather than treating it as a builder-selection failure.
 
