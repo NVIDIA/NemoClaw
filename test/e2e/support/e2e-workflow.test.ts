@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
   evaluateE2eWorkflowDispatchSelectors,
+  evaluateStagingBrevLaunchableDispatch,
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
   validateE2eWorkflow,
@@ -58,6 +59,116 @@ describe("e2e workflow boundary", () => {
       expect.arrayContaining([
         "staging-brev-launchable must use its protected non-deployment environment",
         "staging-brev-launchable BREV_API_KEY must use the trusted-run secret guard",
+      ]),
+    );
+  });
+
+  it("keeps ordinary, full, selective, scheduled, and disabled-readiness dispatches distinct (#7487)", () => {
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: true });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        jobs: "hermes-e2e",
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        jobs: "staging-brev-launchable",
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: true });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "schedule",
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: true });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        readinessEnabled: false,
+      }),
+    ).toEqual({ failReadiness: true, runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        readinessEnabled: true,
+        trustedMain: false,
+      }),
+    ).toEqual({ failReadiness: true, runQualification: false });
+  });
+
+  it("rejects full-dispatch input, correlation, selector, and readiness drift (#7487)", () => {
+    const workflow = readWorkflow() as {
+      "run-name": string;
+      on: {
+        workflow_dispatch: {
+          inputs: Record<string, { default?: boolean; description?: string; type?: string }>;
+        };
+      };
+      jobs: Record<
+        string,
+        {
+          if?: string;
+          steps?: Array<{ env?: Record<string, string>; name?: string; run?: string }>;
+        }
+      >;
+    };
+    workflow["run-name"] = "E2E";
+    workflow.on.workflow_dispatch.inputs.include_staging_brev_launchable.default = true;
+    workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'schedule' }}";
+    workflow.jobs["staging-brev-launchable-readiness"]!.if = "${{ false }}";
+    const dispatchIdentity = workflow.jobs["staging-brev-launchable"]!.steps!.find(
+      (step) => step.name === "Record E2E dispatch identity",
+    )!;
+    delete dispatchIdentity.env!.DISPATCH_JOBS;
+    dispatchIdentity.run = dispatchIdentity.run!.replace(
+      'kind: "nemoclaw-e2e-dispatch-v1"',
+      'kind: "untrusted"',
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "workflow run-name must expose the unique manual-dispatch correlation ID",
+        "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
+        "staging-brev-launchable must run for schedules, explicit selection, or an empty-selector full dispatch",
+        "staging-brev-launchable-readiness must fail only full dispatches with disabled readiness",
+        "staging-brev-launchable dispatch identity must bind DISPATCH_JOBS",
+        `step 'Record E2E dispatch identity' run script must include kind: "nemoclaw-e2e-dispatch-v1"`,
+      ]),
+    );
+  });
+
+  it("rejects superseding full-dispatch and qualification concurrency drift (#7487)", () => {
+    const workflow = readWorkflow() as {
+      concurrency: Record<string, unknown>;
+      jobs: Record<string, { concurrency?: Record<string, unknown> }>;
+    };
+    workflow.concurrency.group =
+      "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
+    delete workflow.jobs["staging-brev-launchable"]!.concurrency!.queue;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "workflow concurrency must isolate each full dispatch with github.run_id",
+        "staging-brev-launchable concurrency must queue all pending qualifications without cancellation",
       ]),
     );
   });
@@ -534,6 +645,14 @@ describe("e2e workflow boundary", () => {
         selectedFreeStandingJobs: ["network-policy"],
         registryTargets: ["ubuntu-repo-cloud-openclaw"],
       });
+      for (const selectors of [{ jobs: "hermes-dashboard" }, { targets: "hermes-dashboard" }]) {
+        expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
+          valid: true,
+          liveTargetsRun: false,
+          selectedFreeStandingJobs: ["hermes-e2e"],
+          registryTargets: [],
+        });
+      }
     },
   );
 

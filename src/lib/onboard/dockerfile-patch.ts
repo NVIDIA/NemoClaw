@@ -415,7 +415,7 @@ export function patchStagedDockerfile(
     }
     dockerfile = dockerfile.replace(
       messagingPlanArgPattern,
-      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlan(hydratedMessagingPlan))}`,
+      `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlanForImageBuild(hydratedMessagingPlan))}`,
     );
   }
   if (hermesToolGateways.length > 0) {

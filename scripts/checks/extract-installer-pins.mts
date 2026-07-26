@@ -47,10 +47,20 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // only in a prerequisite trust-anchor PR that keeps the currently selected
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
-const TRUSTED_INSTALLER_TEMPLATE_SHA256 =
-  "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58";
-const TRUSTED_BREV_TEMPLATE_SHA256 =
-  "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a";
+// This transition accepts the current installer and the reviewed Homebrew
+// trust lifecycle consumed by #7555. The successor trusts only a
+// checksum-verified stable formula and removes inherited or automatic trust
+// around an unverified dev install, including failure cleanup. After this
+// prerequisite merges, #7555 must remove the legacy hash and keep only the
+// reviewed successor hash before it can merge.
+// Base-trusted CI must validate both the prerequisite branch and #7555.
+const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
+  "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58",
+  "ee10afaeb5dc1477ca4b35a70a654ed32092399dbb290266f9f138d64484f1e2",
+] as const;
+const TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST = [
+  "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+] as const;
 const EXPECTED_INSTALLER_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-aarch64-unknown-linux-musl.tar.gz",
@@ -656,7 +666,7 @@ function assertTrustedTemplate(
   source: string,
   functionNames: readonly string[],
   selectorPatterns: readonly RegExp[],
-  expectedSha256: string,
+  expectedSha256: readonly string[],
   label: string,
 ): void {
   const normalized = normalizeTrustedInstallerTemplate(
@@ -666,10 +676,10 @@ function assertTrustedTemplate(
     label,
   );
   const actualSha256 = createHash("sha256").update(normalized).digest("hex");
-  if (actualSha256 !== expectedSha256) {
+  if (!expectedSha256.includes(actualSha256)) {
     fail(
       `${label} operational template is not base-trusted; ` +
-        `expected_sha256=${expectedSha256}, actual_sha256=${actualSha256}`,
+        `expected_sha256=[${expectedSha256.join(", ")}], actual_sha256=${actualSha256}`,
     );
   }
 }
@@ -956,14 +966,14 @@ function runCli(): void {
       /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
       /^DEV_MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
     ],
-    TRUSTED_INSTALLER_TEMPLATE_SHA256,
+    TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST,
     "installer",
   );
   assertTrustedTemplate(
     brevInstallerSource,
     ["openshell_cli_pinned_sha256"],
     [/^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm],
-    TRUSTED_BREV_TEMPLATE_SHA256,
+    TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST,
     "Brev launchable",
   );
   for (const [label, runtimeVersion] of [
