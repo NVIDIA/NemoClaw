@@ -4,6 +4,7 @@
 /** Canonical runner-comparison sample and ledger schema. */
 
 import {
+  isCoherentProcessMemoryBreakdown,
   PROCESS_CLASSES,
   type ProcessClass,
   type ProcessMemoryBreakdown,
@@ -424,8 +425,7 @@ function parseProcessMemoryBreakdown(value: unknown, field: string): ProcessMemo
     rssShmemKb: nonNegativeInteger(breakdown.rssShmemKb, `${field}.rssShmemKb`),
     vmSwapKb: nullableInteger(breakdown.vmSwapKb, `${field}.vmSwapKb`),
   };
-  const residentTotalKb = parsed.rssAnonKb + parsed.rssFileKb + parsed.rssShmemKb;
-  if (!Number.isSafeInteger(residentTotalKb) || residentTotalKb !== parsed.vmRssKb) {
+  if (!isCoherentProcessMemoryBreakdown(parsed)) {
     throw new Error(`${field} resident components must sum to vmRssKb`);
   }
   return parsed;

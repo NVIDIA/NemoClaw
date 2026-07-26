@@ -11,7 +11,11 @@ import {
   type RunnerComparisonSample,
   type RunnerComparisonSampleV1,
 } from "./runner-comparison-schema.mts";
-import { PROCESS_CLASSES, type ProcessMemoryBreakdown } from "./runner-pressure-core.mts";
+import {
+  isCoherentProcessMemoryBreakdown,
+  PROCESS_CLASSES,
+  type ProcessMemoryBreakdown,
+} from "./runner-pressure-core.mts";
 
 export interface RunnerComparisonSummaryV1 extends RunnerComparisonIdentity {
   v: 1;
@@ -517,8 +521,7 @@ function validateProcessMemoryBreakdown(value: unknown, field: string): void {
   const rssFileKb = integer(breakdown.rssFileKb, `${field}.rssFileKb`, false)!;
   const rssShmemKb = integer(breakdown.rssShmemKb, `${field}.rssShmemKb`, false)!;
   integer(breakdown.vmSwapKb, `${field}.vmSwapKb`);
-  const residentTotalKb = rssAnonKb + rssFileKb + rssShmemKb;
-  if (!Number.isSafeInteger(residentTotalKb) || residentTotalKb !== vmRssKb) {
+  if (!isCoherentProcessMemoryBreakdown({ vmRssKb, rssAnonKb, rssFileKb, rssShmemKb })) {
     throw new Error(`${field} resident components must sum to vmRssKb`);
   }
 }

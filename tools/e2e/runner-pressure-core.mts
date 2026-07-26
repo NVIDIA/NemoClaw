@@ -194,6 +194,13 @@ export interface ProcessMemoryBreakdown {
   vmSwapKb: number | null;
 }
 
+export function isCoherentProcessMemoryBreakdown(
+  breakdown: Pick<ProcessMemoryBreakdown, "vmRssKb" | "rssAnonKb" | "rssFileKb" | "rssShmemKb">,
+): boolean {
+  const residentTotalKb = breakdown.rssAnonKb + breakdown.rssFileKb + breakdown.rssShmemKb;
+  return Number.isSafeInteger(residentTotalKb) && residentTotalKb === breakdown.vmRssKb;
+}
+
 export interface CpuTicksSample {
   logicalCpuCount: number;
   idleTicks: number;
@@ -314,15 +321,14 @@ export function parseProcessMemoryStatus(text: string): ProcessMemoryBreakdown |
   ) {
     return null;
   }
-  const residentTotalKb = rssAnonKb + rssFileKb + rssShmemKb;
-  if (!Number.isSafeInteger(residentTotalKb) || residentTotalKb !== vmRssKb) return null;
-  return {
+  const breakdown: ProcessMemoryBreakdown = {
     vmRssKb,
     rssAnonKb,
     rssFileKb,
     rssShmemKb,
     vmSwapKb: values.get("VmSwap") ?? null,
   };
+  return isCoherentProcessMemoryBreakdown(breakdown) ? breakdown : null;
 }
 
 interface PrivateProcessIdentity {
@@ -400,7 +406,7 @@ export function collectLargestClassifiedProcess(
 }
 
 /**
- * Parse `ps -eo rss=` output into the top RSS consumers. Process-controlled
+ * Parse `ps -eo pid=,rss=,comm=` output into the top RSS consumers. Process-controlled
  * names and argv are intentionally discarded so they cannot enter evidence.
  */
 export function parseTopProcesses(text: string, limit = TOP_PROCESS_LIMIT): ProcessSample[] {
@@ -631,17 +637,11 @@ function renderProcessMemoryBreakdown(
   const rssFileKb = nonNegativeInteger(breakdown.rssFileKb);
   const rssShmemKb = nonNegativeInteger(breakdown.rssShmemKb);
   const vmSwapKb = nonNegativeInteger(breakdown.vmSwapKb);
-  if (
-    vmRssKb === null ||
-    rssAnonKb === null ||
-    rssFileKb === null ||
-    rssShmemKb === null ||
-    !Number.isSafeInteger(rssAnonKb + rssFileKb + rssShmemKb) ||
-    vmRssKb !== rssAnonKb + rssFileKb + rssShmemKb
-  ) {
+  if (vmRssKb === null || rssAnonKb === null || rssFileKb === null || rssShmemKb === null) {
     return null;
   }
-  return { vmRssKb, rssAnonKb, rssFileKb, rssShmemKb, vmSwapKb };
+  const rendered = { vmRssKb, rssAnonKb, rssFileKb, rssShmemKb, vmSwapKb };
+  return isCoherentProcessMemoryBreakdown(rendered) ? rendered : null;
 }
 
 /**
