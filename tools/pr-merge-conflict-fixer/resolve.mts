@@ -52,6 +52,7 @@ git diff --binary "$CONFLICT_TREE" "$final_tree" > /sandbox/resolution.patch
 export interface ResolverCommandOptions {
   capture?: boolean;
   env: NodeJS.ProcessEnv;
+  timeout?: number;
 }
 
 export interface ResolverStartOptions {
@@ -105,7 +106,7 @@ export function resolverModelConfiguration(): string {
   )}\n`;
 }
 
-export function gatewayConfiguration(input: {
+function gatewayConfiguration(input: {
   bindAddress: string;
   directory: string;
   supervisor: string;
@@ -188,12 +189,20 @@ function credentialFreeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result;
 }
 
+function loopbackBindAddress(endpoint: URL): string {
+  if (!["127.0.0.1", "[::1]"].includes(endpoint.hostname)) {
+    throw new ConflictFixerError("OPENSHELL_GATEWAY_ENDPOINT must use a loopback address");
+  }
+  return endpoint.host;
+}
+
 const defaultTools: ResolverTools = {
   run(command, args, options): string {
     const output = execFileSync(command, [...args], {
       encoding: "utf8",
       env: options.env,
       stdio: options.capture ? ["ignore", "pipe", "inherit"] : "inherit",
+      timeout: options.timeout,
     });
     return String(output ?? "").trim();
   },
@@ -227,6 +236,7 @@ export async function configureOpenShellInference(
   const gatewayEndpoint = new URL(
     required(env.OPENSHELL_GATEWAY_ENDPOINT, "OPENSHELL_GATEWAY_ENDPOINT"),
   );
+  const bindAddress = loopbackBindAddress(gatewayEndpoint);
   const supervisor = required(
     tools.run("which", ["openshell-sandbox"], { capture: true, env: commandEnv }),
     "openshell-sandbox",
@@ -239,7 +249,7 @@ export async function configureOpenShellInference(
   writeFileSync(
     configurationPath,
     gatewayConfiguration({
-      bindAddress: gatewayEndpoint.host,
+      bindAddress,
       directory: gatewayDirectory,
       supervisor,
     }),
@@ -251,13 +261,13 @@ export async function configureOpenShellInference(
   });
   for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
-      tools.run("openshell", ["gateway", "info"], { env: commandEnv });
+      tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
       break;
     } catch {
       await tools.wait(1000);
     }
   }
-  tools.run("openshell", ["gateway", "info"], { env: commandEnv });
+  tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
   tools.run(
     "openshell",
     [

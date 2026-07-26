@@ -423,9 +423,26 @@ describe("PR merge conflict fixer", () => {
       }),
     );
     expect(run.mock.calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
+    const gatewayInfoCalls = run.mock.calls.filter(
+      ([, args]) => args[0] === "gateway" && args[1] === "info",
+    );
+    expect(gatewayInfoCalls).toHaveLength(2);
+    expect(gatewayInfoCalls.map(([, , options]) => options.timeout)).toEqual([10_000, 10_000]);
     expect(
       run.mock.calls.map(([command, args]) => [command, ...args].join(" ")).join("\n"),
     ).not.toContain("provider-secret");
+  });
+
+  it("rejects a non-loopback unauthenticated gateway (#7542)", async () => {
+    const env = resolverEnvironment();
+    env.OPENSHELL_GATEWAY_ENDPOINT = "http://192.0.2.1:8080";
+    const tools = resolverTools();
+
+    await expect(configureOpenShellInference(env, tools)).rejects.toThrow(
+      "OPENSHELL_GATEWAY_ENDPOINT must use a loopback address",
+    );
+    expect(tools.run).not.toHaveBeenCalled();
+    expect(tools.start).not.toHaveBeenCalled();
   });
 
   it("runs sandbox phases without host credentials (#7542)", () => {
