@@ -24,6 +24,13 @@ The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
 E2E tests when those boundaries are the behavior under test.
 
+## Platform Vitest main watch
+
+`.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
+four independent shards on each of macOS and WSL, with `fail-fast` disabled.
+Each macOS shard has a 30-minute budget and each WSL shard has a 90-minute
+budget. The additional root-required WSL contracts run only on shard 1.
+
 ## Credential-free tests
 
 Credential-free tests that can use the standard Ubuntu runner, CLI build, and

@@ -79,7 +79,11 @@ jobs:
 
   macos-vitest:
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -143,11 +147,15 @@ jobs:
           npm run build
 
       - name: Run full Vitest suite on macOS
-        run: npx vitest run --testTimeout 60000
+        run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
 
   wsl-vitest:
     runs-on: windows-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       WSL_DISTRO: Ubuntu
       WSL_TEST_USER: nemoclaw-ci
@@ -305,7 +313,7 @@ jobs:
           cd '$env:WSL_WORKDIR'
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
-          npx vitest run --testTimeout 60000
+          npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
           "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
@@ -313,6 +321,7 @@ jobs:
           wsl -d $env:WSL_DISTRO --user $env:WSL_TEST_USER -- bash -l $wslTmp
 
       - name: Run root-required Vitest contracts in WSL
+        if: ${{ matrix.shard == 1 }}
         shell: powershell
         run: |
           $script = @"
