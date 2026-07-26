@@ -325,7 +325,7 @@ install_macos_homebrew_formula() {
 const restoreLegacyHomebrewTrustLifecycle = (source: string): string => {
   return HOMEBREW_TRUST_TRANSITION_REPLACEMENTS.reduce((current, [legacy, reviewed, label]) => {
     assert.ok(current.includes(reviewed), `installer Homebrew ${label} marker must exist`);
-    return current.replace(reviewed, legacy);
+    return current.replace(reviewed, () => legacy);
   }, source);
 };
 

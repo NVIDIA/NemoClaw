@@ -574,6 +574,8 @@ exit 0`,
       const tapRepo = path.join(tmp, "tap");
       const downloadLog = path.join(tmp, "downloads.log");
       const brewLog = path.join(tmp, "brew.log");
+      const formulaTmpDir = path.join(tmp, "formula-tmp");
+      const untrustCount = path.join(tmp, "untrust-count");
       fs.mkdirSync(fakeBin);
       fs.mkdirSync(path.join(homebrewPrefix, "bin"), { recursive: true });
 
@@ -589,6 +591,12 @@ if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
 exit 99`,
       );
       writeExecutable(path.join(fakeBin, "gh"), "#!/usr/bin/env bash\nexit 1\n");
+      writeExecutable(
+        path.join(fakeBin, "mktemp"),
+        `#!/usr/bin/env bash
+mkdir -p ${JSON.stringify(formulaTmpDir)}
+printf '%s\\n' ${JSON.stringify(formulaTmpDir)}`,
+      );
       writeExecutable(
         path.join(fakeBin, "curl"),
         `#!/usr/bin/env bash
@@ -643,12 +651,24 @@ case "$*" in
     exit "\${NEMOCLAW_TEST_BREW_TRUST_STATUS:-0}"
     ;;
   "untrust --formula nvidia/openshell/openshell")
+    count=0
+    if [ -f ${JSON.stringify(untrustCount)} ]; then
+      count="$(cat ${JSON.stringify(untrustCount)})"
+    fi
+    count=$((count + 1))
+    printf '%s\\n' "$count" > ${JSON.stringify(untrustCount)}
+    if [ "$count" -gt 1 ]; then
+      exit "\${NEMOCLAW_TEST_BREW_UNTRUST_CLEANUP_STATUS:-\${NEMOCLAW_TEST_BREW_UNTRUST_STATUS:-0}}"
+    fi
     exit "\${NEMOCLAW_TEST_BREW_UNTRUST_STATUS:-0}"
     ;;
   "list --formula openshell")
     exit 1
     ;;
   "install --formula nvidia/openshell/openshell")
+    if [ "\${NEMOCLAW_TEST_BREW_INSTALL_STATUS:-0}" -ne 0 ]; then
+      exit "$NEMOCLAW_TEST_BREW_INSTALL_STATUS"
+    fi
     cat > ${JSON.stringify(path.join(homebrewPrefix, "bin", "openshell"))} <<'EOF'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell \${NEMOCLAW_TEST_INSTALLED_VERSION:-${REQUIRED_OPENSHELL_VERSION}}"; exit 0; fi
@@ -782,6 +802,7 @@ exit 1`,
       expect(missingUntrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
 
       fs.writeFileSync(brewLog, "");
+      fs.writeFileSync(untrustCount, "0");
       const refusedUntrust = spawnSync("bash", [SCRIPT], {
         env: {
           ...process.env,
@@ -810,6 +831,44 @@ exit 1`,
       expect(refusedUntrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
 
       fs.writeFileSync(brewLog, "");
+      fs.writeFileSync(untrustCount, "0");
+      const failedCleanupUntrust = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          XDG_BIN_HOME: path.join(tmp, "local-bin"),
+          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+          NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+          NEMOCLAW_TEST_BREW_INSTALL_STATUS: "1",
+          NEMOCLAW_TEST_BREW_UNTRUST_CLEANUP_STATUS: "1",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.85-dev.8+g7bce1223d",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(
+        failedCleanupUntrust.status,
+        `${failedCleanupUntrust.stdout}\n${failedCleanupUntrust.stderr}`,
+      ).toBeGreaterThan(0);
+      expect(failedCleanupUntrust.stdout).toContain(
+        "Homebrew could not remove temporary trust for nvidia/openshell/openshell",
+      );
+      expect(fs.readFileSync(brewLog, "utf-8").trim().split("\n")).toEqual([
+        "tap-info nvidia/openshell",
+        "tap-new --no-git nvidia/openshell",
+        "--repository nvidia/openshell",
+        "help trust",
+        "help untrust",
+        "untrust --formula nvidia/openshell/openshell",
+        "list --formula openshell",
+        "install --formula nvidia/openshell/openshell",
+        "untrust --formula nvidia/openshell/openshell",
+      ]);
+      expect(fs.existsSync(path.join(formulaTmpDir, "openshell.rb"))).toBe(true);
+
+      fs.writeFileSync(brewLog, "");
+      fs.writeFileSync(untrustCount, "0");
       const devInstall = spawnSync("bash", [SCRIPT], {
         env: {
           ...process.env,
