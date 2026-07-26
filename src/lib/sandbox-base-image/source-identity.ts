@@ -199,15 +199,13 @@ function gitRemoteReachableVersionTag(rootDir: string, env: NodeJS.ProcessEnv): 
     if (peeled || !tags.has(tag)) tags.set(tag, commit);
   }
 
-  return (
-    [...tags]
-      .filter(
-        ([, commit]) =>
-          gitStatus(rootDir, ["merge-base", "--is-ancestor", commit, "HEAD"], env) === 0,
-      )
-      .map(([tag]) => tag)
-      .sort(compareVersionTagsDesc)[0] ?? null
-  );
+  const candidates = [...tags].sort(([left], [right]) => compareVersionTagsDesc(left, right));
+  for (const [tag, commit] of candidates) {
+    if (gitStatus(rootDir, ["merge-base", "--is-ancestor", commit, "HEAD"], env) === 0) {
+      return tag;
+    }
+  }
+  return null;
 }
 
 function versionFileTag(rootDir: string): string | null {
