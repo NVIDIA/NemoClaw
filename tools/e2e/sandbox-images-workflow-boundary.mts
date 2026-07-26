@@ -63,8 +63,9 @@ const EXPECTED_AUTH_ENV = {
   DOCKERHUB_TOKEN: `\${{ ${TRUSTED_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`,
 };
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
+// Shell-expanded values are unknown; only literal `--push=false` is statically non-writing.
 const REGISTRY_WRITE =
-  /(?:\bdocker\s+(?:image\s+)?push\b|\bdocker\s+buildx\s+build\b[^\n]*\s--push(?:=(?:1|[tT](?:[rR][uU][eE])?))?(?=$|[\s;&|<>()])|\b(?:oras|crane)\s+push\b|\bskopeo\s+copy\b)/u;
+  /(?:\bdocker\s+(?:image\s+)?push\b|\bdocker\s+buildx\s+build\b[^\n]*\s--push(?:=(?!false(?=$|[\s;&|<>()]))[^\s;&|<>()]+)?(?=$|[\s;&|<>()])|\b(?:oras|crane)\s+push\b|\bskopeo\s+copy\b)/u;
 
 function normalizeShellContinuations(run: string): string {
   return run.replace(/\\\r?\n[ \t]*/gu, " ");
