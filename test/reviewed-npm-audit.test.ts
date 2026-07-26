@@ -318,8 +318,13 @@ describe("reviewed npm audit gate", () => {
         attempts += 1;
         return {
           status: 1,
-          stderr: "",
-          stdout: JSON.stringify({ error: { summary: "", detail: "" } }),
+          stderr: "registry-token=terminal-stderr-secret",
+          stdout: JSON.stringify({
+            error: {
+              summary: "registry-token=terminal-summary-secret",
+              detail: "authorization: bearer terminal-detail-secret",
+            },
+          }),
         };
       },
       wait: (delayMs) => delays.push(delayMs),
@@ -329,9 +334,12 @@ describe("reviewed npm audit gate", () => {
     expect(attempts).toBe(3);
     expect(delays).toEqual([1_000, 2_000]);
     expect(audit.report).toBeUndefined();
-    expect(audit.failure?.message).toMatch(
-      /scan remained incomplete after 3 attempts.*metadata must be an object.*"summary":""/s,
+    expect(audit.failure?.message).toBe(
+      "npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)",
     );
+    expect(audit.failure?.message).not.toContain("terminal-stderr-secret");
+    expect(audit.failure?.message).not.toContain("terminal-summary-secret");
+    expect(audit.failure?.message).not.toContain("terminal-detail-secret");
   });
 
   it("accepts one exact blocking advisory and its propagated meta-vulnerability", () => {
@@ -602,11 +610,15 @@ describe("reviewed npm audit provenance", () => {
           reportFile: reportPath,
           threshold: "high",
         }),
-      ).toThrow(/ECONNREFUSED/);
+      ).toThrow("npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)");
       const sidecar = JSON.parse(
         fs.readFileSync(path.join(tempRoot, "graph.provenance.json"), "utf-8"),
       ) as Record<string, unknown>;
-      expect(sidecar.failure).toMatch(/ECONNREFUSED/);
+      expect(sidecar.failure).toBe(
+        "npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)",
+      );
+      expect(sidecar.failure).not.toContain("ECONNREFUSED");
+      expect(sidecar.failure).not.toContain("registry unreachable");
       expect(sidecar.advisoryIds).toEqual([]);
       expect(sidecar.rawReportPath).toBe("graph.json");
       expect(sidecar.registry).toEqual({

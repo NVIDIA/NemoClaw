@@ -309,7 +309,6 @@ export function runNpmAuditWithRetry(
   const wait = input.wait ?? waitSynchronously;
   const warn = input.warn ?? console.warn;
   const attemptCount = NPM_AUDIT_RETRY_DELAYS_MS.length + 1;
-  let lastFailure: Error | undefined;
   let lastResult: NpmAuditCommandResult | undefined;
 
   for (let attempt = 1; attempt <= attemptCount; attempt += 1) {
@@ -323,8 +322,7 @@ export function runNpmAuditWithRetry(
         throw new Error(`npm audit exceeded its ${NPM_AUDIT_ATTEMPT_TIMEOUT_MS} ms timeout`);
       }
       return { report: parseAuditReport(result), result };
-    } catch (error) {
-      lastFailure = error instanceof Error ? error : new Error(String(error));
+    } catch {
       const delayMs = NPM_AUDIT_RETRY_DELAYS_MS[attempt - 1];
       if (delayMs === undefined) break;
       warn(
@@ -337,7 +335,7 @@ export function runNpmAuditWithRetry(
   if (!lastResult) throw new Error("npm audit retry loop completed without running the scanner");
   return {
     failure: new Error(
-      `npm audit scan remained incomplete after ${attemptCount} attempts: ${lastFailure?.message ?? "unknown scanner failure"}`,
+      `npm audit scan remained incomplete after ${attemptCount} attempts (reason=${npmAuditRetryReason(lastResult)})`,
     ),
     result: lastResult,
   };
