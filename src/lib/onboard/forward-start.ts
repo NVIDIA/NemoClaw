@@ -476,9 +476,9 @@ export function runDetachedForwardStartWithDiagnostics(
 /**
  * Retry the detached forward-start after an EADDRINUSE-style port conflict or
  * a definitive listener-start failure. A persistently dead exact sandbox+port
- * row also retries after the sandbox-scoped cleanup callback. Listener-start
- * failures retry without sandbox/port cleanup because OpenShell does not
- * expose immutable attempt identity.
+ * row receives one independent recovery after the sandbox-scoped cleanup
+ * callback. Listener-start failures retry without sandbox/port cleanup because
+ * OpenShell does not expose immutable attempt identity.
  */
 export function runDetachedForwardStartWithRetries(
   runDetachedSpawn: DetachedForwardSpawnRunner,
@@ -488,6 +488,7 @@ export function runDetachedForwardStartWithRetries(
   options: DetachedForwardStartOptions = {},
 ): DetachedForwardStartOutcome {
   const maxRetries = options.maxRetries ?? 3;
+  let deadForwardRecoveryAvailable = true;
   const isPortListening = options.isPortListening ?? probeLocalPortListening;
   const runAttempt = (): DetachedForwardStartOutcome =>
     isPortListening(expect.port)
@@ -498,18 +499,22 @@ export function runDetachedForwardStartWithRetries(
         }
       : runDetachedForwardStartWithDiagnostics(runDetachedSpawn, fetchForwardList, expect, options);
   let attempt = runAttempt();
-  for (
-    let retries = 0;
-    !attempt.ok &&
-    ((attempt.reason !== "listener-ownership-conflict" &&
-      looksLikeForwardPortConflict(attempt.diagnostic)) ||
-      attempt.reason === "listener-start-failure" ||
-      attempt.reason === "dead-forward") &&
-    retries < maxRetries;
-    retries++
-  ) {
-    if (looksLikeForwardPortConflict(attempt.diagnostic) || attempt.reason === "dead-forward") {
+  let standardRetries = 0;
+  while (!attempt.ok) {
+    if (attempt.reason === "dead-forward") {
+      if (!deadForwardRecoveryAvailable) break;
+      deadForwardRecoveryAvailable = false;
       beforeRetryCleanup();
+    } else {
+      const isRetryableStandardFailure =
+        (attempt.reason !== "listener-ownership-conflict" &&
+          looksLikeForwardPortConflict(attempt.diagnostic)) ||
+        attempt.reason === "listener-start-failure";
+      if (!isRetryableStandardFailure || standardRetries >= maxRetries) break;
+      if (looksLikeForwardPortConflict(attempt.diagnostic)) {
+        beforeRetryCleanup();
+      }
+      standardRetries++;
     }
     attempt = runAttempt();
   }

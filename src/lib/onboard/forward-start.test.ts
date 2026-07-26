@@ -667,7 +667,6 @@ describe("runDetachedForwardStartWithRetries", () => {
         sleepMs: (ms) => {
           now += ms;
         },
-        maxRetries: 1,
         isPortListening: vi.fn().mockReturnValue(false),
       },
     );
@@ -681,6 +680,40 @@ describe("runDetachedForwardStartWithRetries", () => {
       beforeRetry.mock.invocationCallOrder[0],
     );
     expect(killSpy).not.toHaveBeenCalledWith(42, expect.anything());
+  });
+
+  it("allows only one cleanup when the replacement forward also stays dead (#7140)", () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const spawn = vi.fn().mockReturnValueOnce({ pid: 41 }).mockReturnValueOnce({ pid: 42 });
+    const fetchList = vi
+      .fn()
+      .mockReturnValue(forwardListWith([{ sandbox: "my-sandbox", port: 18789, status: "dead" }]));
+    const beforeRetry = vi.fn();
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        overallTimeoutMs: 10_000,
+        pollIntervalMs: 500,
+        sleepMs: (ms) => {
+          now += ms;
+        },
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("dead-forward");
+    expect(beforeRetry).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(killSpy).toHaveBeenCalledTimes(2);
+    expect(killSpy).toHaveBeenNthCalledWith(1, 41, "SIGTERM");
+    expect(killSpy).toHaveBeenNthCalledWith(2, 42, "SIGTERM");
   });
 
   it("accepts an expected forward that recovers during the dead-state grace (#7140)", () => {
