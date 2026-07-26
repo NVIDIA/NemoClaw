@@ -77,6 +77,12 @@ discovery command locally to inspect the generated test matrix:
 npx tsx tools/e2e/credential-free-tests.mts
 ```
 
+The retired `hermes-dashboard` selector remains a compatibility alias for
+`hermes-e2e` in both selector inputs. Reports use the canonical
+`hermes-e2e` name. That lane always enables dashboard coverage while preserving
+the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
+mode.
+
 ## Larger-runner routing
 
 The larger-runner experiment is inactive while the configuration variable
@@ -117,7 +123,7 @@ Successful state is discarded with the ephemeral runner.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
 the Hermes Bedrock and stable MCP shards, the Hermes common-egress and channel
-stop/start shards, and the `hermes-e2e`, `hermes-dashboard`, `hermes-discord`,
+stop/start shards, the dashboard-bearing `hermes-e2e` lane, `hermes-discord`,
 and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
 dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes shards do not use it.
 Candidate-authored workflow definitions and fork-owned runs cannot reach it.
@@ -135,7 +141,7 @@ The eligible set is limited to the measured or repeatedly interrupted heavy
 lanes:
 
 - `common-egress-agent`;
-- `hermes-e2e`, `hermes-dashboard`, and `hermes-discord`;
+- `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - both `hermes-inference-switch` modes;
 - `hermes-shields-config`;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
@@ -253,7 +259,7 @@ window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 14 routed workflow lane identities / 17
+telemetry for 13 routed workflow lane identities / 16
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
@@ -265,9 +271,8 @@ concrete job executions.
 - `mcp-bridge` with the `hermes` shard
 - `mcp-bridge` with the `deepagents` shard
 - `channels-stop-start` with the `hermes` shard
-- `hermes-dashboard`
 - `hermes-discord`
-- `hermes-e2e`
+- `hermes-e2e`, including dashboard coverage
 - `hermes-inference-switch` with the `hosted` and `anthropic` modes
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
