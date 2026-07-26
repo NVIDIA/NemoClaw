@@ -37,7 +37,6 @@ import {
   DispatchNotObservedError,
   DispatchReconciliationError,
   dispatchWorkflowWithReconciliation,
-  validateWorkflowDispatchDetails,
 } from "./pr-e2e-dispatch-reconciliation.mts";
 import {
   dispatchNotObservedReceiptFromSummary,
