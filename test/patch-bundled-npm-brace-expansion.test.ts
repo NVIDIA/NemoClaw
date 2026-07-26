@@ -186,6 +186,39 @@ describe("npm bundled brace-expansion remediation", () => {
     );
   });
 
+  it("keeps the verified replacement authoritative when backup cleanup is partial", () => {
+    const target = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
+    const originalRmSync = fs.rmSync.bind(fs);
+    let injectedCleanupFailure = false;
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation((targetPath, options) => {
+      if (
+        !injectedCleanupFailure &&
+        String(targetPath).includes("brace-expansion.nemoclaw-backup-")
+      ) {
+        injectedCleanupFailure = true;
+        originalRmSync(path.join(String(targetPath), "old.js"), { force: true });
+        throw new Error("injected partial backup cleanup failure");
+      }
+      originalRmSync(targetPath, options);
+    });
+    syncBuiltinESMExports();
+
+    try {
+      expect(patchBundledNpmBraceExpansion(target)).toMatchObject({ state: "fixed" });
+    } finally {
+      rmSpy.mockRestore();
+      syncBuiltinESMExports();
+    }
+
+    expect(injectedCleanupFailure).toBe(true);
+    expect(verifyBundledNpmBraceExpansion(target.npmRoot)).toMatchObject({ state: "fixed" });
+    expect(
+      fs
+        .readdirSync(path.join(target.npmRoot, "node_modules"))
+        .some((entry) => entry.startsWith("brace-expansion.nemoclaw-backup-")),
+    ).toBe(false);
+  });
+
   it("fails closed on npm layout drift and unsafe replacement members", () => {
     const drifted = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
     writeJson(path.join(drifted.npmRoot, "package.json"), {

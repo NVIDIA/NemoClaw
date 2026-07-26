@@ -73,7 +73,11 @@ function rejectUnsafeTree(root: string): void {
   }
 }
 
-function isContainedBinSymlink(nodeModulesRoot: string, directory: string, entryName: string): boolean {
+function isContainedBinSymlink(
+  nodeModulesRoot: string,
+  directory: string,
+  entryName: string,
+): boolean {
   if (basename(directory) !== ".bin") return false;
   try {
     const target = realpathSync(join(directory, entryName));
@@ -216,7 +220,7 @@ export function patchBundledNpmBraceExpansion(options: {
   const stagingRoot = mkdtempSync(join(dirname(livePath), ".brace-expansion.nemoclaw-stage-"));
   const stagedPath = join(stagingRoot, "replacement");
   const backupPath = `${livePath}.nemoclaw-backup-${transactionId}`;
-  let mutationStarted = false;
+  let rollbackRequired = false;
   try {
     cpSync(replacementRoot, stagedPath, { dereference: false, recursive: true });
     cpSync(livePath, backupPath, {
@@ -226,14 +230,19 @@ export function patchBundledNpmBraceExpansion(options: {
       preserveTimestamps: true,
       recursive: true,
     });
-    mutationStarted = true;
+    rollbackRequired = true;
     rmSync(livePath, { recursive: true });
     renameSync(stagedPath, livePath);
     const fixed = verifyBundledNpmBraceExpansion(npmRoot);
-    rmSync(backupPath, { force: true, recursive: true });
+    rollbackRequired = false;
+    try {
+      rmSync(backupPath, { force: true, recursive: true });
+    } catch {
+      rmSync(backupPath, { force: true, recursive: true });
+    }
     return fixed;
   } catch (error) {
-    if (mutationStarted) {
+    if (rollbackRequired) {
       rmSync(livePath, { force: true, recursive: true });
       renameSync(backupPath, livePath);
     }

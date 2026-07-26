@@ -9,7 +9,7 @@ Date: 2026-07-25
 
 This review covers the sandbox dependency changes that:
 
-- standardize the OpenClaw, Hermes, and Deep Agents Code base images on fixed Debian `libexpat1=2.8.2-1`, `libjq1=1.8.2-1`, `jq=1.8.2-1`, `vim-common=2:9.2.0782-1`, and `vim-tiny=2:9.2.0782-1` packages;
+- standardize the OpenClaw, Hermes, and Deep Agents Code base images on fixed Debian `libexpat1=2.8.2-1`, `libjq1=1.8.2-1`, `jq=1.8.2-1`, `vim-common=2:9.2.0782-1`, and `vim-tiny=2:9.2.0782-1` packages, with the reviewed `libonig5=6.9.9-1+b1` jq runtime dependency;
 - replace the `brace-expansion@5.0.7` copy inside the reviewed `npm@11.18.0` package with `brace-expansion@5.0.8`; and
 - verify the security-relevant dual-life module versions shipped by the checksum-pinned Perl 5.44.0 build.
 
@@ -22,6 +22,7 @@ These changes preserve the existing supported image behavior and do not create a
 | --- | --- | --- | --- |
 | Vim | All managed images: Debian trixie `2:9.1.1230-2` | Debian sid `2:9.2.0782-1` | Debian Snapshot `20260724T000000Z` and package SHA-256 values below |
 | jq | OpenClaw: `1.8.2-1`; Hermes and Deep Agents Code: `1.7.1-6+deb13u2` | All managed images: `libjq1=1.8.2-1` and `jq=1.8.2-1` | Debian Snapshot `20260724T000000Z` and architecture-specific SHA-256 values below |
+| Oniguruma | Distro-selected jq runtime dependency | All managed images: `libonig5=6.9.9-1+b1` | Debian Snapshot `20260724T000000Z` and architecture-specific SHA-256 values below |
 | Expat | OpenClaw: `2.8.2-1`; Hermes and Deep Agents Code: distro-selected package | All managed images: `libexpat1=2.8.2-1` | Debian Snapshot `20260724T000000Z` and architecture-specific SHA-256 values below |
 | npm | `npm@11.18.0` | unchanged | Existing reviewed npm archive and integrity |
 | npm private `brace-expansion` | `5.0.7` | `5.0.8` | Registry tarball and SHA-512 integrity below |
@@ -35,6 +36,7 @@ The immutable Debian package SHA-256 values are:
 | Package | amd64 | arm64 |
 | --- | --- | --- |
 | `libexpat1_2.8.2-1` | `37d24b40a745107941f823d1f22c38f197f01981f7f0783777fe0026af016463` | `df928e3a8e4da79408d4b18e8cd80a03dffa90130d0698e50041aab5e14f9397` |
+| `libonig5_6.9.9-1+b1` | `3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c` | `137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f` |
 | `libjq1_1.8.2-1` | `9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941` | `eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e` |
 | `jq_1.8.2-1` | `b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0` | `c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696` |
 | `vim-common_9.2.0782-1_all` | `6b063038246492c4a20e0a212c896dde4d5aa9f59d6fb43ff33d10080bc53a39` | same architecture-independent package |
@@ -50,8 +52,8 @@ The reviewed npm replacement is:
 
 ### Managed-image Debian package compatibility
 
-Each managed base image downloads the five exact Debian packages from the same immutable snapshot and verifies every package checksum before installation.
-Each image installs the matching jq and Vim package pairs together, verifies every dpkg identity, exercises jq and Python Expat, and verifies that the Vim runtime reports version 9.2.
+Each managed base image downloads the six exact Debian packages from the same immutable snapshot and verifies every package checksum before installation.
+Each image installs the complete jq runtime closure and matching Vim package pair together, verifies every dpkg identity, confirms that jq links to `libonig.so.5`, exercises jq and Python Expat, and verifies that the Vim runtime reports version 9.2.
 The package architecture is selected from `dpkg --print-architecture`, and any architecture other than amd64 or arm64 fails closed.
 
 `vim-tiny=2:9.2.0782-1` depends on:
@@ -63,7 +65,20 @@ The package architecture is selected from `dpkg --print-architecture`, and any a
 - `libtinfo6 >= 6`.
 
 The pinned trixie bases satisfy those library floors.
+`libjq1=1.8.2-1` requires `libonig5 >= 6.9.7.1`; the exact `libonig5=6.9.9-1+b1` artifact closes that dependency on both architectures.
 The packages remain visible to dpkg and the generated software inventory, and no manual file overlay is used.
+
+The final reviewed dependency set and range evidence is:
+
+| Package or component | Previous or affected boundary | Final reviewed boundary | Runtime and inventory proof |
+| --- | --- | --- | --- |
+| `libexpat1` | distro-selected package or `2.8.2-1` | `2.8.2-1` | exact dpkg identity and Python `pyexpat` reports Expat 2.8.2 |
+| `libonig5` | jq dependency floor `>= 6.9.7.1` | `6.9.9-1+b1` | exact dpkg identity and `/usr/bin/jq` links to `libonig.so.5` |
+| `libjq1` | `1.7.1-6+deb13u2..1.8.2-1` | `1.8.2-1` | exact dpkg identity and matching `jq` runtime |
+| `jq` | `1.7.1-6+deb13u2..1.8.2-1` | `1.8.2-1` | exact dpkg identity, `jq-1.8.2`, and a JSON expression probe |
+| `vim-common` and `vim-tiny` | `2:9.1.1230-2..2:9.2.0782-1` | `2:9.2.0782-1` | exact dpkg identities and Vim 9.2 runtime probe |
+| npm private `brace-expansion` | `5.0.7..5.0.8` | `5.0.8` | complete-tree identity, dependency-shape, SRI, rollback, and npm/npx ordering guards |
+| Perl and reviewed dual-life modules | Perl `5.43.10..5.44.0`; `HTTP::Tiny < 0.095`; `IO::Compress < 2.223` | Perl `5.44.0`; `HTTP::Tiny 0.096`; `IO::Compress 2.223`; component identities listed below | native package identity and direct interpreter/module version probes |
 
 ### Bundled npm package compatibility
 
@@ -80,8 +95,9 @@ The replacement helper:
 5. extracts without restoring archive owners or modes;
 6. rejects unsafe extracted members;
 7. replaces the complete private package directory transactionally;
-8. restores the original directory if verification fails; and
-9. invokes npm and npx only after the fixed package is active.
+8. restores the original directory if verification fails;
+9. disarms rollback immediately after the verified replacement becomes authoritative, then retries backup cleanup without risking the live tree; and
+10. invokes npm and npx only after the fixed package is active.
 
 All managed base images apply the helper after the complete npm upgrade.
 Their final images reassert the same idempotent contract so the scanned filesystem, not an intermediate stage, owns the dependency boundary.
@@ -142,13 +158,13 @@ The core interpreter version check also remains the binding for core-language fi
 - Verification: native amd64 and arm64 image builds.
 - Remaining gate: multi-architecture base-image build.
 
-### DEP-4: managed jq and Expat identities differ
+### DEP-4: managed jq, Oniguruma, and Expat identities differ
 
-- Range: OpenClaw retains the reviewed identities; Hermes and Deep Agents Code move from the older or distro-selected identities to the reviewed package boundary.
+- Range: `libexpat1` distro-selected or `2.8.2-1` to `2.8.2-1`; `libjq1` and `jq` `1.7.1-6+deb13u2..1.8.2-1`; `libonig5 >= 6.9.7.1` to exact `6.9.9-1+b1`.
 - Surface: native packages and runtime libraries
 - Severity: high
 - Confidence: high
-- Failure mode: a managed image can retain an older jq or Expat runtime even when the OpenClaw image is fixed.
+- Failure mode: a managed image can retain an older jq or Expat runtime, or fail to configure jq when its architecture-specific Oniguruma dependency is absent.
 - Disposition: migrate, pin, test, runtime-proof
 - Implementation: use the same snapshot, architecture-specific checksums, dpkg identities, and runtime guards in every managed base image.
 - Verification: exact security-package `RUN`-chain execution and checksum-rejection tests for all three images on amd64 and arm64.

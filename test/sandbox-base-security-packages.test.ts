@@ -73,7 +73,21 @@ describe("sandbox base security packages", () => {
         ...baseAptSecurityFunctions(architecture),
       ]);
       expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
-      expect(fs.readFileSync(path.join(tmp, "calls.log"), "utf-8")).toContain("dpkg-install");
+      const calls = fs.readFileSync(path.join(tmp, "calls.log"), "utf-8");
+      expect(calls).toContain("dpkg-install");
+      expect(
+        calls
+          .split("\n")
+          .filter((line) => line.startsWith("download "))
+          .map((line) => line.slice(line.lastIndexOf("/") + 1)),
+      ).toEqual([
+        `libexpat1_2.8.2-1_${architecture}.deb`,
+        `libonig5_6.9.9-1+b1_${architecture}.deb`,
+        `libjq1_1.8.2-1_${architecture}.deb`,
+        `jq_1.8.2-1_${architecture}.deb`,
+        "vim-common_9.2.0782-1_all.deb",
+        `vim-tiny_9.2.0782-1_${architecture}.deb`,
+      ]);
       expect(fs.existsSync(securityDebs)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
