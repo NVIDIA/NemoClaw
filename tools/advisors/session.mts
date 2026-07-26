@@ -14,6 +14,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+import { configureAdvisorHttpDispatcher } from "./http-dispatcher.mts";
 import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
@@ -337,12 +338,20 @@ export async function runReadOnlyAdvisor(
   fs.mkdirSync(options.configDir, { recursive: true });
   const provider = options.provider || DEFAULT_ADVISOR_PROVIDER;
   const modelId = options.modelId || DEFAULT_ADVISOR_MODEL;
-  const { authStorage, modelRegistry } = prepareAdvisorConfig(provider, options.credentialEnv);
+  const baseUrl = advisorInferenceBaseUrl();
+  const { authStorage, modelRegistry } = prepareAdvisorConfig(
+    provider,
+    options.credentialEnv,
+    baseUrl,
+  );
   const model = modelRegistry.find(provider, modelId);
   if (!model || !modelRegistry.hasConfiguredAuth(model)) {
     throw new Error(
       `Could not configure advisor model ${provider}/${modelId}; set ${options.credentialEnv}`,
     );
+  }
+  if (baseUrl === ADVISOR_OPENSHELL_INFERENCE_BASE_URL) {
+    configureAdvisorHttpDispatcher();
   }
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
@@ -776,6 +785,7 @@ export class CappedBuffer {
 function prepareAdvisorConfig(
   provider: string,
   credentialEnv: string,
+  baseUrl: string,
 ): { authStorage: AuthStorage; modelRegistry: ModelRegistry } {
   const authStorage = AuthStorage.inMemory();
   const modelRegistry = ModelRegistry.inMemory(authStorage);
@@ -783,10 +793,7 @@ function prepareAdvisorConfig(
   if (credential) {
     try {
       authStorage.setRuntimeApiKey(provider, credential);
-      modelRegistry.registerProvider(
-        provider,
-        openAiAdvisorProviderConfig(credentialEnv, advisorInferenceBaseUrl()),
-      );
+      modelRegistry.registerProvider(provider, openAiAdvisorProviderConfig(credentialEnv, baseUrl));
     } finally {
       delete process.env[credentialEnv];
     }
