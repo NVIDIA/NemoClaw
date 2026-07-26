@@ -70,10 +70,10 @@ case "$*" in
   "-j route show exact 10.10.0.4/30")
     printf '%s\\n' '[{"dst":"10.10.0.4/30","dev":"rail1","scope":"link","prefsrc":"10.10.0.5"}]'
     ;;
-  "-j neighbor show to 10.10.0.2 dev rail0")
+  "-j neighbor show to 10.10.0.2")
     printf '%s\\n' '[{"dst":"10.10.0.2","dev":"rail0","lladdr":"02:00:00:00:00:02","state":["STALE"]}]'
     ;;
-  "-j neighbor show to 10.10.0.6 dev rail1")
+  "-j neighbor show to 10.10.0.6")
     printf '%s\\n' '[{"dst":"10.10.0.6","dev":"rail1","lladdr":"02:00:00:00:00:06","state":["REACHABLE"]}]'
     ;;
   *)

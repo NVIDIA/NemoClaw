@@ -275,14 +275,20 @@ for offset in (0, 3):
     ping_rc, _ = run([
         "ping", "-4", "-M", "do", "-s", "8972", "-c", "1", "-W", "2", "-I", source, peer,
     ])
-    neighbor_rc, neighbor_output = run(["ip", "-j", "neighbor", "show", "to", peer, "dev", netdev])
+    neighbor_rc, neighbor_output = run(["ip", "-j", "neighbor", "show", "to", peer])
     if neighbor_rc == 0:
         try:
             neighbors = json.loads(neighbor_output)
-            neighbor = neighbors[0] if isinstance(neighbors, list) and neighbors else {}
-            if isinstance(neighbor, dict) and neighbor.get("dst") == peer and neighbor.get("dev") == netdev:
-                peer_mac = str(neighbor.get("lladdr", "")).lower()
-                raw_state = neighbor.get("state", "")
+            matching_neighbors = [
+                neighbor for neighbor in neighbors if (
+                    isinstance(neighbor, dict)
+                    and neighbor.get("dst") == peer
+                    and neighbor.get("dev") == netdev
+                )
+            ] if isinstance(neighbors, list) else []
+            if len(matching_neighbors) == 1:
+                peer_mac = str(matching_neighbors[0].get("lladdr", "")).lower()
+                raw_state = matching_neighbors[0].get("state", "")
                 peer_neighbor_state = ",".join(raw_state) if isinstance(raw_state, list) else str(raw_state)
         except json.JSONDecodeError:
             pass
