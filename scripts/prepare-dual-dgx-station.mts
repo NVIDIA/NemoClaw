@@ -212,7 +212,7 @@ print(json.dumps({
 }, separators=(",", ":")))
 `;
 
-const CONNECTIVITY_PROBE = String.raw`
+export const CONNECTIVITY_PROBE = String.raw`
 import ipaddress
 import json
 import subprocess
@@ -251,23 +251,25 @@ for offset in (0, 3):
             routes = json.loads(output)
             route = routes[0] if isinstance(routes, list) and routes else {}
             route_device = route.get("dev", "") if isinstance(route, dict) else ""
-            route_source = route.get("prefsrc", route.get("src", "")) if isinstance(route, dict) else ""
+            route_source = route.get("prefsrc", route.get("src", route.get("from", ""))) if isinstance(route, dict) else ""
             route_gateway = route.get("gateway") if isinstance(route, dict) else None
         except json.JSONDecodeError:
             pass
     network = str(ipaddress.ip_network(source + "/30", strict=False))
-    link_rc, link_output = run(["ip", "-j", "route", "show", "exact", network, "dev", netdev])
+    link_rc, link_output = run(["ip", "-j", "route", "show", "exact", network])
     if link_rc == 0:
         try:
             link_routes = json.loads(link_output)
-            link_route = link_routes[0] if isinstance(link_routes, list) and link_routes else {}
-            if (
-                isinstance(link_route, dict)
-                and link_route.get("dst") == network
-                and link_route.get("dev") == netdev
-                and link_route.get("gateway") is None
-            ):
-                route_scope = link_route.get("scope", "")
+            matching_routes = [
+                route for route in link_routes if (
+                    isinstance(route, dict)
+                    and route.get("dst") == network
+                    and route.get("dev") == netdev
+                    and route.get("gateway") is None
+                )
+            ] if isinstance(link_routes, list) else []
+            if len(matching_routes) == 1:
+                route_scope = matching_routes[0].get("scope", "")
         except json.JSONDecodeError:
             pass
     ping_rc, _ = run([

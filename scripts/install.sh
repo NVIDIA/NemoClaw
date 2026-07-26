@@ -259,18 +259,30 @@ resolve_nemoclaw_gateway_port() {
   printf "%s" "$port"
 }
 
-nemoclaw_state_dir() {
-  local port
-  port="$(resolve_nemoclaw_gateway_port)" || return 1
-  if [ "$port" -eq 8080 ]; then
-    printf "%s/.nemoclaw" "$HOME"
+nemoclaw_state_root() {
+  local home="${HOME%/}"
+  [ -n "$home" ] || home="/"
+  if [ "$home" = "/" ]; then
+    printf "/.nemoclaw"
   else
-    printf "%s/.nemoclaw/gateways/%s" "$HOME" "$port"
+    printf "%s/.nemoclaw" "$home"
+  fi
+}
+
+nemoclaw_state_dir() {
+  local port root
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  root="$(nemoclaw_state_root)" || return 1
+  if [ "$port" -eq 8080 ]; then
+    printf "%s" "$root"
+  else
+    printf "%s/gateways/%s" "$root" "$port"
   fi
 }
 
 assert_nemoclaw_state_path_safe() {
-  local target="$1" root="${HOME}/.nemoclaw" current relative component
+  local target="$1" root current relative component
+  root="$(nemoclaw_state_root)" || return 1
   case "$target" in
     "$root" | "$root"/*) ;;
     *) error "Refusing NemoClaw state path outside ${root}: ${target}" ;;
@@ -296,7 +308,7 @@ assert_nemoclaw_state_path_safe() {
 ensure_nemoclaw_state_dir() {
   local state_dir root gateways_dir
   state_dir="$(nemoclaw_state_dir)" || return 1
-  root="${HOME}/.nemoclaw"
+  root="$(nemoclaw_state_root)" || return 1
   gateways_dir="${root}/gateways"
   assert_nemoclaw_state_path_safe "$state_dir"
   (umask 077 && mkdir -p "$state_dir") || error "Could not create NemoClaw state directory: ${state_dir}"
@@ -3667,7 +3679,8 @@ assert_station_express_resume_file_safe() {
 }
 
 assert_station_express_resume_directory_safe() {
-  local state_dir=$1 root="${HOME}/.nemoclaw" current relative component mode
+  local state_dir=$1 root current relative component mode
+  root="$(nemoclaw_state_root)" || return 1
   assert_nemoclaw_state_path_safe "$state_dir"
   current="$root"
   relative="${state_dir#"$root"}"
