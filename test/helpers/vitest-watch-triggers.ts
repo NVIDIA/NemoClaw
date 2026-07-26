@@ -99,6 +99,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts", "test/pr-e2e-required.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
+    testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
+  },
+  {
     pattern:
       /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|wsl-e2e|macos-e2e|platform-vitest-main)\.yaml$/,
     testsToRun: runTests("test/hosted-runner-recovery-workflow.test.ts"),
