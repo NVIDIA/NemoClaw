@@ -53,18 +53,15 @@ const PLAN = {
 } satisfies SandboxMessagingPlan;
 
 function reverseObjectKeys(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => reverseObjectKeys(item));
-  }
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .reverse()
-      .map(([key, item]) => [key, reverseObjectKeys(item)]),
-  );
+  return Array.isArray(value)
+    ? value.map((item) => reverseObjectKeys(item))
+    : value !== null && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>)
+            .reverse()
+            .map(([key, item]) => [key, reverseObjectKeys(item)]),
+        )
+      : value;
 }
 
 describe("MessagingSetupApplier plan encoding", () => {
