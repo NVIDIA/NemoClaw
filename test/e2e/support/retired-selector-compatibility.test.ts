@@ -17,6 +17,9 @@ const EXPECTED_SHA = "a".repeat(40);
 const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const REPLACEMENT_FILES = [
+  "src/lib/security/credential-filter-secret-patterns.test.ts",
+  "test/credential-migration-reconciliation.test.ts",
+  "test/package-contract/cli/debug-cli-command.test.ts",
   "test/package-contract/cli/public-cli-contracts.test.ts",
   "test/gateway-drift-preflight.test.ts",
   "test/gateway-health-honest.test.ts",
@@ -56,11 +59,11 @@ describe("retired E2E selector compatibility", () => {
   it("selects only IDs absent from an SHA-bound candidate inventory (#7616)", () => {
     expect(
       selectedRetiredControllerJobs({
-        allowedJobs: ["cloud-onboard", "docs-validation"],
+        allowedJobs: ["cloud-onboard", "credential-sanitization", "docs-validation"],
         expectedSha: EXPECTED_SHA,
-        jobs: "cloud-onboard,docs-validation,gateway-health-honest",
+        jobs: "cloud-onboard,credential-sanitization,diagnostics,docs-validation,gateway-health-honest",
       }),
-    ).toEqual(["gateway-health-honest"]);
+    ).toEqual(["diagnostics", "gateway-health-honest"]);
     expect(
       selectedRetiredControllerJobs({
         allowedJobs: ["cloud-onboard"],
@@ -89,9 +92,10 @@ describe("retired E2E selector compatibility", () => {
 
       expect(selected).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS].sort());
       expect(commands).toEqual([
-        "npx vitest run --project integration test/credentials.test.ts test/gateway-drift-preflight.test.ts test/gateway-health-honest.test.ts",
+        "npx vitest run --project cli src/lib/security/credential-filter-secret-patterns.test.ts",
+        "npx vitest run --project integration test/credential-migration-reconciliation.test.ts test/credentials.test.ts test/gateway-drift-preflight.test.ts test/gateway-health-honest.test.ts",
         "npx vitest run --project installer-integration test/install-openshell-version-pin.test.ts",
-        "npx vitest run --project package-contract test/package-contract/cli/public-cli-contracts.test.ts test/package-contract/onboard/invalid-nvidia-key.test.ts",
+        "npx vitest run --project package-contract test/package-contract/cli/debug-cli-command.test.ts test/package-contract/cli/public-cli-contracts.test.ts test/package-contract/onboard/invalid-nvidia-key.test.ts",
       ]);
       expect(fs.readFileSync(target.output, "utf8")).toBe("selected=true\n");
       for (const id of selected) {
