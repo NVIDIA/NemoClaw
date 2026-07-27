@@ -71,7 +71,12 @@ PRODUCTION_FAIL_CLOSED_CONFIG_DIRS = frozenset(
 OPENCLAW_MUTATION_MUTEX_PATH = "/run/nemoclaw/openclaw-config-mutation.lock"
 # Keep this exact source/target contract aligned with
 # src/lib/state/openclaw-managed-extensions.ts.
-OPENCLAW_GLOBAL_PACKAGE_PATH = "/usr/local/lib/node_modules/openclaw"
+OPENCLAW_IMAGE_PACKAGE_PATHS = frozenset(
+    {
+        "/usr/local/lib/node_modules/openclaw",
+        "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
+    }
+)
 OPENCLAW_EXTENSION_PEER_LINK_SUFFIX = ("node_modules", "openclaw")
 SAFE_EXTENSION_ID_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
@@ -555,9 +560,9 @@ def _is_allowed_openclaw_extension_peer_symlink(
     relative_path: str,
     target: str,
 ) -> bool:
-    """Recognize the one image-owned peer link that may leave the state tree."""
+    """Recognize an exact image-owned peer link that may leave the state tree."""
 
-    if target != OPENCLAW_GLOBAL_PACKAGE_PATH:
+    if target not in OPENCLAW_IMAGE_PACKAGE_PATHS:
         return False
     if posixpath.basename(context.config_path) != ".openclaw":
         return False

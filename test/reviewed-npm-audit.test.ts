@@ -17,6 +17,7 @@ import {
   parseAuditReport,
   provenanceSidecarPath,
   readAuditExceptionRegistry,
+  runNpmAuditWithRetry,
   runReviewedNpmAudit,
   vulnerabilityCounts,
 } from "../scripts/lib/reviewed-npm-audit.mts";
@@ -165,6 +166,180 @@ describe("reviewed npm audit gate", () => {
     expect(() =>
       parseAuditReport({ status: 0, stderr: "", stdout: JSON.stringify(report) }),
     ).toThrow(/vulnerability report|vulnerability count/);
+  });
+
+  it("retries scan-incomplete npm responses with bounded backoff", () => {
+    const completeReport = {
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+      },
+    };
+    const sensitiveStderr =
+      "request failed for https://audit-user:secret-token@registry.example/\n\u001b[31mstderr detail";
+    const sensitiveErrorBody = {
+      summary: "request failed for https://json-user:json-secret@registry.example/",
+      detail: "first line\n\u001b[31msecond line",
+    };
+    const responses = [
+      { status: 1, stderr: sensitiveStderr, stdout: "" },
+      {
+        status: 1,
+        stderr: "",
+        stdout: JSON.stringify({ error: sensitiveErrorBody }),
+      },
+      { status: 0, stderr: "", stdout: JSON.stringify(completeReport) },
+    ];
+    const delays: number[] = [];
+    const warnings: string[] = [];
+    let attempt = 0;
+
+    const audit = runNpmAuditWithRetry({
+      run: () => responses[attempt++] as (typeof responses)[number],
+      wait: (delayMs) => delays.push(delayMs),
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(attempt).toBe(3);
+    expect(delays).toEqual([1_000, 2_000]);
+    expect(warnings).toEqual([
+      "npm audit scan incomplete on attempt 1/3; retrying in 1000 ms (reason=empty-output)",
+      "npm audit scan incomplete on attempt 2/3; retrying in 2000 ms (reason=incomplete-report)",
+    ]);
+    const warningOutput = warnings.join("\n");
+    expect(warningOutput).not.toContain("audit-user");
+    expect(warningOutput).not.toContain("secret-token");
+    expect(warningOutput).not.toContain("json-user");
+    expect(warningOutput).not.toContain("json-secret");
+    expect(warningOutput).not.toContain("registry.example");
+    expect(warningOutput).not.toContain("\u001b");
+    expect(audit.failure).toBeUndefined();
+    expect(audit.report).toEqual(completeReport);
+    expect(audit.result).toEqual(responses[2]);
+  });
+
+  it("does not retry a complete blocking vulnerability report", () => {
+    let attempts = 0;
+    const report = highFindingReport();
+
+    const audit = runNpmAuditWithRetry({
+      run: () => {
+        attempts += 1;
+        return { status: 1, stderr: "", stdout: JSON.stringify(report) };
+      },
+      wait: () => {
+        throw new Error("complete reports must not back off");
+      },
+      warn: () => {
+        throw new Error("complete reports must not emit retry warnings");
+      },
+    });
+
+    expect(attempts).toBe(1);
+    expect(audit.failure).toBeUndefined();
+    expect(audit.report).toEqual(report);
+    withInstalledGraph({ parent: "2.0.0", "vulnerable-package": "1.0.0" }, (directory) => {
+      expect(
+        evaluateAuditPolicy({
+          directory,
+          exceptionPolicy: EMPTY_POLICY,
+          exceptionPolicySha256: "a".repeat(64),
+          graph: "test-graph",
+          report,
+          threshold: "high",
+        }).status,
+      ).toBe("blocked");
+    });
+  });
+
+  it("retries a timed-out scanner process within the same budget", () => {
+    const delays: number[] = [];
+    const timeoutResult = {
+      error: Object.assign(new Error("spawnSync npm ETIMEDOUT"), { code: "ETIMEDOUT" }),
+      status: null,
+      stderr: "",
+      stdout: "",
+    };
+    const completeResult = {
+      status: 0,
+      stderr: "",
+      stdout: JSON.stringify({
+        metadata: {
+          vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+        },
+      }),
+    };
+    const responses = [timeoutResult, timeoutResult, completeResult];
+    let attempts = 0;
+
+    const audit = runNpmAuditWithRetry({
+      run: () => responses[attempts++]!,
+      wait: (delayMs) => delays.push(delayMs),
+      warn: () => {},
+    });
+
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([1_000, 2_000]);
+    expect(audit.failure).toBeUndefined();
+  });
+
+  it("does not retry non-timeout scanner spawn errors", () => {
+    const waits: number[] = [];
+    const warnings: string[] = [];
+    const spawnError = Object.assign(new Error("spawnSync npm ENOENT"), { code: "ENOENT" });
+    let attempts = 0;
+
+    expect(() =>
+      runNpmAuditWithRetry({
+        run: () => {
+          attempts += 1;
+          return {
+            error: spawnError,
+            status: null,
+            stderr: "npm was not found",
+            stdout: "",
+          };
+        },
+        wait: (delayMs) => waits.push(delayMs),
+        warn: (message) => warnings.push(message),
+      }),
+    ).toThrow("spawnSync npm ENOENT");
+
+    expect(attempts).toBe(1);
+    expect(waits).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("fails closed after the scan-incomplete retry budget is exhausted", () => {
+    const delays: number[] = [];
+    let attempts = 0;
+
+    const audit = runNpmAuditWithRetry({
+      run: () => {
+        attempts += 1;
+        return {
+          status: 1,
+          stderr: "registry-token=terminal-stderr-secret",
+          stdout: JSON.stringify({
+            error: {
+              summary: "registry-token=terminal-summary-secret",
+              detail: "authorization: bearer terminal-detail-secret",
+            },
+          }),
+        };
+      },
+      wait: (delayMs) => delays.push(delayMs),
+      warn: () => {},
+    });
+
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([1_000, 2_000]);
+    expect(audit.report).toBeUndefined();
+    expect(audit.failure?.message).toBe(
+      "npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)",
+    );
+    expect(audit.failure?.message).not.toContain("terminal-stderr-secret");
+    expect(audit.failure?.message).not.toContain("terminal-summary-secret");
+    expect(audit.failure?.message).not.toContain("terminal-detail-secret");
   });
 
   it("accepts one exact blocking advisory and its propagated meta-vulnerability", () => {
@@ -435,11 +610,15 @@ describe("reviewed npm audit provenance", () => {
           reportFile: reportPath,
           threshold: "high",
         }),
-      ).toThrow(/ECONNREFUSED/);
+      ).toThrow("npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)");
       const sidecar = JSON.parse(
         fs.readFileSync(path.join(tempRoot, "graph.provenance.json"), "utf-8"),
       ) as Record<string, unknown>;
-      expect(sidecar.failure).toMatch(/ECONNREFUSED/);
+      expect(sidecar.failure).toBe(
+        "npm audit scan remained incomplete after 3 attempts (reason=incomplete-report)",
+      );
+      expect(sidecar.failure).not.toContain("ECONNREFUSED");
+      expect(sidecar.failure).not.toContain("registry unreachable");
       expect(sidecar.advisoryIds).toEqual([]);
       expect(sidecar.rawReportPath).toBe("graph.json");
       expect(sidecar.registry).toEqual({
