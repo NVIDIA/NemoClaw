@@ -43,15 +43,20 @@ describe("platform Vitest main workflow", () => {
       expect(installStep, "missing WSL Node.js install step").toBeDefined();
       const run = installStep?.run ?? "";
       expect(run).toContain('node_version="22.23.1"');
-      expect(run).toContain("9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578");
-      expect(run).toContain("0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1");
-      expect(run).toMatch(/x86_64\)\n\s+node_arch="x64"/u);
-      expect(run).toMatch(/aarch64 \| arm64\)\n\s+node_arch="arm64"/u);
+      expect(run).toMatch(
+        /x86_64\)[\s\S]*?node_arch="x64"[\s\S]*?node_sha256="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"[\s\S]*?;;/u,
+      );
+      expect(run).toMatch(
+        /aarch64 \| arm64\)[\s\S]*?node_arch="arm64"[\s\S]*?node_sha256="0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1"[\s\S]*?;;/u,
+      );
       expect(run).toContain(
         'node_url="https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz"',
       );
       expect(run).toContain('temp_dir="$(mktemp -d)"');
       expect(run).toContain(`trap 'rm -rf "$temp_dir"' EXIT`);
+      expect(run).toContain("--proto '=https'");
+      expect(run).toContain("--connect-timeout 15");
+      expect(run).toContain("--max-time 180");
       expect(run).toContain("--retry 3");
       expect(run).toContain("--retry-max-time 240");
       expect(run).toContain("sha256sum --check --status");
