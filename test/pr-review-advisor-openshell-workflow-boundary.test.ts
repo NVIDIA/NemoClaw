@@ -16,13 +16,6 @@ const OPENSHELL_POLICY_PATH = path.join(
   "pr-review-advisor",
   "openshell-policy.yaml",
 );
-const OPENSHELL_UPLOAD_POLICY_PATH = path.join(
-  ROOT,
-  "tools",
-  "pr-review-advisor",
-  "openshell-upload-policy.yaml",
-);
-
 function workflowSource(): string {
   return fs.readFileSync(WORKFLOW_PATH, "utf8");
 }
@@ -64,27 +57,6 @@ function validatePolicyMutation(mutate: (policy: Record<string, any>) => void): 
   }
 }
 
-function validateUploadPolicyMutation(mutate: (policy: Record<string, any>) => void): string[] {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-upload-policy-"));
-  const policyPath = path.join(tmp, "openshell-upload-policy.yaml");
-  const policy = YAML.parse(fs.readFileSync(OPENSHELL_UPLOAD_POLICY_PATH, "utf8")) as Record<
-    string,
-    any
-  >;
-  mutate(policy);
-  fs.writeFileSync(policyPath, YAML.stringify(policy));
-  try {
-    return validatePrReviewAdvisorWorkflowBoundary(
-      WORKFLOW_PATH,
-      path.join(ROOT, "package-lock.json"),
-      OPENSHELL_POLICY_PATH,
-      policyPath,
-    );
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
 describe("PR review advisor OpenShell workflow boundary", () => {
   // source-shape-contract: compatibility -- The selected target identity must reach host metadata preparation and the credential-free sandbox
   it("binds host-prepared GitHub context to the selected repository and pull request", () => {
@@ -106,6 +78,40 @@ describe("PR review advisor OpenShell workflow boundary", () => {
       expect.arrayContaining([
         "review job env.TARGET_REPO must be ${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo || github.repository }}",
         "review job env.PR_NUMBER must be ${{ github.event.pull_request.number || inputs.target_pr }}",
+      ]),
+    );
+  });
+
+  // source-shape-contract: security -- Executed and mounted trusted code plus the fallback PR worktree must stay on their pinned checkout paths
+  it("pins trusted helper and bind sources to their checkout directories", () => {
+    const workflow = YAML.parse(workflowSource()) as Record<string, any>;
+    const defaultWorkdir = workflow.jobs.review.steps.find(
+      (step: { name?: string }) => step.name === "Set default advisor workdir",
+    );
+    expect(workflow.jobs.review.env.ADVISOR_DIR).toBe("${{ github.workspace }}/advisor");
+    expect(workflow.jobs.publish.env.ADVISOR_DIR).toBe("${{ github.workspace }}/advisor");
+    expect(defaultWorkdir).toMatchObject({
+      if: "${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}",
+      run: 'echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"',
+    });
+
+    const detachedSources = validateMutation((source) =>
+      mutateWorkflowSource(source, (mutated) => {
+        mutated.jobs.review.env.ADVISOR_DIR = "${{ github.workspace }}/pr-workdir/advisor";
+        mutated.jobs.publish.env.ADVISOR_DIR = "${{ github.workspace }}/publish-artifacts/advisor";
+        const defaultWorkdir = mutated.jobs.review.steps.find(
+          (step: { name?: string }) => step.name === "Set default advisor workdir",
+        );
+        defaultWorkdir.if = "${{ always() }}";
+        defaultWorkdir.run = 'echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/advisor" >> "$GITHUB_ENV"';
+      }),
+    );
+    expect(detachedSources).toEqual(
+      expect.arrayContaining([
+        "review job env.ADVISOR_DIR must be ${{ github.workspace }}/advisor",
+        "publish job env.ADVISOR_DIR must be ${{ github.workspace }}/advisor",
+        "Set default advisor workdir must use the canonical dispatch-only condition",
+        "Set default advisor workdir must bind ADVISOR_WORKDIR to the fixed pr-workdir checkout",
       ]),
     );
   });
@@ -377,62 +383,52 @@ describe("PR review advisor OpenShell workflow boundary", () => {
     );
   });
 
-  // source-shape-contract: security -- The no-egress hard-Landlock policies must separate upload access from model runtime access
+  // source-shape-contract: security -- The no-egress hard-Landlock policy must keep mounted inputs immutable and isolate runtime writes
   it("fails closed around the credential-free OpenShell filesystem and network boundary", () => {
     const network = validatePolicyMutation((policy) => {
       policy.network_policies = {
         internet: { endpoints: ["https://example.com"] },
       };
     });
-    expect(network).toContain(
-      "advisor OpenShell runtime policy must not allow direct network egress",
-    );
+    expect(network).toContain("advisor OpenShell policy must not allow direct network egress");
 
     const writableTrustedInputs = validatePolicyMutation((policy) => {
-      policy.filesystem_policy.read_write = ["/dev", "/sandbox/advisor", "/sandbox/pr-workdir"];
+      policy.filesystem_policy.read_write = ["/dev", "/advisor", "/pr-workdir"];
     });
     expect(writableTrustedInputs).toEqual(
       expect.arrayContaining([
-        "advisor OpenShell runtime policy must grant write access to /sandbox/pr-review-advisor-runtime",
-        "advisor OpenShell runtime policy must not grant write access to /sandbox/advisor",
-        "advisor OpenShell runtime policy must not grant write access to /sandbox/pr-workdir",
+        "advisor OpenShell policy must retain only its writable runtime subtree",
+        "advisor OpenShell policy must not grant write access to /advisor",
+        "advisor OpenShell policy must not grant write access to /pr-workdir",
       ]),
     );
 
     const extraWritablePath = validatePolicyMutation((policy) => {
-      policy.filesystem_policy.read_write.push("/sandbox/untrusted-output");
+      policy.filesystem_policy.read_write.push("/sandbox");
     });
     expect(extraWritablePath).toContain(
-      "advisor OpenShell runtime policy must not grant write access to /sandbox/untrusted-output",
+      "advisor OpenShell policy must not grant write access to /sandbox",
     );
 
     const broadReadPath = validatePolicyMutation((policy) => {
       policy.filesystem_policy.read_only.push("/");
     });
-    expect(broadReadPath).toContain(
-      "advisor OpenShell runtime policy must not grant read access to /",
-    );
+    expect(broadReadPath).toContain("advisor OpenShell policy must not grant read access to /");
 
-    const noRuntimePathOrLandlock = validatePolicyMutation((policy) => {
-      policy.filesystem_policy.read_write = ["/dev"];
+    const missingInputAndRuntimeOrLandlock = validatePolicyMutation((policy) => {
+      policy.filesystem_policy.read_only = policy.filesystem_policy.read_only.filter(
+        (entry: string) => entry !== "/advisor",
+      );
+      policy.filesystem_policy.read_write = policy.filesystem_policy.read_write.filter(
+        (entry: string) => entry !== "/sandbox/pr-review-advisor-runtime",
+      );
       policy.landlock.compatibility = "best_effort";
     });
-    expect(noRuntimePathOrLandlock).toEqual(
+    expect(missingInputAndRuntimeOrLandlock).toEqual(
       expect.arrayContaining([
-        "advisor OpenShell runtime policy must grant write access to /sandbox/pr-review-advisor-runtime",
-        "advisor OpenShell runtime policy must fail closed when Landlock is unavailable",
-      ]),
-    );
-
-    const weakenedUploadPolicy = validateUploadPolicyMutation((policy) => {
-      policy.filesystem_policy.read_write = ["/dev", "/sandbox/advisor"];
-      policy.landlock.compatibility = "best_effort";
-    });
-    expect(weakenedUploadPolicy).toEqual(
-      expect.arrayContaining([
-        "advisor OpenShell upload policy must grant write access to /sandbox",
-        "advisor OpenShell upload policy must not grant write access to /sandbox/advisor",
-        "advisor OpenShell upload policy must fail closed when Landlock is unavailable",
+        "advisor OpenShell policy must grant read-only access to /advisor",
+        "advisor OpenShell policy must retain only its writable runtime subtree",
+        "advisor OpenShell policy must fail closed when Landlock is unavailable",
       ]),
     );
   });

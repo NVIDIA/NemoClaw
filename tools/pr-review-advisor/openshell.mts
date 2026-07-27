@@ -19,7 +19,6 @@ import {
   execOpenShellSandbox,
   type OpenShellTools,
   required,
-  setOpenShellSandboxPolicy,
 } from "../openshell-agent/runtime.mts";
 import {
   collectGitHubReviewContext,
@@ -30,19 +29,23 @@ import {
 const ADVISOR_CONTEXT_DIRECTORY_NAME = "pr-review-advisor-context";
 const ADVISOR_RUNTIME_DIRECTORY_NAME = "pr-review-advisor-runtime";
 const ADVISOR_TOOLS_DIRECTORY_NAME = "pr-review-advisor-tools";
+const ADVISOR_BOUNDARY_PROOF_DIRECTORY_NAME = ".pr-review-advisor-boundary-proof";
+const REPOSITORY_BOUNDARY_PROOF_DIRECTORY = `.git/${ADVISOR_BOUNDARY_PROOF_DIRECTORY_NAME}`;
+const ADVISOR_BOUNDARY_PROOF_SOURCE_NAME = "source";
+const ADVISOR_BOUNDARY_PROOF_TARGET_NAME = "target";
 const ADVISOR_CONTEXT_FILE_NAME = "github-context.json";
-const ADVISOR_POLICY_FILE_NAME = "openshell-policy.yaml";
-const ADVISOR_UPLOAD_POLICY_FILE_NAME = "openshell-upload-policy.yaml";
-const SANDBOX_ADVISOR_DIR = "/sandbox/advisor";
-const SANDBOX_WORKDIR = "/sandbox/pr-workdir";
-const SANDBOX_CONTEXT_DIR = `/sandbox/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
+const SANDBOX_ADVISOR_DIR = "/advisor";
+const SANDBOX_WORKDIR = "/pr-workdir";
+const SANDBOX_CONTEXT_DIR = `/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const SANDBOX_RUNTIME_DIR = `/sandbox/${ADVISOR_RUNTIME_DIRECTORY_NAME}`;
-const SANDBOX_TOOLS_DIR = `/sandbox/${ADVISOR_TOOLS_DIRECTORY_NAME}`;
+const SANDBOX_TOOLS_DIR = `/${ADVISOR_TOOLS_DIRECTORY_NAME}`;
 const SANDBOX_CONTEXT_PATH = `${SANDBOX_CONTEXT_DIR}/${ADVISOR_CONTEXT_FILE_NAME}`;
+const ADVISOR_RUNTIME_TMPFS_BYTES = 512 * 1024 * 1024;
 const SANDBOX_API_KEY = "unused";
 const DEFAULT_SANDBOX_TIMEOUT_SECONDS = 2100;
 const DEFAULT_UNAVAILABLE_REASON =
   "OpenShell inference configuration failed or the advisor credential is unavailable";
+const EXPECTED_WRITE_DENIAL_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 
 type PrepareAdvisorSandboxOptions = {
   collectContext?: (env: NodeJS.ProcessEnv) => Promise<GitHubReviewContext | null>;
@@ -56,6 +59,23 @@ function runnerDirectory(env: NodeJS.ProcessEnv, name: string): string {
 function resetDirectory(directory: string): void {
   fs.rmSync(directory, { recursive: true, force: true });
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+}
+
+function createBoundaryProof(directory: string, relativeProofDirectory: string): void {
+  const proofDirectory = path.join(directory, relativeProofDirectory);
+  resetDirectory(proofDirectory);
+  // These canaries are intentionally writable by an unrelated UID. That
+  // prevents ordinary host ownership from making the sandbox proof pass when
+  // neither the read-only mount nor Landlock actually blocks mutation.
+  for (const [name, content] of [
+    [ADVISOR_BOUNDARY_PROOF_SOURCE_NAME, "source\n"],
+    [ADVISOR_BOUNDARY_PROOF_TARGET_NAME, "target\n"],
+  ] as const) {
+    const proofFile = path.join(proofDirectory, name);
+    fs.writeFileSync(proofFile, content, { flag: "wx", mode: 0o666 });
+    fs.chmodSync(proofFile, 0o666);
+  }
+  fs.chmodSync(proofDirectory, 0o777);
 }
 
 function writeExclusive(file: string, content: string): void {
@@ -98,23 +118,88 @@ function requireDirectoryBasename(directory: string, expected: string, name: str
   }
 }
 
-function advisorPolicyPath(advisorDirectory: string, fileName: string): string {
-  return path.join(advisorDirectory, "tools", "pr-review-advisor", fileName);
+function canonicalDirectory(directory: string, expected: string, name: string): string {
+  const canonical = fs.realpathSync(directory);
+  requireDirectoryBasename(canonical, expected, name);
+  if (!fs.statSync(canonical).isDirectory()) {
+    throw new Error(`${name} must be a directory`);
+  }
+  return canonical;
+}
+
+function requireGitMetadataDirectory(directory: string, name: string): void {
+  const gitDirectory = path.join(directory, ".git");
+  if (!fs.existsSync(gitDirectory) || !fs.lstatSync(gitDirectory).isDirectory()) {
+    throw new Error(`${name} must contain a .git directory`);
+  }
+}
+
+function advisorSandboxDriverConfig(input: {
+  advisorDirectory: string;
+  contextDirectory: string;
+  toolsDirectory: string;
+  workdir: string;
+}): Readonly<Record<string, unknown>> {
+  return {
+    docker: {
+      mounts: [
+        {
+          type: "bind",
+          source: input.advisorDirectory,
+          target: SANDBOX_ADVISOR_DIR,
+          read_only: true,
+        },
+        {
+          type: "bind",
+          source: input.workdir,
+          target: SANDBOX_WORKDIR,
+          read_only: true,
+        },
+        {
+          type: "bind",
+          source: input.contextDirectory,
+          target: SANDBOX_CONTEXT_DIR,
+          read_only: true,
+        },
+        {
+          type: "bind",
+          source: input.toolsDirectory,
+          target: SANDBOX_TOOLS_DIR,
+          read_only: true,
+        },
+        {
+          type: "tmpfs",
+          target: SANDBOX_RUNTIME_DIR,
+          size_bytes: ADVISOR_RUNTIME_TMPFS_BYTES,
+          // Docker creates tmpfs mounts as root. The sandbox user needs the
+          // mount root only to create private 0700 application directories.
+          mode: 0o1777,
+        },
+      ],
+    },
+  };
 }
 
 export async function prepareAdvisorSandboxInputs(
   env: NodeJS.ProcessEnv,
   options: PrepareAdvisorSandboxOptions = {},
 ): Promise<void> {
+  const advisorDirectory = canonicalDirectory(
+    required(env.ADVISOR_DIR, "ADVISOR_DIR"),
+    "advisor",
+    "ADVISOR_DIR",
+  );
+  const advisorWorkdir = canonicalDirectory(
+    required(env.ADVISOR_WORKDIR, "ADVISOR_WORKDIR"),
+    "pr-workdir",
+    "ADVISOR_WORKDIR",
+  );
   const contextDirectory = runnerDirectory(env, ADVISOR_CONTEXT_DIRECTORY_NAME);
-  const runtimeDirectory = runnerDirectory(env, ADVISOR_RUNTIME_DIRECTORY_NAME);
   const toolsDirectory = runnerDirectory(env, ADVISOR_TOOLS_DIRECTORY_NAME);
+  requireGitMetadataDirectory(advisorDirectory, "ADVISOR_DIR");
+  requireGitMetadataDirectory(advisorWorkdir, "ADVISOR_WORKDIR");
   resetDirectory(contextDirectory);
-  resetDirectory(runtimeDirectory);
   resetDirectory(toolsDirectory);
-  for (const name of ["artifacts", "config", "tmp"]) {
-    fs.mkdirSync(path.join(runtimeDirectory, name), { mode: 0o700 });
-  }
 
   const contextEnv = { ...env };
   delete contextEnv.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH;
@@ -123,6 +208,7 @@ export async function prepareAdvisorSandboxInputs(
     path.join(contextDirectory, ADVISOR_CONTEXT_FILE_NAME),
     serializePreparedGitHubContext(context),
   );
+  fs.chmodSync(path.join(contextDirectory, ADVISOR_CONTEXT_FILE_NAME), 0o444);
 
   const findExecutable = options.resolveExecutable ?? resolveExecutable;
   const rg = findExecutable("rg", env);
@@ -130,6 +216,16 @@ export async function prepareAdvisorSandboxInputs(
   copyExecutable(rg, path.join(toolsDirectory, "rg"));
   copyExecutable(fdfind, path.join(toolsDirectory, "fdfind"));
   copyExecutable(fdfind, path.join(toolsDirectory, "fd"));
+  for (const executable of ["rg", "fdfind", "fd"]) {
+    fs.chmodSync(path.join(toolsDirectory, executable), 0o555);
+  }
+
+  createBoundaryProof(advisorDirectory, REPOSITORY_BOUNDARY_PROOF_DIRECTORY);
+  createBoundaryProof(advisorWorkdir, REPOSITORY_BOUNDARY_PROOF_DIRECTORY);
+  createBoundaryProof(contextDirectory, ADVISOR_BOUNDARY_PROOF_DIRECTORY_NAME);
+  createBoundaryProof(toolsDirectory, ADVISOR_BOUNDARY_PROOF_DIRECTORY_NAME);
+  fs.chmodSync(contextDirectory, 0o755);
+  fs.chmodSync(toolsDirectory, 0o755);
 }
 
 export async function configureAdvisorOpenShellInference(
@@ -139,6 +235,7 @@ export async function configureAdvisorOpenShellInference(
   await configureOpenShellInference(
     env,
     {
+      enableBindMounts: true,
       gatewayId: "pr-review-advisor",
       modelId: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
       providerName: "advisor",
@@ -177,64 +274,52 @@ export function createAdvisorSandbox(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
 ): void {
-  const advisorDirectory = required(env.ADVISOR_DIR, "ADVISOR_DIR");
-  const advisorWorkdir = required(env.ADVISOR_WORKDIR, "ADVISOR_WORKDIR");
+  const advisorDirectory = canonicalDirectory(
+    required(env.ADVISOR_DIR, "ADVISOR_DIR"),
+    "advisor",
+    "ADVISOR_DIR",
+  );
+  const advisorWorkdir = canonicalDirectory(
+    required(env.ADVISOR_WORKDIR, "ADVISOR_WORKDIR"),
+    "pr-workdir",
+    "ADVISOR_WORKDIR",
+  );
+  const contextDirectory = canonicalDirectory(
+    runnerDirectory(env, ADVISOR_CONTEXT_DIRECTORY_NAME),
+    ADVISOR_CONTEXT_DIRECTORY_NAME,
+    "advisor context directory",
+  );
+  const toolsDirectory = canonicalDirectory(
+    runnerDirectory(env, ADVISOR_TOOLS_DIRECTORY_NAME),
+    ADVISOR_TOOLS_DIRECTORY_NAME,
+    "advisor tools directory",
+  );
   const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
-  requireDirectoryBasename(advisorDirectory, "advisor", "ADVISOR_DIR");
-  requireDirectoryBasename(advisorWorkdir, "pr-workdir", "ADVISOR_WORKDIR");
 
   createOpenShellSandbox(
     env,
     {
       name: sandboxName,
       image: required(env.PI_IMAGE, "PI_IMAGE"),
-      policyPath: advisorPolicyPath(advisorDirectory, ADVISOR_UPLOAD_POLICY_FILE_NAME),
-      uploads: [
-        { source: advisorDirectory, destination: "/sandbox" },
-        { source: advisorWorkdir, destination: "/sandbox" },
-        {
-          source: runnerDirectory(env, ADVISOR_CONTEXT_DIRECTORY_NAME),
-          destination: "/sandbox",
-        },
-        {
-          source: runnerDirectory(env, ADVISOR_RUNTIME_DIRECTORY_NAME),
-          destination: "/sandbox",
-        },
-        {
-          source: runnerDirectory(env, ADVISOR_TOOLS_DIRECTORY_NAME),
-          destination: "/sandbox",
-        },
-      ],
+      policyPath: path.join(
+        advisorDirectory,
+        "tools",
+        "pr-review-advisor",
+        "openshell-policy.yaml",
+      ),
+      driverConfig: advisorSandboxDriverConfig({
+        advisorDirectory,
+        contextDirectory,
+        toolsDirectory,
+        workdir: advisorWorkdir,
+      }),
+      uploads: [],
       command: [
         "/usr/bin/node",
         "--experimental-strip-types",
         "--no-warnings",
         `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/openshell.mts`,
-        "seal",
-      ],
-    },
-    tools,
-  );
-  setOpenShellSandboxPolicy(
-    env,
-    {
-      name: sandboxName,
-      policyPath: advisorPolicyPath(advisorDirectory, ADVISOR_POLICY_FILE_NAME),
-    },
-    tools,
-  );
-  execOpenShellSandbox(
-    env,
-    {
-      name: sandboxName,
-      timeoutSeconds: 60,
-      workdir: SANDBOX_WORKDIR,
-      command: [
-        "/usr/bin/node",
-        "--experimental-strip-types",
-        "--no-warnings",
-        `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/openshell.mts`,
-        "check",
+        "initialize",
       ],
     },
     tools,
@@ -381,67 +466,64 @@ export function checkAdvisorSandboxRuntime(): void {
     `${SANDBOX_RUNTIME_DIR}/tmp`,
   ]) {
     const runtimeProbe = path.join(directory, probeName);
-    fs.writeFileSync(runtimeProbe, "runtime write check\n", {
+    const runtimeTarget = `${runtimeProbe}-target`;
+    fs.writeFileSync(runtimeProbe, "runtime create check\n", {
       flag: "wx",
       mode: 0o600,
     });
-    fs.rmSync(runtimeProbe);
-  }
-  for (const directory of [
-    SANDBOX_ADVISOR_DIR,
-    SANDBOX_WORKDIR,
-    SANDBOX_CONTEXT_DIR,
-    SANDBOX_TOOLS_DIR,
-  ]) {
-    const assertCreateDenied = (name: string): void => {
-      const readOnlyProbe = path.join(directory, name);
-      try {
-        fs.writeFileSync(readOnlyProbe, "unexpected write\n", {
-          flag: "wx",
-          mode: 0o600,
-        });
-      } catch (error: unknown) {
-        if (["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "")) {
-          return;
-        }
-        throw error;
-      }
-      fs.rmSync(readOnlyProbe, { force: true });
-      throw new Error(`Advisor sandbox input is unexpectedly writable: ${directory}`);
-    };
-
-    assertCreateDenied(probeName);
-    const originalMode = fs.statSync(directory).mode & 0o777;
-    let restoredWriteMode = false;
-    try {
-      fs.chmodSync(directory, originalMode | 0o200);
-      restoredWriteMode = true;
-    } catch (error: unknown) {
-      if (!["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "")) {
-        throw error;
-      }
+    fs.writeFileSync(runtimeTarget, "runtime target check\n", {
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.writeFileSync(runtimeProbe, "runtime overwrite check\n", { flag: "w" });
+    fs.chmodSync(runtimeProbe, 0o640);
+    fs.renameSync(runtimeProbe, runtimeTarget);
+    if (fs.readFileSync(runtimeTarget, "utf8") !== "runtime overwrite check\n") {
+      throw new Error(`Advisor sandbox runtime replacement failed: ${directory}`);
     }
-    try {
-      assertCreateDenied(`${probeName}-after-chmod`);
-    } finally {
-      if (restoredWriteMode) fs.chmodSync(directory, originalMode);
-    }
+    fs.rmSync(runtimeTarget);
   }
+  for (const [directory, relativeProofDirectory] of [
+    [SANDBOX_ADVISOR_DIR, REPOSITORY_BOUNDARY_PROOF_DIRECTORY],
+    [SANDBOX_WORKDIR, REPOSITORY_BOUNDARY_PROOF_DIRECTORY],
+    [SANDBOX_CONTEXT_DIR, ADVISOR_BOUNDARY_PROOF_DIRECTORY_NAME],
+    [SANDBOX_TOOLS_DIR, ADVISOR_BOUNDARY_PROOF_DIRECTORY_NAME],
+  ] as const) {
+    const proofDirectory = path.join(directory, relativeProofDirectory);
+    const source = path.join(proofDirectory, ADVISOR_BOUNDARY_PROOF_SOURCE_NAME);
+    const target = path.join(proofDirectory, ADVISOR_BOUNDARY_PROOF_TARGET_NAME);
+    expectWriteDenied(`${directory} chmod`, () => fs.chmodSync(source, 0o600));
+    expectWriteDenied(`${directory} overwrite`, () =>
+      fs.writeFileSync(target, "unexpected replacement\n", { flag: "w" }),
+    );
+    expectWriteDenied(`${directory} replacement`, () => fs.renameSync(source, target));
+    expectWriteDenied(`${directory} create`, () =>
+      fs.writeFileSync(path.join(proofDirectory, probeName), "unexpected create\n", {
+        flag: "wx",
+        mode: 0o600,
+      }),
+    );
+  }
+  console.log(
+    "Advisor sandbox filesystem proof passed: four immutable inputs and one writable runtime",
+  );
 }
 
-export function sealAdvisorSandboxInputs(
-  directories: readonly string[] = [
-    SANDBOX_ADVISOR_DIR,
-    SANDBOX_WORKDIR,
-    SANDBOX_CONTEXT_DIR,
-    SANDBOX_TOOLS_DIR,
-  ],
-  verify: () => void = () => undefined,
-): void {
-  // OpenShell v0.0.85 performs uploads under a bootstrap policy. Remove
-  // ordinary write modes before the host applies the runtime policy.
-  execFileSync("/bin/chmod", ["-R", "a-w", ...directories], { stdio: "inherit" });
-  verify();
+function expectWriteDenied(label: string, operation: () => void): void {
+  try {
+    operation();
+  } catch (error: unknown) {
+    if (EXPECTED_WRITE_DENIAL_CODES.has((error as NodeJS.ErrnoException).code ?? "")) return;
+    throw error;
+  }
+  throw new Error(`Advisor sandbox input mutation unexpectedly succeeded: ${label}`);
+}
+
+export function initializeAdvisorSandboxRuntime(): void {
+  for (const name of ["artifacts", "config", "tmp"]) {
+    fs.mkdirSync(path.join(SANDBOX_RUNTIME_DIR, name), { mode: 0o700 });
+  }
+  checkAdvisorSandboxRuntime();
 }
 
 async function main(): Promise<void> {
@@ -468,11 +550,11 @@ async function main(): Promise<void> {
     case "delete":
       deleteAdvisorSandbox(process.env);
       return;
+    case "initialize":
+      initializeAdvisorSandboxRuntime();
+      return;
     case "check":
       checkAdvisorSandboxRuntime();
-      return;
-    case "seal":
-      sealAdvisorSandboxInputs();
       return;
     default:
       throw new Error(`Unsupported OpenShell advisor command: ${command}`);

@@ -31,6 +31,7 @@ export interface OpenShellTools {
 }
 
 export type OpenShellInferenceOptions = {
+  enableBindMounts?: boolean;
   gatewayId: string;
   modelId: string;
   providerName: string;
@@ -43,6 +44,7 @@ export type OpenShellUpload = {
 
 export type CreateOpenShellSandboxOptions = {
   command: readonly string[];
+  driverConfig?: Readonly<Record<string, unknown>>;
   image: string;
   name: string;
   policyPath: string;
@@ -76,9 +78,11 @@ function tomlString(value: string): string {
 function gatewayConfiguration(input: {
   bindAddress: string;
   directory: string;
+  enableBindMounts: boolean;
   gatewayId: string;
   supervisor: string;
 }): string {
+  const bindMountConfiguration = input.enableBindMounts ? "\nenable_bind_mounts = true" : "";
   return `[openshell]
 version = 1
 
@@ -99,7 +103,7 @@ ttl_secs = 3600
 
 [openshell.drivers.docker]
 grpc_endpoint = "http://host.openshell.internal:8080"
-supervisor_bin = ${tomlString(input.supervisor)}
+supervisor_bin = ${tomlString(input.supervisor)}${bindMountConfiguration}
 `;
 }
 
@@ -192,6 +196,7 @@ export async function configureOpenShellInference(
     gatewayConfiguration({
       bindAddress,
       directory: gatewayDirectory,
+      enableBindMounts: input.enableBindMounts === true,
       gatewayId: input.gatewayId,
       supervisor,
     }),
@@ -252,6 +257,10 @@ export function createOpenShellSandbox(
     "--upload",
     `${source}:${destination}`,
   ]);
+  const uploadOptions = input.uploads.length > 0 ? [...uploadArgs, "--no-git-ignore"] : [];
+  const driverConfigArgs = input.driverConfig
+    ? ["--driver-config-json", JSON.stringify(input.driverConfig)]
+    : [];
   tools.run(
     "openshell",
     [
@@ -261,10 +270,10 @@ export function createOpenShellSandbox(
       input.name,
       "--from",
       input.image,
+      ...driverConfigArgs,
       "--policy",
       input.policyPath,
-      ...uploadArgs,
-      "--no-git-ignore",
+      ...uploadOptions,
       "--no-tty",
       "--",
       ...input.command,

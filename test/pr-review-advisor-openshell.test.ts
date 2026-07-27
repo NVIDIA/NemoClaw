@@ -27,7 +27,6 @@ import {
   downloadAdvisorArtifacts,
   prepareAdvisorSandboxInputs,
   runAdvisorSandbox,
-  sealAdvisorSandboxInputs,
   writeUnavailableAdvisorArtifacts,
 } from "../tools/pr-review-advisor/openshell.mts";
 import { runPrReviewAdvisorAnalysis } from "../tools/pr-review-advisor/run-analysis.mts";
@@ -49,6 +48,12 @@ function advisorEnvironment(): NodeJS.ProcessEnv {
   const runnerTemp = path.join(root, "runner-temp");
   for (const directory of [advisorDirectory, workDirectory, workspace, runnerTemp]) {
     fs.mkdirSync(directory, { recursive: true });
+  }
+  for (const directory of [advisorDirectory, workDirectory]) {
+    fs.mkdirSync(path.join(directory, ".git"));
+  }
+  for (const name of ["pr-review-advisor-context", "pr-review-advisor-tools"]) {
+    fs.mkdirSync(path.join(runnerTemp, name));
   }
   return {
     ADVISOR_DIR: advisorDirectory,
@@ -349,7 +354,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(() => readPreparedGitHubContext(contextPath)).toThrow("exceeds the 5 MiB limit");
   });
 
-  it("materializes bounded host context and pinned read tools for sandbox upload", async () => {
+  it("materializes bounded host context and pinned read tools for read-only mounts", async () => {
     const env = advisorEnvironment();
     env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH = "/untrusted/recursive-context.json";
     const binaries = path.join(temporaryDirectory(), "binaries");
@@ -380,15 +385,38 @@ describe("PR review advisor OpenShell wrapper", () => {
       repo: "NVIDIA/NemoClaw",
       prNumber: 7542,
     });
-    expect(fs.statSync(contextPath).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(contextPath).mode & 0o777).toBe(0o444);
     expect(contextContent).not.toContain("github-host-secret");
-    expect(
-      fs.statSync(path.join(runnerTemp, "pr-review-advisor-runtime", "artifacts")).isDirectory(),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(runnerTemp, "pr-review-advisor-runtime"))).toBe(false);
     for (const name of ["rg", "fdfind", "fd"]) {
       const executable = path.join(runnerTemp, "pr-review-advisor-tools", name);
-      expect(fs.statSync(executable).mode & 0o111).not.toBe(0);
+      expect(fs.statSync(executable).mode & 0o777).toBe(0o555);
     }
+    for (const [directory, relativeProofDirectory] of [
+      [env.ADVISOR_DIR as string, ".git/.pr-review-advisor-boundary-proof"],
+      [env.ADVISOR_WORKDIR as string, ".git/.pr-review-advisor-boundary-proof"],
+      [path.join(runnerTemp, "pr-review-advisor-context"), ".pr-review-advisor-boundary-proof"],
+      [path.join(runnerTemp, "pr-review-advisor-tools"), ".pr-review-advisor-boundary-proof"],
+    ]) {
+      const proofDirectory = path.join(directory, relativeProofDirectory);
+      expect(fs.statSync(proofDirectory).isDirectory()).toBe(true);
+      expect(fs.statSync(proofDirectory).mode & 0o777).toBe(0o777);
+      for (const name of ["source", "target"]) {
+        expect(fs.statSync(path.join(proofDirectory, name)).mode & 0o777).toBe(0o666);
+      }
+    }
+  });
+
+  it("requires repository metadata before placing immutable-boundary proof files", async () => {
+    const env = advisorEnvironment();
+    fs.rmSync(path.join(env.ADVISOR_WORKDIR as string, ".git"), {
+      recursive: true,
+      force: true,
+    });
+
+    await expect(prepareAdvisorSandboxInputs(env)).rejects.toThrow(
+      "ADVISOR_WORKDIR must contain a .git directory",
+    );
   });
 
   it("rejects oversized prepared context before writing a sandbox input", async () => {
@@ -449,33 +477,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       "utf8",
     );
     expect(gatewayConfig).not.toContain("model-host-secret");
-  });
-
-  it("seals uploaded input trees before running the sandbox verification probe", () => {
-    const root = temporaryDirectory();
-    const directories = ["advisor", "pr-workdir", "context", "tools"].map((name) => {
-      const directory = path.join(root, name);
-      fs.mkdirSync(directory);
-      fs.writeFileSync(path.join(directory, "input.txt"), "input\n", { mode: 0o600 });
-      return directory;
-    });
-    const verify = vi.fn(() => {
-      for (const directory of directories) {
-        expect(fs.statSync(directory).mode & 0o222).toBe(0);
-        expect(fs.statSync(path.join(directory, "input.txt")).mode & 0o222).toBe(0);
-      }
-    });
-
-    try {
-      sealAdvisorSandboxInputs(directories, verify);
-      expect(verify).toHaveBeenCalledTimes(1);
-    } finally {
-      fs.chmodSync(root, 0o700);
-      for (const directory of directories) {
-        fs.chmodSync(directory, 0o700);
-        fs.chmodSync(path.join(directory, "input.txt"), 0o600);
-      }
-    }
+    expect(gatewayConfig).toContain("enable_bind_mounts = true");
   });
 
   it("writes unavailable artifacts through a credential-free trusted host fallback", () => {
@@ -534,64 +536,77 @@ describe("PR review advisor OpenShell wrapper", () => {
         "pr-advisor-test",
         "--from",
         "pinned-pi-image",
+        "--driver-config-json",
         "--policy",
         path.join(
-          env.ADVISOR_DIR as string,
+          fs.realpathSync(env.ADVISOR_DIR as string),
           "tools",
           "pr-review-advisor",
-          "openshell-upload-policy.yaml",
+          "openshell-policy.yaml",
         ),
-        "--upload",
-        `${env.ADVISOR_DIR}:/sandbox`,
-        "--upload",
-        `${env.ADVISOR_WORKDIR}:/sandbox`,
-        "/sandbox/advisor/tools/pr-review-advisor/openshell.mts",
-        "seal",
+        "/advisor/tools/pr-review-advisor/openshell.mts",
+        "initialize",
       ]),
     );
+    const driverConfigIndex = createArgs.indexOf("--driver-config-json");
+    expect(JSON.parse(createArgs[driverConfigIndex + 1] as string)).toEqual({
+      docker: {
+        mounts: [
+          {
+            type: "bind",
+            source: fs.realpathSync(env.ADVISOR_DIR as string),
+            target: "/advisor",
+            read_only: true,
+          },
+          {
+            type: "bind",
+            source: fs.realpathSync(env.ADVISOR_WORKDIR as string),
+            target: "/pr-workdir",
+            read_only: true,
+          },
+          {
+            type: "bind",
+            source: fs.realpathSync(
+              path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context"),
+            ),
+            target: "/pr-review-advisor-context",
+            read_only: true,
+          },
+          {
+            type: "bind",
+            source: fs.realpathSync(
+              path.join(env.RUNNER_TEMP as string, "pr-review-advisor-tools"),
+            ),
+            target: "/pr-review-advisor-tools",
+            read_only: true,
+          },
+          {
+            type: "tmpfs",
+            target: "/sandbox/pr-review-advisor-runtime",
+            size_bytes: 512 * 1024 * 1024,
+            mode: 0o1777,
+          },
+        ],
+      },
+    });
+    expect(createArgs).not.toContain("--upload");
+    expect(createArgs).not.toContain("--no-git-ignore");
     expect(createArgs.slice(-6)).toEqual([
       "--",
       "/usr/bin/node",
       "--experimental-strip-types",
       "--no-warnings",
-      "/sandbox/advisor/tools/pr-review-advisor/openshell.mts",
-      "seal",
+      "/advisor/tools/pr-review-advisor/openshell.mts",
+      "initialize",
     ]);
-    expect(
-      calls.find(
-        ([command, args]) => command === "openshell" && args.slice(0, 2).join(" ") === "policy set",
-      )?.[1],
-    ).toEqual([
-      "policy",
-      "set",
-      "--policy",
-      path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "openshell-policy.yaml"),
-      "--wait",
-      "pr-advisor-test",
-    ]);
+    expect(calls.some(([, args]) => args.slice(0, 2).join(" ") === "policy set")).toBe(false);
 
     const sandboxExecCalls = calls.filter(
       ([command, args]) => command === "openshell" && args.slice(0, 2).join(" ") === "sandbox exec",
     );
-    const checkArgs =
-      sandboxExecCalls.find(([, args]) =>
-        args.includes("/sandbox/advisor/tools/pr-review-advisor/openshell.mts"),
-      )?.[1] ?? [];
-    expect(checkArgs).toEqual(
-      expect.arrayContaining([
-        "sandbox",
-        "exec",
-        "--name",
-        "pr-advisor-test",
-        "--timeout",
-        "60",
-        "/sandbox/advisor/tools/pr-review-advisor/openshell.mts",
-        "check",
-      ]),
-    );
     const runArgs =
       sandboxExecCalls.find(([, args]) =>
-        args.includes("/sandbox/advisor/tools/pr-review-advisor/run-analysis.mts"),
+        args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
       )?.[1] ?? [];
     expect(runArgs).toEqual(
       expect.arrayContaining([
@@ -602,39 +617,17 @@ describe("PR review advisor OpenShell wrapper", () => {
         "--timeout",
         "2100",
         "--workdir",
-        "/sandbox/pr-workdir",
+        "/pr-workdir",
         "PR_REVIEW_ADVISOR_API_KEY=unused",
         "PR_REVIEW_ADVISOR_BASE_URL=https://inference.local/v1",
-        "PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH=/sandbox/pr-review-advisor-context/github-context.json",
+        "PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH=/pr-review-advisor-context/github-context.json",
         "TARGET_REPO=NVIDIA/NemoClaw",
-        "/sandbox/advisor/tools/pr-review-advisor/run-analysis.mts",
+        "/advisor/tools/pr-review-advisor/run-analysis.mts",
       ]),
     );
     expect(runArgs.join("\n")).not.toContain("github-host-secret");
     expect(runArgs.join("\n")).not.toContain("model-host-secret");
     expect(runArgs.join("\n")).not.toContain("advisor-host-secret");
-
-    const createIndex = calls.findIndex(
-      ([command, args]) =>
-        command === "openshell" && args.slice(0, 2).join(" ") === "sandbox create",
-    );
-    const policyIndex = calls.findIndex(
-      ([command, args]) => command === "openshell" && args.slice(0, 2).join(" ") === "policy set",
-    );
-    const checkIndex = calls.findIndex(
-      ([command, args]) =>
-        command === "openshell" &&
-        args.includes("/sandbox/advisor/tools/pr-review-advisor/openshell.mts") &&
-        args.includes("check"),
-    );
-    const analysisIndex = calls.findIndex(
-      ([command, args]) =>
-        command === "openshell" &&
-        args.includes("/sandbox/advisor/tools/pr-review-advisor/run-analysis.mts"),
-    );
-    expect(createIndex).toBeLessThan(policyIndex);
-    expect(policyIndex).toBeLessThan(checkIndex);
-    expect(checkIndex).toBeLessThan(analysisIndex);
 
     expect(
       calls.find(

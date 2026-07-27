@@ -15,12 +15,11 @@ const DEFAULT_OPENSHELL_POLICY_PATH = join(
   "pr-review-advisor",
   "openshell-policy.yaml",
 );
-const DEFAULT_OPENSHELL_UPLOAD_POLICY_PATH = join(
-  REPO_ROOT,
-  "tools",
-  "pr-review-advisor",
-  "openshell-upload-policy.yaml",
-);
+const CANONICAL_ADVISOR_DIR = "${{ github.workspace }}/advisor";
+const CANONICAL_DEFAULT_WORKDIR_IF =
+  "${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}";
+const CANONICAL_DEFAULT_WORKDIR =
+  'echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"';
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
 const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
 const PINNED_SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
@@ -265,59 +264,66 @@ function checkAdvisorRuntimePackageLock(errors: string[], packageLockPath: strin
   }
 }
 
-function checkOpenShellPolicy(
-  errors: string[],
-  policyPath: string,
-  input: { label: string; readOnly: readonly string[]; readWrite: readonly string[] },
-): void {
+function checkOpenShellPolicy(errors: string[], policyPath: string): void {
   let policy: WorkflowRecord;
   try {
     policy = asRecord(YAML.parse(readFileSync(policyPath, "utf8")));
   } catch {
-    errors.push(`failed to read or parse ${input.label}: ${policyPath}`);
+    errors.push(`failed to read or parse advisor OpenShell policy: ${policyPath}`);
     return;
   }
   if (policy.version !== 1) {
-    errors.push(`${input.label} version must remain 1`);
+    errors.push("advisor OpenShell policy version must remain 1");
   }
 
   const filesystem = asRecord(policy.filesystem_policy);
   if (booleanValue(filesystem.include_workdir) !== false) {
-    errors.push(`${input.label} must not include the default workdir`);
+    errors.push("advisor OpenShell policy must not include the default workdir");
   }
   const readOnly = stringArray(filesystem.read_only);
-  for (const requiredPath of input.readOnly) {
+  const allowedReadOnlyPaths = [
+    "/usr/bin",
+    "/usr/lib",
+    "/usr/share/git-core",
+    "/etc",
+    "/advisor",
+    "/pr-workdir",
+    "/pr-review-advisor-context",
+    "/pr-review-advisor-tools",
+  ];
+  for (const requiredPath of allowedReadOnlyPaths) {
     if (!readOnly.includes(requiredPath)) {
-      errors.push(`${input.label} must grant read-only access to ${requiredPath}`);
+      errors.push(`advisor OpenShell policy must grant read-only access to ${requiredPath}`);
     }
   }
   for (const readOnlyPath of readOnly) {
-    if (!input.readOnly.includes(readOnlyPath)) {
-      errors.push(`${input.label} must not grant read access to ${readOnlyPath}`);
+    if (!allowedReadOnlyPaths.includes(readOnlyPath)) {
+      errors.push(`advisor OpenShell policy must not grant read access to ${readOnlyPath}`);
     }
   }
   const readWrite = stringArray(filesystem.read_write);
-  for (const requiredPath of input.readWrite) {
-    if (!readWrite.includes(requiredPath)) {
-      errors.push(`${input.label} must grant write access to ${requiredPath}`);
-    }
+  if (!readWrite.includes("/dev")) {
+    errors.push("advisor OpenShell policy must retain writable device access");
+  }
+  if (!readWrite.includes("/sandbox/pr-review-advisor-runtime")) {
+    errors.push("advisor OpenShell policy must retain only its writable runtime subtree");
   }
   for (const writablePath of readWrite) {
-    if (!input.readWrite.includes(writablePath)) {
-      errors.push(`${input.label} must not grant write access to ${writablePath}`);
+    if (!["/dev", "/sandbox/pr-review-advisor-runtime"].includes(writablePath)) {
+      errors.push(`advisor OpenShell policy must not grant write access to ${writablePath}`);
     }
   }
 
   if (asRecord(policy.landlock).compatibility !== "hard_requirement") {
-    errors.push(`${input.label} must fail closed when Landlock is unavailable`);
+    errors.push("advisor OpenShell policy must fail closed when Landlock is unavailable");
   }
   const processPolicy = asRecord(policy.process);
   if (processPolicy.run_as_user !== "sandbox" || processPolicy.run_as_group !== "sandbox") {
-    errors.push(`${input.label} must run as the sandbox user and group`);
+    errors.push("advisor OpenShell policy must run as the sandbox user and group");
   }
   const networkPolicies = asRecord(policy.network_policies);
   if (networkPolicies !== policy.network_policies || Object.keys(networkPolicies).length !== 0) {
-    errors.push(`${input.label} must not allow direct network egress`);
+    errors.push("advisor OpenShell policy must not allow direct network egress");
   }
 }
 
@@ -461,6 +467,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     "PR_REVIEW_ADVISOR_MODEL",
     "${{ matrix.advisor.model }}",
   );
+  requireEnv(errors, "review job", reviewJob, "ADVISOR_DIR", CANONICAL_ADVISOR_DIR);
   requireEnv(errors, "review job", reviewJob, "FD_FIND_VERSION", "9.0.0-1");
   requireEnv(errors, "review job", reviewJob, "RIPGREP_VERSION", "14.1.0-1");
   for (const { envName, version } of ADVISOR_RUNTIME_PACKAGE_PINS) {
@@ -549,6 +556,17 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   requireWith(errors, dispatchCheckout, "persist-credentials", false);
   requireWith(errors, dispatchCheckout, "lfs", false);
   requireWith(errors, dispatchCheckout, "submodules", false);
+
+  const defaultWorkdir = requireStep(errors, steps, "Set default advisor workdir");
+  if (defaultWorkdir && stringValue(defaultWorkdir.if) !== CANONICAL_DEFAULT_WORKDIR_IF) {
+    errors.push("Set default advisor workdir must use the canonical dispatch-only condition");
+  }
+  requireCanonicalRun(
+    errors,
+    defaultWorkdir,
+    CANONICAL_DEFAULT_WORKDIR,
+    "Set default advisor workdir must bind ADVISOR_WORKDIR to the fixed pr-workdir checkout",
+  );
 
   const prepare = requireStep(errors, steps, "Prepare isolated analysis workspace");
   const prepareEnv = asRecord(prepare?.env);
@@ -927,6 +945,7 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
     errors.push("publish job must run best-effort only for pull_request_target events");
   }
   for (const [key, expected] of Object.entries({
+    ADVISOR_DIR: CANONICAL_ADVISOR_DIR,
     PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor",
     PR_REVIEW_ADVISOR_WORKFLOW_PATH: ".github/workflows/pr-review-advisor.yaml",
     PR_REVIEW_ADVISOR_EVENT_NAME: "${{ github.event_name }}",
@@ -1111,7 +1130,6 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
   packageLockPath = DEFAULT_PACKAGE_LOCK_PATH,
   openshellPolicyPath = DEFAULT_OPENSHELL_POLICY_PATH,
-  openshellUploadPolicyPath = DEFAULT_OPENSHELL_UPLOAD_POLICY_PATH,
 ): string[] {
   const errors: string[] = [];
   let workflow: WorkflowRecord;
@@ -1125,25 +1143,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("workflow name must remain PR Review / Advisor");
   }
   checkAdvisorRuntimePackageLock(errors, packageLockPath);
-  checkOpenShellPolicy(errors, openshellPolicyPath, {
-    label: "advisor OpenShell runtime policy",
-    readOnly: [
-      "/usr/bin",
-      "/usr/lib",
-      "/usr/share/git-core",
-      "/etc",
-      "/sandbox/advisor",
-      "/sandbox/pr-workdir",
-      "/sandbox/pr-review-advisor-context",
-      "/sandbox/pr-review-advisor-tools",
-    ],
-    readWrite: ["/dev", "/sandbox/pr-review-advisor-runtime"],
-  });
-  checkOpenShellPolicy(errors, openshellUploadPolicyPath, {
-    label: "advisor OpenShell upload policy",
-    readOnly: ["/usr/bin", "/usr/lib", "/usr/share/git-core", "/etc"],
-    readWrite: ["/dev", "/sandbox"],
-  });
+  checkOpenShellPolicy(errors, openshellPolicyPath);
   checkTargetTriggers(errors, workflow);
   const concurrencyGroup = stringValue(asRecord(workflow.concurrency).group);
   if (!concurrencyGroup.includes("github.event_name")) {

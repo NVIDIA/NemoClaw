@@ -10,10 +10,10 @@ filesystem_policy:
     - /usr/lib
     - /usr/share/git-core
     - /etc
-    - /sandbox/advisor
-    - /sandbox/pr-workdir
-    - /sandbox/pr-review-advisor-context
-    - /sandbox/pr-review-advisor-tools
+    - /advisor
+    - /pr-workdir
+    - /pr-review-advisor-context
+    - /pr-review-advisor-tools
   read_write:
     - /dev
     - /sandbox/pr-review-advisor-runtime

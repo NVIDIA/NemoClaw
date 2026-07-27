@@ -110,7 +110,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell(?:-upload)?-policy\.yaml$/,
+    pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
     testsToRun: runTests("test/pr-review-advisor-openshell-workflow-boundary.test.ts"),
   },
   {
