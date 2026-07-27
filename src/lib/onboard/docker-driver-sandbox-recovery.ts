@@ -32,6 +32,9 @@ function loadDockerStart(): DockerStartFn {
 function loadDockerRename(): DockerRenameFn {
   return (require("../adapters/docker") as { dockerRename: DockerRenameFn }).dockerRename;
 }
+function loadDockerUnpause(): DockerStartFn {
+  return (require("../adapters/docker") as { dockerUnpause: DockerStartFn }).dockerUnpause;
+}
 
 /**
  * Active Docker-driver sandbox recovery (#4423 part 2).
@@ -75,6 +78,7 @@ const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
  */
 export type DockerDriverRecoveryVia =
   | "started-running-original" // labeled container was already running; nothing to do.
+  | "unpaused-original" // labeled container was paused; `docker unpause` resumed it.
   | "started-stopped-original" // labeled container existed but was stopped; `docker start`.
   | "renamed-and-started-backup"; // only a `*-nemoclaw-gpu-backup-*` sibling existed; rename back + start.
 
@@ -94,6 +98,7 @@ export interface DockerDriverRecoveryDeps {
   /** `docker ps -a --filter ... --format ...` runner. */
   dockerCapture?: (args: readonly string[], opts?: Record<string, unknown>) => string;
   dockerStart?: (name: string, opts?: Record<string, unknown>) => { status?: number | null };
+  dockerUnpause?: (name: string, opts?: Record<string, unknown>) => { status?: number | null };
   dockerRename?: (
     oldName: string,
     newName: string,
@@ -114,10 +119,19 @@ function depsWithDefaults(deps: DockerDriverRecoveryDeps) {
   return {
     dockerCapture: deps.dockerCapture ?? ((args, opts) => loadDockerCapture()(args, opts)),
     dockerStart: deps.dockerStart ?? ((name, opts) => loadDockerStart()(name, opts)),
+    dockerUnpause: deps.dockerUnpause ?? ((name, opts) => loadDockerUnpause()(name, opts)),
     dockerRename:
       deps.dockerRename ?? ((oldName, newName, opts) => loadDockerRename()(oldName, newName, opts)),
     now: deps.now ?? (() => Date.now()),
   };
+}
+
+// Paused containers report `Up N ... (Paused)` from `docker ps` and are
+// classified `running` because the status starts with `Up`, but a paused
+// container is frozen: `docker unpause` (not `start`) is the verb that
+// resumes it. Mirrors the pre-check in `src/lib/actions/sandbox/start.ts`.
+function isPausedStatus(status: string): boolean {
+  return status.startsWith("Up") && status.endsWith("(Paused)");
 }
 
 function isBackupSiblingName(name: string): boolean {
@@ -231,6 +245,25 @@ export function recoverDockerDriverSandbox(
   const { runningOriginal, stoppedOriginal, backup } = classifyCandidate(containers);
 
   if (runningOriginal) {
+    if (isPausedStatus(runningOriginal.status)) {
+      const unpause = d.dockerUnpause(runningOriginal.name, {
+        ignoreError: true,
+        timeout: DOCKER_OPERATION_TIMEOUT_MS,
+      });
+      if ((unpause.status ?? 1) !== 0) {
+        return {
+          recovered: false,
+          via: null,
+          containerName: runningOriginal.name,
+          detail: `docker unpause ${runningOriginal.name} failed (exit ${unpause.status ?? "unknown"}).`,
+        };
+      }
+      return {
+        recovered: true,
+        via: "unpaused-original",
+        containerName: runningOriginal.name,
+      };
+    }
     return {
       recovered: true,
       via: "started-running-original",

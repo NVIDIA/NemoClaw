@@ -248,11 +248,6 @@
     },
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects diagnostics workflow-boundary drift for secret and Docker auth handling",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
       "category": "security"
     },
