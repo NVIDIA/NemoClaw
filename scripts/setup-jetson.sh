@@ -7,8 +7,14 @@ set -euo pipefail
 SUDO=()
 ((EUID != 0)) && SUDO=(sudo)
 
+NV_TEGRA_RELEASE_PATH="${NEMOCLAW_TEST_NV_TEGRA_RELEASE_PATH:-/etc/nv_tegra_release}"
+
 info() {
   printf "[INFO]  %s\n" "$*"
+}
+
+warn() {
+  printf "[WARN]  %s\n" "$*" >&2
 }
 
 error() {
@@ -52,10 +58,17 @@ apply_br_netfilter_setup() {
   echo "net.bridge.bridge-nf-call-iptables=1" | "${SUDO[@]}" tee /etc/sysctl.d/99-nemoclaw.conf >/dev/null
 }
 
+warn_host_setup_skipped() {
+  warn "Skipped Jetson host setup: iptables legacy mode and the Docker daemon.json adjustment (L4T 36.x only), and br_netfilter with net.bridge.bridge-nf-call-iptables=1 (every release)."
+  warn "Without br_netfilter, k3s inside the OpenShell gateway cannot NAT sandbox pod traffic to ClusterIP services, so sandbox pods cannot reach CoreDNS."
+  warn "Recognized L4T releases: 36.x (JetPack 6), 38.x (JetPack 7), and 39.x or later (JetPack 7)."
+  warn "Installation continues in an untested configuration."
+}
+
 get_jetpack_version() {
   local release_line release revision l4t_version
 
-  release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
+  release_line="$(head -n1 "$NV_TEGRA_RELEASE_PATH" 2>/dev/null || true)"
   [[ -n "$release_line" ]] || return 0
 
   release="$(printf '%s\n' "$release_line" | sed -n 's/^# R\([0-9][0-9]*\) (release).*/\1/p')"
@@ -63,7 +76,8 @@ get_jetpack_version() {
   l4t_version="${release}.${revision}"
 
   if [[ -z "$release" ]]; then
-    info "Jetson detected but could not parse L4T release — skipping host setup" >&2
+    warn "Jetson detected but the L4T release could not be parsed from $NV_TEGRA_RELEASE_PATH."
+    warn_host_setup_skipped
     return 0
   fi
 
@@ -104,7 +118,8 @@ get_jetpack_version() {
       printf "%s" "jp7-r38"
       ;;
     *)
-      info "Jetson detected (L4T $l4t_version) but version is not recognized — skipping host setup" >&2
+      warn "Jetson detected (L4T $l4t_version) but this L4T release is not recognized."
+      warn_host_setup_skipped
       ;;
   esac
 }

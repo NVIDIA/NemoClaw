@@ -1,14 +1,68 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh");
+
+const HOST_MUTATION_COMMANDS = [
+  "sudo",
+  "modprobe",
+  "sysctl",
+  "tee",
+  "update-alternatives",
+  "systemctl",
+  "python3",
+];
+
+function runSetupJetson(releaseLine: string | null): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-jetson-release-"));
+
+  try {
+    const stubDir = path.join(tempDir, "bin");
+    mkdirSync(stubDir);
+    for (const command of HOST_MUTATION_COMMANDS) {
+      const stubPath = path.join(stubDir, command);
+      writeFileSync(stubPath, "#!/usr/bin/env bash\nexit 0\n");
+      chmodSync(stubPath, 0o755);
+    }
+
+    const releasePath = path.join(tempDir, "nv_tegra_release");
+    if (releaseLine !== null) {
+      writeFileSync(releasePath, `${releaseLine}\n`);
+    }
+
+    const result = spawnSync("bash", [SCRIPT_PATH], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${stubDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        NEMOCLAW_TEST_NV_TEGRA_RELEASE_PATH: releasePath,
+      },
+    });
+
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
 
 function extractDaemonJsonPatcher(): string {
   const script = readFileSync(SCRIPT_PATH, "utf-8");
@@ -145,5 +199,56 @@ describe("setup-jetson daemon.json patcher", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("setup-jetson host setup on an unrecognized L4T release (#7612)", () => {
+  it("names the skipped host setup, its consequence, the recognized releases, and that installation continues", () => {
+    const result = runSetupJetson("# R35 (release), REVISION: 4.1, GCID: 12345678, BOARD: t186ref");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "Jetson detected (L4T 35.4) but this L4T release is not recognized.",
+    );
+    expect(result.stderr).toContain("Skipped Jetson host setup");
+    expect(result.stderr).toContain("iptables legacy mode");
+    expect(result.stderr).toContain("br_netfilter");
+    expect(result.stderr).toContain("sandbox pods cannot reach CoreDNS");
+    expect(result.stderr).toContain(
+      "Recognized L4T releases: 36.x (JetPack 6), 38.x (JetPack 7), and 39.x or later (JetPack 7).",
+    );
+    expect(result.stderr).toContain("Installation continues in an untested configuration.");
+  });
+
+  it("keeps the warning off stdout so the resolved version stays empty", () => {
+    const result = runSetupJetson("# R35 (release), REVISION: 4.1, GCID: 12345678, BOARD: t186ref");
+
+    expect(result.stdout).toBe("");
+  });
+
+  it("warns with the same detail when the release line cannot be parsed", () => {
+    const result = runSetupJetson("not a tegra release line");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("Jetson detected but the L4T release could not be parsed");
+    expect(result.stderr).toContain("Skipped Jetson host setup");
+    expect(result.stderr).toContain("Installation continues in an untested configuration.");
+    expect(result.stdout).toBe("");
+  });
+
+  it("stays silent on a host that is not a Jetson", () => {
+    const result = runSetupJetson(null);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
+
+  it("resolves a recognized release to its host configuration without warning", () => {
+    const result = runSetupJetson("# R36 (release), REVISION: 5.1, GCID: 12345678, BOARD: t186ref");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Jetson detected (jp6)");
+    expect(result.stderr).not.toContain("Skipped Jetson host setup");
   });
 });
