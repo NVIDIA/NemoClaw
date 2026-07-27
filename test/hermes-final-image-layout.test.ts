@@ -97,6 +97,12 @@ function readText(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
 
+function indexOfRequired(haystack: string, needle: string): number {
+  const index = haystack.indexOf(needle);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -158,31 +164,49 @@ describe("Hermes final image layout", () => {
     for (const copy of [npmPatchCopy, agentCopy, runtimeCopy, wrapperCopy, scanCopy]) {
       expect(finalStage).toContain(copy);
     }
-    expect(finalStage.indexOf(npmPatchCopy)).toBeLessThan(
-      finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
+    const npmPatch = indexOfRequired(finalStage, npmPatchCopy);
+    const agent = indexOfRequired(finalStage, agentCopy);
+    const runtime = indexOfRequired(finalStage, runtimeCopy);
+    const wrapper = indexOfRequired(finalStage, wrapperCopy);
+    const scan = indexOfRequired(finalStage, scanCopy);
+    const tarPatch = indexOfRequired(
+      finalStage,
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
-    expect(finalStage.indexOf(agentCopy)).toBeGreaterThan(
-      finalStage.indexOf("RUN _hermes_certifi="),
+    const certifiInstall = indexOfRequired(finalStage, "RUN _hermes_certifi=");
+    const agentChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/",
     );
-    expect(finalStage.indexOf(agentCopy)).toBeLessThan(
-      finalStage.indexOf("RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/"),
+    const configFind = indexOfRequired(finalStage, "RUN find /opt/nemoclaw-hermes-config");
+    const blueprintChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod -R a+rX /opt/nemoclaw-blueprint/",
     );
-    expect(finalStage.indexOf(runtimeCopy)).toBeGreaterThan(
-      finalStage.indexOf("RUN find /opt/nemoclaw-hermes-config"),
+    const tirithFinalizerHash = indexOfRequired(
+      finalStage,
+      '"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"',
     );
-    expect(finalStage.indexOf(runtimeCopy)).toBeLessThan(
-      finalStage.indexOf("RUN chmod -R a+rX /opt/nemoclaw-blueprint/"),
+    const pythonCheck = indexOfRequired(finalStage, "RUN test -x /usr/bin/python3");
+    const darwinCompatibility = indexOfRequired(
+      finalStage,
+      'RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]',
     );
-    expect(finalStage.indexOf(wrapperCopy)).toBeGreaterThan(
-      finalStage.indexOf('"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"'),
+    const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
+    const imageScan = indexOfRequired(
+      finalStage,
+      "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
     );
-    expect(finalStage.indexOf(wrapperCopy)).toBeLessThan(
-      finalStage.indexOf("RUN test -x /usr/bin/python3"),
-    );
-    expect(finalStage.indexOf(scanCopy)).toBeGreaterThan(
-      finalStage.indexOf('RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]'),
-    );
-    expect(finalStage.indexOf(scanCopy)).toBeLessThan(finalStage.indexOf("RUN check_metadata()"));
+
+    expect(npmPatch).toBeLessThan(tarPatch);
+    expect(agent).toBeGreaterThan(certifiInstall);
+    expect(agent).toBeLessThan(agentChmod);
+    expect(runtime).toBeGreaterThan(configFind);
+    expect(runtime).toBeLessThan(blueprintChmod);
+    expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
+    expect(wrapper).toBeLessThan(pythonCheck);
+    expect(scan).toBeGreaterThan(darwinCompatibility);
+    expect(scan).toBeLessThan(metadataCheck);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
@@ -195,12 +219,8 @@ describe("Hermes final image layout", () => {
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
-    expect(finalStage.indexOf("RUN check_metadata()")).toBeGreaterThan(
-      finalStage.indexOf(scanCopy),
-    );
-    expect(finalStage.indexOf("RUN check_metadata()")).toBeLessThan(
-      finalStage.indexOf("node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts"),
-    );
+    expect(metadataCheck).toBeGreaterThan(scan);
+    expect(metadataCheck).toBeLessThan(imageScan);
     expect(doctorLayer).toContain(
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );

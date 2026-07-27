@@ -8,6 +8,12 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 
+function indexOfRequired(haystack: string, needle: string): number {
+  const index = haystack.indexOf(needle);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
 describe("OpenClaw final image layout", () => {
   // source-shape-contract: compatibility -- Gateway-bound Dockerfiles remain parseable by Docker Engine's legacy builder while retaining intentional cache and scan boundaries
   it("uses legacy-compatible copy boundaries for repository payloads (#7611)", () => {
@@ -43,34 +49,47 @@ describe("OpenClaw final image layout", () => {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
 
-    const dependency = finalStage.indexOf(dependencyCopy);
-    const plugin = finalStage.indexOf(pluginCopy);
-    const patch = finalStage.indexOf(patchCopy);
-    const runtime = finalStage.indexOf(runtimeCopy);
-    expect(dependency).toBeLessThan(
-      finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
+    const dependency = indexOfRequired(finalStage, dependencyCopy);
+    const plugin = indexOfRequired(finalStage, pluginCopy);
+    const patch = indexOfRequired(finalStage, patchCopy);
+    const runtime = indexOfRequired(finalStage, runtimeCopy);
+    const scan = indexOfRequired(finalStage, scanCopy);
+    const tarPatch = indexOfRequired(
+      finalStage,
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
-    expect(
-      finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
-    ).toBeLessThan(
-      finalStage.indexOf(
-        "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
-      ),
+    const braceExpansionPatch = indexOfRequired(
+      finalStage,
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
     );
-    expect(plugin).toBeGreaterThan(finalStage.indexOf("RUN npm ci --omit=dev"));
-    expect(plugin).toBeLessThan(
-      finalStage.indexOf("RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/"),
+    const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
+    const pluginChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/",
     );
-    expect(patch).toBeGreaterThan(
-      finalStage.indexOf("RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime"),
+    const wechatInstall = indexOfRequired(
+      finalStage,
+      "RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime",
     );
-    expect(patch).toBeLessThan(
-      finalStage.indexOf("RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts"),
+    const patchChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts",
     );
-    expect(runtime).toBeGreaterThan(
-      finalStage.indexOf("RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0"),
+    const blueprintSetup = indexOfRequired(
+      finalStage,
+      "RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0",
     );
-    expect(runtime).toBeLessThan(finalStage.indexOf("RUN chmod 755 /usr/local/bin/nemoclaw-start"));
-    expect(finalStage.indexOf(scanCopy)).toBeLessThan(finalStage.indexOf("RUN check_metadata()"));
+    const runtimeChmod = indexOfRequired(finalStage, "RUN chmod 755 /usr/local/bin/nemoclaw-start");
+    const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
+
+    expect(dependency).toBeLessThan(tarPatch);
+    expect(tarPatch).toBeLessThan(braceExpansionPatch);
+    expect(plugin).toBeGreaterThan(pluginInstall);
+    expect(plugin).toBeLessThan(pluginChmod);
+    expect(patch).toBeGreaterThan(wechatInstall);
+    expect(patch).toBeLessThan(patchChmod);
+    expect(runtime).toBeGreaterThan(blueprintSetup);
+    expect(runtime).toBeLessThan(runtimeChmod);
+    expect(scan).toBeLessThan(metadataCheck);
   });
 });

@@ -394,11 +394,11 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(buildImage).toHaveBeenCalledOnce();
   });
 
-  it("renders the original Dockerfile after a local build failure", async () => {
+  it("renders the original Dockerfile for Hermes after a local build failure", async () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const result = await prepareSandboxCreateLaunchWithPrebuild({
-      agent: null,
+      agent: { name: "hermes" } as any,
       chatUiUrl: "",
       createArgs: ["--from", dockerfile, "--name", "demo"],
       env: {},
