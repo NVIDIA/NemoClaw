@@ -85,9 +85,8 @@ describe("node-tar image remediation contract", () => {
       patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
     const scanInputStage =
       scanPayloadLayer >= 0 ? namedStage(dockerfile, "hermes-scan-payload") : source;
-    const reviewedCopy = patchInputStage.indexOf(
-      "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
-    );
+    const flattenedPatchInputStage = patchInputStage.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
     const patchCopy = patchInputStage.indexOf(
       "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
     );
@@ -104,6 +103,15 @@ describe("node-tar image remediation contract", () => {
     const scanInputReady = scanPayloadLayer >= 0 ? scanPayloadLayer : scanCopy;
 
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
+    expect(
+      flattenedPatchInputStage.includes(
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+      ) ||
+        patchInputStage.includes(
+          "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
+        ),
+      file,
+    ).toBe(true);
     expect(patchCopy, file).toBeGreaterThan(reviewedCopy);
     expect(patchRun, file).toBeGreaterThan(patchInputReady);
     const aptInstall = source.indexOf(

@@ -54,10 +54,10 @@ Load `cut-release-tag`.
 The version is already known, so use a patch bump unless the maintainer selects another bump.
 Show the commit, changelog, carry-forward plan, label-retirement plan, and release notes draft.
 
-After the release plan freezes the candidate SHA, load `nemoclaw-maintainer-e2e`.
-Run full mode when that SHA has no applicable exact Brev Launchable evidence.
+After the release plan captures the candidate SHA, load `nemoclaw-maintainer-e2e`.
+Run full mode if that SHA has no applicable exact Brev Launchable evidence.
 Review the pre-tag E2E evidence ledger from `.github/workflows/e2e.yaml` at that commit.
-Require a successful `Exact staging Brev Launchable` job, matching qualification identity, and verified workspace absence.
+When full mode runs, require a successful `Exact staging Brev Launchable` job, matching qualification identity, and verified workspace absence.
 Each missing test result requires its own itemized maintainer exception.
 Missing or invalid qualification requires a separate itemized exception with run and job URLs, the result or missing receipt, and rationale.
 Do not ask for the release confirmation phrase until each required result has successful evidence or its own exception.

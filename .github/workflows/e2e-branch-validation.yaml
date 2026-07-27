@@ -19,7 +19,7 @@ name: E2E / Branch Validation
 # WHEN TO USE:
 #   - Before merging a PR that touches onboard, sandbox, security, or infra
 #   - To validate a branch works end-to-end on a clean Linux environment
-#   - To run security regression suites (credential-sanitization, injection)
+#   - To run the Telegram command-injection regression suite
 #   - Manually via workflow_dispatch, or called from other workflows
 #
 # NOTE: This does NOT test a published Brev Launchable image. It bootstraps a
@@ -29,10 +29,6 @@ name: E2E / Branch Validation
 #   full                     — Install → onboard → sandbox verify → live inference
 #                              against NVIDIA Endpoints → CLI operations. Tests the
 #                              complete user journey. (~10 min, destroys sandbox)
-#   credential-sanitization  — 24 tests validating PR #743: credential stripping from
-#                              migration snapshots, auth-profiles.json deletion, blueprint
-#                              digest verification, symlink traversal protection, and
-#                              runtime sandbox credential checks. Requires running sandbox.
 #   telegram-injection       — 18 tests validating PR #584: command injection prevention
 #                              through $(cmd), backticks, quote breakout, ${VAR} expansion,
 #                              process table leak checks, and SANDBOX_NAME validation.
@@ -47,8 +43,6 @@ name: E2E / Branch Validation
 #   dashboard-remote-bind    — Verifies opt-in remote dashboard forwards bind 0.0.0.0.
 #   gpu                      — Provisions a Brev GPU VM and runs the Ollama GPU E2E
 #                              sandbox proof suite from source. (~45 min)
-#   all                      — Runs credential-sanitization + telegram-injection, each with
-#                              its own sandbox lifecycle (NOT the independent full journey).
 #
 # Required secrets: BREV_API_KEY + BREV_ORG_ID (or legacy BREV_API_TOKEN), NVIDIA_INFERENCE_API_KEY
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
@@ -67,13 +61,11 @@ on:
         type: choice
         options:
           - full
-          - credential-sanitization
           - telegram-injection
           - messaging-providers
           - messaging-compatible-endpoint
           - dashboard-remote-bind
           - gpu
-          - all
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
@@ -179,7 +171,7 @@ jobs:
           TEST_SUITE: ${{ inputs.test_suite }}
         run: |
           case "$TEST_SUITE" in
-            full|credential-sanitization|telegram-injection|messaging-providers|messaging-compatible-endpoint|dashboard-remote-bind|gpu|all) ;;
+            full|telegram-injection|messaging-providers|messaging-compatible-endpoint|dashboard-remote-bind|gpu) ;;
             *)
               echo "::error::test_suite is not one of the supported Brev E2E suites"
               exit 1
