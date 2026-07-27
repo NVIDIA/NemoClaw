@@ -1269,7 +1269,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
       role: "operator",
       roles: ["operator"],
       scopes: ["operator.write"],
-      isRepair: true,
+      isRepair: false,
       ts: now,
     },
     "request-1": {
@@ -1281,7 +1281,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
       role: "operator",
       roles: ["operator"],
       scopes: ["operator.write"],
-      isRepair: true,
+      isRepair: false,
       ts: now,
     },
     "request-2": {
@@ -1385,6 +1385,7 @@ const repairRequest = {
   scopes: ["operator.write"],
   isRepair: true,
 };
+const preconvergenceWriteRequest = { ...repairRequest, isRepair: false };
 const pairingOnly = ["operator.pairing"];
 const missingPairedViewScopes = nemoclawResolveApprovePairingScopesForRequest(repairRequest, undefined);
 if (JSON.stringify(missingPairedViewScopes) !== JSON.stringify(pairingOnly)) throw new Error("missing paired CLI view requested read/write before canonical approval");
@@ -1395,13 +1396,13 @@ const roleKeyedTokenScopes = nemoclawResolveApprovePairingScopesForRequest(repai
   tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
 });
 if (JSON.stringify(roleKeyedTokenScopes) !== JSON.stringify(pairingOnly)) throw new Error("role-keyed paired CLI view requested read/write before canonical approval");
-const storedAuthContext = nemoclawResolveSelfRepairPairingContext(repairRequest, {
+const storedAuthContext = nemoclawResolveSelfRepairPairingContext(preconvergenceWriteRequest, {
   deviceId: "device-1",
   publicKey: "public-key-1",
   scopes: ["operator.pairing"],
   tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
 });
-if (storedAuthContext?.useStoredDeviceAuth !== true) throw new Error("exact same-device repair did not select stored device auth");
+if (storedAuthContext?.useStoredDeviceAuth !== true) throw new Error("exact pre-convergence write transition did not select stored device auth");
 const mismatchedStoredAuthContext = nemoclawResolveSelfRepairPairingContext(repairRequest, {
   deviceId: "device-1",
   publicKey: "other-public-key",
