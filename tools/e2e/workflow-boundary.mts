@@ -109,7 +109,6 @@ export interface FocusedE2eJob {
 }
 
 export interface StagingBrevLaunchableDispatchEvaluation {
-  failReadiness: boolean;
   runQualification: boolean;
 }
 
@@ -676,7 +675,6 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
   eventName: "schedule" | "workflow_dispatch";
   includeStagingBrevLaunchable?: boolean;
   jobs?: string;
-  readinessEnabled?: boolean;
   targets?: string;
   trustedMain?: boolean;
 }): StagingBrevLaunchableDispatchEvaluation {
@@ -690,12 +688,11 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
   const explicitlySelected =
     input.eventName === "workflow_dispatch" &&
     splitSelector(jobs).includes("staging-brev-launchable");
-  const requested = input.eventName === "schedule" || fullDispatch || explicitlySelected;
+  const requested = fullDispatch || explicitlySelected;
   const trustedMain = input.trustedMain !== false;
 
   return {
-    failReadiness: fullDispatch && (input.readinessEnabled !== true || !trustedMain),
-    runQualification: requested && input.readinessEnabled === true && trustedMain,
+    runQualification: requested && trustedMain,
   };
 }
 
@@ -4185,10 +4182,10 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
   }
   const expectedSelector =
-    "${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}";
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
   if (job.if !== expectedSelector) {
     errors.push(
-      "staging-brev-launchable must run for schedules, explicit selection, or an empty-selector full dispatch",
+      "staging-brev-launchable must run for explicit selection or an empty-selector full dispatch",
     );
   }
   const concurrency = asRecord(job.concurrency);
@@ -4258,7 +4255,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
     [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
   ] as const) {
-    const expected = `\${{ ${trustedRun} && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
+    const expected = `\${{ ${trustedRun} && github.event_name == 'workflow_dispatch' && secrets.${secret} || '' }}`;
     if (env[key] !== expected) {
       errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
     }
@@ -4279,35 +4276,12 @@ function validateStagingBrevLaunchableInput(
   if (
     !description.includes("Exact staging Brev Launchable") ||
     !description.includes("jobs and targets are empty") ||
-    !description.includes("persistent repository readiness gate")
+    !description.includes("full E2E run")
   ) {
     errors.push(
-      "workflow_dispatch include_staging_brev_launchable input must document qualification scope and readiness",
+      "workflow_dispatch include_staging_brev_launchable input must document full-run qualification scope",
     );
   }
-}
-
-function validateStagingBrevLaunchableReadinessJob(errors: string[], jobs: WorkflowRecord): void {
-  const job = asRecord(jobs["staging-brev-launchable-readiness"]);
-  if (job.needs !== "generate-matrix") {
-    errors.push("staging-brev-launchable-readiness must depend on generate-matrix");
-  }
-  const expectedIf =
-    "${{ github.event_name == 'workflow_dispatch' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && (github.repository != 'NVIDIA/NemoClaw' || github.ref != 'refs/heads/main' || vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED != 'true') }}";
-  if (job.if !== expectedIf) {
-    errors.push(
-      "staging-brev-launchable-readiness must fail only full dispatches with disabled readiness",
-    );
-  }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("staging-brev-launchable-readiness must run on ubuntu-latest");
-  }
-  const steps = asSteps(job.steps);
-  const fail = namedStep(steps, "Fail when staging Brev Launchable is not ready");
-  requireRunContains(errors, fail, "NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED=true");
-  requireRunContains(errors, fail, "protected environment");
-  requireRunContains(errors, fail, "staging Launchable ID");
-  requireRunContains(errors, fail, "exit 1");
 }
 
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
@@ -4819,7 +4793,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   validateSharedE2eJob(errors, jobs);
   validateStagingBrevLaunchableJob(errors, jobs);
-  validateStagingBrevLaunchableReadinessJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration", "credential-migration");
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");

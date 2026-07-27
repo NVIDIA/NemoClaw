@@ -279,7 +279,7 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 
 - Plan generation fails: fix the named precondition, then regenerate the plan.
 - Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
-- Full-mode E2E readiness is disabled: stop before dispatch. Ask a release administrator to complete the protected environment, secrets, staging Launchable ID, and ownership setup, then enable the persistent readiness variable.
+- Full-mode E2E waits for protected-environment approval: keep the run pending until a maintainer approves or rejects the job.
 - Full-mode E2E ran for another SHA or skipped `Exact staging Brev Launchable`: reject the run and dispatch full mode for the plan candidate SHA.
 - Qualification or cleanup evidence is missing or invalid: reject the run. Do not infer qualification from the workflow conclusion.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
