@@ -1374,6 +1374,36 @@ const identity = (suffix) => ({
   clientId: "cli",
   clientMode: "cli",
 });
+const coldCloneDevice = {
+  deviceId: "cold-clone-device",
+  publicKey: "cold-clone-public-key",
+  role: "operator",
+  roles: ["operator"],
+  clientId: "cli",
+  clientMode: "cli",
+  scopes: ["operator.write"],
+};
+await pairingRuntime.m(coldCloneDevice, stateDir);
+const coldPendingState = JSON.parse(
+  fs.readFileSync(path.join(stateDir, "devices", "pending.json"), "utf8"),
+);
+const coldRequests = Object.values(coldPendingState).filter(
+  (request) => request.deviceId === coldCloneDevice.deviceId,
+);
+if (coldRequests.length !== 1) throw new Error("cold clone did not create exactly one pending request");
+const coldRequest = coldRequests[0];
+if (coldRequest.isRepair !== false) throw new Error("cold clone request was not pre-convergence");
+const coldPairedState = JSON.parse(
+  fs.readFileSync(path.join(stateDir, "devices", "paired.json"), "utf8"),
+);
+if (coldPairedState[coldCloneDevice.deviceId]) throw new Error("cold clone unexpectedly had paired state");
+const coldStoredAuthContext = nemoclawResolveSelfRepairPairingContext(
+  coldRequest,
+  coldPairedState[coldCloneDevice.deviceId],
+);
+if (coldStoredAuthContext?.useStoredDeviceAuth === true) {
+  throw new Error("cold clone request incorrectly selected stored device auth");
+}
 const repairRequest = {
   requestId: "cli-scope-repair",
   deviceId: "device-1",

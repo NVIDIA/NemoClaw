@@ -5,7 +5,7 @@ import {
   type RestoreGatewayPairingVerificationResult,
   verifyRestoredSandboxGatewayPairing,
 } from "../../adapters/openshell/restore-gateway-pairing";
-import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
+import { type AutoPairApprovalReceipt, runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
   CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
@@ -18,7 +18,7 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 export type RestoreGatewayPairingDeps = {
   restartRestoredSandboxGateway: (sandboxName: string) => void;
   warmupScopeUpgrade: (sandboxName: string) => void;
-  approveRestoredClonePairing: (sandboxName: string) => void;
+  approveRestoredClonePairing: (sandboxName: string) => AutoPairApprovalReceipt | void;
   verifyGatewayPairing: (sandboxName: string) => RestoreGatewayPairingVerificationResult;
 };
 
@@ -28,6 +28,8 @@ const RESTORED_CLONE_PAIRING_BUDGET = {
   approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
   timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
 } as const;
+
+class RestoreGatewayPairingClassifiedError extends Error {}
 
 type RestoredSandboxGatewayRestartDeps = {
   restartSandboxGateway: (
@@ -48,15 +50,17 @@ export function restartRestoredSandboxGateway(
 ): void {
   const result = deps.restartSandboxGateway(sandboxName, { quiet: true });
   if (!result.ok) {
-    throw new Error(`${result.failureLayer}: ${result.detail}`);
+    throw new RestoreGatewayPairingClassifiedError(result.failureLayer);
   }
 }
 
-export function approveRestoredClonePairing(sandboxName: string): void {
-  runSandboxAutoPairApprovalPass(sandboxName, {
+export function approveRestoredClonePairing(sandboxName: string): AutoPairApprovalReceipt {
+  const result = runSandboxAutoPairApprovalPass(sandboxName, {
     budget: RESTORED_CLONE_PAIRING_BUDGET,
     localDeviceOnly: true,
+    receipt: true,
   });
+  return result.receipt ?? "exec-failed";
 }
 
 function defaultRestoreGatewayPairingDeps(): RestoreGatewayPairingDeps {
@@ -77,21 +81,21 @@ export async function establishRestoredSandboxGatewayPairing(
   try {
     deps.restartRestoredSandboxGateway(targetSandbox);
     deps.warmupScopeUpgrade(targetSandbox);
-    deps.approveRestoredClonePairing(targetSandbox);
+    const approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
     // Publish the clone's approved pairing transition before the one ordinary
     // authenticated verifier. The verifier alone decides success.
     deps.restartRestoredSandboxGateway(targetSandbox);
     const verification = deps.verifyGatewayPairing(targetSandbox);
     if (!verification.ok) {
-      throw new Error(
-        `the authenticated gateway verification run failed (${verification.failureLayer})`,
+      throw new RestoreGatewayPairingClassifiedError(
+        `the authenticated gateway verification run failed (${verification.failureLayer}; approval=${approvalReceipt})`,
       );
     }
   } catch (err) {
+    const classification =
+      err instanceof RestoreGatewayPairingClassifiedError ? err.message : "unexpected-failure";
     throw new Error(
-      `could not establish gateway pairing for '${targetSandbox}': ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      `could not establish gateway pairing for '${targetSandbox}': ${classification}`,
     );
   }
 }

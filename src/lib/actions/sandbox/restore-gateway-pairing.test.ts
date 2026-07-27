@@ -19,7 +19,10 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       order.push("restart");
     });
     const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    const approveRestoredClonePairing = vi.fn(() => order.push("approve"));
+    const approveRestoredClonePairing = vi.fn(() => {
+      order.push("approve");
+      return "approved-one" as const;
+    });
     const verifyGatewayPairing = vi.fn(() => {
       order.push("verify");
       return { ok: true as const };
@@ -42,21 +45,41 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(order).toEqual(["restart", "warmup", "approve", "restart", "verify"]);
   });
 
+  it("keeps the ordinary verifier as the sole success condition (#7431)", async () => {
+    const restartRestoredSandboxGateway = vi.fn();
+    const warmupScopeUpgrade = vi.fn();
+    const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
+    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
+
+    await establishRestoredSandboxGatewayPairing("beta", {
+      restartRestoredSandboxGateway,
+      warmupScopeUpgrade,
+      approveRestoredClonePairing,
+      verifyGatewayPairing,
+    });
+
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
+    expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
+    expect(verifyGatewayPairing).toHaveBeenCalledOnce();
+  });
+
   it("fails before pairing when the restored gateway cannot restart (#7431)", async () => {
     const warmupScopeUpgrade = vi.fn();
     const approveRestoredClonePairing = vi.fn();
     const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
 
-    await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway: vi.fn(() => {
-          throw new Error("gateway did not restart");
-        }),
-        warmupScopeUpgrade,
-        approveRestoredClonePairing,
-        verifyGatewayPairing,
+    const failure = await establishRestoredSandboxGatewayPairing("beta", {
+      restartRestoredSandboxGateway: vi.fn(() => {
+        throw new Error("raw gateway output must stay private");
       }),
-    ).rejects.toThrow("gateway did not restart");
+      warmupScopeUpgrade,
+      approveRestoredClonePairing,
+      verifyGatewayPairing,
+    }).catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("unexpected-failure");
+    expect((failure as Error).message).not.toContain("raw gateway output");
     expect(warmupScopeUpgrade).not.toHaveBeenCalled();
     expect(approveRestoredClonePairing).not.toHaveBeenCalled();
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
@@ -72,7 +95,10 @@ describe("establishRestoredSandboxGatewayPairing", () => {
         throw new Error("gateway did not restart after approval");
       });
     const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
-    const approveRestoredClonePairing = vi.fn(() => order.push("approve"));
+    const approveRestoredClonePairing = vi.fn(() => {
+      order.push("approve");
+      return "approved-one" as const;
+    });
     const verifyGatewayPairing = vi.fn(() => {
       order.push("verify");
       return { ok: true as const };
@@ -85,7 +111,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
         approveRestoredClonePairing,
         verifyGatewayPairing,
       }),
-    ).rejects.toThrow("gateway did not restart after approval");
+    ).rejects.toThrow("unexpected-failure");
     expect(order).toEqual(["restart:initial", "warmup", "approve", "restart:approved"]);
     expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
@@ -105,7 +131,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
         approveRestoredClonePairing,
         verifyGatewayPairing,
       }),
-    ).rejects.toThrow("gateway not up");
+    ).rejects.toThrow("unexpected-failure");
     expect(approveRestoredClonePairing).not.toHaveBeenCalled();
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
   });
@@ -113,7 +139,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
   it("fails after one ordinary verifier without retrying the handshake (#7431)", async () => {
     const restartRestoredSandboxGateway = vi.fn();
     const warmupScopeUpgrade = vi.fn();
-    const approveRestoredClonePairing = vi.fn();
+    const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
     const verifyGatewayPairing = vi.fn(() => ({
       ok: false as const,
       failureLayer: "scope-upgrade-pending" as const,
@@ -126,7 +152,9 @@ describe("establishRestoredSandboxGatewayPairing", () => {
         approveRestoredClonePairing,
         verifyGatewayPairing,
       }),
-    ).rejects.toThrow("authenticated gateway verification run failed (scope-upgrade-pending)");
+    ).rejects.toThrow(
+      "authenticated gateway verification run failed (scope-upgrade-pending; approval=approve-failed)",
+    );
     expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
     expect(warmupScopeUpgrade).toHaveBeenCalledOnce();
     expect(approveRestoredClonePairing).toHaveBeenCalledOnce();
@@ -148,15 +176,21 @@ describe("restartRestoredSandboxGateway", () => {
     expect(restartSandboxGateway).toHaveBeenCalledWith("beta", { quiet: true });
   });
 
-  it("propagates the classified gateway restart failure (#7431)", () => {
-    expect(() =>
+  it("propagates only the classified gateway restart failure (#7431)", () => {
+    let failure: unknown;
+    try {
       restartRestoredSandboxGateway("beta", {
         restartSandboxGateway: () => ({
           ok: false,
           failureLayer: "health timeout",
-          detail: "gateway process did not become healthy",
+          detail: "raw gateway output must stay private",
         }),
-      }),
-    ).toThrow("health timeout: gateway process did not become healthy");
+      });
+    } catch (err) {
+      failure = err;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("health timeout");
+    expect((failure as Error).message).not.toContain("raw gateway output");
   });
 });

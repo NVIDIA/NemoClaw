@@ -10,10 +10,12 @@ import { describe, expect, it } from "vitest";
 import {
   AUTO_PAIR_MAX_APPROVALS,
   buildAutoPairApprovalScript,
+  parseAutoPairApprovalReceipt,
   readAutoPairApprovalPolicyModule,
 } from "./auto-pair-approval";
 
 const SUMMARY_MARKER = "__NEMOCLAW_AUTO_PAIR_APPROVED__";
+const RECEIPT_MARKER = "__NEMOCLAW_AUTO_PAIR_RECEIPT__";
 
 describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
   it("builds the bounded allowlisted approval pass", () => {
@@ -33,21 +35,25 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
   it("adds local-device filtering only for restored-clone approval", () => {
     const ordinary = buildAutoPairApprovalScript("UE9MSUNZ");
     const restoredClone = buildAutoPairApprovalScript("UE9MSUNZ", {
+      emitReceipt: true,
       localDeviceOnly: true,
       budget: { maxApprovals: 1 },
     });
 
     expect(ordinary).not.toContain("local_identity_public_key");
     expect(restoredClone).toContain("local_identity_public_key");
-    expect(restoredClone).toContain("len(related_pending) != 1");
+    expect(restoredClone).toContain("if not related_pending:");
+    expect(restoredClone).toContain("len(related_pending) > 1");
     expect(restoredClone).toContain("pending = related_pending");
     expect(restoredClone).toContain("MAX_APPROVALS = 1");
+    expect(restoredClone).toContain(RECEIPT_MARKER);
   });
 
   it("omits the summary marker by default and appends it when requested", () => {
     const silent = buildAutoPairApprovalScript("UE9MSUNZ");
     const reporting = buildAutoPairApprovalScript("UE9MSUNZ", { emitSummary: true });
     expect(silent).not.toContain(SUMMARY_MARKER);
+    expect(silent).not.toContain(RECEIPT_MARKER);
     expect(reporting).toContain(`print(f'${SUMMARY_MARKER}={approved_count}')`);
     // The reporting script is the silent script with exactly the summary line
     // inserted before the heredoc terminator — nothing else changes.
@@ -61,6 +67,19 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(module).toContain("def approval_request_decision");
     expect(module).toContain("def gateway_approval_env");
     expect(module).not.toContain("recover_failed_scope_approval");
+  });
+
+  it("accepts exactly one terminal fixed receipt", () => {
+    expect(
+      parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=approved-one\n`),
+    ).toBe("approved-one");
+    for (const output of [
+      `${RECEIPT_MARKER}=approved-one\nlater output\n`,
+      `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
+      `${RECEIPT_MARKER}=raw-request-id\n`,
+    ]) {
+      expect(parseAutoPairApprovalReceipt(output)).toBeNull();
+    }
   });
 });
 
@@ -189,6 +208,7 @@ process.exit(2);
       Buffer.from(policy as string, "utf-8").toString("base64"),
       {
         emitSummary: true,
+        emitReceipt: true,
         localDeviceOnly: true,
         budget: { maxApprovals: 1 },
       },
@@ -220,6 +240,10 @@ if (args[0] === "devices" && args[1] === "list") {
   process.exit(0);
 }
 if (args[0] === "devices" && args[1] === "approve") {
+  if (process.env.NEMOCLAW_APPROVE_FAIL === "1") {
+    process.stderr.write("raw approval output must stay private\\n");
+    process.exit(1);
+  }
   fs.appendFileSync(${JSON.stringify(approvalsFile)}, args[2] + "\\n");
   fs.appendFileSync(
     ${JSON.stringify(approveEnvFile)},
@@ -236,13 +260,18 @@ process.exit(2);
 `,
         { mode: 0o755 },
       );
-      const run = (pending: unknown[]) =>
+      const run = (
+        pending: unknown[],
+        options: { rawListResponse?: string; failApproval?: boolean } = {},
+      ) =>
         spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
             ...process.env,
             PATH: `${tmpDir}:/usr/bin:/bin`,
-            NEMOCLAW_LIST_RESPONSE: JSON.stringify({ pending, paired: [] }),
+            NEMOCLAW_LIST_RESPONSE:
+              options.rawListResponse ?? JSON.stringify({ pending, paired: [] }),
+            NEMOCLAW_APPROVE_FAIL: options.failApproval ? "1" : "0",
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
             OPENCLAW_GATEWAY_TOKEN: "secret-token",
@@ -278,6 +307,7 @@ process.exit(2);
       const initial = run([foreignRequest, localRequest]);
       expect(initial.status).toBe(0);
       expect(initial.stdout).toContain(`${SUMMARY_MARKER}=1`);
+      expect(initial.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
       expect(readApprovals()).toEqual(["clone-pairing"]);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
 
@@ -314,6 +344,31 @@ process.exit(2);
       expect(writeOnlyInitial.status).toBe(0);
       expect(writeOnlyInitial.stdout).toContain(`${SUMMARY_MARKER}=1`);
       expect(readApprovals()).toEqual(["clone-write-only"]);
+
+      resetLogs();
+      const listFailed = run([], { rawListResponse: "raw list output must stay private" });
+      expect(listFailed.stdout).toContain(`${RECEIPT_MARKER}=list-failed`);
+      expect(`${listFailed.stdout}${listFailed.stderr}`).not.toContain("raw list output");
+
+      resetLogs();
+      const noMatch = run([foreignRequest]);
+      expect(noMatch.stdout).toContain(`${RECEIPT_MARKER}=clone-no-match`);
+
+      resetLogs();
+      const ambiguous = run([
+        repairRequest,
+        { ...repairRequest, requestId: "second-clone-upgrade" },
+      ]);
+      expect(ambiguous.stdout).toContain(`${RECEIPT_MARKER}=clone-ambiguous`);
+
+      resetLogs();
+      const rejected = run([{ ...repairRequest, publicKey: "mismatched-public-key" }]);
+      expect(rejected.stdout).toContain(`${RECEIPT_MARKER}=request-rejected`);
+
+      resetLogs();
+      const approveFailed = run([repairRequest], { failApproval: true });
+      expect(approveFailed.stdout).toContain(`${RECEIPT_MARKER}=approve-failed`);
+      expect(`${approveFailed.stdout}${approveFailed.stderr}`).not.toContain("raw approval output");
 
       const { scopes: _ignoredScopes, ...repairWithoutScopes } = repairRequest;
       for (const rejected of [

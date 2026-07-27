@@ -80,7 +80,33 @@ export type AutoPairApprovalResult = {
   reported: boolean;
   /** Number of pending requests approved this pass (capture mode only). */
   approved: number;
+  /** Fixed clone-only diagnostic; never contains command output or identifiers. */
+  receipt: AutoPairApprovalReceipt | null;
 };
+
+export type AutoPairApprovalReceipt =
+  | "policy-missing"
+  | "exec-failed"
+  | "list-failed"
+  | "clone-no-match"
+  | "clone-ambiguous"
+  | "request-rejected"
+  | "approve-failed"
+  | "approved-one";
+
+const AUTO_PAIR_RECEIPT_LINE_RE =
+  /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
+
+export function parseAutoPairApprovalReceipt(output: string): AutoPairApprovalReceipt | null {
+  const markerPrefix = "__NEMOCLAW_AUTO_PAIR_RECEIPT__=";
+  const receiptLines = output.split(/\r?\n/).filter((line) => line.startsWith(markerPrefix));
+  const terminalLine = output.trimEnd().split(/\r?\n/).at(-1);
+  if (receiptLines.length !== 1 || terminalLine !== receiptLines[0]) {
+    return null;
+  }
+  const match = receiptLines[0].match(AUTO_PAIR_RECEIPT_LINE_RE);
+  return (match?.[1] as AutoPairApprovalReceipt | undefined) ?? null;
+}
 
 export function readAutoPairApprovalPolicyModule(): string | null {
   try {
@@ -94,16 +120,16 @@ export function readAutoPairApprovalPolicyModule(): string | null {
 }
 
 /**
- * Build the in-sandbox sh+python approval-pass script. When `emitSummary` is
- * false the output is byte-identical to the historical connect-time script so
- * the connect approval-pass tests keep asserting against a stable payload; when
- * true it appends a single machine-readable summary marker so the doctor
- * recovery path can report how many upgrades it approved.
+ * Build the in-sandbox sh+python approval-pass script. With no emit option the
+ * output is byte-identical to the historical connect-time script. `emitSummary`
+ * adds the doctor's count; `emitReceipt` adds one fixed restored-clone
+ * classification without forwarding command output or request identifiers.
  */
 export function buildAutoPairApprovalScript(
   approvalPolicyModuleB64: string,
   options: {
     emitSummary?: boolean;
+    emitReceipt?: boolean;
     budget?: AutoPairApprovalBudget;
     localDeviceOnly?: boolean;
   } = {},
@@ -111,6 +137,27 @@ export function buildAutoPairApprovalScript(
   const summaryLine = options.emitSummary
     ? "print(f'__NEMOCLAW_AUTO_PAIR_APPROVED__={approved_count}')\n"
     : "";
+  const receiptPrelude = options.emitReceipt
+    ? `
+RECEIPT_MARKER = '__NEMOCLAW_AUTO_PAIR_RECEIPT__'
+
+def exit_with_receipt(receipt):
+    print(f'{RECEIPT_MARKER}={receipt}')
+    sys.exit(0)
+`
+    : "";
+  const exitWithReceipt = (receipt: AutoPairApprovalReceipt) =>
+    options.emitReceipt ? `exit_with_receipt('${receipt}')` : "sys.exit(0)";
+  const receiptSuccessLine = options.emitReceipt ? "exit_with_receipt('approved-one')\n" : "";
+  const rejectedRequestAction = options.emitReceipt
+    ? "exit_with_receipt('request-rejected')"
+    : "continue";
+  const failedApproveBranch = options.emitReceipt
+    ? "        else:\n            exit_with_receipt('approve-failed')\n"
+    : "";
+  const failedApproveAction = options.emitReceipt
+    ? "exit_with_receipt('approve-failed')"
+    : "continue";
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
@@ -187,24 +234,24 @@ try:
     with open(os.path.join(state_dir, 'identity', 'device.json'), encoding='utf-8') as handle:
         local_identity = json.load(handle)
 except (OSError, ValueError):
-    sys.exit(0)
+    ${exitWithReceipt("request-rejected")}
 if not isinstance(local_identity, dict):
-    sys.exit(0)
+    ${exitWithReceipt("request-rejected")}
 local_device_id = str(local_identity.get('deviceId', '') or '').strip()
 local_public_key = local_identity_public_key(local_identity)
 if not local_device_id or not local_public_key:
-    sys.exit(0)
+    ${exitWithReceipt("request-rejected")}
 try:
     local_public_key_raw = base64.urlsafe_b64decode(
         local_public_key + '=' * (-len(local_public_key) % 4),
     )
 except (ValueError, binascii.Error):
-    sys.exit(0)
+    ${exitWithReceipt("request-rejected")}
 if (
     len(local_public_key_raw) != 32
     or hashlib.sha256(local_public_key_raw).hexdigest() != local_device_id
 ):
-    sys.exit(0)
+    ${exitWithReceipt("request-rejected")}
 
 def is_local_pairing_transition(device):
     request_id = device.get('requestId')
@@ -237,14 +284,18 @@ related_pending = [
         or str(device.get('publicKey', '') or '').strip() == local_public_key
     )
 ]
-if len(related_pending) != 1 or not is_local_pairing_transition(related_pending[0]):
-    sys.exit(0)
+if not related_pending:
+    ${exitWithReceipt("clone-no-match")}
+if len(related_pending) > 1:
+    ${exitWithReceipt("clone-ambiguous")}
+if not is_local_pairing_transition(related_pending[0]):
+    ${exitWithReceipt("request-rejected")}
 local_request_id = related_pending[0].get('requestId')
 if sum(
     1 for device in pending
     if isinstance(device, dict) and device.get('requestId') == local_request_id
 ) != 1:
-    sys.exit(0)
+    ${exitWithReceipt("clone-ambiguous")}
 pending = related_pending
 `
     : "";
@@ -259,7 +310,7 @@ import json
 import os
 import subprocess
 import sys
-
+${receiptPrelude}
 try:
     policy_source = base64.b64decode(
         os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
@@ -269,7 +320,7 @@ try:
     approval_request_decision = policy_globals['approval_request_decision']
     gateway_approval_env = policy_globals['gateway_approval_env']
 except Exception:
-    sys.exit(0)
+    ${exitWithReceipt("policy-missing")}
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 MAX_APPROVALS = ${maxApprovals}
@@ -280,18 +331,18 @@ try:
         capture_output=True, text=True, timeout=${listTimeoutS},
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    sys.exit(0)
+    ${exitWithReceipt("list-failed")}
 if proc.returncode != 0 or not proc.stdout.strip():
-    sys.exit(0)
+    ${exitWithReceipt("list-failed")}
 try:
     data = json.loads(proc.stdout)
 except ValueError:
-    sys.exit(0)
+    ${exitWithReceipt("list-failed")}
 if not isinstance(data, dict):
-    sys.exit(0)
+    ${exitWithReceipt("list-failed")}
 pending = data.get('pending')
 if not isinstance(pending, list):
-    sys.exit(0)${localDeviceFilter}
+    ${exitWithReceipt("list-failed")}${localDeviceFilter}
 approved_count = 0
 attempted_count = 0
 seen_request_ids = set()
@@ -305,7 +356,7 @@ for device in pending:
         continue
     decision = approval_request_decision(device)
     if not decision['allowed']:
-        continue
+        ${rejectedRequestAction}
     seen_request_ids.add(request_id)
     approve_env = gateway_approval_env(os.environ)
     attempted_count += 1
@@ -316,9 +367,9 @@ for device in pending:
         )
         if approve_proc.returncode == 0:
             approved_count += 1
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        continue
-${summaryLine}PYAPPROVE
+${failedApproveBranch}    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        ${failedApproveAction}
+${summaryLine}${receiptSuccessLine}PYAPPROVE
 exit 0
 `;
 }
@@ -329,26 +380,34 @@ exit 0
  * unreachable, missing policy helper) are swallowed: callers treat this as
  * best-effort and must never let it throw.
  *
- * When `capture` is true the script emits a summary marker and this function
- * parses the approved count so doctor can report a repair outcome; otherwise it
- * runs silently like the original connect-time pass.
+ * `capture` emits the doctor's count. The separate clone-only `receipt` option
+ * captures and parses one fixed classification; ordinary callers remain
+ * silent, and no captured command output is returned.
  */
 export function runSandboxAutoPairApprovalPass(
   sandboxName: string,
   options: {
     capture?: boolean;
+    receipt?: boolean;
     budget?: AutoPairApprovalBudget;
     localDeviceOnly?: boolean;
   } = {},
 ): AutoPairApprovalResult {
-  const capture = options.capture === true;
+  const emitReceipt = options.receipt === true && options.localDeviceOnly === true;
+  const capture = options.capture === true || emitReceipt;
   const approvalPolicyModule = readAutoPairApprovalPolicyModule();
   if (!approvalPolicyModule) {
-    return { attempted: false, reported: false, approved: 0 };
+    return {
+      attempted: false,
+      reported: false,
+      approved: 0,
+      receipt: emitReceipt ? "policy-missing" : null,
+    };
   }
   const approvalPolicyModuleB64 = Buffer.from(approvalPolicyModule, "utf-8").toString("base64");
   const script = buildAutoPairApprovalScript(approvalPolicyModuleB64, {
-    emitSummary: capture,
+    emitSummary: options.capture === true,
+    emitReceipt,
     budget: options.budget,
     localDeviceOnly: options.localDeviceOnly,
   });
@@ -370,16 +429,27 @@ export function runSandboxAutoPairApprovalPass(
         timeout: outerTimeoutMs,
       },
     );
-    if (!capture) {
-      return { attempted: true, reported: false, approved: 0 };
+    const output = String(result.stdout || "");
+    const receipt: AutoPairApprovalReceipt | null = !emitReceipt
+      ? null
+      : result.error || result.status !== 0 || result.signal
+        ? "exec-failed"
+        : (parseAutoPairApprovalReceipt(output) ?? "exec-failed");
+    if (!options.capture) {
+      return { attempted: true, reported: false, approved: 0, receipt };
     }
-    const match = String(result.stdout || "").match(/__NEMOCLAW_AUTO_PAIR_APPROVED__=(\d+)/);
+    const match = output.match(/__NEMOCLAW_AUTO_PAIR_APPROVED__=(\d+)/);
     if (!match) {
-      return { attempted: true, reported: false, approved: 0 };
+      return { attempted: true, reported: false, approved: 0, receipt };
     }
-    return { attempted: true, reported: true, approved: Number(match[1]) };
+    return { attempted: true, reported: true, approved: Number(match[1]), receipt };
   } catch {
     /* defense-in-depth — never throw from the connect or doctor path */
-    return { attempted: true, reported: false, approved: 0 };
+    return {
+      attempted: true,
+      reported: false,
+      approved: 0,
+      receipt: emitReceipt ? "exec-failed" : null,
+    };
   }
 }
