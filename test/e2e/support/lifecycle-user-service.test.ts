@@ -43,20 +43,24 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
     try {
       const env = buildAvailabilityProbeEnv({
         HOME: home,
-        PATH: `${bin}:/usr/bin:/bin`,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
       });
       const staged = execFileSync(
         "bash",
         ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
-        { encoding: "utf8", env },
+        { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
       );
 
       expect(staged).toContain("NEMOCLAW_E2E_GATEWAY_USER_SERVICE=staged");
       expect(fs.readFileSync(unit, "utf8")).toContain(`ExecStart=${bin}/openshell-gateway`);
       expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
 
-      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRemovalScript()], { env });
+      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRemovalScript()], {
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
 
       expect(fs.existsSync(unit)).toBe(false);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
@@ -91,7 +95,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       const output = execFileSync(
         "bash",
         ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
-        { encoding: "utf8", env },
+        { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
       );
 
       expect(output).toContain("NEMOCLAW_E2E_GATEWAY_USER_SERVICE=upstream");
@@ -100,6 +104,46 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
           path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service"),
         ),
       ).toBe(false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("removes a staged service when daemon reload fails", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stage-failure-"));
+    const home = path.join(root, "home");
+    const configHome = path.join(root, "config");
+    const bin = path.join(home, ".local", "bin");
+    const unit = path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service");
+
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        'if [ "$*" = "--user cat openshell-gateway" ]; then exit 1; fi',
+        'if [ "$*" = "--user daemon-reload" ]; then exit 1; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        XDG_CONFIG_HOME: configHome,
+      });
+
+      expect(() =>
+        execFileSync(
+          "bash",
+          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
+        ),
+      ).toThrow();
+      expect(fs.existsSync(unit)).toBe(false);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -135,7 +179,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
         execFileSync(
           "bash",
           ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
-          { env, stdio: "pipe" },
+          { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
         ),
       ).toThrow();
       expect(fs.readFileSync(unit, "utf8")).toBe("[Service]\nExecStart=/tmp/foreign\n");
@@ -178,7 +222,11 @@ describe("managed OpenShell gateway user-service restart", () => {
         PATH: `${bin}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
       });
-      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRestartScript()], { env });
+      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRestartScript()], {
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
 
       expect(env.XDG_CONFIG_HOME).toBe(configHome);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([

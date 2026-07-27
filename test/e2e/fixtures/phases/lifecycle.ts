@@ -66,10 +66,11 @@ export function buildOpenShellGatewayUserServiceStageScript(): string {
     "cleanup_failed_stage() {",
     "  status=$?",
     "  trap - EXIT",
-    '  if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then',
+    '  if [ "$status" -ne 0 ] && [ "$created" -eq 1 ] && [ ! -L "$unit" ] && [ -f "$unit" ] && grep -Fxq "$marker" "$unit"; then',
     '    rm -f -- "$unit"',
     "    systemctl --user daemon-reload >/dev/null 2>&1 || true",
     "  fi",
+    "  if declare -F _global_cleanup >/dev/null 2>&1; then _global_cleanup; fi",
     '  exit "$status"',
     "}",
     "trap cleanup_failed_stage EXIT",
@@ -78,6 +79,8 @@ export function buildOpenShellGatewayUserServiceStageScript(): string {
     "  exit 1",
     "fi",
     'source "$installer"',
+    "trap cleanup_failed_stage EXIT",
+    'if [ "$had_marked_unit" -eq 0 ]; then created=1; fi',
     "install_nemoclaw_openshell_gateway_user_service",
     "systemctl --user daemon-reload",
     "if systemctl --user cat openshell-gateway >/dev/null 2>&1; then",
@@ -85,7 +88,7 @@ export function buildOpenShellGatewayUserServiceStageScript(): string {
     "  exit 0",
     "fi",
     `if [ ! -f "$unit" ] || ! grep -Fxq "$marker" "$unit"; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
-    'if [ "$had_marked_unit" -eq 0 ]; then created=1; outcome=staged; else outcome=existing; fi',
+    'if [ "$had_marked_unit" -eq 0 ]; then outcome=staged; else outcome=existing; fi',
     "systemctl --user enable nemoclaw-openshell-gateway >/dev/null",
     `printf '%s%s\\n' "$result_prefix" "$outcome"`,
   ].join("\n");
@@ -429,7 +432,10 @@ export class LifecyclePhaseFixture {
     );
     assertExitZero(result, "stage OpenShell gateway user service for reboot lifecycle");
     const match = result.stdout.match(
-      /(?:^|\n)NEMOCLAW_E2E_GATEWAY_USER_SERVICE=(upstream|existing|staged)(?:\n|$)/u,
+      new RegExp(
+        `(?:^|\\n)${USER_SERVICE_STAGE_RESULT_PREFIX}(upstream|existing|staged)(?:\\n|$)`,
+        "u",
+      ),
     );
     if (!match) {
       throw new Error("OpenShell gateway user service staging did not report its outcome.");
