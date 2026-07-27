@@ -68,7 +68,7 @@ Run the fallback command if the hooks were skipped, missing, failed, or uncertai
 The command runs the `pre-commit`, `commit-msg`, and `pre-push` checks for the diff:
 
 ```bash
-npm run check:diff
+npm run validate:pr
 ```
 
 The fallback compares the branch with the refreshed `origin/main` ref from Step 1.

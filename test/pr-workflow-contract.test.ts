@@ -729,12 +729,13 @@ describe("pull request and main workflow contracts", () => {
     expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
   });
 
-  it("executes repo-wide coverage and diff-scoped automatic hook commands", () => {
+  it("keeps routine, broad, and repository validation commands distinct (#7550)", () => {
     const scripts = packageJson.scripts;
     const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
     const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
-    const repoCheckCalls = runLoggedPackageScript(scripts.check);
-    const diffCheckCalls = runLoggedPackageScript(scripts["check:diff"]);
+    const broadCheckCalls = runLoggedPackageScript(scripts.check);
+    const routinePrCalls = runLoggedPackageScript(scripts["validate:pr"]);
+    const repositoryCheckCalls = runLoggedPackageScript(scripts["checks:repository"]);
 
     expect(cliCoverageCalls.map(([command]) => command)).toEqual([
       "npm",
@@ -768,11 +769,11 @@ describe("pull request and main workflow contracts", () => {
       "ci/coverage-threshold-plugin.json",
       "Plugin coverage",
     ]);
-    expect(repoCheckCalls).toEqual([
+    expect(broadCheckCalls).toEqual([
       ["npx", "prek", "run", "--all-files", "--stage", "pre-commit"],
       ["npx", "prek", "run", "--all-files", "--stage", "manual"],
     ]);
-    expect(diffCheckCalls).toEqual([
+    expect(routinePrCalls).toEqual([
       [
         "npx",
         "prek",
@@ -797,6 +798,16 @@ describe("pull request and main workflow contracts", () => {
         "pre-push",
       ],
     ]);
+    expect(repositoryCheckCalls).toEqual([["tsx", "scripts/checks/run.mts"]]);
+    expect(scripts["check:diff"]).toBe("npm run validate:pr");
+    expect(scripts.checks).toBe("npm run checks:repository");
+    expect(scripts.lint).toContain("npm run checks:repository");
+    expect(scripts["lint:fix"]).toContain("npm run checks:repository");
+
+    const repositoryHook = prekConfig.repos
+      .flatMap((repo) => repo.hooks ?? [])
+      .find((hook) => hook.id === "repository-checks");
+    expect(repositoryHook?.entry).toBe("npm run checks:repository");
   });
 
   // source-shape-contract: security -- Pull requests must execute base-trusted actions while main uses reviewed repository actions
