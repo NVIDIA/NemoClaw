@@ -265,7 +265,7 @@ jobs:
             --arg summary "$expected_summary" \
             '
               .id == $check_id and
-              .name == "E2E / PR Gate Coordination" and
+              .name == "E2E / PR Gate" and
               .app.id == 15368 and
               .app.slug == "github-actions" and
               .head_sha == $head_sha and

@@ -136,7 +136,7 @@ describe("PR E2E remediation", () => {
     let currentPull = pullRequest(FAILED_HEAD_SHA);
     let failedCheck: Record<string, unknown> = {
       id: 17,
-      name: "E2E / PR Gate Coordination",
+      name: "E2E / PR Gate",
       head_sha: FAILED_HEAD_SHA,
       external_id: prGateExternalId(42, FAILED_HEAD_SHA, BASE_SHA),
       status: "in_progress",
@@ -147,7 +147,7 @@ describe("PR E2E remediation", () => {
     };
     let fixedCheck: Record<string, unknown> = {
       id: 18,
-      name: "E2E / PR Gate Coordination",
+      name: "E2E / PR Gate",
       head_sha: FIXED_HEAD_SHA,
       external_id: prGateExternalId(42, FIXED_HEAD_SHA, BASE_SHA),
       status: "in_progress",

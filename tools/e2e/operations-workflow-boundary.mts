@@ -260,7 +260,7 @@ function validateControllerAuthorization(
     '--header "Cache-Control: no-cache"',
     "Child run: ${expected_run_url}.",
     `[[ "$(jq -r '.output.summary // ""' <<< "$check_json")" == "$expected_summary" ]]`,
-    '.name == "E2E / PR Gate Coordination"',
+    '.name == "E2E / PR Gate"',
     ".app.id == 15368",
     '.app.slug == "github-actions"',
     ".external_id == $external_id",

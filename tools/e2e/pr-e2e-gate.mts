@@ -64,7 +64,7 @@ export { validateWorkflowDispatchDetails } from "./pr-e2e-dispatch-reconciliatio
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW = "pr-e2e-gate.yaml";
-const CHECK_NAME = "E2E / PR Gate Coordination";
+const CHECK_NAME = "E2E / PR Gate";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =

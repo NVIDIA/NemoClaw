@@ -348,7 +348,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const planHash = "c".repeat(64);
     const check = JSON.stringify({
       id: 17,
-      name: "E2E / PR Gate Coordination",
+      name: "E2E / PR Gate",
       app: { id: 15368, slug: "github-actions" },
       head_sha: headSha,
       external_id: `nemoclaw-pr-e2e:v2:42:${headSha}:${baseSha}`,
