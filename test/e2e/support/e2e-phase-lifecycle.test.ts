@@ -118,6 +118,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
   it("stops the labeled container, restarts the gateway service, then runs status", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "openshell-cluster-e2e-ubuntu-repo-cloud-openclaw\n")); // discover
+    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=staged\n")); // stage service
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
@@ -139,6 +140,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     ]);
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
       "docker ps -a --filter label=openshell.ai/sandbox-name=e2e-ubuntu-repo-cloud-openclaw --format {{.Names}}",
+      expect.stringContaining("bash -lc set -eu"),
       "docker stop openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
@@ -149,6 +151,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
       "nemoclaw e2e-ubuntu-repo-cloud-openclaw status",
     ]);
     expect(cleanup.calls.map((call) => call.name)).toEqual([
+      "lifecycle.remove-staged-gateway-user-service",
       "lifecycle.docker-start:openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
     ]);
   });
@@ -156,6 +159,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
   it("tolerates a non-zero status exit (the bug succeeds at destroying state)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "container-1\n")); // discover
+    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=existing\n")); // service
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
@@ -196,6 +200,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
   it("fails when the managed OpenShell gateway user service is unavailable", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "container-1\n")); // discover
+    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=existing\n")); // service
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
@@ -218,6 +223,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
   it("stops, then renames the labeled container to a *-nemoclaw-gpu-backup-* sibling", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "openshell-cluster-e2e-x\n")); // discover
+    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=existing\n")); // service
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // docker rename
     runner.enqueue(shellResult(0)); // forward stop

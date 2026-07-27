@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath } from "node:url";
+
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { assertExitZero, outputContainsReadySandbox } from "../clients/command.ts";
 import type { GatewayClient, HostGatewayRuntime } from "../clients/gateway.ts";
@@ -38,6 +40,80 @@ const SANDBOX_READY_DELAY_MS = 5_000;
 const USER_SERVICE_UNAVAILABLE_EXIT = 75;
 const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE =
   "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
+const NEMOCLAW_INSTALLER = fileURLToPath(
+  new URL("../../../../scripts/install.sh", import.meta.url),
+);
+const USER_SERVICE_STAGE_RESULT_PREFIX = "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=";
+
+type UserServiceStageResult = "upstream" | "existing" | "staged";
+
+export function buildOpenShellGatewayUserServiceStageScript(): string {
+  return [
+    "set -eu",
+    `marker='${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}'`,
+    `result_prefix='${USER_SERVICE_STAGE_RESULT_PREFIX}'`,
+    "installer=$1",
+    `if [ "$(uname -s)" != Linux ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    `if ! command -v systemctl >/dev/null 2>&1; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    'case "${XDG_CONFIG_HOME:-}" in',
+    '  /*) config_home="$XDG_CONFIG_HOME" ;;',
+    '  *) config_home="$HOME/.config" ;;',
+    "esac",
+    'unit="$config_home/systemd/user/nemoclaw-openshell-gateway.service"',
+    "had_marked_unit=0",
+    'if [ -f "$unit" ] && grep -Fxq "$marker" "$unit"; then had_marked_unit=1; fi',
+    "created=0",
+    "cleanup_failed_stage() {",
+    "  status=$?",
+    "  trap - EXIT",
+    '  if [ "$status" -ne 0 ] && [ "$created" -eq 1 ] && [ ! -L "$unit" ] && [ -f "$unit" ] && grep -Fxq "$marker" "$unit"; then',
+    '    rm -f -- "$unit"',
+    "    systemctl --user daemon-reload >/dev/null 2>&1 || true",
+    "  fi",
+    "  if declare -F _global_cleanup >/dev/null 2>&1; then _global_cleanup; fi",
+    '  exit "$status"',
+    "}",
+    "trap cleanup_failed_stage EXIT",
+    'if [ ! -f "$installer" ] || [ -L "$installer" ]; then',
+    '  printf "NemoClaw installer is unavailable: %s\\n" "$installer" >&2',
+    "  exit 1",
+    "fi",
+    'source "$installer"',
+    "trap cleanup_failed_stage EXIT",
+    'if [ "$had_marked_unit" -eq 0 ]; then created=1; fi',
+    "install_nemoclaw_openshell_gateway_user_service",
+    "systemctl --user daemon-reload",
+    "if systemctl --user cat openshell-gateway >/dev/null 2>&1; then",
+    `  printf '%s%s\\n' "$result_prefix" upstream`,
+    "  exit 0",
+    "fi",
+    `if [ ! -f "$unit" ] || ! grep -Fxq "$marker" "$unit"; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    'if [ "$had_marked_unit" -eq 0 ]; then outcome=staged; else outcome=existing; fi',
+    "systemctl --user enable nemoclaw-openshell-gateway >/dev/null",
+    `printf '%s%s\\n' "$result_prefix" "$outcome"`,
+  ].join("\n");
+}
+
+export function buildOpenShellGatewayUserServiceRemovalScript(): string {
+  return [
+    "set -eu",
+    `marker='${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}'`,
+    'case "${XDG_CONFIG_HOME:-}" in',
+    '  /*) config_home="$XDG_CONFIG_HOME" ;;',
+    '  *) config_home="$HOME/.config" ;;',
+    "esac",
+    'unit="$config_home/systemd/user/nemoclaw-openshell-gateway.service"',
+    'if [ ! -e "$unit" ] && [ ! -L "$unit" ]; then exit 0; fi',
+    'if [ -L "$unit" ] || [ ! -f "$unit" ] || ! grep -Fxq "$marker" "$unit"; then',
+    '  printf "Refusing to remove foreign OpenShell gateway user service: %s\\n" "$unit" >&2',
+    "  exit 1",
+    "fi",
+    "systemctl --user stop nemoclaw-openshell-gateway",
+    "systemctl --user disable nemoclaw-openshell-gateway >/dev/null",
+    'rm -f -- "$unit"',
+    "systemctl --user daemon-reload",
+  ].join("\n");
+}
 
 export function buildOpenShellGatewayUserServiceRestartScript(): string {
   return [
@@ -239,7 +315,9 @@ export class LifecyclePhaseFixture {
    *   - rename the backup sibling back to the original name (if we
    *     created one);
    *   - `docker start` the labeled container so the sandbox returns
-   *     to a usable state for any teardown that expects it live.
+   *     to a usable state for any teardown that expects it live;
+   *   - remove a user service staged only for this source-checkout
+   *     fixture, then restore the original gateway runtime shape.
    */
   async simulatePostReboot(
     instance: NemoClawInstance,
@@ -257,6 +335,17 @@ export class LifecyclePhaseFixture {
       );
     }
     const originalName = containerNames[0];
+    const userServiceStage = await this.ensureOpenShellGatewayUserService();
+    let previousRuntime: HostGatewayRuntime | null = null;
+    if (userServiceStage === "staged") {
+      this.cleanup.add("lifecycle.remove-staged-gateway-user-service", async () => {
+        await this.removeStagedOpenShellGatewayUserService();
+        await this.startGatewayRuntime(previousRuntime, {
+          sandboxName: instance.sandboxName,
+        });
+        await this.waitForGatewayConnected();
+      });
+    }
 
     const stop = await this.host.command("docker", ["stop", originalName], {
       artifactName: `lifecycle-post-reboot-docker-stop-${originalName}`,
@@ -294,7 +383,7 @@ export class LifecyclePhaseFixture {
       });
     }
 
-    const previousRuntime = await this.restartGatewayRuntime({
+    previousRuntime = await this.restartGatewayRuntime({
       delayMs: 0,
       requireUserService: true,
       sandboxName: instance.sandboxName,
@@ -324,6 +413,47 @@ export class LifecyclePhaseFixture {
     });
 
     return { profile: "post-reboot-recovery", steps };
+  }
+
+  private async ensureOpenShellGatewayUserService(): Promise<UserServiceStageResult> {
+    const result = await this.host.command(
+      "bash",
+      [
+        "-lc",
+        buildOpenShellGatewayUserServiceStageScript(),
+        "stage-nemoclaw-openshell-gateway-service",
+        NEMOCLAW_INSTALLER,
+      ],
+      {
+        artifactName: "lifecycle-gateway-user-service-stage",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
+    assertExitZero(result, "stage OpenShell gateway user service for reboot lifecycle");
+    const match = result.stdout.match(
+      new RegExp(
+        `(?:^|\\n)${USER_SERVICE_STAGE_RESULT_PREFIX}(upstream|existing|staged)(?:\\n|$)`,
+        "u",
+      ),
+    );
+    if (!match) {
+      throw new Error("OpenShell gateway user service staging did not report its outcome.");
+    }
+    return match[1] as UserServiceStageResult;
+  }
+
+  private async removeStagedOpenShellGatewayUserService(): Promise<void> {
+    const result = await this.host.command(
+      "sh",
+      ["-lc", buildOpenShellGatewayUserServiceRemovalScript()],
+      {
+        artifactName: "lifecycle-cleanup-gateway-user-service",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
+    assertExitZero(result, "remove staged OpenShell gateway user service");
   }
 
   async stopGatewayRuntime(): Promise<HostGatewayRuntime | null> {
