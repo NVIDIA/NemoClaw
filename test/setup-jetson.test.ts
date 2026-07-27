@@ -28,11 +28,15 @@ const HOST_MUTATION_COMMANDS = [
   "python3",
 ];
 
-function runSetupJetson(releaseLine: string | null): {
+type SetupJetsonRun = {
   status: number | null;
   stdout: string;
   stderr: string;
-} {
+};
+
+function withJetsonReleaseSandbox<T>(
+  run: (paths: { releasePath: string; stubDir: string }) => T,
+): T {
   const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-jetson-release-"));
 
   try {
@@ -44,24 +48,36 @@ function runSetupJetson(releaseLine: string | null): {
       chmodSync(stubPath, 0o755);
     }
 
-    const releasePath = path.join(tempDir, "nv_tegra_release");
-    if (releaseLine !== null) {
-      writeFileSync(releasePath, `${releaseLine}\n`);
-    }
-
-    const result = spawnSync("bash", [SCRIPT_PATH], {
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        PATH: `${stubDir}${path.delimiter}${process.env.PATH ?? ""}`,
-        NEMOCLAW_TEST_NV_TEGRA_RELEASE_PATH: releasePath,
-      },
-    });
-
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    return run({ releasePath: path.join(tempDir, "nv_tegra_release"), stubDir });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+function spawnSetupJetson(stubDir: string, releasePath: string): SetupJetsonRun {
+  const result = spawnSync("bash", [SCRIPT_PATH], {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      PATH: `${stubDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      NEMOCLAW_TEST_NV_TEGRA_RELEASE_PATH: releasePath,
+    },
+  });
+
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function runSetupJetson(releaseLine: string): SetupJetsonRun {
+  return withJetsonReleaseSandbox(({ releasePath, stubDir }) => {
+    writeFileSync(releasePath, `${releaseLine}\n`);
+    return spawnSetupJetson(stubDir, releasePath);
+  });
+}
+
+function runSetupJetsonWithoutReleaseFile(): SetupJetsonRun {
+  return withJetsonReleaseSandbox(({ releasePath, stubDir }) =>
+    spawnSetupJetson(stubDir, releasePath),
+  );
 }
 
 function extractDaemonJsonPatcher(): string {
@@ -237,7 +253,7 @@ describe("setup-jetson host setup on an unrecognized L4T release (#7612)", () =>
   });
 
   it("stays silent on a host that is not a Jetson", () => {
-    const result = runSetupJetson(null);
+    const result = runSetupJetsonWithoutReleaseFile();
 
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("");
