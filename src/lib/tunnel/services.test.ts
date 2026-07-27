@@ -22,6 +22,7 @@ import { resolveDefaultSandboxName } from "./service-command";
 import {
   getServiceStatuses,
   getTunnelUrl,
+  type ProcessControl,
   readCloudflaredState,
   showStatus,
   startAll,
@@ -479,41 +480,63 @@ describe("stopAll", () => {
     rmSync(pidDir, { recursive: true, force: true });
   });
 
-  it("does not signal a recycled PID whose process is not cloudflared", () => {
-    // A real bystander process standing in for a PID the OS recycled after the
-    // recorded cloudflared exited. It must not be SIGTERM/SIGKILLed.
-    const bystander = childProcess.spawn("sleep", ["30"], {
-      detached: true,
-      stdio: "ignore",
+  // A scripted ProcessControl models PID identity/liveness/signalling without
+  // touching the host, so the recycled-PID paths are deterministic and portable
+  // (no real process, no /proc, no signals). `alive`/`cmdlines` are consumed in
+  // call order, repeating the last entry.
+  function scriptedControl(script: { alive: boolean[]; cmdlines: Array<string | null> }): {
+    control: ProcessControl;
+    signals: Array<{ pid: number; sig: string }>;
+  } {
+    const signals: Array<{ pid: number; sig: string }> = [];
+    let aliveIdx = 0;
+    let cmdIdx = 0;
+    const control: ProcessControl = {
+      isAlive: () => script.alive[Math.min(aliveIdx++, script.alive.length - 1)],
+      commandLine: () => script.cmdlines[Math.min(cmdIdx++, script.cmdlines.length - 1)],
+      signal: (pid, sig) => {
+        signals.push({ pid, sig });
+      },
+    };
+    return { control, signals };
+  }
+
+  it("does not signal a live PID recycled to a non-cloudflared process", () => {
+    const { control, signals } = scriptedControl({
+      alive: [true],
+      cmdlines: ["/usr/bin/node vitest"],
     });
-    bystander.unref();
-    const bpid = bystander.pid as number;
-    expect(bpid).toBeGreaterThan(0);
-    writeFileSync(join(pidDir, "cloudflared.pid"), String(bpid), { mode: 0o600 });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
-    logSpy.mockRestore();
-
-    // A SIGTERM/SIGKILLed child becomes an unreaped zombie whose PID still
-    // answers `kill(pid, 0)`, so assert on the process state: a live sleep is
-    // sleeping (S), a signalled one is a zombie (Z) or gone.
-    let liveState: string | null = null;
     try {
-      const stat = readFileSync(`/proc/${bpid}/stat`, "utf-8");
-      const match = stat.match(/\) (\S)/);
-      liveState = match ? match[1] : null;
-    } catch {
-      liveState = null;
-    }
-    try {
-      process.kill(bpid, "SIGKILL");
-    } catch {
-      /* already gone */
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      logSpy.mockRestore();
     }
 
-    expect(liveState).not.toBeNull();
-    expect(liveState).not.toBe("Z");
+    expect(signals).toEqual([]);
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("does not escalate to SIGKILL when the PID is recycled during the poll", () => {
+    const { control, signals } = scriptedControl({
+      // Alive pre-SIGTERM; the poll observes exit; a live PID reappears at the
+      // pre-SIGKILL re-check.
+      alive: [true, false, true],
+      // Ours pre-SIGTERM, then recycled to a bystander before escalation.
+      cmdlines: ["cloudflared tunnel run", "/usr/bin/node vitest"],
+    });
+    writeFileSync(join(pidDir, "cloudflared.pid"), "4242", { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir, processControl: control });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(signals.map((entry) => entry.sig)).toEqual(["SIGTERM"]);
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
   });
 
