@@ -45,6 +45,11 @@ const profileDocument = [
   "id: okta-runtime-v1",
   "credentials:",
   "  - name: OKTA_ACCESS_TOKEN",
+  "    refresh:",
+  "      token_url: https://example.okta.com/oauth2/default/v1/token",
+  "endpoints:",
+  "  - host: api.example.okta.com",
+  "    port: 443",
   "",
 ].join("\n");
 
@@ -77,6 +82,8 @@ describe("runtime identity contract", () => {
   let responses: Map<string, RuntimeIdentityCommandResult[]>;
   let environment: NodeJS.ProcessEnv;
   let deps: RuntimeIdentityDeps;
+  let validatedDestinations: string[];
+  let persistedReceipts: RuntimeIdentityReceipt[];
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "nemoclaw-runtime-identity-"));
@@ -86,6 +93,8 @@ describe("runtime identity contract", () => {
     profilePath = realpathSync(profilePath);
     calls = [];
     responses = new Map();
+    validatedDestinations = [];
+    persistedReceipts = [];
     environment = {
       OKTA_CLIENT_ID: "client-id",
       OKTA_REFRESH_TOKEN: "refresh-secret",
@@ -101,6 +110,12 @@ describe("runtime identity contract", () => {
           (redacted, secret) => redacted.replaceAll(secret, secret.length > 0 ? "<redacted>" : ""),
           output,
         ),
+      validateEndpointUrl: async (url) => {
+        validatedDestinations.push(url);
+      },
+      persistReceipt: (receipt) => {
+        persistedReceipts.push({ ...receipt });
+      },
       blueprintPath: root,
       env: environment,
     };
@@ -132,6 +147,8 @@ describe("runtime identity contract", () => {
     { ...config, refresh_token_env: config.client_id_env },
     { ...config, client_secret_env: config.refresh_token_env },
     { ...config, refresh_token_env: "NODE_OPTIONS" },
+    { ...config, refresh_token_env: "OPENSHELL_TOKEN" },
+    { ...config, client_id_env: "XDG_CLIENT_ID" },
     { ...config, refresh_token_env: "MYTOKEN" },
     { ...config, client_secret_env: "OPENSHELL_CONFIG" },
   ])("rejects an invalid provider-neutral config: %j", (value) => {
@@ -197,7 +214,8 @@ describe("runtime identity contract", () => {
 
   it("rejects a directory and an outward symlink as profiles", () => {
     mkdirSync(join(root, "provider-profiles", "directory"));
-    const outside = join(tmpdir(), `nemoclaw-outside-${Date.now()}.yaml`);
+    const outsideDir = mkdtempSync(join(tmpdir(), "nemoclaw-outside-"));
+    const outside = join(outsideDir, "profile.yaml");
     writeFileSync(outside, "outside\n");
     symlinkSync(outside, join(root, "provider-profiles", "outside.yaml"));
 
@@ -208,7 +226,7 @@ describe("runtime identity contract", () => {
       /stay inside/,
     );
 
-    rmSync(outside, { force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
   });
 
   it("creates and configures a new provider without putting secrets in argv", async () => {
@@ -229,6 +247,10 @@ describe("runtime identity contract", () => {
       OKTA_REFRESH_TOKEN: "refresh-secret",
       OKTA_CLIENT_SECRET: "client-secret",
     });
+    expect(validatedDestinations).toEqual([
+      "https://example.okta.com/oauth2/default/v1/token",
+      "https://api.example.okta.com/",
+    ]);
   });
 
   it("reuses only an exactly matching non-secret provider binding", async () => {
@@ -289,10 +311,85 @@ describe("runtime identity contract", () => {
   });
 
   it.each([
-    ["id: another-profile\ncredentials:\n  - name: OKTA_ACCESS_TOKEN\n", /must declare id/],
-    ["id: okta-runtime-v1\ncredentials:\n  - name: DIFFERENT_TOKEN\n", /exactly one credential/],
+    [profileDocument.replace("id: okta-runtime-v1", "id: another-profile"), /must declare id/],
+    [
+      profileDocument.replace("name: OKTA_ACCESS_TOKEN", "name: DIFFERENT_TOKEN"),
+      /exactly one credential/,
+    ],
     ["not: [valid", /not valid YAML/],
   ])("rejects an incompatible local profile", async (profile, message) => {
+    writeFileSync(profilePath, profile);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(message);
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects a non-HTTPS refresh destination before import", async () => {
+    writeFileSync(
+      profilePath,
+      profileDocument.replace("https://example.okta.com", "http://example.okta.com"),
+    );
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/must use HTTPS/);
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    ["loopback.example.okta.com", "loopback"],
+    ["link-local.example.okta.com", "link-local"],
+    ["private.example.okta.com", "private"],
+    ["unresolved.example.okta.com", "unresolved"],
+  ])("rejects an unsafe profile endpoint before import: %s", async (host, reason) => {
+    writeFileSync(profilePath, profileDocument.replace("api.example.okta.com", host));
+    deps.validateEndpointUrl = async (url) => {
+      validatedDestinations.push(url);
+      if (url.includes(host)) throw new Error(`${reason} destination rejected`);
+    };
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(reason);
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects a profile destination outside the provider trust policy", async () => {
+    writeFileSync(
+      profilePath,
+      profileDocument.replace("api.example.okta.com", "api.attacker.example"),
+    );
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      /outside the trusted destination policy/,
+    );
+    expect(validatedDestinations).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    [
+      profileDocument.replace(
+        "token_url: https://example.okta.com/oauth2/default/v1/token",
+        "token_url: https://user:password@example.okta.com/token",
+      ),
+      /must not include URL credentials/,
+    ],
+    [
+      profileDocument.replace("    refresh:\n      token_url:", "    no_refresh:"),
+      /refresh token_url/,
+    ],
+    [profileDocument.replace("endpoints:", "missing_endpoints:"), /between 1 and 32 endpoints/],
+    [
+      profileDocument.replace(
+        "  - host: api.example.okta.com\n    port: 443",
+        "  - invalid-endpoint",
+      ),
+      /endpoint 1 must be a mapping/,
+    ],
+    [profileDocument.replace("api.example.okta.com", "api.example.okta.com/path"), /valid host/],
+    [profileDocument.replace("port: 443", "port: 0"), /valid port/],
+    [
+      profileDocument.replace("host: api.example.okta.com", 'host: "[api.example.okta.com"'),
+      /valid host/,
+    ],
+  ])("rejects a malformed profile destination shape", async (profile, message) => {
     writeFileSync(profilePath, profile);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(message);
@@ -326,9 +423,7 @@ describe("runtime identity contract", () => {
     );
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/create denied/);
-    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
-      expect.stringContaining("refresh configure"),
-    );
+    expect(calls.map(({ args }) => commandKey(args)).join("\n")).not.toContain("refresh configure");
   });
 
   it("fails before mutation when required local material is absent", async () => {
@@ -355,9 +450,7 @@ describe("runtime identity contract", () => {
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/incompatible/);
-    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
-      expect.stringContaining("refresh configure"),
-    );
+    expect(calls.map(({ args }) => commandKey(args)).join("\n")).not.toContain("refresh configure");
   });
 
   it("reports an unexpected inspection failure", async () => {
@@ -414,6 +507,7 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
       /rotate failed[\s\S]*cleanup failed[\s\S]*delete failed/,
     );
+    expect(persistedReceipts).toEqual([createdReceipt]);
   });
 
   it("does not delete a newly created provider when its binding changes before compensation", async () => {

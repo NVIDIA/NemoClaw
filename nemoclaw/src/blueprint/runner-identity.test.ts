@@ -79,7 +79,7 @@ const matchingProvider = [
 const success = { exitCode: 0, stdout: "", stderr: "" };
 
 function responseQueue(
-  overrides: Array<[string, Array<{ exitCode: number; stdout: string; stderr: string }>]>,
+  overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
 ) {
   const responses = new Map(overrides);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
@@ -129,9 +129,17 @@ describe("blueprint identity wrapper", () => {
     store.set("/blueprint", { type: "dir" });
     store.set("/blueprint/provider-profiles/okta-runtime-v1.yaml", {
       type: "file",
-      content: ["id: okta-runtime-v1", "credentials:", "  - name: OKTA_ACCESS_TOKEN", ""].join(
-        "\n",
-      ),
+      content: [
+        "id: okta-runtime-v1",
+        "credentials:",
+        "  - name: OKTA_ACCESS_TOKEN",
+        "    refresh:",
+        "      token_url: https://example.okta.com/oauth2/default/v1/token",
+        "endpoints:",
+        "  - host: api.example.okta.com",
+        "    port: 443",
+        "",
+      ].join("\n"),
     });
   });
 
@@ -258,6 +266,28 @@ describe("blueprint identity wrapper", () => {
     );
   });
 
+  it("fails closed when an identity subprocess has no exit code", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      ["provider get acme-okta-runtime", [{ exitCode: 1, stdout: "", stderr: "not found" }]],
+      [
+        "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+        [{ exitCode: undefined, stdout: "", stderr: "terminated by SIGTERM" }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /terminated by SIGTERM/,
+    );
+    expect(
+      mockExeca.mock.calls
+        .map(([, args]) => (Array.isArray(args) ? args.join(" ") : ""))
+        .join("\n"),
+    ).not.toContain("refresh configure");
+  });
+
   it("plans only the non-secret runtime identity binding", async () => {
     const plan = await actionPlan("default", blueprint({ identity: oktaIdentity() }));
 
@@ -309,6 +339,123 @@ describe("blueprint identity wrapper", () => {
       ["sandbox", "remove", "test-sandbox"],
       expect.objectContaining({ reject: false }),
     );
+    const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
+    expect(JSON.parse(planEntry!.content!).identity).toMatchObject({
+      provider_created: false,
+      attachment_created: false,
+    });
+  });
+
+  it("compensates a sandbox even when an identity component is not configured", async () => {
+    responseQueue([
+      [
+        "inference set --provider test-provider --model test-model",
+        [{ exitCode: 1, stdout: "", stderr: "route failed" }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(/route failed/);
+
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "remove", "test-sandbox"],
+      expect.objectContaining({ reject: false }),
+    );
+  });
+
+  it("persists an ownership receipt so failed compensation remains recoverable", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          ...Array.from({ length: 5 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+      [
+        "provider delete acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "delete denied" },
+          { exitCode: 0, stdout: "", stderr: "" },
+        ],
+      ],
+      [
+        "inference set --provider test-provider --model test-model",
+        [{ exitCode: 1, stdout: "", stderr: "route failed" }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /route failed; cleanup failed:.*delete denied/,
+    );
+
+    const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
+    expect(planEntry?.content).toBeDefined();
+    const plan = JSON.parse(planEntry!.content!);
+    expect(plan.identity).toMatchObject({
+      provider_created: true,
+      attachment_created: true,
+    });
+
+    await actionRollback(plan.run_id);
+    expect(
+      store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)?.content,
+    ).toBeDefined();
+  });
+
+  it("persists provider ownership before refresh so preparation cleanup is recoverable", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          ...Array.from({ length: 3 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+      [
+        "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
+        [{ exitCode: 1, stdout: "", stderr: "rotate failed" }],
+      ],
+      [
+        "provider delete acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "first delete denied" },
+          { exitCode: 1, stdout: "", stderr: "second delete denied" },
+          { exitCode: 0, stdout: "", stderr: "" },
+        ],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /rotate failed.*cleanup failed:.*first delete denied.*cleanup failed:.*second delete denied/s,
+    );
+
+    const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
+    expect(planEntry?.content).toBeDefined();
+    const plan = JSON.parse(planEntry!.content!);
+    expect(plan.identity).toMatchObject({
+      provider_created: true,
+      attachment_created: false,
+    });
+
+    await actionRollback(plan.run_id);
+    expect(
+      store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)?.content,
+    ).toBeDefined();
   });
 
   it("surfaces a validated ownership receipt in status and consumes it in rollback", async () => {
@@ -338,7 +485,12 @@ describe("blueprint identity wrapper", () => {
         ],
       ],
     ]);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     actionStatus("identity-run");
+    const statusOutput = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(statusOutput).toContain('"provider_created": true');
+    expect(statusOutput).toContain('"attachment_created": true');
+    stdout.mockRestore();
     await actionRollback("identity-run");
 
     expect(mockExeca).toHaveBeenCalledWith(

@@ -291,9 +291,11 @@ identity:
 
 `client_secret_env` is optional, but when it is configured its environment variable must be present.
 Secret-material environment names must equal one of `API_KEY`, `TOKEN`, `SECRET`, `PASSWORD`, or `CREDENTIAL`, or end in one of those terms preceded by an underscore.
-Subprocess-control names such as `NODE_OPTIONS` are rejected.
+Subprocess-control names such as `NODE_OPTIONS` and names forwarded by the general subprocess allowlist, such as the `OPENSHELL_`, `GRPC_`, and `XDG_` prefixes, are rejected.
 The profile path must name an existing regular file whose resolved path stays inside the blueprint directory; absolute paths, outward traversal, and outward symlinks are rejected.
 The profile `id` must match `provider_type`, and the profile must declare exactly one credential whose name matches `credential_key`.
+Before importing the profile, the runner requires HTTPS refresh and endpoint destinations, restricts them to the provider type's trusted host policy, and sends each through NemoClaw's DNS-aware SSRF boundary; private, loopback, link-local, and unresolved destinations are rejected.
+The current `okta-runtime-v1` policy accepts `okta.com` and its subdomains; custom Okta domains are not supported in this slice.
 Before applying the blueprint, export the named environment variables in the host process that runs the direct blueprint runner.
 Obtain the refresh token through an authorized OAuth bootstrap flow for the same Okta client and authorization server as the profile.
 `openshell gateway login` authenticates a CLI user to the gateway and is not part of this runtime-credential flow.
@@ -303,6 +305,7 @@ During apply, the runner imports the profile or exports an existing profile and 
 It then creates or verifies the runtime-credential provider, configures gateway-managed OAuth refresh, rotates an initial access token, and attaches the provider to the sandbox.
 The runner refuses to reuse a same-name provider unless its type, credential key, and absence of unrelated configuration match the requested binding.
 The persisted run plan records whether that apply created the provider and its sandbox attachment.
+The runner writes that ownership receipt as each identity resource is acquired, so `status` and a later `rollback` retain a recovery path if automatic compensation fails.
 If a later apply step fails, the runner detaches the provider when that apply attached it, deletes the provider when that apply created it, and removes a sandbox created by that apply.
 The runner never places the refresh token or optional client secret in command arguments or persisted plans.
 It passes those values to `openshell provider refresh configure` through a scoped subprocess environment, and OpenShell stores the resulting credential material in the gateway credential store.
@@ -324,6 +327,7 @@ The same blueprint can optionally configure `components.policy.middlewares`.
 Those entries use the OpenShell middleware API to extend the existing middleware chain with endpoint selection, ordering, and `fail_closed` behavior.
 The runner rejects a requested middleware name that would replace an entry in the existing chain.
 A blueprint can declare at most 10 middleware entries.
+Middleware order values must be unique; omitted values default to `0`.
 Middleware is optional for Okta access-token refresh and presentation.
 Use it only when the deployment has a compatible middleware installed for additional request policy.
 This reference does not package an OAuth bootstrap application, an on-behalf-of exchange, or a production identity middleware service.

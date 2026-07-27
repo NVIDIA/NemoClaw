@@ -37,6 +37,7 @@ import {
   prepareRuntimeIdentity,
   removeRuntimeIdentity,
   type RuntimeIdentityCommandOptions,
+  type RuntimeIdentityCommandDeps,
   type RuntimeIdentityConfig,
   type RuntimeIdentityDeps,
   type RuntimeIdentityPlan,
@@ -526,7 +527,7 @@ async function runCmd(
     extendEnv: false,
   });
   return {
-    exitCode: result.exitCode ?? 0,
+    exitCode: result.exitCode ?? 1,
     stdout: result.stdout,
     stderr: result.stderr,
   };
@@ -544,16 +545,28 @@ async function runRuntimeIdentityCommand(
     extendEnv: false,
   });
   return {
-    exitCode: result.exitCode ?? 0,
+    exitCode: result.exitCode ?? 1,
     stdout: result.stdout,
     stderr: result.stderr,
   };
 }
 
-function runtimeIdentityDeps(): RuntimeIdentityDeps {
+function runtimeIdentityCommandDeps(): RuntimeIdentityCommandDeps {
   return {
     run: runRuntimeIdentityCommand,
     formatError: boundedCommandError,
+  };
+}
+
+function runtimeIdentityDeps(
+  persistReceipt: (receipt: RuntimeIdentityReceipt) => void,
+): RuntimeIdentityDeps {
+  return {
+    ...runtimeIdentityCommandDeps(),
+    validateEndpointUrl: async (url) => {
+      await validateEndpointUrl(url);
+    },
+    persistReceipt,
     blueprintPath: process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
     env: process.env,
   };
@@ -898,17 +911,42 @@ export async function actionApply(
   const policyAdditions = blueprint.components?.policy?.additions ?? {};
   const policyMiddlewares = blueprint.components?.policy?.middlewares ?? {};
   const runtimeIdentityConfig = blueprint.components?.identity;
-  const identityDeps = runtimeIdentityDeps();
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
   mkdirSync(stateDir, { recursive: true });
 
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
   let sandboxCreatedByApply = false;
+  const persistRunPlan = (): void => {
+    writeFileSync(
+      join(stateDir, "plan.json"),
+      JSON.stringify(
+        buildPersistedRunPlan({
+          runId: rid,
+          profile,
+          sandboxName,
+          policyAdditions,
+          inferenceCfg,
+          runtimeIdentityReceipt,
+          timestamp: new Date().toISOString(),
+        }),
+        null,
+        2,
+      ),
+    );
+  };
+  const identityDeps = runtimeIdentityDeps((receipt) => {
+    runtimeIdentityReceipt = receipt;
+    persistRunPlan();
+  });
 
   try {
     if (runtimeIdentityConfig) {
       progress(10, "Configuring runtime identity");
+      // Establish durable state before the first identity mutation, then update
+      // the receipt after each acquired resource.
+      persistRunPlan();
       runtimeIdentityReceipt = await prepareRuntimeIdentity(runtimeIdentityConfig, identityDeps);
+      persistRunPlan();
     }
 
     progress(20, "Creating OpenClaw sandbox");
@@ -945,6 +983,7 @@ export async function actionApply(
         ...runtimeIdentityReceipt,
         attachment_created: attachmentCreated,
       };
+      persistRunPlan();
     }
 
     progress(50, "Configuring inference provider");
@@ -1056,33 +1095,22 @@ export async function actionApply(
     }
 
     progress(85, "Saving run state");
-    writeFileSync(
-      join(stateDir, "plan.json"),
-      JSON.stringify(
-        buildPersistedRunPlan({
-          runId: rid,
-          profile,
-          sandboxName,
-          policyAdditions,
-          inferenceCfg,
-          runtimeIdentityReceipt,
-          timestamp: new Date().toISOString(),
-        }),
-        null,
-        2,
-      ),
-    );
+    persistRunPlan();
 
     progress(100, "Apply complete");
     log(`Sandbox '${sandboxName}' is ready.`);
     log(`Inference: ${providerName} -> ${model} @ ${endpoint}`);
   } catch (error) {
-    if (!runtimeIdentityConfig) throw error;
-
     const cleanupFailures: string[] = [];
     if (runtimeIdentityReceipt) {
       try {
         await compensateRuntimeIdentityApply(runtimeIdentityReceipt, sandboxName, identityDeps);
+        runtimeIdentityReceipt = {
+          ...runtimeIdentityReceipt,
+          provider_created: false,
+          attachment_created: false,
+        };
+        persistRunPlan();
       } catch (cleanupError) {
         cleanupFailures.push(
           cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
@@ -1197,7 +1225,7 @@ export async function actionRollback(rid: string): Promise<void> {
 
   if (runtimeIdentityReceipt) {
     progress(20, `Removing runtime identity provider ${runtimeIdentityReceipt.provider_name}`);
-    await removeRuntimeIdentity(runtimeIdentityReceipt, sandboxName, runtimeIdentityDeps());
+    await removeRuntimeIdentity(runtimeIdentityReceipt, sandboxName, runtimeIdentityCommandDeps());
   }
 
   try {

@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 
+import { isSubprocessEnvNameAllowed } from "../lib/subprocess-env.js";
 import { isPlainObject } from "../shared/object-record.js";
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
@@ -20,6 +21,11 @@ const UNSAFE_CONTROL_PATTERN = /[\x00-\x08\x0A-\x1F\x7F-\x9F]/u;
 const MISSING_RESOURCE_PATTERN = /\b(?:not found|does not exist|unknown provider)\b/i;
 const MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024;
 const MAX_PROFILE_BYTES = 64 * 1024;
+const MAX_PROFILE_ENDPOINTS = 32;
+const MAX_DESTINATION_URL_LENGTH = 2048;
+const TRUSTED_PROFILE_HOST_SUFFIXES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "okta-runtime-v1": Object.freeze(["okta.com"]),
+});
 
 export interface RuntimeIdentityConfig {
   profile_path: string;
@@ -52,7 +58,7 @@ export interface RuntimeIdentityCommandOptions {
   env?: Record<string, string>;
 }
 
-export interface RuntimeIdentityDeps {
+export interface RuntimeIdentityCommandDeps {
   run(
     args: string[],
     options?: RuntimeIdentityCommandOptions,
@@ -62,6 +68,11 @@ export interface RuntimeIdentityDeps {
   env?: NodeJS.ProcessEnv;
 }
 
+export interface RuntimeIdentityDeps extends RuntimeIdentityCommandDeps {
+  validateEndpointUrl(url: string): Promise<void>;
+  persistReceipt(receipt: RuntimeIdentityReceipt): void;
+}
+
 interface RuntimeIdentityProviderMetadata {
   name: string;
   type: string;
@@ -69,11 +80,85 @@ interface RuntimeIdentityProviderMetadata {
   configKeys: string[];
 }
 
+interface ParsedRuntimeIdentityProfile {
+  document: Record<string, unknown>;
+  destinations: string[];
+}
+
+function requireTrustedProfileHostname(
+  hostname: string,
+  config: RuntimeIdentityConfig,
+  label: string,
+): void {
+  const normalized = hostname.toLowerCase().replace(/\.$/u, "");
+  const trustedSuffixes = TRUSTED_PROFILE_HOST_SUFFIXES[config.provider_type] ?? [];
+  if (
+    !trustedSuffixes.some((suffix) => normalized === suffix || normalized.endsWith(`.${suffix}`))
+  ) {
+    throw new Error(
+      `${label} host '${hostname}' is outside the trusted destination policy for '${config.provider_type}'`,
+    );
+  }
+}
+
+function requireHttpsDestination(
+  value: string,
+  config: RuntimeIdentityConfig,
+  label: string,
+): string {
+  if (value.length === 0 || value.length > MAX_DESTINATION_URL_LENGTH) {
+    throw new Error(`${label} must be a non-empty URL no longer than 2048 characters`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${label} must be a valid HTTPS URL`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`${label} must use HTTPS`);
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error(`${label} must not include URL credentials`);
+  }
+  requireTrustedProfileHostname(parsed.hostname, config, label);
+  return parsed.toString();
+}
+
+function endpointDestination(
+  endpoint: unknown,
+  index: number,
+  config: RuntimeIdentityConfig,
+): string {
+  const label = `Runtime identity provider profile endpoint ${String(index + 1)}`;
+  if (!isPlainObject(endpoint)) {
+    throw new Error(`${label} must be a mapping`);
+  }
+  const { host, port } = endpoint;
+  if (
+    typeof host !== "string" ||
+    host.length === 0 ||
+    host.length > 253 ||
+    /[\/@?#\s]/u.test(host)
+  ) {
+    throw new Error(`${label} must declare a valid host`);
+  }
+  if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) {
+    throw new Error(`${label} must declare a valid port`);
+  }
+  const unbracketedHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (unbracketedHost.includes("[") || unbracketedHost.includes("]")) {
+    throw new Error(`${label} must declare a valid host`);
+  }
+  const urlHost = unbracketedHost.includes(":") ? `[${unbracketedHost}]` : unbracketedHost;
+  return requireHttpsDestination(`https://${urlHost}:${String(port)}/`, config, label);
+}
+
 function parseRuntimeIdentityProfile(
   content: string,
   config: RuntimeIdentityConfig,
   label: string,
-): Record<string, unknown> {
+): ParsedRuntimeIdentityProfile {
   if (Buffer.byteLength(content, "utf8") > MAX_PROFILE_BYTES) {
     throw new Error(`${label} exceeds the ${MAX_PROFILE_BYTES}-byte limit`);
   }
@@ -97,7 +182,36 @@ function parseRuntimeIdentityProfile(
       `${label} must declare exactly one credential named '${config.credential_key}'`,
     );
   }
-  return parsed;
+  const refresh = credentials[0].refresh;
+  if (!isPlainObject(refresh) || typeof refresh.token_url !== "string") {
+    throw new Error(`${label} must declare a refresh token_url`);
+  }
+  const endpoints = parsed.endpoints;
+  if (
+    !Array.isArray(endpoints) ||
+    endpoints.length === 0 ||
+    endpoints.length > MAX_PROFILE_ENDPOINTS
+  ) {
+    throw new Error(
+      `${label} must declare between 1 and ${String(MAX_PROFILE_ENDPOINTS)} endpoints`,
+    );
+  }
+  return {
+    document: parsed,
+    destinations: [
+      requireHttpsDestination(refresh.token_url, config, `${label} refresh token_url`),
+      ...endpoints.map((endpoint, index) => endpointDestination(endpoint, index, config)),
+    ],
+  };
+}
+
+async function validateProfileDestinations(
+  profile: ParsedRuntimeIdentityProfile,
+  deps: RuntimeIdentityDeps,
+): Promise<void> {
+  for (const destination of profile.destinations) {
+    await deps.validateEndpointUrl(destination);
+  }
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
@@ -193,7 +307,8 @@ export function isRuntimeIdentityConfig(value: unknown): value is RuntimeIdentit
       (typeof value.client_secret_env === "string" &&
         ENV_NAME_PATTERN.test(value.client_secret_env) &&
         SECRET_MATERIAL_ENV_PATTERN.test(value.client_secret_env))) &&
-    new Set(credentialEnvironmentNames).size === credentialEnvironmentNames.length
+    new Set(credentialEnvironmentNames).size === credentialEnvironmentNames.length &&
+    credentialEnvironmentNames.every((name) => !isSubprocessEnvNameAllowed(name))
   );
 }
 
@@ -283,7 +398,7 @@ export function resolveRuntimeIdentityProfilePath(
 function assertMatchingProvider(
   result: RuntimeIdentityCommandResult,
   expected: RuntimeIdentityPlan,
-  deps: RuntimeIdentityDeps,
+  deps: RuntimeIdentityCommandDeps,
 ): void {
   if (result.exitCode !== 0) {
     throw new Error(
@@ -307,7 +422,7 @@ function assertMatchingProvider(
 
 async function inspectProvider(
   expected: RuntimeIdentityPlan,
-  deps: RuntimeIdentityDeps,
+  deps: RuntimeIdentityCommandDeps,
 ): Promise<"absent" | "matching"> {
   const result = await deps.run(["openshell", "provider", "get", expected.provider_name]);
   if (isMissingResource(result)) return "absent";
@@ -317,7 +432,7 @@ async function inspectProvider(
 
 async function deleteCreatedProvider(
   receipt: RuntimeIdentityReceipt,
-  deps: RuntimeIdentityDeps,
+  deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
   const providerState = await inspectProvider(receipt, deps);
   if (providerState === "absent") return;
@@ -332,7 +447,7 @@ async function deleteCreatedProvider(
 async function compensatePreparationFailure(
   receipt: RuntimeIdentityReceipt,
   error: unknown,
-  deps: RuntimeIdentityDeps,
+  deps: RuntimeIdentityCommandDeps,
 ): Promise<never> {
   const message = error instanceof Error ? error.message : String(error);
   try {
@@ -362,6 +477,7 @@ export async function prepareRuntimeIdentity(
     config,
     "Runtime identity provider profile",
   );
+  await validateProfileDestinations(requestedProfile, deps);
   const clientId = requiredEnvironmentValue(config, config.client_id_env, env);
   const refreshToken = requiredEnvironmentValue(config, config.refresh_token_env, env);
   const clientSecret = config.client_secret_env
@@ -397,7 +513,7 @@ export async function prepareRuntimeIdentity(
         `Failed to inspect existing runtime identity provider profile: ${deps.formatError(commandOutput(profileExport))}`,
       );
     }
-    let existingProfile: Record<string, unknown>;
+    let existingProfile: ParsedRuntimeIdentityProfile;
     try {
       existingProfile = parseRuntimeIdentityProfile(
         profileExport.stdout,
@@ -409,7 +525,7 @@ export async function prepareRuntimeIdentity(
         `Runtime identity provider profile '${config.provider_type}' exists with an incompatible binding`,
       );
     }
-    if (!isDeepStrictEqual(existingProfile, requestedProfile)) {
+    if (!isDeepStrictEqual(existingProfile.document, requestedProfile.document)) {
       throw new Error(
         `Runtime identity provider profile '${config.provider_type}' exists with an incompatible binding`,
       );
@@ -422,25 +538,28 @@ export async function prepareRuntimeIdentity(
     provider_created: providerState === "absent",
     attachment_created: false,
   };
-  if (receipt.provider_created) {
-    const providerCreate = await deps.run([
-      "openshell",
-      "provider",
-      "create",
-      "--name",
-      config.provider_name,
-      "--type",
-      config.provider_type,
-      "--runtime-credentials",
-    ]);
-    if (providerCreate.exitCode !== 0) {
-      throw new Error(
-        `Failed to create runtime identity provider '${config.provider_name}': ${deps.formatError(commandOutput(providerCreate))}`,
-      );
-    }
-  }
-
+  let providerAcquired = false;
   try {
+    if (receipt.provider_created) {
+      const providerCreate = await deps.run([
+        "openshell",
+        "provider",
+        "create",
+        "--name",
+        config.provider_name,
+        "--type",
+        config.provider_type,
+        "--runtime-credentials",
+      ]);
+      if (providerCreate.exitCode !== 0) {
+        throw new Error(
+          `Failed to create runtime identity provider '${config.provider_name}': ${deps.formatError(commandOutput(providerCreate))}`,
+        );
+      }
+      providerAcquired = true;
+      deps.persistReceipt(receipt);
+    }
+
     const refreshArgs = [
       "openshell",
       "provider",
@@ -485,7 +604,7 @@ export async function prepareRuntimeIdentity(
       );
     }
   } catch (error) {
-    if (receipt.provider_created) {
+    if (providerAcquired) {
       return compensatePreparationFailure(receipt, error, deps);
     }
     throw error;
@@ -497,7 +616,7 @@ export async function prepareRuntimeIdentity(
 export async function attachRuntimeIdentity(
   receipt: RuntimeIdentityReceipt,
   sandboxName: string,
-  deps: RuntimeIdentityDeps,
+  deps: RuntimeIdentityCommandDeps,
 ): Promise<boolean> {
   const state = await inspectProvider(receipt, deps);
   if (state === "absent") {
@@ -523,7 +642,7 @@ export async function attachRuntimeIdentity(
 async function detachRuntimeIdentity(
   receipt: RuntimeIdentityReceipt,
   sandboxName: string,
-  deps: RuntimeIdentityDeps,
+  deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
   const providerState = await inspectProvider(receipt, deps);
   if (providerState === "absent") return;
@@ -549,20 +668,15 @@ async function detachRuntimeIdentity(
 export async function compensateRuntimeIdentityApply(
   receipt: RuntimeIdentityReceipt,
   sandboxName: string,
-  deps: RuntimeIdentityDeps,
+  deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
-  if (receipt.attachment_created) {
-    await detachRuntimeIdentity(receipt, sandboxName, deps);
-  }
-  if (receipt.provider_created) {
-    await deleteCreatedProvider(receipt, deps);
-  }
+  await removeRuntimeIdentity(receipt, sandboxName, deps);
 }
 
 export async function removeRuntimeIdentity(
   receipt: RuntimeIdentityReceipt,
   sandboxName: string,
-  deps: RuntimeIdentityDeps,
+  deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
   if (receipt.attachment_created) {
     await detachRuntimeIdentity(receipt, sandboxName, deps);
