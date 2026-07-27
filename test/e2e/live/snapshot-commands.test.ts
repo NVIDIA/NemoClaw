@@ -25,6 +25,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   buildSnapshotCommandEnv,
+  classifySnapshotGatewayProbe,
   type SnapshotInferenceFixture,
 } from "./snapshot-commands-helpers.ts";
 import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
@@ -44,11 +45,12 @@ const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
-const RESTORED_GATEWAY_REJECTION =
-  /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i;
 
-function commandEnv(inference?: SnapshotInferenceFixture): NodeJS.ProcessEnv {
-  return buildSnapshotCommandEnv(SANDBOX_NAME, inference);
+function commandEnv(
+  inference?: SnapshotInferenceFixture,
+  sandboxName = SANDBOX_NAME,
+): NodeJS.ProcessEnv {
+  return buildSnapshotCommandEnv(sandboxName, inference);
 }
 
 async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
@@ -108,6 +110,7 @@ async function expectSandboxFileContent(
 async function expectAuthenticatedGatewayPairing(
   sandbox: SandboxClient,
   sandboxName: string,
+  inference: SnapshotInferenceFixture,
   artifactName: string,
 ): Promise<void> {
   const result = await sandbox.execShell(
@@ -121,13 +124,11 @@ openclaw agent --agent main --json -m "ping" \
 `),
     {
       artifactName,
-      env: commandEnv(),
+      env: commandEnv(inference, sandboxName),
       timeoutMs: 60_000,
     },
   );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  expect(resultText(result).trim()).not.toBe("");
-  expect(resultText(result)).not.toMatch(RESTORED_GATEWAY_REJECTION);
+  expect(classifySnapshotGatewayProbe(result)).toBe("authenticated");
 }
 
 async function expectBaselineExclusionAgreement(
@@ -431,6 +432,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   await expectAuthenticatedGatewayPairing(
     sandbox,
     CLONE_SANDBOX_NAME,
+    inferenceConfig,
     "phase-4-verify-clone-gateway-pairing",
   );
   expect(inference.requests().slice(clonePairingRequestOffset)).toContainEqual(

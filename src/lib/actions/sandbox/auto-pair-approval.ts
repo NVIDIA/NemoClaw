@@ -102,7 +102,11 @@ export function readAutoPairApprovalPolicyModule(): string | null {
  */
 export function buildAutoPairApprovalScript(
   approvalPolicyModuleB64: string,
-  options: { emitSummary?: boolean; budget?: AutoPairApprovalBudget } = {},
+  options: {
+    emitSummary?: boolean;
+    budget?: AutoPairApprovalBudget;
+    localDeviceOnly?: boolean;
+  } = {},
 ): string {
   const summaryLine = options.emitSummary
     ? "print(f'__NEMOCLAW_AUTO_PAIR_APPROVED__={approved_count}')\n"
@@ -110,6 +114,140 @@ export function buildAutoPairApprovalScript(
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
+  const localDeviceFilter = options.localDeviceOnly
+    ? `
+# Snapshot restore shares one gateway across the source sandbox and its clone.
+# Select exactly one pending CLI transition whose device identity matches the
+# clone executing this script. Ambiguous or malformed state approves nothing;
+# OpenClaw remains the only writer through the canonical approve command.
+import binascii
+import hashlib
+import re
+
+REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+ALLOWED_LOCAL_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
+
+def local_identity_public_key(identity):
+    raw = str(identity.get('publicKey', '') or '').strip()
+    if raw:
+        return raw
+    pem = str(identity.get('publicKeyPem', '') or '')
+    body = ''.join(line.strip() for line in pem.splitlines() if '---' not in line)
+    if not body:
+        return ''
+    try:
+        der = base64.b64decode(body, validate=True)
+    except (ValueError, binascii.Error):
+        return ''
+    if len(der) < 32:
+        return ''
+    return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
+
+def normalized_roles(device):
+    roles = set()
+    if device.get('role') is not None:
+        role = device.get('role')
+        if not isinstance(role, str) or not role.strip():
+            return None
+        roles.add(role.strip())
+    if device.get('roles') is not None:
+        raw_roles = device.get('roles')
+        if not isinstance(raw_roles, list):
+            return None
+        for role in raw_roles:
+            if not isinstance(role, str) or not role.strip():
+                return None
+            roles.add(role.strip())
+    return roles
+
+def consistent_scope_view(device):
+    if 'scopes' not in device:
+        return None
+    views = []
+    for key in ('scopes', 'requestedScopes'):
+        if key not in device:
+            continue
+        raw_scopes = device.get(key)
+        if not isinstance(raw_scopes, list) or not raw_scopes:
+            return None
+        scopes = []
+        for scope in raw_scopes:
+            if not isinstance(scope, str) or not scope.strip():
+                return None
+            scopes.append(scope.strip())
+        if len(scopes) != len(set(scopes)) or not set(scopes).issubset(ALLOWED_LOCAL_SCOPES):
+            return None
+        views.append(set(scopes))
+    if not views or any(view != views[0] for view in views[1:]):
+        return None
+    return views[0]
+
+state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+try:
+    with open(os.path.join(state_dir, 'identity', 'device.json'), encoding='utf-8') as handle:
+        local_identity = json.load(handle)
+except (OSError, ValueError):
+    sys.exit(0)
+if not isinstance(local_identity, dict):
+    sys.exit(0)
+local_device_id = str(local_identity.get('deviceId', '') or '').strip()
+local_public_key = local_identity_public_key(local_identity)
+if not local_device_id or not local_public_key:
+    sys.exit(0)
+try:
+    local_public_key_raw = base64.urlsafe_b64decode(
+        local_public_key + '=' * (-len(local_public_key) % 4),
+    )
+except (ValueError, binascii.Error):
+    sys.exit(0)
+if (
+    len(local_public_key_raw) != 32
+    or hashlib.sha256(local_public_key_raw).hexdigest() != local_device_id
+):
+    sys.exit(0)
+
+def is_local_pairing_transition(device):
+    request_id = device.get('requestId')
+    if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
+        return False
+    if str(device.get('deviceId', '') or '').strip() != local_device_id:
+        return False
+    if str(device.get('publicKey', '') or '').strip() != local_public_key:
+        return False
+    if str(device.get('clientId', '') or '').strip() != 'cli':
+        return False
+    if str(device.get('clientMode', '') or '').strip() != 'cli':
+        return False
+    if normalized_roles(device) != {'operator'}:
+        return False
+    scopes = consistent_scope_view(device)
+    if scopes is None:
+        return False
+    is_repair = device.get('isRepair')
+    if is_repair is True:
+        return 'operator.write' in scopes
+    if is_repair not in (None, False):
+        return False
+    return scopes == {'operator.pairing'}
+
+related_pending = [
+    device for device in pending
+    if isinstance(device, dict) and (
+        str(device.get('deviceId', '') or '').strip() == local_device_id
+        or str(device.get('publicKey', '') or '').strip() == local_public_key
+    )
+]
+if len(related_pending) != 1 or not is_local_pairing_transition(related_pending[0]):
+    sys.exit(0)
+local_request_id = related_pending[0].get('requestId')
+if sum(
+    1 for device in pending
+    if isinstance(device, dict) and device.get('requestId') == local_request_id
+) != 1:
+    sys.exit(0)
+pending = related_pending
+`
+    : "";
   return `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
@@ -153,7 +291,7 @@ if not isinstance(data, dict):
     sys.exit(0)
 pending = data.get('pending')
 if not isinstance(pending, list):
-    sys.exit(0)
+    sys.exit(0)${localDeviceFilter}
 approved_count = 0
 attempted_count = 0
 seen_request_ids = set()
@@ -197,7 +335,11 @@ exit 0
  */
 export function runSandboxAutoPairApprovalPass(
   sandboxName: string,
-  options: { capture?: boolean; budget?: AutoPairApprovalBudget } = {},
+  options: {
+    capture?: boolean;
+    budget?: AutoPairApprovalBudget;
+    localDeviceOnly?: boolean;
+  } = {},
 ): AutoPairApprovalResult {
   const capture = options.capture === true;
   const approvalPolicyModule = readAutoPairApprovalPolicyModule();
@@ -208,6 +350,7 @@ export function runSandboxAutoPairApprovalPass(
   const script = buildAutoPairApprovalScript(approvalPolicyModuleB64, {
     emitSummary: capture,
     budget: options.budget,
+    localDeviceOnly: options.localDeviceOnly,
   });
   const outerTimeoutMs = options.budget?.timeoutMs ?? AUTO_PAIR_APPROVAL_TIMEOUT_MS;
   // Lazy require: `adapters/openshell/runtime` pulls in `runner`, whose

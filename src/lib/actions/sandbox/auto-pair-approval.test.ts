@@ -30,6 +30,20 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(script).toContain("'UE9MSUNZ'");
   });
 
+  it("adds local-device filtering only for restored-clone approval", () => {
+    const ordinary = buildAutoPairApprovalScript("UE9MSUNZ");
+    const restoredClone = buildAutoPairApprovalScript("UE9MSUNZ", {
+      localDeviceOnly: true,
+      budget: { maxApprovals: 1 },
+    });
+
+    expect(ordinary).not.toContain("local_identity_public_key");
+    expect(restoredClone).toContain("local_identity_public_key");
+    expect(restoredClone).toContain("len(related_pending) != 1");
+    expect(restoredClone).toContain("pending = related_pending");
+    expect(restoredClone).toContain("MAX_APPROVALS = 1");
+  });
+
   it("omits the summary marker by default and appends it when requested", () => {
     const silent = buildAutoPairApprovalScript("UE9MSUNZ");
     const reporting = buildAutoPairApprovalScript("UE9MSUNZ", { emitSummary: true });
@@ -160,6 +174,142 @@ process.exit(2);
       // Gateway env stripped on the approve subprocess (#4462 workaround).
       expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset", "unset:unset:unset"]);
       expect(result.stdout).toContain(`${SUMMARY_MARKER}=3`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("approves only one exact local clone pairing transition on a shared gateway", () => {
+    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
+      return;
+    }
+    const policy = readAutoPairApprovalPolicyModule();
+    expect(policy).toBeTruthy();
+    const script = buildAutoPairApprovalScript(
+      Buffer.from(policy as string, "utf-8").toString("base64"),
+      {
+        emitSummary: true,
+        localDeviceOnly: true,
+        budget: { maxApprovals: 1 },
+      },
+    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restored-clone-pair-"));
+    try {
+      const stateDir = path.join(tmpDir, "openclaw-state");
+      const identityDir = path.join(stateDir, "identity");
+      const approvalsFile = path.join(tmpDir, "approvals.log");
+      const approveEnvFile = path.join(tmpDir, "approve-env.log");
+      fs.mkdirSync(identityDir, { recursive: true });
+      const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
+      const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
+      fs.writeFileSync(
+        path.join(identityDir, "device.json"),
+        JSON.stringify({
+          deviceId,
+          publicKeyPem:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAy3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8=\n-----END PUBLIC KEY-----\n",
+        }),
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "openclaw"),
+        `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+if (args[0] === "devices" && args[1] === "list") {
+  process.stdout.write(process.env.NEMOCLAW_LIST_RESPONSE + "\\n");
+  process.exit(0);
+}
+if (args[0] === "devices" && args[1] === "approve") {
+  fs.appendFileSync(${JSON.stringify(approvalsFile)}, args[2] + "\\n");
+  fs.appendFileSync(
+    ${JSON.stringify(approveEnvFile)},
+    [
+      process.env.OPENCLAW_GATEWAY_URL || "unset",
+      process.env.OPENCLAW_GATEWAY_PORT || "unset",
+      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+    ].join(":") + "\\n",
+  );
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+process.exit(2);
+`,
+        { mode: 0o755 },
+      );
+      const run = (pending: unknown[]) =>
+        spawnSync("sh", ["-c", script], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            PATH: `${tmpDir}:/usr/bin:/bin`,
+            NEMOCLAW_LIST_RESPONSE: JSON.stringify({ pending, paired: [] }),
+            OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "secret-token",
+            OPENCLAW_STATE_DIR: stateDir,
+          },
+          timeout: 10_000,
+        });
+      const readApprovals = () =>
+        fs.existsSync(approvalsFile)
+          ? fs.readFileSync(approvalsFile, "utf-8").trim().split("\n").filter(Boolean)
+          : [];
+      const resetLogs = () => {
+        fs.rmSync(approvalsFile, { force: true });
+        fs.rmSync(approveEnvFile, { force: true });
+      };
+      const localRequest = {
+        requestId: "clone-pairing",
+        deviceId,
+        publicKey,
+        clientId: "cli",
+        clientMode: "cli",
+        role: "operator",
+        roles: ["operator"],
+        scopes: ["operator.pairing"],
+      };
+      const foreignRequest = {
+        ...localRequest,
+        requestId: "primary-pairing",
+        deviceId: "f".repeat(64),
+        publicKey: "foreign-public-key",
+      };
+
+      const initial = run([foreignRequest, localRequest]);
+      expect(initial.status).toBe(0);
+      expect(initial.stdout).toContain(`${SUMMARY_MARKER}=1`);
+      expect(readApprovals()).toEqual(["clone-pairing"]);
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
+
+      resetLogs();
+      const repairRequest = {
+        ...localRequest,
+        requestId: "clone-write-upgrade",
+        isRepair: true,
+        scopes: ["operator.pairing", "operator.write"],
+        requestedScopes: ["operator.pairing", "operator.write"],
+      };
+      const repair = run([foreignRequest, repairRequest]);
+      expect(repair.status).toBe(0);
+      expect(repair.stdout).toContain(`${SUMMARY_MARKER}=1`);
+      expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+
+      const { scopes: _ignoredScopes, ...repairWithoutScopes } = repairRequest;
+      for (const rejected of [
+        [foreignRequest],
+        [{ ...repairRequest, publicKey: "mismatched-public-key" }],
+        [repairRequest, { ...repairRequest, requestId: "second-clone-upgrade" }],
+        [repairRequest, { ...foreignRequest, requestId: repairRequest.requestId }],
+        [{ ...repairRequest, requestedScopes: ["operator.admin"] }],
+        [{ ...repairRequest, scopes: [] }],
+        [repairWithoutScopes],
+      ]) {
+        resetLogs();
+        const result = run(rejected);
+        expect(result.status).toBe(0);
+        expect(result.stdout).not.toContain(`${SUMMARY_MARKER}=1`);
+        expect(readApprovals()).toEqual([]);
+      }
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
