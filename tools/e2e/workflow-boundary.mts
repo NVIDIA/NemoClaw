@@ -121,6 +121,14 @@ type CachedFreeStandingJobsInventory = {
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const RETIRED_CONTROLLER_SELECTOR_IDS = [
+  "docs-validation",
+  "gateway-drift-preflight",
+  "gateway-health-honest",
+  "onboard-negative-paths",
+  "openshell-version-pin",
+  "ubuntu-repo-cli-smoke",
+] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
@@ -4318,6 +4326,23 @@ function validateStagingBrevLaunchableReadinessJob(errors: string[], jobs: Workf
   requireRunContains(errors, fail, "exit 1");
 }
 
+function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["retired-selector-compatibility"]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing retired-selector-compatibility job");
+    return;
+  }
+  const selectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
+    (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
+  ).join(" || ");
+  const expectedIf = `\${{ inputs.checkout_sha != '' && (${selectorGate}) }}`;
+  if (job.if !== expectedIf) {
+    errors.push(
+      "retired-selector-compatibility job selector gate must match retired selector contract",
+    );
+  }
+}
+
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -4373,6 +4398,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
     "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
   if (workflow["run-name"] !== expectedRunName) {
