@@ -1,9 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
-import { collectHostObservations, projectHostReadiness } from "./host";
+import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
+
+const { detectNvidiaPlatform } = vi.hoisted(() => ({
+  detectNvidiaPlatform: vi.fn<() => NvidiaPlatform>(() => "linux"),
+}));
+
+vi.mock("../inference/nim", () => ({ detectNvidiaPlatform }));
 
 const NOW = new Date("2026-06-01T12:00:00Z");
 
@@ -51,8 +58,9 @@ function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
 function report(
   overrides: Partial<HostAssessment> = {},
   collectionOptions: {
-    hostGpuPlatform?: string;
+    detectHostGpuPlatform?: () => NvidiaPlatform;
     platformIdentity?: ReturnType<typeof emptyPlatformIdentity>;
+    wslDockerDesktopGpuProofPassed?: boolean;
   } = {},
 ) {
   return projectHostReadiness(
@@ -61,7 +69,8 @@ function report(
       architecture: "x64",
       now: () => NOW,
       collectPlatformIdentity: () => collectionOptions.platformIdentity ?? emptyPlatformIdentity(),
-      hostGpuPlatform: collectionOptions.hostGpuPlatform,
+      detectHostGpuPlatform: collectionOptions.detectHostGpuPlatform,
+      wslDockerDesktopGpuProofPassed: collectionOptions.wslDockerDesktopGpuProofPassed,
     }),
     { nemoclawVersion: "0.1.0", now: () => NOW },
   );
@@ -76,6 +85,11 @@ function findingIds(result: ReturnType<typeof report>) {
 }
 
 describe("host readiness projection (#7408)", () => {
+  beforeEach(() => {
+    detectNvidiaPlatform.mockReset();
+    detectNvidiaPlatform.mockReturnValue("linux");
+  });
+
   it("keeps collection dependency-injected and separate from pure evaluation", () => {
     const assess = vi.fn(() => host());
     const snapshot = collectHostObservations({
@@ -142,18 +156,60 @@ describe("host readiness projection (#7408)", () => {
   });
 
   it.each([
-    [{ cdiNvidiaGpuSpecMissing: true }, { hostGpuPlatform: "jetson" }],
+    [{ cdiNvidiaGpuSpecMissing: true }, { detectHostGpuPlatform: () => "jetson" as const }],
     [
       { isWsl: true, runtime: "docker-desktop", cdiNvidiaGpuSpecStale: true },
-      { hostGpuPlatform: undefined },
+      { wslDockerDesktopGpuProofPassed: true },
     ],
   ] as const)("preserves CDI enforcement exclusions for %s", (overrides, collectionOptions) => {
     const result = report(overrides, collectionOptions);
 
-    expect(state(result, "host.gpu.cdi_healthy")).toBe("unknown");
+    expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
     expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
     expect(findingIds(result)).not.toContain("host.gpu.cdi_stale");
-    expect(result.status).not.toBe("incompatible");
+    expect(result.status).toBe("supported");
+  });
+
+  it("uses canonical platform detection in the default report creator", () => {
+    detectNvidiaPlatform.mockReturnValue("jetson");
+
+    const result = createHostReadinessReport(
+      { nemoclawVersion: "0.1.0", now: () => NOW },
+      {
+        assess: () => host({ cdiNvidiaGpuSpecMissing: true }),
+        architecture: "arm64",
+        collectPlatformIdentity: emptyPlatformIdentity,
+      },
+    );
+
+    expect(detectNvidiaPlatform).toHaveBeenCalledOnce();
+    expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
+    expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
+    expect(result.status).toBe("supported");
+  });
+
+  it("supports CPU-only hosts without requiring GPU tooling", () => {
+    const result = report({
+      hasNvidiaGpu: false,
+      nvidiaContainerToolkitInstalled: false,
+      dockerCdiSpecDirs: [],
+      cdiNvidiaGpuSpecMissing: true,
+      cdiNvidiaGpuSpecNeedsRepair: true,
+    });
+
+    expect(detectNvidiaPlatform).not.toHaveBeenCalled();
+    expect(state(result, "host.gpu.nvidia_available")).toBe("absent");
+    expect(state(result, "host.gpu.container_toolkit_available")).toBe("present");
+    expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
+    expect(findingIds(result)).not.toContain("host.gpu.container_toolkit_missing");
+    expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
+    expect(result.status).toBe("supported");
+  });
+
+  it("projects nested overlay conflicts as incompatible storage", () => {
+    const result = report({ hasNestedOverlayConflict: true });
+
+    expect(state(result, "host.docker.storage_compatible")).toBe("absent");
   });
 
   it("uses unknown for dependent facts when Docker is unreachable", () => {

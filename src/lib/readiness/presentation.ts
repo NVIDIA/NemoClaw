@@ -14,6 +14,7 @@ import type {
 
 const MAX_SUMMARY_LENGTH = 512;
 const MAX_EVIDENCE_LENGTH = 1024;
+const MAX_FINDINGS = 256;
 const SOURCE_REVISION_PATTERN = /^[0-9a-f]{40,64}$/;
 const ENVIRONMENT_DETAIL_KEYS = new Set([
   "env",
@@ -75,6 +76,22 @@ function finding(entry: ReadinessFinding): ReadinessFinding {
   };
 }
 
+function boundedFindings(entries: readonly ReadinessFinding[]): ReadinessFinding[] {
+  const required = entries.filter(
+    ({ severity }) => severity === "blocking" || severity === "fatal",
+  );
+  if (required.length > MAX_FINDINGS) {
+    throw new Error("Readiness report exceeds the public boundary for required findings.");
+  }
+
+  const selected = new Set(required);
+  for (const entry of entries) {
+    if (selected.size >= MAX_FINDINGS) break;
+    selected.add(entry);
+  }
+  return entries.filter((entry) => selected.has(entry)).map(finding);
+}
+
 function evidence(entry: ReadinessEvidence): ReadinessEvidence {
   const redactedDetails = entry.details
     ? (redactForLog(entry.details) as Record<string, EvidenceScalar>)
@@ -98,6 +115,9 @@ function evidence(entry: ReadinessEvidence): ReadinessEvidence {
 export function createPublicReadinessReport(
   report: Readonly<SystemReadinessReport>,
 ): SystemReadinessReport {
+  if (report.mutated !== false) {
+    throw new Error("Readiness reports must be observation-only.");
+  }
   const outcome =
     report.status === "supported"
       ? ({ status: report.status, exitCode: report.exitCode } as const)
@@ -119,7 +139,7 @@ export function createPublicReadinessReport(
     observations: report.observations.slice(0, 256).map(observation),
     capabilities: report.capabilities.slice(0, 256).map(capability),
     qualifications: report.qualifications.slice(0, 128).map(qualification),
-    findings: report.findings.slice(0, 256).map(finding),
+    findings: boundedFindings(report.findings),
     evidence: report.evidence.slice(0, 256).map(evidence),
   };
 }

@@ -33,11 +33,6 @@ const READINESS_OUTCOMES = [
   { status: "inconclusive", exitCode: 3 },
 ] as const satisfies readonly ReadinessOutcome[];
 
-const NON_SUPPORTED_OUTCOMES = [
-  { status: "incompatible", exitCode: 2 },
-  { status: "inconclusive", exitCode: 3 },
-] as const satisfies readonly ReadinessOutcome[];
-
 function throwSchemaErrors(errors: unknown): never {
   throw new Error(JSON.stringify(errors));
 }
@@ -88,7 +83,7 @@ describe("host probe command (#7412)", () => {
     }
   });
 
-  it.each(NON_SUPPORTED_OUTCOMES)("emits schema-valid JSON for $status hosts", async (outcome) => {
+  it.each(READINESS_OUTCOMES)("emits schema-valid JSON for $status hosts", async (outcome) => {
     const expectedReport = report(outcome);
     mocks.createHostReadinessReport.mockReturnValueOnce(expectedReport);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
