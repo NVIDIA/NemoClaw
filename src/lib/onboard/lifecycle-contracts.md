@@ -50,6 +50,8 @@ Every nonterminal state has one production owner or an explicit internal designa
 | `post_verify` | `handlePostVerifyState` in `machine/handlers/finalization.ts` |
 | `complete`, `failed` | Terminal; no handler |
 
+The final flow gives the strict runner ownership from the durable entry state. If a saved session is at `policies`, `finalizing`, or `post_verify`, the flow runs earlier handlers as prerequisite repairs. Each repair emits a `state.repair.started` event and then a `state.repair.completed` or `state.repair.failed` event. A repair must return one update-free canonical advance and leave the durable state unchanged. The flow validates but does not apply the returned transition. The repaired context then feeds the strict runner at the saved entry state.
+
 FSM transitions remain step-granular. For OpenClaw onboarding, the sandbox handler additionally checkpoints each completed secret-free prompt group: sandbox name, web search selection, messaging selection and non-secret configuration, and resource profile. After the sandbox name and web search are checkpointed, a validated web search credential may be registered in OpenShell before messaging. After messaging is checkpointed, validated messaging credentials may be registered before the resource prompt. Each successful registration saves a secret-free provider-name receipt. The machine still cannot resume inside gateway startup, an individual credential upsert, sandbox creation, policy application, or another handler-owned effect group.
 
 ## Effect-order flows

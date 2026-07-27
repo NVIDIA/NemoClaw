@@ -4621,9 +4621,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: finalFlowPhases,
-      recordStateResult,
-      recordInvalidatedStateResult,
-      afterPoliciesResultApplied: () => {
+      recordRepairEvent,
+      afterPoliciesReady: () => {
         sandboxCancelRollback.disarm();
       },
       onContextUpdated: (context) => {

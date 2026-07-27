@@ -18,13 +18,12 @@ import {
   handlePostVerifyState,
 } from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
-import {
-  type InvalidatedOnboardStateResultRecorder,
-  runLiveOnboardFlowSlice,
-} from "./live-flow-slice";
+import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
+import { createPhaseProgressReporter } from "./phase-progress";
 import type { OnboardStateResult } from "./result";
-import type { OnboardMachineRunnerRuntime } from "./runner";
+import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
+import type { OnboardMachineEventType, OnboardMachineState } from "./types";
 
 export interface FinalOnboardFlowPhaseOptions<
   Context extends OnboardFlowContext,
@@ -154,16 +153,16 @@ function isPoliciesAppliedResult(result: OnboardStateResult): boolean {
   );
 }
 
-function withAfterPoliciesResultApplied(
+function withAfterPoliciesReady(
   runtime: OnboardMachineRunnerRuntime,
-  afterPoliciesResultApplied: (() => void) | undefined,
+  afterPoliciesReady: (() => void) | undefined,
 ): OnboardMachineRunnerRuntime {
-  if (!afterPoliciesResultApplied) return runtime;
+  if (!afterPoliciesReady) return runtime;
   return {
     session: runtime.session.bind(runtime),
     async applyResult(result) {
       const session = await runtime.applyResult(result);
-      if (isPoliciesAppliedResult(result)) afterPoliciesResultApplied();
+      if (isPoliciesAppliedResult(result)) afterPoliciesReady();
       return session;
     },
   };
@@ -184,39 +183,183 @@ function withContextObserver<Context extends OnboardFlowContext>(
   }));
 }
 
+type FinalFlowRepairEventType = Extract<
+  OnboardMachineEventType,
+  "state.repair.started" | "state.repair.completed" | "state.repair.failed"
+>;
+
+type FinalFlowRepairEventRecorder = (
+  type: FinalFlowRepairEventType,
+  options: {
+    state?: OnboardMachineState | null;
+    error?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
+) => Promise<unknown>;
+
+const FINAL_FLOW_DOWNSTREAM_STATES = ["policies", "finalizing", "post_verify"] as const;
+
+function canonicalFinalFlowPhases<Context extends OnboardFlowContext>(
+  phases: readonly OnboardSequencePhase<Context>[],
+): {
+  branchState: "agent_setup" | "openclaw";
+  phases: readonly OnboardSequencePhase<Context>[];
+} {
+  const branchPhases = phases.filter(
+    (phase) => phase.state === "openclaw" || phase.state === "agent_setup",
+  );
+  if (branchPhases.length !== 1) {
+    throw new Error(
+      `Expected exactly one final onboarding branch phase, got ${branchPhases.length}`,
+    );
+  }
+  if (phases.length !== 4) {
+    throw new Error(`Expected exactly four final onboarding phases, got ${phases.length}`);
+  }
+  const branchState = branchPhases[0].state as "agent_setup" | "openclaw";
+  const expectedStates = [branchState, ...FINAL_FLOW_DOWNSTREAM_STATES] as const;
+  const canonicalPhases = expectedStates.map((state) => {
+    const matches = phases.filter((phase) => phase.state === state);
+    if (matches.length !== 1) {
+      throw new Error(
+        `Expected exactly one final onboarding phase for state '${state}', got ${matches.length}`,
+      );
+    }
+    return matches[0];
+  });
+  return { branchState, phases: canonicalPhases };
+}
+
+function singleRepairResult(
+  handlerResult: OnboardStateHandlerResult,
+  state: OnboardSequencePhase<unknown>["state"],
+): OnboardStateResult {
+  const results = Array.isArray(handlerResult)
+    ? (handlerResult as readonly OnboardStateResult[])
+    : [handlerResult as OnboardStateResult];
+  if (results.length !== 1) {
+    throw new Error(
+      `Final onboarding prerequisite repair for '${state}' returned ${results.length} results; expected exactly one`,
+    );
+  }
+  return results[0];
+}
+
+function assertValidRepairResult(
+  result: OnboardStateResult,
+  state: OnboardSequencePhase<unknown>["state"],
+  nextState: OnboardSequencePhase<unknown>["state"],
+): void {
+  if (
+    result.type !== "transition" ||
+    result.metadata?.state !== state ||
+    result.next !== nextState ||
+    result.transitionKind !== "advance" ||
+    result.updates !== undefined
+  ) {
+    throw new Error(
+      `Invalid final onboarding prerequisite repair result for '${state}'; expected an update-free advance to '${nextState}'`,
+    );
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function runFinalFlowPrerequisiteRepairs<Context extends OnboardFlowContext>(options: {
+  context: Context;
+  entryState: (typeof FINAL_FLOW_DOWNSTREAM_STATES)[number];
+  runtime: OnboardMachineRunnerRuntime;
+  phases: readonly OnboardSequencePhase<Context>[];
+  recordRepairEvent: FinalFlowRepairEventRecorder;
+  afterPoliciesReady?(): void;
+  onContextUpdated?(context: Context): void;
+}): Promise<Context> {
+  const entryIndex = options.phases.findIndex((phase) => phase.state === options.entryState);
+  const repairPhases = options.phases.slice(0, entryIndex);
+  const phaseProgress = createPhaseProgressReporter();
+  let nextContext = options.context;
+
+  for (let index = 0; index < repairPhases.length; index += 1) {
+    const phase = phaseProgress.wrap(repairPhases[index]);
+    const nextState = options.phases[index + 1].state;
+    const metadata = {
+      repair: "final-flow-prerequisite",
+      entryState: options.entryState,
+    };
+
+    try {
+      await options.recordRepairEvent("state.repair.started", {
+        state: phase.state,
+        metadata,
+      });
+      const phaseResult = await phase.run(nextContext);
+      const result = singleRepairResult(phaseResult.result, phase.state);
+      assertValidRepairResult(result, phase.state, nextState);
+      const current = await options.runtime.session();
+      if (current.machine.state !== options.entryState) {
+        throw new Error(
+          `Final onboarding prerequisite repair for '${phase.state}' changed durable entry state from '${options.entryState}' to '${current.machine.state}'`,
+        );
+      }
+      await options.recordRepairEvent("state.repair.completed", {
+        state: phase.state,
+        metadata,
+      });
+      if (phase.state === "policies") options.afterPoliciesReady?.();
+      nextContext = phaseResult.context;
+      options.onContextUpdated?.(nextContext);
+    } catch (error) {
+      await options.recordRepairEvent("state.repair.failed", {
+        state: phase.state,
+        error: errorMessage(error),
+        metadata,
+      });
+      throw error;
+    }
+  }
+
+  return nextContext;
+}
+
 export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContext>(options: {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
-  recordStateResult(result: OnboardStateResult): Promise<unknown>;
-  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
-  afterPoliciesResultApplied?(): void;
+  recordRepairEvent: FinalFlowRepairEventRecorder;
+  afterPoliciesReady?(): void;
   onContextUpdated?(context: Context): void;
 }) {
-  // Exact branch-entry snapshots use the strict sequence runner for both fresh
-  // and resumed sessions. Recompute only when a durable snapshot is already
-  // downstream even though branch readiness, policy reconciliation, and final
-  // verification must still run. Those ahead-state snapshots can come from
-  // legacy/test step mutation that explicitly opts into `updateMachine === true`
-  // or from repaired-resume replay of persisted sessions. Recomputed transition
-  // results are explicitly applied or invalidated by runLiveOnboardFlowSlice, so
-  // stale phase output cannot update context or silently advance state. Remove
-  // this fallback once final-phase repair checks are first-class FSM recovery
-  // states and legacy machine step mutation is gone.
-  return runLiveOnboardFlowSlice({
-    context: options.context,
-    runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
-    phases: withContextObserver(options.phases, options.onContextUpdated),
-    runWhenState: ["openclaw", "agent_setup"],
-    compatibilityWhenState: ["policies", "finalizing", "post_verify"],
-    runSlice: runFinalOnboardFlowSequence,
-    recordStateResult: async (stateResult) => {
-      await options.recordStateResult(stateResult);
-      if (isPoliciesAppliedResult(stateResult)) options.afterPoliciesResultApplied?.();
-    },
-    recordInvalidatedStateResult: async (stateResult, invalidation) => {
-      await options.recordInvalidatedStateResult(stateResult, invalidation);
-      if (isPoliciesAppliedResult(stateResult)) options.afterPoliciesResultApplied?.();
-    },
+  const canonicalFlow = canonicalFinalFlowPhases(options.phases);
+  const { branchState, phases } = canonicalFlow;
+  const durableEntry = await options.runtime.session();
+  const allowedStates = [branchState, ...FINAL_FLOW_DOWNSTREAM_STATES] as const;
+  if (!allowedStates.includes(durableEntry.machine.state as (typeof allowedStates)[number])) {
+    throw new UnexpectedLiveOnboardFlowSliceStateError(
+      durableEntry.machine.state,
+      [branchState],
+      FINAL_FLOW_DOWNSTREAM_STATES,
+    );
+  }
+
+  const context = FINAL_FLOW_DOWNSTREAM_STATES.includes(
+    durableEntry.machine.state as (typeof FINAL_FLOW_DOWNSTREAM_STATES)[number],
+  )
+    ? await runFinalFlowPrerequisiteRepairs({
+        context: options.context,
+        entryState: durableEntry.machine.state as (typeof FINAL_FLOW_DOWNSTREAM_STATES)[number],
+        runtime: options.runtime,
+        phases,
+        recordRepairEvent: options.recordRepairEvent,
+        afterPoliciesReady: options.afterPoliciesReady,
+        onContextUpdated: options.onContextUpdated,
+      })
+    : options.context;
+
+  return runFinalOnboardFlowSequence({
+    context,
+    runtime: withAfterPoliciesReady(options.runtime, options.afterPoliciesReady),
+    phases: withContextObserver(phases, options.onContextUpdated),
   });
 }
