@@ -294,6 +294,9 @@ process.exit(2);
 `,
         { mode: 0o755 },
       );
+      const writePendingById = (pendingById: Record<string, unknown> | undefined) =>
+        pendingById &&
+        fs.writeFileSync(path.join(devicesDir, "pending.json"), JSON.stringify(pendingById));
       const run = (
         pending: unknown[],
         options: {
@@ -305,12 +308,7 @@ process.exit(2);
           pendingById?: Record<string, unknown>;
         } = {},
       ) => {
-        if (options.pendingById) {
-          fs.writeFileSync(
-            path.join(devicesDir, "pending.json"),
-            JSON.stringify(options.pendingById),
-          );
-        }
+        writePendingById(options.pendingById);
         return spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
@@ -504,13 +502,13 @@ process.exit(2);
       }
 
       const clonePendingPath = path.join(devicesDir, "pending.json");
-      for (const pendingContents of [null, "{", "[]"]) {
+      for (const preparePendingState of [
+        () => fs.rmSync(clonePendingPath, { force: true }),
+        () => fs.writeFileSync(clonePendingPath, "{"),
+        () => fs.writeFileSync(clonePendingPath, "[]"),
+      ]) {
         resetLogs();
-        if (pendingContents === null) {
-          fs.rmSync(clonePendingPath, { force: true });
-        } else {
-          fs.writeFileSync(clonePendingPath, pendingContents);
-        }
+        preparePendingState();
         const failed = run([], {
           gatedRequestId: repairRequest.requestId,
           gatedKind: "scope",
