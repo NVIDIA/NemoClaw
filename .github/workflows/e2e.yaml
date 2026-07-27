@@ -346,7 +346,7 @@ jobs:
 
   retired-selector-compatibility:
     needs: generate-matrix
-    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,')) }}
+    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

@@ -122,6 +122,9 @@ type CachedFreeStandingJobsInventory = {
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 export const RETIRED_CONTROLLER_SELECTOR_IDS = [
+  "credential-migration",
+  "credential-sanitization",
+  "diagnostics",
   "docs-validation",
   "gateway-drift-preflight",
   "gateway-health-honest",
