@@ -60,8 +60,8 @@ const BROAD_FILES = [
   "src/lib/credentials/provider-list.ts",
 ] as const;
 const BROAD_JOBS = [
+  "cloud-inference",
   "cloud-onboard",
-  "credential-sanitization",
   "security-posture",
   "channels-add-remove",
   "channels-stop-start",
@@ -288,8 +288,8 @@ describe("PR E2E controller", () => {
       focusedPlan,
     );
     expect(riskPlanRequiredJobIds(focusedPlan)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
       "token-rotation",
     ]);
