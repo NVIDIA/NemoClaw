@@ -147,16 +147,20 @@ function isSupportedGatewayAdminMethod(method: string): method is GatewayAdminMe
  *
  * Trust boundary: `registry.getSandbox()` reads the host-side, user-owned
  * `~/.nemoclaw/sandboxes.json` registry. Sandbox processes cannot reach the
- * host filesystem to change this selection. A missing or unreadable entry
- * keeps the historical OpenClaw default, because the registry stored that as
- * the implicit agent before the field existed.
+ * host filesystem to change this selection. Only an existing legacy entry
+ * whose agent field is absent or null keeps the historical OpenClaw default.
+ * A missing entry is rejected, and registry read errors propagate, because an
+ * unknown agent identity cannot authorize an OpenClaw admin RPC.
  */
-function resolveSandboxAgent(sandboxName: string): string {
-  try {
-    return registry.getSandbox(sandboxName)?.agent || OPENCLAW_AGENT_ID;
-  } catch {
-    return OPENCLAW_AGENT_ID;
+function resolveSandboxAgent(sandboxName: string, method: GatewayAdminMethod): string {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) {
+    console.error(
+      `  Refusing to invoke '${method}' for sandbox '${sandboxName}': it has no registry entry, so NemoClaw cannot confirm that it uses the OpenClaw agent.`,
+    );
+    process.exit(1);
   }
+  return sandbox.agent === undefined || sandbox.agent === null ? OPENCLAW_AGENT_ID : sandbox.agent;
 }
 
 /**
@@ -232,7 +236,7 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
     process.exit(1);
   }
 
-  const agent = resolveSandboxAgent(opts.sandboxName);
+  const agent = resolveSandboxAgent(opts.sandboxName, opts.method);
   if (agent !== OPENCLAW_AGENT_ID) {
     refuseUnsupportedSandboxAgent(opts.sandboxName, agent, opts.method);
   }

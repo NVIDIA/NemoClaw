@@ -17,7 +17,7 @@ vi.mock("../auto-pair-approval", () => ({
 }));
 
 vi.mock("../../../state/registry", () => ({
-  getSandbox: vi.fn(() => null),
+  getSandbox: vi.fn(() => ({ name: "alpha", agent: "openclaw" })),
 }));
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
@@ -63,7 +63,7 @@ beforeEach(() => {
   captureMock.mockReset();
   autoPairMock.mockReset();
   getSandboxMock.mockReset();
-  getSandboxMock.mockReturnValue(null);
+  getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
     throw new Error(`process.exit:${code ?? 0}`);
   });
@@ -298,10 +298,11 @@ describe("callOpenclawGateway", () => {
     expect(captureMock).toHaveBeenCalledTimes(1);
   });
 
-  it("dispatches when the registry lookup throws", () => {
-    getSandboxMock.mockImplementation(() => {
-      throw new Error("registry unreadable");
-    });
+  it.each([
+    undefined,
+    null,
+  ])("dispatches for an existing legacy registry entry whose agent is %s", (agent) => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent });
     captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
 
     const result = callOpenclawGateway({
@@ -312,6 +313,54 @@ describe("callOpenclawGateway", () => {
 
     expect(result.payload).toMatchObject({ ok: true });
     expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses when the registry has no sandbox entry", () => {
+    getSandboxMock.mockReturnValue(null);
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.delete",
+        params: { key: "agent:main:main" },
+      }),
+    ).toThrow(/process\.exit:1/);
+
+    expect(autoPairMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("no registry entry"));
+  });
+
+  it("refuses an existing registry entry whose agent is empty", () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "" });
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.delete",
+        params: { key: "agent:main:main" },
+      }),
+    ).toThrow(/process\.exit:1/);
+
+    expect(autoPairMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch when the registry lookup throws", () => {
+    getSandboxMock.mockImplementation(() => {
+      throw new Error("registry unreadable");
+    });
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.reset",
+        params: { key: "agent:main:main", reason: "reset" },
+      }),
+    ).toThrow("registry unreadable");
+
+    expect(autoPairMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
   });
 
   it("does not retry unrelated gateway failures", () => {

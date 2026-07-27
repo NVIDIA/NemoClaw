@@ -38,7 +38,7 @@ function gatewayRpcCalls(logFile: string): string[] {
     .filter((line) => line.includes("sandbox exec --name alpha -- bash -lc"));
 }
 
-describe("sandbox sessions admin RPCs on a non-OpenClaw agent", () => {
+describe("sandbox sessions admin RPCs on a non-OpenClaw agent (#7587)", () => {
   for (const verb of ["reset", "delete"] as const) {
     it(`refuses \`sessions ${verb}\` on a hermes sandbox instead of dispatching the OpenClaw gateway RPC`, () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-cli-sessions-${verb}-hermes-`));
