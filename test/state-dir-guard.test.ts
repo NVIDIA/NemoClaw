@@ -959,6 +959,28 @@ describe("state-dir-guard", () => {
     expect(fs.existsSync(path.join(agentDir, "sessions"))).toBe(false);
   });
 
+  it("keeps a regular-file sessions entry locked instead of creating a writable carveout (#7545)", () => {
+    const { configDir } = fixture(".openclaw");
+    const agentDir = path.join(configDir, "agents", "main");
+    const sessionsPath = path.join(agentDir, "sessions");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(sessionsPath, "not a directory\n", { mode: 0o664 });
+    const oldInode = fs.statSync(sessionsPath).ino;
+
+    const locked = runGuard("lock", configDir);
+
+    expect(locked.status, locked.stderr).toBe(0);
+    expect(fs.lstatSync(sessionsPath).isFile()).toBe(true);
+    expect(mode(sessionsPath)).toBe(0o644);
+    expect(fs.statSync(sessionsPath).ino).not.toBe(oldInode);
+
+    const relocked = runGuard("lock", configDir);
+
+    expect(relocked.status, relocked.stderr).toBe(0);
+    expect(fs.lstatSync(sessionsPath).isFile()).toBe(true);
+    expect(mode(sessionsPath)).toBe(0o644);
+  });
+
   it("rejects hardlinks and special entries during the read-only preflight", () => {
     const { configDir } = fixture();
     const skillsDir = path.join(configDir, "skills");
