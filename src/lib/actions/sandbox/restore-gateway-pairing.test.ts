@@ -91,10 +91,9 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     });
     const autoPairScopeApproval = vi.fn(() => {
       order.push(`approve:${pendingTransition ?? "none"}`);
-      if (pendingTransition !== null) {
-        approvedTransitions += 1;
-        pendingTransition = null;
-      }
+      expect(pendingTransition).toBe(transitions[approvedTransitions]);
+      approvedTransitions += 1;
+      pendingTransition = null;
     });
     const verifyGatewayPairing = vi.fn(() => {
       order.push(`verify:${runningTransitions}`);
