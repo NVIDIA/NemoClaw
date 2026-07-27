@@ -644,6 +644,9 @@ describe("shields — unit logic", () => {
       const { shieldsStatus } = await loadShieldsModule();
       expect(() => shieldsStatus(sandboxName)).toThrow("exit 1");
       expect(errorSpy).toHaveBeenCalledWith("  Shields: ERROR (state file is corrupt)");
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  Recovery warning: restore trusted state or rebuild openclaw before retrying.",
+      );
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });
@@ -1113,5 +1116,64 @@ describe("NC-2227-05: shields timer marker behavior", () => {
       "Shields state is corrupt for openclaw",
     );
     expect(fs.readFileSync(statePath, "utf8")).toBe(corruptState);
+  });
+
+  it("shieldsUp preserves recovery authority when shields state is corrupt", async () => {
+    const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
+    const [{ shieldsUp }, runner, sandboxConfig, audit] = await Promise.all([
+      import(sourceModulePath),
+      import("../runner"),
+      import("../sandbox/config"),
+      import("./audit"),
+    ]);
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const processToken = "0".repeat(32);
+    const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
+    const transitionPath = path.join(stateDir, `shields-transition-openclaw-${processToken}.json`);
+    const corruptState = Buffer.from([0xff, 0xfe, 0x7b, 0x22, 0x62, 0x61, 0x64]);
+    const marker = Buffer.from(
+      JSON.stringify({
+        pid: 7331,
+        sandboxName: "openclaw",
+        snapshotPath: "/tmp/policy-snapshot.yaml",
+        restoreAt: new Date(Date.now() + 60_000).toISOString(),
+        processToken,
+      }),
+    );
+    const transition = Buffer.from(
+      JSON.stringify({
+        version: 1,
+        phase: "active",
+        ownerPid: 7331,
+        ownerStartIdentity: "timer-owner",
+        processToken,
+        sandboxName: "openclaw",
+        snapshotPath: "/tmp/policy-snapshot.yaml",
+      }),
+    );
+    fs.writeFileSync(statePath, corruptState, { mode: 0o600 });
+    fs.writeFileSync(markerPath, marker, { mode: 0o600 });
+    fs.writeFileSync(transitionPath, transition, { mode: 0o600 });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(() => shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      "Cannot raise shields while persisted shields state is corrupt for openclaw",
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith("  Shields state is corrupt; refusing to raise shields.");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "  Recovery: inspect the reported state error, restore trusted state, or rebuild openclaw before retrying.",
+    );
+    expect(logSpy).not.toHaveBeenCalledWith("  Lockdown active for openclaw");
+    expect(fs.readFileSync(statePath)).toEqual(corruptState);
+    expect(fs.readFileSync(markerPath)).toEqual(marker);
+    expect(fs.readFileSync(transitionPath)).toEqual(transition);
+    expect(vi.mocked(sandboxConfig.resolveAgentConfig)).not.toHaveBeenCalled();
+    expect(vi.mocked(runner.run)).not.toHaveBeenCalled();
+    expect(vi.mocked(runner.runCapture)).not.toHaveBeenCalled();
+    expect(vi.mocked(audit.appendAuditEntry)).not.toHaveBeenCalled();
   });
 });

@@ -2903,6 +2903,16 @@ function shieldsUpWithoutHostLock(
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
+  if (state._isCorrupt) {
+    console.error("  Shields state is corrupt; refusing to raise shields.");
+    console.error(
+      `  Recovery: inspect the reported state error, restore trusted state, or rebuild ${sandboxName} before retrying.`,
+    );
+    return failShieldsCommand(
+      `Cannot raise shields while persisted shields state is corrupt for ${sandboxName}`,
+      opts.throwOnError,
+    );
+  }
   // shieldsDown === false means explicitly locked by a previous shields-up.
   // undefined (no state file) means fresh sandbox — mutable default, allow shields-up.
   if (state.shieldsDown === false) {
@@ -3207,7 +3217,7 @@ function shieldsStatusWithoutHostLock(
       `  ${stateFilePath(sandboxName)} could not be parsed: ${state._corruptError ?? "unknown error"}`,
     );
     console.error(
-      `  Recovery warning: run \`nemoclaw ${sandboxName} shields up\` to restore a known-good state.`,
+      `  Recovery warning: restore trusted state or rebuild ${sandboxName} before retrying.`,
     );
     throw new DeferredShieldsExit("Shields state is corrupt", 1);
   }
