@@ -26,6 +26,11 @@ import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
+  type BackupShieldsWindowOptions,
+  openBackupShieldsWindow,
+  relockBackupShieldsWindow,
+} from "./sandbox/backup-shields-window";
+import {
   backupStartedSandboxState,
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
@@ -52,6 +57,80 @@ export function rebuildBackupsDirectory(home: string, gatewayPort: number): stri
 
 function notRunningBackupSkipMessage(name: string): string {
   return `Skipping '${name}' (not running; start the sandbox/container and rerun '${CLI_NAME} backup-all' so NemoClaw can capture a fresh snapshot)`;
+}
+
+function backupAllShieldsWindowOptions(sandboxName: string): BackupShieldsWindowOptions {
+  return {
+    operation: "backup-all",
+    reason: "auto-unlock for backup-all",
+    retryCommand: `${CLI_NAME} backup-all`,
+    shieldsUpCommand: `${CLI_NAME} ${sandboxName} shields up`,
+  };
+}
+
+interface BackupAllSandboxAttempt {
+  result: sandboxState.BackupResult | null;
+  orphanManifestMessage: string | null;
+  shieldsWindowOpened: boolean;
+}
+
+async function backupSandboxWithinShieldsWindow(
+  sandboxName: string,
+  backup: () => sandboxState.BackupResult | Promise<sandboxState.BackupResult>,
+): Promise<BackupAllSandboxAttempt> {
+  const shieldsWindowOptions = backupAllShieldsWindowOptions(sandboxName);
+  const window = openBackupShieldsWindow(sandboxName, shieldsWindowOptions);
+  if (!window) {
+    return {
+      result: null,
+      orphanManifestMessage: null,
+      shieldsWindowOpened: false,
+    };
+  }
+
+  let result: sandboxState.BackupResult | null = null;
+  let orphanManifestMessage: string | null = null;
+  let backupError: unknown;
+  let hasBackupError = false;
+  let relockError: Error | null = null;
+  try {
+    result = await backup();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Preserve the narrow pre-upgrade orphan exception, but classify it inside
+    // this window so a previously locked sandbox is always relocked before the
+    // caller counts the attempt as skipped.
+    if (/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(message)) {
+      orphanManifestMessage = message;
+    } else {
+      backupError = err;
+      hasBackupError = true;
+    }
+  } finally {
+    if (!relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions)) {
+      relockError = new Error(
+        `Shields lockdown could not be restored for '${sandboxName}' after backup-all; aborting remaining backups.`,
+      );
+    }
+  }
+
+  if (relockError) {
+    if (hasBackupError) {
+      throw new AggregateError(
+        [backupError, relockError],
+        `Backup for '${sandboxName}' failed and Shields lockdown could not be restored; aborting remaining backups.`,
+      );
+    }
+    if (orphanManifestMessage) {
+      throw new AggregateError(
+        [new Error(orphanManifestMessage), relockError],
+        `Backup for '${sandboxName}' encountered an orphan manifest and Shields lockdown could not be restored; aborting remaining backups.`,
+      );
+    }
+    throw relockError;
+  }
+  if (hasBackupError) throw backupError;
+  return { result, orphanManifestMessage, shieldsWindowOpened: true };
 }
 
 export async function backupAll(): Promise<void> {
@@ -144,48 +223,17 @@ export async function backupAll(): Promise<void> {
     console.log(`  Backing up '${sb.name}'...`);
     let result: sandboxState.BackupResult | null = null;
     let orphanManifestMessage: string | null = null;
+    let shieldsWindowOpened = true;
     let returnedToStopped = true;
     try {
-      result = startedForBackup
-        ? await backupStartedSandboxState(sb.name)
-        : sandboxState.backupSandboxState(sb.name);
-    } catch (err: unknown) {
-      // Source-of-truth review (#5734 / #5819):
-      //
-      // - Invalid state: a sandbox in the registry references an agent whose
-      //   manifest no longer exists on disk (orphan after a higher-version
-      //   install replaced the manifest tree). loadAgent() at
-      //   src/lib/agent/defs.ts:365-372 throws `Agent '<name>' not found:
-      //   <manifestPath>` when this happens.
-      // - Source boundary: the orphan is owned upstream by the install/upgrade
-      //   flow that mutates the agents/ directory without reconciling the
-      //   registry. The narrow skip here exists purely so the pre-upgrade
-      //   backup-all loop survives until the upgrade itself reinstalls the
-      //   missing manifest.
-      // - Source-fix constraint: the registry cannot be reconciled before the
-      //   backup runs because the backup IS what gates the upgrade that ships
-      //   the reconciled manifests. A registry-side fix at boot or post-install
-      //   would solve the root cause but is out of scope here.
-      // - Regression test: maintenance.test.ts covers the orphan-skip,
-      //   skipped-not-failed counter, non-orphan re-throw (EACCES), and the
-      //   `: <path>`-suffixed shape boundary so widening or eliminating the
-      //   matcher fails CI.
-      // - Removal condition: drop this catch when the registry is reconciled
-      //   on install/upgrade and orphan sandboxes can no longer reach
-      //   backup-all (or when backupSandboxState surfaces a typed
-      //   MissingAgentManifestError that the caller can identify without
-      //   string matching).
-      //
-      // Anchored to the exact loadAgent() throw shape. Requiring the
-      // `: <path>` suffix prevents accidentally catching unrelated
-      // "Agent '...' not found" messages from other layers that should still
-      // abort the backup batch (disk full, SSH timeout, permission denied,
-      // programming bugs all propagate).
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(msg)) {
-        throw err;
-      }
-      orphanManifestMessage = msg;
+      const attempt = await backupSandboxWithinShieldsWindow(sb.name, () =>
+        startedForBackup
+          ? backupStartedSandboxState(sb.name)
+          : sandboxState.backupSandboxState(sb.name),
+      );
+      result = attempt.result;
+      orphanManifestMessage = attempt.orphanManifestMessage;
+      shieldsWindowOpened = attempt.shieldsWindowOpened;
     } finally {
       if (startedForBackup) {
         if (returnSandboxContainerToStopped(startedForBackup.containerName)) {
@@ -199,6 +247,11 @@ export async function backupAll(): Promise<void> {
       }
     }
     if (!returnedToStopped) {
+      failed++;
+      continue;
+    }
+    if (!shieldsWindowOpened) {
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (could not safely unlock shields)`);
       failed++;
       continue;
     }

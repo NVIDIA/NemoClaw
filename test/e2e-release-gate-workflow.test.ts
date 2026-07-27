@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { validateE2eWorkflow } from "../tools/e2e/workflow-boundary.mts";
 import { readYaml, type WorkflowJob } from "./helpers/e2e-workflow-contract";
 
 type E2eWorkflow = {
@@ -29,6 +30,21 @@ describe("release gate workflow resource contracts", () => {
     expect(checkout?.with?.ref).toBe("${{ inputs.checkout_sha || github.sha }}");
     expect(tuiJob.env?.NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA).toBe(
       "${{ inputs.checkout_sha || github.sha }}",
+    );
+  });
+  it("rejects trusted dispatch receipt contract drift", () => {
+    const workflow = structuredClone(e2eWorkflow);
+    const steps = workflow.jobs["generate-matrix"].steps!;
+    const receipt = steps.find((step) => step.name === "Record trusted E2E dispatch receipt")!;
+    const upload = steps.find((step) => step.name === "Upload trusted E2E dispatch receipt")!;
+    delete receipt.env!.DISPATCH_JOBS;
+    upload.with!.name = "mutable-dispatch-receipt";
+
+    expect(validateE2eWorkflow(workflow as unknown as Record<string, unknown>)).toEqual(
+      expect.arrayContaining([
+        "trusted E2E dispatch receipt must bind only the candidate, run, attempt, and dispatch inputs",
+        "generate-matrix upload-e2e-artifacts must preserve its explicit name/path contract",
+      ]),
     );
   });
 });

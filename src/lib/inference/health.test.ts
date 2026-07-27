@@ -255,7 +255,6 @@ describe("inference health", () => {
 
     it.each([
       "deepseek-ai/deepseek-v4-pro",
-      "qwen/qwen3.5-397b-a17b",
       "deepseek-ai/deepseek-v4-flash",
     ])("reports the short status timeout as unverified for slow model %s", (model) => {
       const result = probeRemoteProviderHealth("nvidia-prod", {

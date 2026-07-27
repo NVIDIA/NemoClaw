@@ -293,13 +293,13 @@ describe("PR review advisor comment CLI", () => {
       e2e: {
         coverage: {
           requiredTests: [],
-          optionalTests: [{ id: "docs-validation", reason: "primary optional coverage" }],
+          optionalTests: [{ id: "vllm-docker-storage", reason: "primary optional coverage" }],
         },
         targets: {
           required: [],
           optional: [
             {
-              id: "docs-validation",
+              id: "vllm-docker-storage",
               workflow: "e2e.yaml",
               selectorType: "job",
               required: false,
@@ -344,7 +344,7 @@ describe("PR review advisor comment CLI", () => {
     expect(comment).not.toContain("do not publish this summary");
     expect(comment).not.toContain("do not publish this finding");
     expect(comment).toContain("<summary>1 optional E2E recommendation</summary>");
-    expect(comment.match(/<code>docs-validation<\/code>/gu)).toHaveLength(1);
+    expect(comment.match(/<code>vllm-docker-storage<\/code>/gu)).toHaveLength(1);
 
     const partialComment = buildComment({
       summary: "# ignored\n",
