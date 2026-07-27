@@ -201,7 +201,6 @@ function runWorkflowShellStepWithJobs(
   }
 }
 
-// source-shape-contract: compatibility -- Package scripts must retain their documented validation command scopes and aliases
 function runLoggedPackageScript(script: string): string[][] {
   const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
   const fakeBin = join(temp, "bin");
@@ -730,6 +729,7 @@ describe("pull request and main workflow contracts", () => {
     expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
   });
 
+  // source-shape-contract: compatibility -- Package scripts must retain their documented validation command scopes and aliases
   it("keeps routine, broad, and repository validation commands distinct (#7550)", () => {
     const scripts = packageJson.scripts;
     const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
