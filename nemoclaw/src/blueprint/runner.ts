@@ -102,6 +102,8 @@ const REST_PROTOCOLS = new Set(["rest"]);
 const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
 const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
 const MISSING_SANDBOX_PATTERN = /\b(?:not found|does not exist)\b/i;
+const MISSING_SANDBOX_INSPECTION_PATTERN =
+  /(?:\bsandbox\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bsandbox\b)/i;
 
 function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
@@ -877,7 +879,7 @@ export async function actionApply(
       const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
       if (sandboxResult.exitCode === 0) {
         reuseExistingSandbox = true;
-      } else if (!MISSING_SANDBOX_PATTERN.test(sandboxOutput)) {
+      } else if (!MISSING_SANDBOX_INSPECTION_PATTERN.test(sandboxOutput)) {
         throw new Error(
           `Failed to inspect sandbox '${sandboxName}' before runtime identity apply: ${boundedCommandError(sandboxOutput)}`,
         );

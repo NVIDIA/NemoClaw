@@ -320,11 +320,14 @@ describe("blueprint identity wrapper", () => {
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
     responseQueue([
-      ["sandbox get test-sandbox", [{ exitCode: 1, stdout: "", stderr: "gateway unavailable" }]],
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 1, stdout: "", stderr: "gateway configuration not found" }],
+      ],
     ]);
 
     await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      /Failed to inspect sandbox 'test-sandbox'.*gateway unavailable/,
+      /Failed to inspect sandbox 'test-sandbox'.*gateway configuration not found/,
     );
 
     const commandLines = mockExeca.mock.calls.map(([command, args]) =>
