@@ -197,15 +197,18 @@ function stationHasGb300PciGpu(
   pciDevicesPath: string,
 ): boolean | undefined {
   try {
-    let matches = 0;
+    let incompleteEvidence = false;
     for (const entry of readdir(pciDevicesPath).slice(0, 256)) {
       const devicePath = path.join(pciDevicesPath, entry);
       const vendor = readOptional(readFile, path.join(devicePath, "vendor"));
       const device = readOptional(readFile, path.join(devicePath, "device"));
       const pciClass = readOptional(readFile, path.join(devicePath, "class"));
-      if (isStationGb300PciDevice(vendor, device, pciClass)) matches += 1;
+      if (isStationGb300PciDevice(vendor, device, pciClass)) return true;
+      if (vendor === undefined || device === undefined || pciClass === undefined) {
+        incompleteEvidence = true;
+      }
     }
-    return matches > 0;
+    return incompleteEvidence ? undefined : false;
   } catch {
     return undefined;
   }

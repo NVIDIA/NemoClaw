@@ -296,6 +296,44 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
+    ["unreadable vendor", "vendor", "throw"],
+    ["oversized device", "device", "oversized"],
+    ["unreadable class", "class", "throw"],
+  ] as const)("keeps Station qualification inconclusive with %s evidence", (_scenario, field, fault) => {
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      osReleasePath: "/fixtures/os-release",
+      stationReleasePath: "/fixtures/dgx-release",
+      pciDevicesPath: "/fixtures/pci",
+      readFile: (filePath) => {
+        if (filePath.endsWith(`/${field}`)) {
+          if (fault === "throw")
+            throw Object.assign(new Error("unreadable PCI identity"), { code: "EIO" });
+          return "0x31c2".padEnd(5000, "0");
+        }
+        return stationFixtureReadFile(filePath);
+      },
+      readdir: () => ["0000:01:00.0"],
+      openFile: () => 17,
+      statFileDescriptor: () => trustedMarkerStat(),
+      readFileDescriptor: () => noOtaStationRelease(),
+      closeFileDescriptor: () => undefined,
+    });
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        ...identity,
+      }),
+    );
+
+    expect(identity.stationGb300PciGpu).toBeUndefined();
+    expect(qualification(result, "host.platform.dgx_station")).toBe("unknown");
+    expect(capability(result, "host.platform.dgx_station")).toBe("unknown");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_station_inconclusive");
+  });
+
+  it.each([
     "7.6.0",
     "7.6.1",
   ])("accepts no-OTA DGX OS %s without binding its build date", (version) => {
