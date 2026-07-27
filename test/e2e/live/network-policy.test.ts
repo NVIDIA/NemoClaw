@@ -507,7 +507,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     e2ePhases: [
       "confirm built CLI Docker OpenShell and credential",
       "clear the sandbox and onboard restricted policy",
-      "prove default denial and the weather allowlist",
+      "prove zero active presets, default denial, and the weather allowlist",
       "exercise package and SaaS policy presets",
       "prove dry-run and per-binary Jira approval",
       "verify hot reload inference exemption and SSRF guards",
@@ -521,6 +521,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     boundary: "live-sandbox-network-policy",
     contracts: [
       "deny-by-default egress",
+      "restricted tier begins with zero active presets",
       "OpenShell 0.0.85 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
       "read-only preset allowlist behavior",
       "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
@@ -606,7 +607,6 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
           NEMOCLAW_POLICY_TIER: "restricted",
-          NEMOCLAW_WEB_SEARCH_ENABLED: "1",
         }),
         redactionValues: [apiKey],
         timeoutMs: ONBOARD_TIMEOUT_MS,
@@ -641,35 +641,21 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
   }
   expect(onboard?.exitCode, onboard ? text(onboard) : "onboard did not run").toBe(0);
 
-  // Invalid state: prior bugs left `openclaw-pricing` (and, under
-  // `NEMOCLAW_OPENCLAW_OTEL=1` with a local endpoint,
-  // `openclaw-diagnostics-otel-local`) live on restricted OpenClaw sandboxes
-  // even though the restricted tier promises zero third-party network access.
-  // Source boundary: live OpenShell `policy-list` after a successful
-  // restricted onboard and before any operator mutation (`policy-add brew`).
-  // This scenario enables `NEMOCLAW_WEB_SEARCH_ENABLED=1` so the later brave
-  // probe has a preset to allow, so the assertion below only proves the two
-  // OpenClaw-agent suppressed presets are absent. The authoritative
-  // source-of-truth for the linked issue's literal "zero applied presets"
-  // clause is the dedicated `restricted-openclaw-policy-suppression`
-  // scenario below — it onboards a default restricted sandbox (no
-  // web-search, no OpenClaw OTEL) and asserts the `policy-list` output has
-  // no `●`-bulleted entries; that scenario must remain the gate even if
-  // this scenario's assertion is ever weakened.
-  progress.phase("prove default denial and the weather allowlist");
+  // Keep the actual OpenShell boundary in the retained journey: a default
+  // restricted onboard must have no active preset before operator mutation.
+  progress.phase("prove zero active presets, default denial, and the weather allowlist");
   const policyListAfterOnboard = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
     artifactName: "tc-net-01-policy-list-after-onboard",
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
   expect(policyListAfterOnboard.exitCode, text(policyListAfterOnboard)).toBe(0);
+  const activeBullets = (policyListAfterOnboard.stdout.match(/^[\s]*●[\s]+(\S+)/gm) ?? []).map(
+    (line) => line.replace(/^[\s]*●[\s]+/, "").trim(),
+  );
   expect(
-    policyListAfterOnboard.stdout,
-    `restricted onboard must not leave openclaw-pricing applied: ${text(policyListAfterOnboard)}`,
-  ).not.toMatch(/^[\s]*●[\s]+openclaw-pricing\b/m);
-  expect(
-    policyListAfterOnboard.stdout,
-    `restricted onboard must not leave openclaw-diagnostics-otel-local applied: ${text(policyListAfterOnboard)}`,
-  ).not.toMatch(/^[\s]*●[\s]+openclaw-diagnostics-otel-local\b/m);
+    activeBullets,
+    `restricted tier must begin with zero active presets; got ${JSON.stringify(activeBullets)} from:\n${text(policyListAfterOnboard)}`,
+  ).toEqual([]);
 
   const denyDefault = await fetchStatus(sandbox, "https://example.com/", "tc-net-01-deny-default");
   expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
@@ -1055,6 +1041,7 @@ NEMOCLAW_WEB_FETCH_PROBE`,
     id: "network-policy",
     sandboxName: SANDBOX_NAME,
     assertions: {
+      zeroInitialPresets: true,
       denyDefault: true,
       weatherReadOnlyPreset: true,
       brewPreset: true,
@@ -1073,11 +1060,12 @@ NEMOCLAW_WEB_FETCH_PROBE`,
   });
 });
 
-// Transitional workflow shim for #7617. The normal integration suite now
-// owns the zero-preset plan contract. Keep this test for one merge so the
-// trusted base workflow, which still dispatches the old zero-presets shard
-// while reviewing the workflow change, can collect passing head evidence.
-// Delete it after the one-row network-policy matrix is present on main.
+// Transitional workflow shim for #7617. The normal integration suite owns
+// the zero-preset plan and the retained live journey above owns the actual
+// OpenShell applied-set boundary. Keep this duplicate test for one merge so
+// the trusted base workflow, which still dispatches the old zero-presets
+// shard while reviewing the workflow change, can collect passing head
+// evidence. Delete it after the one-row matrix is present on main.
 //
 // Acceptance note (`NEMOCLAW_OPENCLAW_OTEL=1`): the OTEL-enabled live
 // variant is deferred to a follow-up nightly extension to keep this
