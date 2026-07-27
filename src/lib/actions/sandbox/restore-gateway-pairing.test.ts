@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("establishRestoredSandboxGatewayPairing", () => {
-  it("restarts the restored gateway before provoking and approving the scope upgrade (#7431)", async () => {
+  it("restarts the restored gateway before warm-up and after approval (#7431)", async () => {
     const order: string[] = [];
     const restartRestoredSandboxGateway = vi.fn(() => {
       order.push("restart");
@@ -36,7 +36,8 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(warmupScopeUpgrade).toHaveBeenCalledWith("beta");
     expect(autoPairScopeApproval).toHaveBeenCalledWith("beta");
     expect(verifyGatewayPairing).toHaveBeenCalledWith("beta");
-    expect(order).toEqual(["restart", "warmup", "approve", "verify"]);
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(order).toEqual(["restart", "warmup", "approve", "restart", "verify"]);
   });
 
   it("repeats the handshake once when verification creates a remaining scope upgrade (#7431)", async () => {
@@ -65,31 +66,40 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       "restart",
       "warmup",
       "approve",
-      "verify",
       "restart",
+      "verify",
       "warmup",
       "approve",
+      "restart",
       "verify",
     ]);
   });
 
-  it("restarts the gateway before verifying registration approved by the first attempt (#7431)", async () => {
-    let lifecycleGeneration = 0;
-    let approvedGeneration: number | null = null;
-    let approvalPending = false;
+  it("restarts after each of two successive approved transitions before verification (#7431)", async () => {
+    const transitions = ["pairing", "operator.write"];
+    const order: string[] = [];
+    let approvedTransitions = 0;
+    let runningTransitions = 0;
+    let pendingTransition: string | null = null;
     const restartRestoredSandboxGateway = vi.fn(() => {
-      lifecycleGeneration += 1;
+      runningTransitions = approvedTransitions;
+      order.push(`restart:${runningTransitions}`);
     });
     const warmupScopeUpgrade = vi.fn(() => {
-      approvalPending = approvedGeneration === null;
+      pendingTransition = transitions[approvedTransitions] ?? null;
+      order.push(`warmup:${pendingTransition ?? "none"}`);
     });
     const autoPairScopeApproval = vi.fn(() => {
-      approvedGeneration = approvalPending ? lifecycleGeneration : approvedGeneration;
-      approvalPending = false;
+      order.push(`approve:${pendingTransition ?? "none"}`);
+      if (pendingTransition !== null) {
+        approvedTransitions += 1;
+        pendingTransition = null;
+      }
     });
-    const verifyGatewayPairing = vi.fn(
-      () => approvedGeneration !== null && lifecycleGeneration > approvedGeneration,
-    );
+    const verifyGatewayPairing = vi.fn(() => {
+      order.push(`verify:${runningTransitions}`);
+      return runningTransitions === transitions.length;
+    });
 
     await establishRestoredSandboxGatewayPairing("beta", {
       restartRestoredSandboxGateway,
@@ -98,7 +108,18 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       verifyGatewayPairing,
     });
 
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(order).toEqual([
+      "restart:0",
+      "warmup:pairing",
+      "approve:pairing",
+      "restart:1",
+      "verify:1",
+      "warmup:operator.write",
+      "approve:operator.write",
+      "restart:2",
+      "verify:2",
+    ]);
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(3);
     expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
     expect(autoPairScopeApproval).toHaveBeenCalledTimes(2);
     expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);
@@ -157,7 +178,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
         verifyGatewayPairing,
       }),
     ).rejects.toThrow("authenticated gateway verification run did not succeed");
-    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(3);
     expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
     expect(autoPairScopeApproval).toHaveBeenCalledTimes(2);
     expect(verifyGatewayPairing).toHaveBeenCalledTimes(2);

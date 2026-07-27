@@ -12,10 +12,12 @@ export type RestoreGatewayPairingDeps = {
   verifyGatewayPairing: (sandboxName: string) => boolean;
 };
 
-// A restored clone starts without runtime device credentials. Its first pass
-// can approve initial pairing, while strict verification can provoke the
-// remaining operator.write upgrade. Permit one bounded recovery pass.
-const RESTORE_GATEWAY_PAIRING_ATTEMPTS = 2;
+// A restored clone starts without runtime device credentials. Restart once so
+// its gateway serves the restored state. Each warm-up can provoke one
+// allowlisted transition, but approved state is not visible until the gateway
+// restarts. Strict verification can then provoke the remaining operator.write
+// upgrade, so permit one bounded recovery cycle.
+const RESTORE_GATEWAY_PAIRING_CYCLES = 2;
 
 type RestoredSandboxGatewayRestartDeps = {
   restartSandboxGateway: (
@@ -57,13 +59,14 @@ export async function establishRestoredSandboxGatewayPairing(
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
   try {
-    for (let attempt = 0; attempt < RESTORE_GATEWAY_PAIRING_ATTEMPTS; attempt += 1) {
-      // Registration approved by the first pass is not visible until the
-      // gateway restarts. Repeat supervisor-mediated restart and host-forward
-      // recovery before every bounded attempt.
-      deps.restartRestoredSandboxGateway(targetSandbox);
+    deps.restartRestoredSandboxGateway(targetSandbox);
+    for (let cycle = 0; cycle < RESTORE_GATEWAY_PAIRING_CYCLES; cycle += 1) {
       deps.warmupScopeUpgrade(targetSandbox);
       deps.autoPairScopeApproval(targetSandbox);
+      // Publish the approved transition to the running gateway before strict
+      // verification. This also recovers the host forward through the existing
+      // supervisor-mediated restart path.
+      deps.restartRestoredSandboxGateway(targetSandbox);
       if (deps.verifyGatewayPairing(targetSandbox)) {
         return;
       }
