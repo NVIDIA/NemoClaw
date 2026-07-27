@@ -15,7 +15,10 @@
     {
       "live": "test/e2e/live/inference-routing.test.ts",
       "fast": [
+        "nemoclaw/src/blueprint/runner-identity.test.ts",
+        "nemoclaw/src/blueprint/runtime-identity.test.ts",
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
+        "test/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/onboard-inference-gateway-scope.test.ts"
       ]

@@ -131,13 +131,44 @@ describe("blueprint identity wrapper", () => {
       type: "file",
       content: [
         "id: okta-runtime-v1",
+        "display_name: Okta Runtime Credentials v1",
+        "description: Gateway-managed Okta access-token refresh for an attached sandbox",
+        "category: agent",
         "credentials:",
         "  - name: OKTA_ACCESS_TOKEN",
+        "    description: Short-lived Okta API access token",
+        "    env_vars:",
+        "      - OKTA_ACCESS_TOKEN",
+        "    required: true",
+        "    auth_style: bearer",
+        "    header_name: authorization",
         "    refresh:",
+        "      strategy: oauth2_refresh_token",
         "      token_url: https://example.okta.com/oauth2/default/v1/token",
+        "      refresh_before_seconds: 300",
+        "      max_lifetime_seconds: 3600",
+        "      material:",
+        "        - name: client_id",
+        "          required: true",
+        "        - name: refresh_token",
+        "          required: true",
+        "          secret: true",
+        "        - name: client_secret",
+        "          required: false",
+        "          secret: true",
         "endpoints:",
         "  - host: api.example.okta.com",
         "    port: 443",
+        "    protocol: rest",
+        "    enforcement: enforce",
+        "    rules:",
+        '      - allow: { method: GET, path: "/**" }',
+        "binaries:",
+        "  - /usr/local/bin/node",
+        "  - /usr/bin/node",
+        "  - /usr/local/bin/curl",
+        "  - /usr/bin/curl",
+        "inference_capable: false",
         "",
       ].join("\n"),
     });
@@ -151,20 +182,8 @@ describe("blueprint identity wrapper", () => {
     vi.restoreAllMocks();
   });
 
-  it("accepts an opt-in Okta identity and fail-closed middleware configuration", () => {
-    const input = blueprint({
-      identity: oktaIdentity(),
-      policy: {
-        middlewares: {
-          identity_guard: {
-            middleware: "acme/identity-guard",
-            order: 10,
-            on_error: "fail_closed",
-            endpoints: { include: ["api.example.okta.com"] },
-          },
-        },
-      },
-    });
+  it("accepts an opt-in provider-neutral Okta identity configuration", () => {
+    const input = blueprint({ identity: oktaIdentity() });
     store.set("/blueprint/blueprint.yaml", { type: "file", content: YAML.stringify(input) });
 
     expect(loadBlueprint()).toEqual(input);
@@ -546,111 +565,5 @@ describe("blueprint identity wrapper", () => {
       /identity ownership receipt is invalid/,
     );
     expect(mockExeca).not.toHaveBeenCalled();
-  });
-
-  it("composes fail-closed middleware while retaining existing middleware", async () => {
-    const responses = new Map([
-      [
-        "policy get",
-        {
-          exitCode: 0,
-          stdout: [
-            "Version: 1",
-            "Hash: sha256:test",
-            "---",
-            "version: 1",
-            "network_policies: {}",
-            "network_middlewares:",
-            "  existing:",
-            "    middleware: openshell/regex",
-            "    endpoints:",
-            "      include: [api.example.com]",
-            "",
-          ].join("\n"),
-          stderr: "",
-        },
-      ],
-    ]);
-    mockExeca.mockImplementation(
-      async (_command: string, args: string[]) =>
-        responses.get(args.slice(0, 2).join(" ")) ?? { exitCode: 0, stdout: "", stderr: "" },
-    );
-    await actionApply(
-      "default",
-      blueprint({
-        policy: {
-          middlewares: {
-            identity_guard: {
-              middleware: "acme/identity-guard",
-              order: 10,
-              on_error: "fail_closed",
-              endpoints: { include: ["api.example.okta.com"] },
-            },
-          },
-        },
-      }),
-    );
-
-    const mergedEntry = [...store.entries()].find(([path]) =>
-      path.endsWith("/merged-policy.yaml"),
-    )?.[1];
-    expect(mergedEntry?.content).toBeDefined();
-    expect(YAML.parse(mergedEntry!.content!).network_middlewares).toMatchObject({
-      existing: { middleware: "openshell/regex" },
-      identity_guard: {
-        middleware: "acme/identity-guard",
-        order: 10,
-        on_error: "fail_closed",
-      },
-    });
-  });
-
-  it("rejects middleware collisions without replacing existing policy", async () => {
-    responseQueue([
-      [
-        "policy get --base test-sandbox",
-        [
-          {
-            exitCode: 0,
-            stdout: [
-              "Version: 1",
-              "Hash: sha256:test",
-              "---",
-              "version: 1",
-              "network_policies: {}",
-              "network_middlewares:",
-              "  identity_guard:",
-              "    middleware: existing/guard",
-              "    endpoints:",
-              "      include: [api.example.okta.com]",
-              "",
-            ].join("\n"),
-            stderr: "",
-          },
-        ],
-      ],
-    ]);
-
-    await expect(
-      actionApply(
-        "default",
-        blueprint({
-          policy: {
-            middlewares: {
-              identity_guard: {
-                middleware: "replacement/guard",
-                endpoints: { include: ["api.example.okta.com"] },
-              },
-            },
-          },
-        }),
-      ),
-    ).rejects.toThrow(/Refusing to replace existing network middleware: identity_guard/);
-
-    expect(
-      mockExeca.mock.calls.some(
-        (call) => Array.isArray(call[1]) && call[1][0] === "policy" && call[1][1] === "set",
-      ),
-    ).toBe(false);
   });
 });

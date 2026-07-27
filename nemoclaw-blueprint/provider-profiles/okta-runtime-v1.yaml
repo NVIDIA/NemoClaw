@@ -6,6 +6,8 @@
 # pinned OpenShell runtime cannot preserve NemoClaw's validated peer across
 # refresh and provider-profile import. This profile is not currently an
 # activatable production Okta integration.
+# The direct runner validates this complete credential-delivery shape before
+# import, including the exact executable allowlist and enforced endpoint rule.
 # Copy this file, replace the example authorization-server URL and API host,
 # and review the endpoint rules before use.
 id: okta-runtime-v1

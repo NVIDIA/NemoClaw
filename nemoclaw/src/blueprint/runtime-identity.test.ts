@@ -43,13 +43,44 @@ const matchingProviderResult: RuntimeIdentityCommandResult = {
 };
 const profileDocument = [
   "id: okta-runtime-v1",
+  "display_name: Okta Runtime Credentials v1",
+  "description: Gateway-managed Okta access-token refresh for an attached sandbox",
+  "category: agent",
   "credentials:",
   "  - name: OKTA_ACCESS_TOKEN",
+  "    description: Short-lived Okta API access token",
+  "    env_vars:",
+  "      - OKTA_ACCESS_TOKEN",
+  "    required: true",
+  "    auth_style: bearer",
+  "    header_name: authorization",
   "    refresh:",
+  "      strategy: oauth2_refresh_token",
   "      token_url: https://example.okta.com/oauth2/default/v1/token",
+  "      refresh_before_seconds: 300",
+  "      max_lifetime_seconds: 3600",
+  "      material:",
+  "        - name: client_id",
+  "          required: true",
+  "        - name: refresh_token",
+  "          required: true",
+  "          secret: true",
+  "        - name: client_secret",
+  "          required: false",
+  "          secret: true",
   "endpoints:",
   "  - host: api.example.okta.com",
   "    port: 443",
+  "    protocol: rest",
+  "    enforcement: enforce",
+  "    rules:",
+  '      - allow: { method: GET, path: "/**" }',
+  "binaries:",
+  "  - /usr/local/bin/node",
+  "  - /usr/bin/node",
+  "  - /usr/local/bin/curl",
+  "  - /usr/bin/curl",
+  "inference_capable: false",
   "",
 ].join("\n");
 
@@ -320,6 +351,40 @@ describe("runtime identity contract", () => {
     expect(calls).toEqual([]);
   });
 
+  it.each([
+    [
+      profileDocument.replace("  - /usr/bin/curl\n", "  - /usr/bin/curl\n  - /bin/sh\n"),
+      /reviewed executable allowlist/,
+    ],
+    [
+      profileDocument.replace("    auth_style: bearer", "    auth_style: query"),
+      /credential presentation policy/,
+    ],
+    [
+      profileDocument.replace(
+        '      - allow: { method: GET, path: "/**" }',
+        '      - allow: { method: POST, path: "/admin/**" }',
+      ),
+      /credential-delivery policy/,
+    ],
+    [
+      profileDocument.replace(
+        "          secret: true\nendpoints:",
+        "          secret: true\n        - name: audience\n          required: false\nendpoints:",
+      ),
+      /refresh material/,
+    ],
+    [
+      `${profileDocument.trimEnd()}\ncredential_passthrough: true\n`,
+      /unsupported top-level fields/,
+    ],
+  ])("rejects unreviewed credential-delivery policy before import", async (profile, message) => {
+    writeFileSync(profilePath, profile);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(message);
+    expect(calls).toEqual([]);
+  });
+
   it("rejects a non-HTTPS refresh destination before import", async () => {
     writeFileSync(
       profilePath,
@@ -383,14 +448,32 @@ describe("runtime identity contract", () => {
       ),
       /must not include URL credentials/,
     ],
-    [
-      profileDocument.replace("    refresh:\n      token_url:", "    no_refresh:"),
-      /refresh token_url/,
-    ],
-    [profileDocument.replace("endpoints:", "missing_endpoints:"), /between 1 and 32 endpoints/],
+    [profileDocument.replace("    refresh:", "    no_refresh:"), /exactly one credential/],
     [
       profileDocument.replace(
-        "  - host: api.example.okta.com\n    port: 443",
+        [
+          "endpoints:",
+          "  - host: api.example.okta.com",
+          "    port: 443",
+          "    protocol: rest",
+          "    enforcement: enforce",
+          "    rules:",
+          '      - allow: { method: GET, path: "/**" }',
+        ].join("\n"),
+        "endpoints: []",
+      ),
+      /between 1 and 32 endpoints/,
+    ],
+    [
+      profileDocument.replace(
+        [
+          "  - host: api.example.okta.com",
+          "    port: 443",
+          "    protocol: rest",
+          "    enforcement: enforce",
+          "    rules:",
+          '      - allow: { method: GET, path: "/**" }',
+        ].join("\n"),
         "  - invalid-endpoint",
       ),
       /endpoint 1 must be a mapping/,

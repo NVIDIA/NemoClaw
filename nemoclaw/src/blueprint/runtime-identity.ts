@@ -26,6 +26,47 @@ const MAX_DESTINATION_URL_LENGTH = 2048;
 const TRUSTED_PROFILE_HOST_SUFFIXES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "okta-runtime-v1": Object.freeze(["okta.com"]),
 });
+const TRUSTED_PROFILE_BINARIES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "okta-runtime-v1": Object.freeze([
+    "/usr/local/bin/node",
+    "/usr/bin/node",
+    "/usr/local/bin/curl",
+    "/usr/bin/curl",
+  ]),
+});
+const RUNTIME_IDENTITY_PROFILE_KEYS = Object.freeze([
+  "id",
+  "display_name",
+  "description",
+  "category",
+  "credentials",
+  "endpoints",
+  "binaries",
+  "inference_capable",
+]);
+const RUNTIME_IDENTITY_CREDENTIAL_KEYS = Object.freeze([
+  "name",
+  "description",
+  "env_vars",
+  "required",
+  "auth_style",
+  "header_name",
+  "refresh",
+]);
+const RUNTIME_IDENTITY_REFRESH_KEYS = Object.freeze([
+  "strategy",
+  "token_url",
+  "refresh_before_seconds",
+  "max_lifetime_seconds",
+  "material",
+]);
+const RUNTIME_IDENTITY_ENDPOINT_KEYS = Object.freeze([
+  "host",
+  "port",
+  "protocol",
+  "enforcement",
+  "rules",
+]);
 
 export interface RuntimeIdentityConfig {
   profile_path: string;
@@ -89,6 +130,69 @@ interface ParsedRuntimeIdentityProfile {
   destinations: string[];
 }
 
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function requireBoundedProfileText(value: unknown, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > 1024 ||
+    UNSAFE_CONTROL_PATTERN.test(value)
+  ) {
+    throw new Error(`${label} must be a non-empty string no longer than 1024 characters`);
+  }
+  return value;
+}
+
+function requireExactRefreshMaterial(
+  value: unknown,
+  label: string,
+): Array<Record<string, unknown>> {
+  const expected = [
+    { name: "client_id", required: true },
+    { name: "refresh_token", required: true, secret: true },
+    { name: "client_secret", required: false, secret: true },
+  ];
+  if (
+    !Array.isArray(value) ||
+    value.length !== expected.length ||
+    !value.every(
+      (entry, index) =>
+        isPlainObject(entry) &&
+        hasOnlyKeys(entry, ["name", "required", "secret"]) &&
+        isDeepStrictEqual(entry, expected[index]),
+    )
+  ) {
+    throw new Error(
+      `${label} must declare only client_id, secret refresh_token, and optional secret client_secret`,
+    );
+  }
+  return expected;
+}
+
+function requireTrustedBinaries(
+  value: unknown,
+  config: RuntimeIdentityConfig,
+  label: string,
+): string[] {
+  const trusted = TRUSTED_PROFILE_BINARIES[config.provider_type];
+  if (
+    !trusted ||
+    !Array.isArray(value) ||
+    value.length !== trusted.length ||
+    !value.every((entry) => typeof entry === "string") ||
+    new Set(value).size !== value.length ||
+    !trusted.every((binary) => value.includes(binary))
+  ) {
+    throw new Error(
+      `${label} must declare exactly the reviewed executable allowlist for '${config.provider_type}'`,
+    );
+  }
+  return [...trusted];
+}
+
 function requireTrustedProfileHostname(
   hostname: string,
   config: RuntimeIdentityConfig,
@@ -129,16 +233,16 @@ function requireHttpsDestination(
   return parsed.toString();
 }
 
-function endpointDestination(
+function parseRuntimeIdentityEndpoint(
   endpoint: unknown,
   index: number,
   config: RuntimeIdentityConfig,
-): string {
+): { destination: string; document: Record<string, unknown> } {
   const label = `Runtime identity provider profile endpoint ${String(index + 1)}`;
-  if (!isPlainObject(endpoint)) {
+  if (!isPlainObject(endpoint) || !hasOnlyKeys(endpoint, RUNTIME_IDENTITY_ENDPOINT_KEYS)) {
     throw new Error(`${label} must be a mapping`);
   }
-  const { host, port } = endpoint;
+  const { enforcement, host, port, protocol, rules } = endpoint;
   if (
     typeof host !== "string" ||
     host.length === 0 ||
@@ -154,8 +258,31 @@ function endpointDestination(
   if (unbracketedHost.includes("[") || unbracketedHost.includes("]")) {
     throw new Error(`${label} must declare a valid host`);
   }
+  if (
+    protocol !== "rest" ||
+    enforcement !== "enforce" ||
+    !Array.isArray(rules) ||
+    rules.length !== 1 ||
+    !isPlainObject(rules[0]) ||
+    !hasOnlyKeys(rules[0], ["allow"]) ||
+    !isPlainObject(rules[0].allow) ||
+    !hasOnlyKeys(rules[0].allow, ["method", "path"]) ||
+    rules[0].allow.method !== "GET" ||
+    rules[0].allow.path !== "/**"
+  ) {
+    throw new Error(`${label} must enforce the reviewed REST GET /** credential-delivery policy`);
+  }
   const urlHost = unbracketedHost.includes(":") ? `[${unbracketedHost}]` : unbracketedHost;
-  return requireHttpsDestination(`https://${urlHost}:${String(port)}/`, config, label);
+  return {
+    destination: requireHttpsDestination(`https://${urlHost}:${String(port)}/`, config, label),
+    document: {
+      host,
+      port,
+      protocol: "rest",
+      enforcement: "enforce",
+      rules: [{ allow: { method: "GET", path: "/**" } }],
+    },
+  };
 }
 
 function parseRuntimeIdentityProfile(
@@ -175,21 +302,57 @@ function parseRuntimeIdentityProfile(
   if (!isPlainObject(parsed) || parsed.id !== config.provider_type) {
     throw new Error(`${label} must declare id '${config.provider_type}'`);
   }
+  if (!hasOnlyKeys(parsed, RUNTIME_IDENTITY_PROFILE_KEYS)) {
+    throw new Error(`${label} contains unsupported top-level fields`);
+  }
+  const displayName = requireBoundedProfileText(parsed.display_name, `${label} display_name`);
+  const description = requireBoundedProfileText(parsed.description, `${label} description`);
+  if (parsed.category !== "agent" || parsed.inference_capable !== false) {
+    throw new Error(`${label} must be a non-inference agent provider profile`);
+  }
   const credentials = parsed.credentials;
   if (
     !Array.isArray(credentials) ||
     credentials.length !== 1 ||
     !isPlainObject(credentials[0]) ||
+    !hasOnlyKeys(credentials[0], RUNTIME_IDENTITY_CREDENTIAL_KEYS) ||
     credentials[0].name !== config.credential_key
   ) {
     throw new Error(
       `${label} must declare exactly one credential named '${config.credential_key}'`,
     );
   }
+  const credentialDescription = requireBoundedProfileText(
+    credentials[0].description,
+    `${label} credential description`,
+  );
+  if (
+    !Array.isArray(credentials[0].env_vars) ||
+    credentials[0].env_vars.length !== 1 ||
+    credentials[0].env_vars[0] !== config.credential_key ||
+    credentials[0].required !== true ||
+    credentials[0].auth_style !== "bearer" ||
+    credentials[0].header_name !== "authorization"
+  ) {
+    throw new Error(`${label} credential presentation policy is not supported`);
+  }
   const refresh = credentials[0].refresh;
-  if (!isPlainObject(refresh) || typeof refresh.token_url !== "string") {
+  if (
+    !isPlainObject(refresh) ||
+    !hasOnlyKeys(refresh, RUNTIME_IDENTITY_REFRESH_KEYS) ||
+    refresh.strategy !== "oauth2_refresh_token" ||
+    typeof refresh.token_url !== "string" ||
+    !Number.isInteger(refresh.refresh_before_seconds) ||
+    (refresh.refresh_before_seconds as number) < 60 ||
+    (refresh.refresh_before_seconds as number) > 3600 ||
+    !Number.isInteger(refresh.max_lifetime_seconds) ||
+    (refresh.max_lifetime_seconds as number) <= (refresh.refresh_before_seconds as number) ||
+    (refresh.max_lifetime_seconds as number) > 86400
+  ) {
     throw new Error(`${label} must declare a refresh token_url`);
   }
+  const material = requireExactRefreshMaterial(refresh.material, `${label} refresh material`);
+  const tokenUrl = requireHttpsDestination(refresh.token_url, config, `${label} refresh token_url`);
   const endpoints = parsed.endpoints;
   if (
     !Array.isArray(endpoints) ||
@@ -200,12 +363,38 @@ function parseRuntimeIdentityProfile(
       `${label} must declare between 1 and ${String(MAX_PROFILE_ENDPOINTS)} endpoints`,
     );
   }
+  const parsedEndpoints = endpoints.map((endpoint, index) =>
+    parseRuntimeIdentityEndpoint(endpoint, index, config),
+  );
+  const binaries = requireTrustedBinaries(parsed.binaries, config, `${label} binaries`);
   return {
-    document: parsed,
-    destinations: [
-      requireHttpsDestination(refresh.token_url, config, `${label} refresh token_url`),
-      ...endpoints.map((endpoint, index) => endpointDestination(endpoint, index, config)),
-    ],
+    document: {
+      id: config.provider_type,
+      display_name: displayName,
+      description,
+      category: "agent",
+      credentials: [
+        {
+          name: config.credential_key,
+          description: credentialDescription,
+          env_vars: [config.credential_key],
+          required: true,
+          auth_style: "bearer",
+          header_name: "authorization",
+          refresh: {
+            strategy: "oauth2_refresh_token",
+            token_url: tokenUrl,
+            refresh_before_seconds: refresh.refresh_before_seconds,
+            max_lifetime_seconds: refresh.max_lifetime_seconds,
+            material,
+          },
+        },
+      ],
+      endpoints: parsedEndpoints.map(({ document }) => document),
+      binaries,
+      inference_capable: false,
+    },
+    destinations: [tokenUrl, ...parsedEndpoints.map(({ destination }) => destination)],
   };
 }
 
@@ -223,10 +412,6 @@ async function validateProfileDestinations(
       );
     }
   }
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
 }
 
 function isValidProviderKey(value: string): boolean {

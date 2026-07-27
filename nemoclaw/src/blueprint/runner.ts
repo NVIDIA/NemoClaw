@@ -94,19 +94,6 @@ interface PolicyAddition {
 }
 
 type PolicyAdditions = { [name: string]: PolicyAddition };
-type PolicyMiddlewares = { [name: string]: PolicyMiddleware };
-
-interface PolicyMiddleware {
-  name?: string;
-  middleware: string;
-  order?: number;
-  config?: UnknownRecord;
-  on_error?: "fail_closed" | "fail_open";
-  endpoints: {
-    include: string[];
-    exclude?: string[];
-  };
-}
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const REST_PROTOCOLS = new Set(["rest"]);
@@ -226,56 +213,6 @@ function isPolicyAdditions(value: unknown): value is PolicyAdditions {
   return isPlainObject(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
 }
 
-function isPolicyMiddleware(value: unknown): value is PolicyMiddleware {
-  if (
-    !isPlainObject(value) ||
-    !hasOnlyKeys(value, ["name", "middleware", "order", "config", "on_error", "endpoints"])
-  ) {
-    return false;
-  }
-  if (typeof value.middleware !== "string" || value.middleware.trim() === "") return false;
-  if (value.name !== undefined && typeof value.name !== "string") return false;
-  if (
-    value.order !== undefined &&
-    (typeof value.order !== "number" || !Number.isInteger(value.order) || value.order < 0)
-  ) {
-    return false;
-  }
-  if (value.config !== undefined && !isPlainObject(value.config)) return false;
-  if (
-    value.on_error !== undefined &&
-    value.on_error !== "fail_closed" &&
-    value.on_error !== "fail_open"
-  ) {
-    return false;
-  }
-  if (!isPlainObject(value.endpoints) || !hasOnlyKeys(value.endpoints, ["include", "exclude"])) {
-    return false;
-  }
-  const include = value.endpoints.include;
-  const exclude = value.endpoints.exclude;
-  return (
-    Array.isArray(include) &&
-    include.length > 0 &&
-    include.every((entry) => typeof entry === "string" && entry.trim() !== "") &&
-    (exclude === undefined ||
-      (Array.isArray(exclude) &&
-        exclude.every((entry) => typeof entry === "string" && entry.trim() !== "")))
-  );
-}
-
-function isPolicyMiddlewares(value: unknown): value is PolicyMiddlewares {
-  if (!isPlainObject(value) || Object.keys(value).length > 10) return false;
-  const orders = new Set<number>();
-  for (const entry of Object.values(value)) {
-    if (!isPolicyMiddleware(entry)) return false;
-    const order = entry.order ?? 0;
-    if (orders.has(order)) return false;
-    orders.add(order);
-  }
-  return true;
-}
-
 function isInferenceProfile(value: unknown): value is InferenceProfile {
   if (!isPlainObject(value)) {
     return false;
@@ -364,9 +301,6 @@ function isBlueprint(value: unknown): value is Blueprint {
         return false;
       }
     }
-    if (policy.middlewares !== undefined && !isPolicyMiddlewares(policy.middlewares)) {
-      return false;
-    }
   }
 
   const identity = components.identity;
@@ -421,7 +355,6 @@ interface Blueprint {
     router?: RouterConfig;
     policy?: {
       additions?: PolicyAdditions;
-      middlewares?: PolicyMiddlewares;
     };
     identity?: RuntimeIdentityConfig;
   };
@@ -451,11 +384,7 @@ interface RouterConfig {
 
 const DEFAULT_ROUTER_PORT = 4000;
 
-function mergePolicyAdditions(
-  currentPolicyRaw: string,
-  additions: PolicyAdditions,
-  middlewares: PolicyMiddlewares,
-): string {
+function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
   // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
   const current = parseOpenShellPolicy(currentPolicyRaw).policy;
   const existingNetworkPolicies = current.network_policies ?? {};
@@ -466,7 +395,7 @@ function mergePolicyAdditions(
   // fail closed on a scalar or sequence until its mutation semantics are
   // reviewed for the next supported OpenShell contract.
   for (const [key, value] of Object.entries(current)) {
-    if (key !== "version" && key !== "network_policies" && key !== "network_middlewares") {
+    if (key !== "version" && key !== "network_policies") {
       if (!isPlainObject(value)) {
         throw new Error(`Current policy top-level field "${key}" must be a YAML mapping`);
       }
@@ -479,21 +408,6 @@ function mergePolicyAdditions(
     ...existingNetworkPolicies,
     ...additions,
   });
-  const existingMiddlewares = current.network_middlewares ?? {};
-  if (!isPlainObject(existingMiddlewares)) {
-    throw new Error("network_middlewares must be a YAML mapping");
-  }
-  const middlewareCollisions = Object.keys(middlewares)
-    .filter((name) => Object.hasOwn(existingMiddlewares, name))
-    .sort();
-  if (middlewareCollisions.length > 0) {
-    throw new Error(
-      `Refusing to replace existing network middleware: ${middlewareCollisions.join(", ")}`,
-    );
-  }
-  if (Object.keys(existingMiddlewares).length > 0 || Object.keys(middlewares).length > 0) {
-    output.network_middlewares = { ...existingMiddlewares, ...middlewares };
-  }
   return YAML.stringify(output);
 }
 
@@ -907,7 +821,6 @@ export async function actionApply(
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
   const policyAdditions = blueprint.components?.policy?.additions ?? {};
-  const policyMiddlewares = blueprint.components?.policy?.middlewares ?? {};
   const runtimeIdentityConfig = blueprint.components?.identity;
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
   mkdirSync(stateDir, { recursive: true });
@@ -1062,7 +975,7 @@ export async function actionApply(
       );
     }
 
-    if (Object.keys(policyAdditions).length > 0 || Object.keys(policyMiddlewares).length > 0) {
+    if (Object.keys(policyAdditions).length > 0) {
       progress(78, "Applying policy additions");
       const currentPolicy = await runCmd(["openshell", "policy", "get", "--base", sandboxName], {
         reject: false,
@@ -1074,14 +987,10 @@ export async function actionApply(
       }
 
       const mergedPolicyFile = join(stateDir, "merged-policy.yaml");
-      writeFileSync(
-        mergedPolicyFile,
-        mergePolicyAdditions(currentPolicy.stdout, policyAdditions, policyMiddlewares),
-        {
-          encoding: "utf-8",
-          mode: 0o600,
-        },
-      );
+      writeFileSync(mergedPolicyFile, mergePolicyAdditions(currentPolicy.stdout, policyAdditions), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
 
       const policySet = await runCmd(
         ["openshell", "policy", "set", "--policy", mergedPolicyFile, "--wait", sandboxName],

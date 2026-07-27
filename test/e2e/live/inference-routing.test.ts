@@ -244,6 +244,225 @@ await main(["apply"]);
   expect(openshellLog).toBe("");
 });
 
+test("TC-INF-12 runtime identity reference plans safely and leaves no identity mutation on rejection", {
+  timeout: 5 * 60_000,
+  meta: {
+    e2ePhases: [
+      "prepare the provider-neutral runtime identity blueprint",
+      "plan the non-secret runtime identity reference",
+      "reject DNS-backed identity apply before OpenShell mutation",
+      "verify persisted state and rollback ownership boundaries",
+    ],
+  },
+}, async ({ artifacts, cleanup, progress }) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-identity-e2e-"));
+  const workdir = path.join(root, "blueprint");
+  const profileDir = path.join(workdir, "provider-profiles");
+  const fakeBinDir = path.join(root, "bin");
+  const home = path.join(root, "home");
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.mkdirSync(fakeBinDir, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  cleanup.add(`remove runtime identity E2E temp root ${root}`, () => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const commandLogPath = writeFakeOpenShellForBlueprintFailClosed(fakeBinDir);
+  fs.copyFileSync(
+    path.join(REPO_ROOT, "nemoclaw-blueprint", "provider-profiles", "okta-runtime-v1.yaml"),
+    path.join(profileDir, "okta-runtime-v1.yaml"),
+  );
+  fs.writeFileSync(
+    path.join(workdir, "blueprint.yaml"),
+    [
+      'version: "1.0"',
+      "components:",
+      "  sandbox:",
+      "    image: openclaw",
+      "    name: e2e-runtime-identity",
+      "  inference:",
+      "    profiles:",
+      "      default:",
+      "        provider_type: openai",
+      "        provider_name: default",
+      "        model: e2e-model",
+      "  identity:",
+      "    profile_path: provider-profiles/okta-runtime-v1.yaml",
+      "    provider_type: okta-runtime-v1",
+      "    provider_name: e2e-okta-runtime",
+      "    credential_key: OKTA_ACCESS_TOKEN",
+      "    client_id_env: OKTA_CLIENT_ID",
+      "    refresh_token_env: OKTA_REFRESH_TOKEN",
+      "    client_secret_env: OKTA_CLIENT_SECRET",
+      "",
+    ].join("\n"),
+  );
+
+  const clientId = "runtime-identity-e2e-client-id";
+  const refreshToken = "runtime-identity-e2e-refresh-token";
+  const clientSecret = "runtime-identity-e2e-client-secret";
+  const redactionValues = [clientId, refreshToken, clientSecret];
+  const runnerPath = path.join(REPO_ROOT, "nemoclaw/src/blueprint/runner.ts");
+  const tsxPath = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
+  const runnerEnv = {
+    HOME: home,
+    PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    OKTA_CLIENT_ID: clientId,
+    OKTA_REFRESH_TOKEN: refreshToken,
+    OKTA_CLIENT_SECRET: clientSecret,
+  };
+
+  await artifacts.target.declare({
+    id: "runtime-identity-reference-fail-closed-lifecycle",
+    issue: 6871,
+    contract: [
+      "plan exposes only the provider-neutral, non-secret identity binding",
+      "DNS-backed refresh and API destinations fail before any OpenShell identity mutation",
+      "failed apply state contains no ownership receipt for resources that were never acquired",
+      "status remains non-secret and rollback never deletes or detaches an unowned identity provider",
+      "this controlled-DNS, fake-OpenShell scenario does not prove successful OpenShell 0.0.85/Okta refresh, presentation, or attachment",
+    ],
+  });
+
+  progress.phase("plan the non-secret runtime identity reference");
+  const plan = await runRawCommand(
+    process.execPath,
+    [
+      tsxPath,
+      "--input-type=module",
+      "--eval",
+      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["plan"]);`,
+    ],
+    {
+      artifactName: "tc-inf-12-runtime-identity-plan",
+      artifacts,
+      cwd: workdir,
+      env: runnerEnv,
+      progress,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  const planText = resultText(plan);
+  expect(plan.exitCode, planText).toBe(0);
+  expect(planText).toContain('"provider_type": "okta-runtime-v1"');
+  expect(planText).toContain('"provider_name": "e2e-okta-runtime"');
+  expect(planText).toContain('"credential_key": "OKTA_ACCESS_TOKEN"');
+  for (const forbidden of [
+    "OKTA_CLIENT_ID",
+    "OKTA_REFRESH_TOKEN",
+    "OKTA_CLIENT_SECRET",
+    ...redactionValues,
+  ]) {
+    expect(planText).not.toContain(forbidden);
+  }
+
+  const applyScript = `
+import dns from "node:dns";
+const originalLookup = dns.promises.lookup;
+const identityHosts = new Set(["example.okta.com", "api.example.okta.com"]);
+dns.promises.lookup = ((hostname, options) => identityHosts.has(hostname)
+  ? Promise.resolve([{ address: "93.184.216.34", family: 4 }])
+  : originalLookup.call(dns.promises, hostname, options));
+const { main } = await import(${JSON.stringify(runnerPath)});
+await main(["apply"]);
+`;
+
+  progress.phase("reject DNS-backed identity apply before OpenShell mutation");
+  const apply = await runRawCommand(
+    process.execPath,
+    [tsxPath, "--input-type=module", "--eval", applyScript],
+    {
+      artifactName: "tc-inf-12-runtime-identity-apply",
+      artifacts,
+      cwd: workdir,
+      env: runnerEnv,
+      progress,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  const applyText = resultText(apply);
+  expectOnboardFailure(apply, "TC-INF-12 DNS-backed runtime identity apply");
+  expect(applyText).toMatch(/DNS-backed runtime identity destination/);
+  for (const secret of redactionValues) expect(applyText).not.toContain(secret);
+  expect(fs.existsSync(commandLogPath) ? fs.readFileSync(commandLogPath, "utf8") : "").toBe("");
+
+  const runId = /^RUN_ID:(\S+)$/m.exec(apply.stdout)?.[1];
+  expect(runId).toMatch(/^nc-[A-Za-z0-9-]+$/);
+  const stateDir = path.join(home, ".nemoclaw", "state", "runs", runId!);
+  const persistedPlan = fs.readFileSync(path.join(stateDir, "plan.json"), "utf8");
+  const parsedPersistedPlan = JSON.parse(persistedPlan) as Record<string, unknown>;
+  expect(parsedPersistedPlan).not.toHaveProperty("identity");
+  for (const forbidden of [
+    "OKTA_CLIENT_ID",
+    "OKTA_REFRESH_TOKEN",
+    "OKTA_CLIENT_SECRET",
+    ...redactionValues,
+  ]) {
+    expect(persistedPlan).not.toContain(forbidden);
+  }
+
+  progress.phase("verify persisted state and rollback ownership boundaries");
+  const status = await runRawCommand(
+    process.execPath,
+    [
+      tsxPath,
+      "--input-type=module",
+      "--eval",
+      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["status", "--run-id", ${JSON.stringify(runId)}]);`,
+    ],
+    {
+      artifactName: "tc-inf-12-runtime-identity-status",
+      artifacts,
+      cwd: workdir,
+      env: runnerEnv,
+      progress,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  const statusText = resultText(status);
+  expect(status.exitCode, statusText).toBe(0);
+  expect(statusText).toContain(`"run_id": "${runId}"`);
+  expect(statusText).not.toContain('"identity"');
+  for (const secret of redactionValues) expect(statusText).not.toContain(secret);
+
+  const rollback = await runRawCommand(
+    process.execPath,
+    [
+      tsxPath,
+      "--input-type=module",
+      "--eval",
+      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["rollback", "--run-id", ${JSON.stringify(runId)}]);`,
+    ],
+    {
+      artifactName: "tc-inf-12-runtime-identity-rollback",
+      artifacts,
+      cwd: workdir,
+      env: runnerEnv,
+      progress,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  expect(rollback.exitCode, resultText(rollback)).toBe(0);
+  expect(fs.existsSync(path.join(stateDir, "rolled_back"))).toBe(true);
+
+  const openshellCalls = fs
+    .readFileSync(commandLogPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { args: string[] });
+  await artifacts.writeJson("tc-inf-12-openshell-commands.json", openshellCalls);
+  expect(openshellCalls).toEqual([
+    { args: ["sandbox", "stop", "e2e-runtime-identity"] },
+    { args: ["sandbox", "remove", "e2e-runtime-identity"] },
+  ]);
+  expect(openshellCalls.some(({ args }) => args.includes("e2e-okta-runtime"))).toBe(false);
+});
+
 test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)", {
   timeout: 20 * 60_000,
   meta: {
