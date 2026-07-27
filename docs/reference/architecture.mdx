@@ -316,7 +316,10 @@ Obtain the refresh token through an authorized OAuth bootstrap flow for the same
 
 During plan, the runner reports only the non-secret provider type, provider name, and credential key.
 During apply, the runner first inspects the target sandbox and stops before identity mutation unless it confirms existence or an explicit sandbox-not-found result.
-It then inspects the requested provider name and stops if any same-name provider already exists.
+If the sandbox exists, the runner inspects the configured inference provider before identity mutation.
+It reuses that inference provider when inspection succeeds and permits creation only after an explicit provider-not-found result.
+Any other inference-provider inspection failure stops apply.
+The runner then inspects the requested runtime identity provider name and stops if any same-name provider already exists.
 It validates an existing provider's non-secret binding to produce a precise error, but never reuses it for this mutable refresh flow because OpenShell does not expose a secret-safe snapshot that rollback could restore.
 Only an absent provider proceeds to profile import, or exact export comparison when that profile is already registered, followed by provider creation, gateway-managed OAuth refresh configuration, initial token rotation, and sandbox attachment.
 Each successful apply therefore creates and owns the provider whose refresh state it mutates.
