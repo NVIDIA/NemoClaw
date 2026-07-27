@@ -4624,7 +4624,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
-      resume,
       recordStateResult,
       recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {

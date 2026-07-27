@@ -49,7 +49,7 @@ describe("final onboard flow phases", () => {
     );
   });
 
-  it("records each phase result on the resume compatibility path", async () => {
+  it("records each phase result when a resumed session is already downstream", async () => {
     const order: string[] = [];
     const recorded: string[] = [];
     const phases = createPhases("openclaw", order);
@@ -61,7 +61,7 @@ describe("final onboard flow phases", () => {
           createSession({
             machine: {
               version: 1,
-              state: "openclaw",
+              state: "policies",
               stateEnteredAt: "2026-06-09T00:00:00.000Z",
               revision: 1,
             },
@@ -69,7 +69,6 @@ describe("final onboard flow phases", () => {
         applyResult: async () => createSession(),
       },
       phases,
-      resume: true,
       recordStateResult: async (result) => {
         if (result.type === "transition") {
           recorded.push(result.next);

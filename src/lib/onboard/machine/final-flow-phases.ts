@@ -160,34 +160,27 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
-  resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
   recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
   afterPoliciesResultApplied?(): void;
   onContextUpdated?(context: Context): void;
 }) {
-  // Recompute plan for live resume repair when durable machine snapshots
-  // are already downstream of this slice even though branch setup/readiness,
-  // policy reconciliation, and final verification must still re-run. Those
-  // ahead-state snapshots can come from legacy/test step mutation that
-  // explicitly opts into `updateMachine === true` or from repaired-resume replay
-  // of persisted sessions. Recomputed transition results are explicitly applied
-  // or invalidated by runLiveOnboardFlowSlice, so stale phase output cannot
-  // update context or silently advance state. This slice cannot eliminate that
-  // source locally because final-phase repair checks are still modeled as
-  // imperative resume work rather than strict FSM recovery states. The tolerated
-  // downstream states are "policies", "finalizing", and "post_verify". Phase
-  // tests cover ahead-state resume and terminal-state rejection; remove this
-  // fallback once final-phase repair checks are first-class FSM recovery states
-  // and legacy machine step mutation is gone.
+  // Exact branch-entry snapshots use the strict sequence runner for both fresh
+  // and resumed sessions. Recompute only when a durable snapshot is already
+  // downstream even though branch readiness, policy reconciliation, and final
+  // verification must still run. Those ahead-state snapshots can come from
+  // legacy/test step mutation that explicitly opts into `updateMachine === true`
+  // or from repaired-resume replay of persisted sessions. Recomputed transition
+  // results are explicitly applied or invalidated by runLiveOnboardFlowSlice, so
+  // stale phase output cannot update context or silently advance state. Remove
+  // this fallback once final-phase repair checks are first-class FSM recovery
+  // states and legacy machine step mutation is gone.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
     phases: withContextObserver(options.phases, options.onContextUpdated),
     runWhenState: ["openclaw", "agent_setup"],
-    compatibilityWhenState: options.resume
-      ? ["openclaw", "agent_setup", "policies", "finalizing", "post_verify"]
-      : ["policies", "finalizing", "post_verify"],
+    compatibilityWhenState: ["policies", "finalizing", "post_verify"],
     runSlice: runFinalOnboardFlowSequence,
     recordStateResult: async (stateResult) => {
       await options.recordStateResult(stateResult);

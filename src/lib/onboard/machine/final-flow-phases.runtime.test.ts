@@ -30,7 +30,12 @@ function deploymentResult(healthy: boolean): VerifyDeploymentResult {
 }
 
 describe("final onboard flow runtime boundary", () => {
-  it("uses the strict final runner for fresh OpenClaw sessions with a real runtime boundary", async () => {
+  it.each([
+    { label: "fresh", resume: false },
+    { label: "resumed", resume: true },
+  ])("uses the strict final runner for $label OpenClaw sessions at the branch state", async ({
+    resume,
+  }) => {
     const order: string[] = [];
     const harness = createRuntimeHarness(sessionAt("openclaw"));
     const recorders = harness.boundary.recorders();
@@ -50,10 +55,9 @@ describe("final onboard flow runtime boundary", () => {
     );
 
     await runFinalOnboardFlowSlice({
-      context: context({ session: harness.getSession() }),
+      context: context({ resume, session: harness.getSession() }),
       runtime: harness.boundary.getRuntime(),
       phases,
-      resume: false,
       recordStateResult,
       recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {
@@ -104,10 +108,9 @@ describe("final onboard flow runtime boundary", () => {
     );
 
     await runFinalOnboardFlowSlice({
-      context: context({ session: harness.getSession() }),
+      context: context({ resume: true, session: harness.getSession() }),
       runtime: harness.boundary.getRuntime(),
       phases,
-      resume: false,
       recordStateResult,
       recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {
@@ -142,7 +145,12 @@ describe("final onboard flow runtime boundary", () => {
     }
   });
 
-  it("uses the strict final runner for fresh agent sessions with a real runtime boundary", async () => {
+  it.each([
+    { label: "fresh", resume: false },
+    { label: "resumed", resume: true },
+  ])("uses the strict final runner for $label agent sessions at the branch state", async ({
+    resume,
+  }) => {
     const order: string[] = [];
     const harness = createRuntimeHarness(sessionAt("agent_setup"));
     const recorders = harness.boundary.recorders();
@@ -162,10 +170,9 @@ describe("final onboard flow runtime boundary", () => {
     );
 
     await runFinalOnboardFlowSlice({
-      context: context({ agent: { name: "hermes" }, session: harness.getSession() }),
+      context: context({ agent: { name: "hermes" }, resume, session: harness.getSession() }),
       runtime: harness.boundary.getRuntime(),
       phases,
-      resume: false,
       recordStateResult,
       recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {
@@ -229,7 +236,6 @@ describe("final onboard flow runtime boundary", () => {
       context: context({ selectedMessagingChannels: ["slack"], session: harness.getSession() }),
       runtime: harness.boundary.getRuntime(),
       phases,
-      resume: false,
       recordStateResult: vi.fn(),
       recordInvalidatedStateResult: vi.fn(),
       afterPoliciesResultApplied: () => {
@@ -262,7 +268,6 @@ describe("final onboard flow runtime boundary", () => {
           applyResult: async () => createSession(),
         },
         phases,
-        resume: false,
         recordStateResult: async (result) => {
           if (result.type === "transition" && result.next === "finalizing") {
             throw new Error("recording failed");
@@ -302,7 +307,6 @@ describe("final onboard flow runtime boundary", () => {
         context: context({ session: harness.getSession() }),
         runtime: harness.boundary.getRuntime(),
         phases,
-        resume: false,
         recordStateResult: vi.fn(),
         recordInvalidatedStateResult: vi.fn(),
         afterPoliciesResultApplied: () => {
@@ -348,7 +352,6 @@ describe("final onboard flow runtime boundary", () => {
       context: context({ session: harness.getSession() }),
       runtime: harness.boundary.getRuntime(),
       phases,
-      resume: false,
       recordStateResult: harness.boundary.recordStateResultWithStepCompatibility.bind(
         harness.boundary,
       ),
@@ -367,7 +370,6 @@ describe("final onboard flow runtime boundary", () => {
       context: context({ resume: true, session: harness.getSession() }),
       runtime: harness.boundary.getRuntime(),
       phases,
-      resume: true,
       recordStateResult: harness.boundary.recordStateResultWithStepCompatibility.bind(
         harness.boundary,
       ),
