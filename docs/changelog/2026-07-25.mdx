@@ -5,7 +5,7 @@
 
 ## v0.0.96
 
-NemoClaw v0.0.96 adds persistent baseline network policy exclusions, DNS-backed HTTPS inference switching, and host-managed default OpenShell gateways.
+NemoClaw v0.0.96 adds persistent baseline network policy exclusions, DNS-backed HTTPS inference switching, host-managed default OpenShell gateways, and opt-in MCP tool discovery.
 It also hardens blueprint identifier validation, improves onboarding and recovery diagnostics, locks and updates managed sandbox image dependencies, reduces Hermes image size, and strengthens release validation.
 
 - `policy exclude` and `policy restore` now persist an operator-approved removal of one exact agent baseline entry across rebuild and snapshot restore.
@@ -34,6 +34,12 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   The error repeats the `--config-accept-new-path` and `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1` guidance.
   Messaging mutation guards print the exact host command.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [About Managed MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/about-managed-mcp-servers), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- `nemoclaw <sandbox> mcp status <server> --tools` now requests the configured server's current advertised tool names without invoking any tool.
+  Discovery is opt-in and sends authenticated traffic through the existing managed OpenShell credential provider and network policy.
+  The shared client returns names only, bounds time, requests, response bytes, pages, tool count, cursors, and name length, and redacts failure details.
+  `--tools` requires one server and suppresses the implicit credential probe unless `--probe` is also passed.
+  Sandboxes built from an older image must be rebuilt before discovery can run.
+  For more information, refer to [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - The installer now requires an existing OpenShell executable to report a version after sandbox backups and before gateway or onboarding changes.
   A version-tag install reports the requested tag, and a near-miss license response such as `y` receives an in-place hint without weakening exact `yes` acceptance.
   WSL Express selects Windows-host Ollama only with Docker Desktop integration and otherwise configures WSL-local Ollama.
