@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   measureDirectorySizeBytes: vi.fn(),
   preflightGpuRuntime: vi.fn(),
   preflightOwnership: vi.fn(),
+  persistRuntimeReceipt: vi.fn(),
   probeCapability: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
@@ -88,6 +89,10 @@ vi.mock("./vllm-station-cluster-lifecycle", () => ({
   rollbackDualStationLegacyMigration: mocks.rollbackLegacyMigration,
   startDualStationManagedVllm: mocks.startManaged,
   withDualStationManagedVllmLifecycle: mocks.withLifecycle,
+}));
+
+vi.mock("./vllm-station-runtime-receipt", () => ({
+  persistDualStationVllmRuntimeReceipt: mocks.persistRuntimeReceipt,
 }));
 
 vi.mock("./vllm-api-key", () => ({
@@ -234,6 +239,7 @@ beforeEach(() => {
   mocks.areContainersRunning.mockReturnValue(true);
   mocks.cleanup.mockReturnValue({ ok: true, removedContainerIds: [] });
   mocks.commitLegacyMigration.mockResolvedValue({ ok: true, cleanupWarnings: [] });
+  mocks.persistRuntimeReceipt.mockImplementation(() => {});
   mocks.rollbackLegacyMigration.mockResolvedValue({ ok: true });
   mocks.measureDirectorySizeBytes.mockReturnValue(0n);
   mocks.probeDockerStorage.mockReturnValue({
@@ -314,6 +320,9 @@ describe("dual DGX Station vLLM install orchestration", () => {
       expect(lifecycleActive).toBe(true);
       return true;
     });
+    mocks.persistRuntimeReceipt.mockImplementation(() => {
+      expect(lifecycleActive).toBe(true);
+    });
     mocks.stageModelSnapshot.mockImplementation(async () => {
       expect(lifecycleActive).toBe(true);
       return { ok: true, transferred: false };
@@ -361,6 +370,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
       mocks.dockerSpawn.mock.invocationCallOrder[0],
     );
     expect(mocks.areContainersRunning).toHaveBeenCalledWith(clusterPlan);
+    expect(mocks.persistRuntimeReceipt).toHaveBeenCalledWith(clusterPlan);
     expect(mocks.withLifecycle).toHaveBeenCalledTimes(2);
     expect(lifecycleActive).toBe(false);
     expect(mocks.probeCapability).toHaveBeenCalledTimes(2);
@@ -381,6 +391,57 @@ describe("dual DGX Station vLLM install orchestration", () => {
     expect(mocks.dockerSpawn.mock.calls[0][1].env.VLLM_API_KEY).toBeUndefined();
     expect(mocks.dockerSpawn.mock.calls[0][1].env.DOCKER_CONTEXT).toBe("default");
     expect(mocks.dockerImageInspectFormat.mock.calls[0][2].env.DOCKER_CONTEXT).toBe("default");
+  });
+
+  it("rolls back a newly started pair when durable rollback state cannot be written", async () => {
+    const clusterPlan = plan();
+    mocks.probeCapability.mockReturnValue({
+      kind: "ready",
+      plan: clusterPlan,
+      peerModelSnapshot: "ready",
+    });
+    mocks.persistRuntimeReceipt.mockImplementation(() => {
+      throw new Error("receipt write failed");
+    });
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+
+    await expect(
+      installVllm(profile!, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
+    ).resolves.toEqual({ ok: false });
+
+    expect(mocks.cleanup).toHaveBeenCalledWith(clusterPlan);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("could not persist the dual-Station cleanup receipt"),
+    );
+  });
+
+  it("removes a committed migrated pair when durable rollback state cannot be written", async () => {
+    const clusterPlan = plan();
+    mocks.probeCapability.mockReturnValue({
+      kind: "ready",
+      plan: clusterPlan,
+      peerModelSnapshot: "ready",
+    });
+    mocks.startManaged.mockReturnValue({
+      ok: true,
+      baseUrl: HEAD_BASE_URL,
+      headContainerId: HEAD_ID,
+      workerContainerId: WORKER_ID,
+      reusedExisting: false,
+      legacyMigration: LEGACY_MIGRATION,
+    });
+    mocks.persistRuntimeReceipt.mockImplementation(() => {
+      throw new Error("receipt write failed");
+    });
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+
+    await expect(
+      installVllm(profile!, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
+    ).resolves.toEqual({ ok: false });
+
+    expect(mocks.commitLegacyMigration).toHaveBeenCalledWith(clusterPlan, LEGACY_MIGRATION);
+    expect(mocks.cleanup).toHaveBeenCalledWith(clusterPlan);
+    expect(mocks.rollbackLegacyMigration).not.toHaveBeenCalled();
   });
 
   it("selects pinned Nemotron Ultra without prompting when an explicit peer qualifies", async () => {

@@ -27,6 +27,7 @@ import {
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
+import { DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE } from "../../inference/vllm-station-runtime-receipt-path";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
@@ -88,6 +89,7 @@ export interface UninstallRunDeps {
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
+  runDualStationRuntimeCleanup?: (options?: SpawnSyncOptions) => RunResult;
 }
 
 export interface UninstallRunOutcome {
@@ -334,6 +336,7 @@ interface UninstallRuntime {
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
+  runDualStationRuntimeCleanup: (options?: SpawnSyncOptions) => RunResult;
   warn: (message: string) => void;
 }
 
@@ -367,6 +370,22 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
+    runDualStationRuntimeCleanup:
+      deps.runDualStationRuntimeCleanup ??
+      ((options = {}) =>
+        defaultRun(
+          process.execPath,
+          [
+            path.resolve(
+              __dirname,
+              "..",
+              "..",
+              "inference",
+              "vllm-station-runtime-cleanup-entry.js",
+            ),
+          ],
+          options,
+        )),
     warn: deps.error ?? ((message) => console.warn(message)),
   };
 }
@@ -1183,6 +1202,29 @@ function dockerIsAvailable(runtime: UninstallRuntime): boolean {
   return true;
 }
 
+function removeManagedDualStationRuntime(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+): boolean {
+  const receiptPath = path.join(paths.nemoclawStateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE);
+  try {
+    fs.lstatSync(receiptPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    runtime.error(`Could not inspect managed dual-Station rollback state: ${formatError(error)}`);
+    return false;
+  }
+  const result = runtime.runDualStationRuntimeCleanup({
+    env: runtime.env,
+    stdio: "inherit",
+  });
+  if (result.status === 0) return true;
+  runtime.error(
+    "Managed dual-Station cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported cleanup error and retry uninstall.",
+  );
+  return false;
+}
+
 function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): void {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
@@ -1508,6 +1550,9 @@ function executePlan(
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     if (step.name === "Stopping services") {
+      if (!scopedToSelectedGateway && !removeManagedDualStationRuntime(paths, runtime)) {
+        return { ok: false };
+      }
       if (
         !options.keepOpenShell &&
         !externallySupervised &&

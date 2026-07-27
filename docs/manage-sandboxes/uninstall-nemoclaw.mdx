@@ -38,6 +38,10 @@ A custom-port uninstall does not stop or remove the default gateway service or i
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
 When uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
+If the selected state root contains a managed dual-Station cleanup receipt, NemoClaw first revalidates the recorded peer, cluster, and GPU identities and removes both exact managed vLLM containers.
+Only after that pair cleanup succeeds does NemoClaw start the remaining full-uninstall steps.
+If validation or pair cleanup fails, uninstall exits nonzero and keeps the receipt so you can resolve the reported SSH, Docker, or peer-host error and retry.
+Pair cleanup can partially complete before an error, so inspect both Stations before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.

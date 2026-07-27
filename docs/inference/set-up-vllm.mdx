@@ -213,6 +213,10 @@ Configure the physical rails and SSH host-key and authentication trust before in
 NemoClaw does not modify rail configuration, enroll SSH trust, or reboot either host automatically.
 If the local host requires a reboot during initial preparation, the installer stops with status `10`; its owner-only receipt preserves the printed exact revision and Express selections.
 After reciprocal peer qualification begins, the pair state additionally binds SSH, GPU, and rail identity and names either host that must be rebooted manually.
+After the managed pair passes readiness and container validation, NemoClaw writes an owner-only cleanup receipt and a copied SSH binding under the selected gateway state root.
+The receipt contains no serving API key.
+It records the exact peer, cluster, and GPU identities needed to revalidate and remove both managed containers during full uninstall.
+If NemoClaw cannot write this receipt, setup stops and rolls back a newly started pair instead of leaving a runtime that full uninstall cannot safely reach.
 The registered two-Station Ultra recipe tracks the [latest NVIDIA dual-Station playbook](https://build.nvidia.com/station/nemoclaw/dual-nodes).
 It pins vLLM `0.25.1` and Ray `2.56.0`, uses one tensor-parallel rank per Station with pipeline parallelism across the pair, serves the `nemotron-ultra` alias with a `262144`-token model limit, and retains the Nemotron reasoning and tool-call parsers.
 The single-Station fallback keeps NemoClaw's bridge-networked managed-inference topology and publishes port `8000` through Docker.

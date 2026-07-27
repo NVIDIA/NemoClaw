@@ -3297,6 +3297,9 @@ It prints the versioned URL of the matching `uninstall.sh` so you can download, 
 When the gateway is externally supervised, uninstall preserves its process, Docker resources, and OpenShell binaries.
 It still deletes the selected sandboxes and attempts to remove the modern local gateway registration.
 When uninstall confirms that no sibling gateways remain, it also deletes NemoClaw provider registrations.
+For a managed dual-Station vLLM runtime, full uninstall revalidates the exact recorded pair and removes both managed containers before starting the remaining uninstall steps.
+If that cleanup fails, uninstall exits nonzero, preserves its owner-only cleanup receipt, and tells you to resolve the reported peer error before retrying.
+Pair cleanup can partially complete before an error; verify both Stations before the retry.
 It does not use the legacy `gateway destroy` command for that gateway.
 <AgentOnly variant="openclaw">
 

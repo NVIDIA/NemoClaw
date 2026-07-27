@@ -737,6 +737,40 @@ export function encodeDualStationSshBindingHandoff(binding: DualStationSshBindin
   return Buffer.from(JSON.stringify(handoff), "utf8").toString("base64url");
 }
 
+/**
+ * Promote an installer-qualified binding into a separate owner-only lifecycle
+ * tree before the temporary installer resume state is retired.
+ */
+export function copyDualStationSshBinding(
+  statePath: string,
+  binding: DualStationSshBinding,
+): DualStationSshBinding {
+  const canonical = validateDualStationSshBindingFiles(binding);
+  const knownHosts = readBoundedFile(
+    canonical.knownHostsFile,
+    0o600,
+    MAX_KNOWN_HOSTS_BYTES,
+    "Station SSH known-hosts file",
+  )
+    .toString("utf8")
+    .trimEnd()
+    .split("\n");
+  return writeDualStationSshBinding(
+    statePath,
+    {
+      requestedTarget: canonical.peerTarget,
+      sshTarget: canonical.peerTarget,
+      resolvedHost: canonical.resolvedHost,
+      sshUser: canonical.sshUser,
+      port: canonical.port,
+      lookupHost: canonical.lookupHost,
+      hostKeyDigest: canonical.hostKeyDigest,
+      knownHostsLines: knownHosts,
+    },
+    { dockerCliFile: canonical.dockerCliFile },
+  );
+}
+
 export function loadDualStationSshBindingHandoff(
   token: string,
   expectedPeerTarget: string,

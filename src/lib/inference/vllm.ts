@@ -69,6 +69,7 @@ import {
   withDualStationManagedVllmLifecycle,
 } from "./vllm-station-cluster-lifecycle";
 import { stageDualStationModelSnapshot } from "./vllm-station-model-staging";
+import { persistDualStationVllmRuntimeReceipt } from "./vllm-station-runtime-receipt";
 import {
   findUnwritableModelCachePath,
   formatStorageBytes,
@@ -1869,6 +1870,7 @@ async function runVllmInstall(
           return { ok: false };
         }
 
+        let legacyMigrationCommitted = false;
         if (start.legacyMigration) {
           const commit = await commitDualStationLegacyMigration(
             dualStationPlan,
@@ -1882,6 +1884,22 @@ async function runVllmInstall(
           for (const warning of commit.cleanupWarnings) {
             console.error(`  vLLM cleanup warning: ${warning}`);
           }
+          legacyMigrationCommitted = true;
+        }
+
+        try {
+          persistDualStationVllmRuntimeReceipt(dualStationPlan);
+        } catch (error) {
+          if (legacyMigrationCommitted) {
+            const cleanup = await cleanupDualStationManagedVllm(dualStationPlan);
+            if (!cleanup.ok) console.error(`  vLLM rollback warning: ${cleanup.reason}`);
+          } else {
+            await rollbackStartedPair();
+          }
+          console.error(
+            `  vLLM install failed: could not persist the dual-Station cleanup receipt: ${(error as Error).message}`,
+          );
+          return { ok: false };
         }
 
         console.log(`  ✓ vLLM ready across two DGX Stations at ${start.baseUrl}`);
