@@ -566,7 +566,7 @@ exit 0`,
     }
   });
 
-  it("trusts and installs the verified macOS Homebrew formula without starting the service", () => {
+  it("revokes verified macOS Homebrew formula trust after install and reinstall outcomes (#7451)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-macos-formula-"));
     try {
       const fakeBin = path.join(tmp, "bin");
@@ -663,9 +663,9 @@ case "$*" in
     exit "\${NEMOCLAW_TEST_BREW_UNTRUST_STATUS:-0}"
     ;;
   "list --formula openshell")
-    exit 1
+    exit "\${NEMOCLAW_TEST_BREW_LIST_STATUS:-1}"
     ;;
-  "install --formula nvidia/openshell/openshell")
+  "install --formula nvidia/openshell/openshell"|"reinstall --formula nvidia/openshell/openshell")
     if [ "\${NEMOCLAW_TEST_BREW_INSTALL_STATUS:-0}" -ne 0 ]; then
       exit "$NEMOCLAW_TEST_BREW_INSTALL_STATUS"
     fi
@@ -691,16 +691,19 @@ esac
 exit 1`,
       );
 
-      const result = spawnSync("bash", [SCRIPT], {
-        env: {
-          ...process.env,
-          HOME: tmp,
-          XDG_BIN_HOME: path.join(tmp, "local-bin"),
-          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
+      const runStable = (overrides: NodeJS.ProcessEnv = {}) =>
+        spawnSync("bash", [SCRIPT], {
+          env: {
+            ...process.env,
+            HOME: tmp,
+            XDG_BIN_HOME: path.join(tmp, "local-bin"),
+            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+            ...overrides,
+          },
+          encoding: "utf8",
+        });
+      const result = runStable();
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const downloads = fs.readFileSync(downloadLog, "utf-8");
@@ -723,6 +726,33 @@ exit 1`,
       );
       const stagedFormula = fs.readFileSync(path.join(tapRepo, "Formula", "openshell.rb"), "utf-8");
       expect(stagedFormula).toContain("entitlements.write <<~XML");
+
+      for (const [listStatus, actionStatus, action, expectedStatus] of [
+        ["0", "0", "reinstall", 0],
+        ["1", "1", "install", 1],
+        ["0", "1", "reinstall", 1],
+      ] as const) {
+        fs.writeFileSync(brewLog, "");
+        fs.writeFileSync(untrustCount, "0");
+        const attempt = runStable({
+          NEMOCLAW_TEST_BREW_INSTALL_STATUS: actionStatus,
+          NEMOCLAW_TEST_BREW_LIST_STATUS: listStatus,
+        });
+        expect(attempt.status, `${attempt.stdout}\n${attempt.stderr}`).toBe(expectedStatus);
+        expect(fs.readFileSync(brewLog, "utf-8").trim().split("\n")).toEqual([
+          "tap-info nvidia/openshell",
+          "tap-new --no-git nvidia/openshell",
+          "--repository nvidia/openshell",
+          "help trust",
+          "trust --formula nvidia/openshell/openshell",
+          "list --formula openshell",
+          `${action} --formula nvidia/openshell/openshell`,
+          "untrust --formula nvidia/openshell/openshell",
+          ...(expectedStatus === 0 ? ["--prefix"] : []),
+        ]);
+        expect(fs.readFileSync(untrustCount, "utf-8").trim()).toBe("1");
+        if (expectedStatus !== 0) expect(fs.existsSync(formulaTmpDir)).toBe(false);
+      }
 
       fs.writeFileSync(brewLog, "");
       const refusedTrust = spawnSync("bash", [SCRIPT], {
