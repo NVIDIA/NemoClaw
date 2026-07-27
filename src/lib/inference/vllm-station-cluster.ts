@@ -25,6 +25,8 @@ const MAX_PROBE_OUTPUT_BYTES = 1024 * 1024;
 const PREFERRED_ROCE_GID_INDEX = 3;
 const EXPECTED_ULTRA_WEIGHT_SHARDS = 113;
 const DIRECT_RAIL_PREFIX_LENGTH = 30;
+const STATION_RUNTIME_PROBE_IMAGE =
+  "docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab";
 const DUAL_STATION_LOCAL_DOCKER_OVERRIDE_ENV_NAMES = [
   "DOCKER_API_VERSION",
   "DOCKER_CERT_PATH",
@@ -109,7 +111,6 @@ export interface StationHostProbe {
     nvidiaRuntime: boolean;
   };
   rsyncAvailable: boolean;
-  nvidiaPeermemLoaded: boolean;
   rails: StationRailProbe[];
   modelSnapshot: StationModelSnapshotProbe;
 }
@@ -316,16 +317,22 @@ def gpu_inventory():
     return result
 
 def docker_state():
-    rc, output = run(["docker", "info", "--format", "{{json .Runtimes}}"])
+    rc, _ = run(["docker", "info", "--format", "{{.ServerVersion}}"])
     if rc != 0:
         return {"reachable": False, "nvidiaRuntime": False}
-    try:
-        runtimes = json.loads(output)
-    except (TypeError, json.JSONDecodeError):
-        runtimes = {}
+    runtime_rc, runtime_output = run([
+        "docker", "run", "--rm", "--pull=never", "--network", "none",
+        "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--pids-limit", "64", "--memory", "512m", "--cpus", "1",
+        "--gpus", "all", "${STATION_RUNTIME_PROBE_IMAGE}",
+        "nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader",
+    ], timeout=15)
     return {
         "reachable": True,
-        "nvidiaRuntime": isinstance(runtimes, dict) and "nvidia" in runtimes,
+        "nvidiaRuntime": runtime_rc == 0 and any(
+            line.strip().startswith("GPU-")
+            for line in runtime_output.splitlines()
+        ),
     }
 
 def ipv4_addresses(netdev):
@@ -531,7 +538,6 @@ def snapshot_state():
         "reason": "; ".join(dict.fromkeys(reasons)),
     }
 
-modules = read_text("/proc/modules").splitlines()
 payload = {
     "schemaVersion": ${String(HOST_PROBE_SCHEMA_VERSION)},
     "hostname": socket.gethostname(),
@@ -543,7 +549,6 @@ payload = {
     "gpus": gpu_inventory(),
     "docker": docker_state(),
     "rsyncAvailable": shutil.which("rsync") is not None,
-    "nvidiaPeermemLoaded": any(line.split(maxsplit=1)[0] == "nvidia_peermem" for line in modules if line),
     "rails": rail_inventory(),
     "modelSnapshot": snapshot_state(),
 }
@@ -970,10 +975,6 @@ export function parseStationHostProbe(stdout: string): StationHostProbe {
       nvidiaRuntime: requireBoolean(docker.nvidiaRuntime, "host probe.docker.nvidiaRuntime"),
     },
     rsyncAvailable: requireBoolean(record.rsyncAvailable, "host probe.rsyncAvailable"),
-    nvidiaPeermemLoaded: requireBoolean(
-      record.nvidiaPeermemLoaded,
-      "host probe.nvidiaPeermemLoaded",
-    ),
     rails: requireArray(record.rails, "host probe.rails", 32).map((entry, index) =>
       parseRail(entry, `host probe.rails[${String(index)}]`),
     ),
@@ -1314,13 +1315,6 @@ function buildStaticPlan(
       "peer Docker daemon and NVIDIA runtime could not both be verified",
     );
   }
-  if (!local.nvidiaPeermemLoaded) {
-    return unavailable("local-fabric-unavailable", "nvidia_peermem is not loaded locally");
-  }
-  if (!peer.nvidiaPeermemLoaded) {
-    return unavailable("peer-fabric-unavailable", "nvidia_peermem is not loaded on the peer");
-  }
-
   const localRails = qualifiedRails(local);
   if (!localRails) {
     return unavailable(

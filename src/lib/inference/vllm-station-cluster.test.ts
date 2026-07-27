@@ -35,6 +35,8 @@ import { resolveStationFixturePython } from "./vllm-station-fixture.test-support
 
 const LOCAL_HOME = "/home/local";
 const PEER_HOME = "/home/nvidia";
+const STATION_ACCEPTANCE_IMAGE =
+  "docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab";
 
 function strictDockerSshConfig(binding: DualStationSshBinding): string {
   return [
@@ -142,7 +144,6 @@ function hostFixture(side: "local" | "peer"): StationHostProbe {
         ],
     docker: { reachable: true, nvidiaRuntime: true },
     rsyncAvailable: true,
-    nvidiaPeermemLoaded: true,
     rails: isLocal
       ? [
           rail("mlx5_0", "cx8a0", "0001:03:00.0", "192.168.240.1"),
@@ -557,13 +558,6 @@ describe("probeDualStationVllmCapability", () => {
       },
     },
     {
-      name: "missing peer nvidia_peermem",
-      code: "peer-fabric-unavailable",
-      mutate: (host: StationHostProbe) => {
-        host.nvidiaPeermemLoaded = false;
-      },
-    },
-    {
       name: "slow peer rail",
       code: "peer-fabric-unavailable",
       mutate: (host: StationHostProbe) => {
@@ -858,6 +852,10 @@ describe("probe command boundary", () => {
     );
     expect(args.join(" ")).not.toMatch(/keyscan|accept-new|StrictHostKeyChecking=no/);
     expect(options.input).toEqual(expect.stringContaining('docker", "info'));
+    expect(options.input).toEqual(expect.stringContaining('"docker", "run", "--rm"'));
+    expect(options.input).toEqual(expect.stringContaining('"--pull=never"'));
+    expect(options.input).toEqual(expect.stringContaining('"--gpus", "all"'));
+    expect(options.input).toEqual(expect.stringContaining(STATION_ACCEPTANCE_IMAGE));
     expect(options.input).toEqual(expect.stringContaining("/sys/firmware/devicetree/base/model"));
     expect(options.timeout).toBe(20_000);
     expect(options.maxBuffer).toBe(1024 * 1024);
@@ -916,6 +914,62 @@ describe("probe command boundary", () => {
         reason: expect.stringContaining("weight shards are unreadable or malformed"),
       });
       expect(observed.rsyncAvailable).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("executes the host probe against the digest-pinned no-pull GPU runtime contract", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-runtime-fixture-"));
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(home, { mode: 0o700 });
+    fs.mkdirSync(bin, { mode: 0o700 });
+
+    let probeScript = "";
+    const recordingSpawn = vi.fn(
+      (
+        _file: string,
+        _args: readonly string[],
+        options: SpawnSyncOptionsWithStringEncoding,
+      ): StationProbeCommandResult => {
+        probeScript = typeof options.input === "string" ? options.input : "";
+        return command({});
+      },
+    );
+    createStationClusterProbeDeps(recordingSpawn).probeLocalHost();
+    const python = resolveStationFixturePython();
+    const fixturePrelude = String.raw`
+import subprocess
+
+class FixtureResult:
+    def __init__(self, returncode, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""
+
+def fixture_run(argv, **_kwargs):
+    if argv and argv[0] == "nvidia-smi":
+        return FixtureResult(0, "0, NVIDIA GB300, GPU-11111111-2222-3333-4444-555555555555")
+    if argv[:2] == ["docker", "info"]:
+        return FixtureResult(0, "29.2.1")
+    if argv[:2] == ["docker", "run"]:
+        return FixtureResult(0, "GPU-11111111-2222-3333-4444-555555555555")
+    return FixtureResult(127)
+
+subprocess.run = fixture_run
+`;
+
+    try {
+      const executed = spawnSync(python, ["-"], {
+        encoding: "utf8",
+        env: { ...process.env, HOME: home, PATH: bin },
+        input: `${fixturePrelude}\n${probeScript}`,
+        timeout: 20_000,
+      });
+      expect(executed.status, executed.stderr).toBe(0);
+      const observed = JSON.parse(executed.stdout) as StationHostProbe;
+      expect(observed.docker).toEqual({ reachable: true, nvidiaRuntime: true });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
