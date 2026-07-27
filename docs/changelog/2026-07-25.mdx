@@ -29,11 +29,13 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   `doctor` reports incomplete lifecycle metadata without exposing stored values.
   An explicit forced rebuild can preserve managed MCP configuration after the old sandbox loses exec access, with exact gateway, policy, and provider proofs before deletion.
   Rebuild rechecks the canonical sandbox and recorded gateway at the delete edge, restores MCP state if that target drifts, and keeps shields unlocked when an accepted deletion remains unconfirmed.
+  When shields lock state before an OpenClaw agent first boots, NemoClaw creates the missing writable `agents/<id>/sessions/` carveout with existing containment checks.
+  This prevents the sessions-directory `EACCES` failure on that first boot.
   Shields failures return exit code `1` without a Node.js traceback, and policy picker EOF returns nonzero.
   A `config set` confirmation that reaches EOF exits nonzero without writing.
   The error repeats the `--config-accept-new-path` and `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1` guidance.
   Messaging mutation guards print the exact host command.
-  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [About Managed MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/about-managed-mcp-servers), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [About Managed MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/about-managed-mcp-servers), [Security Best Practices](/user-guide/openclaw/security/best-practices), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - `nemoclaw <sandbox> mcp status <server> --tools` now requests the configured server's current advertised tool names without invoking any tool.
   Discovery is opt-in and sends authenticated traffic through the existing managed OpenShell credential provider and network policy.
   The shared client returns names only, bounds time, requests, response bytes, pages, tool count, cursors, and name length, and redacts failure details.
