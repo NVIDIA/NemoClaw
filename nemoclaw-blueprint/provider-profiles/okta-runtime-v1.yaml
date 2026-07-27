@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Template profile for the experimental blueprint identity wrapper. Copy this
-# file, replace the example authorization-server URL and API host, and add
-# only tenant-approved API scopes under `refresh.scopes` before use.
+# First data-only implementation of the experimental runtime identity contract.
+# Copy this file, replace the example authorization-server URL and API host,
+# and review the endpoint rules before use.
 id: okta-runtime-v1
 display_name: Okta Runtime Credentials v1
 description: Gateway-managed Okta access-token refresh for an attached sandbox

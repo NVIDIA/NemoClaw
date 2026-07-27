@@ -139,13 +139,8 @@
           }
         },
         "identity": {
-          "type": "object",
-          "description": "Optional experimental Okta runtime identity reference.",
-          "additionalProperties": false,
-          "required": ["okta"],
-          "properties": {
-            "okta": { "$ref": "#/$defs/runtimeIdentity" }
-          }
+          "description": "Optional experimental provider-neutral runtime identity reference.",
+          "$ref": "#/$defs/runtimeIdentity"
         }
       }
     }
@@ -229,8 +224,14 @@
         "provider_name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$" },
         "credential_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,255}$" },
         "client_id_env": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,255}$" },
-        "refresh_token_env": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,255}$" },
-        "client_secret_env": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,255}$" }
+        "refresh_token_env": {
+          "type": "string",
+          "pattern": "^(?=.{1,256}$)(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|[A-Z][A-Z0-9_]*_(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL))$"
+        },
+        "client_secret_env": {
+          "type": "string",
+          "pattern": "^(?=.{1,256}$)(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|[A-Z][A-Z0-9_]*_(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL))$"
+        }
       }
     },
     "endpoint": {

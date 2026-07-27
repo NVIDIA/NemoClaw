@@ -259,9 +259,10 @@ flowchart LR
 
 ### Experimental Runtime Identity
 
-The direct blueprint runner can opt in to an Okta runtime-identity component.
+The direct blueprint runner can opt in to a provider-neutral runtime identity component.
 This experimental reference capability is not enabled by the shipped blueprint, and normal `$$nemoclaw onboard` does not collect or provision its inputs.
-It is for operators extending a reviewed blueprint with a tenant-specific Okta profile.
+The bundled Okta profile is the first data-only implementation of the component.
+The blueprint schema describes the OpenShell provider binding and OAuth refresh inputs without using the identity provider as a schema discriminator.
 
 Enable provider-derived policy on the target gateway before applying a blueprint that attaches this component:
 
@@ -271,30 +272,38 @@ openshell settings set --global --key providers_v2_enabled --value true --yes
 
 Copy `nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml` into the blueprint you operate as `provider-profiles/acme-okta-runtime.yaml`.
 You can choose another tenant-specific filename, but set `profile_path` below to that exact relative path.
-Set its `token_url` to the tenant's authorization-server token endpoint, replace `api.example.okta.com` with the approved upstream API host, and add only the API scopes that the Okta authorization server grants to `refresh.scopes`.
+Set its `token_url` to the tenant's authorization-server token endpoint.
+Replace `api.example.okta.com` with the approved upstream API host.
 Keep the token endpoint and upstream host in the profile so refresh material and bearer-token presentation cannot be redirected by blueprint input.
 
 Configure the reference under `components`:
 
 ```yaml
 identity:
-  okta:
-    profile_path: provider-profiles/acme-okta-runtime.yaml
-    provider_type: okta-runtime-v1
-    provider_name: acme-okta-runtime
-    credential_key: OKTA_ACCESS_TOKEN
-    client_id_env: OKTA_CLIENT_ID
-    refresh_token_env: OKTA_REFRESH_TOKEN
-    client_secret_env: OKTA_CLIENT_SECRET
+  profile_path: provider-profiles/acme-okta-runtime.yaml
+  provider_type: okta-runtime-v1
+  provider_name: acme-okta-runtime
+  credential_key: OKTA_ACCESS_TOKEN
+  client_id_env: OKTA_CLIENT_ID
+  refresh_token_env: OKTA_REFRESH_TOKEN
+  client_secret_env: OKTA_CLIENT_SECRET
 ```
 
 `client_secret_env` is optional, but when it is configured its environment variable must be present.
+Secret-material environment names must equal one of `API_KEY`, `TOKEN`, `SECRET`, `PASSWORD`, or `CREDENTIAL`, or end in one of those terms preceded by an underscore.
+Subprocess-control names such as `NODE_OPTIONS` are rejected.
+The profile path must name an existing regular file whose resolved path stays inside the blueprint directory; absolute paths, outward traversal, and outward symlinks are rejected.
 Before applying the blueprint, export the named environment variables in the host process that runs the direct blueprint runner.
 Obtain the refresh token through an authorized OAuth bootstrap flow for the same Okta client and authorization server as the profile.
 `openshell gateway login` authenticates a CLI user to the gateway and is not part of this runtime-credential flow.
 
-During apply, the runner imports the profile, creates a runtime-credential provider, configures gateway-managed OAuth refresh, rotates an initial access token, and attaches the provider to the sandbox.
-The refresh token and optional client secret are passed as secret material and stay in the gateway credential store.
+During plan, the runner reports only the non-secret provider type, provider name, and credential key.
+During apply, the runner imports the profile, creates or verifies the runtime-credential provider, configures gateway-managed OAuth refresh, rotates an initial access token, and attaches the provider to the sandbox.
+The runner refuses to reuse a same-name provider unless its type, credential key, and absence of unrelated configuration match the requested binding.
+The persisted run plan records whether that apply created the provider and its sandbox attachment.
+If a later apply step fails, the runner detaches the provider when that apply attached it, deletes the provider when that apply created it, and removes a sandbox created by that apply.
+The runner never places the refresh token or optional client secret in command arguments or persisted plans.
+It passes those values to `openshell provider refresh configure` through a scoped subprocess environment, and OpenShell stores the resulting credential material in the gateway credential store.
 The sandbox receives an opaque `OKTA_ACCESS_TOKEN` placeholder, and the OpenShell L7 proxy substitutes the current access token only for admitted HTTPS requests.
 
 Check the gateway-side state without printing credential values:
@@ -304,10 +313,15 @@ openshell provider refresh status acme-okta-runtime --credential-key OKTA_ACCESS
 openshell sandbox provider list <sandbox-name>
 ```
 
+The direct runner `status` action reports the non-secret identity ownership receipt.
+The `rollback` action verifies the current provider binding again, detaches it only when that apply created the sandbox attachment, and deletes it only when that apply created the provider.
+Rollback stops without mutating a same-name provider when the binding no longer matches the receipt.
+
 The same blueprint can optionally configure `components.policy.middlewares`.
 Those entries use the OpenShell middleware API to extend the existing middleware chain with endpoint selection, ordering, and `fail_closed` behavior.
 Middleware is optional for Okta access-token refresh and presentation.
-Use it only when the deployment has a compatible middleware installed for additional controls, such as identity assertions or on-behalf-of exchange.
+Use it only when the deployment has a compatible middleware installed for additional request policy.
+This reference does not package an OAuth bootstrap application, an on-behalf-of exchange, or a production identity middleware service.
 
 ## Sandbox Environment
 
