@@ -4882,7 +4882,8 @@ main() {
         if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
-        elif [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
+        elif [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
+          || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
           info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
           run_onboard || error "Onboarding did not complete successfully."

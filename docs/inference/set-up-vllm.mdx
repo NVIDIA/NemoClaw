@@ -191,6 +191,7 @@ No managed-vLLM runtime image or model download starts before the pair-qualifica
 If no trusted pair qualifies, Express retains the existing single-Station Ultra recipe.
 Setting `NEMOCLAW_VLLM_MODEL` remains authoritative; setting `NEMOCLAW_DGX_STATION_PEER` requests that exact already-trusted peer and fails closed if it does not qualify.
 When Express finds a complete running NemoClaw-managed dual-Station head, it defers the workload-rejecting host-preparation probe only while it revalidates the reciprocal pair and managed lifecycle contract; incomplete or mismatched workloads remain blocked.
+If the installer also recovers existing sandboxes, it still reconciles the newly accepted Station Express runtime state before completing.
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 
 ```bash
