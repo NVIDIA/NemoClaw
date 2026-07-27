@@ -215,6 +215,108 @@ describe("inventory commands", () => {
     ]);
   });
 
+  it("hides a route-only reservation (never-created sandbox) from the list (#7609)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          // A failed onboard (e.g. untrusted base image rejected) leaves this:
+          // pendingRouteReservation with no createdAt — never a live sandbox.
+          {
+            name: "base-img-reject",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+          },
+          { name: "real", provider: "nvidia-prod", model: "m", createdAt: "2026-01-01T00:00:00Z" },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["real"]);
+  });
+
+  it("keeps a created sandbox with a lingering pending reservation flag (#7609)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        // createdAt is set, so this is a real sandbox — the filter must NOT hide
+        // it just because the reservation flag was not cleared.
+        sandboxes: [
+          {
+            name: "created",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["created"]);
+  });
+
+  it("hides route-only reservations from status output too (#7609)", () => {
+    const report = getStatusReport({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "base-img-reject",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+          },
+          { name: "real", provider: "nvidia-prod", model: "m", createdAt: "2026-01-01T00:00:00Z" },
+        ],
+        defaultSandbox: "real",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(report.sandboxes.map((sandbox) => sandbox.name)).toEqual(["real"]);
+
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "base-img-reject",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+          },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+    expect(lines.some((line) => line.includes("base-img-reject"))).toBe(false);
+  });
+
+  it("shows the empty-state hint when only route-only reservations exist (#7609)", async () => {
+    const lines: string[] = [];
+    await listSandboxesCommand({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [{ name: "base-img-reject", pendingRouteReservation: true }],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines.some((line) => line.includes("No sandboxes registered"))).toBe(true);
+    expect(lines.some((line) => line.includes("base-img-reject"))).toBe(false);
+  });
+
   it("normalizes invalid configured inference fields out of status rows", () => {
     const report = getStatusReport({
       listSandboxes: () => ({

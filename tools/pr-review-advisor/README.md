@@ -3,10 +3,10 @@
 
 # PR Review Advisor
 
-The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs as a
-trusted GitHub Actions job, inspects PRs as read-only data, and posts a sticky comment with blockers,
-warnings, and suggestions. Artifacts retain
-acceptance coverage, security notes, and other review context.
+The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs its
+model-backed analysis in an OpenShell sandbox from a trusted GitHub Actions job, inspects PRs as
+read-only data, and posts a sticky comment with blockers, warnings, and suggestions. Artifacts
+retain acceptance coverage, security notes, and other review context.
 
 It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself and by including E2E coverage and target guidance in the same model session:
 
@@ -33,21 +33,27 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 2. Checks out advisor implementation code at the immutable trusted `github.workflow_sha` into `advisor/`.
 3. Fetches the event's PR base and head SHAs into an isolated analysis workspace without running PR-controlled actions, hooks, submodules, LFS filters, package setup, scripts, or tests.
 4. Installs and verifies pinned `ripgrep` and `fd-find` packages on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
-5. Builds the deterministic regression risk plan and E2E inventory in trusted code and injects them into the review contexts.
-6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
-7. Runs the same advisor conversation in parallel for the primary GPT-5.6 Terra lane and an artifact-only Nemotron Ultra evaluation lane.
-8. Opens one Pi session per model variant and reviews the PR in 14 bounded turns: six small analysis/commit pairs for scope/risk, correctness/state, security/trust, tests/regressions, CI/operations, and reconciliation, followed by draft and validation JSON synthesis turns in that same session. The tests/regressions turn analyzes E2E coverage and new-test gaps, while the CI/operations turn selects supported E2E jobs, targets, or fan-out. Only trusted identifiers from these receipts reach normalized E2E output; free-form model E2E prose is discarded. No second advisor session is opened, including for synthesis repair.
-9. Gives each commit turn one job: apply one successful atomic ledger commit for the preceding analysis. The model-facing commit is one flat object with homogeneous additions, updates, resolutions, and supersessions arrays plus a no-change reason; legacy nested operation unions and stringified arrays are rejected. Additions require a structured observed-versus-expected basis, a file and line, and eligibility for the active stage. Positives, advisor/provider state, prior-review process state, open-PR overlap, merge coordination, and live CI/E2E status stay in prose receipts rather than becoming findings. The ledger mutation tool is the turn's only active tool, and the runner rejects prose, other tool calls, or activity after the successful commit. Rejected attempts do not mutate the ledger and may be corrected before one success. If a commit turn ends with no successful call and every attempt settled without mutating state, the runner permits one tool-only retry and then fails closed. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
-10. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings. Unresolved source-of-truth review entries must reference their covering open ledger ID structurally rather than relying on prose matching.
-11. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript. If a later stage fails, already-committed canonical findings remain in the low-confidence incomplete result instead of being replaced by a generic unavailable finding.
-12. Retries transient provider failures such as HTTP 429 within the same session using one bounded exponential-backoff layer. GPT waits 6s, 12s, 24s, and 48s; Nemotron waits 9s, 18s, 36s, and 72s so parallel lanes do not retry in lockstep. The workflow still publishes the primary comment and lane artifacts after an incomplete analysis. An incomplete primary review fails its outcome step; the artifact-only evaluation lane does not affect the workflow result.
-13. Validates and repairs the draft synthesis in the final turn of the same session. If that turn fails or emits malformed output, the runner preserves a schema-valid canonical draft with a limitation; a post-validation ledger mismatch still fails closed.
-14. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
-15. Uploads each lane's artifacts from the read-only analysis job. A separate publisher job receives no model credential or untrusted worktree, validates the primary artifact and live PR head/base, then posts or updates one combined sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`. The evaluation lane does not publish another review. Previous sticky-comment ingestion is disabled for both lanes.
+5. Materializes deterministic GitHub context on the trusted host before sandbox creation. This is the only analysis-phase step that receives `github.token`, and it receives no model credential.
+6. Installs OpenShell, starts a loopback-only gateway, and registers the selected model provider in a dedicated trusted-host step. Only that provider-configuration step receives the upstream model credential.
+7. Creates a sandbox from a digest-pinned Pi image under a no-egress, hard-Landlock policy. The trusted advisor checkout, PR workspace, prepared GitHub context, and verified search binaries enter through advisor-only read-only Docker bind mounts before the first sandbox process starts. A capped tmpfs is the only writable application-data subtree. Before model code runs, a trusted probe reads every input canary, resolves the mounted checkout and `HEAD` through an explicit `GIT_DIR` and `GIT_WORK_TREE`, verifies that chmod, overwrite, replacement, and creation fail in every input, and exercises the complete runtime write lifecycle.
+8. Runs the trusted `tools/pr-review-advisor/run-analysis.mts` entrypoint inside the sandbox. The unchanged multi-turn Pi SDK session reaches the host-configured model only through `https://inference.local/v1`; the sandbox receives an inert SDK key and neither the upstream model credential nor a GitHub token.
+9. Runs the same advisor conversation in parallel for the primary GPT-5.6 Terra lane and an artifact-only Nemotron Ultra evaluation lane.
+10. Opens one Pi session per model variant and reviews the PR in 14 bounded turns: six small analysis/commit pairs for scope/risk, correctness/state, security/trust, tests/regressions, CI/operations, and reconciliation, followed by draft and validation JSON synthesis turns in that same session. The tests/regressions turn analyzes E2E coverage and new-test gaps, while the CI/operations turn selects supported E2E jobs, targets, or fan-out. Only trusted identifiers from these receipts reach normalized E2E output; free-form model E2E prose is discarded. No second advisor session is opened, including for synthesis repair.
+11. Gives each commit turn one job: apply one successful atomic ledger commit for the preceding analysis. The model-facing commit is one flat object with homogeneous additions, updates, resolutions, and supersessions arrays plus a no-change reason; legacy nested operation unions and stringified arrays are rejected. Additions require a structured observed-versus-expected basis, a file and line, and eligibility for the active stage. Positives, advisor/provider state, prior-review process state, open-PR overlap, merge coordination, and live CI/E2E status stay in prose receipts rather than becoming findings. The ledger mutation tool is the turn's only active tool, and the runner rejects prose, other tool calls, or activity after the successful commit. Rejected attempts do not mutate the ledger and may be corrected before one success. If a commit turn ends with no successful call and every attempt settled without mutating state, the runner permits one tool-only retry and then fails closed. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
+12. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings. Unresolved source-of-truth review entries must reference their covering open ledger ID structurally rather than relying on prose matching.
+13. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript. If a later stage fails, already-committed canonical findings remain in the low-confidence incomplete result instead of being replaced by a generic unavailable finding.
+14. Retries transient provider failures such as HTTP 429 within the same session using one bounded exponential-backoff layer. GPT waits 6s, 12s, 24s, and 48s; Nemotron waits 9s, 18s, 36s, and 72s so parallel lanes do not retry in lockstep. The workflow still publishes the primary comment and lane artifacts after an incomplete analysis. An incomplete primary review fails its outcome step; the artifact-only evaluation lane does not affect the workflow result.
+15. Validates and repairs the draft synthesis in the final turn of the same session. If that turn fails or emits malformed output, the runner preserves a schema-valid canonical draft with a limitation; a post-validation ledger mismatch still fails closed.
+16. Writes artifacts under the model-specific artifact directory in the writable runtime subtree, downloads them to the trusted host, and uploads them from the read-only analysis job. Example directories are `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
+17. Uses a separate publisher job with no model credential or untrusted worktree. It validates the primary artifact and live PR head/base, then posts or updates one combined sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`. The evaluation lane does not publish another review. Previous sticky-comment ingestion is disabled for both lanes.
 
 The ordered stage array in `buildPromptTurns` is the source of truth for stage order, evidence, and
 prompt text. Runtime numbering and prompt artifact names derive from that array, so adding or
 reordering a stage does not require parallel orchestration changes.
+
+`tools/pr-review-advisor/openshell.mts` owns the advisor-specific prepare, create, run, download, and
+cleanup sequence. It uses the shared lifecycle and credential-boundary helpers in
+`tools/openshell-agent/runtime.mts`, which are also used by the merge-conflict fixer.
 
 Provider failures and timeouts settle the active turn before the analysis fails, so its status and
 partial response remain available beside the raw transcript. Turn-artifact persistence failures are
@@ -75,13 +81,14 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 
 - Static analysis only.
 - PR-provided scripts, tests, package lifecycle hooks, and build tools are never executed.
+- The model session runs in a digest-pinned OpenShell sandbox under a hard-required Landlock policy with no direct network policy and no ambient workdir. Four canonical host inputs are mounted read-only through the advisor's ephemeral Docker gateway outside `/sandbox`, so OpenShell v0.0.85 applies the final immutable boundary before the first process starts. Landlock independently grants those inputs read-only access. It grants application-data writes only to a bounded runtime tmpfs; required device access remains writable under `/dev`. The sandbox pins Git to `/pr-workdir/.git` and `/pr-workdir` instead of relying on cross-UID repository discovery. A startup proof must read every input canary, resolve the checkout and `HEAD`, fail chmod, overwrite, replacement, and creation in each input, and complete runtime writes. The model-facing Advisor tools remain repository-confined and read-only; generated configuration and artifacts use the dedicated runtime subtree.
 - The advisor receives repo-confined read-only repository tools plus deterministic context tools. Repository paths must remain inside the checked-out analysis workspace after lexical and symlink resolution. Its only mutation tool updates the in-memory finding ledger; it cannot change repository or GitHub state.
 - PR bodies, comments, titles, branch names, and diffs are treated as untrusted evidence, never as instructions.
 - Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
-- Generated advisor credential config is written under `/tmp`, not uploaded artifacts.
-- The analysis job is limited to `NVIDIA/NemoClaw`, has read-only GitHub permissions, and is the only job that receives the model secret.
-- The analyzer collects deterministic GitHub context before model work, then removes GitHub tokens from the process environment.
-  After registering the model credential in the in-memory SDK auth store, it also removes that credential from the process environment before model turns begin.
+- Generated Pi configuration is written under the sandbox's runtime-only configuration directory, not uploaded artifacts.
+- The review job is limited to `NVIDIA/NemoClaw` and has read-only GitHub permissions. Within it, only the trusted host provider-configuration step receives the upstream model secret.
+- A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
+- The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
 - The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting. Before rendering E2E guidance, it independently allowlists coverage IDs and selector tuples and ignores artifact-authored E2E prose. A newly added credential-free test can extend the job allowlist only through trusted-normalizer evidence bound to the same head SHA, changed-file path, and basename-derived selector ID.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
   The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
@@ -99,7 +106,9 @@ Configure this repository secret for review analysis:
 
 - `PR_REVIEW_ADVISOR_API_KEY`
 
-The analyzer uses the OpenAI-compatible `https://inference-api.nvidia.com/v1` service.
+The trusted host uses this secret only to register the OpenAI-compatible
+`https://inference-api.nvidia.com/v1` service with OpenShell. The sandboxed analyzer reaches that
+provider through `https://inference.local/v1` and does not receive the secret.
 The primary lane uses `azure/openai/gpt-5.6-terra`; the parallel Nemotron lane sets
 `PR_REVIEW_ADVISOR_MODEL=nvidia/nvidia/nemotron-3-ultra` and reuses the same analyzer,
 prompts, schema, safety boundary, and credential secret.
@@ -142,10 +151,10 @@ node --experimental-strip-types tools/pr-review-advisor/analyze.mts \
   --out-dir artifacts/pr-review-advisor
 ```
 
-Set `PR_REVIEW_ADVISOR_API_KEY` locally, or configure the repository
-`PR_REVIEW_ADVISOR_API_KEY` secret. Add `PR_REVIEW_ADVISOR_MODEL=nvidia/nvidia/nemotron-3-ultra`
-to exercise the Nemotron Ultra lane locally. Run `npm install` first so the Pi SDK dependency is
-available.
+For this direct local invocation outside the workflow's OpenShell wrapper, set
+`PR_REVIEW_ADVISOR_API_KEY` locally. Add
+`PR_REVIEW_ADVISOR_MODEL=nvidia/nvidia/nemotron-3-ultra` to exercise the Nemotron Ultra lane
+locally. Run `npm install` first so the Pi SDK dependency is available.
 
 ## Output contract
 

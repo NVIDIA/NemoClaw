@@ -302,6 +302,85 @@ _BOOLEAN_FLAGS = {
     "--ignore-user-config",
     "--ignore-rules",
 }
+_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS = ("-c", "--continue", "-r", "--resume")
+_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS = (
+    "-m",
+    "--model",
+    "--provider",
+    "-t",
+    "--toolsets",
+    "-s",
+    "--skills",
+    "-z",
+    "--oneshot",
+    "-p",
+    "--profile",
+)
+# Mirror the pinned Hermes v0.18 `_coalesce_session_name_args` boundaries:
+# unquoted session names consume words until a flag or known subcommand.
+_HERMES_SUBCOMMANDS = (
+    "acp",
+    "auth",
+    "backup",
+    "bundles",
+    "chat",
+    "checkpoints",
+    "claw",
+    "completion",
+    "computer-use",
+    "config",
+    "cron",
+    "curator",
+    "dashboard",
+    "debug",
+    "desktop",
+    "doctor",
+    "dump",
+    "fallback",
+    "gateway",
+    "gui",
+    "hooks",
+    "import",
+    "insights",
+    "journey",
+    "kanban",
+    "learning",
+    "login",
+    "logout",
+    "logs",
+    "lsp",
+    "mcp",
+    "memory",
+    "memory-graph",
+    "migrate",
+    "moa",
+    "model",
+    "pairing",
+    "pets",
+    "plugins",
+    "portal",
+    "postinstall",
+    "profile",
+    "project",
+    "prompt-size",
+    "proxy",
+    "secrets",
+    "security",
+    "send",
+    "serve",
+    "sessions",
+    "setup",
+    "skills",
+    "slack",
+    "status",
+    "tools",
+    "uninstall",
+    "update",
+    "version",
+    "webhook",
+    "whatsapp",
+    "whatsapp-cloud",
+)
 
 
 def _split_flag_value(arg: str) -> tuple[str, str] | None:
@@ -447,22 +526,79 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
 #     bearer token, causing a 401.
 #   - Fix: merge into the combined provider/model form at the wrapper boundary
 #     so the invocation routes through the proxy credential resolution path.
+#   - Upstream constraint: NemoClaw installs a pinned Hermes CLI rather than
+#     vendoring its credential-resolution implementation, so the source fix
+#     cannot be made safely in this repository.
+#   - Regression evidence: the checked-in `hermes-inference-switch` live target
+#     invokes that pinned CLI with separate provider/model flags backed by an
+#     OpenShell placeholder and requires a successful inference response.
 #   - Removal condition: delete this translation when Hermes natively resolves
 #     openshell: placeholders for separate --provider flag invocations.
 #   - Tracking: NVIDIA/NemoClaw#7361
+
+
+def _supports_provider_model_merge(argv: list[str]) -> bool:
+    """Return whether argv is a top-level or chat invocation.
+
+    Hermes accepts provider/model selection at the top level and on `chat`.
+    Other positional commands own their remaining flags, so leave those
+    invocations untouched. Unknown options with separate values fail closed:
+    their first positional token is treated as a command.
+    """
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+
+        if arg == "--":
+            return True
+
+        if _split_flag_value(arg) is not None:
+            i += 1
+            continue
+
+        if arg in _PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS:
+            i += 2
+            continue
+
+        if arg in _PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS:
+            i += 1
+            if i < len(argv) and not argv[i].startswith("-"):
+                i += 1
+            while (
+                i < len(argv)
+                and not argv[i].startswith("-")
+                and argv[i] not in _HERMES_SUBCOMMANDS
+            ):
+                i += 1
+            continue
+
+        if arg.startswith("-"):
+            i += 1
+            continue
+
+        return arg == "chat"
+
+    return True
 
 
 def _merge_provider_into_model(argv: list[str]) -> list[str]:
     """Merge separate --provider and -m/--model flags into the combined form.
 
     When both --provider <name> and -m/--model <model> are present as separate
-    flags and the model value does not already contain '/', rewrite to the
-    combined 'provider/model' form so the invocation routes through the
-    OpenShell proxy rewrite path that resolves credential placeholders.
+    flags and the model value is not already prefixed by that provider,
+    rewrite to the combined 'provider/model' form so the invocation routes
+    through the OpenShell proxy rewrite path that resolves credential
+    placeholders. Model ids may contain their own namespace separator, such
+    as 'nvidia/nemotron', without already being provider-prefixed.
 
-    Returns argv unchanged on ambiguity (missing flag, model already combined,
-    empty values, duplicates). Pure function, no side effects.
+    A model already prefixed by the selected provider keeps its value while the
+    redundant provider flag is removed. Returns argv unchanged for other
+    positional commands or on ambiguity (missing flag, empty values,
+    duplicates). Pure function, no side effects.
     """
+    if not _supports_provider_model_merge(argv):
+        return argv
+
     provider: str | None = None
     provider_idx: int = -1
     provider_val_idx: int = -1
@@ -523,10 +659,10 @@ def _merge_provider_into_model(argv: list[str]) -> list[str]:
         return argv
     if not provider or not model:
         return argv
-    if "/" in model:
-        return argv
-
-    merged_model = f"{provider}/{model}"
+    provider_prefix = f"{provider}/"
+    merged_model = (
+        model if model.casefold().startswith(provider_prefix.casefold()) else f"{provider}/{model}"
+    )
 
     # Build new argv: remove provider flag+value, replace model value with merged
     skip = {provider_idx}
