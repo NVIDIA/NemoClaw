@@ -15,27 +15,41 @@ function indexOfRequired(haystack: string, needle: string): number {
 }
 
 describe("OpenClaw final image layout", () => {
-  // source-shape-contract: compatibility -- Gateway-bound Dockerfiles remain parseable by Docker Engine's legacy builder while retaining intentional cache and scan boundaries
-  it("uses legacy-compatible copy boundaries for repository payloads (#7611)", () => {
+  // source-shape-contract: compatibility -- Legacy-compatible grouped payload copies preserve cold-onboard export work while retaining intentional cache and scan boundaries
+  it("uses grouped legacy-compatible payload layers at their cache boundaries (#7611)", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
-    const dependencyCopy =
-      "COPY agents/openclaw/openclaw-runtime/package.json /usr/local/lib/nemoclaw/openclaw-runtime/package.json";
-    const pluginCopy = "COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/";
-    const patchCopy =
-      "COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts";
-    const runtimeCopy = "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh";
+    const payloads = [
+      { stage: "openclaw-dependency-payload", copies: 12 },
+      { stage: "openclaw-plugin-payload", copies: 3 },
+      { stage: "openclaw-patch-payload", copies: 8 },
+      { stage: "openclaw-runtime-payload", copies: 20 },
+    ] as const;
+    const dependencyCopy = "COPY --from=openclaw-dependency-payload / /";
+    const pluginCopy = "COPY --from=openclaw-plugin-payload / /";
+    const patchCopy = "COPY --from=openclaw-patch-payload / /";
+    const runtimeCopy = "COPY --from=openclaw-runtime-payload / /";
     const scanCopy =
       "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts";
 
     expect(finalStageIndex).toBe(stages.length - 1);
     expect(dockerfile).not.toContain("RUN --mount");
-    expect(dockerfile).not.toMatch(/^FROM scratch AS openclaw-.*-payload$/mu);
-    for (const copy of [dependencyCopy, pluginCopy, patchCopy, runtimeCopy, scanCopy]) {
-      expect(finalStage).toContain(copy);
+    for (const payload of payloads) {
+      const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
+      expect(stage?.match(/^COPY\b.*$/gmu)).toHaveLength(payload.copies);
+      expect(finalStage).toContain(`COPY --from=${payload.stage} / /`);
     }
+    expect(finalStage.match(/^COPY\b.*$/gmu)).toEqual([
+      "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
+      dependencyCopy,
+      "COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/",
+      pluginCopy,
+      patchCopy,
+      runtimeCopy,
+      scanCopy,
+    ]);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root:755'",

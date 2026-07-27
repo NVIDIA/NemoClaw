@@ -137,8 +137,8 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
-  // source-shape-contract: compatibility -- Gateway-bound Dockerfiles remain parseable by Docker Engine's legacy builder while retaining intentional cache and scan boundaries
-  it("uses legacy-compatible copy boundaries for repository payloads (#7611)", () => {
+  // source-shape-contract: compatibility -- Legacy-compatible grouped payload copies preserve the measured Hermes layer budget without invalidating earlier build work
+  it("uses grouped legacy-compatible payload layers at their cache boundaries (#7611)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const doctorLayer = dockerRunCommandBetween(
       dockerfile,
@@ -148,22 +148,33 @@ describe("Hermes final image layout", () => {
     const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
-    const npmPatchCopy =
-      "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts";
-    const agentCopy = "COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/";
-    const runtimeCopy =
-      "COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/";
-    const wrapperCopy =
-      "COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py";
-    const scanCopy =
-      "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts";
+    const payloads = [
+      { stage: "hermes-npm-patch-payload", copies: 3 },
+      { stage: "hermes-agent-payload", copies: 7 },
+      { stage: "hermes-runtime-payload", copies: 19 },
+      { stage: "hermes-wrapper-payload", copies: 1 },
+      { stage: "hermes-scan-payload", copies: 1 },
+    ] as const;
+    const npmPatchCopy = "COPY --from=hermes-npm-patch-payload / /";
+    const agentCopy = "COPY --from=hermes-agent-payload / /";
+    const runtimeCopy = "COPY --from=hermes-runtime-payload / /";
+    const wrapperCopy = "COPY --from=hermes-wrapper-payload / /";
+    const scanCopy = "COPY --from=hermes-scan-payload / /";
 
     expect(finalStageIndex).toBe(stages.length - 1);
     expect(dockerfile).not.toContain("RUN --mount");
-    expect(dockerfile).not.toMatch(/^FROM scratch AS hermes-.*-payload$/mu);
-    for (const copy of [npmPatchCopy, agentCopy, runtimeCopy, wrapperCopy, scanCopy]) {
-      expect(finalStage).toContain(copy);
+    for (const payload of payloads) {
+      const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
+      expect(stage?.match(/^COPY\b.*$/gmu)).toHaveLength(payload.copies);
+      expect(finalStage).toContain(`COPY --from=${payload.stage} / /`);
     }
+    expect(finalStage.match(/^COPY\b.*$/gmu)).toEqual([
+      npmPatchCopy,
+      agentCopy,
+      runtimeCopy,
+      wrapperCopy,
+      scanCopy,
+    ]);
     const npmPatch = indexOfRequired(finalStage, npmPatchCopy);
     const agent = indexOfRequired(finalStage, agentCopy);
     const runtime = indexOfRequired(finalStage, runtimeCopy);
