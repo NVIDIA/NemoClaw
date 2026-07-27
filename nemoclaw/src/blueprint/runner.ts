@@ -118,6 +118,19 @@ interface InferenceRouteBinding {
   timeoutSeconds?: number;
 }
 
+function assertReusableRuntimeIdentitySandbox(output: string, expectedName: string): void {
+  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
+  const nameLine = lines.find((line) => /^\s*Name:/i.test(line));
+  const phaseLine = lines.find((line) => /^\s*Phase:/i.test(line));
+  const name = /^\s*Name:\s*(.+)$/i.exec(nameLine ?? "")?.[1]?.trim();
+  const phase = /^\s*Phase:\s*(.+)$/i.exec(phaseLine ?? "")?.[1]?.trim();
+  if (name !== expectedName || phase !== "Ready") {
+    throw new Error(
+      `Sandbox '${expectedName}' is not reusable for runtime identity apply: expected exact name and Ready phase, received ${boundedCommandError(output)}`,
+    );
+  }
+}
+
 function parseInferenceRouteBinding(output: string): InferenceRouteBinding | null {
   const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
   let inGatewayInference = false;
@@ -976,6 +989,7 @@ export async function actionApply(
       });
       const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
       if (sandboxResult.exitCode === 0) {
+        assertReusableRuntimeIdentitySandbox(sandboxResult.stdout, sandboxName);
         reuseExistingSandbox = true;
       } else if (!MISSING_SANDBOX_INSPECTION_PATTERN.test(sandboxOutput)) {
         throw new Error(
@@ -1058,6 +1072,17 @@ export async function actionApply(
       }
       if (createResult.exitCode !== 0) {
         if (createResult.stderr.includes("already exists")) {
+          if (runtimeIdentityConfig) {
+            const racedSandbox = await runCmd(["openshell", "sandbox", "get", sandboxName], {
+              reject: false,
+            });
+            if (racedSandbox.exitCode !== 0) {
+              throw new Error(
+                `Failed to inspect sandbox '${sandboxName}' after concurrent creation: ${boundedCommandError(`${racedSandbox.stderr}\n${racedSandbox.stdout}`)}`,
+              );
+            }
+            assertReusableRuntimeIdentitySandbox(racedSandbox.stdout, sandboxName);
+          }
           log(`Sandbox '${sandboxName}' already exists, reusing.`);
         } else {
           throw new Error(`Failed to create sandbox: ${createResult.stderr}`);

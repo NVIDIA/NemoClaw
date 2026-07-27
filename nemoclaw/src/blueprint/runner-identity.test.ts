@@ -359,6 +359,74 @@ describe("blueprint identity wrapper", () => {
     expect(commandLines).toEqual(["openshell sandbox get test-sandbox"]);
   });
 
+  it("fails before identity mutation when the target sandbox is not Ready", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Provisioning", stderr: "" }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /Sandbox 'test-sandbox' is not reusable.*Ready phase.*Provisioning/,
+    );
+
+    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
+      [command, ...(args ?? [])].join(" "),
+    );
+    expect(commandLines).toEqual(["openshell sandbox get test-sandbox"]);
+  });
+
+  it.each([
+    [
+      "cannot be inspected",
+      { exitCode: 1, stdout: "", stderr: "gateway route unavailable" },
+      /Failed to inspect sandbox 'test-sandbox' after concurrent creation.*gateway route unavailable/,
+    ],
+    [
+      "is not Ready",
+      { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Provisioning", stderr: "" },
+      /Sandbox 'test-sandbox' is not reusable.*Ready phase.*Provisioning/,
+    ],
+  ])("fails closed when a concurrently created sandbox %s", async (_label, racedSandbox, expectedError) => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 1, stdout: "", stderr: "sandbox not found" }, racedSandbox],
+      ],
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          ...Array.from({ length: 4 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+      [
+        "sandbox create --from openclaw --name test-sandbox --forward 18789",
+        [{ exitCode: 1, stdout: "", stderr: "sandbox already exists" }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      expectedError,
+    );
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands.filter((command) => command === "sandbox get test-sandbox")).toHaveLength(2);
+    expect(commands).not.toContain("sandbox provider attach test-sandbox acme-okta-runtime");
+    expect(commands).toContain("provider delete acme-okta-runtime");
+  });
+
   it("fails before identity mutation when a reused sandbox's inference provider cannot be inspected", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
