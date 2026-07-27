@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { detectNvidiaPlatform, type NvidiaPlatform } from "../inference/nim.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
+import { redactFull } from "../security/redact.js";
 import {
-  SYSTEM_READINESS_SCHEMA_VERSION,
   type EvidenceScalar,
   type FindingSeverity,
   type ReadinessCapability,
@@ -12,13 +13,12 @@ import {
   type ReadinessFinding,
   type ReadinessObservation,
   type ReadinessState,
+  SYSTEM_READINESS_SCHEMA_VERSION,
   type SystemReadinessReport,
 } from "./types.js";
 
 const DEFAULT_MAX_AGE_MS = 30_000;
 const MAX_EVIDENCE_LENGTH = 1024;
-const SECRET_PATTERN =
-  /(?:\bauthorization\s*:\s*bearer\s+[^\s,;]+|\b(?:bearer\s+)?(?:gh[opusr]_[a-z0-9_]{20,}|nvapi-[a-z0-9_-]{16,}|sk-[a-z0-9_-]{16,}|(?:api[_-]?key|token|password|secret)\s*[=:]\s*[^\s,;]+))/gi;
 
 export interface HostObservations {
   platform: string;
@@ -40,7 +40,7 @@ export interface HostObservations {
   nodeInstalled: boolean;
   openshellInstalled: boolean;
   hasNvidiaGpu: boolean;
-  hostGpuPlatform?: string;
+  hostGpuPlatform?: NvidiaPlatform;
   nvidiaContainerToolkitInstalled: boolean;
   dockerCdiSpecDirs: readonly string[];
   cdiNvidiaGpuSpecMissing: boolean;
@@ -58,7 +58,7 @@ export interface HostObservationSnapshot {
 export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
-  hostGpuPlatform?: string;
+  detectHostGpuPlatform?: () => NvidiaPlatform;
   now?: () => Date;
 }
 
@@ -70,13 +70,13 @@ export interface CreateHostReadinessReportOptions {
 }
 
 function safeEvidence(value: string): string {
-  return value.replace(SECRET_PATTERN, "[REDACTED]").slice(0, MAX_EVIDENCE_LENGTH);
+  return redactFull(value).slice(0, MAX_EVIDENCE_LENGTH);
 }
 
 function adaptHostAssessment(
   host: Readonly<HostAssessment>,
   architecture: string,
-  hostGpuPlatform?: string,
+  hostGpuPlatform?: NvidiaPlatform,
 ): HostObservations {
   return {
     platform: host.platform,
@@ -118,7 +118,9 @@ export function collectHostObservations(
       observations: adaptHostAssessment(
         assessment,
         options.architecture ?? process.arch,
-        options.hostGpuPlatform,
+        assessment.hasNvidiaGpu
+          ? (options.detectHostGpuPlatform ?? detectNvidiaPlatform)()
+          : undefined,
       ),
       reusable: false,
     };
@@ -240,9 +242,8 @@ export function projectHostReadiness(
       host.dockerCdiSpecDirs.length > 0 &&
       host.hostGpuPlatform !== "jetson" &&
       !(host.isWsl && host.runtime === "docker-desktop");
-    const cdiHealthy = cdiApplies
-      ? !host.cdiNvidiaGpuSpecMissing && !host.cdiNvidiaGpuSpecNeedsRepair
-      : undefined;
+    const cdiHealthy =
+      !cdiApplies || (!host.cdiNvidiaGpuSpecMissing && !host.cdiNvidiaGpuSpecNeedsRepair);
     observations = [
       observation("host.os.platform", host.platform),
       observation("host.os.architecture", host.architecture),
@@ -277,10 +278,10 @@ export function projectHostReadiness(
       observation("host.gpu.nvidia", host.hasNvidiaGpu),
       observation(
         "host.gpu.container_toolkit",
-        host.hasNvidiaGpu ? host.nvidiaContainerToolkitInstalled : undefined,
+        host.hasNvidiaGpu ? host.nvidiaContainerToolkitInstalled : false,
       ),
-      observation("host.gpu.cdi", cdiHealthy),
-      observation("host.gpu.cdi_stale", cdiApplies ? host.cdiNvidiaGpuSpecStale : undefined),
+      observation("host.gpu.cdi", cdiApplies ? cdiHealthy : false),
+      observation("host.gpu.cdi_stale", cdiApplies ? host.cdiNvidiaGpuSpecStale : false),
     ];
     capabilities = [
       capability("host.docker.available", stateOf(host.dockerInstalled)),
@@ -305,9 +306,9 @@ export function projectHostReadiness(
       capability("host.gpu.nvidia_available", stateOf(host.hasNvidiaGpu)),
       capability(
         "host.gpu.container_toolkit_available",
-        host.hasNvidiaGpu ? stateOf(host.nvidiaContainerToolkitInstalled) : "unknown",
+        host.hasNvidiaGpu ? stateOf(host.nvidiaContainerToolkitInstalled) : "present",
       ),
-      capability("host.gpu.cdi_healthy", stateOf(cdiHealthy)),
+      capability("host.gpu.cdi_healthy", cdiApplies ? stateOf(cdiHealthy) : "present"),
     ];
     findings = [];
     if (!host.dockerInstalled)
