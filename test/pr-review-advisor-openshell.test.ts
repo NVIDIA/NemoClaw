@@ -308,32 +308,33 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(() => readPreparedGitHubContext(contextPath)).toThrow("exceeds the 5 MiB limit");
   });
 
-  it.skipIf(process.platform === "win32" || typeof fs.constants.O_NONBLOCK !== "number")(
-    "rejects a prepared-context FIFO without blocking",
-    () => {
-      const fifoPath = path.join(temporaryDirectory(), "github-context.json");
-      const created = spawnSync("mkfifo", [fifoPath], { encoding: "utf8", timeout: 5_000 });
-      expect(created.status, created.stderr).toBe(0);
+  it.skipIf(
+    process.platform === "win32" ||
+      typeof fs.constants.O_NONBLOCK !== "number" ||
+      typeof fs.constants.O_NOFOLLOW !== "number",
+  )("rejects a prepared-context FIFO without blocking", () => {
+    const fifoPath = path.join(temporaryDirectory(), "github-context.json");
+    const created = spawnSync("mkfifo", [fifoPath], { encoding: "utf8", timeout: 5_000 });
+    expect(created.status, created.stderr).toBe(0);
 
-      const moduleUrl = new URL("../tools/pr-review-advisor/github-context.mts", import.meta.url)
-        .href;
-      const read = spawnSync(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          "--no-warnings",
-          "--input-type=module",
-          "--eval",
-          `import { readPreparedGitHubContext } from ${JSON.stringify(moduleUrl)}; readPreparedGitHubContext(${JSON.stringify(fifoPath)});`,
-        ],
-        { encoding: "utf8", timeout: 2_000 },
-      );
+    const moduleUrl = new URL("../tools/pr-review-advisor/github-context.mts", import.meta.url)
+      .href;
+    const read = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--no-warnings",
+        "--input-type=module",
+        "--eval",
+        `import { readPreparedGitHubContext } from ${JSON.stringify(moduleUrl)}; readPreparedGitHubContext(${JSON.stringify(fifoPath)});`,
+      ],
+      { encoding: "utf8", timeout: 2_000 },
+    );
 
-      expect(read.error).toBeUndefined();
-      expect(read.status).not.toBe(0);
-      expect(read.stderr).toContain("Prepared GitHub context must be a regular file");
-    },
-  );
+    expect(read.error).toBeUndefined();
+    expect(read.status).not.toBe(0);
+    expect(read.stderr).toContain("Prepared GitHub context must be a regular file");
+  });
 
   it("bounds a prepared context that grows after descriptor validation", () => {
     const contextPath = path.join(temporaryDirectory(), "github-context.json");
