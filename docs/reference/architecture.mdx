@@ -336,6 +336,7 @@ openshell sandbox provider list <sandbox-name>
 The direct runner `status` action reports the non-secret identity ownership receipt.
 The `rollback` action verifies the current provider binding again, detaches it only when that apply created the sandbox attachment, and deletes it only when that apply created the provider.
 Rollback stops and removes the sandbox only when the persisted plan proves that apply created it; reused sandboxes and legacy plans with unknown sandbox ownership are preserved.
+If removal of an apply-owned sandbox fails, rollback returns the bounded error without writing its completion marker, leaving the ownership receipt available for retry.
 Rollback stops without mutating a same-name provider when the binding no longer matches the receipt.
 
 Runtime identity does not add a generic blueprint middleware surface in this slice.

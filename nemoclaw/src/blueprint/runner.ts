@@ -101,6 +101,7 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "
 const REST_PROTOCOLS = new Set(["rest"]);
 const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
 const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
+const MISSING_SANDBOX_PATTERN = /\b(?:not found|does not exist)\b/i;
 
 function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
@@ -1051,7 +1052,7 @@ export async function actionApply(
       const remove = await runCmd(["openshell", "sandbox", "remove", sandboxName], {
         reject: false,
       });
-      if (remove.exitCode === 0 || /\b(?:not found|does not exist)\b/i.test(remove.stderr)) {
+      if (remove.exitCode === 0 || MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
         sandboxCreatedByApply = false;
         if (runtimeIdentityConfig) {
           persistRunPlan();
@@ -1165,14 +1166,22 @@ export async function actionRollback(rid: string): Promise<void> {
   }
 
   if (sandboxCreatedByApply) {
-    try {
-      progress(30, `Stopping sandbox ${sandboxName}`);
-      await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
+    progress(30, `Stopping sandbox ${sandboxName}`);
+    const stop = await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
 
-      progress(60, `Removing sandbox ${sandboxName}`);
-      await runCmd(["openshell", "sandbox", "remove", sandboxName], { reject: false });
-    } catch {
-      // Sandbox cleanup is best-effort; the rollback marker still records this run as handled.
+    progress(60, `Removing sandbox ${sandboxName}`);
+    const remove = await runCmd(["openshell", "sandbox", "remove", sandboxName], {
+      reject: false,
+    });
+    if (remove.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
+      const stopFailure =
+        stop.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(stop.stderr)
+          ? `; sandbox stop also failed: ${boundedCommandError(stop.stderr)}`
+          : "";
+      throw new Error(
+        `Failed to remove owned sandbox '${sandboxName}': ${boundedCommandError(remove.stderr)}` +
+          stopFailure,
+      );
     }
   } else {
     progress(60, `Preserving unowned sandbox ${sandboxName}`);

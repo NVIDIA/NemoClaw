@@ -470,6 +470,26 @@ describe("blueprint identity wrapper", () => {
     expect(store.get(`${stateDir}/rolled_back`)?.content).toBeDefined();
   });
 
+  it("keeps an owned sandbox receipt retryable when removal fails", async () => {
+    const stateDir = "/fakehome/.nemoclaw/state/runs/failed-sandbox-removal";
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({
+        sandbox_name: "owned-sandbox",
+        sandbox_created_by_apply: true,
+      }),
+    });
+    responseQueue([
+      ["sandbox remove owned-sandbox", [{ exitCode: 1, stdout: "", stderr: "remove denied" }]],
+    ]);
+
+    await expect(actionRollback("failed-sandbox-removal")).rejects.toThrow(
+      /Failed to remove owned sandbox 'owned-sandbox': remove denied/,
+    );
+    expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
+  });
+
   it("persists an ownership receipt so failed compensation remains recoverable", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
