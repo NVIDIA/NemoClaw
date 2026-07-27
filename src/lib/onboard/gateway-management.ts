@@ -88,7 +88,8 @@ export type GatewayManagementParseResult =
  */
 export class GatewayManagementDeclarationError extends Error {}
 
-const GATEWAY_MANAGEMENT_ERROR_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu;
+const GATEWAY_MANAGEMENT_ERROR_CONTROL_RE =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
 
 function escapeGatewayManagementErrorReason(reason: string): string {
   return reason.replace(

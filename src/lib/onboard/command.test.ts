@@ -8,8 +8,8 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
-import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 import type { OnboardFlags } from "./command-support";
+import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
@@ -293,7 +293,7 @@ describe("onboard command options", () => {
         env: {},
         runOnboard: async () => {
           throw invalidGatewayManagementDeclarationError(
-            "unknown declaration field(s): forged\n\u001b[31mError: fake failure",
+            "unknown declaration field(s): forged\n\u001b[31mError: \u202efake failure",
           );
         },
         error: (message = "") => errors.push(message),
@@ -302,10 +302,12 @@ describe("onboard command options", () => {
     ).rejects.toThrow("exit:1");
 
     expect(errors).toEqual([
-      "  Invalid gateway management declaration: unknown declaration field(s): forged\\u000a\\u001b[31mError: fake failure",
+      "  Invalid gateway management declaration: unknown declaration field(s): forged\\u000a\\u001b[31mError: \\u202efake failure",
     ]);
     expect(errors[0]?.split(/\r?\n/u)).toHaveLength(1);
-    expect(errors[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u);
+    expect(errors[0]).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
   });
 
   it("re-throws a non-cancellation, non-gateway error so genuine bugs still surface (#7627)", async () => {
