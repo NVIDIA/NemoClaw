@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { detectNvidiaPlatform, type NvidiaPlatform } from "../inference/nim.js";
+import {
+  detectGpu,
+  detectNvidiaPlatform,
+  type GpuDetection,
+  type NvidiaPlatform,
+} from "../inference/nim.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
 import { redactFull } from "../security/redact.js";
@@ -65,6 +70,7 @@ export interface HostObservationSnapshot {
 export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
+  detectGpu?: () => Pick<GpuDetection, "wslDockerDesktopGpuProofPassed"> | null;
   detectHostGpuPlatform?: () => NvidiaPlatform;
   wslDockerDesktopGpuProofPassed?: boolean;
   collectPlatformIdentity?: () => PlatformIdentity;
@@ -128,6 +134,11 @@ export function collectHostObservations(
   const observedAt = (options.now ?? (() => new Date()))().toISOString();
   try {
     const assessment = (options.assess ?? assessHost)();
+    const wslDockerDesktopGpuProofPassed =
+      options.wslDockerDesktopGpuProofPassed ??
+      (assessment.isWsl && assessment.runtime === "docker-desktop" && assessment.hasNvidiaGpu
+        ? (options.detectGpu ?? detectGpu)()?.wslDockerDesktopGpuProofPassed
+        : undefined);
     return {
       observedAt,
       observations: adaptHostAssessment(
@@ -140,7 +151,7 @@ export function collectHostObservations(
           options.collectPlatformIdentity ??
           (() => collectPlatformIdentity(options.platformIdentityOptions))
         )(),
-        options.wslDockerDesktopGpuProofPassed,
+        wslDockerDesktopGpuProofPassed,
       ),
       reusable: false,
     };

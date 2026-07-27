@@ -181,6 +181,24 @@ describe("initial sandbox policy helpers", () => {
     ).toThrow("the detected Station product is not a qualified GB300 system");
   });
 
+  it("rejects Station GPU policy when host GPU availability fails", () => {
+    expect(() =>
+      discoverHostStationGb300SysfsReadOnlyPaths({
+        platform: "linux",
+        architecture: "arm64",
+        hasNvidiaGpu: false,
+        identity: {
+          nvidiaPlatform: "station",
+          productName: "NVIDIA DGX Station GB300",
+          stationProfile: "supported-dgx-os",
+          stationGb300PciGpu: true,
+          osId: "ubuntu",
+          osVersionId: "24.04",
+        },
+      }),
+    ).toThrow("an available GB300 GPU");
+  });
+
   it("scopes sysfs read access and lets OpenShell own /proc GPU enrichment (#7103)", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, {
       sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS,

@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { NvidiaPlatform } from "../inference/nim";
+import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
 
-const { detectNvidiaPlatform } = vi.hoisted(() => ({
+const { detectGpu, detectNvidiaPlatform } = vi.hoisted(() => ({
+  detectGpu: vi.fn<() => GpuDetection | null>(() => null),
   detectNvidiaPlatform: vi.fn<() => NvidiaPlatform>(() => "linux"),
 }));
 
-vi.mock("../inference/nim", () => ({ detectNvidiaPlatform }));
+vi.mock("../inference/nim", () => ({ detectGpu, detectNvidiaPlatform }));
 
 const NOW = new Date("2026-06-01T12:00:00Z");
 
@@ -86,6 +87,8 @@ function findingIds(result: ReturnType<typeof report>) {
 
 describe("host readiness projection (#7408)", () => {
   beforeEach(() => {
+    detectGpu.mockReset();
+    detectGpu.mockReturnValue(null);
     detectNvidiaPlatform.mockReset();
     detectNvidiaPlatform.mockReturnValue("linux");
   });
@@ -186,6 +189,29 @@ describe("host readiness projection (#7408)", () => {
     expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
     expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
     expect(result.status).toBe("supported");
+  });
+
+  it("uses the canonical WSL Docker Desktop GPU proof in the default report creator", () => {
+    detectGpu.mockReturnValue({
+      type: "nvidia",
+      count: 1,
+      totalMemoryMB: 32_768,
+      perGpuMB: 32_768,
+      nimCapable: true,
+      wslDockerDesktopGpuProofPassed: true,
+    });
+
+    const result = createHostReadinessReport(
+      { nemoclawVersion: "0.1.0", now: () => NOW },
+      {
+        assess: () => host({ isWsl: true, runtime: "docker-desktop" }),
+        architecture: "arm64",
+        collectPlatformIdentity: emptyPlatformIdentity,
+      },
+    );
+
+    expect(detectGpu).toHaveBeenCalledOnce();
+    expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("present");
   });
 
   it("supports CPU-only hosts without requiring GPU tooling", () => {

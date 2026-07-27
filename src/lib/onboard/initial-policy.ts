@@ -137,6 +137,7 @@ export function discoverHostStationGb300SysfsReadOnlyPaths(
   options: {
     platform?: string;
     architecture?: string;
+    hasNvidiaGpu?: boolean;
     identity?: PlatformIdentity;
     sysfsRoot?: string;
   } = {},
@@ -161,7 +162,7 @@ export function discoverHostStationGb300SysfsReadOnlyPaths(
       architecture: options.architecture ?? process.arch,
       osId: identity.osId,
       osVersionId: identity.osVersionId,
-      hasNvidiaGpu: identity.stationGb300PciGpu === true,
+      hasNvidiaGpu: options.hasNvidiaGpu ?? identity.stationGb300PciGpu === true,
     })
   ) {
     throw new Error(
@@ -380,6 +381,7 @@ export function prepareInitialSandboxCreatePolicy(
   options: {
     directGpu?: boolean;
     dockerGpuPatch?: boolean;
+    hostGpuAvailable?: boolean;
     stationGb300SysfsReadOnlyPaths?: readonly string[];
     additionalPresets?: string[];
     agentName?: string | null;
@@ -391,7 +393,10 @@ export function prepareInitialSandboxCreatePolicy(
     ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
         procReadWrite: options.dockerGpuPatch === true,
         sysfsReadOnlyPaths:
-          options.stationGb300SysfsReadOnlyPaths ?? discoverHostStationGb300SysfsReadOnlyPaths(),
+          options.stationGb300SysfsReadOnlyPaths ??
+          discoverHostStationGb300SysfsReadOnlyPaths({
+            hasNvidiaGpu: options.hostGpuAvailable,
+          }),
       })
     : null;
   let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
