@@ -36,6 +36,7 @@ const ADVISOR_BOUNDARY_PROOF_TARGET_NAME = "target";
 const ADVISOR_CONTEXT_FILE_NAME = "github-context.json";
 const SANDBOX_ADVISOR_DIR = "/advisor";
 const SANDBOX_WORKDIR = "/pr-workdir";
+const SANDBOX_GIT_DIR = `${SANDBOX_WORKDIR}/.git`;
 const SANDBOX_CONTEXT_DIR = `/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const SANDBOX_RUNTIME_DIR = `/sandbox/${ADVISOR_RUNTIME_DIRECTORY_NAME}`;
 const SANDBOX_TOOLS_DIR = `/${ADVISOR_TOOLS_DIRECTORY_NAME}`;
@@ -381,6 +382,8 @@ export function runAdvisorSandbox(
         ...passthroughEnvironment(env),
         ADVISOR_DIR: SANDBOX_ADVISOR_DIR,
         ADVISOR_WORKDIR: SANDBOX_WORKDIR,
+        GIT_DIR: SANDBOX_GIT_DIR,
+        GIT_WORK_TREE: SANDBOX_WORKDIR,
         GITHUB_WORKSPACE: SANDBOX_RUNTIME_DIR,
         HOME: SANDBOX_RUNTIME_DIR,
         PATH: `${SANDBOX_TOOLS_DIR}:/usr/bin`,
@@ -457,6 +460,7 @@ export function checkAdvisorSandboxRuntime(): void {
       throw new Error(`Advisor sandbox input is not a directory: ${directory}`);
     }
   }
+  verifyAdvisorGitWorktree();
 
   const probeName = `.pr-review-advisor-write-check-${randomUUID()}`;
   for (const directory of [
@@ -492,6 +496,12 @@ export function checkAdvisorSandboxRuntime(): void {
     const proofDirectory = path.join(directory, relativeProofDirectory);
     const source = path.join(proofDirectory, ADVISOR_BOUNDARY_PROOF_SOURCE_NAME);
     const target = path.join(proofDirectory, ADVISOR_BOUNDARY_PROOF_TARGET_NAME);
+    if (
+      fs.readFileSync(source, "utf8") !== "source\n" ||
+      fs.readFileSync(target, "utf8") !== "target\n"
+    ) {
+      throw new Error(`Advisor sandbox input canary is unreadable or invalid: ${directory}`);
+    }
     expectWriteDenied(`${directory} chmod`, () => fs.chmodSync(source, 0o600));
     expectWriteDenied(`${directory} overwrite`, () =>
       fs.writeFileSync(target, "unexpected replacement\n", { flag: "w" }),
@@ -507,6 +517,40 @@ export function checkAdvisorSandboxRuntime(): void {
   console.log(
     "Advisor sandbox filesystem proof passed: four immutable inputs and one writable runtime",
   );
+}
+
+export function verifyAdvisorGitWorktree(
+  workdir = SANDBOX_WORKDIR,
+  gitDirectory = path.join(workdir, ".git"),
+): void {
+  const gitEnvironment = {
+    ...process.env,
+    GIT_DIR: gitDirectory,
+    GIT_WORK_TREE: workdir,
+    PATH: `${SANDBOX_TOOLS_DIR}:/usr/bin`,
+  };
+  let topLevel: string;
+  let head: string;
+  try {
+    topLevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      env: gitEnvironment,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    head = execFileSync("git", ["rev-parse", "--verify", "HEAD^{commit}"], {
+      encoding: "utf8",
+      env: gitEnvironment,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    throw new Error(`Advisor sandbox Git checkout is unreadable or invalid: ${workdir}`);
+  }
+  if (fs.realpathSync(topLevel) !== fs.realpathSync(workdir)) {
+    throw new Error(`Advisor sandbox Git worktree resolved outside ${workdir}: ${topLevel}`);
+  }
+  if (!/^[0-9a-f]{40}$/u.test(head)) {
+    throw new Error(`Advisor sandbox Git HEAD is invalid: ${head}`);
+  }
 }
 
 function expectWriteDenied(label: string, operation: () => void): void {

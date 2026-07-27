@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +27,7 @@ import {
   downloadAdvisorArtifacts,
   prepareAdvisorSandboxInputs,
   runAdvisorSandbox,
+  verifyAdvisorGitWorktree,
   writeUnavailableAdvisorArtifacts,
 } from "../tools/pr-review-advisor/openshell.mts";
 import { runPrReviewAdvisorAnalysis } from "../tools/pr-review-advisor/run-analysis.mts";
@@ -419,6 +420,53 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
   });
 
+  it("pins the readable Git worktree explicitly across the sandbox ownership boundary", () => {
+    const workdir = path.join(temporaryDirectory(), "pr-workdir");
+    fs.mkdirSync(workdir);
+    execFileSync("git", ["init", "--quiet"], { cwd: workdir });
+    fs.writeFileSync(path.join(workdir, "tracked.txt"), "tracked\n");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: workdir });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=PR Review Advisor",
+        "-c",
+        "user.email=advisor@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "test: initialize advisor worktree",
+      ],
+      { cwd: workdir },
+    );
+
+    const differentOwnerEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_TEST_ASSUME_DIFFERENT_OWNER: "1",
+    };
+    delete differentOwnerEnv.GIT_DIR;
+    delete differentOwnerEnv.GIT_WORK_TREE;
+    expect(() =>
+      execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+        cwd: workdir,
+        env: differentOwnerEnv,
+        stdio: "pipe",
+      }),
+    ).toThrow();
+
+    vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
+    try {
+      expect(() => verifyAdvisorGitWorktree(workdir)).not.toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    fs.rmSync(path.join(workdir, ".git", "HEAD"));
+    expect(() => verifyAdvisorGitWorktree(workdir)).toThrow(
+      "Advisor sandbox Git checkout is unreadable or invalid",
+    );
+  });
+
   it("rejects oversized prepared context before writing a sandbox input", async () => {
     const env = advisorEnvironment();
 
@@ -512,6 +560,8 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", () => {
     const env = advisorEnvironment();
+    env.GIT_DIR = "/untrusted/ambient-git-dir";
+    env.GIT_WORK_TREE = "/untrusted/ambient-worktree";
     const commandResponses = new Map([["openshell sandbox list --names", "pr-advisor-test\n"]]);
     const tools = advisorTools(
       (command, args) => commandResponses.get(`${command} ${args.slice(0, 3).join(" ")}`) ?? "",
@@ -621,6 +671,8 @@ describe("PR review advisor OpenShell wrapper", () => {
         "PR_REVIEW_ADVISOR_API_KEY=unused",
         "PR_REVIEW_ADVISOR_BASE_URL=https://inference.local/v1",
         "PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH=/pr-review-advisor-context/github-context.json",
+        "GIT_DIR=/pr-workdir/.git",
+        "GIT_WORK_TREE=/pr-workdir",
         "TARGET_REPO=NVIDIA/NemoClaw",
         "/advisor/tools/pr-review-advisor/run-analysis.mts",
       ]),
@@ -628,6 +680,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(runArgs.join("\n")).not.toContain("github-host-secret");
     expect(runArgs.join("\n")).not.toContain("model-host-secret");
     expect(runArgs.join("\n")).not.toContain("advisor-host-secret");
+    expect(runArgs.join("\n")).not.toContain("/untrusted/ambient");
 
     expect(
       calls.find(
