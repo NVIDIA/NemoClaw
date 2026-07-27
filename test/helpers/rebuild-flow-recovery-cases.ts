@@ -8,6 +8,7 @@ import {
   makeActiveTeamsMessagingPlan,
   makePreparedRecoveryManifest,
 } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import { createRebuildFlowHarness, installRebuildFlowTestHooks } from "./rebuild-flow-test-harness";
 
 export function registerRebuildFlowRecoveryTests(): void {
@@ -27,7 +28,7 @@ export function registerRebuildFlowRecoveryTests(): void {
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
         expect.objectContaining({ ignoreError: true }),
       );
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
@@ -63,7 +64,7 @@ export function registerRebuildFlowRecoveryTests(): void {
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
         expect.objectContaining({ ignoreError: true }),
       );
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
@@ -89,10 +90,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       ).rejects.toThrow("Invalid recovery manifest");
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
@@ -116,10 +114,7 @@ export function registerRebuildFlowRecoveryTests(): void {
 
       expect(validationCount).toBe(2);
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
     });
 
     it("rejects registry configuration drift before prepared recovery deletion (#6114)", async () => {
@@ -143,10 +138,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       ).rejects.toThrow("Recovery registry configuration changed during preflight");
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
     });
 
     it("uses the refreshed registry snapshot for prepared-recovery rollback (#6114)", async () => {
@@ -188,10 +180,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       ).rejects.toThrow("Recovery backup identity changed during preflight");
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
     });
 
     it("restores the registry entry when prepared-backup recreation fails (#6114)", async () => {
@@ -441,10 +430,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(errors).toContain("messaging manifest plan could not be staged");
       expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
@@ -462,10 +448,16 @@ export function registerRebuildFlowRecoveryTests(): void {
           entries: [attached, alreadyDetached],
           detachedProviderEntries: [attached],
         },
-        runOpenshell: (args) =>
-          args.join(" ") === "sandbox delete alpha"
-            ? { status: 7, output: "delete failed", stderr: "delete failed" }
-            : { status: 0, output: "" },
+        runOpenshell: (args) => {
+          const command = args.join(" ");
+          if (command === "sandbox delete -g nemoclaw alpha") {
+            return { status: 7, output: "delete failed", stderr: "delete failed" };
+          }
+          if (command === "sandbox get -g nemoclaw alpha") {
+            return { status: 0, output: "Phase: Ready", stdout: "Phase: Ready", stderr: "" };
+          }
+          return undefined;
+        },
       });
 
       await expect(

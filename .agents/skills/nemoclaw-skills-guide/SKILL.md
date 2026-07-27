@@ -25,10 +25,10 @@ The prefix in each skill name indicates who it is for.
 For end users operating a NemoClaw sandbox.
 Covers routing human users' AI agents to the canonical NemoClaw Markdown documentation.
 
-### `nemoclaw-maintainer-*` (14 skills)
+### `nemoclaw-maintainer-*` (15 skills)
 
 For project maintainers.
-Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), workflow policy reference, documentation information-architecture refactors, cutting releases, drafting release notes, finding PRs to review, comparing PRs, cross-issue sweeps, triage, normalizing issue and PR title tags, performing security code reviews, and verifying whether stale bug reports still reproduce on the latest release.
+Covers the daily maintainer cadence, trusted E2E dispatch, workflow policy, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
 
 ### `nemoclaw-contributor-*` (5 skills)
 
@@ -58,6 +58,7 @@ documentation updates, and onboarding new messaging channels.
 | `nemoclaw-maintainer-day` | Run one daytime maintainer pass for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow. Designed for `/loop`. |
 | `nemoclaw-maintainer-evening` | End-of-day handoff: require the pre-tag dated changelog PR, check version progress, identify stragglers, generate a QA handoff summary, cut the release tag, carry stragglers forward, retire the released label, and hand off the Announcement. |
 | `nemoclaw-maintainer-cut-release-tag` | Verify the dated changelog entry, cut an annotated semver tag on a maintainer-confirmed `origin/main` commit, wait for workflow-managed `latest`, carry remaining open items forward, and delete the released label; `lkg` stays manual. |
+| `nemoclaw-maintainer-e2e` | Dispatch ordinary or full trusted GitHub Actions E2E and verify exact-candidate Brev Launchable qualification evidence. |
 | `nemoclaw-maintainer-release-notes` | Draft the post-tag Announcement from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
 | `nemoclaw-maintainer-find-review-pr` | Find open security PRs with Urgent or High Project Priority. Link each PR to its issue and identify competing PRs. |
 | `nemoclaw-maintainer-pr-comparator` | Compare open PRs for the same issue. Apply gates and score the eligible PRs before you recommend one to merge. |
@@ -90,6 +91,6 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
 | Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 6 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 20 | `nemoclaw-maintainer-morning` |
+| Maintainer | All skills | 21 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

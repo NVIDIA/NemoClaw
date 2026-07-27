@@ -131,7 +131,7 @@ const DOCKER_PULL_TIMEOUT_MS = 20 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 const SANDBOX_CREATE_TIMEOUT_MS = 10 * 60_000;
 const REBUILD_TIMEOUT_MS = 45 * 60_000;
-const LIVE_TIMEOUT_MS = 100 * 60_000;
+const LIVE_TIMEOUT_MS = 70 * 60_000;
 // Long Docker and onboard commands can become noisy when they wedge. Keep a
 // generous diagnostic tail without letting a stuck child exhaust the hosted
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.
@@ -654,7 +654,7 @@ test(STALE_BASE_REBUILD
       "phase 1 current Hermes base resolution plus immutable old Hermes base fixture",
       "openshell provider create/update and sandbox create/exec/list",
       "curated local ~/.nemoclaw registry and onboard-session rebuild metadata",
-      "real nemoclaw <sandbox> rebuild --yes --verbose",
+      "real nemoclaw <sandbox> rebuild --yes --verbose without host inference credentials",
       "Hermes .env/config.yaml messaging placeholder preservation",
       "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
     ],
@@ -854,7 +854,7 @@ test(STALE_BASE_REBUILD
     timeoutMs: OPENSHELL_TIMEOUT_MS,
   });
 
-  progress.phase("pull and validate the old Hermes base fixture");
+  progress.phase("pull and verify the historical Hermes base fixture");
   const pullOldBase = await host.command(
     "docker",
     ["pull", REBUILD_HERMES_OLD_BASE_FIXTURE.imageRef],
@@ -999,7 +999,7 @@ test(STALE_BASE_REBUILD
     );
     expectExitZero(provider, "OpenShell Discord provider create/update");
 
-    progress.phase("create the old Hermes sandbox");
+    progress.phase("create the historical Hermes sandbox");
     const createOldSandbox = await host.command(
       "openshell",
       [
@@ -1077,7 +1077,6 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(seededKanban, "verify historical Hermes kanban seed before rebuild");
   expect(resultText(seededKanban)).toContain(KANBAN_TASK_TITLE);
-
   const writeMarker = await host.command(
     "openshell",
     [
@@ -1209,12 +1208,16 @@ test(STALE_BASE_REBUILD
   }
 
   progress.phase("rebuild the Hermes sandbox");
+  const rebuildEnv = testEnv(undefined, {
+    NEMOCLAW_REBUILD_VERBOSE: "1",
+    ...baseReusePlan?.childEnv,
+  });
+  expect(rebuildEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+  expect(rebuildEnv).not.toHaveProperty("COMPATIBLE_API_KEY");
+  expect(rebuildEnv).not.toHaveProperty("NVIDIA_API_KEY");
   const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
     artifactName: "phase-6-nemoclaw-rebuild-hermes",
-    env: testEnv(apiKey, {
-      NEMOCLAW_REBUILD_VERBOSE: "1",
-      ...baseReusePlan?.childEnv,
-    }),
+    env: rebuildEnv,
     redactionValues,
     timeoutMs: REBUILD_TIMEOUT_MS,
     captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
@@ -1226,6 +1229,7 @@ test(STALE_BASE_REBUILD
   expect(rebuildOutput).toContain(`nemoclaw ${SANDBOX_NAME} gateway-token --quiet`);
   expect(rebuildOutput).toContain(`Using Hermes Agent base image: ${phase1BaseResolution.ref}`);
   expect(rebuildOutput).not.toContain("Rebuilding Hermes Agent base image");
+  expect(rebuildOutput).not.toMatch(/provider credential not found/i);
   await waitForSandboxReady(host, apiKey, "phase-6-post-rebuild");
 
   const backupPathText = rebuildOutput.match(/^\s*Backup:\s+(.+)$/mu)?.[1]?.trim();

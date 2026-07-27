@@ -16,6 +16,7 @@ import {
 } from "./mcp-bridge-destroy";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
+  type McpRebuildPreparation,
   prepareMcpBridgesForAbsentSandboxRebuild as prepareMcpBridgesForAbsentSandboxRebuildLifecycle,
   prepareMcpBridgesForRebuild as prepareMcpBridgesForRebuildLifecycle,
   reattachMcpProvidersAfterRebuildAbort as reattachMcpProvidersAfterRebuildAbortLifecycle,
@@ -69,6 +70,7 @@ export {
   parseMcpProviderMetadata,
   providerDetachChangedState,
 } from "./mcp-bridge-provider";
+export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild";
 export {
   buildMcpBridgeProviderName,
   MCP_SERVER_URL_MAX_LENGTH,
@@ -78,6 +80,7 @@ export {
   validateMcpCredentialEnvName,
   validateMcpServerName,
 } from "./mcp-bridge-validation";
+export type { McpRebuildPreparation };
 export { statusMcpBridge };
 
 export interface McpDestroyPreparation {
@@ -88,12 +91,6 @@ export interface McpDestroyPreparation {
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
   destroyAlreadyPending: boolean;
-}
-
-export interface McpRebuildPreparation {
-  entries: McpBridgeEntry[];
-  detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
 }
 
 export async function addMcpBridge(
@@ -189,6 +186,13 @@ function parseProbeFlags(args: string[]): { probe?: boolean; rest: string[] } {
   return { probe, rest: args.filter((arg) => arg !== "--probe" && arg !== "--no-probe") };
 }
 
+function parseToolsFlag(args: string[]): { tools: boolean; rest: string[] } {
+  return {
+    tools: args.includes("--tools"),
+    rest: args.filter((arg) => arg !== "--tools"),
+  };
+}
+
 /**
  * Post-add wire probe (#6379). Reports only — the add transaction committed
  * durably and a resolution failure is a host-side OpenShell defect, so a
@@ -266,12 +270,13 @@ FLAGS
       return;
     case "status":
       console.log(`USAGE
-  nemoclaw <name> mcp status [server] [--json] [--probe|--no-probe]
+  nemoclaw <name> mcp status [server] [--json] [--probe|--no-probe] [--tools]
 
 FLAGS
   --json      Emit MCP server status as JSON
   --probe     Request the wire-level credential-resolution probe for every server
-  --no-probe  Skip the probe (it defaults on only when a single server is named)`);
+  --no-probe  Skip the probe (it defaults on only when a single server is named)
+  --tools     Discover names advertised by one named MCP server`);
       return;
     case "restart":
       console.log(`USAGE
@@ -331,15 +336,20 @@ export async function dispatchMcpBridgeCommand(
       }
       case "status": {
         const { json, rest: statusJsonRest } = parseJsonFlag(rest);
-        const { probe, rest: statusRest } = parseProbeFlags(statusJsonRest);
+        const { tools, rest: statusToolsRest } = parseToolsFlag(statusJsonRest);
+        const { probe, rest: statusRest } = parseProbeFlags(statusToolsRest);
         const server = requireAtMostOneArg(
           statusRest,
-          "Usage: nemoclaw <sandbox> mcp status [server] [--json] [--probe|--no-probe]",
+          "Usage: nemoclaw <sandbox> mcp status [server] [--json] [--probe|--no-probe] [--tools]",
         );
+        if (tools && server === undefined) {
+          throw new McpBridgeError("Pass one MCP server name with --tools.", 2);
+        }
         const sandbox = getSandboxOrThrow(sandboxName);
         const agent = getSandboxAgent(sandbox);
         const statuses = await statusMcpBridge(sandboxName, server, {
-          probeCredentialResolution: probe ?? server !== undefined,
+          probeCredentialResolution: probe === true || (probe !== false && !tools && !!server),
+          discoverTools: tools,
         });
         if (json) {
           console.log(

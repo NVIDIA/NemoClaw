@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import * as http2 from "node:http2";
@@ -30,12 +30,8 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { redactString } from "../fixtures/redaction.ts";
-import {
-  projectRawOutputForArtifact,
-  type RawArtifactOutputMode,
-  summarizeSandboxSnapshot,
-} from "./bedrock-runtime-compatible-anthropic-artifacts.ts";
+import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
+import { summarizeSandboxSnapshot } from "./bedrock-runtime-compatible-anthropic-artifacts.ts";
 import {
   type ForbiddenLeakPattern,
   findForbiddenLeaks,
@@ -52,6 +48,10 @@ import {
   BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_SOURCE_BOUNDARY,
   isPreContractEndpointValidationRateLimitEvidence,
 } from "./bedrock-runtime-compatible-anthropic-rate-limit.ts";
+import {
+  type RawRunResult,
+  runRawCommand,
+} from "./bedrock-runtime-compatible-anthropic-raw-command.ts";
 
 // Keep the same live system boundary: host fake Bedrock Runtime endpoint,
 // /etc/hosts mapping, source CLI onboard, OpenShell provider route, sandbox
@@ -84,27 +84,6 @@ type EventStreamCodecConstructor = new (
   toUtf8: (input: Uint8Array) => string,
   fromUtf8: (input: string) => Uint8Array,
 ) => EventStreamCodec;
-
-interface RawRunResult {
-  readonly command: readonly string[];
-  readonly exitCode: number | null;
-  readonly signal: NodeJS.Signals | null;
-  readonly timedOut: boolean;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly redactedStdout: string;
-  readonly redactedStderr: string;
-}
-
-interface RawRunOptions {
-  readonly artifactName: string;
-  readonly artifacts: ArtifactSink;
-  readonly artifactOutputMode?: RawArtifactOutputMode;
-  readonly cwd?: string;
-  readonly env?: NodeJS.ProcessEnv;
-  readonly redactionValues?: readonly string[];
-  readonly timeoutMs?: number;
-}
 
 interface MockBedrockRuntime {
   readonly port: number;
@@ -184,7 +163,7 @@ function createBedrockTlsFixture(home: string): { cert: Buffer; key: Buffer; cer
       "-addext",
       `subjectAltName=DNS:${BEDROCK_HOSTNAME}`,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
   );
   expect(
     generated.status,
@@ -194,96 +173,6 @@ function createBedrockTlsFixture(home: string): { cert: Buffer; key: Buffer; cer
     cert: fs.readFileSync(certPath),
     key: fs.readFileSync(keyPath),
     certPath,
-  };
-}
-
-function redactedCommand(command: readonly string[], values: readonly string[]): string[] {
-  return command.map((part) => redactString(part, values));
-}
-
-async function runRawCommand(
-  command: string,
-  args: readonly string[],
-  options: RawRunOptions,
-): Promise<RawRunResult> {
-  const timeoutMs = options.timeoutMs ?? 60_000;
-  const redactionValues = [...(options.redactionValues ?? [])];
-  const child = spawn(command, [...args], {
-    cwd: options.cwd ?? REPO_ROOT,
-    detached: true,
-    env: options.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const fullCommand = [command, ...args];
-  let stdout = "";
-  let stderr = "";
-  let timedOut = false;
-  let spawnError: Error | undefined;
-
-  const killProcessGroup = (signal: NodeJS.Signals): void => {
-    if (child.pid === undefined) return;
-    try {
-      process.kill(-child.pid, signal);
-    } catch {
-      child.kill(signal);
-    }
-  };
-
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    killProcessGroup("SIGTERM");
-    setTimeout(() => killProcessGroup("SIGKILL"), 1_000).unref();
-  }, timeoutMs);
-  timeout.unref();
-
-  child.stdout?.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString("utf8");
-  });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  child.on("error", (error) => {
-    spawnError = error;
-  });
-
-  const { exitCode, signal } = await new Promise<{
-    exitCode: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolve) => {
-    child.on("close", (code, closeSignal) => resolve({ exitCode: code, signal: closeSignal }));
-  });
-  clearTimeout(timeout);
-
-  if (spawnError) {
-    const message = redactString(spawnError.message, redactionValues);
-    throw new Error(`failed to spawn ${redactString(command, redactionValues)}: ${message}`);
-  }
-
-  const redactedStdout = redactString(stdout, redactionValues);
-  const redactedStderr = redactString(stderr, redactionValues);
-  const artifactOutputMode = options.artifactOutputMode ?? "content";
-  const artifactStdout = projectRawOutputForArtifact(redactedStdout, "stdout", artifactOutputMode);
-  const artifactStderr = projectRawOutputForArtifact(redactedStderr, "stderr", artifactOutputMode);
-  await options.artifacts.writeText(`raw-shell/${options.artifactName}.stdout.txt`, artifactStdout);
-  await options.artifacts.writeText(`raw-shell/${options.artifactName}.stderr.txt`, artifactStderr);
-  await options.artifacts.writeJson(`raw-shell/${options.artifactName}.result.json`, {
-    command: redactedCommand(fullCommand, redactionValues),
-    exitCode,
-    signal,
-    timedOut,
-    stdout: artifactStdout,
-    stderr: artifactStderr,
-  });
-
-  return {
-    command: fullCommand,
-    exitCode,
-    signal,
-    timedOut,
-    stdout,
-    stderr,
-    redactedStdout,
-    redactedStderr,
   };
 }
 
@@ -602,7 +491,9 @@ function isBedrockAdapterProcess(pid: number): boolean {
 
   const ps = spawnSync("ps", ["-p", String(pid), "-o", "args="], {
     encoding: "utf8",
+    killSignal: "SIGKILL",
     stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
   });
   return ps.status === 0 && BEDROCK_ADAPTER_LAUNCHER_PATTERN.test(ps.stdout);
 }
@@ -1242,6 +1133,7 @@ async function assertNoBedrockLeaks(options: {
   home: string;
   mock: MockBedrockRuntime;
   onboarding: RawRunResult;
+  progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   sandbox: SandboxClient;
   redact: (text: string, extraValues?: string[]) => string;
 }): Promise<void> {
@@ -1265,6 +1157,7 @@ async function assertNoBedrockLeaks(options: {
       artifacts: options.artifacts,
       artifactOutputMode: "metadata-only",
       env: testEnv(options.home),
+      progress: options.progress,
       redactionValues: [COMPATIBLE_KEY, adapterToken],
       timeoutMs: 180_000,
     },
@@ -1433,6 +1326,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
       artifactName: `onboard-bedrock-runtime-${AGENT}`,
       artifacts,
       env: onboardEnv(home, AGENT, tls.certPath),
+      progress,
       redactionValues: [COMPATIBLE_KEY],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
@@ -1480,6 +1374,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
     home,
     mock,
     onboarding,
+    progress,
     sandbox,
     redact: (text, extraValues) => secrets.redact(text, extraValues),
   });

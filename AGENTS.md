@@ -213,6 +213,29 @@ Follow `.agents/skills/_shared/git-github-hard-stop.md`: if SSH, `gh`, authentic
 
 Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a PR, monitor required CI and automated review comments, address valid CodeRabbit and PR Review Advisor findings, and consult the user when feedback is ambiguous or design-changing.
 
+Reviewer routing is repository-owned.
+Reviewer selection can come from these sources:
+
+- `CODEOWNERS` loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+- Rulesets configured for `NVIDIA/NemoClaw`.
+- NemoClaw workflow definitions loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+- NemoClaw skills loaded from the PR base SHA in `NVIDIA/NemoClaw`.
+
+Before you use a reviewer-request write, confirm that one of these conditions is true:
+
+- The current user names the exact reviewer.
+- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
+
+Otherwise, do not use any of these reviewer-request writes:
+
+- Add a reviewer.
+- Remove a reviewer.
+- Re-request a review.
+
+GitHub can create an automatic review-request event when a contributor or agent pushes.
+GitHub can attribute the event to the pushing account.
+If the command trace contains no reviewer-request write, report the event as an automatic review-request event.
+
 ### Common Patterns
 
 **Adding a CLI command:**
@@ -253,7 +276,7 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 
 - Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
 - After completing code or documentation changes, run a documentation writer subagent before final handoff. Give it the changed files, change summary, and test or docs-build evidence. For documentation-only changes, ask it to verify the writing rules and documentation style.
-- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, agent surface, and PR number. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
+- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, and agent surface. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
 - If any commit changes the pull-request head after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
 - For normal docs changes, include source pages under `docs/`.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.

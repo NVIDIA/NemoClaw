@@ -169,6 +169,7 @@ export interface AssessHostOpts {
   procVersion?: string;
   dockerInfoOutput?: string;
   dockerInfoError?: string;
+  dockerVersionOutput?: string;
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
   readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
@@ -213,6 +214,93 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
   if (normalized.includes("docker desktop")) return "docker-desktop";
   if (normalized.includes("docker")) return "docker";
   return "unknown";
+}
+
+type DockerVersionIdentity = "docker" | "podman" | "unknown";
+
+/**
+ * Classify the engine identity from the explicit
+ * `docker version --format '{{json .}}'` banner.
+ *
+ * Podman's docker-compat `/info` endpoint mimics Docker so closely that
+ * `docker info` carries no "podman" marker (observed on Apple Silicon macOS:
+ * `ServerVersion: "5.6.2"`, `OperatingSystem: "fedora"`, no "podman"
+ * substring), so `inferContainerRuntime` misclassifies it as plain Docker.
+ * The docker-compat `/version` payload still names the engine: a
+ * `Server.Components[].Name` of "Podman Engine" and a `Server.Platform.Name`
+ * like "linux/arm64/fedora-42". Real Docker reports
+ * `Server.Platform.Name: "Docker Engine - Community"` and components
+ * `Engine`/`containerd`/`runc`, which provide positive Docker identity on
+ * Docker Engine, Docker Desktop, and Colima (#7320).
+ */
+function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentity {
+  const text = String(versionOutput || "").trim();
+  if (!text) return "unknown";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Plain-text `docker version` still prints the "Podman Engine" server banner.
+    if (/podman/i.test(text)) return "podman";
+    return /docker engine/i.test(text) ? "docker" : "unknown";
+  }
+  const server = (parsed as Record<string, unknown> | null)?.Server;
+  if (!server || typeof server !== "object") return "unknown";
+  const s = server as Record<string, unknown>;
+  const platformName = (s.Platform as Record<string, unknown> | undefined)?.Name;
+  if (typeof platformName === "string" && /podman/i.test(platformName)) return "podman";
+  const components = s.Components;
+  const componentNames = Array.isArray(components)
+    ? components.flatMap((component) => {
+        const name =
+          component && typeof component === "object"
+            ? (component as Record<string, unknown>).Name
+            : undefined;
+        return typeof name === "string" ? [name] : [];
+      })
+    : [];
+  if (componentNames.some((name) => /podman/i.test(name))) return "podman";
+  if (
+    (typeof platformName === "string" && /^docker (?:engine|desktop)\b/i.test(platformName)) ||
+    componentNames.some((name) => name.trim().toLowerCase() === "engine")
+  ) {
+    return "docker";
+  }
+  return "unknown";
+}
+
+/**
+ * Use `ProductLicense: "Apache-2.0"` as a Podman backstop only when the
+ * authoritative `docker version` probe is unavailable. Podman's docker-compat
+ * `/info` reports this value, but Docker Engine can also report it. Without
+ * version evidence, preflight conservatively rejects that ambiguous runtime
+ * before the Docker-driver path (#7320).
+ */
+function dockerInfoReportsPodmanCompat(infoOutput = ""): boolean {
+  const text = String(infoOutput || "").trim();
+  if (!text) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const license = (parsed as Record<string, unknown>).ProductLicense;
+  return typeof license === "string" && license.trim().toLowerCase() === "apache-2.0";
+}
+
+/**
+ * Reclassify a Docker CLI routed to Podman's compatibility socket as `podman`
+ * so the unsupported-runtime gate fires before the forced macOS/Linux
+ * Docker-driver gateway binds Podman's VM-only bridge address and exits
+ * `EADDRNOTAVAIL` (#7320).
+ */
+function isDockerCompatPodman(dockerInfoOutput = "", dockerVersionOutput = ""): boolean {
+  const versionIdentity = classifyDockerVersionIdentity(dockerVersionOutput);
+  if (versionIdentity === "podman") return true;
+  if (versionIdentity === "docker") return false;
+  return dockerInfoReportsPodmanCompat(dockerInfoOutput);
 }
 
 function parseDockerCgroupVersion(info = ""): "v1" | "v2" | "unknown" {
@@ -536,6 +624,16 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerRunning = true;
   }
 
+  // Capture the docker-compat engine banner so Podman fronting the Docker CLI
+  // socket is reclassified below. Only probed when the daemon is reachable so a
+  // down/absent Docker never pays for the extra call (#7320).
+  let dockerVersionOutput = opts.dockerVersionOutput;
+  if (dockerReachable && dockerVersionOutput === undefined) {
+    dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
+      ignoreError: true,
+    });
+  }
+
   const release = opts.release ?? os.release();
   const procVersion =
     opts.procVersion ??
@@ -547,6 +645,18 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
       }
     })();
   let runtime = inferContainerRuntime(dockerInfoOutput);
+  // Podman fronting the Docker CLI compatibility socket mimics Docker in
+  // `docker info`, so the grep above misclassifies it as `docker`. Reclassify
+  // from the explicit docker-compat signals so the unsupported-runtime gate
+  // fires before the forced Docker-driver gateway binds Podman's VM-only
+  // bridge IP and exits EADDRNOTAVAIL (#7320).
+  if (
+    dockerReachable &&
+    runtime !== "podman" &&
+    isDockerCompatPodman(dockerInfoOutput, dockerVersionOutput)
+  ) {
+    runtime = "podman";
+  }
   if (dockerReachable && runtime === "unknown" && platform === "linux") {
     runtime = "docker";
   }
@@ -1131,6 +1241,13 @@ export interface ProbeContainerDnsOpts {
   runProbeImpl?: RunProbeFn;
   /** Override the probe name (test seam; pinned name for stable assertions). */
   probeName?: string;
+  /**
+   * Resolver to test with `docker run --dns <ip>`, so the probe exercises the
+   * exact DNS path a recreated sandbox will use rather than Docker defaults.
+   * Must be an IP address (validated) since it is interpolated into the shell
+   * command. Null/undefined preserves Docker defaults. (#7172)
+   */
+  dnsServer?: string | null;
   /** Inject a precomputed image-cache result; skips the pre-pull. */
   ensureImageCachedOverride?: EnsureProbeImageCachedResult;
 }
@@ -1557,10 +1674,18 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
       `probeName must be a plain DNS name (RFC 1035 label characters), got: ${JSON.stringify(probeName)}`,
     );
   }
+  // Validate the resolver as an IP before interpolating it into the shell
+  // command (same injection guard as probeName above); detectSandboxFallbackDns
+  // only yields validated IPv4 or null, but defend the seam regardless.
+  const dnsServer = opts.dnsServer ?? null;
+  if (dnsServer !== null && net.isIP(dnsServer) === 0) {
+    throw new Error(`dnsServer must be an IP address, got: ${JSON.stringify(dnsServer)}`);
+  }
+  const dnsArg = dnsServer !== null ? ` --dns ${dnsServer}` : "";
   const command = opts.command ?? [
     "sh",
     "-c",
-    `docker run --rm --pull=missing ${BUSYBOX_PROBE_IMAGE} nslookup ${probeName} 2>&1`,
+    `docker run --rm --pull=missing${dnsArg} ${BUSYBOX_PROBE_IMAGE} nslookup ${probeName} 2>&1`,
   ];
 
   // Pre-pull the busybox image so the timed probe below measures only

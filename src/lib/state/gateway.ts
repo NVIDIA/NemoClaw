@@ -102,13 +102,63 @@ export function getReportedGatewayName(output = ""): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * OpenShell v0.0.85 compatibility boundary: `openshell status` prints the
+ * selected gateway on stdout, then reports a failed probe on stderr as either
+ * `Error: <detail>` or `client error ...`. `runCapture` combines those streams
+ * for this probe. OpenShell is an independently versioned external CLI, so
+ * NemoClaw cannot retrofit a structured lifecycle discriminator into v0.0.85;
+ * this parser limits the compatibility fallback to the producer's error
+ * suffix instead of matching diagnostic text elsewhere in the output.
+ *
+ * Keep this contract aligned with
+ * `test/fixtures/openshell-status-errors-v0.0.85.json`. Remove the text parser
+ * once NemoClaw's entire supported OpenShell range guarantees a structured
+ * status error kind (or an equivalent stable exit-code contract) and callers
+ * consume that signal directly.
+ */
+function getGatewayStatusErrorText(output = ""): string {
+  if (typeof output !== "string") return "";
+  const clean = stripAnsi(output);
+  const match = /(?:^|\n)\s*(?:Error\s*:|client error\b)/i.exec(clean);
+  return match ? clean.slice(match.index).trim() : "";
+}
+
+function hasGatewayStatusError(output = ""): boolean {
+  return getGatewayStatusErrorText(output).length > 0;
+}
+
+function hasGatewayConnectionError(output = ""): boolean {
+  if (typeof output !== "string") return false;
+  const clean = stripAnsi(output);
+  const statusError = getGatewayStatusErrorText(clean);
+  if (
+    statusError &&
+    /\b(?:auth(?:entication|orization)?|unauthorized|forbidden|permission denied|credentials?|tokens?|TLS|SSL|cert(?:ificate)?|configuration|config|invalid (?:argument|option|value)|unexpected argument|unknown (?:argument|command|option)|usage)\b/i.test(
+      statusError,
+    )
+  ) {
+    return false;
+  }
+  // Connection phrases can also appear in successful status details. Only
+  // treat them as lifecycle evidence when the status command emitted an
+  // actual error line (including stderr appended by runCapture).
+  return (
+    statusError.length > 0 &&
+    (/\bConnection refused\b/i.test(statusError) ||
+      /\bNo active gateway\b/i.test(statusError) ||
+      /\btcp connect error\b/i.test(statusError) ||
+      /\berror trying to connect\b/i.test(statusError) ||
+      /\bclient error\s*\(\s*Connect\s*\)/i.test(statusError) ||
+      /\btransport error\b/i.test(statusError) ||
+      /\bConnection (?:reset|aborted|closed)\b/i.test(statusError))
+  );
+}
+
 export function isGatewayConnected(statusOutput = ""): boolean {
   if (typeof statusOutput !== "string") return false;
   const clean = stripAnsi(statusOutput);
-  if (
-    /\b(Error|transport error|client error)\b/i.test(clean) ||
-    /Connection refused|Connection reset|No active gateway/i.test(clean)
-  ) {
+  if (hasGatewayStatusError(clean) || hasGatewayConnectionError(clean)) {
     return false;
   }
   return clean.includes("Connected") || clean.includes("Server Status");
@@ -169,6 +219,16 @@ export function getGatewayReuseState(
   }
   if ((connected || activeInfo) && activeGatewayName && activeGatewayName !== gatewayName) {
     return "foreign-active";
+  }
+  if (activeGatewayName === gatewayName && hasGatewayConnectionError(statusOutput)) {
+    return "stale";
+  }
+  // A status-command failure such as auth, config, TLS, or CLI validation is
+  // not proof that a named gateway is stale. Preserve the metadata and let the
+  // later operation surface the real error instead of destructively cleaning
+  // up the gateway through the metadata-only fallback below.
+  if (hasGatewayStatusError(statusOutput)) {
+    return "missing";
   }
   if (hasStaleGateway(gwInfoOutput, gatewayName)) {
     return "stale";

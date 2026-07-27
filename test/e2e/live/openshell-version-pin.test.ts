@@ -22,8 +22,10 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 // fixture from e2e-test.ts so failures attach the per-target artifact root.
 
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
+const LIVE_TIMEOUT_MS = 2 * 60_000;
 
 test("openshell-version-pin: selects shipping 0.0.85 between older and too-new releases", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "prepare a mixed OpenShell release catalog",
@@ -76,6 +78,8 @@ process.stdout.write(JSON.stringify({
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        killSignal: "SIGKILL",
+        timeout: 60_000,
       },
     );
     progress.phase("confirm the shipping version wins range selection");
@@ -372,6 +376,8 @@ async function runVersionPinTarget(
         PATH: `${fakeBin}:/usr/bin:/bin`,
       },
       encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 60_000,
     });
 
     // Persist the install transcript so failures can be diagnosed without
@@ -409,6 +415,8 @@ async function runVersionPinTarget(
     // there and it is writable) was overwritten with the pinned 0.0.85 build.
     const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
       encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: 30_000,
     });
     expect(replacedVersion.status).toBe(0);
     expect(replacedVersion.stdout).toContain("0.0.85");
@@ -419,6 +427,7 @@ async function runVersionPinTarget(
 }
 
 test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.85 via gh download", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "stage a too-new OpenShell installation",
@@ -434,6 +443,7 @@ test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.8
 });
 
 test("openshell-version-pin: falls back to curl when gh cannot fetch the pinned release", {
+  timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "stage a too-new OpenShell installation",

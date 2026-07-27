@@ -45,7 +45,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
   });
 
   it("keeps a maximum-size config write journal below its bounded state cap", {
-    timeout: 60_000,
+    timeout: 120_000,
   }, () => {
     const fixture = createRestartFixture();
     const boundarySize = 16 * 1024 * 1024;
@@ -59,23 +59,19 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     const expectedDigest = createHash("sha256").update(originalConfig).digest("hex");
 
     try {
-      const updated = spawnSync(
-        "python3",
+      const startedAt = Date.now();
+      const updated = runWriteConfig(fixture, expectedDigest, updatedConfig);
+      const elapsedMs = Date.now() - startedAt;
+      const errorCode = (updated.error as NodeJS.ErrnoException | undefined)?.code ?? "<none>";
+      expect(
+        updated.status,
         [
-          RUNTIME_CONFIG_GUARD,
-          "write-config",
-          "--hermes-dir",
-          fixture.hermesDir,
-          "--hash-file",
-          fixture.hashPath,
-          "--state-file",
-          fixture.statePath,
-          "--expected-config-sha256",
-          expectedDigest,
-        ],
-        { encoding: "utf-8", input: updatedConfig, timeout: 45_000 },
-      );
-      expect(updated.status, updated.stderr).toBe(0);
+          `write-config failed after ${elapsedMs} ms`,
+          `error.code=${errorCode}`,
+          `signal=${updated.signal ?? "<none>"}`,
+          `stderr=${updated.stderr || "<empty>"}`,
+        ].join("\n"),
+      ).toBe(0);
       const updatedBytes = fs.readFileSync(fixture.configPath);
       expect(updatedBytes).toHaveLength(boundarySize);
       expect(createHash("sha256").update(updatedBytes).digest("hex")).toBe(

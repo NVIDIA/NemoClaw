@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   clearCompatibleEndpointReasoning,
   configureCompatibleEndpointReasoning,
+  describeIgnoredReasoningEnv,
   normalizeReasoningFlag,
 } from "./reasoning-mode";
 
@@ -39,5 +40,39 @@ describe("compatible endpoint reasoning mode", () => {
 
     expect(clearCompatibleEndpointReasoning()).toBeNull();
     expect(process.env.NEMOCLAW_REASONING).toBeUndefined();
+  });
+});
+
+describe("describeIgnoredReasoningEnv", () => {
+  it("names the recorded value and the recreate command when the env disagrees (#7462)", () => {
+    const message = describeIgnoredReasoningEnv("false", "nemoclaw", {
+      NEMOCLAW_REASONING: "true",
+    });
+    expect(message).toContain("Ignoring NEMOCLAW_REASONING=true");
+    expect(message).toContain("recorded as reasoning=false");
+    expect(message).toContain("nemoclaw onboard --fresh --name <sandbox> --recreate-sandbox");
+  });
+
+  it("names the calling CLI so Deep Agents gets its own command (#7462)", () => {
+    expect(
+      describeIgnoredReasoningEnv("false", "nemo-deepagents", { NEMOCLAW_REASONING: "true" }),
+    ).toContain("nemo-deepagents onboard --fresh --name <sandbox> --recreate-sandbox");
+  });
+
+  it("normalizes both sides before comparing them (#7462)", () => {
+    expect(
+      describeIgnoredReasoningEnv("no", "nemoclaw", { NEMOCLAW_REASONING: " YES " }),
+    ).toContain("Ignoring NEMOCLAW_REASONING=true");
+    expect(describeIgnoredReasoningEnv("yes", "nemoclaw", { NEMOCLAW_REASONING: "1" })).toBeNull();
+  });
+
+  it("stays silent when there is nothing to ignore (#7462)", () => {
+    expect(describeIgnoredReasoningEnv("false", "nemoclaw", {})).toBeNull();
+    expect(
+      describeIgnoredReasoningEnv("false", "nemoclaw", { NEMOCLAW_REASONING: "maybe" }),
+    ).toBeNull();
+    expect(
+      describeIgnoredReasoningEnv(null, "nemoclaw", { NEMOCLAW_REASONING: "true" }),
+    ).toBeNull();
   });
 });

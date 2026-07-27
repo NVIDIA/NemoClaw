@@ -31,6 +31,8 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 const BLUEPRINT_FILE = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-credential-sanitization-${process.pid}`;
+const GATEWAY_PORT = "18080";
+const GATEWAY_NAME = `nemoclaw-${GATEWAY_PORT}`;
 const INSTALL_TIMEOUT_MS = 45 * 60_000;
 const SANDBOX_PROBE_TIMEOUT_MS = 120_000;
 validateSandboxName(SANDBOX_NAME);
@@ -45,7 +47,11 @@ type Blueprint = {
 };
 
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return testHomeEnvironment(home, extra);
+  return testHomeEnvironment(home, {
+    NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT,
+    OPENSHELL_GATEWAY: GATEWAY_NAME,
+    ...extra,
+  });
 }
 
 async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
@@ -71,7 +77,7 @@ async function cleanupCredentialSanitizationState(
     }),
   );
   await bestEffortPreclean(() =>
-    host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+    host.command("openshell", ["gateway", "destroy", "-g", GATEWAY_NAME], {
       artifactName: "cleanup-openshell-gateway-destroy-credential-sanitization",
       env,
       timeoutMs: 120_000,
@@ -305,6 +311,13 @@ runCredentialSanitizationTest(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
+    expect(
+      GATEWAY_PORT,
+      "the isolated test HOME must use a custom-port detached gateway instead of the host user service",
+    ).not.toBe("8080");
+    const isolatedGatewayEnv = testEnv("/tmp/nemoclaw-credential-sanitization-contract");
+    expect(isolatedGatewayEnv.NEMOCLAW_GATEWAY_PORT).toBe(GATEWAY_PORT);
+    expect(isolatedGatewayEnv.OPENSHELL_GATEWAY).toBe(GATEWAY_NAME);
 
     await artifacts.target.declare({
       id: "credential-sanitization",
@@ -345,7 +358,7 @@ runCredentialSanitizationTest(
     cleanup.trackDisposable(`remove credential sanitization test home ${home}`, () =>
       fs.rmSync(home, { recursive: true, force: true }),
     );
-    cleanup.trackGateway(host, "nemoclaw", {
+    cleanup.trackGateway(host, GATEWAY_NAME, {
       artifactName: "cleanup-openshell-gateway-destroy-credential-sanitization",
       env: cleanupEnv,
       timeoutMs: 120_000,

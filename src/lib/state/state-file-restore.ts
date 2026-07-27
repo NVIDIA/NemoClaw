@@ -17,9 +17,8 @@ export interface StateFileRestoreSpec {
 }
 
 const SQLITE_RESTORE_PY = [
-  "import os, sqlite3, sys",
+  "import sqlite3, sys",
   "src, dst = sys.argv[1], sys.argv[2]",
-  "os.makedirs(os.path.dirname(dst), exist_ok=True)",
   "src_conn = sqlite3.connect('file:' + src + '?mode=ro', uri=True, timeout=30)",
   "dst_conn = sqlite3.connect(dst, timeout=30)",
   "try:",
@@ -31,7 +30,6 @@ const SQLITE_RESTORE_PY = [
   "finally:",
   "    dst_conn.close()",
   "    src_conn.close()",
-  "os.chmod(dst, 0o660)",
 ].join("\n");
 
 function stateFileRemotePath(dir: string, filePath: string): string {
@@ -46,6 +44,13 @@ export function buildStateFileRestoreCommand(
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
+    // The agent gateway process owns the live database (created as the
+    // gateway user with no group-write bit), so writing into it in place
+    // fails with "attempt to write a readonly database" for the restoring
+    // sandbox user (#7312). Validate the backup into a staged database this
+    // user owns, then replace the target atomically — replacement only needs
+    // directory write permission, like the copy strategy. The stale WAL/SHM
+    // sidecars belong to the replaced database, so drop them after the swap.
     return [
       `dst=${quotedRemotePath}`,
       'parent="$(dirname "$dst")"',
@@ -53,11 +58,15 @@ export function buildStateFileRestoreCommand(
       '[ ! -L "$dst" ] || { echo "refusing symlinked sqlite target: $dst" >&2; exit 11; }',
       'mkdir -p "$parent"',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-restore.XXXXXX)"',
-      "trap 'rm -f \"$tmp\"' EXIT",
+      'staged="$(mktemp "${parent}/.nemoclaw-sqlite-staged.XXXXXX")"',
+      'trap \'rm -f "$tmp" "$staged"\' EXIT',
       'cat > "$tmp"',
       'chmod 600 "$tmp"',
-      `umask 0007; /usr/bin/python3 -I -S -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$dst"`,
-    ].join("; ");
+      `(umask 0007; /usr/bin/python3 -I -S -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$staged")`,
+      'chmod 660 "$staged"',
+      'mv -f "$staged" "$dst"',
+      'rm -f -- "${dst}-wal" "${dst}-shm"',
+    ].join(" && ");
   }
 
   const steps = [

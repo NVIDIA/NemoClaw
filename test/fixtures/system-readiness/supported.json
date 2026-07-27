@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0.0",
+  "status": "supported",
+  "exitCode": 0,
+  "mutated": false,
+  "provenance": {
+    "nemoclawVersion": "0.1.0",
+    "sourceRevision": "21e60ae287e8c2a184f71406ac8b418f046330d1",
+    "observedAt": "2026-06-01T12:00:00Z"
+  },
+  "observations": [
+    { "id": "host.os", "state": "present", "value": "linux" },
+    { "id": "runtime.docker", "state": "present" }
+  ],
+  "capabilities": [
+    { "id": "sandbox.container-runtime", "state": "present", "evidenceIds": ["docker.reachable"] }
+  ],
+  "qualifications": [
+    { "id": "platform.generic-linux", "status": "qualified", "capabilityIds": ["sandbox.container-runtime"] }
+  ],
+  "findings": [],
+  "evidence": [
+    { "id": "docker.reachable", "summary": "The container runtime responded.", "details": { "version": "27.5.1" } }
+  ]
+}

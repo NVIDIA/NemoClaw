@@ -53,12 +53,10 @@ function writeRuntimeShellEnv(tmpDir: string): string {
     '_NO_PROXY_VAL="localhost,127.0.0.1"',
     `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety-net.js"))}`,
     `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
-    `_WS_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "ws-fix.js"))}`,
     `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-    `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
     `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
     "NODE_USE_ENV_PROXY=",
-    "_TOOL_REDIRECTS=()",
+    '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
     "emit_messaging_connect_runtime_preload_exports() { :; }",
     // Stand-in for the sandbox-init helper: atomically-written ownership is
     // covered separately; this harness exercises the resulting sourced env.
