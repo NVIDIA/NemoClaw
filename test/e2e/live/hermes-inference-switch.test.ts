@@ -10,6 +10,7 @@ import { DEFAULT_HOSTED_INFERENCE_BASE_URL } from "../fixtures/hosted-inference.
 import { inferenceResponseModel } from "../fixtures/inference-switch-retry.ts";
 import {
   apiKeyShape,
+  CLI,
   chatContent,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
@@ -52,6 +53,9 @@ import {
 const TIMEOUT_MS = 45 * 60_000;
 const MOCK_BASELINE_API_KEY = "hermes-inference-switch-baseline-credential";
 const MOCK_BASELINE_MODEL = "hermes-inference-switch-baseline-model";
+const PROXY_RESOLUTION_PROVIDER = "nvidia-prod";
+const PROXY_RESOLUTION_MODEL = "nvidia/nemotron-proxy-resolution-e2e";
+const PROXY_FORBIDDEN_MARKERS = ["openshell:resolve:env:", "sk-OPENSHELL-PROXY-REWRITE"] as const;
 const HERMES_DASHBOARD_INTERNAL_PORT =
   process.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ?? "19119";
 
@@ -59,14 +63,16 @@ function canonicalEndpoint(value: unknown): string | null {
   return typeof value === "string" ? new URL(value).toString() : null;
 }
 
-async function expectCompatibleAnthropicOpenAiProvider(
+async function expectOpenAiProvider(
   host: Parameters<typeof ensureCompatibleAnthropicSwitchProvider>[0],
+  providerName: string,
+  credentialEnv: string,
 ): Promise<void> {
   const provider = await host.command(
     "openshell",
-    ["provider", "get", "-g", "nemoclaw", "compatible-anthropic-endpoint"],
+    ["provider", "get", "-g", "nemoclaw", providerName],
     {
-      artifactName: "compatible-anthropic-openai-provider-metadata",
+      artifactName: `${providerName}-openai-provider-metadata`,
       env: env(),
       timeoutMs: 30_000,
     },
@@ -75,7 +81,7 @@ async function expectCompatibleAnthropicOpenAiProvider(
   expect(provider.exitCode, output).toBe(0);
   const plain = stripAnsi(output);
   expect(plain).toMatch(/^\s*Type:\s*openai\s*$/imu);
-  expect(plain).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
+  expect(plain).toContain(credentialEnv);
   expect(plain).toContain("OPENAI_BASE_URL");
 }
 
@@ -89,6 +95,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
       "validate switched route and locked config",
       "exercise inference.local and Hermes API",
       "run Hermes CLI against switched provider",
+      "prove split provider/model credential resolution",
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
@@ -135,6 +142,8 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   const mockBaseline = mockAnthropicSwitchEnabled()
     ? await startFakeOpenAiCompatibleServer({
         apiKey: MOCK_BASELINE_API_KEY,
+        chatContent: "PONG",
+        forbiddenMarkers: PROXY_FORBIDDEN_MARKERS,
         host: "0.0.0.0",
         model: MOCK_BASELINE_MODEL,
         publicHost: "host.openshell.internal",
@@ -193,7 +202,12 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     : null;
   publicProvider && expect(publicProvider.exitCode, resultText(publicProvider)).toBe(0);
   const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
-  switchEndpointUrl && (await expectCompatibleAnthropicOpenAiProvider(host));
+  switchEndpointUrl &&
+    (await expectOpenAiProvider(
+      host,
+      "compatible-anthropic-endpoint",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ));
 
   const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
   const envHashBefore = await envHash(sandbox, "env-hash-before");
@@ -401,4 +415,97 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   });
   expect(hermesCli.exitCode, resultText(hermesCli)).toBe(0);
   expect(hermesCli.stdout).toMatch(/\bPONG\b/iu);
+
+  if (mockBaseline) {
+    progress.phase("prove split provider/model credential resolution");
+    const registerProxyProvider = await host.command(
+      "openshell",
+      [
+        "provider",
+        "create",
+        "-g",
+        "nemoclaw",
+        "--name",
+        PROXY_RESOLUTION_PROVIDER,
+        "--type",
+        "openai",
+        "--credential",
+        "NVIDIA_INFERENCE_API_KEY",
+        "--config",
+        `OPENAI_BASE_URL=${mockBaseline.baseUrl}`,
+      ],
+      {
+        artifactName: "register-proxy-resolution-provider",
+        env: env(undefined, { NVIDIA_INFERENCE_API_KEY: apiKey }),
+        redactionValues,
+        timeoutMs: 120_000,
+      },
+    );
+    expect(registerProxyProvider.exitCode, resultText(registerProxyProvider)).toBe(0);
+    await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY");
+
+    const setProxyRoute = await host.command(
+      "node",
+      [
+        CLI,
+        "inference",
+        "set",
+        "--provider",
+        PROXY_RESOLUTION_PROVIDER,
+        "--model",
+        PROXY_RESOLUTION_MODEL,
+        "--no-verify",
+      ],
+      {
+        artifactName: "set-proxy-resolution-route",
+        env: env(),
+        redactionValues,
+        timeoutMs: 180_000,
+      },
+    );
+    expect(setProxyRoute.exitCode, resultText(setProxyRoute)).toBe(0);
+
+    const requestOffset = mockBaseline.requests().length;
+    const proxyResolutionCli = await runHermesCliPongWithRetry({
+      run: (attempt) =>
+        sandbox.exec(
+          SANDBOX_NAME,
+          [
+            "hermes",
+            "-z",
+            "Reply with exactly one word: PONG",
+            "--provider",
+            PROXY_RESOLUTION_PROVIDER,
+            "--model",
+            PROXY_RESOLUTION_MODEL,
+          ],
+          {
+            artifactName: `hermes-cli-split-provider-namespaced-model-proxy-resolution-${attempt}`,
+            env: env(),
+            redactionValues,
+            timeoutMs: 150_000,
+          },
+        ),
+    });
+    expect(proxyResolutionCli.exitCode, resultText(proxyResolutionCli)).toBe(0);
+    expect(proxyResolutionCli.stdout).toMatch(/\bPONG\b/iu);
+
+    const proxyAttemptRequests = mockBaseline.requests().slice(requestOffset);
+    expect(
+      proxyAttemptRequests.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0),
+    ).toEqual([]);
+    const proxyRequests = proxyAttemptRequests.filter(
+      (request) =>
+        request.method === "POST" &&
+        ["/v1/chat/completions", "/chat/completions"].includes(request.path),
+    );
+    expect(proxyRequests.length).toBeGreaterThan(0);
+    for (const request of proxyRequests) {
+      expect(request).toMatchObject({
+        auth: "ok",
+        authorizationSent: true,
+        model: PROXY_RESOLUTION_MODEL,
+      });
+    }
+  }
 });
