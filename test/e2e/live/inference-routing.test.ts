@@ -662,9 +662,8 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
             timeoutMs: 30_000,
           },
         );
-        if (placeholderAfter.exitCode !== 0 || placeholderAfter.stdout.trim() !== placeholder) {
-          return false;
-        }
+        const placeholderStayedStable =
+          placeholderAfter.exitCode === 0 && placeholderAfter.stdout.trim() === placeholder;
         const resourceV2 = await sandbox.exec(
           sandboxName,
           [
@@ -680,11 +679,13 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
             timeoutMs: 60_000,
           },
         );
-        if (resourceV2.exitCode !== 0) return false;
         try {
+          const response = JSON.parse(resourceV2.stdout);
           return (
-            JSON.parse(resourceV2.stdout).authenticated === true &&
-            JSON.parse(resourceV2.stdout).access_token_version === 2
+            placeholderStayedStable &&
+            resourceV2.exitCode === 0 &&
+            response.authenticated === true &&
+            response.access_token_version === 2
           );
         } catch {
           return false;
