@@ -92,16 +92,12 @@ function runRecoveryHarness({
     proxy: path.join(tmpDir, "source-proxy.js"),
     nemotron: path.join(tmpDir, "source-nemotron.js"),
     ciao: path.join(tmpDir, "source-ciao.js"),
-    websocket: path.join(tmpDir, "source-websocket.js"),
-    seccomp: path.join(tmpDir, "source-seccomp.js"),
   };
   const targets = {
     safety: path.join(tmpDir, "target-safety.js"),
     proxy: path.join(tmpDir, "target-proxy.js"),
     nemotron: path.join(tmpDir, "target-nemotron.js"),
     ciao: path.join(tmpDir, "target-ciao.js"),
-    websocket: path.join(tmpDir, "target-websocket.js"),
-    seccomp: path.join(tmpDir, "target-seccomp.js"),
     runtimeEnv: path.join(tmpDir, "nemoclaw-proxy-env.sh"),
   };
 
@@ -126,10 +122,6 @@ function runRecoveryHarness({
     `_NEMOTRON_FIX_SOURCE=${JSON.stringify(sources.nemotron)}`,
     `_CIAO_GUARD_SCRIPT=${JSON.stringify(targets.ciao)}`,
     `_CIAO_GUARD_SOURCE=${JSON.stringify(sources.ciao)}`,
-    `_WS_FIX_SCRIPT=${JSON.stringify(targets.websocket)}`,
-    `_WS_FIX_SOURCE=${JSON.stringify(sources.websocket)}`,
-    `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(targets.seccomp)}`,
-    `_SECCOMP_GUARD_SOURCE=${JSON.stringify(sources.seccomp)}`,
     `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(targets.runtimeEnv)}`,
     "OPENCLAW_RESTART_FAILURE_CODE=internal",
     "emit_sandbox_sourced_file() {",
@@ -149,7 +141,7 @@ function runRecoveryHarness({
     "}",
     "validate_nemoclaw_tmp_permissions() {",
     '  printf "validate\\n" >>"$EVENT_LOG"',
-    '  local target; for target in "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_RUNTIME_SHELL_ENV_FILE"; do',
+    '  local target; for target in "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_RUNTIME_SHELL_ENV_FILE"; do',
     '    [ -f "$target" ] && [ ! -L "$target" ] || return 1',
     "  done",
     "}",
@@ -198,8 +190,6 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
         "emit:target-proxy.js",
         "emit:target-nemotron.js",
         "emit:target-ciao.js",
-        "emit:target-websocket.js",
-        "emit:target-seccomp.js",
         "write-messaging-plan",
         "messaging",
         "secret-scan",
@@ -212,7 +202,7 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
         ...onePass,
       ]);
 
-      for (const name of ["safety", "proxy", "nemotron", "ciao", "websocket", "seccomp"]) {
+      for (const name of ["safety", "proxy", "nemotron", "ciao"]) {
         const target = harness.targets[name];
         expect(fs.readFileSync(target, "utf8")).toBe(
           fs.readFileSync(harness.sources[name], "utf8"),

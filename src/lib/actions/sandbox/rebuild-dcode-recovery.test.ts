@@ -43,7 +43,7 @@ describe("rebuildSandbox DCode flow: recovery", () => {
     expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
     expect(harness.onboardSpy).toHaveBeenCalledOnce();

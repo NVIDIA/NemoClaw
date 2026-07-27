@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# invalidState: the three reviewed E2E consumers drift to different cloudflared
+# invalidState: the four reviewed E2E consumers drift to different cloudflared
 # versions/digests, or their shared pin no longer matches the upstream asset.
-# sourceBoundary: Cloudflare owns the release asset; NemoClaw owns all three
+# sourceBoundary: Cloudflare owns the release asset; NemoClaw owns all four
 # workflow pins and independently verifies the downloaded bytes.
 # whyNotSourceFix: upstream cannot enforce which release NemoClaw workflows use.
-# regressionTest: cloudflared-update-check-workflow.test.ts covers three-pin
+# regressionTest: cloudflared-update-check-workflow.test.ts covers four-pin
 # parity, asset URL identity, digest mismatch, and update instructions.
-# removalCondition: remove this checker when the three consumers share one
+# removalCondition: remove this checker when the four consumers share one
 # machine-readable dependency manifest with equivalent live asset verification.
 
 set -euo pipefail
@@ -48,10 +48,10 @@ done < <(
     "${E2E_WORKFLOW}"
 )
 
-[[ "${#version_pins[@]}" -eq 3 ]] \
-  || fail "expected exactly three CLOUDFLARED_VERSION pins in ${E2E_WORKFLOW}; found ${#version_pins[@]}"
-[[ "${#sha_pins[@]}" -eq 3 ]] \
-  || fail "expected exactly three CLOUDFLARED_DEB_SHA256 pins in ${E2E_WORKFLOW}; found ${#sha_pins[@]}"
+[[ "${#version_pins[@]}" -eq 4 ]] \
+  || fail "expected exactly four CLOUDFLARED_VERSION pins in ${E2E_WORKFLOW}; found ${#version_pins[@]}"
+[[ "${#sha_pins[@]}" -eq 4 ]] \
+  || fail "expected exactly four CLOUDFLARED_DEB_SHA256 pins in ${E2E_WORKFLOW}; found ${#sha_pins[@]}"
 
 pinned_version="${version_pins[0]}"
 pinned_sha="$(printf '%s' "${sha_pins[0]}" | tr '[:upper:]' '[:lower:]')"
@@ -127,7 +127,7 @@ print_update_instructions() {
     'Update locations:' \
     "  ${workflow_display} CLOUDFLARED_VERSION lines: ${version_lines}" \
     "  ${workflow_display} CLOUDFLARED_DEB_SHA256 lines: ${sha_lines}" \
-    'Set all three version/SHA256 pairs to the latest reviewed values, then rerun this check.' >&2
+    'Set all four version/SHA256 pairs to the latest reviewed values, then rerun this check.' >&2
 }
 
 if [[ "${latest_version}" != "${pinned_version}" ]]; then

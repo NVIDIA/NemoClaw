@@ -125,6 +125,7 @@ export type RebuildRecreateOnboardOpts = {
   observabilityRequestedExplicitly: boolean;
   policyTier: string | null;
   baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null;
+  preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata;
   noGpu?: true;
 };
 

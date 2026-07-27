@@ -146,6 +146,7 @@ function createSetupHarness({
     note: (message) => notes.push(message),
     isNonInteractive: () => nonInteractive,
     waitForSandboxReady: () => true,
+    waitForSandboxControlPlaneReady: () => true,
     syncPresetSelection: (sandboxName, current, selected, accessByName) => {
       syncCalls.push({
         sandboxName,
@@ -709,11 +710,18 @@ describe("policy tier setup", () => {
     assert.doesNotMatch(text, /did you mean NEMOCLAW_POLICY_TIER/);
   });
 
-  it("applies zero presets for restricted OpenClaw in non-interactive suggested mode", async () => {
+  it("plans zero presets for restricted OpenClaw in non-interactive suggested mode (#7617)", async () => {
     const result = await runPolicySetup({ tierName: "restricted" }, { agent: "openclaw" });
 
     assert.deepEqual(result.applied, []);
     assert.deepEqual(result.appliedCalls, []);
+    assert.deepEqual(result.syncCalls, [
+      {
+        sandboxName: "test-sb",
+        current: [],
+        selected: [],
+      },
+    ]);
   });
 
   it("does not re-add OpenClaw OTEL presets for the restricted tier", async () => {

@@ -15,7 +15,7 @@ Daily release labels coordinate release work. They do not classify issues and th
 - Issues may also carry daily version labels when they need a PR, fix, or regression follow-up for the daily tag.
 - Applying a daily version label is not a readiness claim.
 - Release includes PRs that both carry the daily version label and are merged by cutoff.
-- Issue version labels are tracking signals only; an issue label does not include work in the release without a merged labeled PR.
+- Issue version labels are tracking signals. An issue label does not include work in the release without a merged, labeled PR.
 - Open PRs and issues that miss a tagged release carry forward automatically by moving from the released version label to the next patch label.
 - After the semver tag and workflow-managed `latest` are verified, post-tag housekeeping moves open stragglers and deletes the released version label. Tags and commit ancestry are the only durable release-membership record.
 - Released version labels must be deleted, never renamed or reused for a later release.
@@ -23,8 +23,9 @@ Daily release labels coordinate release work. They do not classify issues and th
 ## Release-Prep Docs
 
 Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
-The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx` with the exact `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
-This dated file is the canonical release history shared by all documentation variants; ordinary doc pages and the post-tag Announcement do not replace it.
+The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx`.
+Use the required `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
+This dated file is the release history for all documentation variants. Ordinary documentation pages and the post-tag Announcement do not replace it.
 Release-prep docs, including that entry, must be merged or explicitly waived before `release:plan` captures the release commit.
 If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
 
@@ -50,14 +51,20 @@ The release candidate is the full `origin/main` commit SHA captured by the gener
 
 Before asking for the release confirmation phrase, build and show an evidence ledger for that SHA:
 
+- Run `nemoclaw-maintainer-e2e` in full mode when no applicable full-mode run exists for the candidate SHA.
+- Require one workflow run for the candidate SHA that includes the default-enabled suite and a successful `Exact staging Brev Launchable` job.
+- Require the trusted dispatch receipt to bind that run and attempt to empty selectors and `include_staging_brev_launchable=true`.
+- Require the qualification receipt to identify the candidate SHA in the repository and provision records.
+- Require the cleanup receipt to identify the qualified workspace and report `ABSENT`.
 - Every E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection and every expanded matrix execution.
 - Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
 - Green evidence may accumulate across multiple workflow runs, selective runs, reruns, and attempts. A later failure does not erase an earlier successful execution for the same test and SHA.
 - Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence.
 - Map each test with green evidence to its successful run or job URL and attempt number.
-- If a test has no successful execution, the tag may still proceed at maintainer discretion only with an itemized maintainer exception that records the test identifier, relevant run links or available evidence, the current result or failure summary, and the rationale for proceeding.
+- Each test without a successful execution requires its own itemized maintainer exception. Record the test identifier, relevant run links or available evidence, the current result or failure summary, and the rationale.
+- Missing or invalid exact Brev Launchable qualification requires a separate itemized maintainer exception. Record the run and job URLs, the current result or missing receipt, and the rationale.
 
-Every test must have either green evidence or an itemized maintainer exception before the release confirmation is requested. If the candidate SHA changes, discard the ledger and its exceptions, regenerate the release plan, and repeat the review for the new SHA.
+Each test and the exact Brev Launchable qualification must have successful evidence or its own itemized maintainer exception before release confirmation. If the candidate SHA changes, discard the ledger and its exceptions, including qualification evidence. Regenerate the release plan and repeat the review for the new SHA. No release-note-only delta exception is currently defined.
 
 ## Carry Forward
 
@@ -69,7 +76,7 @@ Maintainers may:
 
 - Add the current version label when they want the PR visible in the current day queue.
 - Remove a version label without replacement when an item is deferred, superseded, closed, or no longer part of the daily cycle.
-- Rerun post-tag housekeeping after a partial failure; already-moved items no longer match the released source label, so the operation is safely resumable.
+- Rerun post-tag housekeeping after a partial failure. Moved items no longer have the released label, so the operation can resume safely.
 
 ## Label Retirement
 

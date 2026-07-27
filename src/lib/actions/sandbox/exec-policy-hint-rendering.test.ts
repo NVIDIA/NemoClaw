@@ -11,8 +11,8 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     ["the denied endpoint", "example.com:443"],
     ["the sandbox name", "oc-fresh"],
     ["the logs breadcrumb", "nemoclaw oc-fresh logs --tail 50"],
-    ["the policy-list review breadcrumb", "nemoclaw oc-fresh policy-list"],
-    ["the policy-add allow-path breadcrumb", "nemoclaw oc-fresh policy-add <preset>"],
+    ["the policy-list review breadcrumb", "nemoclaw oc-fresh policy list"],
+    ["the policy-add allow-path breadcrumb", "nemoclaw oc-fresh policy add <preset>"],
     ["the opt-out env", POLICY_HINT_SUPPRESS_ENV],
   ])("names %s", (_label, expected) => {
     expect(hint).toContain(expected);
@@ -52,7 +52,7 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
   ])("renders the <name> placeholder for an unsafe sandbox name: %s", (_label, unsafe) => {
     const hint = buildPolicyDenialExecHint("nemoclaw", unsafe, "example.com:443");
     expect(hint).toContain("nemoclaw <name> logs --tail 50");
-    expect(hint).toContain("nemoclaw <name> policy-add <preset>");
+    expect(hint).toContain("nemoclaw <name> policy add <preset>");
     expect(hint).not.toContain(unsafe);
     expect(hint).not.toContain("");
   });

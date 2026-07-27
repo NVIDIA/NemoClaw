@@ -3,7 +3,8 @@
 
 export const SNAPSHOT_PROBE_PID_PREFIX = "@@NEMOCLAW_E2E_PROBE_PID@@ ";
 export const SNAPSHOT_FILE_PREFIX = "@@NEMOCLAW_E2E_FILE@@ ";
-export const SNAPSHOT_DATA_PREFIX = "@@NEMOCLAW_E2E_DATA@@ ";
+// Keep this per-line tag compact so null-heavy snapshots stay within the bounded capture guard.
+export const SNAPSHOT_DATA_PREFIX = "D ";
 const PID_PATTERN = /^[1-9][0-9]*$/u;
 
 export interface ForbiddenLeakPattern {

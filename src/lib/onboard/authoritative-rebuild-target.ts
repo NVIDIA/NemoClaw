@@ -156,6 +156,7 @@ export function rebuildProviderFlowOptions(
               provider: target.provider,
               model: target.model,
               endpointUrl: target.endpointUrl ?? null,
+              endpointSource: opts.endpointSource ?? null,
               preferredInferenceApi: target.preferredInferenceApi ?? "",
               source: "registry",
             },
@@ -175,6 +176,7 @@ export function rebuildProviderFlowOptions(
 }
 
 export type AuthoritativeRebuildTargetDeps = {
+  resolveBaselinePolicy(sandboxName: string): unknown | null;
   runFatalRuntimePreflight(): unknown;
   ensureOpenshell(): unknown;
   inferenceRouteReady(provider: string, model: string): boolean;
@@ -195,6 +197,9 @@ export async function preflightAuthoritativeRebuildTarget(
   };
   env.OPENSHELL_GATEWAY = target.targetGatewayName;
   try {
+    if (!deps.resolveBaselinePolicy(target.sandboxName)) {
+      fail(`Could not read the baseline policy for sandbox '${target.sandboxName}'.`);
+    }
     deps.runFatalRuntimePreflight();
     deps.ensureOpenshell();
     // Prepared-backup recovery can run after the installer has replaced a

@@ -3,10 +3,23 @@
 
 import type { DockerDriverGatewayPortListenerScan } from "./docker-driver-gateway-port-listener";
 
-interface GatewayHealthSnapshot {
+export interface GatewayHealthSnapshot {
   status: string;
   namedInfo: string;
   activeInfo: string;
+}
+
+export function readDockerDriverGatewayHealth(
+  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string,
+  gatewayName: string,
+): GatewayHealthSnapshot {
+  return {
+    status: runCaptureOpenshell(["status"], { ignoreError: true }),
+    namedInfo: runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+      ignoreError: true,
+    }),
+    activeInfo: runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
+  };
 }
 
 export interface DockerDriverGatewayCutoverInput {

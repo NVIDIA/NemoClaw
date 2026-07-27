@@ -187,7 +187,7 @@ describe("effective built-in policy contracts", () => {
     expect(
       loadAgent("openclaw").expectedVersion,
       "Revalidate the bundled OpenClaw weather skill before changing its reviewed egress contract",
-    ).toBe("2026.6.10");
+    ).toBe("2026.7.1");
   });
 
   it("uses raw L4 tunnels only for protocols that cannot be REST-inspected", () => {
@@ -511,5 +511,11 @@ describe("effective built-in policy contracts", () => {
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
     }
     expect(binaries(claude)).not.toContain("/**");
+    // OpenShell enforces on the resolved /proc/<pid>/exe, so the npm-installed
+    // launcher (not just the bin/claude shim) must be allowlisted or egress is
+    // denied for the documented `--prefix /tmp/npm-global` install (#7579).
+    expect(binaries(claude)).toContain(
+      "/tmp/npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+    );
   });
 });

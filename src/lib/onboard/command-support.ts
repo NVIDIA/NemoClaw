@@ -46,7 +46,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -77,13 +77,14 @@ export type OnboardFlags = {
   "tool-disclosure"?: ToolDisclosure;
   observability?: boolean;
   "control-ui-port"?: number;
+  events?: "jsonl";
   yes?: boolean;
   "no-ollama-autostart"?: boolean;
   [NOTICE_ACCEPT_FLAG_NAME]?: boolean;
 };
 
-export function buildOnboardFlags(): Record<string, any> {
-  return {
+export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Record<string, any> {
+  const flags = {
     "non-interactive": Flags.boolean({ description: "Run without interactive prompts" }),
     resume: Flags.boolean({
       description: "Resume an interrupted onboarding session",
@@ -150,4 +151,11 @@ export function buildOnboardFlags(): Record<string, any> {
       description: "Accept the third-party software notice",
     }),
   } as Record<string, any>;
+  if (options.includeEvents) {
+    flags.events = Flags.string({
+      description: "Emit versioned read-only onboarding events as JSON Lines on stdout",
+      options: ["jsonl"],
+    });
+  }
+  return flags;
 }

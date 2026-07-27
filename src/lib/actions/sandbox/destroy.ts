@@ -16,6 +16,9 @@ import {
   resolveDestroyGatewayCleanupDecision,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
+import { parseHttpsPinRouteId } from "../../inference/https-pin-runtime";
+import { revokeHttpsPinRuntimeAdapterRoute } from "../../inference/https-pin-runtime-adapter";
 import {
   emitProviderDetachResidualHint,
   SANDBOX_PROVIDER_SUFFIXES,
@@ -29,8 +32,8 @@ import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
 import { executeSandboxDestroy } from "./destroy-execution";
-import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
+import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { prepareSandboxDestroy } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
@@ -257,6 +260,42 @@ function defaultDestroyWarn(message: string): void {
   console.warn(`  ${YW}⚠${R} ${message}`);
 }
 
+export async function revokeDestroyedSandboxHttpsPinRoute(
+  gatewayName: string,
+  routeId: string,
+  deps: {
+    listSandboxes?: typeof registry.listSandboxes;
+    revokeRoute?: typeof revokeHttpsPinRuntimeAdapterRoute;
+    warn?: (message: string) => void;
+    withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
+  } = {},
+): Promise<void> {
+  const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
+  const revokeRoute = deps.revokeRoute ?? revokeHttpsPinRuntimeAdapterRoute;
+  const warn = deps.warn ?? defaultDestroyWarn;
+  const withRouteMutationLock = deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock;
+  try {
+    await withRouteMutationLock(gatewayName, async () => {
+      // The peer scan and DELETE are one critical section with inference-set's
+      // route PUT + registry commit. Otherwise a peer can register the route,
+      // pause before its registry write, and have destroy revoke its live route.
+      const stillReferenced = listSandboxes().sandboxes.some(
+        (entry) => parseHttpsPinRouteId(entry.endpointUrl) === routeId,
+      );
+      if (stillReferenced) return;
+      const revoked = await revokeRoute(routeId);
+      if (!revoked) throw new Error("the adapter did not confirm route revocation");
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    warn(
+      `Sandbox deletion succeeded, but its superseded HTTPS Pin Runtime route '${routeId}' ` +
+        `could not be revoked: ${detail}. Uninstall NemoClaw after all sandboxes are removed ` +
+        `to stop the adapter and purge its in-memory credentials.`,
+    );
+  }
+}
+
 export function cleanupShieldsDestroyArtifacts(
   sandboxName: string,
   deps: CleanupShieldsDestroyArtifactsDeps = {},
@@ -297,6 +336,7 @@ async function destroySandboxUnlocked(
 
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
+  const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
   const destructiveResult = await executeSandboxDestroy({
     cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
     force: normalized.force === true,
@@ -387,6 +427,9 @@ async function destroySandboxUnlocked(
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.
   const removed = removeSandboxRegistryEntry(sandboxName);
+  if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
+    await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
+  }
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {
     onboardSession.updateSession((s: Session) => {

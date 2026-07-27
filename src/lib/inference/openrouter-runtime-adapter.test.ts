@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -186,10 +187,18 @@ describe("OpenRouter Runtime adapter", () => {
     expect(upstreamHandler).not.toHaveBeenCalled();
   });
 
-  it("returns a generic error when upstream connection details fail (#5826)", async () => {
+  it("returns a redacted generic error on immediate upstream connection failure (#7248)", async () => {
+    const probe = http.createServer();
+    const probeBaseUrl = await listen(probe);
+    const refusedPort = Number(new URL(probeBaseUrl).port);
+    await new Promise<void>((resolve) => {
+      servers.splice(0, servers.length, ...servers.filter((server) => server !== probe));
+      probe.close(() => resolve());
+    });
+
     const adapter = createTestAdapter({
-      upstreamBaseUrl: "http://127.0.0.1:1/api/v1",
-      upstreamTimeoutMs: 100,
+      upstreamBaseUrl: `http://127.0.0.1:${refusedPort}/api/v1`,
+      upstreamTimeoutMs: 5000,
     });
     const adapterBaseUrl = await listen(adapter);
 
@@ -212,6 +221,79 @@ describe("OpenRouter Runtime adapter", () => {
     expect(JSON.stringify(body)).not.toContain("ECONNREFUSED");
   });
 
+  it("bounds the outbound deadline before connection establishment (#7248)", async () => {
+    const upstreamReq = new EventEmitter() as unknown as http.ClientRequest;
+    const destroy = vi.fn();
+    (upstreamReq as unknown as { end: unknown }).end = vi.fn();
+    (upstreamReq as unknown as { destroy: unknown }).destroy = destroy;
+    const requestSpy = vi
+      .spyOn(http, "request")
+      .mockImplementation(() => upstreamReq as http.ClientRequest);
+
+    const adapter = createTestAdapter({
+      upstreamBaseUrl: "http://openrouter.invalid/api/v1",
+      upstreamTimeoutMs: 25,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
+    });
+
+    expect(response.status).toBe(504);
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error).toMatchObject({ code: "upstream_timeout" });
+    expect(JSON.stringify(body)).not.toContain("openrouter.invalid");
+    expect(destroy).toHaveBeenCalled();
+
+    requestSpy.mockRestore();
+  });
+
+  it("discards a late upstream response after the deadline settles (#7248)", async () => {
+    const upstreamReq = new EventEmitter() as unknown as http.ClientRequest;
+    (upstreamReq as unknown as { end: unknown }).end = vi.fn();
+    (upstreamReq as unknown as { destroy: unknown }).destroy = vi.fn();
+    let responseCallback: ((res: http.IncomingMessage) => void) | undefined;
+    const requestSpy = vi.spyOn(http, "request").mockImplementation(((..._args: unknown[]) => {
+      responseCallback = _args[_args.length - 1] as (res: http.IncomingMessage) => void;
+      return upstreamReq as http.ClientRequest;
+    }) as typeof http.request);
+
+    const adapter = createTestAdapter({
+      upstreamBaseUrl: "http://openrouter.invalid/api/v1",
+      upstreamTimeoutMs: 20,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
+    });
+
+    expect(response.status).toBe(504);
+
+    const lateResponse = new EventEmitter() as unknown as http.IncomingMessage;
+    (lateResponse as unknown as { statusCode: number }).statusCode = 200;
+    (lateResponse as unknown as { headers: http.IncomingHttpHeaders }).headers = {};
+    const lateDestroy = vi.fn();
+    (lateResponse as unknown as { destroy: unknown }).destroy = lateDestroy;
+    (lateResponse as unknown as { pipe: unknown }).pipe = vi.fn();
+
+    expect(() => responseCallback?.(lateResponse)).not.toThrow();
+    expect(lateDestroy).toHaveBeenCalled();
+
+    requestSpy.mockRestore();
+  });
+
   it("times out stalled upstream requests without hanging (#5826)", async () => {
     const upstream = http.createServer(async (req, res) => {
       await readRequestBody(req);
@@ -232,6 +314,85 @@ describe("OpenRouter Runtime adapter", () => {
       },
       body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
     });
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "upstream_timeout" },
+    });
+  });
+
+  it("streams upstream body chunks before the response ends (#7248)", async () => {
+    let finishUpstream: (() => void) | undefined;
+    const waitToFinish = new Promise<void>((resolve) => {
+      finishUpstream = resolve;
+    });
+    const upstream = http.createServer(async (req, res) => {
+      await readRequestBody(req);
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write("data: first\n\n");
+      await waitToFinish;
+      res.end("data: second\n\n");
+    });
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createTestAdapter({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+      upstreamTimeoutMs: 1000,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    try {
+      const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [], stream: true }),
+      });
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const first = await reader?.read();
+      expect(new TextDecoder().decode(first?.value)).toBe("data: first\n\n");
+      expect(first?.done).toBe(false);
+
+      finishUpstream?.();
+      const second = await reader?.read();
+      expect(new TextDecoder().decode(second?.value)).toBe("data: second\n\n");
+      expect((await reader?.read())?.done).toBe(true);
+    } finally {
+      finishUpstream?.();
+    }
+  });
+
+  it("returns a redacted timeout when upstream sends headers and then stalls (#7248)", async () => {
+    let markHeadersFlushed!: () => void;
+    const headersFlushed = new Promise<void>((resolve) => {
+      markHeadersFlushed = resolve;
+    });
+    const upstream = http.createServer(async (req, res) => {
+      await readRequestBody(req);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.flushHeaders();
+      markHeadersFlushed();
+      req.on("close", () => res.destroy());
+    });
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createTestAdapter({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+      upstreamTimeoutMs: 250,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    const responsePromise = fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
+    });
+    await headersFlushed;
+    const response = await responsePromise;
 
     expect(response.status).toBe(504);
     await expect(response.json()).resolves.toMatchObject({

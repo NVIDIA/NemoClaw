@@ -9,6 +9,10 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateHermesGpuStartupWorkflowBoundary } from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
+import {
+  HERMES_TIMEOUT_CONTRACTS,
+  HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
+} from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { readRepoText, readWorkflow } from "../../helpers/e2e-workflow-contract";
 
@@ -129,6 +133,15 @@ describe("Hermes GPU boundary", () => {
     expect(validateHermesGpuStartupWorkflowBoundary()).toEqual([]);
   });
 
+  it("requires each GPU scenario to identify its evidence shard", () => {
+    const errors = wfErrors((workflow) => {
+      delete workflow.jobs[GPU].env.NEMOCLAW_E2E_SHARD;
+    });
+    expect(errors).toContain(
+      "hermes-gpu-startup job must set NEMOCLAW_E2E_SHARD=${{ matrix.scenario }}",
+    );
+  });
+
   it("rejects broad drift", () => {
     const errors = wfErrors((workflow) => {
       workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "minimaxai/minimax-m2.7";
@@ -136,7 +149,7 @@ describe("Hermes GPU boundary", () => {
       job["runs-on"] = "ubuntu-latest";
       job.if = "${{ always() }}";
       job.strategy["max-parallel"] = 2;
-      job.strategy.matrix.scenario = ["native"];
+      job.strategy.matrix.include = [{ scenario: "native" }];
       job.env.UNRELATED_SECRET = KEY;
       const run = step(job, "Run Hermes GPU startup live Vitest test");
       run.env = { NVIDIA_INFERENCE_API_KEY: KEY };
@@ -165,6 +178,36 @@ describe("Hermes GPU boundary", () => {
         "workflow env must leave inference mode scoped to adapter-consuming jobs",
       ]),
     );
+  });
+
+  const hermesTimeoutBoundaries = HERMES_TIMEOUT_CONTRACTS.map(
+    ({ innerTest, innerTimeoutMinutes, jobName, jobTimeoutMinutes }) => ({
+      jobName,
+      maximumTimeoutMinutes: innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
+      message: `${jobName} timeout must be between ${jobTimeoutMinutes} and ${innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with 15-30 minutes of job headroom`,
+      minimumTimeoutMinutes: jobTimeoutMinutes,
+    }),
+  );
+
+  it.each(hermesTimeoutBoundaries)("requires 15-30 minutes of outer headroom for $jobName", ({
+    jobName,
+    maximumTimeoutMinutes,
+    message,
+    minimumTimeoutMinutes,
+  }) => {
+    const insufficient = wfErrors((workflow) => {
+      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes - 1;
+    }, validateE2eWorkflowBoundary);
+    const additional = wfErrors((workflow) => {
+      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes + 1;
+    }, validateE2eWorkflowBoundary);
+    const excessive = wfErrors((workflow) => {
+      workflow.jobs[jobName]["timeout-minutes"] = maximumTimeoutMinutes + 1;
+    }, validateE2eWorkflowBoundary);
+
+    expect(insufficient).toContain(message);
+    expect(additional).toEqual([]);
+    expect(excessive).toContain(message);
   });
 
   it("rejects unconditional live secret in hermes-e2e mock run step", () => {

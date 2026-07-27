@@ -41,7 +41,10 @@ vi.mock("../sandbox-base-image/source-identity", async (importOriginal) => ({
   getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
 }));
 
-import { createAgentSandbox } from "./base-image";
+import {
+  createAgentSandbox,
+  pinTrustedAgentRemoteBaseImageOverrideForOperation,
+} from "./base-image";
 
 const platformDigest = "sha256:c0c149ed03b3e8fcd3e395558b22e871cd27c9966ea6faf04c0d2b94d0a821b9";
 const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${platformDigest}`;
@@ -139,4 +142,34 @@ describe("Hermes base-image resolver integration", () => {
       `Hermes final image does not accept base image ref '${platformRef}'`,
     );
   });
+
+  it("reuses an outer resolver's pinned platform digest only during its rebuild lease (#7144)", () => {
+    const outer = createAgentSandbox(makeAgent());
+    createdBuildContexts.push(outer.buildCtx);
+    const resolutionMetadata = outer.baseImageResolutionMetadata;
+    expect(resolutionMetadata).not.toBeNull();
+    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", platformRef);
+    const restore = pinTrustedAgentRemoteBaseImageOverrideForOperation(
+      "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+      {
+        ref: platformRef,
+        resolutionMetadata: resolutionMetadata as NonNullable<typeof resolutionMetadata>,
+      },
+    );
+
+    try {
+      const inner = createAgentSandbox(makeAgent());
+      createdBuildContexts.push(inner.buildCtx);
+      expect(fs.readFileSync(inner.stagedDockerfile, "utf8")).toContain(
+        `ARG BASE_IMAGE=${platformRef}`,
+      );
+      expect(inner.baseImageResolutionMetadata).toEqual(resolutionMetadata);
+    } finally {
+      restore();
+    }
+
+    expect(() => createAgentSandbox(makeAgent())).toThrow(
+      `Hermes final image does not accept base image ref '${platformRef}'`,
+    );
+  }, 30_000);
 });

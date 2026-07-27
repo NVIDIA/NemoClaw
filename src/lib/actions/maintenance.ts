@@ -13,14 +13,26 @@ import {
   normalizeGarbageCollectImagesOptions,
 } from "../domain/lifecycle/options";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
+import {
+  classifyOrphanedRegistrySandboxes,
+  orphanedRegistryRemediation,
+  orphanedRegistrySummary,
+} from "../domain/maintenance/orphan-detection";
 import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
-import { parseReadySandboxNames } from "../runtime-recovery";
+import { parseLiveSandboxNames, parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
+  type BackupShieldsWindowOptions,
+  openBackupShieldsWindow,
+  relockBackupShieldsWindow,
+} from "./sandbox/backup-shields-window";
+import {
   backupStartedSandboxState,
+  isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
@@ -47,6 +59,80 @@ function notRunningBackupSkipMessage(name: string): string {
   return `Skipping '${name}' (not running; start the sandbox/container and rerun '${CLI_NAME} backup-all' so NemoClaw can capture a fresh snapshot)`;
 }
 
+function backupAllShieldsWindowOptions(sandboxName: string): BackupShieldsWindowOptions {
+  return {
+    operation: "backup-all",
+    reason: "auto-unlock for backup-all",
+    retryCommand: `${CLI_NAME} backup-all`,
+    shieldsUpCommand: `${CLI_NAME} ${sandboxName} shields up`,
+  };
+}
+
+interface BackupAllSandboxAttempt {
+  result: sandboxState.BackupResult | null;
+  orphanManifestMessage: string | null;
+  shieldsWindowOpened: boolean;
+}
+
+async function backupSandboxWithinShieldsWindow(
+  sandboxName: string,
+  backup: () => sandboxState.BackupResult | Promise<sandboxState.BackupResult>,
+): Promise<BackupAllSandboxAttempt> {
+  const shieldsWindowOptions = backupAllShieldsWindowOptions(sandboxName);
+  const window = openBackupShieldsWindow(sandboxName, shieldsWindowOptions);
+  if (!window) {
+    return {
+      result: null,
+      orphanManifestMessage: null,
+      shieldsWindowOpened: false,
+    };
+  }
+
+  let result: sandboxState.BackupResult | null = null;
+  let orphanManifestMessage: string | null = null;
+  let backupError: unknown;
+  let hasBackupError = false;
+  let relockError: Error | null = null;
+  try {
+    result = await backup();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Preserve the narrow pre-upgrade orphan exception, but classify it inside
+    // this window so a previously locked sandbox is always relocked before the
+    // caller counts the attempt as skipped.
+    if (/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(message)) {
+      orphanManifestMessage = message;
+    } else {
+      backupError = err;
+      hasBackupError = true;
+    }
+  } finally {
+    if (!relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions)) {
+      relockError = new Error(
+        `Shields lockdown could not be restored for '${sandboxName}' after backup-all; aborting remaining backups.`,
+      );
+    }
+  }
+
+  if (relockError) {
+    if (hasBackupError) {
+      throw new AggregateError(
+        [backupError, relockError],
+        `Backup for '${sandboxName}' failed and Shields lockdown could not be restored; aborting remaining backups.`,
+      );
+    }
+    if (orphanManifestMessage) {
+      throw new AggregateError(
+        [new Error(orphanManifestMessage), relockError],
+        `Backup for '${sandboxName}' encountered an orphan manifest and Shields lockdown could not be restored; aborting remaining backups.`,
+      );
+    }
+    throw relockError;
+  }
+  if (hasBackupError) throw backupError;
+  return { result, orphanManifestMessage, shieldsWindowOpened: true };
+}
+
 export async function backupAll(): Promise<void> {
   const sandboxes = registry
     .listSandboxes()
@@ -56,11 +142,53 @@ export async function backupAll(): Promise<void> {
     return;
   }
 
-  const liveList = await captureSandboxListWithGatewayPreflightOrExit({
-    action: "backing up registered sandboxes",
-    command: `${CLI_NAME} backup-all`,
-  });
+  // Pin the listing to the selected gateway (#6114/#6520): OpenShell's
+  // mutable current selection may be a sibling gateway, and an unpinned list
+  // would both misjudge readiness and let the orphan classifier below make a
+  // fail-open stranded call from another gateway's sandboxes.
+  const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
+  const liveList = await captureSandboxListWithGatewayPreflightOrExit(
+    {
+      action: "backing up registered sandboxes",
+      command: `${CLI_NAME} backup-all`,
+    },
+    { gatewayName: selectedGatewayName },
+  );
   const readyNames = parseReadySandboxNames(liveList.output || "");
+  // Source-of-truth review (#6520):
+  //
+  // - Invalid state: a sandbox the selected gateway does not observe, whose
+  //   persisted binding resolves to that gateway, and whose OpenShell-labeled
+  //   container is definitively absent is stranded. It has no state left to
+  //   back up, so counting it as a strict-gate skip would abort the
+  //   installer's pre-upgrade backup before its recovery phase
+  //   (recover_preexisting_sandboxes_before_onboard in scripts/install.sh)
+  //   that knows how to surface it ever runs.
+  // - Source boundary: the state is created by `nemoclaw uninstall`, which
+  //   removes the gateway registration and containers but deliberately
+  //   preserves sandboxes.json so a later reinstall can rebuild from it.
+  // - Source-fix constraint: backup-all must not reconcile the registry —
+  //   clearing a stranded record is owned by the recovery phase's
+  //   destroy/onboard guidance (and the user), and this gate runs before
+  //   that phase. Deleting records inside a backup command would destroy the
+  //   very evidence the recovery phase reports.
+  // - Removal condition: drop this exemption when install/uninstall
+  //   reconciles sandboxes.json against the gateway (stranded records can no
+  //   longer reach backup-all), or when the installer runs its recovery
+  //   phase before the strict pre-upgrade backup.
+  //
+  // The container-absence gate (checked per candidate at skip time and again
+  // after the confirming listing) makes the exemption race-safe: a
+  // reconnecting or sibling-healthy sandbox still has a container, and a
+  // candidate the gateway observes again reverts to a genuine strict skip.
+  const orphanNames = new Set(
+    classifyOrphanedRegistrySandboxes(sandboxes, {
+      observedNames: parseLiveSandboxNames(liveList.output || ""),
+      reconnectedNames: new Set(),
+      selectedGatewayName,
+      resolveGatewayBinding: resolveSandboxGatewayName,
+    }).map((sandbox) => sandbox.name),
+  );
 
   const skipUnreachable = shouldSkipUnreachableSandboxBackup(process.env);
   const requireAll = process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
@@ -69,6 +197,7 @@ export async function backupAll(): Promise<void> {
   let skipped = 0;
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
+  const strandedOrphans: string[] = [];
   for (const sb of sandboxes) {
     // A registered docker-driver sandbox whose container is merely stopped is
     // backupable: start it for the duration of the backup and return it to
@@ -78,6 +207,12 @@ export async function backupAll(): Promise<void> {
     if (!readyNames.has(sb.name)) {
       startedForBackup = startStoppedSandboxContainerForBackup(sb.name);
       if (!startedForBackup) {
+        if (orphanNames.has(sb.name) && isSandboxContainerDefinitivelyAbsent(sb.name)) {
+          // Tracked separately from `skipped` so the strict gate stays
+          // untripped: there is nothing to back up and nothing to start.
+          strandedOrphans.push(sb.name);
+          continue;
+        }
         console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
         skipped++;
         notRunningSkipped++;
@@ -88,48 +223,17 @@ export async function backupAll(): Promise<void> {
     console.log(`  Backing up '${sb.name}'...`);
     let result: sandboxState.BackupResult | null = null;
     let orphanManifestMessage: string | null = null;
+    let shieldsWindowOpened = true;
     let returnedToStopped = true;
     try {
-      result = startedForBackup
-        ? await backupStartedSandboxState(sb.name)
-        : sandboxState.backupSandboxState(sb.name);
-    } catch (err: unknown) {
-      // Source-of-truth review (#5734 / #5819):
-      //
-      // - Invalid state: a sandbox in the registry references an agent whose
-      //   manifest no longer exists on disk (orphan after a higher-version
-      //   install replaced the manifest tree). loadAgent() at
-      //   src/lib/agent/defs.ts:365-372 throws `Agent '<name>' not found:
-      //   <manifestPath>` when this happens.
-      // - Source boundary: the orphan is owned upstream by the install/upgrade
-      //   flow that mutates the agents/ directory without reconciling the
-      //   registry. The narrow skip here exists purely so the pre-upgrade
-      //   backup-all loop survives until the upgrade itself reinstalls the
-      //   missing manifest.
-      // - Source-fix constraint: the registry cannot be reconciled before the
-      //   backup runs because the backup IS what gates the upgrade that ships
-      //   the reconciled manifests. A registry-side fix at boot or post-install
-      //   would solve the root cause but is out of scope here.
-      // - Regression test: maintenance.test.ts covers the orphan-skip,
-      //   skipped-not-failed counter, non-orphan re-throw (EACCES), and the
-      //   `: <path>`-suffixed shape boundary so widening or eliminating the
-      //   matcher fails CI.
-      // - Removal condition: drop this catch when the registry is reconciled
-      //   on install/upgrade and orphan sandboxes can no longer reach
-      //   backup-all (or when backupSandboxState surfaces a typed
-      //   MissingAgentManifestError that the caller can identify without
-      //   string matching).
-      //
-      // Anchored to the exact loadAgent() throw shape. Requiring the
-      // `: <path>` suffix prevents accidentally catching unrelated
-      // "Agent '...' not found" messages from other layers that should still
-      // abort the backup batch (disk full, SSH timeout, permission denied,
-      // programming bugs all propagate).
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(msg)) {
-        throw err;
-      }
-      orphanManifestMessage = msg;
+      const attempt = await backupSandboxWithinShieldsWindow(sb.name, () =>
+        startedForBackup
+          ? backupStartedSandboxState(sb.name)
+          : sandboxState.backupSandboxState(sb.name),
+      );
+      result = attempt.result;
+      orphanManifestMessage = attempt.orphanManifestMessage;
+      shieldsWindowOpened = attempt.shieldsWindowOpened;
     } finally {
       if (startedForBackup) {
         if (returnSandboxContainerToStopped(startedForBackup.containerName)) {
@@ -143,6 +247,11 @@ export async function backupAll(): Promise<void> {
       }
     }
     if (!returnedToStopped) {
+      failed++;
+      continue;
+    }
+    if (!shieldsWindowOpened) {
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (could not safely unlock shields)`);
       failed++;
       continue;
     }
@@ -176,10 +285,40 @@ export async function backupAll(): Promise<void> {
       failed++;
     }
   }
+  // The classification above is only as fresh as the pre-loop listing, and
+  // the backup loop can run for minutes. Confirm with a second pinned listing
+  // that every stranded candidate is still unobserved before accepting the
+  // exemption (same two-phase confirmation as upgrade-sandboxes, #6114); a
+  // candidate that reappeared reverts to the genuine strict skip it would
+  // otherwise have been.
+  let confirmedStranded = strandedOrphans;
+  if (strandedOrphans.length > 0) {
+    const confirmation = await captureSandboxListWithGatewayPreflightOrExit(
+      {
+        action: "confirming stranded sandboxes remain absent from the selected gateway",
+        command: `${CLI_NAME} backup-all`,
+      },
+      { gatewayName: selectedGatewayName },
+    );
+    const observedOnRecheck = parseLiveSandboxNames(confirmation.output || "");
+    confirmedStranded = strandedOrphans.filter(
+      (name) => !observedOnRecheck.has(name) && isSandboxContainerDefinitivelyAbsent(name),
+    );
+    const confirmedNames = new Set(confirmedStranded);
+    for (const name of strandedOrphans.filter((entry) => !confirmedNames.has(entry))) {
+      console.log(`  ${D}${notRunningBackupSkipMessage(name)}${R}`);
+      skipped++;
+      notRunningSkipped++;
+    }
+  }
   console.log("");
   console.log(`  Pre-upgrade backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`);
   if (backed > 0) {
     console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
+  }
+  if (confirmedStranded.length > 0) {
+    console.log(`  ${YW}${orphanedRegistrySummary(confirmedStranded)}${R}`);
+    console.log(`  ${D}${orphanedRegistryRemediation(CLI_NAME)}${R}`);
   }
   if (failed > 0) {
     if (unreachableRunning > 0) {

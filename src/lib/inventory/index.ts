@@ -4,8 +4,13 @@
 import { CLI_NAME } from "../cli/branding";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
+import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
 import { redactFull } from "../security/redact";
-import { getSandboxEntryDisplayInference, type SandboxMessagingState } from "../state/registry";
+import {
+  getSandboxEntryDisplayInference,
+  isRouteOnlySandboxReservation,
+  type SandboxMessagingState,
+} from "../state/registry";
 import { resolveDefaultSandboxName } from "../tunnel/service-command";
 
 export interface SandboxEntry {
@@ -23,6 +28,12 @@ export interface SandboxEntry {
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
+  // Passthrough of the durable registry reservation markers so the list can
+  // recognize (and hide) a route-only reservation left by a failed onboard
+  // (#7609). A real sandbox carries createdAt; a never-created reservation does
+  // not. Not rendered — read only by isRouteOnlySandboxReservation.
+  pendingRouteReservation?: true;
+  createdAt?: string;
   // #5714: display-only markers for a sandbox recovered directly from the live
   // gateway. `recoveredFromGateway` flags that agent/GPU are genuinely unknown
   // (the gateway sandbox list does not expose them) so the renderer shows
@@ -132,6 +143,8 @@ export interface ShowStatusCommandDeps {
    * detect the degraded state from `$?` (#3386).
    */
   getGatewayHealth?: () => GatewayHealth;
+  /** Last authority durably selected by onboarding, with secret-free identity fields. */
+  getGatewayAuthority?: () => GatewayOwnerDescription | null;
   checkMessagingBridgeHealth?: (
     sandboxName: string,
     channels: string[],
@@ -173,6 +186,7 @@ export interface StatusReport {
     model: string | null;
   } | null;
   gatewayHealth: GatewayHealth | null;
+  gatewayAuthority: GatewayOwnerDescription | null;
   sandboxes: StatusSandboxRow[];
   services: StatusServiceRow[];
 }
@@ -248,9 +262,18 @@ export async function getSandboxInventory(
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
     lastOnboardedSandbox,
-    sandboxes: recovery.sandboxes.map((sandbox) =>
-      buildSandboxInventoryRow(sandbox, resolvedDefault, deps.getActiveSessionCount),
-    ),
+    // A route-only reservation (pendingRouteReservation with no createdAt) is an
+    // internal artifact of an onboard that reserved the gateway route but never
+    // finished creating the sandbox — e.g. an untrusted base image was rejected
+    // (#7609), or the image build failed. The reservation is intentionally kept
+    // for `--resume` (#6572/#6626), but it must not render as a real sandbox in
+    // `nemoclaw list`. Filter it here so the display matches every other
+    // consumer that already excludes it (maintenance, upgrade-sandboxes).
+    sandboxes: recovery.sandboxes
+      .filter((sandbox) => !isRouteOnlySandboxReservation(sandbox))
+      .map((sandbox) =>
+        buildSandboxInventoryRow(sandbox, resolvedDefault, deps.getActiveSessionCount),
+      ),
   };
 }
 
@@ -411,9 +434,44 @@ function normalizeGatewayHealth(health: GatewayHealth | null | undefined): Gatew
   };
 }
 
+function normalizeGatewayAuthority(
+  authority: GatewayOwnerDescription | null | undefined,
+): GatewayOwnerDescription | null {
+  if (!authority) return null;
+  const gatewayName = safeStatusString(authority.gatewayName);
+  const source = safeStatusString(authority.source);
+  const endpoint = safeStatusString(authority.endpoint);
+  const supervisor = authority.supervisor
+    ? {
+        kind: authority.supervisor.kind,
+        serviceName: safeStatusString(authority.supervisor.serviceName) ?? "unknown",
+        execPath: safeStatusString(authority.supervisor.execPath) ?? "unknown",
+      }
+    : null;
+  return {
+    gatewayName: gatewayName ?? "unknown",
+    gatewayPort: authority.gatewayPort,
+    mode: authority.mode,
+    source:
+      source === "declared" || source === "packaged-service" || source === "standalone"
+        ? source
+        : "standalone",
+    endpoint,
+    supervisor,
+    requiredCapabilities: authority.requiredCapabilities.map(
+      (capability) => safeStatusString(capability) ?? "unknown",
+    ),
+  };
+}
+
 export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
   const sandboxList = deps.listSandboxes();
-  const { sandboxes } = sandboxList;
+  // Hide route-only reservations from a failed onboard (#7609) — same as
+  // `nemoclaw list`. Pending reservations cannot become the registry default;
+  // explicit environment overrides still control host-service selection.
+  const sandboxes = sandboxList.sandboxes.filter(
+    (sandbox) => !isRouteOnlySandboxReservation(sandbox),
+  );
   const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
   const liveInference = sandboxes.length > 0 ? deps.getLiveInference() : null;
   const gatewayHealth =
@@ -433,6 +491,7 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
         }
       : null,
     gatewayHealth: normalizeGatewayHealth(gatewayHealth),
+    gatewayAuthority: normalizeGatewayAuthority(deps.getGatewayAuthority?.()),
     sandboxes: sandboxes.map((sandbox) =>
       buildStatusSandboxRow(sandbox, resolvedDefault, liveInference),
     ),
@@ -451,7 +510,11 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
 export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   const log = deps.log ?? console.log;
   const sandboxList = deps.listSandboxes();
-  const { sandboxes } = sandboxList;
+  // Hide route-only reservations from a failed onboard (#7609) — same as
+  // `nemoclaw list`.
+  const sandboxes = sandboxList.sandboxes.filter(
+    (sandbox) => !isRouteOnlySandboxReservation(sandbox),
+  );
   const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
   log("");
   log("  Global status (registered sandboxes and host services):");
@@ -490,6 +553,19 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
           );
         }
       }
+    }
+    log("");
+  }
+
+  const gatewayAuthority = normalizeGatewayAuthority(deps.getGatewayAuthority?.());
+  if (gatewayAuthority) {
+    const owner = gatewayAuthority.supervisor
+      ? `${gatewayAuthority.supervisor.kind} ${gatewayAuthority.supervisor.serviceName} (${gatewayAuthority.supervisor.execPath})`
+      : gatewayAuthority.source;
+    log(`  Gateway authority: ${gatewayAuthority.mode}`);
+    log(`    Owner: ${owner}`);
+    if (gatewayAuthority.endpoint) {
+      log(`    Endpoint: ${gatewayAuthority.endpoint}`);
     }
     log("");
   }
