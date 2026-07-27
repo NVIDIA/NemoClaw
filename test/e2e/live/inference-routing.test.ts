@@ -474,6 +474,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     contract: [
       "plan exposes only the provider-neutral, non-secret identity binding",
       "the blueprint runner imports the profile, creates and attaches the provider through real OpenShell",
+      "apply preserves the already-active provider and model route before attaching identity",
       "OpenShell exchanges the refresh token at a public HTTPS OAuth endpoint",
       "a sandbox request carries only the stable placeholder and the protected resource receives the minted bearer",
       "a second refresh uses the rotated refresh token and changes the upstream bearer without changing the placeholder",
@@ -540,6 +541,9 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   expect(apply.exitCode, applyText).toBe(0);
   expect(applyText).toContain(`Sandbox '${sandboxName}' is ready.`);
   expect(applyText).toContain("Provider 'compatible-endpoint' already exists, reusing.");
+  expect(applyText).toContain(
+    `Inference route 'compatible-endpoint / ${model}' is already active, reusing.`,
+  );
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
   expect(oauth.tokenRequests()).toEqual([
     {

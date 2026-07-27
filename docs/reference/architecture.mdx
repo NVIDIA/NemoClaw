@@ -336,8 +336,9 @@ Any other inference-provider inspection failure stops apply.
 The runner then inspects the requested runtime identity provider name and stops if any same-name provider already exists.
 It validates an existing provider's non-secret binding to produce a precise error, but never reuses it for this mutable refresh flow because OpenShell does not expose a secret-safe snapshot that rollback could restore.
 Only an absent provider proceeds to profile import, or exact export comparison when that profile is already registered, followed by provider creation, gateway-managed OAuth refresh configuration, and initial token rotation.
-Before attaching that runtime identity to the sandbox, the runner creates or reuses the configured inference provider and requires `openshell inference set` to verify the requested route.
-This keeps the new credential attachment out of the sandbox until OpenShell accepts the requested inference route; after that verification succeeds, the runner attaches the runtime identity and applies any policy additions.
+Before attaching that runtime identity to the sandbox, the runner creates or reuses the configured inference provider.
+For a reused sandbox and provider, it reads the live gateway route and preserves it only when the provider and model exactly match the blueprint; an absent or different route must pass `openshell inference set`.
+This keeps the new credential attachment out of the sandbox until OpenShell has either reported the exact active route or accepted the requested route; only then does the runner attach the runtime identity and apply any policy additions.
 Each successful apply therefore creates and owns the provider whose refresh state it mutates.
 The persisted run plan records whether that apply created the runtime identity provider, its sandbox attachment, the inference provider, and the sandbox itself.
 The runner writes that ownership receipt as each identity resource is acquired, so `status` and a later `rollback` retain a recovery path if automatic compensation fails.

@@ -87,6 +87,16 @@ const matchingInferenceProvider = [
   "",
 ].join("\n");
 
+const matchingInferenceRoute = [
+  "Gateway inference:",
+  "",
+  "  Provider: test-provider",
+  "  Model: test-model",
+  "  Version: 1",
+  "  Timeout: 180s",
+  "",
+].join("\n");
+
 const success = { exitCode: 0, stdout: "", stderr: "" };
 
 function responseQueue(
@@ -95,6 +105,7 @@ function responseQueue(
   const responses = new Map([
     ["sandbox get test-sandbox", [{ exitCode: 1, stdout: "", stderr: "sandbox not found" }]],
     ["provider get test-provider", [{ exitCode: 1, stdout: "", stderr: "provider not found" }]],
+    ["inference get", [{ exitCode: 0, stdout: matchingInferenceRoute, stderr: "" }]],
     ...overrides,
   ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
@@ -406,6 +417,120 @@ describe("blueprint identity wrapper", () => {
     ]);
   });
 
+  it("fails before identity mutation when a reused route cannot be inspected", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
+      ],
+      [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      [
+        "inference get",
+        [{ exitCode: 1, stdout: "", stderr: "gateway route inspection unavailable" }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /Failed to inspect the active inference route.*gateway route inspection unavailable/,
+    );
+
+    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
+      [command, ...(args ?? [])].join(" "),
+    );
+    expect(commandLines).toEqual([
+      "openshell sandbox get test-sandbox",
+      "openshell provider get test-provider",
+      "openshell inference get",
+    ]);
+  });
+
+  it.each([
+    ["not configured", "Gateway inference:\n\n  Not configured\n"],
+    [
+      "configured for a different model",
+      matchingInferenceRoute.replace("Model: test-model", "Model: other-model"),
+    ],
+  ])("sets the requested route when the reused route is %s", async (_label, routeOutput) => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
+      ],
+      [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      ["inference get", [{ exitCode: 0, stdout: routeOutput, stderr: "" }]],
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          ...Array.from({ length: 4 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+    ]);
+
+    await actionApply("default", blueprint({ identity: oktaIdentity() }));
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).toContain("inference set --provider test-provider --model test-model");
+    expect(
+      commands.indexOf("inference set --provider test-provider --model test-model"),
+    ).toBeLessThan(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"));
+  });
+
+  it("sets an exact reused route when the requested timeout differs", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
+      ],
+      [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          ...Array.from({ length: 4 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+    ]);
+
+    const input = blueprint({ identity: oktaIdentity() });
+    const inferenceProfile = input.components?.inference?.profiles?.default;
+    if (!inferenceProfile)
+      throw new Error("test blueprint is missing its default inference profile");
+    inferenceProfile.timeout_secs = 300;
+    await actionApply("default", input);
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).toContain(
+      "inference set --provider test-provider --model test-model --timeout 300",
+    );
+  });
+
   it("revalidates a mismatched inference provider created after preflight", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
@@ -625,6 +750,10 @@ describe("blueprint identity wrapper", () => {
       "sandbox create --from openclaw --name test-sandbox --forward 18789",
     );
     expect(applyCommands).toContain("provider get test-provider");
+    expect(applyCommands).toContain("inference get");
+    expect(applyCommands).not.toContain(
+      "inference set --provider test-provider --model test-model",
+    );
     expect(applyCommands).not.toContain(
       "provider create --name test-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
     );

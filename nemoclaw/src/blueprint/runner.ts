@@ -109,6 +109,38 @@ const MISSING_SANDBOX_INSPECTION_PATTERN =
   /(?:\bsandbox\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bsandbox\b)/i;
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
+const UNCONFIGURED_INFERENCE_ROUTE_PATTERN =
+  /^Gateway inference:\s*(?:\r?\n\s*)*Not configured\s*$/im;
+
+interface InferenceRouteBinding {
+  provider: string;
+  model: string;
+  timeoutSeconds?: number;
+}
+
+function parseInferenceRouteBinding(output: string): InferenceRouteBinding | null {
+  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
+  let inGatewayInference = false;
+  let provider = "";
+  let model = "";
+  let timeoutSeconds: number | undefined;
+  for (const line of lines) {
+    if (/^Gateway inference:\s*$/i.test(line)) {
+      inGatewayInference = true;
+      continue;
+    }
+    if (inGatewayInference && /^\S.*:$/.test(line)) break;
+    if (!inGatewayInference) continue;
+    const trimmed = line.trim();
+    const providerMatch = /^Provider:\s*(.+)$/i.exec(trimmed);
+    const modelMatch = /^Model:\s*(.+)$/i.exec(trimmed);
+    const timeoutMatch = /^Timeout:\s*(\d+)s?$/i.exec(trimmed);
+    if (providerMatch) provider = providerMatch[1].trim();
+    if (modelMatch) model = modelMatch[1].trim();
+    if (timeoutMatch) timeoutSeconds = Number(timeoutMatch[1]);
+  }
+  return provider && model ? { provider, model, timeoutSeconds } : null;
+}
 
 function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
@@ -937,6 +969,7 @@ export async function actionApply(
   try {
     let reuseExistingSandbox = false;
     let reuseExistingInferenceProvider = false;
+    let reuseExistingInferenceRoute = false;
     if (runtimeIdentityConfig) {
       const sandboxResult = await runCmd(["openshell", "sandbox", "get", sandboxName], {
         reject: false,
@@ -966,6 +999,29 @@ export async function actionApply(
         throw new Error(
           `Failed to inspect inference provider '${providerName}' before runtime identity apply: ${boundedCommandError(providerOutput)}`,
         );
+      }
+
+      if (reuseExistingSandbox && reuseExistingInferenceProvider) {
+        const routeResult = await runCmd(["openshell", "inference", "get"], {
+          reject: false,
+        });
+        const routeOutput = `${routeResult.stderr}\n${routeResult.stdout}`;
+        if (routeResult.exitCode !== 0) {
+          throw new Error(
+            `Failed to inspect the active inference route before runtime identity apply: ${boundedCommandError(routeOutput)}`,
+          );
+        }
+        const activeRoute = parseInferenceRouteBinding(routeResult.stdout);
+        if (!activeRoute && !UNCONFIGURED_INFERENCE_ROUTE_PATTERN.test(routeResult.stdout)) {
+          throw new Error(
+            `Failed to parse the active inference route before runtime identity apply: ${boundedCommandError(routeOutput)}`,
+          );
+        }
+        reuseExistingInferenceRoute =
+          activeRoute?.provider === providerName &&
+          activeRoute.model === model &&
+          (inferenceCfg.timeout_secs === undefined ||
+            activeRoute.timeoutSeconds === inferenceCfg.timeout_secs);
       }
 
       progress(10, "Configuring runtime identity");
@@ -1080,25 +1136,29 @@ export async function actionApply(
     }
 
     progress(70, "Setting inference route");
-    const inferenceArgs = [
-      "openshell",
-      "inference",
-      "set",
-      "--provider",
-      providerName,
-      "--model",
-      model,
-    ];
-    if (inferenceCfg.timeout_secs !== undefined) {
-      inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
-    }
-    const inferenceResult = await runCmd(inferenceArgs, { reject: false });
-    // Another required mutation: without a routed provider the sandbox cannot
-    // perform inference, so a non-zero result must abort the apply. (#6703)
-    if (inferenceResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to set inference route (provider '${providerName}', model '${model}'): ${boundedCommandError(inferenceResult.stderr)}`,
-      );
+    if (reuseExistingInferenceRoute) {
+      log(`Inference route '${providerName} / ${model}' is already active, reusing.`);
+    } else {
+      const inferenceArgs = [
+        "openshell",
+        "inference",
+        "set",
+        "--provider",
+        providerName,
+        "--model",
+        model,
+      ];
+      if (inferenceCfg.timeout_secs !== undefined) {
+        inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
+      }
+      const inferenceResult = await runCmd(inferenceArgs, { reject: false });
+      // Another required mutation: without a routed provider the sandbox cannot
+      // perform inference, so a non-zero result must abort the apply. (#6703)
+      if (inferenceResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to set inference route (provider '${providerName}', model '${model}'): ${boundedCommandError(inferenceResult.stderr)}`,
+        );
+      }
     }
 
     if (runtimeIdentityReceipt) {
