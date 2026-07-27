@@ -4,7 +4,7 @@
 title: "System Readiness"
 sidebar-title: "System Readiness"
 description: "Check host readiness before NemoClaw onboarding without changing system state."
-description-agent: "Documents the read-only host readiness command, JSON contract, exit codes, redaction boundary, and mutation guarantees."
+description-agent: "Documents the read-only host readiness command, JSON contract, exit codes, redaction boundary, and mutation guarantees. Use when checking a host before onboarding or consuming readiness JSON."
 keywords: ["nemoclaw host probe", "system readiness", "readiness json", "pre-onboarding check"]
 content:
   type: "reference"
@@ -18,13 +18,13 @@ The command works without a registered gateway or sandbox.
 Run the human-readable check from the host:
 
 ```bash
-nemoclaw host probe
+$$nemoclaw host probe
 ```
 
 Use JSON when another tool consumes the result:
 
 ```bash
-nemoclaw host probe --json
+$$nemoclaw host probe --json
 ```
 
 Both presentations use the same structured report.
