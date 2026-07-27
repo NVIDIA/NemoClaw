@@ -339,6 +339,10 @@ function mode(filePath: string): number {
   return fs.lstatSync(filePath).mode & 0o7777;
 }
 
+function fileIdentity(filePath: string): [number, Buffer] {
+  return [fs.statSync(filePath).ino, fs.readFileSync(filePath)];
+}
+
 function setUserXattr(filePath: string, value: string): boolean {
   return (
     spawnSync(
@@ -399,10 +403,7 @@ describe("openclaw-config-guard", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const first = runGuard("lock", configDir);
     expect(first.status, JSON.stringify(first.lines)).toBe(0);
-    const configInode = fs.statSync(configPath).ino;
-    const hashInode = fs.statSync(hashPath).ino;
-    const configBytes = fs.readFileSync(configPath);
-    const hashBytes = fs.readFileSync(hashPath);
+    const fileIdentities = [configPath, hashPath].map(fileIdentity);
     expect(mode(root)).toBe(0o1775);
 
     const second = runGuard("lock", configDir);
@@ -411,16 +412,15 @@ describe("openclaw-config-guard", () => {
     expect(mode(configDir)).toBe(0o755);
     expect(mode(configPath)).toBe(0o444);
     expect(mode(hashPath)).toBe(0o444);
-    expect(fs.statSync(configPath).ino).toBe(configInode);
-    expect(fs.statSync(hashPath).ino).toBe(hashInode);
-    expect(fs.readFileSync(configPath)).toEqual(configBytes);
-    expect(fs.readFileSync(hashPath)).toEqual(hashBytes);
+    expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
   });
   it("unlocks idempotently when the config already holds the mutable posture (#7430)", () => {
     const { configDir, configPath, hashPath } = fixture();
+    const fileIdentities = [configPath, hashPath].map(fileIdentity);
     const r = runGuard("unlock", configDir);
     expect(r.status, JSON.stringify(r.lines)).toBe(0);
     expect([mode(configDir), mode(configPath), mode(hashPath)]).toEqual([0o2770, 0o660, 0o660]);
+    expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
     const drift = runGuard("unlock", configDir, "mutable-dir-drift");
     expect(drift.lines).toContainEqual(expect.objectContaining({ code: "config-not-mutable" }));
   });
