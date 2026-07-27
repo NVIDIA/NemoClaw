@@ -76,6 +76,14 @@ function noOtaStationRelease(
     .join("\n");
 }
 
+function nonGb300StationFixtureReadFile(path: string): string {
+  const values = new Map([
+    ["dgx-release", noOtaStationRelease()],
+    ["device", "0xffff\n"],
+  ]);
+  return values.get(path.split("/").at(-1) ?? "") ?? stationFixtureReadFile(path);
+}
+
 function trustedMarkerStat(
   overrides: Partial<{ uid: number; gid: number; mode: number; size: number }> = {},
 ) {
@@ -267,7 +275,7 @@ describe("platform readiness qualification (#7410)", () => {
     expect(qualification(result, "host.platform.dgx_station")).toBe("qualified");
   });
 
-  it("marks Station unqualified when no NVIDIA display-class PCI device is present", () => {
+  it("marks Station unqualified when no exact GB300 PCI device is present", () => {
     const result = projectPlatformQualification(
       input({
         architecture: "arm64",
@@ -413,11 +421,7 @@ describe("platform readiness qualification (#7410)", () => {
       osReleasePath: "/fixtures/os-release",
       stationReleasePath: "/fixtures/dgx-release",
       pciDevicesPath: "/fixtures/pci",
-      readFile: (filePath) => {
-        if (filePath.endsWith("dgx-release")) return noOtaStationRelease();
-        if (filePath.endsWith("/device")) return "0xffff\n";
-        return stationFixtureReadFile(filePath);
-      },
+      readFile: nonGb300StationFixtureReadFile,
       readdir: () => ["0000:01:00.0"],
       stat: () => trustedMarkerStat(),
     });
