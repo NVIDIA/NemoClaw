@@ -66,8 +66,8 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_docker_desktop` | Docker Desktop integration in WSL. |
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
-| `host.platform.dgx_spark` | DGX Spark identity. |
-| `host.platform.dgx_station` | Qualified DGX Station GB300 identity, hardware, and software profile. |
+| `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
+| `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
 
 The report adds `host.platform.wsl`, `host.platform.dgx_spark`, or `host.platform.dgx_station` qualifications when those platforms apply.
 For WSL, Docker Desktop is `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
@@ -75,7 +75,8 @@ The `host.platform.wsl_gpu_passthrough` capability is `present` only after the D
 It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown` when the proof cannot run conclusively.
 
 DGX Station qualification fails closed.
-The `host.platform.dgx_station` capability is `present` only when the product identity, NVIDIA display-class PCI device, and software profile all qualify.
+The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, exact GB300 PCI device (`0x31c2` or `0x31c3`), and software profile all qualify.
+NemoClaw reads DGX release metadata only from a bounded, root-owned, root-group marker that is not writable by group or other users.
 A known mismatch produces an `unqualified` qualification and the blocking `host.platform.dgx_station_unqualified` finding.
 Missing or unreadable qualification evidence produces an `unknown` qualification and the blocking `host.platform.dgx_station_inconclusive` finding.
 Both outcomes prevent `host.platform.supported` from becoming `present`.
@@ -91,3 +92,4 @@ That mode cannot run with `--json` probing.
 The public report removes process environments and unrecognized fields from internal probe results.
 It redacts token-shaped values and credential-bearing URLs.
 It also limits finding summaries and command evidence before either presentation receives the report.
+It rejects a report that claims mutation and retains every blocking or fatal finding at the bounded public-report boundary.

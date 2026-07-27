@@ -8,14 +8,15 @@ import YAML from "yaml";
 import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
-import { collectPlatformIdentity } from "../readiness/platform-qualification";
 import {
   applyBaselineExclusions,
   type BaselineExclusionRequest,
 } from "../policy/baseline-exclusion";
+import { collectPlatformIdentity } from "../readiness/platform-qualification";
 import {
-  isNvidiaDisplayClassPciDevice,
   isQualifiedStationProfile,
+  isQualifiedStationRuntime,
+  isStationGb300PciDevice,
   isStationGb300ProductName,
   type StationProfile,
 } from "../readiness/station-qualification";
@@ -110,14 +111,15 @@ export function discoverStationGb300SysfsReadOnlyPaths(
     if (!PCI_BDF_PATTERN.test(pciDeviceName)) continue;
     const pciDeviceRoot = path.join(pciDevicesRoot, pciDeviceName);
     const vendor = readTrimmedFile(path.join(pciDeviceRoot, "vendor"))?.toLowerCase();
+    const device = readTrimmedFile(path.join(pciDeviceRoot, "device"))?.toLowerCase();
     const pciClass = readTrimmedFile(path.join(pciDeviceRoot, "class"));
-    if (isNvidiaDisplayClassPciDevice(vendor, pciClass)) {
+    if (isStationGb300PciDevice(vendor, device, pciClass)) {
       readOnlyPaths.push(`${SYSFS_PATH}/bus/pci/devices/${pciDeviceName}`);
     }
   }
   if (readOnlyPaths.length === 0) {
     throw new Error(
-      `Cannot prepare Station GB300 direct GPU sandbox policy; no NVIDIA display-class PCI device was found under ${pciDevicesRoot}.`,
+      `Cannot prepare Station GB300 direct GPU sandbox policy; no exact NVIDIA GB300 PCI device was found under ${pciDevicesRoot}.`,
     );
   }
 
@@ -136,6 +138,19 @@ function discoverHostStationGb300SysfsReadOnlyPaths(): string[] {
   if (!isQualifiedStationProfile(identity.stationProfile)) {
     throw new Error(
       "Cannot prepare Station GB300 direct GPU sandbox policy; the Station software profile is unsupported or unknown.",
+    );
+  }
+  if (
+    !isQualifiedStationRuntime({
+      platform: process.platform,
+      architecture: process.arch,
+      osId: identity.osId,
+      osVersionId: identity.osVersionId,
+      hasNvidiaGpu: identity.stationGb300PciGpu === true,
+    })
+  ) {
+    throw new Error(
+      "Cannot prepare Station GB300 direct GPU sandbox policy; Linux ARM64, Ubuntu 24.04, and an available GB300 GPU are required.",
     );
   }
   const productName = readTrimmedFile(DMI_PRODUCT_NAME_PATH);

@@ -8,7 +8,7 @@ import {
   type PlatformQualificationInput,
   projectPlatformQualification,
 } from "./platform-qualification";
-import { isNvidiaDisplayClassPciDevice, isStationGb300ProductName } from "./station-qualification";
+import { isStationGb300PciDevice, isStationGb300ProductName } from "./station-qualification";
 
 function input(overrides: Partial<PlatformQualificationInput> = {}): PlatformQualificationInput {
   return {
@@ -23,6 +23,8 @@ function input(overrides: Partial<PlatformQualificationInput> = {}): PlatformQua
     nvidiaPlatform: null,
     stationProfile: null,
     stationGb300PciGpu: null,
+    osId: "ubuntu",
+    osVersionId: "24.04",
     ...overrides,
   };
 }
@@ -38,8 +40,9 @@ function qualification(result: ReturnType<typeof projectPlatformQualification>, 
 function stationFixtureReadFile(path: string): string {
   const values = new Map([
     ["product_name", "NVIDIA DGX Station GB300\n"],
+    ["os-release", 'ID=ubuntu\nVERSION_ID="24.04"\n'],
     ["vendor", "0x10DE\n"],
-    ["device", "0xffff\n"],
+    ["device", "0x31c2\n"],
     ["class", "0x030000\n"],
   ]);
   return values.get(path.split("/").at(-1) ?? "") ?? "";
@@ -73,15 +76,30 @@ function noOtaStationRelease(
     .join("\n");
 }
 
-function collectStationIdentity(release: string) {
+function trustedMarkerStat(
+  overrides: Partial<{ uid: number; gid: number; mode: number; size: number }> = {},
+) {
+  return {
+    isFile: () => true,
+    isSymbolicLink: () => false,
+    size: 256,
+    uid: 0,
+    gid: 0,
+    mode: 0o100644,
+    ...overrides,
+  };
+}
+
+function collectStationIdentity(release: string, markerStat = trustedMarkerStat()) {
   return collectPlatformIdentity({
     productNamePath: "/fixtures/product_name",
+    osReleasePath: "/fixtures/os-release",
     stationReleasePath: "/fixtures/dgx-release",
     pciDevicesPath: "/fixtures/pci",
     readFile: (filePath) =>
       filePath.endsWith("dgx-release") ? release : stationFixtureReadFile(filePath),
     readdir: () => ["0000:01:00.0"],
-    stat: () => ({ isFile: () => true, isSymbolicLink: () => false, size: 256 }),
+    stat: () => markerStat,
   });
 }
 
@@ -165,6 +183,25 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
+    ["wrong architecture", { architecture: "x64" }],
+    ["unavailable GPU", { hasNvidiaGpu: false }],
+  ] as const)("keeps DGX Spark unqualified with %s", (_scenario, overrides) => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        nvidiaPlatform: "spark",
+        productName: "NVIDIA DGX Spark",
+        ...overrides,
+      }),
+    );
+
+    expect(capability(result, "host.platform.dgx_spark")).toBe("absent");
+    expect(qualification(result, "host.platform.dgx_spark")).toBe("unqualified");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_spark_unqualified");
+  });
+
+  it.each([
     ["generic-ubuntu", "qualified"],
     ["supported-dgx-os", "qualified"],
     ["supported-colossus-baseos", "qualified"],
@@ -187,6 +224,30 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.dgx_station")).toBe(
       expected === "qualified" ? "present" : expected === "unqualified" ? "absent" : "unknown",
     );
+  });
+
+  it.each([
+    ["wrong platform", { platform: "darwin" }],
+    ["wrong architecture", { architecture: "x64" }],
+    ["wrong distribution", { osId: "debian" }],
+    ["wrong Ubuntu release", { osVersionId: "22.04" }],
+    ["unavailable GPU", { hasNvidiaGpu: false }],
+  ] as const)("keeps Station unqualified with %s", (_scenario, overrides) => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        nvidiaPlatform: "station",
+        productName: "NVIDIA DGX Station GB300",
+        stationProfile: "supported-dgx-os",
+        stationGb300PciGpu: true,
+        ...overrides,
+      }),
+    );
+
+    expect(qualification(result, "host.platform.dgx_station")).toBe("unqualified");
+    expect(capability(result, "host.platform.dgx_station")).toBe("absent");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_station_unqualified");
   });
 
   it("uses the shared Station product qualification contract", () => {
@@ -248,14 +309,28 @@ describe("platform readiness qualification (#7410)", () => {
     });
   });
 
+  it.each([
+    ["non-root owner", { uid: 1000 }],
+    ["non-root group", { gid: 1000 }],
+    ["group-writable marker", { mode: 0o100664 }],
+    ["world-writable marker", { mode: 0o100646 }],
+  ] as const)("rejects a %s before trusting Station release metadata", (_scenario, overrides) => {
+    expect(
+      collectStationIdentity(noOtaStationRelease(), trustedMarkerStat(overrides)),
+    ).toMatchObject({
+      stationProfile: "unsupported-dgx-os",
+    });
+  });
+
   it("collects only bounded identity reads and never invokes host preparation", () => {
     const readFile = vi.fn(stationFixtureReadFile);
     const readdir = vi.fn(() => ["0000:01:00.0"]);
-    const stat = vi.fn(() => ({ isFile: () => true, isSymbolicLink: () => false, size: 256 }));
+    const stat = vi.fn(() => trustedMarkerStat());
 
     expect(
       collectPlatformIdentity({
         productNamePath: "/fixtures/product_name",
+        osReleasePath: "/fixtures/os-release",
         stationReleasePath: "/fixtures/dgx-release",
         pciDevicesPath: "/fixtures/pci",
         readFile,
@@ -267,6 +342,8 @@ describe("platform readiness qualification (#7410)", () => {
       nvidiaPlatform: "station",
       stationProfile: "unsupported-dgx-os",
       stationGb300PciGpu: true,
+      osId: "ubuntu",
+      osVersionId: "24.04",
     });
     expect(stat).toHaveBeenCalledWith("/fixtures/dgx-release");
     expect(readFile.mock.calls.every(([path]) => String(path).startsWith("/fixtures/"))).toBe(true);
@@ -299,19 +376,20 @@ describe("platform readiness qualification (#7410)", () => {
   it.each([
     [["0000:01:00.0"], "one"],
     [["0000:01:00.0", "0000:02:00.0"], "multiple"],
-  ] as const)("accepts %s Station NVIDIA display-class devices as preparation", (devices, _count) => {
+  ] as const)("accepts %s exact Station GB300 devices as preparation", (devices, _count) => {
     const readFile = vi.fn(stationFixtureReadFile);
 
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
+      osReleasePath: "/fixtures/os-release",
       stationReleasePath: "/fixtures/dgx-release",
       pciDevicesPath: "/fixtures/pci",
       readFile,
       readdir: () => devices,
-      stat: () => ({ isFile: () => true, isSymbolicLink: () => false, size: 256 }),
+      stat: () => trustedMarkerStat(),
     });
 
-    expect(isNvidiaDisplayClassPciDevice("0x10DE", "0x030000")).toBe(true);
+    expect(isStationGb300PciDevice("0x10DE", "0x31c2", "0x030000")).toBe(true);
     expect(identity.stationGb300PciGpu).toBe(true);
     expect(
       qualification(
@@ -326,7 +404,26 @@ describe("platform readiness qualification (#7410)", () => {
         "host.platform.dgx_station",
       ),
     ).toBe("qualified");
-    expect(readFile).not.toHaveBeenCalledWith(expect.stringContaining("/device"));
+    expect(readFile).toHaveBeenCalledWith(expect.stringContaining("/device"));
+  });
+
+  it("rejects a non-GB300 NVIDIA display-class device", () => {
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      osReleasePath: "/fixtures/os-release",
+      stationReleasePath: "/fixtures/dgx-release",
+      pciDevicesPath: "/fixtures/pci",
+      readFile: (filePath) => {
+        if (filePath.endsWith("dgx-release")) return noOtaStationRelease();
+        if (filePath.endsWith("/device")) return "0xffff\n";
+        return stationFixtureReadFile(filePath);
+      },
+      readdir: () => ["0000:01:00.0"],
+      stat: () => trustedMarkerStat(),
+    });
+
+    expect(isStationGb300PciDevice("0x10DE", "0xffff", "0x030000")).toBe(false);
+    expect(identity.stationGb300PciGpu).toBe(false);
   });
 
   it("bounds firmware identity before publishing it", () => {

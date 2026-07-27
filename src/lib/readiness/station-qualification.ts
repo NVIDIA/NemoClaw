@@ -3,6 +3,7 @@
 
 const STATION_GB300_PRODUCT_PATTERN = /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu;
 const NVIDIA_PCI_VENDOR = "0x10de";
+const STATION_GB300_PCI_DEVICES = new Set(["0x31c2", "0x31c3"]);
 const DISPLAY_PCI_CLASS_PATTERN = /^0x03[0-9a-f]{4}$/iu;
 
 export type StationProfile =
@@ -26,12 +27,49 @@ export function isQualifiedStationProfile(profile: StationProfile | null | undef
   );
 }
 
-export function isNvidiaDisplayClassPciDevice(
+export function isStationGb300PciDevice(
   vendor: string | null | undefined,
+  device: string | null | undefined,
   pciClass: string | null | undefined,
 ): boolean {
   return (
     vendor?.trim().toLowerCase() === NVIDIA_PCI_VENDOR &&
+    STATION_GB300_PCI_DEVICES.has(device?.trim().toLowerCase() ?? "") &&
     DISPLAY_PCI_CLASS_PATTERN.test(pciClass?.trim() ?? "")
+  );
+}
+
+export function isQualifiedStationRuntime(input: {
+  platform: string;
+  architecture: string;
+  osId?: string | null;
+  osVersionId?: string | null;
+  hasNvidiaGpu: boolean;
+}): boolean {
+  return (
+    input.platform === "linux" &&
+    input.architecture === "arm64" &&
+    input.osId === "ubuntu" &&
+    input.osVersionId === "24.04" &&
+    input.hasNvidiaGpu
+  );
+}
+
+export function isTrustedStationReleaseMarker(metadata: {
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+  size: number;
+  uid: number;
+  gid: number;
+  mode: number;
+}): boolean {
+  return (
+    metadata.isFile() &&
+    !metadata.isSymbolicLink() &&
+    metadata.size > 0 &&
+    metadata.size <= 4096 &&
+    metadata.uid === 0 &&
+    metadata.gid === 0 &&
+    (metadata.mode & 0o022) === 0
   );
 }
