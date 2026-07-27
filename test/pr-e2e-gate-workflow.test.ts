@@ -212,6 +212,7 @@ function runCancelStep(prNumber: string) {
       env: {
         ...process.env,
         FAKE_NODE_ARGUMENTS: argumentsPath,
+        BASE_SHA,
         GITHUB_TOKEN: "token",
         HEAD_SHA,
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
@@ -624,6 +625,8 @@ describe("PR E2E gate workflow", () => {
       HEAD_SHA,
       "--superseded-head",
       "c".repeat(40),
+      "--base",
+      BASE_SHA,
     ]);
   });
 

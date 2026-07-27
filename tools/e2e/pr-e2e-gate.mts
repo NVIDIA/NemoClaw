@@ -215,6 +215,7 @@ export type ControllerCommand =
       prNumber: number;
       headSha?: string;
       supersededHeadSha?: string;
+      baseSha?: string;
     }
   | { mode: "wait"; childRunId: number }
   | ({ mode: "download"; childRunId: number } & ControllerPaths)
@@ -529,8 +530,12 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   if (args.mode === "cancel") {
-    if ((args.head === undefined) !== (args.supersededHead === undefined)) {
-      throw new Error("--head and --superseded-head must be provided together");
+    const revisionArguments = [args.head, args.supersededHead, args.base];
+    const providedRevisionArguments = revisionArguments.filter(
+      (value) => value !== undefined,
+    ).length;
+    if (providedRevisionArguments !== 0 && providedRevisionArguments !== revisionArguments.length) {
+      throw new Error("--head, --superseded-head, and --base must be provided together");
     }
     if (args.head !== undefined && !SHA_PATTERN.test(args.head)) {
       throw new Error("--head is invalid");
@@ -538,11 +543,15 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     if (args.supersededHead !== undefined && !SHA_PATTERN.test(args.supersededHead)) {
       throw new Error("--superseded-head is invalid");
     }
+    if (args.base !== undefined && !SHA_PATTERN.test(args.base)) {
+      throw new Error("--base is invalid");
+    }
     return {
       mode: "cancel",
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
       headSha: args.head,
       supersededHeadSha: args.supersededHead,
+      baseSha: args.base,
     };
   }
   if (args.mode === "wait") {
@@ -4224,9 +4233,13 @@ export async function cancelPrGate(
   prNumber: number,
   headSha?: string,
   supersededHeadSha?: string,
+  baseSha?: string,
 ): Promise<number> {
   const { token, repository } = tokenAndRepository();
   if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("PR number is invalid");
+  if (baseSha !== undefined && !SHA_PATTERN.test(baseSha)) {
+    throw new Error("PR base SHA is invalid");
+  }
   const supersededChecks = await activeSupersededPrGateChecks({
     repository,
     token,
@@ -4350,7 +4363,7 @@ async function main(): Promise<void> {
     await downloadChildRunEvidence(command.childRunId, command.evidencePath);
     return;
   }
-  await cancelPrGate(command.prNumber, command.headSha, command.supersededHeadSha);
+  await cancelPrGate(command.prNumber, command.headSha, command.supersededHeadSha, command.baseSha);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

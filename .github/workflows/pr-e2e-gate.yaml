@@ -154,6 +154,7 @@ jobs:
 
       - name: Cancel superseded E2E runs
         env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -164,6 +165,7 @@ jobs:
           --pr "$PR_NUMBER"
           --head "$HEAD_SHA"
           --superseded-head "$SUPERSEDED_HEAD_SHA"
+          --base "$BASE_SHA"
 
   coordinate:
     if: ${{ github.run_attempt == 1 && github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'run-control-plane')) }}
