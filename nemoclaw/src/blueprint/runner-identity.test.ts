@@ -84,14 +84,12 @@ const success = { exitCode: 0, stdout: "", stderr: "" };
 function responseQueue(
   overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
 ) {
-  const responses = new Map(overrides);
+  const responses = new Map([
+    ["sandbox get test-sandbox", [{ exitCode: 1, stdout: "", stderr: "sandbox not found" }]],
+    ...overrides,
+  ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
-    const queue = responses.get(args.join(" "));
-    if (queue) return queue.shift() ?? success;
-    if (args.join(" ") === "sandbox get test-sandbox") {
-      return { exitCode: 1, stdout: "", stderr: "sandbox not found" };
-    }
-    return success;
+    return responses.get(args.join(" "))?.shift() ?? success;
   });
 }
 
