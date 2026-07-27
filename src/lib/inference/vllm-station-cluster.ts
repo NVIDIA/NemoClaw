@@ -594,7 +594,11 @@ for offset in (0, 3):
             routes = json.loads(output)
             route = routes[0] if isinstance(routes, list) and routes else {}
             route_device = route.get("dev", "") if isinstance(route, dict) else ""
-            route_source = route.get("prefsrc", route.get("src", "")) if isinstance(route, dict) else ""
+            route_source = (
+                route.get("prefsrc") or route.get("src") or route.get("from", "")
+                if isinstance(route, dict)
+                else ""
+            )
             route_gateway = route.get("gateway") if isinstance(route, dict) else None
         except json.JSONDecodeError:
             pass
@@ -607,7 +611,7 @@ for offset in (0, 3):
             if (
                 isinstance(link_route, dict)
                 and link_route.get("dst") == network
-                and link_route.get("dev") == netdev
+                and link_route.get("dev", netdev) == netdev
                 and link_route.get("gateway") is None
             ):
                 route_scope = link_route.get("scope", "")

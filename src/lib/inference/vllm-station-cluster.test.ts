@@ -1129,6 +1129,112 @@ subprocess.run = fixture_run
     );
     expect(options.input).toEqual(expect.stringContaining('"-I", source, peer'));
   });
+
+  it("executes the connectivity probe against the route JSON emitted on Station", () => {
+    const requests = [
+      {
+        netdev: "cx8r0",
+        sourceAddress: "192.168.240.1",
+        peerAddress: "192.168.240.2",
+        expectedPeerMac: "ac:3a:e2:de:3a:23",
+      },
+      {
+        netdev: "cx8r1",
+        sourceAddress: "192.168.240.5",
+        peerAddress: "192.168.240.6",
+        expectedPeerMac: "ac:3a:e2:de:3a:24",
+      },
+    ];
+    let probeScript = "";
+    let probeArgs: readonly string[] = [];
+    const recordingSpawn = vi.fn(
+      (
+        _file: string,
+        args: readonly string[],
+        options: SpawnSyncOptionsWithStringEncoding,
+      ): StationProbeCommandResult => {
+        probeArgs = args;
+        probeScript = typeof options.input === "string" ? options.input : "";
+        return command({});
+      },
+    );
+    createStationClusterProbeDeps(recordingSpawn).probeLocalConnectivity(requests);
+    const fixturePrelude = String.raw`
+import json
+import subprocess
+
+class FixtureResult:
+    def __init__(self, returncode, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""
+
+def fixture_run(argv, **_kwargs):
+    if argv[:4] == ["ip", "-j", "route", "get"]:
+        peer, source, netdev = argv[4], argv[6], argv[8]
+        return FixtureResult(0, json.dumps([{
+            "dst": peer,
+            "from": source,
+            "dev": netdev,
+            "flags": [],
+            "uid": 1000,
+            "cache": [],
+        }]))
+    if argv[:5] == ["ip", "-j", "route", "show", "exact"]:
+        network = argv[5]
+        return FixtureResult(0, json.dumps([{
+            "dst": network,
+            "protocol": "kernel",
+            "scope": "link",
+            "prefsrc": "192.168.240.1",
+            "metric": 100,
+            "flags": [],
+        }]))
+    if argv and argv[0] == "ping":
+        return FixtureResult(0)
+    if argv[:3] == ["ip", "-j", "neighbor"]:
+        peer, netdev = argv[5], argv[7]
+        mac = {
+            "192.168.240.2": "ac:3a:e2:de:3a:23",
+            "192.168.240.6": "ac:3a:e2:de:3a:24",
+        }[peer]
+        return FixtureResult(0, json.dumps([{
+            "dst": peer,
+            "lladdr": mac,
+            "state": ["REACHABLE"],
+            "dev": netdev,
+        }]))
+    return FixtureResult(127)
+
+subprocess.run = fixture_run
+`;
+    const executed = spawnSync(resolveStationFixturePython(), probeArgs, {
+      encoding: "utf8",
+      input: `${fixturePrelude}\n${probeScript}`,
+      timeout: 20_000,
+    });
+
+    expect(executed.status, executed.stderr).toBe(0);
+    const observed = JSON.parse(executed.stdout) as {
+      checks: Array<Record<string, unknown>>;
+    };
+    expect(observed.checks).toEqual([
+      expect.objectContaining({
+        netdev: "cx8r0",
+        routeDevice: "cx8r0",
+        routeSource: "192.168.240.1",
+        routeScope: "link",
+        jumboPing: true,
+      }),
+      expect.objectContaining({
+        netdev: "cx8r1",
+        routeDevice: "cx8r1",
+        routeSource: "192.168.240.5",
+        routeScope: "link",
+        jumboPing: true,
+      }),
+    ]);
+  });
 });
 
 describe("parseStationHostProbe", () => {
