@@ -57,6 +57,7 @@ const CLOUD_MODEL =
   "nvidia/nemotron-3-super-120b-a12b";
 const INSTALL_TIMEOUT_MS = 25 * 60_000;
 const CHAT_TIMEOUT_MS = 120_000;
+const SANDBOX_PROBE_TIMEOUT_MS = 120_000;
 const TEST_TIMEOUT_MS = 40 * 60_000;
 const MAX_ATTEMPTS = positiveInteger(process.env.E2E_PHASE_5B_MAX_ATTEMPTS, 3);
 const RETRY_SLEEP_MS = positiveInteger(process.env.E2E_PHASE_5B_RETRY_SLEEP_SEC, 5) * 1_000;
@@ -225,6 +226,57 @@ async function expectLiveChatPong(
   throw new Error(`Live chat failed after ${MAX_ATTEMPTS} attempt(s): ${lastFailure}`);
 }
 
+async function expectSandboxCredentialBoundary(
+  sandbox: SandboxClient,
+  home: string,
+  apiKey: string,
+): Promise<void> {
+  const authProbe = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "sh",
+      "-lc",
+      "find /sandbox -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print 2>/dev/null | head -5",
+    ],
+    {
+      artifactName: "phase-3-sandbox-auth-profiles-probe",
+      env: testEnv(home),
+      timeoutMs: SANDBOX_PROBE_TIMEOUT_MS,
+    },
+  );
+  expect(authProbe.exitCode, resultText(authProbe)).toBe(0);
+  expect(authProbe.stdout.trim(), "auth-profiles.json must not be present in sandbox state").toBe(
+    "",
+  );
+
+  const secretProbe = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "sh",
+      "-lc",
+      "for dir in /sandbox/.openclaw /sandbox/.nemoclaw; do " +
+        '[ -d "$dir" ] || continue; ' +
+        "grep -rE 'nvapi-|ghp_|npm_' \"$dir\" 2>/dev/null " +
+        "| grep -v 'STRIPPED' " +
+        "| grep -v '/policies/' " +
+        "| grep -v '/plugin-runtime-deps/' " +
+        "| grep -Ev '/extensions/[^/]+/(dist|node_modules)/' " +
+        "| head -5 || true; " +
+        "done",
+    ],
+    {
+      artifactName: "phase-3-sandbox-secret-pattern-probe",
+      env: testEnv(home),
+      redactionValues: [apiKey],
+      timeoutMs: SANDBOX_PROBE_TIMEOUT_MS,
+    },
+  );
+  expect(secretProbe.exitCode, resultText(secretProbe)).toBe(0);
+  expect(secretProbe.stdout.trim(), "sandbox config must not contain secret-shaped tokens").toBe(
+    "",
+  );
+}
+
 // biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "cloud inference: inference.local chat and OpenClaw skill filesystem validate",
@@ -235,6 +287,7 @@ test(
         "verify cloud inference prerequisites",
         "install hosted-inference OpenClaw sandbox",
         "exercise managed inference.local chat",
+        "scan sandbox agent state for credentials",
         "validate repo and sandbox skill layouts",
       ],
     },
@@ -262,6 +315,7 @@ test(
         "install.sh --non-interactive creates or recreates the named OpenClaw sandbox",
         "nemoclaw and openshell are available on PATH after install",
         "curl inside the sandbox reaches https://inference.local/v1/chat/completions and returns PONG",
+        "sandbox agent state contains neither auth-profiles.json nor secret-shaped credential values",
         "repo .agents/skills SKILL.md frontmatter and body validate",
         "sandbox /sandbox/.openclaw and openclaw.json validate; skills subdir may be present or absent",
       ],
@@ -337,9 +391,12 @@ test(
       content: chat.content,
     });
 
+    progress.phase("scan sandbox agent state for credentials");
+    await expectSandboxCredentialBoundary(sandbox, home, apiKey);
+
     progress.phase("validate repo and sandbox skill layouts");
     const repoSkills = await host.command("bash", [REPO_SKILL_VALIDATOR, "--repo", REPO_ROOT], {
-      artifactName: "phase-3-validate-repo-skills",
+      artifactName: "phase-4-validate-repo-skills",
       cwd: REPO_ROOT,
       env: testEnv(home),
       timeoutMs: 60_000,
@@ -347,7 +404,7 @@ test(
     expect(repoSkills.exitCode, resultText(repoSkills)).toBe(0);
 
     const sandboxSkills = await host.command("bash", [SANDBOX_SKILL_VALIDATOR], {
-      artifactName: "phase-3-validate-sandbox-openclaw-skills",
+      artifactName: "phase-4-validate-sandbox-openclaw-skills",
       cwd: REPO_ROOT,
       env: testEnv(home, { SANDBOX_NAME }),
       timeoutMs: 90_000,
@@ -367,6 +424,7 @@ test(
         dockerRunning: docker.exitCode === 0,
         installCompleted: install.exitCode === 0,
         chatReturnedPong: /pong/i.test(chat.content),
+        sandboxCredentialBoundaryValidated: true,
         repoSkillsValidated: repoSkills.exitCode === 0,
         sandboxOpenClawLayoutValidated: sandboxSkills.exitCode === 0,
         sandboxSkillsSubdir: sandboxSkillStatus,

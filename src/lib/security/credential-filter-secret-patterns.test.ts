@@ -26,8 +26,10 @@ describe("isCredentialField", () => {
     expect(isCredentialField("clientSecret")).toBe(true);
     expect(isCredentialField("bearerToken")).toBe(true);
     expect(isCredentialField("privateKey")).toBe(true);
+    expect(isCredentialField("signingKey")).toBe(true);
     expect(isCredentialField("sessionToken")).toBe(true);
     expect(isCredentialField("sessionKey")).toBe(true);
+    expect(isCredentialField("authKey")).toBe(true);
     // OpenClaw channel token fields (#5027).
     expect(isCredentialField("botToken")).toBe(true);
     expect(isCredentialField("appToken")).toBe(true);
@@ -103,6 +105,10 @@ describe("isCredentialField", () => {
     expect(isCredentialField("PATH")).toBe(false);
     expect(isCredentialField("tokenizer")).toBe(false);
     expect(isCredentialField("maxTokens")).toBe(false);
+    expect(isCredentialField("displayName")).toBe(false);
+    expect(isCredentialField("sortKey")).toBe(false);
+    expect(isCredentialField("sessionId")).toBe(false);
+    expect(isCredentialField("accessLevel")).toBe(false);
     expect(isCredentialField("X-Request-Id")).toBe(false);
     expect(isCredentialField("author")).toBe(false);
   });

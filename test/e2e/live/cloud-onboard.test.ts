@@ -78,6 +78,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
       "check cloud onboarding prerequisites",
       "install and onboard cloud sandbox",
       "validate installed CLI and corporate CA trust",
+      "collect scoped diagnostics from onboarded sandbox",
       "run cloud inference and security checks",
       "remove cloud sandbox",
     ],
@@ -109,6 +110,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
       "public curl installer uses GitHub clone path for the requested ref",
       "sandbox appears healthy after cloud onboarding",
       "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
+      "installed CLI creates a non-empty diagnostics archive for the registered sandbox",
       "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
       "cleanup verifies sandbox removal",
     ],
@@ -178,6 +180,27 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   });
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
+  progress.phase("collect scoped diagnostics from onboarded sandbox");
+  const diagnosticsArchive = path.join(installCwd, "cloud-onboard-debug.tar.gz");
+  const diagnostics = await host.command(
+    "bash",
+    [
+      "-lc",
+      `nemoclaw debug --quick --sandbox ${shellQuote(SANDBOX_NAME)} --output ${shellQuote(diagnosticsArchive)}`,
+    ],
+    {
+      artifactName: "phase-3-scoped-diagnostics",
+      env: env(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(diagnostics.exitCode, resultText(diagnostics)).toBe(0);
+  expect(fs.existsSync(diagnosticsArchive), "scoped diagnostics archive must exist").toBe(true);
+  expect(
+    fs.statSync(diagnosticsArchive).size,
+    "scoped diagnostics archive must be non-empty",
+  ).toBeGreaterThan(0);
+
   progress.phase("run cloud inference and security checks");
   const checkScripts = fs
     .readdirSync(CHECKS_DIR)
@@ -186,7 +209,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(checkScripts.length).toBeGreaterThan(0);
   for (const scriptName of checkScripts) {
     const result = await host.command("bash", [path.join(CHECKS_DIR, scriptName)], {
-      artifactName: `phase-3-check-${scriptName.replace(/\.sh$/, "")}`,
+      artifactName: `phase-4-check-${scriptName.replace(/\.sh$/, "")}`,
       cwd: REPO_ROOT,
       env: env({
         ...hosted.env,
