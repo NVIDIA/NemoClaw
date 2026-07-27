@@ -302,10 +302,19 @@ _BOOLEAN_FLAGS = {
     "--ignore-user-config",
     "--ignore-rules",
 }
-_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS = frozenset(("-c", "--continue", "-r", "--resume"))
-_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS = frozenset(
-    (set(_VALUE_FLAGS) - _PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS)
-    | {"-z", "--oneshot", "-p", "--profile"}
+_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS = ("-c", "--continue", "-r", "--resume")
+_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS = (
+    "-m",
+    "--model",
+    "--provider",
+    "-t",
+    "--toolsets",
+    "-s",
+    "--skills",
+    "-z",
+    "--oneshot",
+    "-p",
+    "--profile",
 )
 # Mirror the pinned Hermes v0.18 `_coalesce_session_name_args` boundaries:
 # unquoted session names consume words until a flag or known subcommand.
