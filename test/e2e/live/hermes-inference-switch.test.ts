@@ -416,80 +416,85 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(hermesCli.exitCode, resultText(hermesCli)).toBe(0);
   expect(hermesCli.stdout).toMatch(/\bPONG\b/iu);
 
+  progress.phase("prove split provider/model credential resolution");
+  const proxyResolutionEndpoint =
+    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+  const proxyResolutionModel = mockBaseline
+    ? PROXY_RESOLUTION_MODEL
+    : hostedInstallModel(installEnv);
+  const registerProxyProvider = await host.command(
+    "openshell",
+    [
+      "provider",
+      "create",
+      "-g",
+      "nemoclaw",
+      "--name",
+      PROXY_RESOLUTION_PROVIDER,
+      "--type",
+      "openai",
+      "--credential",
+      "NVIDIA_INFERENCE_API_KEY",
+      "--config",
+      `OPENAI_BASE_URL=${proxyResolutionEndpoint}`,
+    ],
+    {
+      artifactName: "register-proxy-resolution-provider",
+      env: env(undefined, { NVIDIA_INFERENCE_API_KEY: apiKey }),
+      redactionValues,
+      timeoutMs: 120_000,
+    },
+  );
+  expect(registerProxyProvider.exitCode, resultText(registerProxyProvider)).toBe(0);
+  await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY");
+
+  const setProxyRoute = await host.command(
+    "node",
+    [
+      CLI,
+      "inference",
+      "set",
+      "--provider",
+      PROXY_RESOLUTION_PROVIDER,
+      "--model",
+      proxyResolutionModel,
+      "--no-verify",
+    ],
+    {
+      artifactName: "set-proxy-resolution-route",
+      env: env(),
+      redactionValues,
+      timeoutMs: 180_000,
+    },
+  );
+  expect(setProxyRoute.exitCode, resultText(setProxyRoute)).toBe(0);
+
+  const requestOffset = mockBaseline?.requests().length ?? 0;
+  const proxyResolutionCli = await runHermesCliPongWithRetry({
+    run: (attempt) =>
+      sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "hermes",
+          "-z",
+          "Reply with exactly one word: PONG",
+          "--provider",
+          PROXY_RESOLUTION_PROVIDER,
+          "--model",
+          proxyResolutionModel,
+        ],
+        {
+          artifactName: `hermes-cli-split-provider-namespaced-model-proxy-resolution-${attempt}`,
+          env: env(),
+          redactionValues,
+          timeoutMs: 150_000,
+        },
+      ),
+  });
+  expect(proxyResolutionCli.exitCode, resultText(proxyResolutionCli)).toBe(0);
+  expect(proxyResolutionCli.stdout).toMatch(/\bPONG\b/iu);
+
   if (mockBaseline) {
-    progress.phase("prove split provider/model credential resolution");
-    const registerProxyProvider = await host.command(
-      "openshell",
-      [
-        "provider",
-        "create",
-        "-g",
-        "nemoclaw",
-        "--name",
-        PROXY_RESOLUTION_PROVIDER,
-        "--type",
-        "openai",
-        "--credential",
-        "NVIDIA_INFERENCE_API_KEY",
-        "--config",
-        `OPENAI_BASE_URL=${mockBaseline.baseUrl}`,
-      ],
-      {
-        artifactName: "register-proxy-resolution-provider",
-        env: env(undefined, { NVIDIA_INFERENCE_API_KEY: apiKey }),
-        redactionValues,
-        timeoutMs: 120_000,
-      },
-    );
-    expect(registerProxyProvider.exitCode, resultText(registerProxyProvider)).toBe(0);
-    await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY");
-
-    const setProxyRoute = await host.command(
-      "node",
-      [
-        CLI,
-        "inference",
-        "set",
-        "--provider",
-        PROXY_RESOLUTION_PROVIDER,
-        "--model",
-        PROXY_RESOLUTION_MODEL,
-        "--no-verify",
-      ],
-      {
-        artifactName: "set-proxy-resolution-route",
-        env: env(),
-        redactionValues,
-        timeoutMs: 180_000,
-      },
-    );
-    expect(setProxyRoute.exitCode, resultText(setProxyRoute)).toBe(0);
-
-    const requestOffset = mockBaseline.requests().length;
-    const proxyResolutionCli = await runHermesCliPongWithRetry({
-      run: (attempt) =>
-        sandbox.exec(
-          SANDBOX_NAME,
-          [
-            "hermes",
-            "-z",
-            "Reply with exactly one word: PONG",
-            "--provider",
-            PROXY_RESOLUTION_PROVIDER,
-            "--model",
-            PROXY_RESOLUTION_MODEL,
-          ],
-          {
-            artifactName: `hermes-cli-split-provider-namespaced-model-proxy-resolution-${attempt}`,
-            env: env(),
-            redactionValues,
-            timeoutMs: 150_000,
-          },
-        ),
-    });
-    expect(proxyResolutionCli.exitCode, resultText(proxyResolutionCli)).toBe(0);
-    expect(proxyResolutionCli.stdout).toMatch(/\bPONG\b/iu);
-
     const proxyAttemptRequests = mockBaseline.requests().slice(requestOffset);
     expect(
       proxyAttemptRequests.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0),
@@ -504,7 +509,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
       expect(request).toMatchObject({
         auth: "ok",
         authorizationSent: true,
-        model: PROXY_RESOLUTION_MODEL,
+        model: proxyResolutionModel,
       });
     }
   }
