@@ -87,21 +87,30 @@ jobs:
       TYPEBOX_VERSION: "1.1.38"
       # Workflow-boundary modules parse YAML before the advisor session starts.
       YAML_VERSION: "2.8.3"
+      # Embedded Pi SDK sessions use Pi's proxy-aware Undici transport.
+      UNDICI_VERSION: "8.5.0"
       # Credential-free inventory discovery executes the trusted Vitest entrypoint.
       VITEST_VERSION: "4.1.9"
       FD_FIND_VERSION: "9.0.0-1"
       RIPGREP_VERSION: "14.1.0-1"
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
+      PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS: "2100"
       PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
+      PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
       PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
       PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
       PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
       PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false"
+      SANDBOX_NAME: pr-advisor-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.advisor.id }}
       # Only executable code from this checkout may run in the analysis job.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
+      TARGET_REPO: ${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo || github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.target_pr }}
     steps:
       - name: Checkout trusted advisor code (workflow revision)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,13 +162,14 @@ jobs:
           PR_BASE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || '' }}
           EXPECTED_HEAD_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || '' }}
           GIT_LFS_SKIP_SMUDGE: "1"
+          TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |
           node --experimental-strip-types \
             "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
 
-      # The advisor reads repository files while holding its model key. Remove
-      # worktree symlinks first so an untrusted link cannot redirect a read to
-      # runner state. Git still retains the link target in committed objects.
+      # The advisor reads repository files inside OpenShell. Remove worktree
+      # symlinks first so an untrusted link cannot redirect a read outside the
+      # uploaded repository. Git still retains the committed link target.
       - name: Remove symlinks from analysis workspace
         shell: bash
         run: |
@@ -209,20 +219,65 @@ jobs:
             npm ci --ignore-scripts --no-audit --no-fund
           )
 
+      # Materialize GitHub metadata before sandbox creation. This is the only
+      # analysis-phase step with a GitHub token, and it has no model credential.
+      - name: Prepare advisor sandbox inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" prepare
+
+      - name: Install OpenShell
+        if: ${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '1' }}
+        run: |
+          env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash "$ADVISOR_DIR/scripts/install-openshell.sh"
+
+      # The upstream model key exists only while the trusted host registers the
+      # provider. The sandbox uses inference.local and receives an inert key.
+      - name: Configure OpenShell inference
+        id: configure-openshell
+        if: ${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '1' }}
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" configure
+
+      # Preserve a review artifact when the provider credential is unavailable
+      # or gateway configuration fails. This trusted host fallback has neither
+      # a GitHub token nor a model credential and never executes PR content.
+      - name: Write unavailable advisor artifacts
+        id: unavailable-analysis
+        if: ${{ always() && steps.configure-openshell.outcome != 'success' }}
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
+          HEAD_REF: ${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          PR_REVIEW_ADVISOR_UNAVAILABLE_REASON: ${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '0' && 'PR_REVIEW_ADVISOR_RUN_ANALYSIS=0' || 'OpenShell inference configuration failed or the advisor credential is unavailable' }}
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" unavailable
+
+      - name: Create credential-free advisor sandbox
+        if: ${{ steps.configure-openshell.outcome == 'success' }}
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" create
+
       - name: Run PR review advisor
         id: analysis
+        if: ${{ steps.configure-openshell.outcome == 'success' }}
         continue-on-error: true
         env:
           BASE_REF: ${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
           HEAD_REF: ${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.target_pr }}
-          PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
-          GH_TOKEN: ${{ github.token }}
-          PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: |
-          cd "$ADVISOR_WORKDIR"
-          node --experimental-strip-types \
-            "$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" run
+
+      - id: download-analysis
+        name: Download advisor artifacts from sandbox
+        if: ${{ always() && steps.configure-openshell.outcome == 'success' }}
+        continue-on-error: true
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" download
+
+      - name: Delete advisor sandbox
+        if: always()
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" delete
 
       - name: Publish job summary
         if: always()
@@ -246,9 +301,28 @@ jobs:
         if: always()
         env:
           ANALYSIS_OUTCOME: ${{ steps.analysis.outcome }}
+          ANALYSIS_REQUESTED: ${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS }}
+          CONFIGURE_OUTCOME: ${{ steps.configure-openshell.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download-analysis.outcome }}
+          UNAVAILABLE_OUTCOME: ${{ steps.unavailable-analysis.outcome }}
         run: |
+          if [ "$CONFIGURE_OUTCOME" != "success" ]; then
+            if [ "$UNAVAILABLE_OUTCOME" != "success" ]; then
+              echo "::error::PR review advisor could not write unavailable artifacts: outcome=$UNAVAILABLE_OUTCOME"
+              exit 1
+            fi
+            if [ "$ANALYSIS_REQUESTED" = "0" ]; then
+              exit 0
+            fi
+            echo "::error::PR review advisor inference configuration did not complete: outcome=$CONFIGURE_OUTCOME"
+            exit 1
+          fi
           if [ "$ANALYSIS_OUTCOME" != "success" ]; then
             echo "::error::PR review advisor analysis did not complete: outcome=$ANALYSIS_OUTCOME"
+            exit 1
+          fi
+          if [ "$DOWNLOAD_OUTCOME" != "success" ]; then
+            echo "::error::PR review advisor artifacts were not downloaded: outcome=$DOWNLOAD_OUTCOME"
             exit 1
           fi
 
