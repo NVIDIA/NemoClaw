@@ -4344,6 +4344,49 @@ function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: Workflo
   }
 }
 
+function validateTrustedE2eDispatchReceipt(
+  errors: string[],
+  generateSteps: readonly WorkflowStep[],
+): void {
+  const dispatchReceipt = requireStep(errors, generateSteps, "Record trusted E2E dispatch receipt");
+  if (dispatchReceipt?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+    errors.push("trusted E2E dispatch receipt must run for workflow dispatches only");
+  }
+  const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
+  const expectedDispatchReceiptEnv = {
+    ALLOW_JETSON_RUNNER_QUEUE: "${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}",
+    CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    DISPATCH_JOBS: "${{ inputs.jobs }}",
+    DISPATCH_RECEIPT_DIR: "${{ runner.temp }}/nemoclaw-e2e-dispatch",
+    DISPATCH_TARGETS: "${{ inputs.targets }}",
+    EVENT_NAME: "${{ github.event_name }}",
+    INCLUDE_STAGING_BREV_LAUNCHABLE:
+      "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    RUN_ATTEMPT: "${{ github.run_attempt }}",
+    RUN_ID: "${{ github.run_id }}",
+  };
+  if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
+    errors.push(
+      "trusted E2E dispatch receipt must bind only the candidate, run, attempt, and dispatch inputs",
+    );
+  }
+  for (const fragment of [
+    'kind: "nemoclaw-e2e-dispatch-v1"',
+    "candidateSha: $candidateSha",
+    "eventName: $eventName",
+    "workflowRunId: $workflowRunId",
+    "workflowRunAttempt: $workflowRunAttempt",
+    "jobs: $jobs",
+    "targets: $targets",
+    "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
+    "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    'defaultSuiteSelected: ($jobs == "" and $targets == "")',
+    '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
+  ]) {
+    requireRunContains(errors, dispatchReceipt, fragment);
+  }
+}
+
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -4515,6 +4558,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     generate,
     "E2E planner matrix does not match controller-selected targets",
   );
+  validateTrustedE2eDispatchReceipt(errors, generateSteps);
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
