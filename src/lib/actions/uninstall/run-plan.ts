@@ -95,6 +95,9 @@ export interface UninstallRunOutcome {
   plan: UninstallPlan;
 }
 
+const OPENSHELL_COMMAND_MISSING_ERROR =
+  "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.";
+
 function toRunResult(result: SpawnSyncReturns<string | Buffer>): RunResult {
   return {
     status: result.status,
@@ -1034,9 +1037,7 @@ function removeOpenShellResources(
   externallySupervised: boolean,
 ): boolean {
   if (!runtime.commandExists("openshell")) {
-    runtime.error(
-      "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.",
-    );
+    runtime.error(OPENSHELL_COMMAND_MISSING_ERROR);
     return false;
   }
   const gatewayLabel = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
@@ -1808,6 +1809,10 @@ export function runUninstallPlan(
         "A sibling gateway appeared during uninstall preparation; switching to gateway-scoped cleanup.",
       );
     }
+  }
+  if (!runtime.commandExists("openshell")) {
+    runtime.error(OPENSHELL_COMMAND_MISSING_ERROR);
+    return { exitCode: 1, plan };
   }
   const preserveUnderStateDir = resolvePreserveSet(paths, resolvedOptions, runtime);
   const { ok } = executePlan(
