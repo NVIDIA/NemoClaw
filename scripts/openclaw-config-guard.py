@@ -3470,9 +3470,10 @@ def _transition(
         # onboarded or snapshot-restored sandbox boots mutable before the lock
         # settles. Requiring the locked posture there rejected a legitimate
         # `shields down` with config-not-locked even though the config already
-        # holds the mutable target posture. Verify the exact mutable file
-        # posture and treat the transition as a no-op instead of failing.
-        _verify_mutable_files(opened, _snapshot_raw_pair(opened), identity)
+        # holds the mutable target posture. Verify the exact mutable posture
+        # and treat the transition as a no-op instead of failing.
+        pair = _snapshot_raw_pair(opened)
+        _verify_mutable_posture(opened, pair, identity)
         return
     pair = _snapshot_pair(opened)
     _verify_locked_posture(opened, pair, identity, allow_blocking_flags=True)

@@ -72,7 +72,7 @@ if failure in {"installed-nonroot-no-cap", "installed-nonroot-not-ready"}:
     module._pid1_effective_uid = lambda: identity.root_uid + 1
 if failure == "startup-owner":
     module.os.getppid = lambda: 1
-if failure == "pair-race":
+if failure in {"pair-race", "mutable-dir-drift"}:
     original_snapshot = module._snapshot_file
     raced = False
     def race_pair(opened, name):
@@ -80,6 +80,9 @@ if failure == "pair-race":
         snapshot = original_snapshot(opened, name)
         if name == "openclaw.json" and not raced:
             raced = True
+            if failure == "mutable-dir-drift":
+                os.chmod(config_dir, 0o700)
+                return snapshot
             updated = b'{"gateway":{"port":19001}}\n'
             with open(os.path.join(config_dir, "openclaw.json"), "wb") as stream:
                 stream.write(updated)
@@ -413,13 +416,13 @@ describe("openclaw-config-guard", () => {
     expect(fs.readFileSync(configPath)).toEqual(configBytes);
     expect(fs.readFileSync(hashPath)).toEqual(hashBytes);
   });
-
   it("unlocks idempotently when the config already holds the mutable posture (#7430)", () => {
-    // An in-sandbox reconciler can leave the config mutable before shields-down; unlock must be a no-op.
     const { configDir, configPath, hashPath } = fixture();
     const r = runGuard("unlock", configDir);
     expect(r.status, JSON.stringify(r.lines)).toBe(0);
     expect([mode(configDir), mode(configPath), mode(hashPath)]).toEqual([0o2770, 0o660, 0o660]);
+    const drift = runGuard("unlock", configDir, "mutable-dir-drift");
+    expect(drift.lines).toContainEqual(expect.objectContaining({ code: "config-not-mutable" }));
   });
 
   it("fresh-replaces both files on lock and unlock while preserving bytes, times, and xattrs", () => {
@@ -569,9 +572,7 @@ describe("openclaw-config-guard", () => {
 
   it("retries config and hash as one pair when a writer interleaves their capture", () => {
     const { configDir, configPath, hashPath } = fixture();
-
     const result = runGuard("lock", configDir, "pair-race");
-
     expect(result.status).toBe(0);
     const updated = Buffer.from('{"gateway":{"port":19001}}\n');
     expect(fs.readFileSync(configPath)).toEqual(updated);
