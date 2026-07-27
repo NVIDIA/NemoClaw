@@ -28,8 +28,8 @@ describe("PR E2E signal shard policy", () => {
       "onboard-repair": ["default"],
       "onboard-resume": ["default"],
     });
-    expect(expectedSignalShards(["docs-validation"])).toEqual({
-      "docs-validation": ["default"],
+    expect(expectedSignalShards(["vllm-docker-storage"])).toEqual({
+      "vllm-docker-storage": ["default"],
     });
     expect(expectedSignalShards(["hermes-inference-switch", "openclaw-inference-switch"])).toEqual({
       "hermes-inference-switch": ["hosted", "anthropic"],
@@ -48,7 +48,7 @@ describe("PR E2E signal shard policy", () => {
     const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
     const broadShards = expectedSignalShards(riskPlanRequiredJobIds(broadPlan));
     expect(Object.keys(broadShards)).toHaveLength(13);
-    expect(Object.values(broadShards).flat()).toHaveLength(16);
+    expect(Object.values(broadShards).flat()).toHaveLength(15);
     expect(() => expectedSignalShards(["not-a-workflow-job"])).toThrow(/does not define/u);
   });
 });
