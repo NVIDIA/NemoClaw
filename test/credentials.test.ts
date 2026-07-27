@@ -953,6 +953,9 @@ ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptFile)} < "$pipe"
     expect(`${result.stdout}${result.stderr}`).toContain(
       "Invalid NVIDIA API key. Must start with nvapi-",
     );
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(
+      /(^|\s)(TypeError|ReferenceError|SyntaxError):|^\s+at /m,
+    );
     expect(result.stdout).toContain("STAGED=nvapi-good-key");
   });
 

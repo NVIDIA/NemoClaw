@@ -156,6 +156,7 @@ export default defineConfig({
             "test/install-station-host-preparation.test.ts",
             "test/install-station-package-state.test.ts",
             "test/install-station-package-transaction.test.ts",
+            "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
         },
@@ -184,6 +185,7 @@ export default defineConfig({
             "test/install-station-host-preparation.test.ts",
             "test/install-station-package-state.test.ts",
             "test/install-station-package-transaction.test.ts",
+            "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
           // Slow tests that spawn real bash install.sh processes. Explicit

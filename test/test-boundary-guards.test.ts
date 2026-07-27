@@ -750,6 +750,7 @@ describe("Vitest project membership boundary", () => {
       ["test/install-build-dependency-preflight.test.ts", "installer-integration"],
       ["test/install-clone-ref.test.ts", "installer-integration"],
       ["test/install-express-prompt.test.ts", "installer-integration"],
+      ["test/install-openshell-version-pin.test.ts", "installer-integration"],
       ["test/install-openshell-version-check.test.ts", "installer-integration"],
       ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],
       ["test/install-preflight.test.ts", "installer-integration"],
