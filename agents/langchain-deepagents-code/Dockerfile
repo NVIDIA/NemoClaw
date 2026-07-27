@@ -6,9 +6,28 @@
 # NemoClaw staging supplies a resolved base image reference. Direct Docker builds
 # must pass --build-arg BASE_IMAGE=... rather than falling back to a mutable tag.
 ARG BASE_IMAGE
+ARG NEMOCLAW_CORPORATE_CA_B64=
+
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
+ARG NEMOCLAW_CORPORATE_CA_B64
+ENV NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+WORKDIR /opt/mcp-tool-discovery-runtime
+COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/*.ts ./
+RUN ./install-reviewed-runtime.sh \
+    && rm -f ./install-reviewed-runtime.sh
+RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
+    && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
+
+COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
+RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
+    && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
+    && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$discovery_unsafe"
 
 USER root
 

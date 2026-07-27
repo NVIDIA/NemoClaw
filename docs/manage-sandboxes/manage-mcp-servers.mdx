@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Manage MCP Servers"
 sidebar-title: "Manage MCP Servers"
-description: "Inspect, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
-description-agent: "Explains managed MCP status and credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
-keywords: ["nemoclaw mcp status", "nemoclaw mcp restart", "nemoclaw mcp remove", "mcp credential rotation"]
+description: "Inspect advertised tools, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
+description-agent: "Explains managed MCP status, advertised tool discovery, credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
+keywords: ["nemoclaw mcp status", "mcp tool discovery", "nemoclaw mcp restart", "nemoclaw mcp remove", "mcp credential rotation"]
 content:
   type: "how_to"
 skill:
@@ -28,6 +28,54 @@ The `env.missing` field lists recorded host variable names that are currently un
 
 An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential.
 The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
+
+## Discover Advertised Tools
+
+Pass `--tools` with one server name to request the server's advertised tool names:
+
+```bash
+$$nemoclaw my-sandbox mcp status github --tools
+$$nemoclaw my-sandbox mcp status github --tools --json
+```
+
+The shared discovery runtime uses the managed registration's existing OpenShell credential provider and generated policy.
+OpenShell injects the credential at the policy boundary; it is not passed to the runtime through arguments, environment values, or an authorization option.
+The same runtime and thin adapter ancestry are used across OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
+
+Run discovery only against a configured endpoint you trust to advertise names while authenticated.
+The endpoint controls every returned tool name and can derive those names from the request or credential it receives; NemoClaw validates and bounds the returned text but cannot prove that an authenticated endpoint did not encode credential-derived data in an otherwise valid name.
+
+A discovery result is a point-in-time list from the configured MCP server, not an attestation of the exact tools visible to the model in an active agent session.
+Agent configuration, progressive disclosure, runtime filters, and session state can further limit model-visible tools.
+
+NemoClaw runs the standard MCP `initialize`, `notifications/initialized`, and paginated `tools/list` lifecycle.
+It retains and returns tool names only, never prints the other tool-definition fields returned by `tools/list`, and never calls a tool.
+The client bounds total time, per-request time, cumulative response bytes, pages, tool count, cursor length, and tool-name length.
+It attempts to close the MCP session and transport on both success and failure.
+Cleanup errors do not replace the bounded discovery result.
+
+JSON output adds a per-server `toolDiscovery` object without changing the existing status fields:
+
+```json
+{
+  "toolDiscovery": {
+    "ok": true,
+    "count": 2,
+    "tools": ["createJiraIssue", "getJiraIssue"],
+    "truncated": false
+  }
+}
+```
+
+Discovery is opt-in and sends authenticated network traffic to the configured endpoint.
+`--tools` requires one server name and suppresses the named-server credential-resolution probe that would otherwise run by default.
+Pass `--probe --tools` when you intentionally want both live checks.
+
+An older sandbox image that does not contain the shared discovery client reports that a rebuild is required.
+Run `$$nemoclaw my-sandbox rebuild` and retry the command.
+
+A discovery failure sets `toolDiscovery.ok` to `false` and leaves the ordinary provider, policy, environment, and adapter status available.
+Bounded partial results set `truncated` to `true` and include a redacted `detail` value.
 
 ## Verify Credential Resolution
 
