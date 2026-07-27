@@ -68,6 +68,13 @@ function mockSandboxExecCurl(command, options = {}) {
 
 function mockOnboardRunCapture(command, options = {}) {
   const normalized = normalizeCommand(command);
+  if (
+    normalized.startsWith("docker run ") &&
+    normalized.includes("security_inventory=/usr/local/share/nemoclaw/security-packages.txt") &&
+    normalized.includes("nemoclaw-security-inventory-ok")
+  ) {
+    return "nemoclaw-security-inventory-ok";
+  }
   if (/^docker run --rm --entrypoint \/usr\/bin\/ldd \S+ --version$/.test(normalized)) {
     return "ldd (GNU libc) 2.41";
   }

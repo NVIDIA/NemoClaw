@@ -310,6 +310,10 @@ if (a[0]==="run" && a.includes("nslookup")) {
   process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
   process.exit(0);
 }
+if (a[0]==="run" && a.some((value) => value.includes("nemoclaw-security-inventory-ok"))) {
+  process.stdout.write("nemoclaw-security-inventory-ok\\n");
+  process.exit(0);
+}
 if (a[0]==="run" && a.includes("/usr/bin/ldd")) {
   process.stdout.write("ldd (GNU libc) 2.41\\n");
   process.exit(0);

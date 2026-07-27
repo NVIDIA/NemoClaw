@@ -23,20 +23,30 @@ describe("OpenClaw sandbox base image validation", () => {
     dockerMocks.capture.mockReturnValue("nemoclaw-security-inventory-ok\n");
 
     expect(openClawBaseImageHasSecurityInventory("nemoclaw:test")).toBe(true);
-    expect(dockerMocks.capture).toHaveBeenCalledWith(
+    const [args, options] = dockerMocks.capture.mock.calls[0];
+    expect(args).toEqual(
       expect.arrayContaining([
         "run",
         "--network",
         "none",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
         "--read-only",
+        "--entrypoint",
+        "/bin/sh",
         "nemoclaw:test",
         "-c",
-        expect.stringContaining(
-          "security_inventory=/usr/local/share/nemoclaw/security-packages.txt",
-        ),
       ]),
-      { ignoreError: true, timeout: 20_000 },
     );
+    const probe = args.at(-1);
+    expect(probe).toContain("security_inventory=/usr/local/share/nemoclaw/security-packages.txt");
+    expect(probe).toContain('test ! -L "$security_inventory"');
+    expect(probe).toContain(`stat -c '%u:%g:%a'`);
+    expect(probe).toContain('"0:0:444"');
+    expect(probe).toContain(`cmp -s - "$security_inventory"`);
+    expect(options).toEqual({ ignoreError: true, timeout: 20_000 });
   });
 
   it("rejects a base that predates the security inventory", () => {

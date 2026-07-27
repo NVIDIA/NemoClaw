@@ -184,6 +184,7 @@ if (a[0]==="image" && a[1]==="inspect") {
 if (a[0]==="tag" || a[0]==="rmi") { process.exit(0); }
 if (a[0]==="run") {
   if (a.includes("nslookup")) process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  else if (a.some((value) => value.includes("nemoclaw-security-inventory-ok"))) process.stdout.write("nemoclaw-security-inventory-ok\\n");
   else if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
   process.exit(0);
 }
