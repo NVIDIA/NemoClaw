@@ -341,6 +341,7 @@ describe("uninstall run plan", () => {
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
+        commandExists: () => false,
         env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
         log: (line) => logs.push(line),
         readLine: () => "no",
@@ -359,6 +360,7 @@ describe("uninstall run plan", () => {
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
       {
+        commandExists: () => false,
         env: { HOME: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
         log: (line) => logs.push(line),
         readLine: () => null,
@@ -1014,6 +1016,11 @@ describe("uninstall run plan", () => {
       fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.json"), "{}");
       fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.lock"), "lock");
       fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.log"), "{}\n");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter.pid"), "1236");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter-token"), "secret");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter.json"), "{}");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter.lock"), "lock");
+      fs.writeFileSync(path.join(stateDir, "https-pin-runtime-adapter.log"), "{}\n");
       fs.mkdirSync(path.join(stateDir, "source"));
       return { tmpHome, stateDir };
     }
@@ -1079,6 +1086,11 @@ describe("uninstall run plan", () => {
         expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.json"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.lock"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.log"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter.pid"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter-token"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter.json"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter.lock"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "https-pin-runtime-adapter.log"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "source"))).toBe(false);
         expect(logs).toContain(
           `Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`,

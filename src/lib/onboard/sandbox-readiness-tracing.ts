@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { waitUntil } from "../core/wait";
 import { envInt } from "./env";
+import {
+  createReadinessWaitOptions,
+  formatReadinessDeadline,
+  getLegacyPollDeadlineBudgetMs,
+} from "./readiness-wait";
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string;
@@ -57,8 +63,9 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
  * removed. Escalate to a dedicated OpenShell-fix tracking issue (referenced
  * here and in the test) if the workaround outlives a release cycle.
  *
- * The readiness loop polls `sandbox list` every 2 seconds, so the default of
- * 30 tolerates ~60s of sustained Error before failing.
+ * The readiness loop starts at 250ms and backs off to 2 seconds. The default
+ * of 30 therefore tolerates a substantial transient window while the overall
+ * sandbox readiness deadline remains authoritative.
  */
 const SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 30;
 
@@ -81,6 +88,7 @@ export interface SandboxReadyWaitDeps {
   isSandboxReady: (output: string, sandboxName: string) => boolean;
   isLinuxDockerDriverGatewayEnabled: () => boolean;
   sleep: (seconds: number) => void;
+  now?: () => number;
 }
 
 export interface SandboxReadyWaitOptions extends SandboxReadyWaitDeps {
@@ -91,7 +99,6 @@ export interface SandboxReadyWaitOptions extends SandboxReadyWaitDeps {
 
 function pollSandboxReady(
   options: SandboxReadyWaitOptions & {
-    sleepAfterFinalPodPoll?: boolean;
     trace?: (event: string, attributes: Record<string, unknown>) => void;
   },
 ): boolean {
@@ -104,18 +111,31 @@ function pollSandboxReady(
     isLinuxDockerDriverGatewayEnabled,
     sleep,
   } = options;
-  for (let i = 0; i < attempts; i += 1) {
+  let attempt = 0;
+  const budgetMs = getLegacyPollDeadlineBudgetMs(attempts, delaySeconds);
+  const waitOptions = createReadinessWaitOptions({
+    budgetMs,
+    maxIntervalMs: Math.max(0, delaySeconds * 1000),
+    zeroBudgetAttempts: attempts,
+    now: options.now,
+    sleep: (ms) => sleep(ms / 1000),
+  });
+  if (!waitOptions) {
+    options.trace?.("not_ready", { attempts: 0, deadline_ms: budgetMs });
+    return false;
+  }
+  const ready = waitUntil(() => {
+    attempt += 1;
     const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
     if (isSandboxReady(list, sandboxName)) {
-      options.trace?.("ready", { attempt: i + 1, source: "sandbox_list" });
+      options.trace?.("ready", { attempt, source: "sandbox_list" });
       return true;
     }
 
     // Package-managed OpenShell gateways report readiness through
     // `sandbox list`; legacy Kubernetes gateways may still expose pod state.
     if (isLinuxDockerDriverGatewayEnabled()) {
-      if (i < attempts - 1) sleep(delaySeconds);
-      continue;
+      return false;
     }
     const podPhase = runCaptureOpenshell(
       [
@@ -134,13 +154,13 @@ function pollSandboxReady(
       { ignoreError: true },
     );
     if (podPhase === "Running") {
-      options.trace?.("ready", { attempt: i + 1, source: "pod_phase" });
+      options.trace?.("ready", { attempt, source: "pod_phase" });
       return true;
     }
-    if (i < attempts - 1 || options.sleepAfterFinalPodPoll) sleep(delaySeconds);
-  }
-  options.trace?.("not_ready", { attempts });
-  return false;
+    return false;
+  }, waitOptions);
+  if (!ready) options.trace?.("not_ready", { attempts: attempt, deadline_ms: budgetMs });
+  return ready;
 }
 
 export function waitForSandboxReadyWithTrace(options: SandboxReadyWaitOptions): boolean {
@@ -160,7 +180,6 @@ export function createSandboxReadyWaiter(
       attempts,
       delaySeconds,
       ...deps,
-      sleepAfterFinalPodPoll: true,
     });
 }
 
@@ -181,23 +200,23 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    * The Docker GPU compatibility recreate passes 2 because the OpenShell
    * gateway can briefly retain the pre-recreate Ready row before publishing
    * the new supervisor's Error -> Ready registration transition. Requiring a
-   * confirmation poll keeps that stale row from reaching the GPU proof.
+   * confirmation poll at the original two-second interval keeps that stale row
+   * from reaching the GPU proof.
    */
   stableReadyPolls?: number;
   /**
    * Consecutive Error-phase polls required before the wait treats the phase as
-   * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls} (30 polls /
-   * ~60s at the 2s poll interval).
+   * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls} (30 polls).
    *
    * Trade-off: on a fresh create — the path this waiter guards — a healthy
    * sandbox that briefly transits Error costs nothing (it flips to Ready and
    * the wait returns on that poll), while a genuinely stuck Error is reported
-   * ~60s later than a fast-fail would. The default is deliberately conservative
-   * rather than tuned to the shortest observed transient: the re-registration
-   * window scales with host/gateway speed (slower on ARM64/DGX-class hosts), so
-   * a too-low default risks re-introducing #6043. The window is bounded and far
-   * below the readiness timeout, so it never masks a terminal failure; operators
-   * who want a tighter bound set NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE.
+   * after the configured number of observations. The default is deliberately
+   * conservative rather than tuned to the shortest observed transient: the
+   * re-registration window scales with host/gateway speed (slower on
+   * ARM64/DGX-class hosts), so a too-low default risks re-introducing #6043.
+   * The readiness deadline still bounds the wait; operators who want fewer
+   * observations set NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE.
    *
    * Fractional values are rounded (Math.round), matching the env-var path's
    * envInt rounding for one consistent rule across both entry points. Pass 1 to
@@ -206,6 +225,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    */
   errorPhaseDebouncePolls?: number;
   sleep: (seconds: number) => void;
+  now?: () => number;
 }): CreatedSandboxReadinessResult {
   const {
     sandboxName,
@@ -226,11 +246,25 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       ? 1
       : Math.max(1, Math.round(options.stableReadyPolls));
   return withSandboxReadinessTrace(sandboxName, { timeout_seconds: timeoutSecs }, () => {
-    const readyAttempts = Math.max(1, Math.ceil(timeoutSecs / 2));
+    const budgetMs = Math.max(0, timeoutSecs * 1000);
+    const waitOptions = createReadinessWaitOptions({
+      budgetMs,
+      initialIntervalMs: stableReadyPolls > 1 ? 2_000 : undefined,
+      maxIntervalMs: 2_000,
+      now: options.now,
+      sleep: (ms) => sleep(ms / 1000),
+    });
+    if (!waitOptions) {
+      addTraceEvent("not_ready", { attempts: 0, deadline_ms: budgetMs });
+      return { ready: false, reason: "timeout", failurePhase: null };
+    }
     let consecutiveReadyPolls = 0;
     let consecutiveFailurePolls = 0;
     let lastFailurePhase: string | null = null;
-    for (let i = 0; i < readyAttempts; i++) {
+    let attempt = 0;
+    let result: CreatedSandboxReadinessResult | null = null;
+    waitUntil(() => {
+      attempt += 1;
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isSandboxReady(list, sandboxName)) {
         consecutiveReadyPolls += 1;
@@ -238,18 +272,18 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
         lastFailurePhase = null;
         if (consecutiveReadyPolls >= stableReadyPolls) {
           addTraceEvent("ready", {
-            attempt: i + 1,
+            attempt,
             consecutive_polls: consecutiveReadyPolls,
           });
-          return { ready: true, reason: "ready", failurePhase: null };
+          result = { ready: true, reason: "ready", failurePhase: null };
+          return true;
         }
         addTraceEvent("ready_pending_stability", {
-          attempt: i + 1,
+          attempt,
           consecutive_polls: consecutiveReadyPolls,
           required_polls: stableReadyPolls,
         });
-        if (i < readyAttempts - 1) sleep(2);
-        continue;
+        return false;
       }
       consecutiveReadyPolls = 0;
       const failurePhase = getSandboxFailurePhase?.(list, sandboxName) ?? null;
@@ -258,8 +292,9 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       // (#6043). "Failed" and "CrashLoopBackOff" are genuinely terminal and
       // must still fast-fail immediately rather than burn the debounce window.
       if (failurePhase && failurePhase !== "Error") {
-        addTraceEvent("terminal_failure_phase", { attempt: i + 1, failure_phase: failurePhase });
-        return { ready: false, reason: "terminal_failure_phase", failurePhase };
+        addTraceEvent("terminal_failure_phase", { attempt, failure_phase: failurePhase });
+        result = { ready: false, reason: "terminal_failure_phase", failurePhase };
+        return true;
       }
       if (failurePhase === "Error") {
         consecutiveFailurePolls += 1;
@@ -268,14 +303,15 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
         // re-registers the sandbox recovers on a later poll (#6043).
         if (consecutiveFailurePolls >= errorPhaseDebouncePolls) {
           addTraceEvent("terminal_failure_phase", {
-            attempt: i + 1,
+            attempt,
             failure_phase: failurePhase,
             consecutive_polls: consecutiveFailurePolls,
           });
-          return { ready: false, reason: "terminal_failure_phase", failurePhase };
+          result = { ready: false, reason: "terminal_failure_phase", failurePhase };
+          return true;
         }
         addTraceEvent("transient_failure_phase", {
-          attempt: i + 1,
+          attempt,
           failure_phase: failurePhase,
           consecutive_polls: consecutiveFailurePolls,
           debounce_polls: errorPhaseDebouncePolls,
@@ -283,8 +319,9 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       } else {
         consecutiveFailurePolls = 0;
       }
-      if (i < readyAttempts - 1) sleep(2);
-    }
+      return false;
+    }, waitOptions);
+    if (result) return result;
     // If the sandbox is still in Error on the final poll, surface the terminal
     // phase instead of a generic timeout. This happens when the configured
     // debounce window is larger than the readiness timeout allows (e.g. a low
@@ -293,7 +330,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
     // ready" and drop the phase (#6043 review).
     if (consecutiveFailurePolls > 0 && lastFailurePhase) {
       addTraceEvent("terminal_failure_phase", {
-        attempts: readyAttempts,
+        attempts: attempt,
         failure_phase: lastFailurePhase,
         consecutive_polls: consecutiveFailurePolls,
         debounce_polls: errorPhaseDebouncePolls,
@@ -301,7 +338,11 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       });
       return { ready: false, reason: "terminal_failure_phase", failurePhase: lastFailurePhase };
     }
-    addTraceEvent("not_ready", { attempts: readyAttempts, last_failure_phase: lastFailurePhase });
+    addTraceEvent("not_ready", {
+      attempts: attempt,
+      deadline_ms: budgetMs,
+      last_failure_phase: lastFailurePhase,
+    });
     return { ready: false, reason: "timeout", failurePhase: null };
   });
 }
@@ -338,39 +379,58 @@ export function waitForDashboardReadyWithTrace(options: {
   port: string | number;
   runCaptureOpenshell: RunCaptureOpenshell;
   sleep: (seconds: number) => void;
-}): void {
+  timeoutSecs?: number;
+  now?: () => number;
+  trace?: typeof addTraceEvent;
+}): boolean {
   const { sandboxName, port, runCaptureOpenshell, sleep } = options;
-  withDashboardReadinessTrace(sandboxName, port, 15, () => {
-    for (let i = 0; i < 15; i++) {
-      const readyOutput = runCaptureOpenshell(
-        [
-          "sandbox",
-          "exec",
-          "-n",
-          sandboxName,
-          "--",
-          "curl",
-          "-so",
-          "/dev/null",
-          "-w",
-          "%{http_code}",
-          "--max-time",
-          "3",
-          `http://localhost:${port}/health`,
-        ],
-        { ignoreError: true },
-      );
-      const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
-      addTraceEvent("dashboard_probe", { attempt: i + 1, http_status: readyCode });
-      if (readyCode === 200 || readyCode === 401) {
-        console.log("  ✓ Dashboard is live");
-        return;
-      }
-      if (i === 14) {
-        console.warn("  Dashboard taking longer than expected to start. Continuing...");
-      } else {
-        sleep(2);
-      }
+  const timeoutSecs = options.timeoutSecs ?? 30;
+  const budgetMs = Math.max(0, timeoutSecs * 1000);
+  return withDashboardReadinessTrace(sandboxName, port, timeoutSecs, () => {
+    let attempt = 0;
+    const waitOptions = createReadinessWaitOptions({
+      budgetMs,
+      maxIntervalMs: 2_000,
+      now: options.now,
+      sleep: (ms) => sleep(ms / 1000),
+    });
+    const traceEvent = options.trace ?? addTraceEvent;
+    if (!waitOptions) {
+      traceEvent("not_ready", { attempts: 0, deadline_ms: budgetMs });
     }
+    const ready =
+      waitOptions !== null &&
+      waitUntil(() => {
+        attempt += 1;
+        const readyOutput = runCaptureOpenshell(
+          [
+            "sandbox",
+            "exec",
+            "-n",
+            sandboxName,
+            "--",
+            "curl",
+            "-so",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "3",
+            `http://localhost:${port}/health`,
+          ],
+          { ignoreError: true },
+        );
+        const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
+        traceEvent("dashboard_probe", { attempt, http_status: readyCode });
+        return readyCode === 200 || readyCode === 401;
+      }, waitOptions);
+    if (ready) {
+      console.log("  ✓ Dashboard is live");
+      return true;
+    }
+    console.warn(
+      `  Dashboard did not become ready within the configured ${formatReadinessDeadline(budgetMs)} deadline. Continuing...`,
+    );
+    return false;
   });
 }

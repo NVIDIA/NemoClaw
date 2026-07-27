@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { verifiedRunnerLossEvidence } from "../tools/e2e/pr-e2e-gate.mts";
+import { verifiedRunnerLossEvidence } from "../tools/e2e/hosted-runner-loss.mts";
 import { detectRunnerLoss } from "../tools/e2e/runner-pressure-core.mts";
 
 const WORKFLOW_SHA = "d".repeat(40);

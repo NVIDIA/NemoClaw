@@ -390,7 +390,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
-      if (argv.join(" ") === "sandbox get alpha") {
+      const overrideResult = overrides.runOpenshell?.(argv);
+      if (overrideResult) return overrideResult;
+      if (
+        argv.join(" ") === "sandbox get alpha" ||
+        argv.join(" ") === "sandbox get -g nemoclaw alpha"
+      ) {
         return {
           status: 1,
           output: "sandbox alpha not found",
@@ -398,7 +403,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           stderr: "sandbox alpha not found",
         };
       }
-      return overrides.runOpenshell ? overrides.runOpenshell(argv) : { status: 0, output: "" };
+      return { status: 0, output: "" };
     });
   const captureOpenshellSpy = vi
     .spyOn(openshellRuntime, "captureOpenshell")
@@ -406,7 +411,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       const argv = Array.isArray(args) ? args.map(String) : [];
       return overrides.captureOpenshell
         ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
-        : { status: 1, output: "", stderr: "Not Found: sandbox not found" };
+        : { status: 1, output: "", stderr: "Error: sandbox alpha not found" };
     });
   const defaultRemovalReceipt = {
     entry: preDeleteSandboxEntry,

@@ -16,13 +16,39 @@ before those targets run; local runners must provide it themselves.
   GitHub Actions check suite.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
+- `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
+  failures from approved `main` workflows and requests one full rerun only when
+  every non-passing job has authenticated GitHub-hosted runner-loss evidence.
 - Platform workflows such as macOS, WSL, sandbox image, and regression E2E
   call their target E2E tests directly. The Ollama auth proxy target is
   selected through `.github/workflows/e2e.yaml`.
 
+## CI execution shape
+
+The sandbox image workflow builds the Hermes production image in the dedicated
+30-minute `build-hermes-sandbox-image` job. It uses full-SHA-pinned Buildx
+actions and a GitHub Actions cache scoped to the runner OS and architecture.
+The producer adds a bounded 32 GiB swap file and validates the guarded
+production build arguments before the build. It loads the image locally with
+registry writes disabled. After the build, it scans the completed image for
+node-tar and verifies the sandbox-readable installed files. It then uploads the
+compressed image as the one-day `hermes-isolation-image` artifact.
+
+The 90-minute `test-hermes-sandbox-image` job and the
+`state-dir-guard-metadata` job download and load that artifact instead of
+rebuilding the image. Within the Hermes test job, the secret-boundary and
+root-entrypoint steps have 45- and 30-minute budgets respectively.
+
 The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
 E2E tests when those boundaries are the behavior under test.
+
+## Platform Vitest main watch
+
+`.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
+four independent shards on each of macOS and WSL, with `fail-fast` disabled.
+Each macOS shard has a 30-minute budget and each WSL shard has a 90-minute
+budget. The additional root-required WSL contracts run only on shard 1.
 
 ## Credential-free tests
 
@@ -50,6 +76,12 @@ discovery command locally to inspect the generated test matrix:
 ```bash
 npx tsx tools/e2e/credential-free-tests.mts
 ```
+
+The retired `hermes-dashboard` selector remains a compatibility alias for
+`hermes-e2e` in both selector inputs. Reports use the canonical
+`hermes-e2e` name. That lane always enables dashboard coverage while preserving
+the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
+mode.
 
 ## Larger-runner routing
 
@@ -91,7 +123,7 @@ Successful state is discarded with the ephemeral runner.
 
 The fallback covers agent-turn latency, Hermes inference switch and shields,
 the Hermes Bedrock and stable MCP shards, the Hermes common-egress and channel
-stop/start shards, and the `hermes-e2e`, `hermes-dashboard`, `hermes-discord`,
+stop/start shards, the dashboard-bearing `hermes-e2e` lane, `hermes-discord`,
 and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
 dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes shards do not use it.
 Candidate-authored workflow definitions and fork-owned runs cannot reach it.
@@ -109,7 +141,7 @@ The eligible set is limited to the measured or repeatedly interrupted heavy
 lanes:
 
 - `common-egress-agent`;
-- `hermes-e2e`, `hermes-dashboard`, and `hermes-discord`;
+- `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - both `hermes-inference-switch` modes;
 - `hermes-shields-config`;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
@@ -178,10 +210,63 @@ graph as the live targets:
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
 
+A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
+`targets` selectors is a full dispatch. Each full dispatch uses `github.run_id`
+in its workflow concurrency identity, so another full dispatch cannot supersede
+it while it waits. The protected `staging-brev-launchable` job uses the
+non-cancelling `staging-brev-launchable-cpu` group with `queue: max`, so pending
+qualifications remain queued instead of replacing one another.
+
+### Hosted-runner recovery
+
+The trusted recovery workflow can request one full rerun of the latest eligible
+first attempt for these source workflows:
+
+- scheduled or manually dispatched `E2E main`;
+- `E2E / WSL` pushes to `main`;
+- `E2E / macOS` pushes to `main`; and
+- `CI / Platform Vitest Main Watch` pushes to `main`.
+
+The controller authenticates the active workflow name and path, repository,
+head repository, branch, run name, event, run URL, and first-attempt failure.
+It ignores E2E PR child runs and an eligible source run that has a newer
+eligible run for the same workflow.
+
+The complete non-passing job listing must contain only exact hosted-runner-loss
+markers for that workflow's approved runner labels.
+The E2E policy accepts only `ubuntu-latest`.
+The WSL and macOS policies accept only `cancelled` jobs with their exact
+platform label and exact GitHub internal-error annotation.
+The platform-watch policy applies those platform contracts to Windows and
+macOS jobs and the authenticated hosted-runner-loss contract to Ubuntu jobs.
+An ordinary assertion failure, mixed failure set, incomplete listing, custom or
+self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
+
+The controller collects and fingerprints the complete source, workflow,
+latest-run, job, check, annotation, and optional log evidence twice.
+It requests the full GitHub Actions rerun only when both snapshots match.
+The rerun executes every job in attempt two, not only the failed jobs.
+Neither a source attempt two nor a recovery-controller rerun can request
+another source rerun.
+
+The recovery job checks out only the trusted default-branch controller and does
+not check out source-run code.
+It receives no repository secrets and holds `actions: write` only for the
+bounded rerun request.
+
+The runner-allocation and internal-error failures originate in the
+GitHub-hosted Actions service, outside repository-controlled workflow code, so
+this controller contains the failure without claiming to repair its source.
+Remove the recovery workflow and controller after the supported source
+workflows record 30 consecutive days with no first-attempt failure accepted by
+the exact recovery classifier, or when those workflows stop using
+GitHub-hosted runners. Any accepted recovery request resets that observation
+window.
+
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 14 routed workflow lane identities / 17
+telemetry for 13 routed workflow lane identities / 16
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
@@ -193,9 +278,8 @@ concrete job executions.
 - `mcp-bridge` with the `hermes` shard
 - `mcp-bridge` with the `deepagents` shard
 - `channels-stop-start` with the `hermes` shard
-- `hermes-dashboard`
 - `hermes-discord`
-- `hermes-e2e`
+- `hermes-e2e`, including dashboard coverage
 - `hermes-inference-switch` with the `hosted` and `anthropic` modes
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
@@ -258,7 +342,14 @@ sample metadata, including the explicit target and shard labels. It never
 records process or container names, command lines, child output, or arbitrary
 environment and secret values. Docker memory evidence is reduced to the largest
 retained container value; maximum Docker CPU considers every row in the bounded
-command output.
+command output. When the globally largest process is in the Docker/BuildKit
+class, the collector also reads that process's `VmRSS`, `RssAnon`, `RssFile`,
+`RssShmem`, and optional `VmSwap` values from procfs. PID and exact process
+identity remain private to the collector, and the breakdown is `null` if the
+process exits, its identity changes, procfs denies access, or the resident
+components are incomplete or inconsistent. The outer `rssKb` is the `ps`
+selection and ranking observation; `breakdown.vmRssKb` is the immediately
+following procfs observation and may differ when a live process changes memory.
 
 The finalizer validates the complete ledger before writing
 `runner-comparison-summary.json`. The v2 summary reports the sampled
@@ -272,6 +363,13 @@ intervals ending at a `scenario-start` remain unattributed because they can
 span two tests, and extrema whose selected observation is `initialize` have a
 `null` phase. OOM deltas are also `null` unless both endpoint counters are
 available. Unsupported or unreadable measurements are `null`.
+
+The largest-process summary carries the breakdown from the same sample that
+provided the maximum total RSS; it does not combine per-component maxima from
+different samples. Treat this as an approximate breakdown of one process's RSS,
+not as a Docker/BuildKit process-tree working set: file-backed RSS can count
+shared mappings in more than one process, and this evidence excludes host page
+cache and sibling processes.
 
 The root-cgroup peak is a lifetime counter that includes Docker siblings but
 can also include host activity before the measured window. Compare it only
@@ -466,10 +564,15 @@ through cold onboarding and a real first turn.
 The repository-root `Dockerfile.base` remains in only the `platform-install`
 family. It selects `cloud-onboard` and does not trigger the cold `full-e2e`
 path.
-The Deep Agents Code headless-inference check additionally selects the exact
-`ubuntu-repo-cloud-langchain-deepagents-code` typed target. That target is
-hashed into the risk plan beside the control-plane floor jobs, so the
-controller dispatches both selector types in one correlated workflow run.
+Non-documentation runtime changes under `agents/langchain-deepagents-code/`
+and changes to the Deep Agents Code headless-inference check select the exact
+`ubuntu-repo-cloud-langchain-deepagents-code` typed target. Documentation and
+ordinary test changes alone do not select it. The target is hashed into the
+risk plan beside any control-plane floor jobs, so the controller dispatches
+both selector types in one correlated workflow run. Fork revisions whose plans
+select credential-bearing jobs or targets instead require explicit protected
+credentialed-E2E approval. Plans with no selected jobs or targets can complete
+without an E2E run.
 An internal revision whose matched control-plane files are drawn only from the
 trusted controller and observer boundaries—`.github/workflows/pr-e2e-gate.yaml`,
 `tools/e2e/pr-e2e-gate.mts`, and `tools/e2e/pr-e2e-required.mts`—automatically
@@ -500,11 +603,44 @@ projects each controller-selected target into a fixed target ID and hosted
 runner mapping. The generated live matrix must exactly match those trusted IDs
 and runners, and only the trusted projection can configure credential-bearing
 typed-target jobs. Ordinary branch dispatch is not an acceptable substitute.
-The controller uses GitHub's returned run ID for
-waiting, evidence download, and completion, then revalidates that the PR is
-still open with the PR SHA, base SHA, and coordination identity before
-recording a final result. The native observer revalidates the live revision
-before mirroring that terminal result.
+Immediately before the dispatch request, the controller also requires the
+coordination check to remain in the exact phase expected by that path.
+Regardless of the list result, a bounded direct check read must confirm the
+same identity and exact phase; pending, reserved, stale, or mismatched
+authorization state fails closed.
+The normal dispatch path uses GitHub's returned run ID for waiting, evidence
+download, and completion. A transport failure, HTTP 5xx response, invalid JSON,
+or malformed success response instead starts a 45-second read-only
+reconciliation window. The dispatch request is capped at 10 seconds, each
+inventory read is capped at 5 seconds, and the bounded adoption checks plus
+authorization publication keep the full path within the child's authorization
+window. The controller never sends a second dispatch request in that attempt.
+It waits for the full settling window and adopts exactly one
+correlated child only after validating its title, workflow path and SHA, `main`
+branch, first attempt, repository, canonical URLs, creation time, and GitHub
+Actions actor identities. It then rereads that run and revalidates the exact PR
+head, base, head repository, and unchanged pre-dispatch coordination check
+before publishing the run-specific authorization. If the authorization update
+response is lost or malformed, a bounded direct read accepts only the exact
+persisted child binding. Otherwise, the controller attempts to revoke
+coordination before requesting cancellation of the candidate child. If
+revocation itself fails,
+the controller still attempts cancellation and reports both failures. HTTP 4xx
+responses remain definitive dispatch rejections.
+
+Zero correlated runs produce the retryable `Workflow dispatch was not
+observed` result and a versioned receipt. Multiple or malformed correlated
+runs, incomplete or failed inventory reads, and identity drift fail closed as
+terminal reconciliation errors. Dispatch-reconciliation logs contain only the
+correlation ID, failure kind, optional HTTP status and safe GitHub request ID,
+and the `reconciling`, `adopted`, or `not-observed` result. API response
+excerpts are normalized to one line and limited to 512 characters. Dispatch
+inputs and tokens are not logged.
+
+After a child is selected, the controller revalidates that the PR is still open
+with the PR SHA, base SHA, and coordination identity before recording a final
+result. The native observer revalidates the live revision before mirroring that
+terminal result.
 
 An internal revision whose control-plane matches include a file outside the
 trusted controller and observer boundaries leaves coordination in progress
@@ -546,18 +682,23 @@ maintainer or administrator chooses **Run workflow** on `main`, selects
 as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
 and a specific 10–500-character `review_reason`. This path additionally
 revalidates the triggering actor's `maintain` or `admin` permission and uses the
-same exact-revision and deterministic-plan checks. If authorization
-fails before a child run is dispatched, the controller restores the
-authorization title and leaves coordination in progress. A maintainer can then
-launch a fresh first-attempt manual authorization. To use the protected path
-again, correct its environment configuration, update the PR to create a new
-head, and trigger fresh PR CI. After a child is dispatched, a startup failure
-requests cancellation. Whether or not cancellation is confirmed, the
-controller completes coordination as
-`Authorized E2E run requires reconciliation`; that authorization for the PR/base SHA pair
-cannot be retried because the child may still execute and a retry could start
-duplicate credential-bearing work. Inspect the linked run, then update the PR
-and run fresh CI before authorizing again.
+same exact-revision and deterministic-plan checks. An ordinary validation
+failure before dispatch restores the authorization title and leaves
+coordination in progress. A maintainer can then launch a fresh first-attempt
+manual authorization. To use the protected path again, correct its environment
+configuration, update the PR to create a new head, and trigger fresh PR CI.
+
+An uncertain dispatch that completes the bounded window with zero correlated
+runs instead completes coordination as `Workflow dispatch was not observed`
+with a validated receipt on the trusted GitHub Actions-owned coordination
+check. Ambiguous reconciliation or a startup failure after a possible child
+dispatch completes coordination as `Authorized E2E run requires
+reconciliation`. The controller requests cancellation for every fully validated
+candidate child and every schema-valid run ID that carries the correlation,
+including identity-invalid candidates. That authorization for the PR/base SHA
+pair cannot be reused because a child may still execute and another dispatch
+could start duplicate credential-bearing work. Inspect any linked or candidate
+run, then update the PR and run fresh CI before authorizing again.
 The native required job treats authorization and running titles as intermediate
 waiting states only while coordination remains in progress. It also keeps
 polling when the current PR/base SHA coordination check is a completed failure
@@ -568,21 +709,28 @@ later eligible `CI / Pull Request` run can create a fresh coordination check for
 the same unchanged open head and base only when the newest failed coordination
 check carries a current-version retry reason:
 `prerequisite-ci` after the later CI run succeeds, `child-cancelled` after a
-conclusively cancelled child, or `evidence-download` after a successful child
-whose evidence download failed, was cancelled, or was skipped. The trusted
-controller leaves the completed check as audit history, creates and validates a
-new `in_progress` check with the same PR/base SHA external identity, and rebuilds
-the deterministic plan before exposing a fresh authorization state. The
+conclusively cancelled child, `evidence-download` after a successful child
+whose evidence download failed, was cancelled, or was skipped, or
+`dispatch-not-observed` after an uncertain dispatch completes its bounded
+zero-match window and records a validated receipt. Before replacing a
+`dispatch-not-observed` check, the next controller rereads the old correlation
+and fails closed if a late child, incomplete inventory, or contradiction
+appears. The trusted controller leaves the completed check as audit history,
+creates and validates a new `in_progress` check with the same PR/base SHA
+external identity and a fresh correlation, and rebuilds the deterministic plan
+before exposing a fresh authorization state. The
 controller and native observer select the highest check-run ID only when every
 older duplicate is a completed failure with a recognized versioned retry
 marker. An unexpected app or mismatched mutation identity, duplicate ID, older
 unmarked or otherwise non-retryable terminal state, or multiple active
 candidates fails closed. Selected-job product or
 assertion failures, evidence policy or integrity failures, schema or identity
-mismatches, traversal or provenance failures, reconciliation, controller
-errors, unknown states, and failures recorded before retry reasons existed
-remain terminal for that PR/base SHA pair. Update the PR and run fresh CI for
-terminal outcomes. The
+mismatches, traversal or provenance failures, ambiguous, incomplete, or
+identity-invalid reconciliation, controller errors, unknown states, and
+failures recorded before retry reasons existed remain terminal for that
+PR/base SHA pair. A validated `dispatch-not-observed` receipt on a trusted
+GitHub Actions check is the only retryable reconciliation result. Update the PR
+and run fresh CI for terminal outcomes. The
 normal wait, evidence download, and finish path is the only path that can record
 success; the authorization itself cannot make the gate green. A changed head or
 base requires a new authorization.
@@ -680,8 +828,8 @@ exactly one failure annotation. Its message must be
 `The operation was canceled.` for one completed `cancelled` workload step or
 `Process completed with exit code 143.` for one completed `failure` workload
 step. The annotation must use `.github`, equal start and end lines, null
-columns, and empty title and detail fields. Every annotation must use a blob URL
-bound to the same workflow commit. The controller accepts at most 20
+columns, and null or empty title and detail fields. Every annotation must use a
+blob URL bound to the same workflow commit. The controller accepts at most 20
 annotations, bounds each text field, and limits the normalized annotation
 evidence to 64 KiB. This permits trusted bounded non-failure notices beside the
 sole failure annotation without allowing annotation output to exhaust the

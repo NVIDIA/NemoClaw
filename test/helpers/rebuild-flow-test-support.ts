@@ -86,12 +86,14 @@ export type RebuildFlowOverrides = {
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries?: Array<Record<string, unknown>>;
   };
-  runOpenshell?: (args: string[]) => {
-    status: number;
-    output: string;
-    stdout?: string;
-    stderr?: string;
-  };
+  runOpenshell?: (args: string[]) =>
+    | {
+        status: number;
+        output: string;
+        stdout?: string;
+        stderr?: string;
+      }
+    | undefined;
   captureOpenshell?: (
     args: string[],
     options?: Record<string, unknown>,

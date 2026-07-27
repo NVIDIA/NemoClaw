@@ -24,6 +24,7 @@ const WORKFLOW_SHA = "d".repeat(40);
 const APPROVAL_RUN_ID = 123;
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
@@ -137,6 +138,7 @@ describe("PR E2E protected internal approval", () => {
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
+    let check = exactPrGateCheck();
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -160,7 +162,7 @@ describe("PR E2E protected internal approval", () => {
           githubFetchRoute(
             ({ url, method }) =>
               url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
-            () => githubResponse({ total_count: 1, check_runs: [exactPrGateCheck()] }),
+            () => githubResponse({ total_count: 1, check_runs: [check] }),
           ),
           githubFetchRoute(
             ({ url }) => url.endsWith("/git/ref/heads/main"),
@@ -172,11 +174,14 @@ describe("PR E2E protected internal approval", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            (request) =>
-              githubResponse({
-                ...exactPrGateCheck(),
-                ...((request.body ?? {}) as Record<string, unknown>),
-              }),
+            (request) => {
+              check = { ...check, ...((request.body ?? {}) as Record<string, unknown>) };
+              return githubResponse(check);
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
           ),
           githubFetchRoute(
             ({ url, method }) =>
@@ -244,6 +249,115 @@ describe("PR E2E protected internal approval", () => {
         },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("dispatched=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("terminalizes a zero-match uncertain dispatch without restoring internal authorization", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-26T18:00:00.000Z"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-zero-match-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    let check = exactPrGateCheck();
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          approvalRunRoute(),
+          approvalHistoryRoute([
+            {
+              state: "approved",
+              comment: "Reviewed the exact internal PR and base SHAs.",
+              environments: [{ name: "approve-credentialed-e2e-for-internal-pr" }],
+              user: { login: "e2e-reviewer" },
+            },
+          ]),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [check] }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/git/ref/heads/main"),
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => {
+              check = { ...check, ...((request.body ?? {}) as Record<string, unknown>) };
+              return githubResponse(check);
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () => githubResponse({ message: "dispatch response lost" }, 500),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/workflows/e2e.yaml/runs?") && method === "GET",
+            () => githubResponse({ total_count: 0, workflow_runs: [] }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      const attempt = startApprovedControlPlanePrGate(approvedControlPlaneCommand(workDir));
+      const result = expect(attempt).rejects.toThrow(/not observed after bounded reconciliation/u);
+      await vi.runAllTimersAsync();
+      await result;
+
+      expect(check).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: {
+          title: "Workflow dispatch was not observed",
+          summary: expect.stringContaining(
+            "<!-- nemoclaw-pr-e2e-retry:v1:dispatch-not-observed -->",
+          ),
+        },
+      });
+      expect(JSON.stringify(check)).toContain("nemoclaw-pr-e2e-dispatch:v1:");
+      expect(
+        requests.filter(
+          (request) =>
+            request.url.endsWith("/actions/workflows/e2e.yaml/dispatches") &&
+            request.method === "POST",
+        ),
+      ).toHaveLength(1);
+      expect(
+        requests.filter(
+          (request) =>
+            request.method === "PATCH" &&
+            (request.body as { output?: { title?: string } } | undefined)?.output?.title ===
+              "E2E reviewer authorization required to run E2E",
+        ),
+      ).toHaveLength(0);
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }

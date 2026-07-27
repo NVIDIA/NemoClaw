@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Hosted Runner Recovery
+
+run-name: Hosted runner recovery for source run ${{ github.event.workflow_run.id }}
+
+on:
+  workflow_run:
+    workflows:
+      - E2E
+      - E2E / WSL
+      - E2E / macOS
+      - CI / Platform Vitest Main Watch
+    types:
+      - completed
+
+permissions: {}
+
+jobs:
+  recover:
+    if: >-
+      ${{
+      github.run_attempt == 1 &&
+      github.repository == 'NVIDIA/NemoClaw' &&
+      github.event.workflow_run.run_attempt == 1 &&
+      github.event.workflow_run.status == 'completed' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw' &&
+      (
+      (
+      github.event.workflow_run.path == '.github/workflows/e2e.yaml' &&
+      (github.event.workflow_run.event == 'schedule' ||
+      github.event.workflow_run.event == 'workflow_dispatch') &&
+      github.event.workflow_run.display_title == 'E2E main'
+      ) ||
+      (
+      github.event.workflow_run.event == 'push' &&
+      (
+      github.event.workflow_run.path == '.github/workflows/wsl-e2e.yaml' ||
+      github.event.workflow_run.path == '.github/workflows/macos-e2e.yaml' ||
+      github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'
+      )
+      )
+      )
+      }}
+    concurrency:
+      group: hosted-runner-recovery-${{ github.event.workflow_run.workflow_id }}
+      queue: max
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+    steps:
+      - name: Checkout trusted recovery controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Evaluate exact hosted-runner-loss evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          tools/e2e/hosted-runner-recovery.mts
+
+      - name: Record static recovery policy
+        if: ${{ always() }}
+        shell: bash
+        run: >-
+          printf '%s\n'
+          'Hosted-runner recovery evaluated the fail-closed latest-eligible main-run policy.'
+          >> "$GITHUB_STEP_SUMMARY"

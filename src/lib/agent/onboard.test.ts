@@ -7,6 +7,7 @@ import type { AgentDefinition } from "./defs";
 import {
   collectHermesStartupDiagnostics,
   handleAgentSetup,
+  type OnboardContext,
   printDashboardUi,
   verifyAgentBinaryAvailable,
 } from "./onboard";
@@ -269,7 +270,10 @@ describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
 });
 
 describe("agent setup session boundaries", () => {
-  function createAgentSetupContext(runCaptureOpenshell = vi.fn(() => "")) {
+  function createAgentSetupContext(
+    runCaptureOpenshell: OnboardContext["runCaptureOpenshell"] = vi.fn(() => ""),
+    timing: Pick<OnboardContext, "now" | "sleepSeconds"> = {},
+  ) {
     return {
       context: {
         step: vi.fn(),
@@ -280,9 +284,14 @@ describe("agent setup session boundaries", () => {
         recordStepComplete: vi.fn(async () => undefined),
         recordStepFailed: vi.fn(async () => undefined),
         skippedStepMessage: vi.fn(),
+        ...timing,
       },
     };
   }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it("records resume success through the supplied completion boundary", async () => {
     const runCaptureOpenshell = vi.fn(() => "ok");
@@ -319,6 +328,86 @@ describe("agent setup session boundaries", () => {
       model: "model-x",
     });
     expect(context.recordStepFailed).not.toHaveBeenCalled();
+  });
+
+  it("retries a configured gateway probe through the supplied scheduler", async () => {
+    let nowMs = 0;
+    const sleepSeconds = vi.fn((seconds: number) => {
+      nowMs += seconds * 1000;
+    });
+    const runCaptureOpenshell = vi
+      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok")
+      .mockReturnValueOnce("");
+    const { context } = createAgentSetupContext(runCaptureOpenshell, {
+      now: () => nowMs,
+      sleepSeconds,
+    });
+
+    await handleAgentSetup(
+      "sandbox-x",
+      "model-x",
+      "provider-x",
+      makeAgent({
+        healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 1 },
+      }),
+      false,
+      null,
+      context,
+    );
+
+    expect(runCaptureOpenshell.mock.calls.filter(([args]) => args.includes("curl"))).toHaveLength(
+      2,
+    );
+    expect(sleepSeconds).toHaveBeenCalledWith(0.25);
+    expect(context.recordStepComplete).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "sandbox-x",
+      provider: "provider-x",
+      model: "model-x",
+    });
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+  });
+
+  it("records gateway failure when the configured deadline expires", async () => {
+    let nowMs = 0;
+    const sleepSeconds = vi.fn((seconds: number) => {
+      nowMs += seconds * 1000;
+    });
+    const runCaptureOpenshell = vi
+      .fn<OnboardContext["runCaptureOpenshell"]>(() => "")
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+    const { context } = createAgentSetupContext(runCaptureOpenshell, {
+      now: () => nowMs,
+      sleepSeconds,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${String(code)}`);
+    }) as typeof process.exit);
+
+    await expect(
+      handleAgentSetup(
+        "sandbox-x",
+        "model-x",
+        "provider-x",
+        makeAgent({
+          healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 1 },
+        }),
+        false,
+        null,
+        context,
+      ),
+    ).rejects.toThrow("process.exit:1");
+
+    expect(
+      runCaptureOpenshell.mock.calls.filter(([args]) => args.includes("curl")).length,
+    ).toBeGreaterThan(1);
+    expect(sleepSeconds).toHaveBeenCalledWith(0.25);
+    expect(context.recordStepFailed).toHaveBeenCalledWith(
+      "agent_setup",
+      "Agent gateway did not respond within 1s",
+    );
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
   });
 });
 

@@ -546,12 +546,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
             status: 1,
             output: "",
             stdout: "",
-            stderr: "Not Found: sandbox not found",
+            stderr: "Error: sandbox alpha not found",
           };
     });
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
-    if (argv.join(" ") === "sandbox get alpha") {
+    if (
+      argv.join(" ") === "sandbox get alpha" ||
+      argv.join(" ") === "sandbox get -g nemoclaw alpha"
+    ) {
       return {
         status: 1,
         output: "sandbox alpha not found",

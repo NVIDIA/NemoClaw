@@ -1543,16 +1543,22 @@ Onboarding ends with:
 On a fresh onboard the OpenShell gateway can (re)start its supervisor session and re-register the just-created sandbox.
 During that window `openshell sandbox list` briefly reports the sandbox in the transient `Error` phase before it flips to `Ready`, as seen on DGX Spark when supervisor restart races the sandbox bootstrap.
 
-NemoClaw tolerates a bounded run of consecutive `Error` polls (default 30 polls / ~60s) so this transient recovers on its own; only `Error` that persists past the debounce window is treated as terminal. `Failed` and `CrashLoopBackOff` are always terminal and fail immediately.
+NemoClaw polls immediately, starts retrying after 250ms, and backs off to a 2-second cap.
+It tolerates 30 consecutive `Error` observations by default so this transient recovers on its own.
+Only `Error` that persists through the debounce count is terminal, unless the overall `NEMOCLAW_SANDBOX_READY_TIMEOUT` deadline expires first.
+`Failed` and `CrashLoopBackOff` are always terminal and fail immediately.
 
-If your host needs a longer window (slower re-registration), raise the debounce; to fail fast on the first `Error` poll, set it to `1`:
+If your host needs more observations for slower re-registration, raise the debounce.
+Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` too if the overall deadline is too short.
+To fail fast on the first `Error` poll, set the debounce to `1`:
 
 ```bash
-export NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE=60   # tolerate ~120s of transient Error
+export NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE=1
 $$nemoclaw onboard
 ```
 
-If the failure persists after the debounce, the sandbox is genuinely stuck — inspect the retained diagnostics and gateway state:
+If the failure persists after the debounce, the sandbox is stuck.
+Inspect the retained diagnostics and gateway state:
 
 ```bash
 openshell sandbox list
@@ -1994,7 +2000,8 @@ After the upgrade, recreate the sandbox with `$$nemoclaw onboard`.
 NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation.
 This can appear during a direct blueprint run, custom-endpoint onboarding, or a host-side `config set` write.
 <AgentOnly variant="openclaw,hermes">
-It can also appear during a runtime `$$nemoclaw inference set` switch.
+It does not appear during a runtime `$$nemoclaw inference set` switch on an already-onboarded sandbox; that command routes a DNS-backed HTTPS endpoint through a local HTTPS Pin Runtime adapter instead of rejecting it.
+Refer to [Commands](commands) for details.
 </AgentOnly>
 
 Use an HTTPS IP-literal endpoint whose certificate is valid for that address.
@@ -2634,6 +2641,22 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
 For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
+
+### Managed Hermes local image build fails
+
+For a managed Hermes image on a local Docker-driver gateway, NemoClaw may first attempt the image build with host-side BuildKit.
+If that exact staged build starts and fails with a nonzero exit status or no exit status, NemoClaw preserves the BuildKit failure instead of retrying the managed Dockerfile with the incompatible gateway builder.
+The preceding BuildKit output contains the root cause.
+Fix the reported base-image, package, network, or Dockerfile error rather than treating it as a builder-selection failure.
+
+Then resume onboarding:
+
+```bash
+nemohermes onboard --resume
+```
+
+A disabled or unavailable local prebuild retains the existing gateway path.
+A custom Hermes Dockerfile supplied with `--from`, an OpenClaw image, or a build on a remote gateway also retains its existing builder behavior.
 
 ### Hermes dashboard config did not converge
 

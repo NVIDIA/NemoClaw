@@ -98,6 +98,11 @@ An explicit different API family is rejected for that route.
 To point a sandbox at a different custom endpoint, re-run onboarding with the new endpoint.
 A rebuild reuses the recorded endpoint and cannot change it.
 
+If updating an existing compatible provider fails after OpenShell selects the new route, NemoClaw attempts to restore the previously recorded provider and model.
+The command still exits nonzero because the provider binding might be partially updated.
+Retry the switch or re-run onboarding to reconcile the provider.
+If NemoClaw reports that it could not restore the previous selection, do not use the route until you re-run onboarding.
+
 </AgentOnly>
 
 ## Account for Shared Gateways

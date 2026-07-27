@@ -287,7 +287,19 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         path.join(stateDir, "sandboxes.json"),
         JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
       );
+      const adapterStateEntries = [
+        "https-pin-runtime-adapter.pid",
+        "https-pin-runtime-adapter-token",
+        "https-pin-runtime-adapter.json",
+        "https-pin-runtime-adapter.lock",
+        "https-pin-runtime-adapter.log",
+      ];
+      for (const name of adapterStateEntries) {
+        fs.writeFileSync(path.join(stateDir, name), name.endsWith(".pid") ? "4242" : "state");
+      }
       const logs: string[] = [];
+      const kill = vi.fn(() => true);
+      const run = vi.fn((_command: string, _args: string[]) => ok());
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
@@ -299,8 +311,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
+          kill,
           log: (line) => logs.push(line),
-          run: vi.fn(() => ok()),
+          run,
           runDocker: () => ok(""),
         },
       );
@@ -309,6 +322,17 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(path.join(otherEnv, "sandboxes.json"))).toBe(true);
       expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(false);
       expect(fs.existsSync(stateDir)).toBe(true);
+      for (const name of adapterStateEntries) {
+        expect(fs.existsSync(path.join(stateDir, name))).toBe(true);
+      }
+      expect(kill).not.toHaveBeenCalled();
+      expect(
+        run.mock.calls.some(
+          ([command, args]) =>
+            command === "ps" && JSON.stringify(args).includes("https-pin-runtime-adapter"),
+        ),
+      ).toBe(false);
+      expect(logs).toContain("Sibling gateways remain; kept the shared HTTPS Pin Runtime adapter.");
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

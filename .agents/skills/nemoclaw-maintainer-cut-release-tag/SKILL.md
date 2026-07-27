@@ -40,6 +40,7 @@ The downstream scheduled reconciliation remains available if the event-driven di
 - Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
+- Load `nemoclaw-maintainer-e2e` and run full mode when the candidate has no applicable exact Brev Launchable evidence.
 - Ask the maintainer to paste the confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.
@@ -115,14 +116,36 @@ When the entry is waived, show the recorded waiver reason in the plan presentati
 
 For the plan's full `origin/main` SHA, review `.github/workflows/e2e.yaml` at that commit and build the evidence ledger required by the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence). The workflow is the sole source of truth; do not substitute or maintain a separate release-gating test list.
 
+Find an applicable full-mode E2E run for the candidate SHA.
+If none exists, load `nemoclaw-maintainer-e2e` and dispatch full mode for that SHA.
+Do not substitute an ordinary E2E run or a selective `staging-brev-launchable` run.
+Require the full-mode run to include the default-enabled suite and `Exact staging Brev Launchable`.
+
+Before accepting that run, require:
+
+- the workflow `head_sha` to equal the plan candidate SHA;
+- the trusted dispatch receipt to prove empty selectors and `include_staging_brev_launchable=true`;
+- the workflow conclusion to be `success`;
+- the `Exact staging Brev Launchable` job conclusion to be `success`;
+- the job URL and workflow attempt number;
+- qualification identity for the same SHA; and
+- cleanup evidence that reports the qualified workspace as `ABSENT`.
+
+Treat a skipped job as missing evidence even when the workflow concludes `success`.
+If the plan candidate SHA changes, discard the run and qualification evidence.
+Run full mode again for the new candidate SHA.
+No release-note-only delta exception is currently defined.
+
 Before showing the confirmation prompt, present:
 
 - the candidate SHA;
 - the number of tests with green evidence out of the number required by the workflow;
 - each required test mapped to a successful run or job URL and attempt; and
-- an itemized maintainer exception for every test without green evidence, including its current result or failure summary and the rationale for proceeding.
+- the full-mode workflow URL, `Exact staging Brev Launchable` job URL, attempt, qualification identity, and cleanup result; and
+- a separate itemized maintainer exception for each test without successful evidence, including its test identifier, run links, current result, and rationale; and
+- a separate itemized maintainer exception for missing or invalid exact Brev Launchable qualification, including run and job URLs, the current result or missing receipt, and rationale.
 
-Do not ask for the phrase until every test has green evidence or an explicit itemized maintainer exception. If `origin/main` moves or the candidate SHA otherwise changes, regenerate the plan and rebuild the ledger for the new SHA.
+Do not ask for the phrase until each test and the exact Brev Launchable qualification has successful evidence or its own itemized maintainer exception. If `origin/main` moves or the candidate SHA otherwise changes, regenerate the plan and rebuild the ledger for the new SHA.
 
 Ask the maintainer to paste this phrase:
 
@@ -256,6 +279,9 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 
 - Plan generation fails: fix the named precondition, then regenerate the plan.
 - Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
+- Full-mode E2E readiness is disabled: stop before dispatch. Ask a release administrator to complete the protected environment, secrets, staging Launchable ID, and ownership setup, then enable the persistent readiness variable.
+- Full-mode E2E ran for another SHA or skipped `Exact staging Brev Launchable`: reject the run and dispatch full mode for the plan candidate SHA.
+- Qualification or cleanup evidence is missing or invalid: reject the run. Do not infer qualification from the workflow conclusion.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.

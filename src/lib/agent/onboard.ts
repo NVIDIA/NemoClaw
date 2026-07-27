@@ -23,6 +23,7 @@ import {
   requireAgentPolicyAdditionsPath,
   resolveAgentName,
 } from "./defs";
+import { waitForAgentGatewayReady } from "./gateway-readiness";
 import { runAgentSmokeCommands } from "./terminal-smoke";
 import { enforceTerminalAgentVersion } from "./terminal-version-enforcement";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
@@ -41,6 +42,8 @@ export interface OnboardContext {
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+  now?: () => number;
+  sleepSeconds?: (seconds: number) => void;
 }
 
 // Keep these compatibility exports as ordinary writable functions. Focused
@@ -377,29 +380,27 @@ export async function handleAgentSetup(
   const probe = agent.healthProbe;
   if (probe?.url) {
     const timeoutSecs = probe.timeout_seconds || 60;
-    const pollInterval = 3;
-    const maxAttempts = Math.ceil(timeoutSecs / pollInterval);
     console.log(`  Waiting for ${agent.displayName} gateway (up to ${timeoutSecs}s)...`);
-    let healthy = false;
-    for (let i = 0; i < maxAttempts; i++) {
-      const result = runCaptureOpenshell(
-        [
-          "sandbox",
-          "exec",
-          "-n",
-          sandboxName,
-          "--",
-          "curl",
-          ...buildValidatedCurlCommandArgs(["-sf", "--max-time", "3", probe.url]),
-        ],
-        { ignoreError: true },
-      );
-      if (isHealthProbeOk(result)) {
-        healthy = true;
-        break;
-      }
-      sleep(pollInterval);
-    }
+    const healthy = waitForAgentGatewayReady({
+      timeoutSeconds: timeoutSecs,
+      now: ctx.now,
+      sleepSeconds: ctx.sleepSeconds ?? sleep,
+      probe: () => {
+        const result = runCaptureOpenshell(
+          [
+            "sandbox",
+            "exec",
+            "-n",
+            sandboxName,
+            "--",
+            "curl",
+            ...buildValidatedCurlCommandArgs(["-sf", "--max-time", "3", probe.url]),
+          ],
+          { ignoreError: true },
+        );
+        return isHealthProbeOk(result);
+      },
+    });
     if (healthy) {
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {
