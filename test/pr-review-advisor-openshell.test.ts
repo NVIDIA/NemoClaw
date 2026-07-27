@@ -441,8 +441,12 @@ describe("PR review advisor OpenShell wrapper", () => {
       { cwd: workdir },
     );
 
+    const emptyGitConfig = path.join(workdir, "empty-gitconfig");
+    fs.writeFileSync(emptyGitConfig, "");
     const differentOwnerEnv: NodeJS.ProcessEnv = {
       ...process.env,
+      GIT_CONFIG_GLOBAL: emptyGitConfig,
+      GIT_CONFIG_NOSYSTEM: "1",
       GIT_TEST_ASSUME_DIFFERENT_OWNER: "1",
     };
     delete differentOwnerEnv.GIT_DIR;
@@ -455,6 +459,8 @@ describe("PR review advisor OpenShell wrapper", () => {
       }),
     ).toThrow();
 
+    vi.stubEnv("GIT_CONFIG_GLOBAL", emptyGitConfig);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
     vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
     try {
       expect(() => verifyAdvisorGitWorktree(workdir)).not.toThrow();
