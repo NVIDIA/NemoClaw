@@ -88,11 +88,22 @@ export type GatewayManagementParseResult =
  */
 export class GatewayManagementDeclarationError extends Error {}
 
+const GATEWAY_MANAGEMENT_ERROR_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu;
+
+function escapeGatewayManagementErrorReason(reason: string): string {
+  return reason.replace(
+    GATEWAY_MANAGEMENT_ERROR_CONTROL_RE,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 /** Build the user-facing error for an invalid gateway management declaration. */
 export function invalidGatewayManagementDeclarationError(
   reason: string,
 ): GatewayManagementDeclarationError {
-  return new GatewayManagementDeclarationError(`Invalid gateway management declaration: ${reason}`);
+  return new GatewayManagementDeclarationError(
+    `Invalid gateway management declaration: ${escapeGatewayManagementErrorReason(reason)}`,
+  );
 }
 
 const DECLARATION_KEYS = new Set([

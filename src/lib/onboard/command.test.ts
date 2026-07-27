@@ -285,6 +285,29 @@ describe("onboard command options", () => {
     expect(output).not.toContain("    at ");
   });
 
+  it("escapes terminal controls in gateway declaration errors before printing (#7627)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw invalidGatewayManagementDeclarationError(
+            "unknown declaration field(s): forged\n\u001b[31mError: fake failure",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(errors).toEqual([
+      "  Invalid gateway management declaration: unknown declaration field(s): forged\\u000a\\u001b[31mError: fake failure",
+    ]);
+    expect(errors[0]?.split(/\r?\n/u)).toHaveLength(1);
+    expect(errors[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u);
+  });
+
   it("re-throws a non-cancellation, non-gateway error so genuine bugs still surface (#7627)", async () => {
     await expect(
       runOnboardCommand({
