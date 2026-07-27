@@ -62,6 +62,9 @@ function writeExclusive(file: string, content: string): void {
     0o600,
   );
   try {
+    // lgtm[js/network-data-to-file] The prepared GitHub context is bounded,
+    // serialized JSON written to a fixed runner-owned path through an exclusive
+    // 0600 descriptor. The sandbox mounts it read-only and never executes it.
     fs.writeFileSync(fd, content);
   } finally {
     fs.closeSync(fd);

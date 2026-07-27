@@ -81,15 +81,31 @@ export function readPreparedGitHubContext(
   filePath: string,
   expected: { prNumber?: number; repo?: string } = {},
 ): GitHubReviewContext | null {
-  const stat = fs.lstatSync(filePath);
-  if (!stat.isFile()) {
-    throw new Error("Prepared GitHub context must be a regular file");
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    throw new Error("Prepared GitHub context must be a regular file", { cause: error });
   }
-  if (stat.size > MAX_PREPARED_GITHUB_CONTEXT_BYTES) {
+
+  let content: Buffer;
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) {
+      throw new Error("Prepared GitHub context must be a regular file");
+    }
+    if (stat.size > MAX_PREPARED_GITHUB_CONTEXT_BYTES) {
+      throw new Error("Prepared GitHub context exceeds the 5 MiB limit");
+    }
+    content = fs.readFileSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  if (content.byteLength > MAX_PREPARED_GITHUB_CONTEXT_BYTES) {
     throw new Error("Prepared GitHub context exceeds the 5 MiB limit");
   }
 
-  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
+  const parsed = JSON.parse(content.toString("utf8")) as unknown;
   if (parsed === null) return null;
   if (!isObjectRecord(parsed)) {
     throw new Error("Prepared GitHub context must be a JSON object or null");

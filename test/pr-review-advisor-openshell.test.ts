@@ -333,12 +333,13 @@ describe("PR review advisor OpenShell wrapper", () => {
 
     const runnerTemp = env.RUNNER_TEMP as string;
     const contextPath = path.join(runnerTemp, "pr-review-advisor-context", "github-context.json");
-    expect(JSON.parse(fs.readFileSync(contextPath, "utf8"))).toMatchObject({
+    const contextContent = fs.readFileSync(contextPath, "utf8");
+    expect(JSON.parse(contextContent)).toMatchObject({
       repo: "NVIDIA/NemoClaw",
       prNumber: 7542,
     });
     expect(fs.statSync(contextPath).mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(contextPath, "utf8")).not.toContain("github-host-secret");
+    expect(contextContent).not.toContain("github-host-secret");
     expect(
       fs.statSync(path.join(runnerTemp, "pr-review-advisor-runtime", "artifacts")).isDirectory(),
     ).toBe(true);
