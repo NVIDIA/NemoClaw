@@ -52,6 +52,35 @@ Consumers can ignore fields that they do not recognize within major version 1.
 Use stable capability and finding IDs instead of parsing human summaries.
 Treat bounded evidence as diagnostic context unless a capability or finding references its evidence ID.
 
+## Interpret platform qualification
+
+Platform checks report stable capabilities and qualifications for the detected host.
+Each capability uses `present`, `absent`, or `unknown`.
+
+| Capability ID | Result represented |
+| --- | --- |
+| `host.platform.supported` | The combined host platform result. |
+| `host.platform.linux_supported` | Linux on `x64` or `arm64`. |
+| `host.platform.macos_apple_silicon` | Apple silicon with reachable Docker Desktop or Colima. |
+| `host.platform.wsl_runtime_available` | A reachable, recognized Docker runtime in WSL. |
+| `host.platform.wsl_docker_desktop` | Docker Desktop integration in WSL. |
+| `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
+| `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
+| `host.platform.dgx_spark` | DGX Spark identity. |
+| `host.platform.dgx_station` | Qualified DGX Station GB300 identity, hardware, and software profile. |
+
+The report adds `host.platform.wsl`, `host.platform.dgx_spark`, or `host.platform.dgx_station` qualifications when those platforms apply.
+For WSL, Docker Desktop is `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
+The `host.platform.wsl_gpu_passthrough` capability is `present` only after the Docker Desktop proof passes.
+It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown` when the proof cannot run conclusively.
+
+DGX Station qualification fails closed.
+The `host.platform.dgx_station` capability is `present` only when the product identity, NVIDIA display-class PCI device, and software profile all qualify.
+A known mismatch produces an `unqualified` qualification and the blocking `host.platform.dgx_station_unqualified` finding.
+Missing or unreadable qualification evidence produces an `unknown` qualification and the blocking `host.platform.dgx_station_inconclusive` finding.
+Both outcomes prevent `host.platform.supported` from becoming `present`.
+When available, bounded Station identity appears under evidence ID `host.platform.identity`.
+
 ## Understand the read-only boundary
 
 `host probe` observes the host and does not run remediation.

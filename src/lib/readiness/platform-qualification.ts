@@ -139,12 +139,19 @@ function parseStationRelease(contents: string): StationProfile {
       ? "supported-dgx-os"
       : "unsupported-dgx-os";
   }
-  if (values.has("DGX_OTA_DATE")) return "unsupported-dgx-os";
-  const identity = [
-    values.get("DGX_PRETTY_NAME")?.[0],
-    values.get("DGX_SWBUILD_VERSION")?.[0],
-    values.get("DGX_SWBUILD_DATE")?.[0],
-  ].join("|");
+  if (values.has("DGX_OTA_PRETTY_NAME") || values.has("DGX_OTA_DATE")) {
+    return "unsupported-dgx-os";
+  }
+  const noOtaPrettyName = values.get("DGX_PRETTY_NAME")?.[0];
+  const noOtaVersion = values.get("DGX_SWBUILD_VERSION")?.[0];
+  if (
+    noOtaPrettyName === "NVIDIA DGX GB300WS" &&
+    /^7\.6\.[0-9]+$/u.test(noOtaVersion ?? "") &&
+    values.has("DGX_SWBUILD_DATE")
+  ) {
+    return "supported-dgx-os";
+  }
+  const identity = [noOtaPrettyName, noOtaVersion, values.get("DGX_SWBUILD_DATE")?.[0]].join("|");
   if (identity === "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16") {
     return "supported-colossus-baseos";
   }

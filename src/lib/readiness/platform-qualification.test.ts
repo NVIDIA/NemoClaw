@@ -45,6 +45,46 @@ function stationFixtureReadFile(path: string): string {
   return values.get(path.split("/").at(-1) ?? "") ?? "";
 }
 
+function noOtaStationRelease(
+  overrides: Partial<{
+    prettyName: string;
+    version: string;
+    buildDate: string;
+    otaMetadata: string;
+  }> = {},
+): string {
+  const fields = {
+    prettyName: "NVIDIA DGX GB300WS",
+    version: "7.6.0",
+    buildDate: "2026-07-14-13-59-06",
+    otaMetadata: "",
+    ...overrides,
+  };
+  return [
+    'DGX_NAME="DGX GB300WS"',
+    `DGX_PRETTY_NAME="${fields.prettyName}"`,
+    `DGX_SWBUILD_DATE="${fields.buildDate}"`,
+    `DGX_SWBUILD_VERSION="${fields.version}"`,
+    'DGX_COMMIT_ID="d0e99cc"',
+    fields.otaMetadata,
+    'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function collectStationIdentity(release: string) {
+  return collectPlatformIdentity({
+    productNamePath: "/fixtures/product_name",
+    stationReleasePath: "/fixtures/dgx-release",
+    pciDevicesPath: "/fixtures/pci",
+    readFile: (filePath) =>
+      filePath.endsWith("dgx-release") ? release : stationFixtureReadFile(filePath),
+    readdir: () => ["0000:01:00.0"],
+    stat: () => ({ isFile: () => true, isSymbolicLink: () => false, size: 256 }),
+  });
+}
+
 describe("platform readiness qualification (#7410)", () => {
   it.each(["x64", "arm64"])("supports generic Linux %s by capability", (architecture) => {
     const result = projectPlatformQualification(input({ architecture }));
@@ -166,7 +206,7 @@ describe("platform readiness qualification (#7410)", () => {
     expect(qualification(result, "host.platform.dgx_station")).toBe("qualified");
   });
 
-  it("fails closed when Station identity or hardware is unsafe", () => {
+  it("marks Station unqualified when no NVIDIA display-class PCI device is present", () => {
     const result = projectPlatformQualification(
       input({
         architecture: "arm64",
@@ -181,6 +221,31 @@ describe("platform readiness qualification (#7410)", () => {
     expect(qualification(result, "host.platform.dgx_station")).toBe("unqualified");
     expect(capability(result, "host.platform.supported")).toBe("absent");
     expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_station_unqualified");
+  });
+
+  it.each([
+    "7.6.0",
+    "7.6.1",
+  ])("accepts no-OTA DGX OS %s without binding its build date", (version) => {
+    expect(
+      collectStationIdentity(noOtaStationRelease({ version, buildDate: "2099-01-02-03-04-05" })),
+    ).toMatchObject({
+      stationProfile: "supported-dgx-os",
+      stationGb300PciGpu: true,
+    });
+  });
+
+  it.each([
+    ["different lineage", { prettyName: "NVIDIA DGX Server" }],
+    ["older no-OTA version", { version: "7.5.0" }],
+    ["future release family", { version: "7.7.0" }],
+    ["non-numeric patch", { version: "7.6.rc1" }],
+    ["partial OTA identity", { otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }],
+  ] as const)("keeps no-OTA Station metadata fail-closed with %s", (_scenario, overrides) => {
+    expect(collectStationIdentity(noOtaStationRelease(overrides))).toMatchObject({
+      stationProfile: "unsupported-dgx-os",
+      stationGb300PciGpu: true,
+    });
   });
 
   it("collects only bounded identity reads and never invokes host preparation", () => {
