@@ -225,12 +225,10 @@ describe("vllm model registry", () => {
     );
   });
 
-  it("keeps the pinned Nemotron Ultra recipe behind Hugging Face access", () => {
+  it("keeps the public Nemotron Ultra recipe usable without a Hugging Face token", () => {
     const ultra = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-ultra-550b-a55b");
-    expect(ultra?.gated).toBe(true);
-    expect(() => assertGatedModelAccess(ultra!, {} as NodeJS.ProcessEnv)).toThrow(
-      /gated on Hugging Face/,
-    );
+    expect(ultra?.gated).toBe(false);
+    expect(() => assertGatedModelAccess(ultra!, {} as NodeJS.ProcessEnv)).not.toThrow();
   });
 
   it("never rejects a non-gated model regardless of token state", () => {

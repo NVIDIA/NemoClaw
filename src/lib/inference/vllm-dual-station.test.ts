@@ -404,7 +404,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
     expect(mocks.probeCapability).toHaveBeenCalledTimes(2);
   });
 
-  it("fails through the normal gated-model resolver before side effects without an HF token", async () => {
+  it("installs the public Nemotron Ultra model without an HF token", async () => {
     delete process.env.NEMOCLAW_VLLM_MODEL;
     delete process.env.HF_TOKEN;
     delete process.env.HUGGING_FACE_HUB_TOKEN;
@@ -418,15 +418,14 @@ describe("dual DGX Station vLLM install orchestration", () => {
         promptFn: vi.fn(),
         beforeInstall,
       }),
-    ).resolves.toEqual({ ok: false });
+    ).resolves.toEqual({ ok: true });
 
-    expect(mocks.probeCapability).toHaveBeenCalledTimes(1);
-    expect(beforeInstall).not.toHaveBeenCalled();
-    expect(mocks.preflightOwnership).not.toHaveBeenCalled();
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
-    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
-    expect(mocks.stageModelSnapshot).not.toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("gated on Hugging Face"));
+    expect(mocks.probeCapability).toHaveBeenCalledTimes(2);
+    expect(beforeInstall).toHaveBeenCalledWith("nemotron-ultra");
+    expect(mocks.preflightOwnership).toHaveBeenCalled();
+    expect(mocks.dockerSpawn).toHaveBeenCalled();
+    expect(mocks.stageModelSnapshot).toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("gated on Hugging Face"));
   });
 
   it("skips only the model picker for an interactive qualified-peer install", async () => {

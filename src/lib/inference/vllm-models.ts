@@ -263,7 +263,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--default-chat-template-kwargs",
       `'{"enable_thinking":true,"force_nonempty_content":true}'`,
     ],
-    gated: true,
+    gated: false,
     platforms: ["station"],
     serveEnv: {
       VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: "1",
