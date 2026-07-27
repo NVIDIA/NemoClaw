@@ -208,10 +208,14 @@ def load_clone_local_pending():
         return None
     return value if isinstance(value, dict) else None
 
+clone_list_env = dict(os.environ)
+# OpenClaw otherwise omits a cold clone's identity on a loopback shared-token
+# call, so the gateway cannot bind its denial to the clone's pending request.
+clone_list_env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS},
+        capture_output=True, text=True, timeout=${listTimeoutS}, env=clone_list_env,
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     proc = None

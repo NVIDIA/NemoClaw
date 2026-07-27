@@ -41,8 +41,12 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     });
 
     expect(ordinary).not.toContain("local_identity_public_key");
+    expect(ordinary).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
     expect(ordinary.includes("load_clone_local_pending")).toBe(false);
     expect(restoredClone).toContain("local_identity_public_key");
+    expect(
+      restoredClone.match(/clone_list_env\['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'\] = '1'/gu),
+    ).toHaveLength(1);
     expect(restoredClone).toContain("if not related_pending:");
     expect(restoredClone).toContain("len(related_pending) > 1");
     expect(restoredClone).toContain("pending = related_pending");
@@ -248,8 +252,13 @@ if (args[0] === "devices" && args[1] === "list") {
     [
       process.env.OPENCLAW_STATE_DIR || "unset",
       process.env.NEMOCLAW_PRIMARY_STATE_DIR || "unset",
+      process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
     ].join(":") + "\\n",
   );
+  if (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING !== "1") {
+    process.stderr.write("raw clone identity failure must stay private\\n");
+    process.exit(1);
+  }
   if (process.env.NEMOCLAW_LIST_GATE_REQUEST_ID) {
     const requestId = process.env.NEMOCLAW_LIST_GATE_REQUEST_ID;
     const detail =
@@ -285,6 +294,7 @@ if (args[0] === "devices" && args[1] === "approve") {
       process.env.OPENCLAW_GATEWAY_URL || "unset",
       process.env.OPENCLAW_GATEWAY_PORT || "unset",
       process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+      process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
     ].join(":") + "\\n",
   );
   process.stdout.write("{}\\n");
@@ -364,7 +374,7 @@ process.exit(2);
       expect(initial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
       expect(parseAutoPairApprovalReceipt(initial.stdout)).toBe("approved-one");
       expect(readApprovals()).toEqual(["clone-pairing"]);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset:unset");
 
       resetLogs();
       const repairRequest = {
@@ -418,8 +428,8 @@ process.exit(2);
       expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
         primaryPending,
       );
-      expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe(`${stateDir}:${primaryStateDir}`);
-      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
+      expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe(`${stateDir}:${primaryStateDir}:1`);
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset:unset");
 
       const cloneScopePendingById = {
         [foreignRequest.requestId]: foreignRequest,
@@ -450,8 +460,10 @@ process.exit(2);
         expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
           primaryPending,
         );
-        expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe(`${stateDir}:${primaryStateDir}`);
-        expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
+        expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe(
+          `${stateDir}:${primaryStateDir}:1`,
+        );
+        expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset:unset");
       }
 
       for (const [pendingById, gatedRequestId, gatedKind, gatedExtraId, receipt] of [
