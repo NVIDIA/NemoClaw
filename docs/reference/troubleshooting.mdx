@@ -1684,6 +1684,22 @@ If the sandbox still cannot start or reports that no baseline is available, rebu
 $$nemoclaw <name> rebuild
 ```
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes,deepagents">
+
+### A Shields command reports corrupt persisted state
+
+If `shields up`, `shields down`, or `shields status` reports corrupt persisted state, NemoClaw refuses to infer or change the Shields posture.
+It preserves the Shields state file, timer marker, and transition record so an active recovery authority remains intact.
+
+While the state remains corrupt, do not use `shields up` or an ordinary rebuild to replace it.
+Inspect the reported state-file error and restore the state file from a trusted host backup before retrying.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
 ### `shields up` or `shields down` fails after `.config-hash` was removed
 
 `/sandbox/.openclaw/.config-hash` is the integrity sidecar for `openclaw.json`; deleting it during a manual config edit removes the file the shields guard captures alongside the config.
