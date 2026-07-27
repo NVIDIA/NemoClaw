@@ -87,7 +87,11 @@ function responseQueue(
   const responses = new Map(overrides);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
     const queue = responses.get(args.join(" "));
-    return queue?.shift() ?? success;
+    if (queue) return queue.shift() ?? success;
+    if (args.join(" ") === "sandbox get test-sandbox") {
+      return { exitCode: 1, stdout: "", stderr: "sandbox not found" };
+    }
+    return success;
   });
 }
 
@@ -311,6 +315,24 @@ describe("blueprint identity wrapper", () => {
     ).not.toContain("refresh configure");
   });
 
+  it("fails before identity mutation when the target sandbox cannot be inspected", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      ["sandbox get test-sandbox", [{ exitCode: 1, stdout: "", stderr: "gateway unavailable" }]],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /Failed to inspect sandbox 'test-sandbox'.*gateway unavailable/,
+    );
+
+    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
+      [command, ...(args ?? [])].join(" "),
+    );
+    expect(commandLines).toEqual(["openshell sandbox get test-sandbox"]);
+  });
+
   it("plans only the non-secret runtime identity binding", async () => {
     const plan = await actionPlan("default", blueprint({ identity: oktaIdentity() }));
 
@@ -412,6 +434,10 @@ describe("blueprint identity wrapper", () => {
     process.env.OKTA_CLIENT_SECRET = "client-secret";
     responseQueue([
       [
+        "sandbox get test-sandbox",
+        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
+      ],
+      [
         "provider get acme-okta-runtime",
         [
           { exitCode: 1, stdout: "", stderr: "provider not found" },
@@ -422,14 +448,14 @@ describe("blueprint identity wrapper", () => {
           })),
         ],
       ],
-      [
-        "sandbox create --from openclaw --name test-sandbox --forward 18789",
-        [{ exitCode: 1, stdout: "", stderr: "sandbox already exists" }],
-      ],
     ]);
 
     await actionApply("default", blueprint({ identity: oktaIdentity() }));
 
+    const applyCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(applyCommands).not.toContain(
+      "sandbox create --from openclaw --name test-sandbox --forward 18789",
+    );
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
     expect(planEntry?.content).toBeDefined();
     const plan = JSON.parse(planEntry!.content!);

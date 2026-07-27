@@ -259,7 +259,8 @@ flowchart LR
 
 ### Experimental Runtime Identity
 
-The direct blueprint runner can opt in to a provider-neutral runtime identity component.
+The direct OpenClaw blueprint runner can opt in to a provider-neutral runtime identity component.
+The Hermes manifest onboarding path does not consume this component.
 This experimental reference capability is not enabled by the shipped blueprint, and normal `$$nemoclaw onboard` does not collect or provision its inputs.
 The bundled Okta profile is the first data-only implementation of the component.
 The blueprint schema describes the OpenShell provider binding and OAuth refresh inputs without using the identity provider as a schema discriminator.

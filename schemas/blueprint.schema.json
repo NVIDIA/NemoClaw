@@ -133,7 +133,7 @@
           }
         },
         "identity": {
-          "description": "Optional experimental provider-neutral runtime identity reference.",
+          "description": "Optional experimental provider-neutral runtime identity reference for the direct OpenClaw blueprint runner.",
           "$ref": "#/$defs/runtimeIdentity"
         }
       }

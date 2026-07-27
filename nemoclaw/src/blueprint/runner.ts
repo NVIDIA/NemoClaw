@@ -869,7 +869,20 @@ export async function actionApply(
   }, options?.runtimeIdentityProfilePolicy);
 
   try {
+    let reuseExistingSandbox = false;
     if (runtimeIdentityConfig) {
+      const sandboxResult = await runCmd(["openshell", "sandbox", "get", sandboxName], {
+        reject: false,
+      });
+      const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
+      if (sandboxResult.exitCode === 0) {
+        reuseExistingSandbox = true;
+      } else if (!MISSING_SANDBOX_PATTERN.test(sandboxOutput)) {
+        throw new Error(
+          `Failed to inspect sandbox '${sandboxName}' before runtime identity apply: ${boundedCommandError(sandboxOutput)}`,
+        );
+      }
+
       progress(10, "Configuring runtime identity");
       // Establish durable state before the first identity mutation, then update
       // the receipt after each acquired resource.
@@ -879,31 +892,35 @@ export async function actionApply(
     }
 
     progress(20, "Creating OpenClaw sandbox");
-    const createArgs = [
-      "openshell",
-      "sandbox",
-      "create",
-      "--from",
-      sandboxImage,
-      "--name",
-      sandboxName,
-    ];
-    for (const port of forwardPorts) {
-      createArgs.push("--forward", String(port));
-    }
+    if (reuseExistingSandbox) {
+      log(`Sandbox '${sandboxName}' already exists, reusing.`);
+    } else {
+      const createArgs = [
+        "openshell",
+        "sandbox",
+        "create",
+        "--from",
+        sandboxImage,
+        "--name",
+        sandboxName,
+      ];
+      for (const port of forwardPorts) {
+        createArgs.push("--forward", String(port));
+      }
 
-    const createResult = await runCmd(createArgs, { reject: false });
-    sandboxCreatedByApply = createResult.exitCode === 0;
-    if (sandboxCreatedByApply && runtimeIdentityConfig) {
-      // Persist ownership immediately so a later-process rollback stays safe
-      // if apply is interrupted before its final state write.
-      persistRunPlan();
-    }
-    if (createResult.exitCode !== 0) {
-      if (createResult.stderr.includes("already exists")) {
-        log(`Sandbox '${sandboxName}' already exists, reusing.`);
-      } else {
-        throw new Error(`Failed to create sandbox: ${createResult.stderr}`);
+      const createResult = await runCmd(createArgs, { reject: false });
+      sandboxCreatedByApply = createResult.exitCode === 0;
+      if (sandboxCreatedByApply && runtimeIdentityConfig) {
+        // Persist ownership immediately so a later-process rollback stays safe
+        // if apply is interrupted before its final state write.
+        persistRunPlan();
+      }
+      if (createResult.exitCode !== 0) {
+        if (createResult.stderr.includes("already exists")) {
+          log(`Sandbox '${sandboxName}' already exists, reusing.`);
+        } else {
+          throw new Error(`Failed to create sandbox: ${createResult.stderr}`);
+        }
       }
     }
 
