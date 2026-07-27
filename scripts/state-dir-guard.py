@@ -244,7 +244,8 @@ def _is_under_runtime_carveout(relative_path: str) -> bool:
 
 
 def _is_runtime_carveout_parent(relative_path: str) -> bool:
-    """Return whether this is an agent directory that owns a sessions carveout."""
+    """Return whether this is an agent directory whose ``sessions`` child is
+    the carveout location."""
 
     parts = relative_path.split("/")
     return len(parts) == 2 and parts[0] == "agents" and parts[1] not in {"", ".", ".."}
@@ -1245,11 +1246,12 @@ def _ensure_runtime_carveout(
 
     The locked agent directory is root-owned and read-only for the sandbox
     identity, so an agent booting for the first time after shields-up cannot
-    create its own sessions directory and fails with EACCES.  This runs after
-    the entry loop so an agent whose unsafe ``sessions`` entry was just
-    removed also converges on a created carveout; a surviving non-directory
-    entry keeps its locked posture.  A name that appears between the
-    existence check and the mkdir fails closed like every other raced entry.
+    create its own sessions directory and fails with EACCES.  ``_mutate_dir``
+    calls this after its entry loop so an agent whose unsafe ``sessions``
+    entry was removed earlier in the same lock pass also converges on a
+    created carveout; a surviving non-directory entry keeps its locked
+    posture.  A name that appears between the existence check and the mkdir
+    makes the lock fail closed, matching the raced-entry policy.
     """
 
     relative_path = posixpath.join(relative_dir, "sessions")
