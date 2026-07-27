@@ -287,12 +287,22 @@ process.exit(2);
         requestId: "clone-write-upgrade",
         isRepair: true,
         scopes: ["operator.pairing", "operator.write"],
-        requestedScopes: ["operator.pairing", "operator.write"],
       };
       const repair = run([foreignRequest, repairRequest]);
       expect(repair.status).toBe(0);
       expect(repair.stdout).toContain(`${SUMMARY_MARKER}=1`);
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+      resetLogs();
+      const combinedInitialRequest = {
+        ...localRequest,
+        requestId: "clone-pairing-with-write",
+        isRepair: false,
+        scopes: ["operator.pairing", "operator.write"],
+      };
+      const combinedInitial = run([foreignRequest, combinedInitialRequest]);
+      expect(combinedInitial.status).toBe(0);
+      expect(combinedInitial.stdout).toContain(`${SUMMARY_MARKER}=1`);
+      expect(readApprovals()).toEqual(["clone-pairing-with-write"]);
 
       const { scopes: _ignoredScopes, ...repairWithoutScopes } = repairRequest;
       for (const rejected of [
@@ -301,7 +311,9 @@ process.exit(2);
         [repairRequest, { ...repairRequest, requestId: "second-clone-upgrade" }],
         [repairRequest, { ...foreignRequest, requestId: repairRequest.requestId }],
         [{ ...repairRequest, requestedScopes: ["operator.admin"] }],
+        [{ ...repairRequest, requestedScopes: repairRequest.scopes }],
         [{ ...repairRequest, scopes: [] }],
+        [{ ...localRequest, requestId: "unpaired-write-only", scopes: ["operator.write"] }],
         [repairWithoutScopes],
       ]) {
         resetLogs();

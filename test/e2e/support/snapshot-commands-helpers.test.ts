@@ -7,6 +7,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildSnapshotCommandEnv,
   classifySnapshotGatewayProbe,
+  classifySnapshotRestoreResult,
 } from "../live/snapshot-commands-helpers.ts";
 
 const HOSTED_FLAG = "NEMOCLAW_E2E_USE_HOSTED_INFERENCE";
@@ -124,6 +125,19 @@ describe("snapshot restored-gateway probe classification", () => {
     ],
   ] as const)("returns only fixed classification %#", (result, expected) => {
     const classification = classifySnapshotGatewayProbe(result);
+
+    expect(classification).toBe(expected);
+    expect(classification).not.toContain("secret-output");
+  });
+});
+
+describe("snapshot restore result classification", () => {
+  it.each([
+    [{ exitCode: 0, stdout: "Restored secret-output", stderr: "" }, "restored"],
+    [{ exitCode: 1, stdout: "Restored secret-output", stderr: "" }, "command-failure"],
+    [{ exitCode: 0, stdout: "secret-output", stderr: "" }, "missing-restored-marker"],
+  ] as const)("returns only fixed classification %#", (result, expected) => {
+    const classification = classifySnapshotRestoreResult(result);
 
     expect(classification).toBe(expected);
     expect(classification).not.toContain("secret-output");

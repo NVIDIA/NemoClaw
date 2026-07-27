@@ -17,6 +17,10 @@ export type SnapshotGatewayProbeClassification =
   | "gateway-connect-failure"
   | "scope-upgrade-pending"
   | "device-pairing-required";
+export type SnapshotRestoreResultClassification =
+  | "restored"
+  | "command-failure"
+  | "missing-restored-marker";
 
 const SNAPSHOT_GATEWAY_PROBE_REJECTIONS: ReadonlyArray<{
   pattern: RegExp;
@@ -51,6 +55,16 @@ export function classifySnapshotGatewayProbe(result: {
   if (result.exitCode !== 0) return "command-failure";
   if (!output.trim()) return "empty-output";
   return "authenticated";
+}
+export function classifySnapshotRestoreResult(result: {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}): SnapshotRestoreResultClassification {
+  if (result.exitCode !== 0) return "command-failure";
+  return /\bRestored\b/.test(`${result.stdout}\n${result.stderr}`)
+    ? "restored"
+    : "missing-restored-marker";
 }
 
 /**

@@ -26,6 +26,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   buildSnapshotCommandEnv,
   classifySnapshotGatewayProbe,
+  classifySnapshotRestoreResult,
   type SnapshotInferenceFixture,
 } from "./snapshot-commands-helpers.ts";
 import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
@@ -413,8 +414,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       timeoutMs: 5 * 60_000,
     },
   );
-  expect(cloneRestore.exitCode, resultText(cloneRestore)).toBe(0);
-  expect(resultText(cloneRestore)).toContain("Restored");
+  expect(classifySnapshotRestoreResult(cloneRestore)).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     CLONE_SANDBOX_NAME,
@@ -493,8 +493,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     env: commandEnv(),
     timeoutMs: 120_000,
   });
-  expect(latestRestore.exitCode, resultText(latestRestore)).toBe(0);
-  expect(resultText(latestRestore)).toContain("Restored");
+  expect(classifySnapshotRestoreResult(latestRestore)).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     SANDBOX_NAME,
@@ -522,8 +521,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       timeoutMs: 120_000,
     },
   );
-  expect(targetedRestore.exitCode, resultText(targetedRestore)).toBe(0);
-  expect(resultText(targetedRestore)).toContain("Restored");
+  expect(classifySnapshotRestoreResult(targetedRestore)).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     SANDBOX_NAME,
@@ -660,8 +658,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       timeoutMs: 120_000,
     },
   );
-  expect(restoreStoppedBackup.exitCode, resultText(restoreStoppedBackup)).toBe(0);
-  expect(resultText(restoreStoppedBackup)).toContain("Restored");
+  expect(classifySnapshotRestoreResult(restoreStoppedBackup)).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     SANDBOX_NAME,

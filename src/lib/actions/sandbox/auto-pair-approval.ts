@@ -161,7 +161,7 @@ def normalized_roles(device):
     return roles
 
 def consistent_scope_view(device):
-    if 'scopes' not in device:
+    if 'scopes' not in device or 'requestedScopes' in device:
         return None
     views = []
     for key in ('scopes', 'requestedScopes'):
@@ -228,7 +228,10 @@ def is_local_pairing_transition(device):
         return 'operator.write' in scopes
     if is_repair not in (None, False):
         return False
-    return scopes == {'operator.pairing'}
+    return (
+        scopes == {'operator.pairing'}
+        or {'operator.pairing', 'operator.write'}.issubset(scopes)
+    )
 
 related_pending = [
     device for device in pending
