@@ -723,6 +723,7 @@ install_macos_homebrew_formula() {
   if [ "$formula_checksum_verified" = "1" ] && [ "$homebrew_trust_supported" = "1" ]; then
     brew trust --formula "$formula_ref" \
       || fail "Homebrew refused to trust the checksum-verified OpenShell formula ${formula_ref}"
+    OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF="$formula_ref"
   fi
   if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then
     info "reinstalling OpenShell with Homebrew..."
@@ -733,7 +734,7 @@ install_macos_homebrew_formula() {
   fi
   if [ -n "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" ]; then
     brew untrust --formula "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" >/dev/null \
-      || fail "Homebrew refused to remove temporary trust for the unverified OpenShell dev formula ${formula_ref}"
+      || fail "Homebrew refused to remove temporary trust for OpenShell formula ${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF}"
     OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF=""
   fi
 

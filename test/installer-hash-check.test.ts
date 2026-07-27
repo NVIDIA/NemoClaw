@@ -106,6 +106,7 @@ type FixtureMode =
   | "installer-min-version-drift"
   | "installer-homebrew-untrust-cleanup-drift"
   | "installer-homebrew-trust-transition-drift"
+  | "installer-homebrew-trust-transition-stable-leak"
   | "installer-homebrew-trust-transition-complete-current"
   | "installer-pin-selector-drift"
   | "installer-sandbox-build-control-flow"
@@ -296,6 +297,7 @@ install_macos_homebrew_formula() {
     `  if [ "$formula_checksum_verified" = "1" ] && [ "$homebrew_trust_supported" = "1" ]; then
     brew trust --formula "$formula_ref" \\
       || fail "Homebrew refused to trust the checksum-verified OpenShell formula \${formula_ref}"
+    OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF="$formula_ref"
   fi
   if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then`,
     "stable trust",
@@ -313,7 +315,7 @@ install_macos_homebrew_formula() {
   fi
   if [ -n "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" ]; then
     brew untrust --formula "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" >/dev/null \\
-      || fail "Homebrew refused to remove temporary trust for the unverified OpenShell dev formula \${formula_ref}"
+      || fail "Homebrew refused to remove temporary trust for OpenShell formula \${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF}"
     OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF=""
   fi
 
@@ -327,6 +329,23 @@ const restoreLegacyHomebrewTrustLifecycle = (source: string): string => {
     assert.ok(current.includes(reviewed), `installer Homebrew ${label} marker must exist`);
     return current.replace(reviewed, () => legacy);
   }, source);
+};
+
+const restorePersistentStableHomebrewTrust = (source: string): string => {
+  const stableTrust = `    brew trust --formula "$formula_ref" \\
+      || fail "Homebrew refused to trust the checksum-verified OpenShell formula \${formula_ref}"
+    OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF="$formula_ref"`;
+  assert.ok(source.includes(stableTrust), "temporary stable Homebrew trust marker must exist");
+  return source
+    .replace(
+      stableTrust,
+      `    brew trust --formula "$formula_ref" \\
+      || fail "Homebrew refused to trust the checksum-verified OpenShell formula \${formula_ref}"`,
+    )
+    .replace(
+      "Homebrew refused to remove temporary trust for OpenShell formula \${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF}",
+      "Homebrew refused to remove temporary trust for the unverified OpenShell dev formula \${formula_ref}",
+    );
 };
 
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
@@ -400,6 +419,8 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
       `      warn "Homebrew could not remove temporary trust for \${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF}"
       status=1`,
     ),
+  "installer-homebrew-trust-transition-stable-leak": (source) =>
+    restorePersistentStableHomebrewTrust(source),
   "installer-max-version-drift": (source) =>
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
   "installer-pin-selector-drift": (source) =>
@@ -870,7 +891,18 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("rejects the legacy installer template after completing the trust transition", () => {
+  it("rejects the prior template that leaves stable formula trust behind", () => {
+    const result = runFixture("installer-homebrew-trust-transition-stable-leak", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("installer operational template is not base-trusted");
+    expect(result.stdout).toContain(
+      "actual_sha256=ee10afaeb5dc1477ca4b35a70a654ed32092399dbb290266f9f138d64484f1e2",
+    );
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("rejects the legacy installer template after completing the trust transition (#7451)", () => {
     const legacy = runFixture(
       "installer-homebrew-trust-transition-complete-current",
       undefined,

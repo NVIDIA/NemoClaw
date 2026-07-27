@@ -47,12 +47,12 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // only in a prerequisite trust-anchor PR that keeps the currently selected
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
-// #7555 completes the Homebrew trust transition anchored by #7558. Keep only
-// the reviewed successor: it trusts a checksum-verified stable formula and
-// removes inherited or automatic trust around an unverified dev install,
-// including failure cleanup.
+// #7555 completes the Homebrew trust transition anchored by #7601. Keep only
+// the reviewed successor: it trusts a checksum-verified stable formula,
+// revokes that temporary trust after success or failure, and removes inherited
+// trust around an unverified dev install.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
-  "ee10afaeb5dc1477ca4b35a70a654ed32092399dbb290266f9f138d64484f1e2",
+  "0fa737a64cf2a7a6a437dc5f203dad81f66f191dc316214c2f343f762ad9b0a5",
 ] as const;
 const TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST = [
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",

@@ -715,6 +715,7 @@ exit 1`,
         "trust --formula nvidia/openshell/openshell",
         "list --formula openshell",
         "install --formula nvidia/openshell/openshell",
+        "untrust --formula nvidia/openshell/openshell",
         "--prefix",
       ]);
       expect(result.stdout).toContain(
