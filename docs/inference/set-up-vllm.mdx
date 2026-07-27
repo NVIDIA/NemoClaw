@@ -190,6 +190,7 @@ After the Stations pass reciprocal GPU, rail, MAC, route, neighbor, and jumbo-fr
 No managed-vLLM runtime image or model download starts before the pair-qualification or single-Station fallback decision completes.
 If no trusted pair qualifies, Express retains the existing single-Station Ultra recipe.
 Setting `NEMOCLAW_VLLM_MODEL` remains authoritative; setting `NEMOCLAW_DGX_STATION_PEER` requests that exact already-trusted peer and fails closed if it does not qualify.
+When Express finds a complete running NemoClaw-managed dual-Station head, it defers the workload-rejecting host-preparation probe only while it revalidates the reciprocal pair and managed lifecycle contract; incomplete or mismatched workloads remain blocked.
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 
 ```bash

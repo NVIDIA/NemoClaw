@@ -27,6 +27,7 @@ import {
   strictStationPrepSshTransportArgs,
   writeDualStationResumeState,
 } from "../scripts/prepare-dual-dgx-station.mts";
+import { DUAL_STATION_VLLM_LAUNCH_SCHEMA } from "../src/lib/inference/vllm-station-cluster-lifecycle.ts";
 import {
   stationKnownHostsDigest,
   strictStationSshTransportArgs,
@@ -1445,7 +1446,7 @@ ensure_station_express_pair
       "true",
       "true",
       "head",
-      "1",
+      DUAL_STATION_VLLM_LAUNCH_SCHEMA,
       "c".repeat(64),
       "d".repeat(64),
       "e".repeat(64),
