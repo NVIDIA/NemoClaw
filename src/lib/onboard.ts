@@ -3881,8 +3881,6 @@ const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
 const recordInvalidatedStateResult =
   onboardRuntimeBoundary.recordInvalidatedStateResult.bind(onboardRuntimeBoundary);
-const recordInitialPreflightTransition =
-  onboardRuntimeBoundary.recordInitialPreflightTransition.bind(onboardRuntimeBoundary);
 /** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
@@ -4109,7 +4107,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await recordInitialPreflightTransition(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
     // safe name in that state.

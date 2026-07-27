@@ -282,11 +282,7 @@ preflightHandlers.handlePreflightState = async (options) => {
       stateResult: advanceTo("gateway", { metadata: { state: "preflight" } }),
     };
   }
-  if (scenario.mode !== "resume-initial") {
-    throw new Error("unexpected preflight compatibility handler");
-  }
-  called.push("preflight-compat");
-  throw sentinel;
+  throw new Error("unexpected preflight compatibility handler");
 };
 
 gatewayHandlers.handleGatewayState = async (options) => {
@@ -312,12 +308,9 @@ providerHandlers.handleProviderInferenceState = async (options) => {
 };
 
 flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
-  called.push("initial");
-  if (scenario.mode === "resume-initial") {
-    throw new Error("strict initial runner should not run on resume");
-  }
-  if (scenario.slice === "initial") throw sentinel;
   const initialSession = await runtime.session();
+  called.push("initial:" + initialSession.machine.state);
+  if (scenario.slice === "initial") throw sentinel;
   if (initialSession.machine?.state === "init") {
     await runtime.applyResult(advanceTo("preflight"));
   }
@@ -454,7 +447,7 @@ describe("live onboard FSM slice boundaries", () => {
   });
 
   it("enters the initial slice on fresh onboard runs", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial" }), ["initial"]);
+    assert.deepEqual(runSliceProbe({ slice: "initial" }), ["initial:init"]);
   });
 
   it("rejects an ambient gateway endpoint before entering the initial slice", () => {
@@ -462,22 +455,22 @@ describe("live onboard FSM slice boundaries", () => {
   });
 
   it("enters the core slice after the initial slice reaches provider selection", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core" }), ["initial", "core"]);
+    assert.deepEqual(runSliceProbe({ slice: "core" }), ["initial:init", "core"]);
   });
 
   it("enters the final slice after the core slice reaches the branch state", () => {
-    assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial", "core", "final"]);
+    assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
   });
 
-  it("bypasses the strict initial runner on resume and reaches compatibility phases", () => {
+  it("enters the strict initial runner at preflight on an exact-state resume", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "resume-initial" }), [
-      "preflight-compat",
+      "initial:preflight",
     ]);
   });
 
   it("bypasses the strict core runner when fresh state is already past the core entry", () => {
     assert.deepEqual(runSliceProbe({ slice: "core", mode: "ahead-core" }), [
-      "initial",
+      "initial:init",
       "provider-compat",
     ]);
   });
@@ -516,7 +509,7 @@ describe("live onboard FSM slice boundaries", () => {
   it("leaves ordinary policy tiers non-authoritative in the runOnboard machine", () => {
     for (const policyTier of ["balanced", "restricted"] as const) {
       assert.deepEqual(runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }), [
-        "initial",
+        "initial:init",
         "authoritative-policy-tier:undefined",
       ]);
     }

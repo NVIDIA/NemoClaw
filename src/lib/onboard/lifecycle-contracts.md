@@ -39,7 +39,7 @@ Every nonterminal state has one production owner or an explicit internal designa
 
 | State | Production owner |
 |---|---|
-| `init` | Internal entry state advanced by `onboard()` before the first flow slice |
+| `init` | Synthetic phase in `machine/flow-slices.ts`, applied by the strict initial-flow runner |
 | `preflight` | `machine/handlers/preflight.ts` |
 | `gateway` | `machine/handlers/gateway.ts` |
 | `provider_selection`, `inference` | `machine/handlers/provider-inference.ts` |
