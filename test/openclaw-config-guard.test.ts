@@ -416,11 +416,10 @@ describe("openclaw-config-guard", () => {
 
   it("unlocks idempotently when the config already holds the mutable posture (#7430)", () => {
     // An in-sandbox reconciler can leave the config mutable before shields-down; unlock must be a no-op.
-    const { configDir } = fixture();
+    const { configDir, configPath, hashPath } = fixture();
     const r = runGuard("unlock", configDir);
     expect(r.status, JSON.stringify(r.lines)).toBe(0);
-    expect(r.lines.at(-1)).toMatchObject({ action: "unlock", status: "ok" });
-    expect(mode(configDir)).toBe(0o2770);
+    expect([mode(configDir), mode(configPath), mode(hashPath)]).toEqual([0o2770, 0o660, 0o660]);
   });
 
   it("fresh-replaces both files on lock and unlock while preserving bytes, times, and xattrs", () => {
