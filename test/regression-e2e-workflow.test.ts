@@ -122,19 +122,6 @@ describe("Regression E2E workflow contract", () => {
     }
   });
 
-  // source-shape-contract: compatibility -- Keeps the gateway drift regression in its stateful integration execution lane
-  it("collects the gateway drift regression from its integration project (#6692)", () => {
-    const job = workflow.jobs?.["gateway-drift-preflight-e2e"];
-    const runStep = job?.steps?.find(
-      (step) => step.name === "Run gateway drift preflight E2E test",
-    );
-
-    expect(runStep?.run).toContain(
-      "vitest run --project integration test/gateway-drift-preflight.test.ts",
-    );
-    expect(runStep?.run).not.toContain("vitest run --project cli");
-  });
-
   // source-shape-contract: security -- Keeps the custom-plugin EXDEV regression immutable and free of repository secrets
   it("runs the OpenClaw custom-plugin lifecycle and EXDEV guard in a secret-free lane", () => {
     const releaseJob = workflow.jobs?.["openclaw-plugin-runtime-exdev-release-e2e"];

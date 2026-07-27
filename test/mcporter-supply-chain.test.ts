@@ -120,12 +120,16 @@ describe("mcporter image supply-chain controls", () => {
     expect(flattenedContents).toContain(
       '--verify-only --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" --tarball-url "$MCPORTER_EXPECTED_TARBALL"',
     );
-    expect(contents).toContain(
+    const groupedRuntimeCopy =
+      "COPY agents/openclaw/mcporter-runtime/package.json agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/";
+    const splitRuntimeCopies = [
       "COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json",
-    );
-    expect(contents).toContain(
       "COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json",
-    );
+    ];
+    expect(
+      flattenedContents.includes(groupedRuntimeCopy) ||
+        splitRuntimeCopies.every((copy) => contents.includes(copy)),
+    ).toBe(true);
     expect(flattenedContents).toContain(
       `${runtimePrefix} ci --ignore-scripts --omit=dev --no-audit --no-fund --no-progress`,
     );
@@ -156,9 +160,14 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).toContain(
       "COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json",
     );
-    expect(contents).toContain(
-      "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
-    );
+    expect(
+      flattenedContents.includes(
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+      ) ||
+        contents.includes(
+          "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
+        ),
+    ).toBe(true);
     expect(flattenedContents).toContain(
       "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     );

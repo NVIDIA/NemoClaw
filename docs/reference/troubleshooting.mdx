@@ -1373,7 +1373,7 @@ $$nemoclaw <name> logs --tail 50
 If the host should be reachable, allow it with a preset or a [custom preset](../network-policy/customize-network-policy#custom-preset-files):
 </AgentOnly>
 <AgentOnly variant="deepagents">
-If the host should be reachable, allow it with a built-in preset or apply a reviewed custom preset file from the host:
+If the host should be reachable, allow it with a built-in preset or apply a [reviewed custom preset file](../network-policy/configure-policies/create-custom-policy-presets) from the host:
 </AgentOnly>
 
 ```bash
@@ -1683,6 +1683,22 @@ If the sandbox still cannot start or reports that no baseline is available, rebu
 ```bash
 $$nemoclaw <name> rebuild
 ```
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes,deepagents">
+
+### A Shields command reports corrupt persisted state
+
+If `shields up`, `shields down`, or `shields status` reports corrupt persisted state, NemoClaw refuses to infer or change the Shields posture.
+It preserves the Shields state file, timer marker, and transition record so an active recovery authority remains intact.
+
+While the state remains corrupt, do not use `shields up` or an ordinary rebuild to replace it.
+Inspect the reported state-file error and restore the state file from a trusted host backup before retrying.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
 
 ### `shields up` or `shields down` fails after `.config-hash` was removed
 
@@ -2107,7 +2123,7 @@ To permanently allow an endpoint, add it to the network policy.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for details.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-For Deep Agents, use `nemo-deepagents <name> policy add <preset>` for built-in presets or `nemo-deepagents <name> policy add --from-file <preset.yaml>` for reviewed custom presets.
+For Deep Agents, follow [Customize the Network Policy](../network-policy/customize-network-policy) to choose between built-in presets, reviewed custom presets, baseline edits, and live-policy replacement.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
@@ -2641,22 +2657,6 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
 For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
-
-### Managed Hermes local image build fails
-
-For a managed Hermes image on a local Docker-driver gateway, NemoClaw may first attempt the image build with host-side BuildKit.
-If that exact staged build starts and fails with a nonzero exit status or no exit status, NemoClaw preserves the BuildKit failure instead of retrying the managed Dockerfile with the incompatible gateway builder.
-The preceding BuildKit output contains the root cause.
-Fix the reported base-image, package, network, or Dockerfile error rather than treating it as a builder-selection failure.
-
-Then resume onboarding:
-
-```bash
-nemohermes onboard --resume
-```
-
-A disabled or unavailable local prebuild retains the existing gateway path.
-A custom Hermes Dockerfile supplied with `--from`, an OpenClaw image, or a build on a remote gateway also retains its existing builder behavior.
 
 ### Hermes dashboard config did not converge
 

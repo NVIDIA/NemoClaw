@@ -110,7 +110,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
 
   it("retries a reasoning-only length response before failing the sandbox smoke", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-reasoning-"));
-    const model = "minimaxai/minimax-m2.7";
+    const model = "provider/reasoning-model";
     const configPath = writeSmokeConfig(tmpDir, model);
     const { binDir, callFile } = writeFakeCurl(
       tmpDir,
@@ -355,7 +355,7 @@ printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}
 
   it("reports a model-output budget problem when the retry also has no assistant content", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-no-content-"));
-    const model = "minimaxai/minimax-m2.7";
+    const model = "provider/reasoning-model";
     const configPath = writeSmokeConfig(tmpDir, model);
     const { binDir, callFile } = writeFakeCurl(
       tmpDir,

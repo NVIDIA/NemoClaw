@@ -610,10 +610,19 @@ function hasRetryableOpenshellResultShape(result: ReturnType<typeof captureOpens
 
 function isRetryableOpenshellReRegistrationState(
   result: ReturnType<typeof captureOpenshell>,
+  sandboxName: string,
 ): boolean {
   if (!hasRetryableOpenshellResultShape(result)) return false;
   const error = normalizeOpenshellStructuredError(String(result.stderr));
   if (error === OPENSHELL_SANDBOX_NOT_READY) return true;
+  // OpenShell can publish Ready before replacement registration settles.
+  // Retry only if the readiness probe reports phase Error for this sandbox.
+  if (
+    error ===
+    `Error: sandbox '${sandboxName}' is not ready (phase: Error); wait for it to reach Ready state.`
+  ) {
+    return true;
+  }
 
   // OpenShell 0.0.85 can keep the recreated sandbox's cached phase at Ready
   // while its replacement supervisor session is still registering. The exec
@@ -763,7 +772,10 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     // mutation outcome to reconcile. Treat that exact timeout as inconclusive
     // and retry behind the pinned managed-health guard on the next iteration.
     // All other unexpected OpenShell failures remain definitive.
-    if (!isRetryableOpenshellReRegistrationState(result) && !isCommandTimeout(result)) {
+    if (
+      !isRetryableOpenshellReRegistrationState(result, sandboxName) &&
+      !isCommandTimeout(result)
+    ) {
       return {
         failure: "openshell-readiness-failure",
         openshellError: lastOpenshellError,
