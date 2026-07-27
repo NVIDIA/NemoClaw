@@ -44,6 +44,8 @@ const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
+const RESTORED_GATEWAY_REJECTION =
+  /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i;
 
 function commandEnv(inference?: SnapshotInferenceFixture): NodeJS.ProcessEnv {
   return buildSnapshotCommandEnv(SANDBOX_NAME, inference);
@@ -101,6 +103,31 @@ async function expectSandboxFileContent(
   });
   expect(result.exitCode, resultText(result)).toBe(0);
   expect(result.stdout.trim()).toBe(expected);
+}
+
+async function expectAuthenticatedGatewayPairing(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(`
+set -eu
+PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
+[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+openclaw agent --agent main --json -m "ping" \
+  --session-id "snapshot-restore-verify-$$-$(date +%s)"
+`),
+    {
+      artifactName,
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(resultText(result).trim()).not.toBe("");
+  expect(resultText(result)).not.toMatch(RESTORED_GATEWAY_REJECTION);
 }
 
 async function expectBaselineExclusionAgreement(
@@ -163,7 +190,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     e2ePhases: [
       "confirm Docker and start hermetic inference",
       "onboard the snapshot sandbox",
-      "create and list the first snapshot",
+      "create, list, and restore the first snapshot into a paired clone",
       "create a second snapshot from changed workspace",
       "restore latest and timestamped snapshots",
       "audit snapshot credentials and command help",
@@ -184,6 +211,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "snapshot list shows versioned snapshots and parseable timestamps",
       "baseline exclusions remain active in registry and live policy across rebuild",
       "snapshot restore --to carries baseline exclusions into clone registry and live policy",
+      "snapshot restore --to returns only after restored gateway pairing is authenticated",
       "latest snapshot restore recovers latest workspace state",
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
@@ -355,7 +383,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     "phase-2-read-marker",
   );
 
-  progress.phase("create and list the first snapshot");
+  progress.phase("create, list, and restore the first snapshot into a paired clone");
   const firstCreate = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "create"], {
     artifactName: "phase-3-snapshot-create-first",
     env: commandEnv(),
@@ -398,6 +426,19 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     sandbox,
     CLONE_SANDBOX_NAME,
     "phase-4-clone-baseline-exclusion",
+  );
+  const clonePairingRequestOffset = inference.requests().length;
+  await expectAuthenticatedGatewayPairing(
+    sandbox,
+    CLONE_SANDBOX_NAME,
+    "phase-4-verify-clone-gateway-pairing",
+  );
+  expect(inference.requests().slice(clonePairingRequestOffset)).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      model: INFERENCE_MODEL,
+      path: "/v1/chat/completions",
+    }),
   );
   const destroyClone = await host.command("nemoclaw", [CLONE_SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "phase-4-destroy-clone",
