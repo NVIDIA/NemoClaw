@@ -526,6 +526,12 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
 #     bearer token, causing a 401.
 #   - Fix: merge into the combined provider/model form at the wrapper boundary
 #     so the invocation routes through the proxy credential resolution path.
+#   - Upstream constraint: NemoClaw installs a pinned Hermes CLI rather than
+#     vendoring its credential-resolution implementation, so the source fix
+#     cannot be made safely in this repository.
+#   - Regression evidence: the checked-in `hermes-inference-switch` live target
+#     invokes that pinned CLI with separate provider/model flags backed by an
+#     OpenShell placeholder and requires a successful inference response.
 #   - Removal condition: delete this translation when Hermes natively resolves
 #     openshell: placeholders for separate --provider flag invocations.
 #   - Tracking: NVIDIA/NemoClaw#7361
