@@ -74,7 +74,7 @@ const CONNECTION_DETAILS_SPEC: PatchSpec = {
 };
 
 const TOOL_TARGET_SPEC: PatchSpec = {
-  label: "agent-tool gateway target",
+  label: "agent-tool gateway",
   marker: TOOL_TARGET_MARKER,
   upstream: 'if (params.envGatewayUrl) return "remote";',
   patched: [
@@ -163,7 +163,7 @@ export function patchOpenClawGatewayDaemonDialback(
     file,
     source: fs.readFileSync(file, "utf8"),
   }));
-  const changedFiles: string[] = [];
+  const changedFiles = new Set<string>();
   const files: string[] = [];
 
   for (const spec of PATCH_SPECS) {
@@ -174,15 +174,20 @@ export function patchOpenClawGatewayDaemonDialback(
     }
     files.push(target.file);
     if (result.status === "patched") {
-      changedFiles.push(target.file);
+      changedFiles.add(target.file);
       target.source = result.text;
-      if (!options.audit) fs.writeFileSync(target.file, result.text);
+    }
+  }
+
+  if (!options.audit) {
+    for (const { file, source } of entries) {
+      if (changedFiles.has(file)) fs.writeFileSync(file, source);
     }
   }
 
   return {
     files,
-    status: changedFiles.length === 0 ? "already-patched" : "patched",
+    status: changedFiles.size === 0 ? "already-patched" : "patched",
   };
 }
 

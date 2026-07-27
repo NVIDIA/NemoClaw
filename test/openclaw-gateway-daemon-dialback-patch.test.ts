@@ -248,6 +248,22 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
     ).toThrow(/found 2 upstream/);
   });
 
+  it("does not write any target when a later patch shape is missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-atomic-"));
+    const callPath = path.join(tmp, "call.js");
+    try {
+      fs.writeFileSync(callPath, CALL_CONTEXT_SOURCE);
+      fs.writeFileSync(path.join(tmp, "connection-details.js"), CONNECTION_DETAILS_SOURCE);
+
+      expect(() => patchOpenClawGatewayDaemonDialback(tmp)).toThrow(
+        /expected exactly one agent-tool gateway target, found 0/,
+      );
+      expect(fs.readFileSync(callPath, "utf8")).toBe(CALL_CONTEXT_SOURCE);
+    } finally {
+      fs.rmSync(tmp, { force: true, recursive: true });
+    }
+  });
+
   it("fails closed when a marker remains after the patched shape drifts", () => {
     const patched = patchGatewayCallContextText(CALL_CONTEXT_SOURCE).text;
     const drifted = patched.replace(
