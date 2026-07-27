@@ -1009,19 +1009,8 @@ export async function actionApply(
       }
     }
 
-    if (runtimeIdentityReceipt) {
-      const attachmentCreated = await attachRuntimeIdentity(
-        runtimeIdentityReceipt,
-        sandboxName,
-        identityDeps,
-      );
-      runtimeIdentityReceipt = {
-        ...runtimeIdentityReceipt,
-        attachment_created: attachmentCreated,
-      };
-      persistRunPlan();
-    }
-
+    // Keep runtime credentials unattached until OpenShell accepts the
+    // sandbox's requested inference route.
     progress(50, "Configuring inference provider");
     if (reuseExistingInferenceProvider) {
       log(`Provider '${providerName}' already exists, reusing.`);
@@ -1110,6 +1099,19 @@ export async function actionApply(
       throw new Error(
         `Failed to set inference route (provider '${providerName}', model '${model}'): ${boundedCommandError(inferenceResult.stderr)}`,
       );
+    }
+
+    if (runtimeIdentityReceipt) {
+      const attachmentCreated = await attachRuntimeIdentity(
+        runtimeIdentityReceipt,
+        sandboxName,
+        identityDeps,
+      );
+      runtimeIdentityReceipt = {
+        ...runtimeIdentityReceipt,
+        attachment_created: attachmentCreated,
+      };
+      persistRunPlan();
     }
 
     if (Object.keys(policyAdditions).length > 0) {

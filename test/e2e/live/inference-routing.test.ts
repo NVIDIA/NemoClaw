@@ -254,6 +254,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "start the public OAuth issuer and protected resource",
       "plan the non-secret runtime identity reference",
       "apply and attach the runtime identity through OpenShell",
+      "prove inference remains live after identity attachment",
       "call the protected resource with the injected bearer",
       "rotate the credential without changing the placeholder",
       "verify secret-safe status and deterministic rollback",
@@ -300,7 +301,13 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     requireAuth: true,
     requireAuthModels: true,
   });
-  cleanup.add("close runtime identity inference prerequisite", () => inference.close());
+  cleanup.add("close runtime identity inference prerequisite", async () => {
+    try {
+      await artifacts.writeJson("tc-inf-12-inference-requests.json", inference.requests());
+    } finally {
+      await inference.close();
+    }
+  });
 
   progress.phase("onboard a real OpenShell sandbox");
   const onboard = await onboardSandbox(
@@ -584,6 +591,25 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   );
   expect(refreshStatus.exitCode, resultText(refreshStatus)).toBe(0);
   expect(resultText(refreshStatus)).toMatch(/refreshed/i);
+
+  progress.phase("prove inference remains live after identity attachment");
+  const inferenceRequestOffset = inference.requests().length;
+  await expectOpenAiChatThroughSandbox(
+    sandbox,
+    sandboxName,
+    model,
+    [inferenceKey],
+    "tc-inf-12-inference-after-identity-attach",
+  );
+  expect(inference.requests().slice(inferenceRequestOffset)).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      hostHeader: "host.openshell.internal:8000",
+      method: "POST",
+      model,
+      path: "/v1/chat/completions",
+    }),
+  );
 
   progress.phase("call the protected resource with the injected bearer");
   let placeholder = "";

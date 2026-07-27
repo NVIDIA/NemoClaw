@@ -299,6 +299,10 @@ describe("blueprint identity wrapper", () => {
       ["sandbox", "provider", "attach", "test-sandbox", "acme-okta-runtime"],
       expect.objectContaining({ reject: false, env: expect.any(Object) }),
     );
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(
+      commands.indexOf("inference set --provider test-provider --model test-model"),
+    ).toBeLessThan(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"));
   });
 
   it("fails closed when an identity subprocess has no exit code", async () => {
@@ -478,10 +482,10 @@ describe("blueprint identity wrapper", () => {
       /route failed/,
     );
 
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "provider", "detach", "test-sandbox", "acme-okta-runtime"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
@@ -823,7 +827,7 @@ describe("blueprint identity wrapper", () => {
     const plan = JSON.parse(planEntry!.content!);
     expect(plan.identity).toMatchObject({
       provider_created: true,
-      attachment_created: true,
+      attachment_created: false,
     });
 
     await actionRollback(plan.run_id);
