@@ -41,6 +41,14 @@ function report(
 }
 
 describe("public readiness presentation (#7412)", () => {
+  it("rejects reports that claim host mutation", () => {
+    const mutatedReport = { ...report(), mutated: true } as unknown as SystemReadinessReport;
+
+    expect(() => createPublicReadinessReport(mutatedReport)).toThrow(
+      "Readiness reports must be observation-only.",
+    );
+  });
+
   it.each(NON_SUPPORTED_OUTCOMES)("preserves $status status and exit code $exitCode", (outcome) => {
     const publicReport = createPublicReadinessReport(report({}, outcome));
 
@@ -124,5 +132,40 @@ describe("public readiness presentation (#7412)", () => {
     expect(serialized).not.toContain("envVars");
     expect(publicReport.evidence[0]?.summary.length).toBeLessThanOrEqual(1024);
     expect(String(publicReport.evidence[0]?.details?.stderr).length).toBeLessThanOrEqual(1024);
+  });
+
+  it("retains a final required finding at the public boundary", () => {
+    const warnings = Array.from({ length: 256 }, (_, index) => ({
+      id: `host.boundary.${index}`,
+      severity: "warning" as const,
+      summary: `Warning ${index}`,
+    }));
+    const blocker = {
+      id: "host.boundary.blocker",
+      severity: "fatal" as const,
+      summary: "A final required finding.",
+    };
+
+    const publicReport = createPublicReadinessReport(
+      report({ findings: [...warnings, blocker] }, { status: "incompatible", exitCode: 2 }),
+    );
+
+    expect(publicReport.findings).toHaveLength(256);
+    expect(publicReport.findings).toContainEqual(blocker);
+    expect(publicReport.findings).not.toContainEqual(warnings.at(-1));
+  });
+
+  it("fails closed when required findings exceed the public boundary", () => {
+    const blockers = Array.from({ length: 257 }, (_, index) => ({
+      id: `host.blocker.${index}`,
+      severity: "blocking" as const,
+      summary: `Blocker ${index}`,
+    }));
+
+    expect(() =>
+      createPublicReadinessReport(
+        report({ findings: blockers }, { status: "incompatible", exitCode: 2 }),
+      ),
+    ).toThrow("Readiness report exceeds the public boundary for required findings.");
   });
 });
