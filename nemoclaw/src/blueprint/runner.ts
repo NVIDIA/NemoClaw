@@ -31,6 +31,7 @@ import {
   compensateRuntimeIdentityApply,
   isRuntimeIdentityConfig,
   isRuntimeIdentityReceipt,
+  parseRuntimeIdentityProviderMetadata,
   prepareRuntimeIdentity,
   type RuntimeIdentityCommandDeps,
   type RuntimeIdentityCommandOptions,
@@ -66,6 +67,8 @@ type Action = "plan" | "apply" | "status" | "rollback";
 type RollbackPlanSource = {
   sandbox_name?: unknown;
   sandbox_created_by_apply?: unknown;
+  inference_provider_created_by_apply?: unknown;
+  inference?: unknown;
   identity?: unknown;
 };
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
@@ -336,6 +339,19 @@ function readRollbackSandboxName(value: RollbackPlanSource | null): string {
   return assertValidName(value.sandbox_name, "sandbox name");
 }
 
+function readRollbackInferenceProviderName(value: RollbackPlanSource): string {
+  if (
+    !isPlainObject(value.inference) ||
+    typeof value.inference.provider_name !== "string" ||
+    value.inference.provider_name.trim() === ""
+  ) {
+    throw new Error(
+      "rollback plan inference.provider_name must be a non-empty string for an owned provider",
+    );
+  }
+  return assertValidProviderName(value.inference.provider_name, "rollback inference provider name");
+}
+
 // ── Utilities ───────────────────────────────────────────────────
 
 export function emitRunId(): string {
@@ -592,6 +608,7 @@ interface PersistedRunPlan {
   profile: string;
   sandbox_name: string;
   sandbox_created_by_apply: boolean;
+  inference_provider_created_by_apply: boolean;
   policy_additions: PolicyAdditions;
   inference: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
@@ -608,6 +625,7 @@ type StatusRunPlan = {
   };
   sandbox_name?: string;
   sandbox_created_by_apply?: boolean;
+  inference_provider_created_by_apply?: boolean;
   policy_additions?: PolicyAdditions;
   inference?: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
@@ -674,6 +692,7 @@ function buildPersistedRunPlan(args: {
   profile: string;
   sandboxName: string;
   sandboxCreatedByApply: boolean;
+  inferenceProviderCreatedByApply: boolean;
   policyAdditions: PolicyAdditions;
   inferenceCfg: InferenceProfile;
   runtimeIdentityReceipt?: RuntimeIdentityReceipt;
@@ -684,6 +703,7 @@ function buildPersistedRunPlan(args: {
     profile: args.profile,
     sandbox_name: args.sandboxName,
     sandbox_created_by_apply: args.sandboxCreatedByApply,
+    inference_provider_created_by_apply: args.inferenceProviderCreatedByApply,
     policy_additions: args.policyAdditions,
     inference: buildSafeInferencePlan(args.inferenceCfg),
     timestamp: args.timestamp,
@@ -735,6 +755,9 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
   }
   if (typeof source.sandbox_created_by_apply === "boolean") {
     safePlan.sandbox_created_by_apply = source.sandbox_created_by_apply;
+  }
+  if (typeof source.inference_provider_created_by_apply === "boolean") {
+    safePlan.inference_provider_created_by_apply = source.inference_provider_created_by_apply;
   }
 
   if (isPolicyAdditions(source.policy_additions)) {
@@ -858,6 +881,7 @@ export async function actionApply(
 
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
   let sandboxCreatedByApply = false;
+  let inferenceProviderCreatedByApply = false;
   const persistRunPlan = (): void => {
     writeFileSync(
       join(stateDir, "plan.json"),
@@ -867,6 +891,7 @@ export async function actionApply(
           profile,
           sandboxName,
           sandboxCreatedByApply,
+          inferenceProviderCreatedByApply,
           policyAdditions,
           inferenceCfg,
           runtimeIdentityReceipt,
@@ -892,20 +917,37 @@ export async function actionApply(
       const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
       if (sandboxResult.exitCode === 0) {
         reuseExistingSandbox = true;
-        const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
-          reject: false,
-        });
-        const providerOutput = `${providerResult.stderr}\n${providerResult.stdout}`;
-        if (providerResult.exitCode === 0) {
-          reuseExistingInferenceProvider = true;
-        } else if (!MISSING_PROVIDER_INSPECTION_PATTERN.test(providerOutput)) {
-          throw new Error(
-            `Failed to inspect inference provider '${providerName}' before runtime identity apply: ${boundedCommandError(providerOutput)}`,
-          );
-        }
       } else if (!MISSING_SANDBOX_INSPECTION_PATTERN.test(sandboxOutput)) {
         throw new Error(
           `Failed to inspect sandbox '${sandboxName}' before runtime identity apply: ${boundedCommandError(sandboxOutput)}`,
+        );
+      }
+
+      const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
+        reject: false,
+      });
+      const providerOutput = `${providerResult.stderr}\n${providerResult.stdout}`;
+      if (providerResult.exitCode === 0) {
+        const providerMetadata = parseRuntimeIdentityProviderMetadata(providerResult.stdout);
+        const hasExpectedConfigShape =
+          endpoint === "" || providerMetadata?.configKeys.includes("OPENAI_BASE_URL") === true;
+        const hasExpectedCredentialShape =
+          credential === "" || providerMetadata?.credentialKeys.includes("OPENAI_API_KEY") === true;
+        if (
+          !providerMetadata ||
+          providerMetadata.name !== providerName ||
+          providerMetadata.type !== providerType ||
+          !hasExpectedConfigShape ||
+          !hasExpectedCredentialShape
+        ) {
+          throw new Error(
+            `Inference provider '${providerName}' does not match the requested non-secret binding; refusing runtime identity apply`,
+          );
+        }
+        reuseExistingInferenceProvider = true;
+      } else if (!MISSING_PROVIDER_INSPECTION_PATTERN.test(providerOutput)) {
+        throw new Error(
+          `Failed to inspect inference provider '${providerName}' before runtime identity apply: ${boundedCommandError(providerOutput)}`,
         );
       }
 
@@ -936,7 +978,7 @@ export async function actionApply(
 
       const createResult = await runCmd(createArgs, { reject: false });
       sandboxCreatedByApply = createResult.exitCode === 0;
-      if (sandboxCreatedByApply && runtimeIdentityConfig) {
+      if (sandboxCreatedByApply) {
         // Persist ownership immediately so a later-process rollback stays safe
         // if apply is interrupted before its final state write.
         persistRunPlan();
@@ -1008,6 +1050,10 @@ export async function actionApply(
             `Failed to create inference provider '${providerName}': ${boundedCommandError(providerResult.stderr, [credential])}`,
           );
         }
+      } else {
+        inferenceProviderCreatedByApply = true;
+        // Persist ownership before a later route or policy mutation can fail.
+        persistRunPlan();
       }
     }
 
@@ -1089,12 +1135,26 @@ export async function actionApply(
       });
       if (remove.exitCode === 0 || MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
         sandboxCreatedByApply = false;
-        if (runtimeIdentityConfig) {
-          persistRunPlan();
-        }
+        persistRunPlan();
       } else {
         cleanupFailures.push(
           `Failed to remove sandbox '${sandboxName}': ${boundedCommandError(remove.stderr)}`,
+        );
+      }
+    }
+    if (inferenceProviderCreatedByApply && !sandboxCreatedByApply) {
+      const removeProvider = await runCmd(["openshell", "provider", "delete", providerName], {
+        reject: false,
+      });
+      if (
+        removeProvider.exitCode === 0 ||
+        MISSING_PROVIDER_INSPECTION_PATTERN.test(removeProvider.stderr)
+      ) {
+        inferenceProviderCreatedByApply = false;
+        persistRunPlan();
+      } else {
+        cleanupFailures.push(
+          `Failed to remove inference provider '${providerName}': ${boundedCommandError(removeProvider.stderr)}`,
         );
       }
     }
@@ -1174,6 +1234,8 @@ export async function actionRollback(rid: string): Promise<void> {
   const planFile = join(stateDir, "plan.json");
   let sandboxName: string;
   let sandboxCreatedByApply = false;
+  let inferenceProviderCreatedByApply = false;
+  let inferenceProviderName: string | undefined;
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
   try {
     const planData = readFileSync(planFile, "utf-8");
@@ -1184,6 +1246,10 @@ export async function actionRollback(rid: string): Promise<void> {
         : null;
     sandboxName = readRollbackSandboxName(rollbackPlan);
     sandboxCreatedByApply = rollbackPlan?.sandbox_created_by_apply === true;
+    inferenceProviderCreatedByApply = rollbackPlan?.inference_provider_created_by_apply === true;
+    if (inferenceProviderCreatedByApply) {
+      inferenceProviderName = readRollbackInferenceProviderName(rollbackPlan!);
+    }
     if (rollbackPlan?.identity !== undefined) {
       if (!isRuntimeIdentityReceipt(rollbackPlan.identity)) {
         throw new Error("identity ownership receipt is invalid");
@@ -1220,6 +1286,22 @@ export async function actionRollback(rid: string): Promise<void> {
     }
   } else {
     progress(60, `Preserving unowned sandbox ${sandboxName}`);
+  }
+
+  if (inferenceProviderCreatedByApply) {
+    progress(80, `Removing inference provider ${inferenceProviderName!}`);
+    const removeProvider = await runCmd(
+      ["openshell", "provider", "delete", inferenceProviderName!],
+      { reject: false },
+    );
+    if (
+      removeProvider.exitCode !== 0 &&
+      !MISSING_PROVIDER_INSPECTION_PATTERN.test(removeProvider.stderr)
+    ) {
+      throw new Error(
+        `Failed to remove owned inference provider '${inferenceProviderName!}': ${boundedCommandError(removeProvider.stderr)}`,
+      );
+    }
   }
 
   progress(90, "Cleaning up run state");

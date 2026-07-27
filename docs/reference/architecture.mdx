@@ -273,6 +273,19 @@ The blueprint schema describes the OpenShell provider binding and OAuth refresh 
   Adding an attacker-controlled or customer-controlled DNS suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
 </Warning>
 
+#### Threat Model and Conformance Evidence
+
+Runtime identity is opt-in only when a direct-runner blueprint includes `components.identity`; there is no implicit activation path.
+The host process that supplies the named OAuth bootstrap variables and the authenticated OpenShell gateway are trusted.
+The blueprint, copied profile, same-name gateway resources, sandbox workload, subprocess output, persisted state, and CI artifacts are treated as untrusted or observable surfaces.
+The runner therefore validates the complete data-only profile before import, fails closed on ambiguous resource inspection, scopes secret material to the single refresh-configuration subprocess, and persists only non-secret ownership receipts.
+OpenShell remains responsible for credential custody, refresh, admitted-request enforcement, and bearer substitution; NemoClaw never exposes the minted bearer to the sandbox.
+
+The deterministic `TC-INF-12` protected E2E scenario is the conformance gate for this boundary.
+It runs the real blueprint runner against a real OpenShell gateway and sandbox, exchanges a refresh token through a public HTTPS OAuth endpoint, proves the sandbox sees only a stable placeholder, proves the protected resource receives successive versioned bearer tokens before and after rotation, checks secret-free plan, status, state, logs, and request ledgers, and verifies ownership-aware rollback.
+Focused runner and runtime-identity tests cover malformed profiles, endpoint and DNS rejection, subprocess scoping, same-name resource handling, partial-apply compensation, and retryable rollback receipts.
+The gateway refresh client's connect-time DNS-pinning limitation described above is the accepted residual boundary; expanding the trusted hostname policy requires upstream pinning and new conformance evidence.
+
 Enable provider-derived policy on the target gateway before applying a blueprint that attaches this component:
 
 ```bash
@@ -316,16 +329,16 @@ Obtain the refresh token through an authorized OAuth bootstrap flow for the same
 
 During plan, the runner reports only the non-secret provider type, provider name, and credential key.
 During apply, the runner first inspects the target sandbox and stops before identity mutation unless it confirms existence or an explicit sandbox-not-found result.
-If the sandbox exists, the runner inspects the configured inference provider before identity mutation.
-It reuses that inference provider when inspection succeeds and permits creation only after an explicit provider-not-found result.
+The runner always inspects the configured inference provider before identity mutation, whether it will create or reuse the sandbox.
+It reuses that inference provider only when its reported name, type, and required non-secret key shape match the blueprint, and permits creation only after an explicit provider-not-found result.
 Any other inference-provider inspection failure stops apply.
 The runner then inspects the requested runtime identity provider name and stops if any same-name provider already exists.
 It validates an existing provider's non-secret binding to produce a precise error, but never reuses it for this mutable refresh flow because OpenShell does not expose a secret-safe snapshot that rollback could restore.
 Only an absent provider proceeds to profile import, or exact export comparison when that profile is already registered, followed by provider creation, gateway-managed OAuth refresh configuration, initial token rotation, and sandbox attachment.
 Each successful apply therefore creates and owns the provider whose refresh state it mutates.
-The persisted run plan records whether that apply created the provider, its sandbox attachment, and the sandbox itself.
+The persisted run plan records whether that apply created the runtime identity provider, its sandbox attachment, the inference provider, and the sandbox itself.
 The runner writes that ownership receipt as each identity resource is acquired, so `status` and a later `rollback` retain a recovery path if automatic compensation fails.
-If a later apply step fails, the runner detaches the provider when that apply attached it, deletes the provider when that apply created it, and removes a sandbox created by that apply.
+If a later apply step fails, the runner detaches the runtime identity provider when that apply attached it, deletes each provider when that apply created it, and removes a sandbox created by that apply.
 The runner never places the refresh token or optional client secret in command arguments or persisted plans.
 It passes those values to `openshell provider refresh configure` through a scoped subprocess environment, and OpenShell stores the resulting credential material in the gateway credential store.
 All other runner subprocesses receive the allowlisted environment without the identity material.
@@ -341,6 +354,7 @@ openshell sandbox provider list <sandbox-name>
 The direct runner `status` action reports the non-secret identity ownership receipt.
 The `rollback` action verifies the current provider binding again, detaches it only when that apply created the sandbox attachment, and deletes it only when that apply created the provider.
 Rollback stops and removes the sandbox only when the persisted plan proves that apply created it; reused sandboxes and legacy plans with unknown sandbox ownership are preserved.
+After an owned sandbox is removed, or immediately when the sandbox was reused, rollback deletes the inference provider only when the persisted receipt proves that apply created it.
 If removal of an apply-owned sandbox fails, rollback returns the bounded error without writing its completion marker, leaving the ownership receipt available for retry.
 Rollback stops without mutating a same-name provider when the binding no longer matches the receipt.
 

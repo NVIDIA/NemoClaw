@@ -532,6 +532,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   const applyText = resultText(apply);
   expect(apply.exitCode, applyText).toBe(0);
   expect(applyText).toContain(`Sandbox '${sandboxName}' is ready.`);
+  expect(applyText).toContain("Provider 'compatible-endpoint' already exists, reusing.");
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
   expect(oauth.tokenRequests()).toEqual([
     {
@@ -550,6 +551,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   const stateDir = path.join(os.homedir(), ".nemoclaw", "state", "runs", runId!);
   const persistedPlan = fs.readFileSync(path.join(stateDir, "plan.json"), "utf8");
   const parsedPersistedPlan = JSON.parse(persistedPlan) as {
+    inference_provider_created_by_apply?: boolean;
     identity?: Record<string, unknown>;
   };
   expect(parsedPersistedPlan.identity).toMatchObject({
@@ -561,6 +563,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   });
   expect(parsedPersistedPlan).toMatchObject({
     sandbox_created_by_apply: false,
+    inference_provider_created_by_apply: false,
   });
   for (const forbidden of [
     "E2E_CLIENT_ID",
