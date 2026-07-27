@@ -170,6 +170,18 @@ $$nemoclaw resources [--json]
 
 If the gateway is not running, Kubernetes allocatable fields are omitted and host CPU/RAM totals are still shown.
 
+### `$$nemoclaw host probe`
+
+Inspect host readiness before onboarding without changing host, Docker, gateway, credential, policy, or sandbox state.
+Use `--json` for the schema-versioned report.
+The command exits with `0` for `supported`, `2` for `incompatible`, and `3` for `inconclusive`.
+
+```bash
+$$nemoclaw host probe [--json]
+```
+
+For capability IDs, evidence bounds, and compatibility guidance, refer to [System Readiness](system-readiness).
+
 ### `$$nemoclaw agents list`
 
 List the installed agent runtimes that can be selected with `$$nemoclaw onboard --agent <name>`.
