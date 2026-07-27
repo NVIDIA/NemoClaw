@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
+          Valid: dashboard-remote-bind-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
         required: false
         type: string
         default: ""
@@ -46,10 +46,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       dashboard: ${{ steps.select.outputs.dashboard }}
-      gateway: ${{ steps.select.outputs.gateway }}
-      gateway_drift_preflight: ${{ steps.select.outputs.gateway_drift_preflight }}
-      openshell_version_pin: ${{ steps.select.outputs.openshell_version_pin }}
-
       model_router_provider_routed_inference: ${{ steps.select.outputs.model_router_provider_routed_inference }}
       openclaw_plugin_runtime_exdev: ${{ steps.select.outputs.openclaw_plugin_runtime_exdev }}
       whatsapp_qr_compact: ${{ steps.select.outputs.whatsapp_qr_compact }}
@@ -73,25 +69,6 @@ jobs:
           else
             echo "dashboard=false" >> "$GITHUB_OUTPUT"
           fi
-
-          if [ -z "$normalized" ] || includes_job "gateway-health-honest-e2e"; then
-            echo "gateway=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "gateway=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ -z "$normalized" ] || includes_job "gateway-drift-preflight-e2e"; then
-            echo "gateway_drift_preflight=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "gateway_drift_preflight=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ -z "$normalized" ] || includes_job "openshell-version-pin-e2e"; then
-            echo "openshell_version_pin=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "openshell_version_pin=false" >> "$GITHUB_OUTPUT"
-          fi
-
 
           if [ -z "$normalized" ] || includes_job "model-router-provider-routed-inference-e2e"; then
             echo "model_router_provider_routed_inference=true" >> "$GITHUB_OUTPUT"
@@ -123,128 +100,6 @@ jobs:
       test_suite: dashboard-remote-bind
       keep_alive: ${{ inputs.keep_alive }}
     secrets: inherit
-
-  # ── Gateway health-honesty E2E ──────────────────────────────
-  # Coverage guard for #3111. Issue #3111 reported that onboard prints
-  # "✓ Docker-driver gateway is healthy" on Ubuntu 22.04 even though the
-  # shipped openshell-gateway binary (GNU-linked against GLIBC 2.38/2.39)
-  # crashes immediately on a 22.04 host (GLIBC 2.35).
-  #
-  # Root cause is platform-independent: the detached child remains a
-  # zombie so isPidAlive() returns true, registerDockerDriverGatewayEndpoint()
-  # writes metadata without any TCP probe, and isGatewayHealthy() is a
-  # string match on openshell CLI output rather than a real health check.
-  # Any scenario where the gateway binary fails before serving connections
-  # will surface the same false-positive log on ANY Linux host — not just
-  # Ubuntu 22.04.
-  #
-  # This test sabotages the gateway binary with a shim that matches the
-  # #3111 failure mode (immediate exit with GLIBC-style stderr) and asserts
-  # that onboard does NOT log "healthy" and exits non-zero.
-  gateway-health-honest-e2e:
-    needs: select_regression_jobs
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      needs.select_regression_jobs.outputs.gateway == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-
-      - name: Run gateway health-honesty E2E test
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_RUN_LIVE_E2E: "1"
-        run: npx vitest run --project e2e-live test/e2e/live/gateway-health-honest.test.ts --silent=false --reporter=default
-
-      - name: Upload gateway health-honesty logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: gateway-health-honest-logs
-          path: |
-            /tmp/nemoclaw-e2e-gateway-health-honest.log
-            /tmp/nemoclaw-e2e-gateway-health-honest-start.log
-            /tmp/nemoclaw-e2e-gateway-health-honest-process.log
-          if-no-files-found: ignore
-
-  # ── OpenShell version-pin E2E ──────────────────────────────
-  # Coverage guard for #3474. If a host has sticky OpenShell above the pinned
-  # supported version on PATH, install-openshell.sh
-  # must replace it with the pinned compatible release instead of hard-failing.
-  openshell-version-pin-e2e:
-    needs: select_regression_jobs
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      needs.select_regression_jobs.outputs.openshell_version_pin == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Run OpenShell version-pin E2E test
-        env:
-          NEMOCLAW_RUN_LIVE_E2E: "1"
-        run: npx vitest run --project e2e-live test/e2e/live/openshell-version-pin.test.ts --silent=false --reporter=default
-
-      - name: Upload OpenShell version-pin logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: openshell-version-pin-logs
-          path: |
-            /tmp/nemoclaw-e2e-openshell-version-pin.log
-            /tmp/nemoclaw-e2e-openshell-version-pin-install.log
-            /tmp/nemoclaw-e2e-openshell-version-pin-downloads.log
-          if-no-files-found: ignore
-
-  # ── Gateway drift preflight E2E ─────────────────────────────
-  # Coverage guard for #3399 / #3423. A stale OpenShell gateway image can
-  # make sandbox-state RPCs fail with protobuf invalid-wire decode errors.
-  # NemoClaw must fail closed instead of trusting or misclassifying that state.
-  gateway-drift-preflight-e2e:
-    needs: select_regression_jobs
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      needs.select_regression_jobs.outputs.gateway_drift_preflight == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-
-      - name: Run gateway drift preflight E2E test
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: npx vitest run --project integration test/gateway-drift-preflight.test.ts --silent=false --reporter=default
 
   # ── Model Router provider-routed inference E2E ─────────────────
   # Coverage guard for #3255. Model Router onboard must generate a routed

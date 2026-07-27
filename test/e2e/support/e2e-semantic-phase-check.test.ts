@@ -54,13 +54,8 @@ describe("semantic E2E phase checker", () => {
         matrix: [{}],
         testMatrix: [
           {
-            id: "docs-validation",
-            file: "test/e2e/live/docs-validation.test.ts",
-            project: "e2e-live",
-          },
-          {
-            id: "gateway-drift-preflight",
-            file: "test/gateway-drift-preflight.test.ts",
+            id: "vllm-docker-storage",
+            file: "test/vllm-docker-storage.test.ts",
             project: "integration",
           },
         ],
@@ -68,13 +63,11 @@ describe("semantic E2E phase checker", () => {
       {
         liveTestToJobs: new Map([
           ["test/e2e/live/bootstrap-install-smoke.test.ts", ["bootstrap-install-smoke"]],
-          ["test/e2e/live/docs-validation.test.ts", ["docs-validation"]],
-          ["test/gateway-drift-preflight.test.ts", ["gateway-drift-preflight"]],
+          ["test/vllm-docker-storage.test.ts", ["vllm-docker-storage"]],
         ]),
       },
       [
         "test/e2e/live/bootstrap-install-smoke.test.ts",
-        "test/e2e/live/docs-validation.test.ts",
         "test/e2e/live/unselected-regression.test.ts",
       ],
     );
@@ -84,11 +77,10 @@ describe("semantic E2E phase checker", () => {
         file: "test/e2e/live/bootstrap-install-smoke.test.ts",
         project: "e2e-live",
       },
-      { file: "test/e2e/live/docs-validation.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/launchable-smoke.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/registry-targets.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/unselected-regression.test.ts", project: "e2e-live" },
-      { file: "test/gateway-drift-preflight.test.ts", project: "integration" },
+      { file: "test/vllm-docker-storage.test.ts", project: "integration" },
     ]);
   });
 
