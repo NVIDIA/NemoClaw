@@ -14,6 +14,7 @@ import { createServer, type Server } from "node:http";
 import path from "node:path";
 
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
+import { listPresets } from "../../../src/lib/policy/index.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -28,6 +29,7 @@ import {
   requirePolicyPresetNumber,
 } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
 import {
   ensureDockerAvailable,
   runRestrictedOnboardWithRetry,
@@ -648,14 +650,19 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     artifactName: "tc-net-01-policy-list-after-onboard",
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
-  expect(policyListAfterOnboard.exitCode, text(policyListAfterOnboard)).toBe(0);
-  const activeBullets = (policyListAfterOnboard.stdout.match(/^[\s]*●[\s]+(\S+)/gm) ?? []).map(
-    (line) => line.replace(/^[\s]*●[\s]+/, "").trim(),
+  expect(
+    policyListAfterOnboard.exitCode,
+    "policy-list must exit successfully after default restricted onboard",
+  ).toBe(0);
+  const activePresets = parseVerifiedActivePolicyPresets(
+    text(policyListAfterOnboard),
+    listPresets({ agent: "openclaw" }).map((preset) => preset.name),
   );
   expect(
-    activeBullets,
-    `restricted tier must begin with zero active presets; got ${JSON.stringify(activeBullets)} from:\n${text(policyListAfterOnboard)}`,
-  ).toEqual([]);
+    activePresets,
+    "policy-list must return one complete, verified preset listing",
+  ).not.toBeNull();
+  expect(activePresets?.length, "restricted tier must begin with zero active presets").toBe(0);
 
   const denyDefault = await fetchStatus(sandbox, "https://example.com/", "tc-net-01-deny-default");
   expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
@@ -1060,12 +1067,8 @@ NEMOCLAW_WEB_FETCH_PROBE`,
   });
 });
 
-// Transitional workflow shim for #7617. The normal integration suite owns
-// the zero-preset plan and the retained live journey above owns the actual
-// OpenShell applied-set boundary. Keep this duplicate test for one merge so
-// the trusted base workflow, which still dispatches the old zero-presets
-// shard while reviewing the workflow change, can collect passing head
-// evidence. Delete it after the one-row matrix is present on main.
+// Compatibility shim for #7617: the trusted base workflow still selects this
+// target while reviewing the one-row matrix change.
 //
 // Acceptance note (`NEMOCLAW_OPENCLAW_OTEL=1`): the OTEL-enabled live
 // variant is deferred to a follow-up nightly extension to keep this
