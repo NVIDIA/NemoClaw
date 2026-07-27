@@ -173,7 +173,7 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("keeps network-policy scenarios isolated with cleanup reserve", () => {
+  it("keeps the retained network-policy live probes isolated with cleanup reserve (#7617)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
@@ -207,7 +207,7 @@ describe("e2e workflow boundary", () => {
       expect.arrayContaining([
         "network-policy scenario jobs must keep the 90 minute timeout",
         "network-policy scenario matrix must disable fail-fast",
-        "network-policy job must keep the two isolated scenario shards",
+        "network-policy job must keep only the isolated live-probes scenario",
         "network-policy job must isolate artifacts by matrix.scenario",
         "network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
         "network-policy job must bind its sandbox name to matrix.sandbox",
@@ -662,7 +662,7 @@ describe("e2e workflow boundary", () => {
   }, () => {
     const inventory = readFreeStandingJobsInventory();
     const workflow = readWorkflow() as {
-      jobs: Record<string, { env?: Record<string, string> }>;
+      jobs: Record<string, { env?: Record<string, string>; if?: string }>;
     };
     const workflowJobs = new Set(Object.keys(workflow.jobs));
 
@@ -679,6 +679,15 @@ describe("e2e workflow boundary", () => {
     );
     expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
+    const driftedWorkflow = structuredClone(workflow);
+    const compatibilityJob = driftedWorkflow.jobs["retired-selector-compatibility"] ?? {};
+    compatibilityJob.if = compatibilityJob.if?.replace(
+      ",docs-validation,",
+      ",future-retired-selector,",
+    );
+    expect(validateE2eWorkflow(driftedWorkflow)).toContain(
+      "retired-selector-compatibility job selector gate must match retired selector contract",
+    );
     expect(
       focusedE2eJobsForChangedFiles(
         [
@@ -703,31 +712,31 @@ describe("e2e workflow boundary", () => {
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
       E2E_JOB: "yes"
-      E2E_TARGET_ID: openshell-version-pin
+      E2E_TARGET_ID: fixture-version-check
 `,
-        error: 'openshell-version-pin job E2E_JOB must be "1"',
+        error: 'fixture-version-check job E2E_JOB must be "1"',
       },
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
-      E2E_TARGET_ID: openshell-version-pin
+      E2E_TARGET_ID: fixture-version-check
 `,
-        error: "openshell-version-pin job E2E_TARGET_ID requires E2E_JOB",
+        error: "fixture-version-check job E2E_TARGET_ID requires E2E_JOB",
       },
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bad:target"
 `,
-        error: "openshell-version-pin job E2E_TARGET_ID must be a selector id",
+        error: "fixture-version-check job E2E_TARGET_ID must be a selector id",
       },
       {
         body: `
@@ -882,12 +891,12 @@ jobs:
           path: .e2e/live/
           include-hidden-files: true
           if-no-files-found: ignore
-  openshell-version-pin:
+  fixture-version-check:
     runs-on: ubuntu-latest
     needs: generate-matrix
     if: \${{ inputs.targets != '' }}
     env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/openshell-version-pin
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/fixture-version-check
       NEMOCLAW_RUN_LIVE_E2E: "0"
       NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
@@ -900,23 +909,23 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
-      - name: Run OpenShell version-pin live test
+      - name: Run fixture version-check live test
         env:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload OpenShell version-pin artifacts
+      - name: Upload fixture version-check artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openshell-version-pin
-          path: .e2e/openshell-version-pin/
+          name: fixture-version-check
+          path: .e2e/fixture-version-check/
           include-hidden-files: true
           if-no-files-found: error
-  onboard-negative-paths:
+  fixture-negative-path:
     runs-on: ubuntu-latest
     needs: generate-matrix
     if: \${{ inputs.targets != '' }}
     env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/onboard-negative-paths
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/fixture-negative-path
       NEMOCLAW_RUN_LIVE_E2E: "0"
       NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
@@ -929,15 +938,15 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
-      - name: Run onboard negative-paths live test
+      - name: Run fixture negative-path live test
         env:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload onboard negative-paths artifacts
+      - name: Upload fixture negative-path artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: onboard-negative-paths
-          path: .e2e/onboard-negative-paths/
+          name: fixture-negative-path
+          path: .e2e/fixture-negative-path/
           include-hidden-files: true
           if-no-files-found: error
   network-policy:

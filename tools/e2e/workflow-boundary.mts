@@ -121,6 +121,14 @@ type CachedFreeStandingJobsInventory = {
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const RETIRED_CONTROLLER_SELECTOR_IDS = [
+  "docs-validation",
+  "gateway-drift-preflight",
+  "gateway-health-honest",
+  "onboard-negative-paths",
+  "openshell-version-pin",
+  "ubuntu-repo-cli-smoke",
+] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
@@ -143,11 +151,7 @@ const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
 ]);
-const NO_IMAGE_E2E_JOBS = new Set([
-  "gateway-health-honest",
-  "staging-brev-launchable",
-  SHARED_E2E_JOB_ID,
-]);
+const NO_IMAGE_E2E_JOBS = new Set(["staging-brev-launchable", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
@@ -218,11 +222,6 @@ const NETWORK_POLICY_SCENARIO_MATRIX = {
       scenario: "live-probes",
       selector: "^network-policy:.+probes$",
       sandbox: "e2e-net-policy-live-probes",
-    },
-    {
-      scenario: "zero-presets",
-      selector: "^network-policy:.+presets$",
-      sandbox: "e2e-net-policy-zero-presets",
     },
   ],
 } as const;
@@ -561,6 +560,12 @@ export function readFreeStandingJobsInventory(
   return inventory;
 }
 
+const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/auto-pair-approval.ts",
+  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+]);
+
 export function focusedE2eJobsForChangedFiles(
   changedFiles: readonly string[],
   inventory: FreeStandingJobsInventory = readFreeStandingJobsInventory(),
@@ -569,6 +574,9 @@ export function focusedE2eJobsForChangedFiles(
   for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
     for (const job of inventory.liveTestToJobs.get(file) ?? []) {
       addMapValue(matchedFilesByJob, job, file);
+    }
+    if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
+      addMapValue(matchedFilesByJob, "snapshot-commands", file);
     }
   }
   return [...matchedFilesByJob]
@@ -1377,7 +1385,7 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("network-policy scenario matrix must disable fail-fast");
   }
   if (!isDeepStrictEqual(asRecord(strategy.matrix), NETWORK_POLICY_SCENARIO_MATRIX)) {
-    errors.push("network-policy job must keep the two isolated scenario shards");
+    errors.push("network-policy job must keep only the isolated live-probes scenario");
   }
 
   const jobEnv = asRecord(job.env);
@@ -4319,6 +4327,66 @@ function validateStagingBrevLaunchableReadinessJob(errors: string[], jobs: Workf
   requireRunContains(errors, fail, "exit 1");
 }
 
+function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["retired-selector-compatibility"]);
+  if (Object.keys(job).length === 0) {
+    errors.push("workflow missing retired-selector-compatibility job");
+    return;
+  }
+  const selectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
+    (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
+  ).join(" || ");
+  const expectedIf = `\${{ inputs.checkout_sha != '' && (${selectorGate}) }}`;
+  if (job.if !== expectedIf) {
+    errors.push(
+      "retired-selector-compatibility job selector gate must match retired selector contract",
+    );
+  }
+}
+
+function validateTrustedE2eDispatchReceipt(
+  errors: string[],
+  generateSteps: readonly WorkflowStep[],
+): void {
+  const dispatchReceipt = requireStep(errors, generateSteps, "Record trusted E2E dispatch receipt");
+  if (dispatchReceipt?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+    errors.push("trusted E2E dispatch receipt must run for workflow dispatches only");
+  }
+  const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
+  const expectedDispatchReceiptEnv = {
+    ALLOW_JETSON_RUNNER_QUEUE: "${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}",
+    CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    DISPATCH_JOBS: "${{ inputs.jobs }}",
+    DISPATCH_RECEIPT_DIR: "${{ runner.temp }}/nemoclaw-e2e-dispatch",
+    DISPATCH_TARGETS: "${{ inputs.targets }}",
+    EVENT_NAME: "${{ github.event_name }}",
+    INCLUDE_STAGING_BREV_LAUNCHABLE:
+      "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    RUN_ATTEMPT: "${{ github.run_attempt }}",
+    RUN_ID: "${{ github.run_id }}",
+  };
+  if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
+    errors.push(
+      "trusted E2E dispatch receipt must bind only the candidate, run, attempt, and dispatch inputs",
+    );
+  }
+  for (const fragment of [
+    'kind: "nemoclaw-e2e-dispatch-v1"',
+    "candidateSha: $candidateSha",
+    "eventName: $eventName",
+    "workflowRunId: $workflowRunId",
+    "workflowRunAttempt: $workflowRunAttempt",
+    "jobs: $jobs",
+    "targets: $targets",
+    "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
+    "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    'defaultSuiteSelected: ($jobs == "" and $targets == "")',
+    '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
+  ]) {
+    requireRunContains(errors, dispatchReceipt, fragment);
+  }
+}
+
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -4374,6 +4442,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
     "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
   if (workflow["run-name"] !== expectedRunName) {
@@ -4489,6 +4558,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     generate,
     "E2E planner matrix does not match controller-selected targets",
   );
+  validateTrustedE2eDispatchReceipt(errors, generateSteps);
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
@@ -4877,8 +4947,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateIssue2478CrashLoopRecoveryJob(errors, jobs);
 
   validateTunnelLifecycleJob(errors, jobs);
-
-  validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest", "gateway-health-honest");
 
   validateSandboxRlimitConnectJob(errors, jobs);
 

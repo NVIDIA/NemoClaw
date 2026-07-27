@@ -603,11 +603,6 @@
     },
     {
       "file": "test/regression-e2e-workflow.test.ts",
-      "test": "collects the gateway drift regression from its integration project (#6692)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/regression-e2e-workflow.test.ts",
       "test": "prepares every discovered non-hermetic Vitest job before execution (#6692)",
       "category": "security"
     },
