@@ -155,39 +155,85 @@ describe("system readiness contract", () => {
   });
 
   it("rejects duplicate IDs and unresolved references (#7409)", async () => {
-    const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as SystemReadinessReport;
+    const fixture = (await readJson(`${fixtureRoot}/incompatible.json`)) as SystemReadinessReport;
     const duplicateEvidence = {
       ...fixture,
       evidence: [...fixture.evidence, fixture.evidence[0]!],
     } as SystemReadinessReport;
-    const missingCapability = {
-      ...fixture,
-      qualifications: [
-        {
-          ...fixture.qualifications[0]!,
-          capabilityIds: ["missing.capability"],
-        },
-      ],
-    } as SystemReadinessReport;
-    const missingEvidence = {
-      ...fixture,
-      capabilities: [
-        {
-          ...fixture.capabilities[0]!,
-          evidenceIds: ["missing.evidence"],
-        },
-      ],
-    } as SystemReadinessReport;
 
     expect(getSystemReadinessReferenceErrors(duplicateEvidence)).toContain(
-      "evidence contains duplicate ID docker.reachable",
+      "evidence contains duplicate ID docker.not-found",
     );
-    expect(getSystemReadinessReferenceErrors(missingCapability)).toContain(
-      "qualifications[0].capabilityIds references unknown ID missing.capability",
-    );
-    expect(getSystemReadinessReferenceErrors(missingEvidence)).toContain(
-      "capabilities[0].evidenceIds references unknown ID missing.evidence",
-    );
+
+    const unresolvedReferences: ReadonlyArray<{
+      report: SystemReadinessReport;
+      error: string;
+    }> = [
+      {
+        report: {
+          ...fixture,
+          observations: [
+            {
+              ...fixture.observations[0]!,
+              evidenceIds: ["missing.evidence"],
+            },
+          ],
+        },
+        error: "observations[0].evidenceIds references unknown ID missing.evidence",
+      },
+      {
+        report: {
+          ...fixture,
+          capabilities: [
+            {
+              ...fixture.capabilities[0]!,
+              evidenceIds: ["missing.evidence"],
+            },
+          ],
+        },
+        error: "capabilities[0].evidenceIds references unknown ID missing.evidence",
+      },
+      {
+        report: {
+          ...fixture,
+          qualifications: [
+            {
+              ...fixture.qualifications[0]!,
+              capabilityIds: ["missing.capability"],
+            },
+          ],
+        },
+        error: "qualifications[0].capabilityIds references unknown ID missing.capability",
+      },
+      {
+        report: {
+          ...fixture,
+          findings: [
+            {
+              ...fixture.findings[0]!,
+              capabilityIds: ["missing.capability"],
+            },
+          ],
+        },
+        error: "findings[0].capabilityIds references unknown ID missing.capability",
+      },
+      {
+        report: {
+          ...fixture,
+          findings: [
+            {
+              ...fixture.findings[0]!,
+              evidenceIds: ["missing.evidence"],
+            },
+          ],
+        },
+        error: "findings[0].evidenceIds references unknown ID missing.evidence",
+      },
+    ];
+
+    for (const { report, error } of unresolvedReferences) {
+      expect(getSystemReadinessReferenceErrors(report)).toContain(error);
+    }
   });
 
   it("rejects mutation and unbounded evidence (#7409)", async () => {
