@@ -402,6 +402,46 @@ describe("blueprint identity wrapper", () => {
     ]);
   });
 
+  it("revalidates a mismatched inference provider created after preflight", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "provider get test-provider",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          {
+            exitCode: 0,
+            stdout: matchingInferenceProvider.replace("Type: openai", "Type: anthropic"),
+            stderr: "",
+          },
+        ],
+      ],
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          { exitCode: 0, stdout: matchingProvider, stderr: "" },
+          { exitCode: 0, stdout: matchingProvider, stderr: "" },
+          { exitCode: 0, stdout: matchingProvider, stderr: "" },
+        ],
+      ],
+      [
+        "provider create --name test-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
+        [{ exitCode: 1, stdout: "", stderr: "provider already exists" }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /Inference provider 'test-provider' does not match the requested non-secret binding/,
+    );
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).not.toContain("inference set --provider test-provider --model test-model");
+    expect(commands).not.toContain("provider delete test-provider");
+  });
+
   it("plans only the non-secret runtime identity binding", async () => {
     const plan = await actionPlan("default", blueprint({ identity: oktaIdentity() }));
 

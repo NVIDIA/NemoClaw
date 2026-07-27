@@ -331,6 +331,7 @@ During plan, the runner reports only the non-secret provider type, provider name
 During apply, the runner first inspects the target sandbox and stops before identity mutation unless it confirms existence or an explicit sandbox-not-found result.
 The runner always inspects the configured inference provider before identity mutation, whether it will create or reuse the sandbox.
 It reuses that inference provider only when its reported name, type, and required non-secret key shape match the blueprint, and permits creation only after an explicit provider-not-found result.
+If creation then reports that another actor created the provider concurrently, the runner repeats the same binding inspection before treating it as unowned reusable state.
 Any other inference-provider inspection failure stops apply.
 The runner then inspects the requested runtime identity provider name and stops if any same-name provider already exists.
 It validates an existing provider's non-secret binding to produce a precise error, but never reuses it for this mutable refresh flow because OpenShell does not expose a secret-safe snapshot that rollback could restore.

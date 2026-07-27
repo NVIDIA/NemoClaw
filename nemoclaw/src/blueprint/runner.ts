@@ -352,6 +352,33 @@ function readRollbackInferenceProviderName(value: RollbackPlanSource): string {
   return assertValidProviderName(value.inference.provider_name, "rollback inference provider name");
 }
 
+function assertReusableInferenceProvider(
+  output: string,
+  expected: {
+    name: string;
+    type: string;
+    requiresEndpointConfig: boolean;
+    requiresCredential: boolean;
+  },
+): void {
+  const metadata = parseRuntimeIdentityProviderMetadata(output);
+  const hasExpectedConfigShape =
+    !expected.requiresEndpointConfig || metadata?.configKeys.includes("OPENAI_BASE_URL") === true;
+  const hasExpectedCredentialShape =
+    !expected.requiresCredential || metadata?.credentialKeys.includes("OPENAI_API_KEY") === true;
+  if (
+    !metadata ||
+    metadata.name !== expected.name ||
+    metadata.type !== expected.type ||
+    !hasExpectedConfigShape ||
+    !hasExpectedCredentialShape
+  ) {
+    throw new Error(
+      `Inference provider '${expected.name}' does not match the requested non-secret binding; refusing runtime identity apply`,
+    );
+  }
+}
+
 // ── Utilities ───────────────────────────────────────────────────
 
 export function emitRunId(): string {
@@ -928,22 +955,12 @@ export async function actionApply(
       });
       const providerOutput = `${providerResult.stderr}\n${providerResult.stdout}`;
       if (providerResult.exitCode === 0) {
-        const providerMetadata = parseRuntimeIdentityProviderMetadata(providerResult.stdout);
-        const hasExpectedConfigShape =
-          endpoint === "" || providerMetadata?.configKeys.includes("OPENAI_BASE_URL") === true;
-        const hasExpectedCredentialShape =
-          credential === "" || providerMetadata?.credentialKeys.includes("OPENAI_API_KEY") === true;
-        if (
-          !providerMetadata ||
-          providerMetadata.name !== providerName ||
-          providerMetadata.type !== providerType ||
-          !hasExpectedConfigShape ||
-          !hasExpectedCredentialShape
-        ) {
-          throw new Error(
-            `Inference provider '${providerName}' does not match the requested non-secret binding; refusing runtime identity apply`,
-          );
-        }
+        assertReusableInferenceProvider(providerResult.stdout, {
+          name: providerName,
+          type: providerType,
+          requiresEndpointConfig: endpoint !== "",
+          requiresCredential: credential !== "",
+        });
         reuseExistingInferenceProvider = true;
       } else if (!MISSING_PROVIDER_INSPECTION_PATTERN.test(providerOutput)) {
         throw new Error(
@@ -1044,6 +1061,22 @@ export async function actionApply(
       // surfacing bounded diagnostic context. (#6703)
       if (providerResult.exitCode !== 0) {
         if (providerResult.stderr.includes("already exists")) {
+          if (runtimeIdentityConfig) {
+            const racedProvider = await runCmd(["openshell", "provider", "get", providerName], {
+              reject: false,
+            });
+            if (racedProvider.exitCode !== 0) {
+              throw new Error(
+                `Failed to inspect inference provider '${providerName}' after concurrent creation: ${boundedCommandError(`${racedProvider.stderr}\n${racedProvider.stdout}`)}`,
+              );
+            }
+            assertReusableInferenceProvider(racedProvider.stdout, {
+              name: providerName,
+              type: providerType,
+              requiresEndpointConfig: endpoint !== "",
+              requiresCredential: credential !== "",
+            });
+          }
           log(`Provider '${providerName}' already exists, reusing.`);
         } else {
           throw new Error(
