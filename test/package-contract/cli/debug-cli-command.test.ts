@@ -26,7 +26,7 @@ function runCli(args: string[], env: NodeJS.ProcessEnv): CliResult {
     killSignal: "SIGKILL",
     timeout: 30_000,
   });
-  if (result.error) throw result.error;
+  expect(result.error).toBeUndefined();
   return {
     status: result.status,
     output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
@@ -38,16 +38,9 @@ function writeExecutable(filePath: string, lines: string[]): void {
 }
 
 function extractedFiles(root: string): string[] {
-  const files: string[] = [];
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const filePath = path.join(dir, entry.name);
-      if (entry.isDirectory()) visit(filePath);
-      else if (entry.isFile()) files.push(filePath);
-    }
-  };
-  visit(root);
-  return files;
+  const [archiveRoot] = fs.readdirSync(root);
+  const archiveRootPath = path.join(root, archiveRoot);
+  return fs.readdirSync(archiveRootPath).map((entry) => path.join(archiveRootPath, entry));
 }
 
 describe("compiled diagnostics CLI", () => {
