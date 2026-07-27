@@ -51,10 +51,9 @@ export type ReleaseE2ePreflight = {
 };
 
 export type ReleaseE2eRunEvidence = {
-  defaultSuiteSelected: boolean;
+  dispatch: unknown;
   jobs: unknown;
   run: unknown;
-  selectedJobs: string[];
 };
 
 export type ReleaseE2eLedgerEntry = ReleaseE2eExecution & {
@@ -86,10 +85,9 @@ type ReleaseEvidenceManifest = {
   candidateSha: string;
   jetsonRunnerOnline: RunnerStatus;
   runs: Array<{
-    defaultSuiteSelected: boolean;
+    dispatchJson: string;
     jobsJson: string;
     runJson: string;
-    selectedJobs: string[];
   }>;
 };
 
@@ -128,6 +126,20 @@ function numberField(value: JsonRecord, field: string, label: string): number {
     throw new Error(`${label}.${field} must be a positive integer`);
   }
   return result as number;
+}
+
+function booleanField(value: JsonRecord, field: string, label: string): boolean {
+  const result = value[field];
+  if (typeof result !== "boolean") {
+    throw new Error(`${label}.${field} must be a boolean`);
+  }
+  return result;
+}
+
+function requireEqual(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    throw new Error(`${label} must equal ${JSON.stringify(expected)}`);
+  }
 }
 
 function parseBoolean(value: string, label: string): boolean {
@@ -391,20 +403,55 @@ export function buildReleaseE2eLedger(
   const attempts = new Map<string, ReleaseE2eLedgerEntry["attempts"]>();
 
   for (const [runIndex, evidence] of runs.entries()) {
-    const run = record(evidence.run, `runs[${runIndex}].run`);
-    if (stringField(run, "head_sha", `runs[${runIndex}].run`) !== preflight.candidateSha) {
-      throw new Error(`runs[${runIndex}].run.head_sha does not match the candidate SHA`);
+    const label = `runs[${runIndex}]`;
+    const run = record(evidence.run, `${label}.run`);
+    requireEqual(run.head_sha, preflight.candidateSha, `${label}.run.head_sha`);
+    requireEqual(run.head_branch, "main", `${label}.run.head_branch`);
+    requireEqual(run.event, "workflow_dispatch", `${label}.run.event`);
+    requireEqual(run.path, ".github/workflows/e2e.yaml", `${label}.run.path`);
+    const runId = numberField(run, "id", `${label}.run`);
+    const runAttempt = numberField(run, "run_attempt", `${label}.run`);
+    const runUrl = stringField(run, "html_url", `${label}.run`);
+
+    const dispatch = record(evidence.dispatch, `${label}.dispatch`);
+    requireEqual(dispatch.kind, "nemoclaw-e2e-dispatch-v1", `${label}.dispatch.kind`);
+    requireEqual(dispatch.candidateSha, preflight.candidateSha, `${label}.dispatch.candidateSha`);
+    requireEqual(dispatch.eventName, "workflow_dispatch", `${label}.dispatch.eventName`);
+    requireEqual(dispatch.workflowRunId, String(runId), `${label}.dispatch.workflowRunId`);
+    const receiptAttempt = numberField(dispatch, "workflowRunAttempt", `${label}.dispatch`);
+    if (receiptAttempt > runAttempt) {
+      throw new Error(`${label}.dispatch.workflowRunAttempt exceeds the workflow run attempt`);
     }
-    const runUrl = stringField(run, "html_url", `runs[${runIndex}].run`);
-    const selectedJobs = new Set(evidence.selectedJobs);
+    const jobsInput = dispatch.jobs;
+    const targetsInput = dispatch.targets;
+    if (typeof jobsInput !== "string" || typeof targetsInput !== "string") {
+      throw new Error(`${label}.dispatch jobs and targets must be strings`);
+    }
+    requireEqual(targetsInput, "", `${label}.dispatch.targets`);
+    const defaultSuiteSelected = jobsInput === "" && targetsInput === "";
+    requireEqual(
+      booleanField(dispatch, "defaultSuiteSelected", `${label}.dispatch`),
+      defaultSuiteSelected,
+      `${label}.dispatch.defaultSuiteSelected`,
+    );
+    booleanField(dispatch, "includeStagingBrevLaunchable", `${label}.dispatch`);
+    const allowJetsonRunnerQueue = booleanField(
+      dispatch,
+      "allowJetsonRunnerQueue",
+      `${label}.dispatch`,
+    );
+    const selectedJobs = new Set(jobsInput === "" ? [] : jobsInput.split(","));
     for (const jobId of selectedJobs) {
       if (!SELECTOR_PATTERN.test(jobId) || !knownJobs.has(jobId)) {
         throw new Error(`runs[${runIndex}] selects unknown release E2E job ${jobId}`);
       }
     }
+    if (selectedJobs.has("jetson-nvmap-gpu") && !allowJetsonRunnerQueue) {
+      throw new Error(`${label}.dispatch must allow the Jetson runner queue for its selector`);
+    }
     const selectedExecutions = preflight.executions.filter(
       (execution) =>
-        (evidence.defaultSuiteSelected && execution.group === "default") ||
+        (defaultSuiteSelected && execution.group === "default") ||
         selectedJobs.has(execution.jobId),
     );
 
@@ -512,19 +559,16 @@ function readManifest(manifestPath: string): {
   }
   const runs = manifest.runs.map((entry, index) => {
     if (
-      typeof entry.defaultSuiteSelected !== "boolean" ||
+      typeof entry.dispatchJson !== "string" ||
       typeof entry.jobsJson !== "string" ||
-      typeof entry.runJson !== "string" ||
-      !Array.isArray(entry.selectedJobs) ||
-      !entry.selectedJobs.every((job) => typeof job === "string")
+      typeof entry.runJson !== "string"
     ) {
       throw new Error(`manifest.runs[${index}] has an invalid schema`);
     }
     return {
-      defaultSuiteSelected: entry.defaultSuiteSelected,
+      dispatch: JSON.parse(readFileSync(path.resolve(directory, entry.dispatchJson), "utf8")),
       jobs: JSON.parse(readFileSync(path.resolve(directory, entry.jobsJson), "utf8")),
       run: JSON.parse(readFileSync(path.resolve(directory, entry.runJson), "utf8")),
-      selectedJobs: entry.selectedJobs,
     };
   });
   return { manifest, runs };

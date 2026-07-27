@@ -46,8 +46,21 @@ function runEvidence(
   const executions = plan.executions.filter(
     (execution) => execution.group === group && (options.only?.(execution) ?? true),
   );
+  const selectors = group === "default" ? [] : selectedJobs(plan, group);
   return {
-    defaultSuiteSelected: group === "default",
+    dispatch: {
+      allowJetsonRunnerQueue: group === "conditional",
+      candidateSha,
+      defaultSuiteSelected: group === "default",
+      eventName: "workflow_dispatch",
+      includeStagingBrevLaunchable:
+        group === "default" && plan.dispatches.defaultSuite.includeStagingBrevLaunchable,
+      jobs: selectors.join(","),
+      kind: "nemoclaw-e2e-dispatch-v1",
+      targets: "",
+      workflowRunAttempt: attempt,
+      workflowRunId: String(attempt),
+    },
     jobs: {
       jobs: executions.map((execution, index) => ({
         conclusion: options.conclusion?.(execution) ?? "success",
@@ -58,10 +71,14 @@ function runEvidence(
       })),
     },
     run: {
+      event: "workflow_dispatch",
+      head_branch: "main",
+      id: attempt,
+      path: ".github/workflows/e2e.yaml",
+      run_attempt: attempt,
       head_sha: options.sha ?? candidateSha,
       html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${attempt}`,
     },
-    selectedJobs: group === "default" ? [] : selectedJobs(plan, group),
   };
 }
 
@@ -75,7 +92,9 @@ describe("release E2E evidence", () => {
       mode: "ordinary",
       targets: "",
     });
-    expect(new Set(plan.dispatches.parallelExplicit.jobs.split(","))).toEqual(
+    const parallelExplicitJobs = plan.dispatches.parallelExplicit.jobs.split(",");
+    expect(parallelExplicitJobs).toHaveLength(4);
+    expect(new Set(parallelExplicitJobs)).toEqual(
       new Set([
         "openshell-gateway-auth-contract",
         "mcp-bridge-dev",
@@ -198,11 +217,23 @@ describe("release E2E evidence", () => {
     );
   });
 
+  it("rejects a selective dispatch receipt that claims default-suite coverage", () => {
+    const plan = preflight();
+    const selective = runEvidence(plan, "default");
+    const dispatch = selective.dispatch as Record<string, unknown>;
+    dispatch.jobs = "snapshot-commands";
+    dispatch.defaultSuiteSelected = true;
+
+    expect(() => buildReleaseE2eLedger(plan, [selective])).toThrow(
+      "runs[0].dispatch.defaultSuiteSelected must equal false",
+    );
+  });
+
   it("rejects evidence from another candidate SHA", () => {
     const plan = preflight();
 
     expect(() =>
       buildReleaseE2eLedger(plan, [runEvidence(plan, "default", { sha: "b".repeat(40) })]),
-    ).toThrow("does not match the candidate SHA");
+    ).toThrow("runs[0].run.head_sha must equal");
   });
 });

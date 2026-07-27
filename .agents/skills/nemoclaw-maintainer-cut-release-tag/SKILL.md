@@ -180,7 +180,7 @@ If the plan candidate SHA changes, discard the run and qualification evidence.
 Run full mode again for the new candidate SHA.
 No release-note-only delta exception is currently defined.
 
-For every accepted default, explicit, and conditional run, reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` returned by `nemoclaw-maintainer-e2e`.
+For every accepted default, explicit, and conditional run, reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` returned by `nemoclaw-maintainer-e2e`, and collect the workflow-produced dispatch receipt for that run.
 If those files were not returned, collect them once:
 
 ```bash
@@ -189,7 +189,19 @@ gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID" \
 gh api --paginate --slurp \
   "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
   >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
+ARTIFACT_PAGES="$(gh api --paginate --slurp \
+  "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/artifacts?per_page=100")"
+DISPATCH_ARTIFACT_NAME="$(jq -r --arg prefix "e2e-dispatch-$RUN_ID-" \
+  '[.[] | .artifacts[] | select(.expired != true and (.name | startswith($prefix)))]
+   | sort_by(.created_at) | last | .name // empty' <<<"$ARTIFACT_PAGES")"
+test -n "$DISPATCH_ARTIFACT_NAME"
+gh run download "$RUN_ID" \
+  --repo NVIDIA/NemoClaw \
+  --name "$DISPATCH_ARTIFACT_NAME" \
+  --dir "$EVIDENCE_DIR/dispatch-$RUN_ID"
 ```
+
+Use the latest existing receipt artifact, not the run's latest attempt number. A partial rerun can leave `generate-matrix` successful and therefore reuse its earlier receipt; the ledger permits that earlier receipt only when it binds the same run and its attempt does not exceed the run's latest attempt.
 
 Create `manifest.json` in the private evidence directory:
 
@@ -202,22 +214,21 @@ Create `manifest.json` in the private evidence directory:
     {
       "runJson": "run-123.json",
       "jobsJson": "jobs-123.json",
-      "defaultSuiteSelected": true,
-      "selectedJobs": []
+      "dispatchJson": "dispatch-123/dispatch.json"
     },
     {
       "runJson": "run-124.json",
       "jobsJson": "jobs-124.json",
-      "defaultSuiteSelected": false,
-      "selectedJobs": ["mcp-bridge-dev", "hermes-gpu-startup"]
+      "dispatchJson": "dispatch-124/dispatch.json"
     }
   ]
 }
 ```
 
-List the exact selectors used by each selective dispatch; do not copy the example selectors.
+Do not type default-suite claims or selector lists into the manifest. The helper derives them from the workflow-produced receipt and rejects a receipt whose selector fields disagree with its default-suite flag.
 Build the ledger with `npm run release:e2e-evidence -- --manifest "$EVIDENCE_DIR/manifest.json"`.
-The helper derives the denominator from the workflow, preserves matrix rows as separate semantic identifiers, binds every run to the candidate SHA, and keeps an earlier successful attempt green when a later attempt fails.
+The helper derives the denominator from the workflow, preserves matrix rows as separate semantic identifiers, binds every run and its actual dispatch inputs to the candidate SHA, and keeps an earlier successful attempt green when a later attempt fails.
+The manifest and helper cover the workflow-derived test execution ledger only. They do not replace exact Brev qualification acceptance: keep the raw `dispatch.json`, `qualification.json`, and `cleanup.json` validation in `nemoclaw-maintainer-e2e`, and carry its validated return beside this ledger or record the required qualification exception.
 
 Before showing the confirmation prompt, present:
 
@@ -229,7 +240,7 @@ Before showing the confirmation prompt, present:
 - a separate itemized maintainer exception for missing or invalid exact Brev Launchable qualification, including run and job URLs, the current result or missing receipt, and rationale.
 
 Do not ask for the phrase until each test and the exact Brev Launchable qualification has successful evidence or its own itemized maintainer exception.
-Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan. If it moved, regenerate the plan and rebuild the ledger for the new SHA; merges did not need to stop while the earlier evidence ran.
+Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan. If it moved, discard all prior candidate-bound evidence, regenerate the plan, rerun preflight and every required default, explicit, conditional, and exact Brev qualification group for the new SHA, capture a new manifest, and rebuild the ledger before requesting confirmation; merges did not need to stop while the earlier evidence ran.
 
 Ask the maintainer to paste this phrase:
 

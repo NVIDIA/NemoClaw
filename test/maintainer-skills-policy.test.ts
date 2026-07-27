@@ -151,11 +151,17 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
     expect(policy).toContain("Do not serialize unrelated evidence behind that blocker");
     expect(policy).toContain("discard the ledger and its exceptions");
+    expect(policy).toContain("actual selector inputs");
+    expect(release).toContain('"dispatchJson"');
     expect(release).toContain("the number of tests with green evidence");
     expect(release).toContain("successful run or job URL and attempt");
     expect(release).toContain("npm run release:e2e-evidence");
     expect(release).toContain("Do not wait for either run to finish before dispatching the other");
     expect(release).toContain("filter=all");
+    expect(release).toContain("actions/runs/$RUN_ID/artifacts");
+    expect(release).toContain("sort_by(.created_at)");
+    expect(release).not.toContain("RECEIPT_ATTEMPT");
+    expect(release).toContain("rerun preflight and every required default");
     expect(release).toContain("Immediately before asking, refresh `origin/main` once");
     const evidenceSummary = release.indexOf("Before showing the confirmation prompt");
     const confirmationPrompt = release.indexOf(
