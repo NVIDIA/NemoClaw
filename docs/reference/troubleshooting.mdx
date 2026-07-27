@@ -1689,8 +1689,8 @@ $$nemoclaw <name> rebuild
 If `shields up`, `shields down`, or `shields status` reports corrupt persisted state, NemoClaw refuses to infer or change the Shields posture.
 It preserves the Shields state file, timer marker, and transition record so an active recovery authority remains intact.
 
-Do not use `shields up` to replace corrupt state.
-Inspect the reported state-file error, restore the state file from a trusted host backup, or run `$$nemoclaw <name> rebuild` before retrying.
+Do not use `shields up` or an ordinary rebuild to replace corrupt state.
+Inspect the reported state-file error and restore the state file from a trusted host backup before retrying.
 
 ### `shields up` or `shields down` fails after `.config-hash` was removed
 

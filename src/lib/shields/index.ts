@@ -2593,7 +2593,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   if (state._isCorrupt) {
     console.error("  Shields state is corrupt; refusing to unlock.");
     console.error(
-      `  Recovery: inspect the reported state error, restore trusted state, or rebuild ${sandboxName} before retrying.`,
+      `  Recovery: inspect the reported state error and restore trusted state for ${sandboxName} before retrying.`,
     );
     return failShieldsCommand(`Shields state is corrupt for ${sandboxName}`, opts.throwOnError);
   }
@@ -2906,7 +2906,7 @@ function shieldsUpWithoutHostLock(
   if (state._isCorrupt) {
     console.error("  Shields state is corrupt; refusing to raise shields.");
     console.error(
-      `  Recovery: inspect the reported state error, restore trusted state, or rebuild ${sandboxName} before retrying.`,
+      `  Recovery: inspect the reported state error and restore trusted state for ${sandboxName} before retrying.`,
     );
     return failShieldsCommand(
       `Cannot raise shields while persisted shields state is corrupt for ${sandboxName}`,
@@ -3216,9 +3216,7 @@ function shieldsStatusWithoutHostLock(
     console.error(
       `  ${stateFilePath(sandboxName)} could not be parsed: ${state._corruptError ?? "unknown error"}`,
     );
-    console.error(
-      `  Recovery warning: restore trusted state or rebuild ${sandboxName} before retrying.`,
-    );
+    console.error(`  Recovery warning: restore trusted state for ${sandboxName} before retrying.`);
     throw new DeferredShieldsExit("Shields state is corrupt", 1);
   }
 

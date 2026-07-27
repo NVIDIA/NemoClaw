@@ -645,7 +645,7 @@ describe("shields — unit logic", () => {
       expect(() => shieldsStatus(sandboxName)).toThrow("exit 1");
       expect(errorSpy).toHaveBeenCalledWith("  Shields: ERROR (state file is corrupt)");
       expect(errorSpy).toHaveBeenCalledWith(
-        "  Recovery warning: restore trusted state or rebuild openclaw before retrying.",
+        "  Recovery warning: restore trusted state for openclaw before retrying.",
       );
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
@@ -1110,10 +1110,14 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     const statePath = path.join(stateDir, "shields-openclaw.json");
     const corruptState = "{broken-json";
     fs.writeFileSync(statePath, corruptState);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     expect(isShieldsDown("openclaw")).toBe(false);
     expect(() => shieldsDown("openclaw", { throwOnError: true })).toThrow(
       "Shields state is corrupt for openclaw",
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      "  Recovery: inspect the reported state error and restore trusted state for openclaw before retrying.",
     );
     expect(fs.readFileSync(statePath, "utf8")).toBe(corruptState);
   });
@@ -1165,7 +1169,7 @@ describe("NC-2227-05: shields timer marker behavior", () => {
 
     expect(errorSpy).toHaveBeenCalledWith("  Shields state is corrupt; refusing to raise shields.");
     expect(errorSpy).toHaveBeenCalledWith(
-      "  Recovery: inspect the reported state error, restore trusted state, or rebuild openclaw before retrying.",
+      "  Recovery: inspect the reported state error and restore trusted state for openclaw before retrying.",
     );
     expect(logSpy).not.toHaveBeenCalledWith("  Lockdown active for openclaw");
     expect(fs.readFileSync(statePath)).toEqual(corruptState);
