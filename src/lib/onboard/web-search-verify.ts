@@ -3,6 +3,11 @@
 
 import YAML from "yaml";
 import { shellQuote } from "../core/shell-quote";
+import {
+  type WebSearchProvider,
+  webSearchEnvFor,
+  webSearchLabelFor,
+} from "../inference/web-search";
 
 export type WebSearchVerifyAgent =
   | {
@@ -20,6 +25,92 @@ export type WebSearchVerifyDeps = {
   log?: (message?: string) => void;
   warn?: (message?: string) => void;
 };
+
+export type WebSearchEnvBoundary = "absent" | "placeholder" | "raw-secret";
+
+const WEB_SEARCH_ENV_BOUNDARY_SENTINELS: readonly WebSearchEnvBoundary[] = [
+  "absent",
+  "placeholder",
+  "raw-secret",
+];
+
+/**
+ * Shell that classifies a web-search provider's credential env var *inside* the
+ * sandbox and prints only a sentinel — never the value. This keeps the guard
+ * from pulling the very credential it is checking back across the host boundary.
+ * The profile-backed provider keeps the key gateway-side and rewrites it at
+ * egress, so the sandbox env is unset (`absent`) or carries the
+ * `openshell:resolve:env:<NAME>` reference (`placeholder`); a `generic`-typed
+ * provider instead injects the plaintext credential (`raw-secret`), which the
+ * agent can read and print (#7425).
+ */
+function buildWebSearchEnvBoundaryScript(envKey: string): string {
+  return [
+    `v="$(printenv ${envKey} 2>/dev/null || true)"`,
+    'case "$v" in',
+    "  '') printf absent ;;",
+    "  openshell:resolve:env:*) printf placeholder ;;",
+    "  *) printf raw-secret ;;",
+    "esac",
+  ].join("\n");
+}
+
+/**
+ * Map the in-sandbox sentinel to the typed boundary state. Anything other than a
+ * recognized sentinel (including a failed probe returning null) is treated as
+ * `absent` so a probe hiccup never raises a false security alert.
+ */
+export function classifyWebSearchEnvBoundary(
+  sentinel: string | null | undefined,
+): WebSearchEnvBoundary {
+  const value = (sentinel ?? "").trim();
+  return (WEB_SEARCH_ENV_BOUNDARY_SENTINELS as readonly string[]).includes(value)
+    ? (value as WebSearchEnvBoundary)
+    : "absent";
+}
+
+/**
+ * Runtime secret-boundary guard: assert the live sandbox container env does not
+ * expose the web-search provider's raw credential. `openclaw.json` inspection
+ * alone misses this — the key leaks through the process environment, not the
+ * config file. Classification runs in-sandbox and only a sentinel returns, so
+ * the raw value never reaches the host. On a raw-secret exposure it surfaces a
+ * prominent, actionable alert. Returns true when a raw credential was detected.
+ * Best-effort and non-fatal, matching the surrounding verification.
+ */
+function checkWebSearchEnvSecretBoundary(
+  sandboxName: string,
+  provider: WebSearchProvider,
+  deps: WebSearchVerifyDeps,
+  warn: (message?: string) => void,
+): boolean {
+  const envKey = webSearchEnvFor(provider);
+  const probe = deps.runCaptureOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "-n",
+      sandboxName,
+      "--",
+      "sh",
+      "-lc",
+      buildWebSearchEnvBoundaryScript(envKey),
+    ],
+    { ignoreError: true, timeout: 10_000 },
+  );
+  if (classifyWebSearchEnvBoundary(probe) !== "raw-secret") return false;
+
+  const label = webSearchLabelFor(provider);
+  warn("");
+  warn(`  ✗ SECURITY: the ${label} credential is exposed in the sandbox environment.`);
+  warn(`    ${envKey} holds a raw key inside sandbox '${sandboxName}', so the agent can read and`);
+  warn("    print it when asked to list environment variables or API keys.");
+  warn("    The credential should stay gateway-side and be resolved only at egress; a raw value");
+  warn("    means the provider was attached without the profile-backed rewrite. Recreate the");
+  warn("    sandbox to re-attach the profile-backed provider:");
+  warn(`      ${deps.cliName()} onboard --recreate-sandbox`);
+  return true;
+}
 
 function buildBraveEgressProbeCommand(apiKey: string): string {
   return [
@@ -158,6 +249,8 @@ export function verifyWebSearchInsideSandbox(
         return;
       }
 
+      checkWebSearchEnvSecretBoundary(sandboxName, "tavily", deps, warn);
+
       const placeholder = "openshell:resolve:env:TAVILY_API_KEY";
       const probe = deps.runCaptureOpenshell(
         [
@@ -209,6 +302,7 @@ export function verifyWebSearchInsideSandbox(
           warn(`  ⚠ Web search provider '${String(provider)}' cannot be verified.`);
           return;
         }
+        checkWebSearchEnvSecretBoundary(sandboxName, provider, deps, warn);
         const providerLabel = provider === "tavily" ? "Tavily Search" : "Brave Search";
         // Current OpenClaw schema keeps the provider-owned apiKey under
         // plugins.entries.<provider>.config.webSearch; older configs carried

@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { verifyWebSearchInsideSandbox, type WebSearchVerifyDeps } from "./web-search-verify";
+import {
+  classifyWebSearchEnvBoundary,
+  verifyWebSearchInsideSandbox,
+  type WebSearchVerifyDeps,
+} from "./web-search-verify";
 
 function deps(output: string | null | Array<string | null>) {
   const outputs = Array.isArray(output) ? [...output] : [output];
@@ -19,14 +23,18 @@ function deps(output: string | null | Array<string | null>) {
 
 describe("verifyWebSearchInsideSandbox", () => {
   it("verifies Hermes Tavily egress through JSON body credential rewriting", () => {
+    // Between the config read and the egress probe the secret-boundary check
+    // classifies the env var in-sandbox; a null/absent sentinel means no raw
+    // key is exposed.
     const d = deps([
       "web:\n  backend: tavily\n",
+      "absent",
       JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
     ]);
 
     verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, d);
 
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
     expect(d.runCaptureOpenshell.mock.calls[0][0]).toEqual([
       "sandbox",
       "exec",
@@ -36,7 +44,19 @@ describe("verifyWebSearchInsideSandbox", () => {
       "cat",
       "/sandbox/.hermes/config.yaml",
     ]);
-    expect(d.runCaptureOpenshell.mock.calls[1][0]).toEqual([
+    // The boundary probe classifies in-sandbox and returns only a sentinel.
+    expect(d.runCaptureOpenshell.mock.calls[1][0].slice(0, 7)).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+    ]);
+    expect(d.runCaptureOpenshell.mock.calls[1][0][7]).toContain("printenv TAVILY_API_KEY");
+    expect(d.runCaptureOpenshell.mock.calls[1][0][7]).not.toContain("cat ");
+    expect(d.runCaptureOpenshell.mock.calls[2][0]).toEqual([
       "sandbox",
       "exec",
       "-n",
@@ -93,13 +113,24 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
+      "absent",
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    expect(d.runCaptureOpenshell.mock.calls[1][0]).toEqual([
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(d.runCaptureOpenshell.mock.calls[1][0].slice(0, 7)).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+    ]);
+    expect(d.runCaptureOpenshell.mock.calls[1][0][7]).toContain("printenv BRAVE_API_KEY");
+    expect(d.runCaptureOpenshell.mock.calls[2][0]).toEqual([
       "sandbox",
       "exec",
       "-n",
@@ -125,13 +156,14 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
+      null,
       JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
     ]);
 
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    expect(d.runCaptureOpenshell.mock.calls[1][0]).toEqual([
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(d.runCaptureOpenshell.mock.calls[2][0]).toEqual([
       "sandbox",
       "exec",
       "-n",
@@ -141,7 +173,7 @@ describe("verifyWebSearchInsideSandbox", () => {
       "-lc",
       expect.stringContaining("Authorization: Bearer openshell:resolve:env:TAVILY_API_KEY"),
     ]);
-    expect(d.runCaptureOpenshell.mock.calls[1][0][7]).toContain("https://api.tavily.com/search");
+    expect(d.runCaptureOpenshell.mock.calls[2][0][7]).toContain("https://api.tavily.com/search");
     expect(d.log).toHaveBeenCalledWith("  ✓ Tavily Search egress verified inside sandbox");
   });
 
@@ -158,6 +190,7 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
+      null,
       JSON.stringify({ results: [] }) + "\nHTTP_STATUS:200\n",
     ]);
 
@@ -182,12 +215,13 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
+      null,
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 
@@ -204,6 +238,7 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
+      null,
       '{"message":"Unauthorized"}\nHTTP_STATUS:401\n',
     ]);
 
@@ -230,12 +265,26 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
+      null,
     ]);
 
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
-    // Only the openclaw.json read happens — no curl probe with the raw key.
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+    // The config read and the sentinel-only boundary probe run, but no curl
+    // probe interpolates the raw key.
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(d.runCaptureOpenshell.mock.calls[1][0].slice(0, 7)).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+    ]);
+    for (const call of d.runCaptureOpenshell.mock.calls) {
+      expect(call[0]).not.toContain("BSA-real-looking-secret-do-not-interpolate");
+    }
     expect(d.warn).toHaveBeenCalledWith(
       "  ⚠ Brave Search apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.",
     );
@@ -270,5 +319,73 @@ describe("verifyWebSearchInsideSandbox", () => {
     expect(throwing.warn).toHaveBeenCalledWith(
       "  ⚠ Web search verification probe failed (non-fatal).",
     );
+  });
+
+  it("raises a security alert when the sandbox env exposes a raw Brave key (#7425)", () => {
+    // The in-sandbox probe returns only the `raw-secret` sentinel — never the
+    // key itself — so the guard does not pull the credential across the boundary.
+    const d = deps([
+      JSON.stringify({
+        tools: { web: { search: { enabled: true, provider: "brave" } } },
+        plugins: {
+          entries: {
+            brave: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
+            },
+          },
+        },
+      }),
+      "raw-secret",
+      JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+
+    expect(d.warn).toHaveBeenCalledWith(
+      "  ✗ SECURITY: the Brave Search credential is exposed in the sandbox environment.",
+    );
+    expect(d.warn).toHaveBeenCalledWith("      nemoclaw onboard --recreate-sandbox");
+    // Non-fatal: egress verification still runs after the alert.
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
+  });
+
+  it("accepts a resolve:env placeholder sentinel without a security alert", () => {
+    const d = deps([
+      JSON.stringify({
+        tools: { web: { search: { enabled: true, provider: "brave" } } },
+        plugins: {
+          entries: {
+            brave: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
+            },
+          },
+        },
+      }),
+      "placeholder",
+      JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+
+    for (const call of d.warn.mock.calls) {
+      expect(String(call[0] ?? "")).not.toContain("SECURITY");
+    }
+    expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
+  });
+});
+
+describe("classifyWebSearchEnvBoundary", () => {
+  it("maps in-sandbox sentinels and treats anything else as absent", () => {
+    expect(classifyWebSearchEnvBoundary("absent")).toBe("absent");
+    expect(classifyWebSearchEnvBoundary("placeholder")).toBe("placeholder");
+    expect(classifyWebSearchEnvBoundary("raw-secret")).toBe("raw-secret");
+    expect(classifyWebSearchEnvBoundary(" raw-secret\n")).toBe("raw-secret");
+    // A failed probe (null) or unexpected output must never raise a false alarm.
+    expect(classifyWebSearchEnvBoundary(null)).toBe("absent");
+    expect(classifyWebSearchEnvBoundary(undefined)).toBe("absent");
+    expect(classifyWebSearchEnvBoundary("")).toBe("absent");
+    expect(classifyWebSearchEnvBoundary("BSAabcdefghijklmnopqrstuvwxyz012345")).toBe("absent");
   });
 });

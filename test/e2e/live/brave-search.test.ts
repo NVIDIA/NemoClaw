@@ -5,6 +5,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
+  assertAgentHasNoReadableBraveKey,
   assertBraveConfig,
   assertBraveResponse,
   assertDockerAvailable,
@@ -30,6 +31,7 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
       "onboard Brave-enabled OpenClaw sandbox",
       "validate Brave policy and secret isolation",
       "run Brave-backed OpenClaw search",
+      "assert agent cannot read the real Brave key",
       "query Brave API through credential resolver",
     ],
   },
@@ -48,6 +50,7 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
       "OpenClaw web search config is enabled and selects provider=brave",
       "the real BRAVE_API_KEY is absent from openclaw.json and sandbox shell env",
       "OpenClaw agent can perform a Brave-backed web search",
+      "the real BRAVE_API_KEY is absent from every agent-readable surface (env and OpenClaw config)",
       "curl from inside the sandbox can query Brave using the placeholder token header",
     ],
   });
@@ -127,6 +130,15 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   expect(extractOpenClawAgentText(agent.stdout), resultText(agent)).toMatch(
     /nvidia|geforce|cuda|gpu/i,
   );
+
+  progress.phase("assert agent cannot read the real Brave key");
+  // #7425 reproduction, reframed to the real boundary. The reporter's leak came
+  // from the raw key being readable by the agent (a generic-typed provider
+  // injects it into the sandbox env), not from the model choosing to print it.
+  // The benign search above proves Brave still works; this proves the agent has
+  // no readable channel to the real key, so it cannot disclose it for any prompt
+  // — without feeding the key through the live LLM loop.
+  await assertAgentHasNoReadableBraveKey(sandbox, remoteSecretFile, redactionValues);
 
   progress.phase("query Brave API through credential resolver");
   const curl = await sandboxShell(
