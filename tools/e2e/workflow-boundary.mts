@@ -561,6 +561,7 @@ export function readFreeStandingJobsInventory(
 }
 
 const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/auto-pair-approval.ts",
   "src/lib/actions/sandbox/restore-gateway-pairing.ts",
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
