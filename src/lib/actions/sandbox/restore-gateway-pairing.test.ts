@@ -144,6 +144,35 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
   });
 
+  it("fails without verification when the post-approval gateway restart fails (#7431)", async () => {
+    const order: string[] = [];
+    const restartRestoredSandboxGateway = vi
+      .fn()
+      .mockImplementationOnce(() => order.push("restart:initial"))
+      .mockImplementationOnce(() => {
+        order.push("restart:approved");
+        throw new Error("gateway did not restart after approval");
+      });
+    const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
+    const autoPairScopeApproval = vi.fn(() => order.push("approve"));
+    const verifyGatewayPairing = vi.fn(() => {
+      order.push("verify");
+      return true;
+    });
+
+    await expect(
+      establishRestoredSandboxGatewayPairing("beta", {
+        restartRestoredSandboxGateway,
+        warmupScopeUpgrade,
+        autoPairScopeApproval,
+        verifyGatewayPairing,
+      }),
+    ).rejects.toThrow("gateway did not restart after approval");
+    expect(order).toEqual(["restart:initial", "warmup", "approve", "restart:approved"]);
+    expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(2);
+    expect(verifyGatewayPairing).not.toHaveBeenCalled();
+  });
+
   it("fails when the pairing warm-up does not complete (#7431)", async () => {
     const warmupScopeUpgrade = vi.fn(() => {
       throw new Error("gateway not up");
