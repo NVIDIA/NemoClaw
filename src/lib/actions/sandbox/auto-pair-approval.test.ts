@@ -179,10 +179,10 @@ process.exit(2);
     }
   });
 
-  it("approves only one exact local clone pairing transition on a shared gateway", () => {
-    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
-      return;
-    }
+  const pyIt =
+    spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0 ? it : it.skip;
+
+  pyIt("approves only one exact local clone pairing transition on a shared gateway", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const script = buildAutoPairApprovalScript(
