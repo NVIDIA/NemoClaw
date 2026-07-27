@@ -80,6 +80,24 @@ describe("evaluateTelegramDiagnostics verdict", () => {
     }
   });
 
+  it("keeps provider-ready ahead of a stale Bot API startup error", () => {
+    const idle = evaluateTelegramDiagnostics(
+      baseInput({ breadcrumbs: breadcrumbs({ providerReady: true, startupHttpError: 502 }) }),
+    );
+    expect(idle.verdict).toBe("idle");
+
+    const healthy = evaluateTelegramDiagnostics(
+      baseInput({
+        breadcrumbs: breadcrumbs({
+          providerReady: true,
+          inboundReceived: true,
+          startupHttpError: 502,
+        }),
+      }),
+    );
+    expect(healthy.verdict).toBe("healthy");
+  });
+
   it("stays unknown when there is no conclusive breadcrumb", () => {
     expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: null })).verdict).toBe("unknown");
     expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: breadcrumbs() })).verdict).toBe(

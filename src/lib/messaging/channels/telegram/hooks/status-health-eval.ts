@@ -293,7 +293,7 @@ function buildHints(verdict: TelegramVerdict): string[] {
       ];
     case "unreachable":
       return [
-        "The sandbox could not reach api.telegram.org. Confirm the telegram egress policy is loaded and the corporate network allows Telegram.",
+        "The sandbox could not reach api.telegram.org, or the Telegram Bot API returned an error status. Confirm the telegram egress policy is loaded and the network allows Telegram, and check `nemoclaw <sandbox> logs --follow` for a Bot API HTTP status.",
       ];
     case "not_started":
       return [
