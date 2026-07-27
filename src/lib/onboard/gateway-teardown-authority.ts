@@ -21,6 +21,7 @@ import { gatewayOwnerFromCheckpoint } from "./gateway-authority-checkpoint";
 import { resolveGatewayName } from "./gateway-binding";
 import {
   type GatewayManagementLoadResult,
+  invalidGatewayManagementDeclarationError,
   loadGatewayManagementDeclaration,
 } from "./gateway-management";
 import {
@@ -87,7 +88,7 @@ function resolveGatewayEffectAuthority(
     ? deps.loadDeclaration(env)
     : loadGatewayManagementDeclaration({ env });
   if (!loaded.ok) {
-    throw new Error(`Invalid gateway management declaration: ${loaded.reason}`);
+    throw invalidGatewayManagementDeclarationError(loaded.reason);
   }
   const hasPackagedService =
     loaded.declaration === null &&

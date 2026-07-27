@@ -76,6 +76,25 @@ export type GatewayManagementParseResult =
   | { ok: true; declaration: GatewayManagementDeclaration }
   | { ok: false; reason: string };
 
+/**
+ * A rejected NEMOCLAW_GATEWAY_MANAGEMENT contract is user-input error, not a
+ * NemoClaw bug: the operator pointed the env var at a declaration file that
+ * fails contract validation (bad version, unknown field, non-loopback / DNS
+ * endpoint, embedded credentials, query string, path, …). Command boundaries
+ * recognize this class to print a clean single-line CLI error and exit nonzero
+ * instead of leaking a Node.js stack trace (#7627). Every rejection reason
+ * funnels through `reason`, so this one class covers the whole class of
+ * contract-validation failures.
+ */
+export class GatewayManagementDeclarationError extends Error {}
+
+/** Build the user-facing error for an invalid gateway management declaration. */
+export function invalidGatewayManagementDeclarationError(
+  reason: string,
+): GatewayManagementDeclarationError {
+  return new GatewayManagementDeclarationError(`Invalid gateway management declaration: ${reason}`);
+}
+
 const DECLARATION_KEYS = new Set([
   "version",
   "mode",
