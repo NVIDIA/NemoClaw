@@ -88,6 +88,8 @@ const CHECK_EXTERNAL_ID_PATTERN =
 const SELECTED_E2E_RUN_SUMMARY_PATTERN =
   /^\[Selected E2E run ([1-9][0-9]*)\]\((https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/([1-9][0-9]*))\) concluded /u;
 const SELECTED_E2E_RUN_SUMMARY_PREFIX = "[Selected E2E run ";
+const APPROVAL_CONTROLLER_RUN_SUMMARY_PATTERN =
+  /\[E2E \/ PR Gate Controller run ([1-9][0-9]*)\]\((https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/actions\/runs\/([1-9][0-9]*))\)/gu;
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
@@ -4182,6 +4184,373 @@ async function requireMaintainerPermission(
   }
 }
 
+type PendingApprovalController = {
+  environment: typeof FORK_E2E_APPROVAL_ENVIRONMENT | typeof INTERNAL_E2E_APPROVAL_ENVIRONMENT;
+  runId: number;
+  runUrl: string;
+  summary: string;
+  title: string;
+};
+
+function pendingApprovalController(
+  repository: string,
+  check: CheckRun,
+): PendingApprovalController | null {
+  const environment =
+    check.output?.title === CONTROL_PLANE_AUTHORIZATION_TITLE
+      ? INTERNAL_E2E_APPROVAL_ENVIRONMENT
+      : check.output?.title === FORK_E2E_AUTHORIZATION_TITLE
+        ? FORK_E2E_APPROVAL_ENVIRONMENT
+        : null;
+  if (!environment) return null;
+  if (
+    check.status !== "in_progress" ||
+    check.conclusion !== null ||
+    typeof check.output?.summary !== "string"
+  ) {
+    throw new Error("pending E2E approval check has an invalid state");
+  }
+
+  const matches = [...check.output.summary.matchAll(APPROVAL_CONTROLLER_RUN_SUMMARY_PATTERN)];
+  if (matches.length !== 1) {
+    throw new Error("pending E2E approval check must identify exactly one controller run");
+  }
+  const [, labelRunId, runUrl, linkedRepository, urlRunId] = matches[0]!;
+  if (
+    labelRunId !== urlRunId ||
+    linkedRepository !== repository ||
+    runUrl !== `https://github.com/${repository}/actions/runs/${labelRunId}`
+  ) {
+    throw new Error("pending E2E approval check has a mismatched controller run link");
+  }
+  const canonicalCheckUrl = `https://github.com/${repository}/runs/${check.id}`;
+  if (check.details_url !== canonicalCheckUrl && check.details_url !== runUrl) {
+    throw new Error("pending E2E approval check has an unexpected details URL");
+  }
+  return {
+    environment,
+    runId: parsePositiveId(labelRunId!, "approval controller run ID"),
+    runUrl: runUrl!,
+    summary: check.output.summary,
+    title: check.output.title!,
+  };
+}
+
+type ApprovalControllerRunState = {
+  status: "waiting" | "in_progress" | "completed";
+  conclusion: null | "cancelled";
+};
+
+function validateApprovalControllerRun(
+  value: unknown,
+  options: { repository: string; runId: number; runUrl: string },
+): ApprovalControllerRunState {
+  const expectedName = `E2E Gate workflow_run ${options.runId}`;
+  const active =
+    isObjectRecord(value) &&
+    (value.status === "waiting" || value.status === "in_progress") &&
+    value.conclusion === null;
+  const cancelled =
+    isObjectRecord(value) && value.status === "completed" && value.conclusion === "cancelled";
+  if (
+    !isObjectRecord(value) ||
+    value.id !== options.runId ||
+    value.name !== expectedName ||
+    value.display_title !== expectedName ||
+    value.path !== PR_GATE_WORKFLOW_PATH ||
+    !Number.isSafeInteger(value.workflow_id) ||
+    (value.workflow_id as number) < 1 ||
+    value.event !== "workflow_run" ||
+    value.head_branch !== "main" ||
+    typeof value.head_sha !== "string" ||
+    !SHA_PATTERN.test(value.head_sha) ||
+    value.run_attempt !== 1 ||
+    (!active && !cancelled) ||
+    value.html_url !== options.runUrl ||
+    !isObjectRecord(value.repository) ||
+    value.repository.full_name !== options.repository
+  ) {
+    throw new Error("linked E2E approval controller is not the expected workflow run");
+  }
+  return {
+    status: value.status as ApprovalControllerRunState["status"],
+    conclusion: value.conclusion as ApprovalControllerRunState["conclusion"],
+  };
+}
+
+function validatePendingApprovalDeployment(
+  value: unknown,
+  options: { repository: string; environment: string },
+): boolean {
+  if (!Array.isArray(value)) {
+    throw new Error("linked E2E approval controller returned invalid pending deployments");
+  }
+  if (value.length === 0) return false;
+  const expectedUrl = `https://api.github.com/repos/${options.repository}/environments/${options.environment}`;
+  if (value.length === 1) {
+    const deployment = value[0];
+    const environment = isObjectRecord(deployment) ? deployment.environment : undefined;
+    if (
+      isObjectRecord(environment) &&
+      Number.isSafeInteger(environment.id) &&
+      (environment.id as number) > 0 &&
+      environment.name === options.environment &&
+      environment.url === expectedUrl
+    ) {
+      return true;
+    }
+  }
+  throw new Error("linked E2E approval controller has no exact pending protected environment");
+}
+
+type ActivePrGateCheck = {
+  check: CheckRun;
+  identity: PrGateExternalIdentity;
+};
+
+async function activePrGateChecksForHead(options: {
+  repository: string;
+  token: string;
+  prNumber: number;
+  headSha: string;
+}): Promise<ActivePrGateCheck[]> {
+  const lineage = (
+    await listPrGateChecks({
+      repository: options.repository,
+      token: options.token,
+      headSha: options.headSha,
+    })
+  ).filter((check) => isPrGateLineage(check, options.prNumber, options.headSha));
+  if (lineage.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
+    throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
+  }
+
+  const histories = new Map<string, { identity: PrGateExternalIdentity; checks: CheckRun[] }>();
+  for (const check of lineage) {
+    if (check.external_id?.startsWith(`${LEGACY_CHECK_EXTERNAL_ID_PREFIX}:`)) continue;
+    const identity = parsePrGateExternalIdentity(check.external_id);
+    if (
+      !identity ||
+      identity.prNumber !== options.prNumber ||
+      identity.headSha !== options.headSha
+    ) {
+      throw new Error("PR gate lineage contains an invalid v2 external identity");
+    }
+    const externalId = prGateExternalId(identity.prNumber, identity.headSha, identity.baseSha);
+    const history = histories.get(externalId) ?? { identity, checks: [] };
+    history.checks.push(check);
+    histories.set(externalId, history);
+  }
+
+  const active: ActivePrGateCheck[] = [];
+  for (const history of histories.values()) {
+    const current = currentExactDiffCheck(history.checks, {
+      repository: options.repository,
+      identity: history.identity,
+    });
+    if (current && current.status !== "completed") {
+      active.push({ check: current, identity: history.identity });
+    }
+  }
+  return active.sort((left, right) => left.check.id - right.check.id);
+}
+
+async function readCloseEventPull(options: {
+  repository: string;
+  token: string;
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+}): Promise<PullRequestListItem> {
+  const pull = validatePullRequestIdentity(
+    await githubApi<unknown>(
+      `repos/${options.repository}/pulls/${options.prNumber}`,
+      options.token,
+      { userAgent: USER_AGENT },
+    ),
+    { allowClosed: true },
+  );
+  if (
+    pull.number !== options.prNumber ||
+    pull.head.sha !== options.headSha ||
+    pull.base.sha !== options.baseSha ||
+    pull.base.repo.full_name !== options.repository
+  ) {
+    throw new Error("pull request identity does not match the close cancellation event");
+  }
+  return pull;
+}
+
+async function readExactPrGateCheck(options: {
+  repository: string;
+  token: string;
+  checkRunId: number;
+  identity: PrGateExternalIdentity;
+}): Promise<CheckRun> {
+  const value = await githubApi<unknown>(
+    `repos/${options.repository}/check-runs/${options.checkRunId}`,
+    options.token,
+    { userAgent: USER_AGENT },
+  );
+  if (!isObjectRecord(value)) {
+    throw new Error("GitHub returned an invalid PR gate check during close cancellation");
+  }
+  const check = value as CheckRun;
+  if (
+    check.id !== options.checkRunId ||
+    check.name !== CHECK_NAME ||
+    check.app?.id !== GITHUB_ACTIONS_APP_ID ||
+    check.head_sha !== options.identity.headSha ||
+    check.external_id !==
+      prGateExternalId(
+        options.identity.prNumber,
+        options.identity.headSha,
+        options.identity.baseSha,
+      )
+  ) {
+    throw new Error("PR gate check identity changed during close cancellation");
+  }
+  return check;
+}
+
+function samePendingApprovalController(
+  repository: string,
+  check: CheckRun,
+  expected: PendingApprovalController,
+): PendingApprovalController | null {
+  const approval = pendingApprovalController(repository, check);
+  if (
+    approval &&
+    (approval.runId !== expected.runId ||
+      approval.environment !== expected.environment ||
+      approval.title !== expected.title ||
+      approval.summary !== expected.summary)
+  ) {
+    throw new Error("pending E2E approval check changed during close cancellation");
+  }
+  return approval;
+}
+
+async function cancelClosedPendingApprovalPrGate(options: {
+  repository: string;
+  token: string;
+  prNumber: number;
+  headSha?: string;
+  supersededHeadSha?: string;
+  baseSha?: string;
+}): Promise<number> {
+  if (
+    !options.headSha ||
+    !options.supersededHeadSha ||
+    !options.baseSha ||
+    options.headSha !== options.supersededHeadSha
+  ) {
+    return 0;
+  }
+
+  const closeEvent = {
+    repository: options.repository,
+    token: options.token,
+    prNumber: options.prNumber,
+    headSha: options.headSha,
+    baseSha: options.baseSha,
+  };
+  const pull = await readCloseEventPull(closeEvent);
+  if (pull.state !== "closed") return 0;
+
+  const candidates = await activePrGateChecksForHead({
+    repository: options.repository,
+    token: options.token,
+    prNumber: options.prNumber,
+    headSha: options.headSha,
+  });
+  let cancelled = 0;
+  for (const candidate of candidates) {
+    const approval = pendingApprovalController(options.repository, candidate.check);
+    if (!approval) continue;
+    const runOptions = {
+      repository: options.repository,
+      runId: approval.runId,
+      runUrl: approval.runUrl,
+    };
+    const initialRun = validateApprovalControllerRun(
+      await githubApi<unknown>(
+        `repos/${options.repository}/actions/runs/${approval.runId}`,
+        options.token,
+        { userAgent: USER_AGENT },
+      ),
+      runOptions,
+    );
+    if (initialRun.status === "waiting") {
+      validatePendingApprovalDeployment(
+        await githubApi<unknown>(
+          `repos/${options.repository}/actions/runs/${approval.runId}/pending_deployments`,
+          options.token,
+          { userAgent: USER_AGENT },
+        ),
+        {
+          repository: options.repository,
+          environment: approval.environment,
+        },
+      );
+    }
+
+    // A stale close event must not cancel a controller made live again by a reopen.
+    if ((await readCloseEventPull(closeEvent)).state !== "closed") break;
+
+    const before = await readExactPrGateCheck({
+      repository: options.repository,
+      token: options.token,
+      checkRunId: candidate.check.id,
+      identity: candidate.identity,
+    });
+    if (before.status === "completed") continue;
+    samePendingApprovalController(options.repository, before, approval);
+    const currentRun = validateApprovalControllerRun(
+      await githubApi<unknown>(
+        `repos/${options.repository}/actions/runs/${approval.runId}`,
+        options.token,
+        { userAgent: USER_AGENT },
+      ),
+      runOptions,
+    );
+    let reconciled = currentRun.status === "completed";
+    if (!reconciled) {
+      await cancelChildRun(options.repository, options.token, approval.runId);
+      reconciled = true;
+    }
+
+    const afterRun = validateApprovalControllerRun(
+      await githubApi<unknown>(
+        `repos/${options.repository}/actions/runs/${approval.runId}`,
+        options.token,
+        { userAgent: USER_AGENT },
+      ),
+      runOptions,
+    );
+    const after = await readExactPrGateCheck({
+      repository: options.repository,
+      token: options.token,
+      checkRunId: candidate.check.id,
+      identity: candidate.identity,
+    });
+    const stillPending = samePendingApprovalController(options.repository, after, approval);
+    if (stillPending) {
+      await completeCheck(
+        { repository: options.repository, checkRunId: candidate.check.id },
+        options.token,
+        closedPrGateVerdict(options.repository, candidate.identity),
+        approval.runUrl,
+      );
+    }
+    if (reconciled) cancelled += 1;
+    console.log(
+      `Reconciled closed-PR approval controller: pr=${options.prNumber} run=${approval.runId} check=${candidate.check.id} controller_status=${afterRun.status} check_closed=${Boolean(stillPending)}`,
+    );
+  }
+  return cancelled;
+}
+
 async function activeSupersededPrGateChecks(options: {
   repository: string;
   token: string;
@@ -4291,10 +4660,18 @@ export async function cancelPrGate(
     });
     console.log(`Closed superseded PR gate check: pr=${prNumber} check=${check.id}`);
   }
-  if (active.size === 0) {
+  const closedApprovalControllers = await cancelClosedPendingApprovalPrGate({
+    repository,
+    token,
+    prNumber,
+    headSha,
+    supersededHeadSha,
+    baseSha,
+  });
+  if (active.size === 0 && closedApprovalControllers === 0) {
     console.log(`No active E2E runs found for PR #${prNumber}`);
   }
-  return active.size;
+  return active.size + closedApprovalControllers;
 }
 
 function reportControllerError(error: unknown): void {
