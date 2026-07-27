@@ -97,6 +97,19 @@ describe("e2e workflow boundary", () => {
     ).toEqual({ runQualification: true });
     expect(
       evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        jobs: "staging-brev-launchable",
+        targets: "cloud-onboard",
+      }),
+    ).toEqual({ runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        jobs: "staging-brev-launchable,hermes-e2e",
+      }),
+    ).toEqual({ runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
         eventName: "schedule",
       }),
     ).toEqual({ runQualification: false });
@@ -143,7 +156,7 @@ describe("e2e workflow boundary", () => {
         "workflow run-name must expose the unique manual-dispatch correlation ID",
         "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
         "workflow must not define superseded staging-brev-launchable-readiness job",
-        "staging-brev-launchable must run for explicit selection or an empty-selector full dispatch",
+        "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
         "staging-brev-launchable dispatch identity must bind DISPATCH_JOBS",
         `step 'Record E2E dispatch identity' run script must include kind: "nemoclaw-e2e-dispatch-v1"`,
       ]),

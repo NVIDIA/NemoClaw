@@ -686,8 +686,7 @@ export function evaluateStagingBrevLaunchableDispatch(input: {
     jobs === "" &&
     targets === "";
   const explicitlySelected =
-    input.eventName === "workflow_dispatch" &&
-    splitSelector(jobs).includes("staging-brev-launchable");
+    input.eventName === "workflow_dispatch" && jobs === "staging-brev-launchable" && targets === "";
   const requested = fullDispatch || explicitlySelected;
   const trustedMain = input.trustedMain !== false;
 
@@ -4182,10 +4181,10 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
   }
   const expectedSelector =
-    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
   if (job.if !== expectedSelector) {
     errors.push(
-      "staging-brev-launchable must run for explicit selection or an empty-selector full dispatch",
+      "staging-brev-launchable must run for its exact Launchable-only selection or an empty-selector full dispatch",
     );
   }
   const concurrency = asRecord(job.concurrency);

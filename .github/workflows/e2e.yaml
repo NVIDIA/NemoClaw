@@ -347,7 +347,7 @@ jobs:
   staging-brev-launchable:
     name: Exact staging Brev Launchable
     needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment:
