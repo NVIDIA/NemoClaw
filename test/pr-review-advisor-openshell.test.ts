@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -303,6 +304,46 @@ describe("PR review advisor OpenShell wrapper", () => {
   it("bounds prepared GitHub context before parsing", () => {
     const contextPath = path.join(temporaryDirectory(), "github-context.json");
     fs.writeFileSync(contextPath, Buffer.alloc(5 * 1024 * 1024 + 1, 0x20));
+
+    expect(() => readPreparedGitHubContext(contextPath)).toThrow("exceeds the 5 MiB limit");
+  });
+
+  it.skipIf(process.platform === "win32" || typeof fs.constants.O_NONBLOCK !== "number")(
+    "rejects a prepared-context FIFO without blocking",
+    () => {
+      const fifoPath = path.join(temporaryDirectory(), "github-context.json");
+      const created = spawnSync("mkfifo", [fifoPath], { encoding: "utf8", timeout: 5_000 });
+      expect(created.status, created.stderr).toBe(0);
+
+      const moduleUrl = new URL("../tools/pr-review-advisor/github-context.mts", import.meta.url)
+        .href;
+      const read = spawnSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          "--no-warnings",
+          "--input-type=module",
+          "--eval",
+          `import { readPreparedGitHubContext } from ${JSON.stringify(moduleUrl)}; readPreparedGitHubContext(${JSON.stringify(fifoPath)});`,
+        ],
+        { encoding: "utf8", timeout: 2_000 },
+      );
+
+      expect(read.error).toBeUndefined();
+      expect(read.status).not.toBe(0);
+      expect(read.stderr).toContain("Prepared GitHub context must be a regular file");
+    },
+  );
+
+  it("bounds a prepared context that grows after descriptor validation", () => {
+    const contextPath = path.join(temporaryDirectory(), "github-context.json");
+    fs.writeFileSync(contextPath, Buffer.alloc(MAX_PREPARED_GITHUB_CONTEXT_BYTES, 0x20));
+    const originalFstatSync = fs.fstatSync;
+    vi.spyOn(fs, "fstatSync").mockImplementation((descriptor) => {
+      const stat = originalFstatSync(descriptor);
+      fs.appendFileSync(contextPath, "x");
+      return stat;
+    });
 
     expect(() => readPreparedGitHubContext(contextPath)).toThrow("exceeds the 5 MiB limit");
   });

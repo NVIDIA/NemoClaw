@@ -41,6 +41,7 @@ describe("advisor HTTP dispatcher", () => {
 
     const moduleUrl = new URL("../tools/advisors/http-dispatcher.mts", import.meta.url).href;
     const script = `
+      import { getGlobalDispatcher } from "undici";
       import { configureAdvisorHttpDispatcher } from ${JSON.stringify(moduleUrl)};
       const originalFetch = globalThis.fetch;
       configureAdvisorHttpDispatcher();
@@ -56,6 +57,7 @@ describe("advisor HTTP dispatcher", () => {
       if (!fetchRejected) {
         throw new Error("advisor transport swallowed a failed fetch");
       }
+      getGlobalDispatcher().emit("error", new Error("unpaired-dispatcher-failure"));
     `;
     const child = spawn(
       process.execPath,
@@ -86,5 +88,8 @@ describe("advisor HTTP dispatcher", () => {
 
     expect(exitCode, Buffer.concat(stderr).toString("utf8")).toBe(0);
     expect(connectTargets).toContain("advisor-transport.invalid:443");
+    expect(Buffer.concat(stderr).toString("utf8")).toContain(
+      "Advisor HTTP dispatcher error: Error: unpaired-dispatcher-failure",
+    );
   });
 });

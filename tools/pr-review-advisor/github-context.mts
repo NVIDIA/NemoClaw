@@ -81,14 +81,23 @@ export function readPreparedGitHubContext(
   filePath: string,
   expected: { prNumber?: number; repo?: string } = {},
 ): GitHubReviewContext | null {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") {
+    throw new Error("Prepared GitHub context requires secure no-follow file access");
+  }
+
   let descriptor: number;
   try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0),
+    );
   } catch (error) {
     throw new Error("Prepared GitHub context must be a regular file", { cause: error });
   }
 
-  let content: Buffer;
+  const content = Buffer.allocUnsafe(MAX_PREPARED_GITHUB_CONTEXT_BYTES + 1);
+  let bytesRead = 0;
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) {
@@ -97,15 +106,19 @@ export function readPreparedGitHubContext(
     if (stat.size > MAX_PREPARED_GITHUB_CONTEXT_BYTES) {
       throw new Error("Prepared GitHub context exceeds the 5 MiB limit");
     }
-    content = fs.readFileSync(descriptor);
+    while (bytesRead < content.length) {
+      const count = fs.readSync(descriptor, content, bytesRead, content.length - bytesRead, null);
+      if (count === 0) break;
+      bytesRead += count;
+    }
   } finally {
     fs.closeSync(descriptor);
   }
-  if (content.byteLength > MAX_PREPARED_GITHUB_CONTEXT_BYTES) {
+  if (bytesRead > MAX_PREPARED_GITHUB_CONTEXT_BYTES) {
     throw new Error("Prepared GitHub context exceeds the 5 MiB limit");
   }
 
-  const parsed = JSON.parse(content.toString("utf8")) as unknown;
+  const parsed = JSON.parse(content.toString("utf8", 0, bytesRead)) as unknown;
   if (parsed === null) return null;
   if (!isObjectRecord(parsed)) {
     throw new Error("Prepared GitHub context must be a JSON object or null");

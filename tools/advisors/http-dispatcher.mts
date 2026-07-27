@@ -10,12 +10,16 @@ const originalGlobalFetch = globalThis.fetch;
 let installedGlobalFetch: typeof globalThis.fetch | undefined;
 
 // Undici can emit a dispatcher error while the corresponding fetch rejects normally.
-// Handle that duplicate EventEmitter path without swallowing the fetch rejection.
-const ignoreUndiciDispatcherError = (_error: unknown): void => {};
+// Keep that EventEmitter path from terminating the process, but report every event so
+// an independent transport failure remains observable. Remove this listener when
+// Undici no longer emits an uncaught dispatcher error for a rejected proxy request.
+const reportUndiciDispatcherError = (error: unknown): void => {
+  console.error("Advisor HTTP dispatcher error:", error);
+};
 
 function withUndiciErrorListener<T extends undici.Dispatcher>(dispatcher: T): T {
   if (dispatcher instanceof EventEmitter) {
-    EventEmitter.prototype.on.call(dispatcher, "error", ignoreUndiciDispatcherError);
+    EventEmitter.prototype.on.call(dispatcher, "error", reportUndiciDispatcherError);
   }
   return dispatcher;
 }
