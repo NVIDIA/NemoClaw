@@ -8,7 +8,7 @@
 - Status: Draft.
 - Authors: NemoClaw maintainers.
 - Created: 2026-07-26.
-- Discussion: To be assigned.
+- Discussion: [#7636](https://github.com/NVIDIA/NemoClaw/discussions/7636).
 - Related work: [PR #7030](https://github.com/NVIDIA/NemoClaw/pull/7030).
 - Implementation: Not started.
 
