@@ -155,6 +155,47 @@ describe("public readiness presentation (#7412)", () => {
     expect(publicReport.findings).not.toContainEqual(warnings.at(-1));
   });
 
+  it("retains evidence referenced by a finding beyond the initial evidence boundary", () => {
+    const evidence = Array.from({ length: 257 }, (_, index) => ({
+      id: `host.boundary.evidence.${index}`,
+      summary: `Evidence ${index}`,
+    }));
+    const blocker = {
+      id: "host.boundary.blocker",
+      severity: "blocking" as const,
+      summary: "A blocker with late evidence.",
+      evidenceIds: [evidence.at(-1)?.id ?? ""],
+    };
+
+    const publicReport = createPublicReadinessReport(
+      report({ evidence, findings: [blocker] }, { status: "incompatible", exitCode: 2 }),
+    );
+
+    expect(publicReport.evidence).toHaveLength(256);
+    expect(publicReport.evidence.map(({ id }) => id)).toContain(evidence.at(-1)?.id);
+    expect(publicReport.evidence.map(({ id }) => id)).not.toContain(evidence.at(-2)?.id);
+  });
+
+  it("retains capabilities referenced by a qualification beyond the initial boundary", () => {
+    const capabilities = Array.from({ length: 257 }, (_, index) => ({
+      id: `host.boundary.capability.${index}`,
+      state: "present" as const,
+    }));
+    const qualification = {
+      id: "host.boundary.qualification",
+      status: "qualified" as const,
+      capabilityIds: [capabilities.at(-1)?.id ?? ""],
+    };
+
+    const publicReport = createPublicReadinessReport(
+      report({ capabilities, qualifications: [qualification] }),
+    );
+
+    expect(publicReport.capabilities).toHaveLength(256);
+    expect(publicReport.capabilities.map(({ id }) => id)).toContain(capabilities.at(-1)?.id);
+    expect(publicReport.capabilities.map(({ id }) => id)).not.toContain(capabilities.at(-2)?.id);
+  });
+
   it("fails closed when required findings exceed the public boundary", () => {
     const blockers = Array.from({ length: 257 }, (_, index) => ({
       id: `host.blocker.${index}`,
