@@ -655,42 +655,38 @@ describe("pull request and main workflow contracts", () => {
     const routinePrCalls = runLoggedPackageScript(scripts["validate:pr"]);
     const repositoryCheckCalls = runLoggedPackageScript(scripts["checks:repository"]);
 
-    expect(cliCoverageCalls.map(([command]) => command)).toEqual([
-      "npm", "npm", "tsx", "vitest", "tsx",
-    ]);
+    expect(cliCoverageCalls.map(([command]) => command).join(" ")).toBe(
+      "npm npm tsx vitest tsx",
+    );
     expect(cliCoverageCalls[3]).toEqual(
       expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
     );
-    expect(cliCoverageCalls[4]).toEqual([
-      "tsx", "scripts/check-coverage-ratchet.mts", "coverage/cli/coverage-summary.json",
-      "ci/coverage-threshold-cli.json", "CLI coverage",
-    ]);
+    expect(cliCoverageCalls[4].join(" ")).toBe(
+      "tsx scripts/check-coverage-ratchet.mts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json CLI coverage",
+    );
     expect(pluginCoverageCalls[0]).toEqual(
       expect.arrayContaining([
-        "--project", "plugin", "--coverage.include=nemoclaw/src/**/*.ts",
+        "--project",
+        "plugin",
+        "--coverage.include=nemoclaw/src/**/*.ts",
         "--coverage.include=nemoclaw/src/**/*.cts",
       ]),
     );
-    expect(pluginCoverageCalls[1]).toEqual([
-      "tsx", "scripts/check-coverage-ratchet.mts", "coverage/plugin/coverage-summary.json",
-      "ci/coverage-threshold-plugin.json", "Plugin coverage",
+    expect(pluginCoverageCalls[1].join(" ")).toBe(
+      "tsx scripts/check-coverage-ratchet.mts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json Plugin coverage",
+    );
+    expect(broadCheckCalls.map((call) => call.join(" "))).toEqual([
+      "npx prek run --all-files --stage pre-commit",
+      "npx prek run --all-files --stage manual",
     ]);
-    expect(broadCheckCalls).toEqual([
-      ["npx", "prek", "run", "--all-files", "--stage", "pre-commit"],
-      ["npx", "prek", "run", "--all-files", "--stage", "manual"],
+    expect(routinePrCalls.map((call) => call.join(" "))).toEqual([
+      "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-commit",
+      "npx commitlint --from origin/main --to HEAD",
+      "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-push",
     ]);
-    expect(routinePrCalls).toEqual([
-      [
-        "npx", "prek", "run", "--from-ref", "origin/main", "--to-ref", "HEAD", "--stage",
-        "pre-commit",
-      ],
-      ["npx", "commitlint", "--from", "origin/main", "--to", "HEAD"],
-      [
-        "npx", "prek", "run", "--from-ref", "origin/main", "--to-ref", "HEAD", "--stage",
-        "pre-push",
-      ],
+    expect(repositoryCheckCalls.map((call) => call.join(" "))).toEqual([
+      "tsx scripts/checks/run.mts",
     ]);
-    expect(repositoryCheckCalls).toEqual([["tsx", "scripts/checks/run.mts"]]);
     expect(scripts["check:diff"]).toBe("npm run validate:pr");
     expect(scripts.checks).toBe("npm run checks:repository");
     expect(scripts.lint).toContain("npm run checks:repository");
