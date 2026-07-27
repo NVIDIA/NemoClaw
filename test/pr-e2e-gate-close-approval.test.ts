@@ -116,6 +116,8 @@ function deterministicPolling(timeoutMs = 10) {
   return {
     pollIntervalMs: 1,
     timeoutMs,
+    childVisibilityWindowMs: 2,
+    childPollIntervalMs: 1,
     now: () => time,
     sleep: async (ms: number) => {
       time += ms;
@@ -283,6 +285,10 @@ describe("PR E2E close approval cleanup", () => {
             ({ url, method }) =>
               url.endsWith("/actions/runs/23/pending_deployments") && method === "GET",
             () => githubResponse(pendingDeployments()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
           ),
         ],
         requests,
