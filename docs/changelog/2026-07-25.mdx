@@ -59,7 +59,8 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   A sandbox that starts with Shields down remains down.
   If lockdown cannot be restored, the batch stops and prints the recovery command without processing the remaining sandboxes.
   Cross-sandbox snapshot restore now approves at most one pairing or scope-upgrade request that matches the restored clone, restarts that clone's gateway to publish the approval, and uses one authenticated verification as its success condition.
-  Corrupt persisted Shields state is rejected before mutation and must be restored from a trusted host backup; neither `shields up` nor an ordinary rebuild replaces it.
+  NemoClaw rejects corrupt persisted Shields state before mutation.
+  Restore the state from a trusted host backup; neither `shields up` nor an ordinary rebuild replaces it.
   For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Managed OpenClaw and Hermes sandbox Dockerfiles now avoid BuildKit-only bind mounts.
   On Docker Engine hosts, the OpenShell gateway builder can complete the image build when the host-side BuildKit prebuild is unavailable or fails.
@@ -69,7 +70,9 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   The OpenClaw graph replaces its affected `brace-expansion` and `fast-uri` resolutions.
   All managed sandbox base images now install checksum-bound fixed Vim, jq, Oniguruma, and Expat packages and verify the reviewed Perl components.
   Their bundled npm replaces its private `brace-expansion@5.0.7` copy with SRI-pinned `5.0.8`, and each image records a root-owned, read-only package inventory.
-  OpenClaw onboarding now rejects a selected base that lacks that immutable inventory before the final image build; an incompatible exact release is refreshed once when cached, then replaced by a current local build rather than `:latest`.
+  OpenClaw onboarding now rejects a selected base that lacks that immutable inventory before the final image build.
+  When a cached exact release is incompatible, onboarding refreshes it once.
+  If it remains incompatible, onboarding uses a current local build rather than `:latest`.
   Hermes image assembly removes build-only caches and dependencies, reducing the measured final image by 624,394,525 bytes.
   For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture).
 - Release validation now runs approved E2E targets for fork PRs, retries one confirmed hosted-runner loss, and retries classified transient base-image pulls.
