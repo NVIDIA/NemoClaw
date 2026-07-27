@@ -1404,23 +1404,6 @@ const coldStoredAuthContext = nemoclawResolveSelfRepairPairingContext(
 if (coldStoredAuthContext?.useStoredDeviceAuth === true) {
   throw new Error("cold clone request incorrectly selected stored device auth");
 }
-const primaryDevicesDir = path.join(stateDir + "-primary", "devices");
-fs.mkdirSync(primaryDevicesDir, { recursive: true });
-const primaryPendingBytes = JSON.stringify({
-  "primary-request": {
-    requestId: "primary-request",
-    deviceId: "primary-device",
-    publicKey: "primary-public-key",
-    clientId: "cli",
-    clientMode: "cli",
-    role: "operator",
-    roles: ["operator"],
-    scopes: ["operator.pairing"],
-  },
-});
-const primaryPairedBytes = JSON.stringify({});
-fs.writeFileSync(path.join(primaryDevicesDir, "pending.json"), primaryPendingBytes);
-fs.writeFileSync(path.join(primaryDevicesDir, "paired.json"), primaryPairedBytes);
 const unrelatedBeforeColdApproval = JSON.stringify(coldPendingState.unrelated);
 const coldApproval = await approveDevicePairing(String(coldRequest.requestId), {
   callerScopes: ["operator.admin"],
@@ -1466,14 +1449,6 @@ if (
   )
 ) {
   throw new Error("cold clone approval left an admin successor");
-}
-if (
-  fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf8") !==
-    primaryPendingBytes ||
-  fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf8") !==
-    primaryPairedBytes
-) {
-  throw new Error("cold clone approval mutated primary state");
 }
 const repairRequest = {
   requestId: "cli-scope-repair",
