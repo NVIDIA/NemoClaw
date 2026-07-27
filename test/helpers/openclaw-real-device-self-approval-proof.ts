@@ -1404,6 +1404,77 @@ const coldStoredAuthContext = nemoclawResolveSelfRepairPairingContext(
 if (coldStoredAuthContext?.useStoredDeviceAuth === true) {
   throw new Error("cold clone request incorrectly selected stored device auth");
 }
+const primaryDevicesDir = path.join(stateDir + "-primary", "devices");
+fs.mkdirSync(primaryDevicesDir, { recursive: true });
+const primaryPendingBytes = JSON.stringify({
+  "primary-request": {
+    requestId: "primary-request",
+    deviceId: "primary-device",
+    publicKey: "primary-public-key",
+    clientId: "cli",
+    clientMode: "cli",
+    role: "operator",
+    roles: ["operator"],
+    scopes: ["operator.pairing"],
+  },
+});
+const primaryPairedBytes = JSON.stringify({});
+fs.writeFileSync(path.join(primaryDevicesDir, "pending.json"), primaryPendingBytes);
+fs.writeFileSync(path.join(primaryDevicesDir, "paired.json"), primaryPairedBytes);
+const unrelatedBeforeColdApproval = JSON.stringify(coldPendingState.unrelated);
+const coldApproval = await approveDevicePairing(String(coldRequest.requestId), {
+  callerScopes: ["operator.admin"],
+}, stateDir);
+if (coldApproval?.status !== "approved") {
+  throw new Error("cold clone canonical approval failed");
+}
+const coldPendingAfter = JSON.parse(
+  fs.readFileSync(path.join(stateDir, "devices", "pending.json"), "utf8"),
+);
+if (coldPendingAfter[String(coldRequest.requestId)]) {
+  throw new Error("cold clone transition remained pending after approval");
+}
+if (JSON.stringify(coldPendingAfter.unrelated) !== unrelatedBeforeColdApproval) {
+  throw new Error("cold clone approval mutated an unrelated transition");
+}
+const coldPairedAfter = JSON.parse(
+  fs.readFileSync(path.join(stateDir, "devices", "paired.json"), "utf8"),
+);
+const coldPairedDevice = coldPairedAfter[coldCloneDevice.deviceId];
+if (!coldPairedDevice) throw new Error("cold clone canonical approval produced no paired device");
+const coldOperatorToken = Array.isArray(coldPairedDevice.tokens)
+  ? coldPairedDevice.tokens.find((token) => token?.role === "operator")
+  : coldPairedDevice.tokens?.operator;
+const hasExactScopes = (view, expected) =>
+  Array.isArray(view) &&
+  view.length === new Set(view).size &&
+  JSON.stringify([...view].sort()) === JSON.stringify([...expected].sort());
+if (
+  !hasExactScopes(coldPairedDevice.scopes, ["operator.write"]) ||
+  !hasExactScopes(coldPairedDevice.approvedScopes, ["operator.write"]) ||
+  !hasExactScopes(coldOperatorToken?.scopes, ["operator.read", "operator.write"])
+) {
+  throw new Error("cold clone approval escaped canonical bounded scope views");
+}
+if (
+  Object.values(coldPendingAfter).some(
+    (request) =>
+      request.deviceId === coldCloneDevice.deviceId &&
+      [request.scopes, request.requestedScopes].some(
+        (scopes) => Array.isArray(scopes) && scopes.includes("operator.admin"),
+      ),
+  )
+) {
+  throw new Error("cold clone approval left an admin successor");
+}
+if (
+  fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf8") !==
+    primaryPendingBytes ||
+  fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf8") !==
+    primaryPairedBytes
+) {
+  throw new Error("cold clone approval mutated primary state");
+}
 const repairRequest = {
   requestId: "cli-scope-repair",
   deviceId: "device-1",

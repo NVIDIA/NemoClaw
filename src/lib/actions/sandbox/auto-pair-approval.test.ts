@@ -37,10 +37,11 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     const restoredClone = buildAutoPairApprovalScript("UE9MSUNZ", {
       emitReceipt: true,
       localDeviceOnly: true,
-      budget: { maxApprovals: 1 },
+      budget: { maxApprovals: AUTO_PAIR_MAX_APPROVALS },
     });
 
     expect(ordinary).not.toContain("local_identity_public_key");
+    expect(ordinary.includes("load_clone_local_pending")).toBe(false);
     expect(restoredClone).toContain("local_identity_public_key");
     expect(restoredClone).toContain("if not related_pending:");
     expect(restoredClone).toContain("len(related_pending) > 1");
@@ -217,9 +218,15 @@ process.exit(2);
     try {
       const stateDir = path.join(tmpDir, "openclaw-state");
       const identityDir = path.join(stateDir, "identity");
+      const devicesDir = path.join(stateDir, "devices");
+      const primaryStateDir = path.join(tmpDir, "primary-openclaw-state");
+      const primaryDevicesDir = path.join(primaryStateDir, "devices");
       const approvalsFile = path.join(tmpDir, "approvals.log");
       const approveEnvFile = path.join(tmpDir, "approve-env.log");
+      const listEnvFile = path.join(tmpDir, "list-env.log");
       fs.mkdirSync(identityDir, { recursive: true });
+      fs.mkdirSync(devicesDir, { recursive: true });
+      fs.mkdirSync(primaryDevicesDir, { recursive: true });
       const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
       const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
       fs.writeFileSync(
@@ -236,6 +243,33 @@ process.exit(2);
 const fs = require("fs");
 const args = process.argv.slice(2);
 if (args[0] === "devices" && args[1] === "list") {
+  fs.appendFileSync(
+    ${JSON.stringify(listEnvFile)},
+    [
+      process.env.OPENCLAW_STATE_DIR || "unset",
+      process.env.NEMOCLAW_PRIMARY_STATE_DIR || "unset",
+    ].join(":") + "\\n",
+  );
+  if (process.env.NEMOCLAW_LIST_GATE_REQUEST_ID) {
+    const requestId = process.env.NEMOCLAW_LIST_GATE_REQUEST_ID;
+    const detail =
+      process.env.NEMOCLAW_LIST_GATE_KIND === "other"
+        ? "raw unrelated list failure"
+        : process.env.NEMOCLAW_LIST_GATE_KIND === "scope"
+          ? "scope upgrade pending approval (requestId: " + requestId + ")"
+          : process.env.NEMOCLAW_LIST_GATE_KIND === "scope-pairing"
+            ? "pairing required: device is asking for more scopes (requestId: " +
+              requestId +
+              ")"
+            : "pairing required: device is not approved yet (requestId: " +
+              requestId +
+              ")";
+    const extra = process.env.NEMOCLAW_LIST_GATE_EXTRA_ID
+      ? " requestId: " + process.env.NEMOCLAW_LIST_GATE_EXTRA_ID
+      : "";
+    process.stderr.write("raw private list output " + detail + extra + "\\n");
+    process.exit(1);
+  }
   process.stdout.write(process.env.NEMOCLAW_LIST_RESPONSE + "\\n");
   process.exit(0);
 }
@@ -262,9 +296,22 @@ process.exit(2);
       );
       const run = (
         pending: unknown[],
-        options: { rawListResponse?: string; failApproval?: boolean } = {},
-      ) =>
-        spawnSync("sh", ["-c", script], {
+        options: {
+          rawListResponse?: string;
+          failApproval?: boolean;
+          gatedRequestId?: string;
+          gatedKind?: "pairing" | "scope" | "scope-pairing" | "other";
+          gatedExtraId?: string;
+          pendingById?: Record<string, unknown>;
+        } = {},
+      ) => {
+        if (options.pendingById) {
+          fs.writeFileSync(
+            path.join(devicesDir, "pending.json"),
+            JSON.stringify(options.pendingById),
+          );
+        }
+        return spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
             ...process.env,
@@ -272,6 +319,10 @@ process.exit(2);
             NEMOCLAW_LIST_RESPONSE:
               options.rawListResponse ?? JSON.stringify({ pending, paired: [] }),
             NEMOCLAW_APPROVE_FAIL: options.failApproval ? "1" : "0",
+            NEMOCLAW_LIST_GATE_REQUEST_ID: options.gatedRequestId ?? "",
+            NEMOCLAW_LIST_GATE_KIND: options.gatedKind ?? "pairing",
+            NEMOCLAW_LIST_GATE_EXTRA_ID: options.gatedExtraId ?? "",
+            NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
             OPENCLAW_GATEWAY_TOKEN: "secret-token",
@@ -279,6 +330,7 @@ process.exit(2);
           },
           timeout: 10_000,
         });
+      };
       const readApprovals = () =>
         fs.existsSync(approvalsFile)
           ? fs.readFileSync(approvalsFile, "utf-8").trim().split("\n").filter(Boolean)
@@ -286,6 +338,7 @@ process.exit(2);
       const resetLogs = () => {
         fs.rmSync(approvalsFile, { force: true });
         fs.rmSync(approveEnvFile, { force: true });
+        fs.rmSync(listEnvFile, { force: true });
       };
       const localRequest = {
         requestId: "clone-pairing",
@@ -303,11 +356,15 @@ process.exit(2);
         deviceId: "f".repeat(64),
         publicKey: "foreign-public-key",
       };
+      const primaryPending = JSON.stringify({
+        [foreignRequest.requestId]: foreignRequest,
+      });
+      fs.writeFileSync(path.join(primaryDevicesDir, "pending.json"), primaryPending);
 
       const initial = run([foreignRequest, localRequest]);
       expect(initial.status).toBe(0);
-      expect(initial.stdout).toContain(`${SUMMARY_MARKER}=1`);
-      expect(initial.stdout).toContain(`${RECEIPT_MARKER}=approved-one`);
+      expect(initial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
+      expect(parseAutoPairApprovalReceipt(initial.stdout)).toBe("approved-one");
       expect(readApprovals()).toEqual(["clone-pairing"]);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
 
@@ -320,7 +377,7 @@ process.exit(2);
       };
       const repair = run([foreignRequest, repairRequest]);
       expect(repair.status).toBe(0);
-      expect(repair.stdout).toContain(`${SUMMARY_MARKER}=1`);
+      expect(repair.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
       resetLogs();
       const combinedInitialRequest = {
@@ -331,7 +388,7 @@ process.exit(2);
       };
       const combinedInitial = run([foreignRequest, combinedInitialRequest]);
       expect(combinedInitial.status).toBe(0);
-      expect(combinedInitial.stdout).toContain(`${SUMMARY_MARKER}=1`);
+      expect(combinedInitial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
       expect(readApprovals()).toEqual(["clone-pairing-with-write"]);
       resetLogs();
       const writeOnlyInitialRequest = {
@@ -342,33 +399,157 @@ process.exit(2);
       };
       const writeOnlyInitial = run([foreignRequest, writeOnlyInitialRequest]);
       expect(writeOnlyInitial.status).toBe(0);
-      expect(writeOnlyInitial.stdout).toContain(`${SUMMARY_MARKER}=1`);
+      expect(writeOnlyInitial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
       expect(readApprovals()).toEqual(["clone-write-only"]);
+      resetLogs();
+      const clonePendingById = {
+        [foreignRequest.requestId]: foreignRequest,
+        [writeOnlyInitialRequest.requestId]: writeOnlyInitialRequest,
+      };
+      const clonePending = JSON.stringify(clonePendingById);
+      const gated = run([], {
+        gatedRequestId: writeOnlyInitialRequest.requestId,
+        pendingById: clonePendingById,
+      });
+      expect(gated.status).toBe(0);
+      expect(parseAutoPairApprovalReceipt(gated.stdout)).toBe("approved-one");
+      expect(readApprovals()).toEqual(["clone-write-only"]);
+      expect(`${gated.stdout}${gated.stderr}`.includes("raw private list output")).toBe(false);
+      expect(`${gated.stdout}${gated.stderr}`.includes("clone-write-only")).toBe(false);
+      expect(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8")).toBe(clonePending);
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+        primaryPending,
+      );
+      expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe(`${stateDir}:${primaryStateDir}`);
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
+
+      const cloneScopePendingById = {
+        [foreignRequest.requestId]: foreignRequest,
+        [repairRequest.requestId]: repairRequest,
+      };
+      const cloneScopePending = JSON.stringify(cloneScopePendingById);
+      for (const gatedKind of ["scope", "scope-pairing"] as const) {
+        resetLogs();
+        const gatedScopeUpgrade = run([], {
+          gatedRequestId: repairRequest.requestId,
+          gatedKind,
+          pendingById: cloneScopePendingById,
+        });
+        expect(gatedScopeUpgrade.status).toBe(0);
+        expect(parseAutoPairApprovalReceipt(gatedScopeUpgrade.stdout)).toBe("approved-one");
+        expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+        expect(
+          `${gatedScopeUpgrade.stdout}${gatedScopeUpgrade.stderr}`.includes(
+            "raw private list output",
+          ),
+        ).toBe(false);
+        expect(
+          `${gatedScopeUpgrade.stdout}${gatedScopeUpgrade.stderr}`.includes("clone-write-upgrade"),
+        ).toBe(false);
+        expect(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8")).toBe(
+          cloneScopePending,
+        );
+        expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+          primaryPending,
+        );
+        expect(fs.readFileSync(listEnvFile, "utf-8").trim()).toBe(`${stateDir}:${primaryStateDir}`);
+        expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe("unset:unset:unset");
+      }
+
+      for (const [pendingById, gatedRequestId, gatedKind, gatedExtraId, receipt] of [
+        [clonePendingById, foreignRequest.requestId, "pairing", undefined, "request-rejected"],
+        [
+          { "wrong-map-key": writeOnlyInitialRequest },
+          writeOnlyInitialRequest.requestId,
+          "pairing",
+          undefined,
+          "request-rejected",
+        ],
+        [
+          {
+            [writeOnlyInitialRequest.requestId]: writeOnlyInitialRequest,
+            duplicate: {
+              ...foreignRequest,
+              requestId: writeOnlyInitialRequest.requestId,
+            },
+          },
+          writeOnlyInitialRequest.requestId,
+          "pairing",
+          undefined,
+          "clone-ambiguous",
+        ],
+        [clonePendingById, writeOnlyInitialRequest.requestId, "other", undefined, "list-failed"],
+        [clonePendingById, "invalid request id", "pairing", undefined, "list-failed"],
+        [
+          clonePendingById,
+          writeOnlyInitialRequest.requestId,
+          "pairing",
+          "second-request",
+          "list-failed",
+        ],
+      ] as const) {
+        resetLogs();
+        const rejected = run([], {
+          pendingById,
+          gatedRequestId,
+          gatedKind,
+          gatedExtraId,
+        });
+        expect(rejected.status).toBe(0);
+        expect(parseAutoPairApprovalReceipt(rejected.stdout)).toBe(receipt);
+        expect(readApprovals()).toEqual([]);
+        expect(`${rejected.stdout}${rejected.stderr}`.includes("raw private list output")).toBe(
+          false,
+        );
+      }
+
+      const clonePendingPath = path.join(devicesDir, "pending.json");
+      for (const pendingContents of [null, "{", "[]"]) {
+        resetLogs();
+        if (pendingContents === null) {
+          fs.rmSync(clonePendingPath, { force: true });
+        } else {
+          fs.writeFileSync(clonePendingPath, pendingContents);
+        }
+        const failed = run([], {
+          gatedRequestId: repairRequest.requestId,
+          gatedKind: "scope",
+        });
+        expect(failed.status).toBe(0);
+        expect(parseAutoPairApprovalReceipt(failed.stdout)).toBe("list-failed");
+        expect(readApprovals()).toEqual([]);
+        expect(`${failed.stdout}${failed.stderr}`.includes("raw private list output")).toBe(false);
+        expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+          primaryPending,
+        );
+      }
 
       resetLogs();
       const listFailed = run([], { rawListResponse: "raw list output must stay private" });
-      expect(listFailed.stdout).toContain(`${RECEIPT_MARKER}=list-failed`);
-      expect(`${listFailed.stdout}${listFailed.stderr}`).not.toContain("raw list output");
+      expect(parseAutoPairApprovalReceipt(listFailed.stdout)).toBe("list-failed");
+      expect(`${listFailed.stdout}${listFailed.stderr}`.includes("raw list output")).toBe(false);
 
       resetLogs();
       const noMatch = run([foreignRequest]);
-      expect(noMatch.stdout).toContain(`${RECEIPT_MARKER}=clone-no-match`);
+      expect(parseAutoPairApprovalReceipt(noMatch.stdout)).toBe("clone-no-match");
 
       resetLogs();
       const ambiguous = run([
         repairRequest,
         { ...repairRequest, requestId: "second-clone-upgrade" },
       ]);
-      expect(ambiguous.stdout).toContain(`${RECEIPT_MARKER}=clone-ambiguous`);
+      expect(parseAutoPairApprovalReceipt(ambiguous.stdout)).toBe("clone-ambiguous");
 
       resetLogs();
       const rejected = run([{ ...repairRequest, publicKey: "mismatched-public-key" }]);
-      expect(rejected.stdout).toContain(`${RECEIPT_MARKER}=request-rejected`);
+      expect(parseAutoPairApprovalReceipt(rejected.stdout)).toBe("request-rejected");
 
       resetLogs();
       const approveFailed = run([repairRequest], { failApproval: true });
-      expect(approveFailed.stdout).toContain(`${RECEIPT_MARKER}=approve-failed`);
-      expect(`${approveFailed.stdout}${approveFailed.stderr}`).not.toContain("raw approval output");
+      expect(parseAutoPairApprovalReceipt(approveFailed.stdout)).toBe("approve-failed");
+      expect(`${approveFailed.stdout}${approveFailed.stderr}`.includes("raw approval output")).toBe(
+        false,
+      );
 
       const { scopes: _ignoredScopes, ...repairWithoutScopes } = repairRequest;
       for (const rejected of [
@@ -385,7 +566,7 @@ process.exit(2);
         resetLogs();
         const result = run(rejected);
         expect(result.status).toBe(0);
-        expect(result.stdout).not.toContain(`${SUMMARY_MARKER}=1`);
+        expect(result.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(false);
         expect(readApprovals()).toEqual([]);
       }
 
@@ -397,7 +578,7 @@ process.exit(2);
       );
       const invalidIdentity = run([{ ...localRequest, deviceId: hashMismatchedDeviceId }]);
       expect(invalidIdentity.status).toBe(0);
-      expect(invalidIdentity.stdout).not.toContain(`${SUMMARY_MARKER}=1`);
+      expect(invalidIdentity.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(false);
       expect(readApprovals()).toEqual([]);
       expect(fs.existsSync(approveEnvFile)).toBe(false);
     } finally {

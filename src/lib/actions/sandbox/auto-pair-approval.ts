@@ -162,9 +162,97 @@ def exit_with_receipt(receipt):
   const failedApproveAction = options.emitReceipt
     ? "exit_with_receipt('approve-failed')"
     : "continue";
-  const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
+  const maxApprovals = options.localDeviceOnly
+    ? 1
+    : (options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS);
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
+  const pendingRead = options.localDeviceOnly
+    ? `
+# SOURCE_OF_TRUTH_REVIEW (restored-clone gated-list fallback):
+# Invalid state: the clone's first authenticated devices list can be denied by
+# the same pending pairing/scope transition that this one-shot pass must
+# approve. Source boundary: on that denial, read only the clone-local pending
+# map, validate one exact request below, and delegate the write to OpenClaw's
+# canonical devices approve command. Remove this fallback when the pinned
+# OpenClaw release exposes a bootstrap/list API for an unpaired clone.
+local_pending_by_id = None
+gated_request_id = None
+import re
+
+GATED_REQUEST_ID_RE = re.compile(r'\\(requestId:\\s*([A-Za-z0-9._:-]{1,128})\\)')
+
+def gated_pairing_request_id(out, err):
+    message = f'{out}\\n{err}'
+    lowered = message.lower()
+    initial_pairing = (
+        'pairing required' in lowered and 'device is not approved yet' in lowered
+    )
+    scope_upgrade = (
+        'scope upgrade pending approval' in lowered
+        or 'pairing required: device is asking for more scopes' in lowered
+    )
+    if not initial_pairing and not scope_upgrade:
+        return None
+    if len(re.findall(r'\\brequestId\\b', message)) != 1:
+        return None
+    matches = GATED_REQUEST_ID_RE.findall(message)
+    return matches[0] if len(matches) == 1 else None
+
+def load_clone_local_pending():
+    state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    try:
+        with open(os.path.join(state_dir, 'devices', 'pending.json'), encoding='utf-8') as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+try:
+    proc = subprocess.run(
+        [OPENCLAW, 'devices', 'list', '--json'],
+        capture_output=True, text=True, timeout=${listTimeoutS},
+    )
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    proc = None
+data = None
+if proc is not None and proc.returncode == 0 and proc.stdout.strip():
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        data = None
+elif proc is not None and proc.returncode != 0:
+    gated_request_id = gated_pairing_request_id(proc.stdout, proc.stderr)
+if isinstance(data, dict) and isinstance(data.get('pending'), list):
+    pending = data.get('pending')
+elif gated_request_id is not None:
+    local_pending_by_id = load_clone_local_pending()
+    if local_pending_by_id is None:
+        ${exitWithReceipt("list-failed")}
+    pending = list(local_pending_by_id.values())
+else:
+    ${exitWithReceipt("list-failed")}
+`
+    : `
+try:
+    proc = subprocess.run(
+        [OPENCLAW, 'devices', 'list', '--json'],
+        capture_output=True, text=True, timeout=${listTimeoutS},
+    )
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    ${exitWithReceipt("list-failed")}
+if proc.returncode != 0 or not proc.stdout.strip():
+    ${exitWithReceipt("list-failed")}
+try:
+    data = json.loads(proc.stdout)
+except ValueError:
+    ${exitWithReceipt("list-failed")}
+if not isinstance(data, dict):
+    ${exitWithReceipt("list-failed")}
+pending = data.get('pending')
+if not isinstance(pending, list):
+    ${exitWithReceipt("list-failed")}
+`;
   const localDeviceFilter = options.localDeviceOnly
     ? `
 # Snapshot restore shares one gateway across the source sandbox and its clone.
@@ -300,6 +388,14 @@ if sum(
     if isinstance(device, dict) and device.get('requestId') == local_request_id
 ) != 1:
     ${exitWithReceipt("clone-ambiguous")}
+if (
+    local_pending_by_id is not None
+    and (
+        local_request_id != gated_request_id
+        or local_pending_by_id.get(local_request_id) is not related_pending[0]
+    )
+):
+    ${exitWithReceipt("request-rejected")}
 pending = related_pending
 `
     : "";
@@ -329,24 +425,7 @@ except Exception:
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 MAX_APPROVALS = ${maxApprovals}
 
-try:
-    proc = subprocess.run(
-        [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS},
-    )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    ${exitWithReceipt("list-failed")}
-if proc.returncode != 0 or not proc.stdout.strip():
-    ${exitWithReceipt("list-failed")}
-try:
-    data = json.loads(proc.stdout)
-except ValueError:
-    ${exitWithReceipt("list-failed")}
-if not isinstance(data, dict):
-    ${exitWithReceipt("list-failed")}
-pending = data.get('pending')
-if not isinstance(pending, list):
-    ${exitWithReceipt("list-failed")}${localDeviceFilter}
+${pendingRead}${localDeviceFilter}
 approved_count = 0
 attempted_count = 0
 seen_request_ids = set()
