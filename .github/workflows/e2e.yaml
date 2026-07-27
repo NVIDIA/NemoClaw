@@ -344,6 +344,50 @@ jobs:
             fi
           fi
 
+      - name: Record trusted E2E dispatch receipt
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          ALLOW_JETSON_RUNNER_QUEUE: ${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          DISPATCH_JOBS: ${{ inputs.jobs }}
+          DISPATCH_RECEIPT_DIR: ${{ runner.temp }}/nemoclaw-e2e-dispatch
+          DISPATCH_TARGETS: ${{ inputs.targets }}
+          EVENT_NAME: ${{ github.event_name }}
+          INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$DISPATCH_RECEIPT_DIR"
+          jq -n \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg eventName "$EVENT_NAME" \
+            --arg jobs "$DISPATCH_JOBS" \
+            --arg targets "$DISPATCH_TARGETS" \
+            --arg workflowRunId "$RUN_ID" \
+            --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
+            --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
+            '{
+              kind: "nemoclaw-e2e-dispatch-v1",
+              candidateSha: $candidateSha,
+              eventName: $eventName,
+              workflowRunId: $workflowRunId,
+              workflowRunAttempt: $workflowRunAttempt,
+              jobs: $jobs,
+              targets: $targets,
+              allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
+              includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
+              defaultSuiteSelected: ($jobs == "" and $targets == "")
+            }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
+
+      - name: Upload trusted E2E dispatch receipt
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json
+
   retired-selector-compatibility:
     needs: generate-matrix
     if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,')) }}
