@@ -4,6 +4,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -12,7 +13,7 @@ const children: ChildProcess[] = [];
 
 afterEach(async () => {
   for (const child of children.splice(0)) {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    child.kill("SIGKILL");
   }
   await Promise.all(
     servers.splice(0).map(
@@ -36,8 +37,7 @@ describe("advisor HTTP dispatcher", () => {
     proxy.listen(0, "127.0.0.1");
     await once(proxy, "listening");
     servers.push(proxy);
-    const address = proxy.address();
-    if (!address || typeof address === "string") throw new Error("proxy address is unavailable");
+    const address = proxy.address() as AddressInfo;
 
     const moduleUrl = new URL("../tools/advisors/http-dispatcher.mts", import.meta.url).href;
     const script = `

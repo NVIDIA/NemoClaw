@@ -234,20 +234,27 @@ describe("PR review advisor OpenShell wrapper", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      let payload: unknown = [];
-      if (url.endsWith("/pulls/7542")) {
-        payload = {
-          number: 7542,
-          title: "Current PR",
-          body: "",
-          head: { ref: "feature", sha: "b".repeat(40) },
-          base: { ref: "main", sha: "a".repeat(40) },
-        };
-      } else if (url.includes("/pulls?state=open")) {
-        payload = openPulls;
-      } else if (url.includes("/files?")) {
-        payload = longFiles;
-      }
+      const routes: Array<{ matches: (requestUrl: string) => boolean; payload: unknown }> = [
+        {
+          matches: (requestUrl) => requestUrl.endsWith("/pulls/7542"),
+          payload: {
+            number: 7542,
+            title: "Current PR",
+            body: "",
+            head: { ref: "feature", sha: "b".repeat(40) },
+            base: { ref: "main", sha: "a".repeat(40) },
+          },
+        },
+        {
+          matches: (requestUrl) => requestUrl.includes("/pulls?state=open"),
+          payload: openPulls,
+        },
+        {
+          matches: (requestUrl) => requestUrl.includes("/files?"),
+          payload: longFiles,
+        },
+      ];
+      const payload = routes.find(({ matches }) => matches(url))?.payload ?? [];
       return {
         ok: true,
         json: async () => payload,
@@ -460,12 +467,10 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", () => {
     const env = advisorEnvironment();
-    const tools = advisorTools((command, args) => {
-      if (command === "openshell" && args.slice(0, 3).join(" ") === "sandbox list --names") {
-        return "pr-advisor-test\n";
-      }
-      return "";
-    });
+    const commandResponses = new Map([["openshell sandbox list --names", "pr-advisor-test\n"]]);
+    const tools = advisorTools(
+      (command, args) => commandResponses.get(`${command} ${args.slice(0, 3).join(" ")}`) ?? "",
+    );
 
     createAdvisorSandbox(env, tools);
     runAdvisorSandbox(env, tools);
