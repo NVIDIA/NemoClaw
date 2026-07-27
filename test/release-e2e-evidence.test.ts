@@ -75,12 +75,14 @@ describe("release E2E evidence", () => {
       mode: "ordinary",
       targets: "",
     });
-    expect(plan.dispatches.parallelExplicit.jobs.split(",")).toEqual([
-      "openshell-gateway-auth-contract",
-      "mcp-bridge-dev",
-      "hermes-gpu-startup",
-      "sandbox-rlimits-connect",
-    ]);
+    expect(new Set(plan.dispatches.parallelExplicit.jobs.split(","))).toEqual(
+      new Set([
+        "openshell-gateway-auth-contract",
+        "mcp-bridge-dev",
+        "hermes-gpu-startup",
+        "sandbox-rlimits-connect",
+      ]),
+    );
     expect(plan.dispatches.conditional).toEqual([
       expect.objectContaining({ allowJetsonRunnerQueue: false, jobs: "jetson-nvmap-gpu" }),
     ]);
@@ -166,6 +168,34 @@ describe("release E2E evidence", () => {
       attempts: [{ conclusion: "success", status: "in_progress" }],
       status: "missing",
     });
+  });
+
+  it("does not treat a skipped execution as successful evidence", () => {
+    const plan = preflight();
+    const skippedId = "snapshot-commands";
+    const ledger = buildReleaseE2eLedger(plan, [
+      runEvidence(plan, "default", {
+        conclusion: (execution) => (execution.id === skippedId ? "skipped" : "success"),
+      }),
+      runEvidence(plan, "parallel-explicit"),
+      runEvidence(plan, "conditional"),
+    ]);
+
+    expect(ledger.entries.find((entry) => entry.id === skippedId)).toMatchObject({
+      attempts: [{ conclusion: "skipped", status: "completed" }],
+      status: "missing",
+    });
+  });
+
+  it("rejects malformed job evidence", () => {
+    const plan = preflight();
+    const malformed = runEvidence(plan, "default");
+    const jobs = malformed.jobs as { jobs: Array<Record<string, unknown>> };
+    delete jobs.jobs[0]!.name;
+
+    expect(() => buildReleaseE2eLedger(plan, [malformed])).toThrow(
+      "runs[0].job.name must be a non-empty string",
+    );
   });
 
   it("rejects evidence from another candidate SHA", () => {

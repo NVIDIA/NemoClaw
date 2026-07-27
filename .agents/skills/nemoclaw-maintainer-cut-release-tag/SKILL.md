@@ -180,7 +180,8 @@ If the plan candidate SHA changes, discard the run and qualification evidence.
 Run full mode again for the new candidate SHA.
 No release-note-only delta exception is currently defined.
 
-For every accepted default, explicit, and conditional run, collect the run plus every job attempt:
+For every accepted default, explicit, and conditional run, reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` returned by `nemoclaw-maintainer-e2e`.
+If those files were not returned, collect them once:
 
 ```bash
 gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID" \

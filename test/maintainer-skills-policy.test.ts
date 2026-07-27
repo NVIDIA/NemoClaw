@@ -191,6 +191,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(e2e).toContain("parallelExplicit.jobs");
     expect(e2e).toContain("do not serialize independent runs");
     expect(e2e).toContain("jobs?filter=all&per_page=100");
+    expect(e2e).toContain("Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json`");
+    expect(release).toContain("reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json`");
     expect(release).toContain("load `nemoclaw-maintainer-e2e` and dispatch full mode");
     expect(release).toContain("Treat a skipped job as missing evidence");
     expect(release).toContain("include_staging_brev_launchable=true");
@@ -213,6 +215,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain(
       "For full-mode exact Brev evidence, require one workflow run for the candidate SHA",
     );
+    expect(policy).toContain("if no applicable exact Brev Launchable evidence exists");
     expect(policy).toContain("successful `Exact staging Brev Launchable` job");
     expect(policy).toContain("cleanup receipt");
     expect(policy).toContain("trusted dispatch receipt");

@@ -256,11 +256,15 @@ function workflowJobs(workflowPath: string): JsonRecord {
 }
 
 function isQualificationJob(job: JsonRecord): boolean {
-  return JSON.stringify(job).includes("include_staging_brev_launchable");
+  const condition = job.if;
+  return (
+    typeof condition === "string" && condition.includes("inputs.include_staging_brev_launchable")
+  );
 }
 
 function requiresConfirmedJetsonRunner(job: JsonRecord): boolean {
-  return JSON.stringify(job).includes("allow_jetson_runner_queue");
+  const runsOn = job["runs-on"];
+  return typeof runsOn === "string" && runsOn.includes("inputs.allow_jetson_runner_queue");
 }
 
 export function buildReleaseE2ePreflight(input: {

@@ -191,9 +191,9 @@ Create a private temporary evidence directory:
 EVIDENCE_DIR="$(mktemp -d)"
 chmod 700 "$EVIDENCE_DIR"
 trap 'rm -rf "$EVIDENCE_DIR"' EXIT
-gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID" >"$EVIDENCE_DIR/run.json"
+gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID" >"$EVIDENCE_DIR/run-$RUN_ID.json"
 gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
-  >"$EVIDENCE_DIR/jobs.json"
+  >"$EVIDENCE_DIR/jobs-latest-$RUN_ID.json"
 ```
 
 For a release coverage group, also collect every attempt for the matrix-preserving ledger:
@@ -201,10 +201,14 @@ For a release coverage group, also collect every attempt for the matrix-preservi
 ```bash
 gh api --paginate --slurp \
   "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
-  >"$EVIDENCE_DIR/jobs-all-$RUN_ID.json"
+  >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
 ```
 
-For ordinary mode, require `run.json` to report:
+Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the `nemoclaw-maintainer-cut-release-tag` manifest inputs.
+Do not fetch the same run again.
+`jobs-latest-$RUN_ID.json` is only the validator input for the latest full-mode attempt.
+
+For ordinary mode, require `run-$RUN_ID.json` to report:
 
 - `head_sha` equal to `CANDIDATE_SHA`;
 - `status` equal to `completed`; and
@@ -221,8 +225,8 @@ gh run download "$RUN_ID" --repo NVIDIA/NemoClaw \
 node --experimental-strip-types --no-warnings \
   .agents/skills/nemoclaw-maintainer-e2e/scripts/validate-full-e2e-evidence.mts \
   --candidate-sha "$CANDIDATE_SHA" \
-  --run-json "$EVIDENCE_DIR/run.json" \
-  --jobs-json "$EVIDENCE_DIR/jobs.json" \
+  --run-json "$EVIDENCE_DIR/run-$RUN_ID.json" \
+  --jobs-json "$EVIDENCE_DIR/jobs-latest-$RUN_ID.json" \
   --dispatch-json "$EVIDENCE_DIR/dispatch.json" \
   --qualification-json "$EVIDENCE_DIR/qualification.json" \
   --cleanup-json "$EVIDENCE_DIR/cleanup.json"

@@ -55,7 +55,7 @@ Before asking for the release confirmation phrase, build and show an evidence le
 - Dispatch independent default-suite and unconditional explicit-only work concurrently. Dispatch a conditional hardware lane only after its authoritative runner inventory confirms that it is online; otherwise record its required itemized exception without queueing it.
 - If protected qualification readiness is disabled, continue the ordinary default suite and unconditional explicit-only work while recording the missing qualification as a required itemized exception. Do not serialize unrelated evidence behind that blocker.
 - Derive the denominator and dispatch selectors from the candidate workflow. Do not copy them into a second release test list.
-- When the protected qualification readiness variable is `true`, run `nemoclaw-maintainer-e2e` in full mode if no applicable full-mode run exists for the candidate SHA.
+- When the protected qualification readiness variable is `true`, run `nemoclaw-maintainer-e2e` in full mode if no applicable exact Brev Launchable evidence exists for the candidate SHA.
 - For full-mode exact Brev evidence, require one workflow run for the candidate SHA that includes the default-enabled suite and a successful `Exact staging Brev Launchable` job.
 - For that evidence, require the trusted dispatch receipt to bind the run and attempt to empty selectors and `include_staging_brev_launchable=true`.
 - Require its qualification receipt to identify the candidate SHA in the repository and provision records.
