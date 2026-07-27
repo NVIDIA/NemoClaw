@@ -435,9 +435,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
   it("copies the legacy OpenClaw remediation helper before the base build invokes it", () => {
     const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
     const flattenedDockerfile = dockerfile.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const helperCopy = flattenedDockerfile.indexOf(
+    const groupedHelperCopy = flattenedDockerfile.indexOf(
       "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
     );
+    const legacyHelperCopy = flattenedDockerfile.indexOf(
+      "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
+    );
+    const helperCopy = groupedHelperCopy >= 0 ? groupedHelperCopy : legacyHelperCopy;
     const helperInvocation = flattenedDockerfile.indexOf(
       "node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts",
     );
