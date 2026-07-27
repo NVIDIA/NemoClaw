@@ -65,6 +65,9 @@ Report this prerequisite:
 Do not inspect, print, or handle cloud credentials.
 Do not change the readiness variable around a run.
 
+When `nemoclaw-maintainer-cut-release-tag` invokes this skill, disabled readiness blocks only the protected qualification dispatch.
+Return `brevReady=false` to the release preflight so it can run the ordinary default suite and unconditional explicit-only group concurrently while reserving the required qualification exception.
+
 ## Dispatch One Trusted Run
 
 Generate a unique correlation ID:
@@ -102,6 +105,48 @@ gh workflow run .github/workflows/e2e.yaml \
 Do not set `jobs=staging-brev-launchable` for full mode.
 Empty `jobs` and `targets` select the default suite.
 The boolean input adds qualification to that same run.
+
+### Release Coverage Dispatch Group
+
+Use this subsection only when `nemoclaw-maintainer-cut-release-tag` supplies a release E2E preflight.
+It coordinates independent workflow runs; it does not change the meaning of ordinary or full mode above.
+
+Read `dispatches` from the preflight.
+Create a different correlation ID for each run.
+Dispatch the `defaultSuite` run first, using ordinary or full mode exactly as reported.
+Without waiting for it, dispatch the non-empty `parallelExplicit.jobs` value:
+
+```bash
+gh workflow run .github/workflows/e2e.yaml \
+  --repo NVIDIA/NemoClaw \
+  --ref main \
+  -f targets= \
+  -f "jobs=${EXPLICIT_JOBS}" \
+  -f inference_mode=mock \
+  -f include_staging_brev_launchable=false \
+  -f "correlation_id=${EXPLICIT_CORRELATION_ID}"
+```
+
+Do not add `staging-brev-launchable` to that selector list.
+Do not dispatch a conditional Jetson lane unless the authoritative repository runner inventory was confirmed online.
+After that confirmation, use a separate run and opt into queueing explicitly:
+
+```bash
+gh workflow run .github/workflows/e2e.yaml \
+  --repo NVIDIA/NemoClaw \
+  --ref main \
+  -f targets= \
+  -f jobs=jetson-nvmap-gpu \
+  -f inference_mode=mock \
+  -f include_staging_brev_launchable=false \
+  -f allow_jetson_runner_queue=true \
+  -f "correlation_id=${JETSON_CORRELATION_ID}"
+```
+
+Find all correlation IDs with one bounded `gh run list` query.
+Require exactly one run per correlation ID and the candidate SHA on every match.
+Dispatch the whole group before watching any member; do not serialize independent runs.
+Watch the group with batched status snapshots and collect results after all members are terminal.
 
 Find the run by its unique title:
 
@@ -149,6 +194,14 @@ trap 'rm -rf "$EVIDENCE_DIR"' EXIT
 gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID" >"$EVIDENCE_DIR/run.json"
 gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
   >"$EVIDENCE_DIR/jobs.json"
+```
+
+For a release coverage group, also collect every attempt for the matrix-preserving ledger:
+
+```bash
+gh api --paginate --slurp \
+  "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+  >"$EVIDENCE_DIR/jobs-all-$RUN_ID.json"
 ```
 
 For ordinary mode, require `run.json` to report:
@@ -201,7 +254,7 @@ Return:
 - qualification identity; and
 - cleanup result.
 
-If the release candidate SHA changes, discard the earlier run and rerun full mode.
+If the release candidate SHA changes, discard the earlier run group and rerun every required release coverage group for the new SHA.
 No release-note-only delta exception is currently defined.
 
 When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
