@@ -4,10 +4,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { buildSnapshotCommandEnv } from "../live/snapshot-commands-helpers.ts";
+import {
+  buildSnapshotCommandEnv,
+  classifySnapshotGatewayProbe,
+  classifySnapshotRestoreResult,
+} from "../live/snapshot-commands-helpers.ts";
 
 const HOSTED_FLAG = "NEMOCLAW_E2E_USE_HOSTED_INFERENCE";
 const SANDBOX_NAME = "e2e-snapshot";
+const CLONE_SANDBOX_NAME = `${SANDBOX_NAME}-clone`;
 
 const INFERENCE = {
   apiKey: "nvapi-snapshot-commands-fixture-credential",
@@ -61,6 +66,20 @@ describe("snapshot commands live env helper", () => {
     });
   });
 
+  it("binds the restored clone probe to its name and hermetic inference fixture", () => {
+    const env = buildSnapshotCommandEnv(CLONE_SANDBOX_NAME, INFERENCE);
+
+    expect(env).toMatchObject({
+      COMPATIBLE_API_KEY: INFERENCE.apiKey,
+      NEMOCLAW_COMPAT_MODEL: INFERENCE.model,
+      NEMOCLAW_ENDPOINT_URL: INFERENCE.endpointUrl,
+      NEMOCLAW_MODEL: INFERENCE.model,
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_SANDBOX_NAME: CLONE_SANDBOX_NAME,
+    });
+    expect(env.NEMOCLAW_SANDBOX_NAME).not.toBe(SANDBOX_NAME);
+  });
+
   it("leaves inference selection unset when no fixture is staged", () => {
     const env = buildSnapshotCommandEnv(SANDBOX_NAME);
 
@@ -83,5 +102,44 @@ describe("snapshot commands live env helper", () => {
       expect(process.env[name]).toBe("nvapi-ambient-credential-that-must-not-leak");
       expect(env[name]).toBeUndefined();
     }
+  });
+});
+
+describe("snapshot restored-gateway probe classification", () => {
+  it.each([
+    [{ exitCode: 0, stdout: '{"ok":true}', stderr: "" }, "authenticated"],
+    [{ exitCode: 1, stdout: "", stderr: "opaque command failure" }, "command-failure"],
+    [{ exitCode: 0, stdout: "", stderr: "" }, "empty-output"],
+    [{ exitCode: 0, stdout: "EMBEDDED FALLBACK secret-output", stderr: "" }, "embedded-fallback"],
+    [
+      { exitCode: 1, stdout: "", stderr: "gateway connect failed token=secret-output" },
+      "gateway-connect-failure",
+    ],
+    [
+      { exitCode: 0, stdout: "scope upgrade pending approval secret-output", stderr: "" },
+      "scope-upgrade-pending",
+    ],
+    [
+      { exitCode: 0, stdout: "device pairing required secret-output", stderr: "" },
+      "device-pairing-required",
+    ],
+  ] as const)("returns only fixed classification %#", (result, expected) => {
+    const classification = classifySnapshotGatewayProbe(result);
+
+    expect(classification).toBe(expected);
+    expect(classification).not.toContain("secret-output");
+  });
+});
+
+describe("snapshot restore result classification", () => {
+  it.each([
+    [{ exitCode: 0, stdout: "Restored secret-output", stderr: "" }, "restored"],
+    [{ exitCode: 1, stdout: "Restored secret-output", stderr: "" }, "command-failure"],
+    [{ exitCode: 0, stdout: "secret-output", stderr: "" }, "missing-restored-marker"],
+  ] as const)("returns only fixed classification %#", (result, expected) => {
+    const classification = classifySnapshotRestoreResult(result);
+
+    expect(classification).toBe(expected);
+    expect(classification).not.toContain("secret-output");
   });
 });

@@ -87,6 +87,40 @@ describe("deterministic PR risk plan", () => {
     expect(result.planHash).not.toBe(withoutFocusedSelection.planHash);
   });
 
+  it("runs snapshot commands for restored-gateway pairing runtime changes (#7431)", () => {
+    const runtimeFiles = [
+      "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+      "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+    ];
+    const changedFiles = [
+      ...runtimeFiles,
+      "src/lib/actions/sandbox/restore-gateway-pairing.test.ts",
+    ];
+    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
+
+    expect(focusedE2eJobs).toEqual([
+      {
+        id: "snapshot-commands",
+        matchedFiles: runtimeFiles,
+      },
+    ]);
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: runtimeFiles,
+        requiredJobs: ["snapshot-commands"],
+      }),
+    );
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "snapshot-commands",
+        families: ["focused-e2e"],
+        matchedFiles: runtimeFiles,
+      }),
+    );
+  });
+
   it("hashes the Deep Agents headless check into its exact typed target", () => {
     const changedFile =
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";

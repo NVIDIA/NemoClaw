@@ -1269,7 +1269,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
       role: "operator",
       roles: ["operator"],
       scopes: ["operator.write"],
-      isRepair: true,
+      isRepair: false,
       ts: now,
     },
     "request-1": {
@@ -1281,7 +1281,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
       role: "operator",
       roles: ["operator"],
       scopes: ["operator.write"],
-      isRepair: true,
+      isRepair: false,
       ts: now,
     },
     "request-2": {
@@ -1374,6 +1374,36 @@ const identity = (suffix) => ({
   clientId: "cli",
   clientMode: "cli",
 });
+const coldCloneDevice = {
+  deviceId: "cold-clone-device",
+  publicKey: "cold-clone-public-key",
+  role: "operator",
+  roles: ["operator"],
+  clientId: "cli",
+  clientMode: "cli",
+  scopes: ["operator.write"],
+};
+await pairingRuntime.m(coldCloneDevice, stateDir);
+const coldPendingState = JSON.parse(
+  fs.readFileSync(path.join(stateDir, "devices", "pending.json"), "utf8"),
+);
+const coldRequests = Object.values(coldPendingState).filter(
+  (request) => request.deviceId === coldCloneDevice.deviceId,
+);
+if (coldRequests.length !== 1) throw new Error("cold clone did not create exactly one pending request");
+const coldRequest = coldRequests[0];
+if (coldRequest.isRepair !== false) throw new Error("cold clone request was not pre-convergence");
+const coldPairedState = JSON.parse(
+  fs.readFileSync(path.join(stateDir, "devices", "paired.json"), "utf8"),
+);
+if (coldPairedState[coldCloneDevice.deviceId]) throw new Error("cold clone unexpectedly had paired state");
+const coldStoredAuthContext = nemoclawResolveSelfRepairPairingContext(
+  coldRequest,
+  coldPairedState[coldCloneDevice.deviceId],
+);
+if (coldStoredAuthContext?.useStoredDeviceAuth === true) {
+  throw new Error("cold clone request incorrectly selected stored device auth");
+}
 const repairRequest = {
   requestId: "cli-scope-repair",
   deviceId: "device-1",
@@ -1385,6 +1415,7 @@ const repairRequest = {
   scopes: ["operator.write"],
   isRepair: true,
 };
+const preconvergenceWriteRequest = { ...repairRequest, isRepair: false };
 const pairingOnly = ["operator.pairing"];
 const missingPairedViewScopes = nemoclawResolveApprovePairingScopesForRequest(repairRequest, undefined);
 if (JSON.stringify(missingPairedViewScopes) !== JSON.stringify(pairingOnly)) throw new Error("missing paired CLI view requested read/write before canonical approval");
@@ -1395,13 +1426,13 @@ const roleKeyedTokenScopes = nemoclawResolveApprovePairingScopesForRequest(repai
   tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
 });
 if (JSON.stringify(roleKeyedTokenScopes) !== JSON.stringify(pairingOnly)) throw new Error("role-keyed paired CLI view requested read/write before canonical approval");
-const storedAuthContext = nemoclawResolveSelfRepairPairingContext(repairRequest, {
+const storedAuthContext = nemoclawResolveSelfRepairPairingContext(preconvergenceWriteRequest, {
   deviceId: "device-1",
   publicKey: "public-key-1",
   scopes: ["operator.pairing"],
   tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
 });
-if (storedAuthContext?.useStoredDeviceAuth !== true) throw new Error("exact same-device repair did not select stored device auth");
+if (storedAuthContext?.useStoredDeviceAuth !== true) throw new Error("exact pre-convergence write transition did not select stored device auth");
 const mismatchedStoredAuthContext = nemoclawResolveSelfRepairPairingContext(repairRequest, {
   deviceId: "device-1",
   publicKey: "other-public-key",

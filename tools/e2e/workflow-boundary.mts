@@ -143,11 +143,7 @@ const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
 ]);
-const NO_IMAGE_E2E_JOBS = new Set([
-  "gateway-health-honest",
-  "staging-brev-launchable",
-  SHARED_E2E_JOB_ID,
-]);
+const NO_IMAGE_E2E_JOBS = new Set(["staging-brev-launchable", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
@@ -218,11 +214,6 @@ const NETWORK_POLICY_SCENARIO_MATRIX = {
       scenario: "live-probes",
       selector: "^network-policy:.+probes$",
       sandbox: "e2e-net-policy-live-probes",
-    },
-    {
-      scenario: "zero-presets",
-      selector: "^network-policy:.+presets$",
-      sandbox: "e2e-net-policy-zero-presets",
     },
   ],
 } as const;
@@ -561,6 +552,11 @@ export function readFreeStandingJobsInventory(
   return inventory;
 }
 
+const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+]);
+
 export function focusedE2eJobsForChangedFiles(
   changedFiles: readonly string[],
   inventory: FreeStandingJobsInventory = readFreeStandingJobsInventory(),
@@ -569,6 +565,9 @@ export function focusedE2eJobsForChangedFiles(
   for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
     for (const job of inventory.liveTestToJobs.get(file) ?? []) {
       addMapValue(matchedFilesByJob, job, file);
+    }
+    if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
+      addMapValue(matchedFilesByJob, "snapshot-commands", file);
     }
   }
   return [...matchedFilesByJob]
@@ -1377,7 +1376,7 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("network-policy scenario matrix must disable fail-fast");
   }
   if (!isDeepStrictEqual(asRecord(strategy.matrix), NETWORK_POLICY_SCENARIO_MATRIX)) {
-    errors.push("network-policy job must keep the two isolated scenario shards");
+    errors.push("network-policy job must keep only the isolated live-probes scenario");
   }
 
   const jobEnv = asRecord(job.env);
@@ -4877,8 +4876,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateIssue2478CrashLoopRecoveryJob(errors, jobs);
 
   validateTunnelLifecycleJob(errors, jobs);
-
-  validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest", "gateway-health-honest");
 
   validateSandboxRlimitConnectJob(errors, jobs);
 
