@@ -19,6 +19,7 @@ import {
   execOpenShellSandbox,
   type OpenShellTools,
   required,
+  setOpenShellSandboxPolicy,
 } from "../openshell-agent/runtime.mts";
 import {
   collectGitHubReviewContext,
@@ -30,6 +31,8 @@ const ADVISOR_CONTEXT_DIRECTORY_NAME = "pr-review-advisor-context";
 const ADVISOR_RUNTIME_DIRECTORY_NAME = "pr-review-advisor-runtime";
 const ADVISOR_TOOLS_DIRECTORY_NAME = "pr-review-advisor-tools";
 const ADVISOR_CONTEXT_FILE_NAME = "github-context.json";
+const ADVISOR_POLICY_FILE_NAME = "openshell-policy.yaml";
+const ADVISOR_UPLOAD_POLICY_FILE_NAME = "openshell-upload-policy.yaml";
 const SANDBOX_ADVISOR_DIR = "/sandbox/advisor";
 const SANDBOX_WORKDIR = "/sandbox/pr-workdir";
 const SANDBOX_CONTEXT_DIR = `/sandbox/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
@@ -93,6 +96,10 @@ function requireDirectoryBasename(directory: string, expected: string, name: str
   if (path.basename(path.resolve(directory)) !== expected) {
     throw new Error(`${name} must end in ${expected}`);
   }
+}
+
+function advisorPolicyPath(advisorDirectory: string, fileName: string): string {
+  return path.join(advisorDirectory, "tools", "pr-review-advisor", fileName);
 }
 
 export async function prepareAdvisorSandboxInputs(
@@ -181,12 +188,7 @@ export function createAdvisorSandbox(
     {
       name: sandboxName,
       image: required(env.PI_IMAGE, "PI_IMAGE"),
-      policyPath: path.join(
-        advisorDirectory,
-        "tools",
-        "pr-review-advisor",
-        "openshell-policy.yaml",
-      ),
+      policyPath: advisorPolicyPath(advisorDirectory, ADVISOR_UPLOAD_POLICY_FILE_NAME),
       uploads: [
         { source: advisorDirectory, destination: "/sandbox" },
         { source: advisorWorkdir, destination: "/sandbox" },
@@ -209,6 +211,30 @@ export function createAdvisorSandbox(
         "--no-warnings",
         `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/openshell.mts`,
         "seal",
+      ],
+    },
+    tools,
+  );
+  setOpenShellSandboxPolicy(
+    env,
+    {
+      name: sandboxName,
+      policyPath: advisorPolicyPath(advisorDirectory, ADVISOR_POLICY_FILE_NAME),
+    },
+    tools,
+  );
+  execOpenShellSandbox(
+    env,
+    {
+      name: sandboxName,
+      timeoutSeconds: 60,
+      workdir: SANDBOX_WORKDIR,
+      command: [
+        "/usr/bin/node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/openshell.mts`,
+        "check",
       ],
     },
     tools,
@@ -367,20 +393,39 @@ export function checkAdvisorSandboxRuntime(): void {
     SANDBOX_CONTEXT_DIR,
     SANDBOX_TOOLS_DIR,
   ]) {
-    const readOnlyProbe = path.join(directory, probeName);
-    try {
-      fs.writeFileSync(readOnlyProbe, "unexpected write\n", {
-        flag: "wx",
-        mode: 0o600,
-      });
-    } catch (error: unknown) {
-      if (["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "")) {
-        continue;
+    const assertCreateDenied = (name: string): void => {
+      const readOnlyProbe = path.join(directory, name);
+      try {
+        fs.writeFileSync(readOnlyProbe, "unexpected write\n", {
+          flag: "wx",
+          mode: 0o600,
+        });
+      } catch (error: unknown) {
+        if (["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+          return;
+        }
+        throw error;
       }
-      throw error;
+      fs.rmSync(readOnlyProbe, { force: true });
+      throw new Error(`Advisor sandbox input is unexpectedly writable: ${directory}`);
+    };
+
+    assertCreateDenied(probeName);
+    const originalMode = fs.statSync(directory).mode & 0o777;
+    let restoredWriteMode = false;
+    try {
+      fs.chmodSync(directory, originalMode | 0o200);
+      restoredWriteMode = true;
+    } catch (error: unknown) {
+      if (!["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+        throw error;
+      }
     }
-    fs.rmSync(readOnlyProbe, { force: true });
-    throw new Error(`Advisor sandbox input is unexpectedly writable: ${directory}`);
+    try {
+      assertCreateDenied(`${probeName}-after-chmod`);
+    } finally {
+      if (restoredWriteMode) fs.chmodSync(directory, originalMode);
+    }
   }
 }
 
@@ -391,12 +436,10 @@ export function sealAdvisorSandboxInputs(
     SANDBOX_CONTEXT_DIR,
     SANDBOX_TOOLS_DIR,
   ],
-  verify: () => void = checkAdvisorSandboxRuntime,
+  verify: () => void = () => undefined,
 ): void {
-  // OpenShell v0.0.85 performs uploads after applying the sandbox policy, so
-  // /sandbox must remain policy-writable. Remove ordinary write modes before
-  // model code starts as an accidental-mutation guard; the Advisor's
-  // repo-confined read-only tools remain the model-facing write boundary.
+  // OpenShell v0.0.85 performs uploads under a bootstrap policy. Remove
+  // ordinary write modes before the host applies the runtime policy.
   execFileSync("/bin/chmod", ["-R", "a-w", ...directories], { stdio: "inherit" });
   verify();
 }

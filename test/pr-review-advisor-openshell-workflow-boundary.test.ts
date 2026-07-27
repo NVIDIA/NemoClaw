@@ -16,6 +16,12 @@ const OPENSHELL_POLICY_PATH = path.join(
   "pr-review-advisor",
   "openshell-policy.yaml",
 );
+const OPENSHELL_UPLOAD_POLICY_PATH = path.join(
+  ROOT,
+  "tools",
+  "pr-review-advisor",
+  "openshell-upload-policy.yaml",
+);
 
 function workflowSource(): string {
   return fs.readFileSync(WORKFLOW_PATH, "utf8");
@@ -51,6 +57,27 @@ function validatePolicyMutation(mutate: (policy: Record<string, any>) => void): 
     return validatePrReviewAdvisorWorkflowBoundary(
       WORKFLOW_PATH,
       path.join(ROOT, "package-lock.json"),
+      policyPath,
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+function validateUploadPolicyMutation(mutate: (policy: Record<string, any>) => void): string[] {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-upload-policy-"));
+  const policyPath = path.join(tmp, "openshell-upload-policy.yaml");
+  const policy = YAML.parse(fs.readFileSync(OPENSHELL_UPLOAD_POLICY_PATH, "utf8")) as Record<
+    string,
+    any
+  >;
+  mutate(policy);
+  fs.writeFileSync(policyPath, YAML.stringify(policy));
+  try {
+    return validatePrReviewAdvisorWorkflowBoundary(
+      WORKFLOW_PATH,
+      path.join(ROOT, "package-lock.json"),
+      OPENSHELL_POLICY_PATH,
       policyPath,
     );
   } finally {
@@ -350,23 +377,25 @@ describe("PR review advisor OpenShell workflow boundary", () => {
     );
   });
 
-  // source-shape-contract: security -- The no-egress hard-Landlock policy must permit OpenShell uploads without broadening host or network access
+  // source-shape-contract: security -- The no-egress hard-Landlock policies must separate upload access from model runtime access
   it("fails closed around the credential-free OpenShell filesystem and network boundary", () => {
     const network = validatePolicyMutation((policy) => {
       policy.network_policies = {
         internet: { endpoints: ["https://example.com"] },
       };
     });
-    expect(network).toContain("advisor OpenShell policy must not allow direct network egress");
+    expect(network).toContain(
+      "advisor OpenShell runtime policy must not allow direct network egress",
+    );
 
     const writableTrustedInputs = validatePolicyMutation((policy) => {
       policy.filesystem_policy.read_write = ["/dev", "/sandbox/advisor", "/sandbox/pr-workdir"];
     });
     expect(writableTrustedInputs).toEqual(
       expect.arrayContaining([
-        "advisor OpenShell policy must allow its post-create input uploads",
-        "advisor OpenShell policy must not grant write access to /sandbox/advisor",
-        "advisor OpenShell policy must not grant write access to /sandbox/pr-workdir",
+        "advisor OpenShell runtime policy must grant write access to /sandbox/pr-review-advisor-runtime",
+        "advisor OpenShell runtime policy must not grant write access to /sandbox/advisor",
+        "advisor OpenShell runtime policy must not grant write access to /sandbox/pr-workdir",
       ]),
     );
 
@@ -374,24 +403,36 @@ describe("PR review advisor OpenShell workflow boundary", () => {
       policy.filesystem_policy.read_write.push("/sandbox/untrusted-output");
     });
     expect(extraWritablePath).toContain(
-      "advisor OpenShell policy must not grant write access to /sandbox/untrusted-output",
+      "advisor OpenShell runtime policy must not grant write access to /sandbox/untrusted-output",
     );
 
     const broadReadPath = validatePolicyMutation((policy) => {
       policy.filesystem_policy.read_only.push("/");
     });
-    expect(broadReadPath).toContain("advisor OpenShell policy must not grant read access to /");
+    expect(broadReadPath).toContain(
+      "advisor OpenShell runtime policy must not grant read access to /",
+    );
 
-    const noUploadPathOrLandlock = validatePolicyMutation((policy) => {
-      policy.filesystem_policy.read_write = policy.filesystem_policy.read_write.filter(
-        (entry: string) => entry !== "/sandbox",
-      );
+    const noRuntimePathOrLandlock = validatePolicyMutation((policy) => {
+      policy.filesystem_policy.read_write = ["/dev"];
       policy.landlock.compatibility = "best_effort";
     });
-    expect(noUploadPathOrLandlock).toEqual(
+    expect(noRuntimePathOrLandlock).toEqual(
       expect.arrayContaining([
-        "advisor OpenShell policy must allow its post-create input uploads",
-        "advisor OpenShell policy must fail closed when Landlock is unavailable",
+        "advisor OpenShell runtime policy must grant write access to /sandbox/pr-review-advisor-runtime",
+        "advisor OpenShell runtime policy must fail closed when Landlock is unavailable",
+      ]),
+    );
+
+    const weakenedUploadPolicy = validateUploadPolicyMutation((policy) => {
+      policy.filesystem_policy.read_write = ["/dev", "/sandbox/advisor"];
+      policy.landlock.compatibility = "best_effort";
+    });
+    expect(weakenedUploadPolicy).toEqual(
+      expect.arrayContaining([
+        "advisor OpenShell upload policy must grant write access to /sandbox",
+        "advisor OpenShell upload policy must not grant write access to /sandbox/advisor",
+        "advisor OpenShell upload policy must fail closed when Landlock is unavailable",
       ]),
     );
   });

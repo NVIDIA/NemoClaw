@@ -10,13 +10,9 @@ filesystem_policy:
     - /usr/lib
     - /usr/share/git-core
     - /etc
-    - /sandbox/advisor
-    - /sandbox/pr-workdir
-    - /sandbox/pr-review-advisor-context
-    - /sandbox/pr-review-advisor-tools
   read_write:
     - /dev
-    - /sandbox/pr-review-advisor-runtime
+    - /sandbox
 
 landlock:
   compatibility: hard_requirement

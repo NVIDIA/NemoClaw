@@ -15,6 +15,12 @@ const DEFAULT_OPENSHELL_POLICY_PATH = join(
   "pr-review-advisor",
   "openshell-policy.yaml",
 );
+const DEFAULT_OPENSHELL_UPLOAD_POLICY_PATH = join(
+  REPO_ROOT,
+  "tools",
+  "pr-review-advisor",
+  "openshell-upload-policy.yaml",
+);
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
 const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
 const PINNED_SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
@@ -259,57 +265,59 @@ function checkAdvisorRuntimePackageLock(errors: string[], packageLockPath: strin
   }
 }
 
-function checkOpenShellPolicy(errors: string[], policyPath: string): void {
+function checkOpenShellPolicy(
+  errors: string[],
+  policyPath: string,
+  input: { label: string; readOnly: readonly string[]; readWrite: readonly string[] },
+): void {
   let policy: WorkflowRecord;
   try {
     policy = asRecord(YAML.parse(readFileSync(policyPath, "utf8")));
   } catch {
-    errors.push(`failed to read or parse advisor OpenShell policy: ${policyPath}`);
+    errors.push(`failed to read or parse ${input.label}: ${policyPath}`);
     return;
   }
   if (policy.version !== 1) {
-    errors.push("advisor OpenShell policy version must remain 1");
+    errors.push(`${input.label} version must remain 1`);
   }
 
   const filesystem = asRecord(policy.filesystem_policy);
   if (booleanValue(filesystem.include_workdir) !== false) {
-    errors.push("advisor OpenShell policy must not include the default workdir");
+    errors.push(`${input.label} must not include the default workdir`);
   }
   const readOnly = stringArray(filesystem.read_only);
-  const allowedReadOnlyPaths = ["/usr/bin", "/usr/lib", "/usr/share/git-core", "/etc"];
-  for (const requiredPath of allowedReadOnlyPaths) {
+  for (const requiredPath of input.readOnly) {
     if (!readOnly.includes(requiredPath)) {
-      errors.push(`advisor OpenShell policy must grant read-only access to ${requiredPath}`);
+      errors.push(`${input.label} must grant read-only access to ${requiredPath}`);
     }
   }
   for (const readOnlyPath of readOnly) {
-    if (!allowedReadOnlyPaths.includes(readOnlyPath)) {
-      errors.push(`advisor OpenShell policy must not grant read access to ${readOnlyPath}`);
+    if (!input.readOnly.includes(readOnlyPath)) {
+      errors.push(`${input.label} must not grant read access to ${readOnlyPath}`);
     }
   }
   const readWrite = stringArray(filesystem.read_write);
-  if (!readWrite.includes("/dev")) {
-    errors.push("advisor OpenShell policy must retain writable device access");
-  }
-  if (!readWrite.includes("/sandbox")) {
-    errors.push("advisor OpenShell policy must allow its post-create input uploads");
+  for (const requiredPath of input.readWrite) {
+    if (!readWrite.includes(requiredPath)) {
+      errors.push(`${input.label} must grant write access to ${requiredPath}`);
+    }
   }
   for (const writablePath of readWrite) {
-    if (!["/dev", "/sandbox"].includes(writablePath)) {
-      errors.push(`advisor OpenShell policy must not grant write access to ${writablePath}`);
+    if (!input.readWrite.includes(writablePath)) {
+      errors.push(`${input.label} must not grant write access to ${writablePath}`);
     }
   }
 
   if (asRecord(policy.landlock).compatibility !== "hard_requirement") {
-    errors.push("advisor OpenShell policy must fail closed when Landlock is unavailable");
+    errors.push(`${input.label} must fail closed when Landlock is unavailable`);
   }
   const processPolicy = asRecord(policy.process);
   if (processPolicy.run_as_user !== "sandbox" || processPolicy.run_as_group !== "sandbox") {
-    errors.push("advisor OpenShell policy must run as the sandbox user and group");
+    errors.push(`${input.label} must run as the sandbox user and group`);
   }
   const networkPolicies = asRecord(policy.network_policies);
   if (networkPolicies !== policy.network_policies || Object.keys(networkPolicies).length !== 0) {
-    errors.push("advisor OpenShell policy must not allow direct network egress");
+    errors.push(`${input.label} must not allow direct network egress`);
   }
 }
 
@@ -1103,6 +1111,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
   packageLockPath = DEFAULT_PACKAGE_LOCK_PATH,
   openshellPolicyPath = DEFAULT_OPENSHELL_POLICY_PATH,
+  openshellUploadPolicyPath = DEFAULT_OPENSHELL_UPLOAD_POLICY_PATH,
 ): string[] {
   const errors: string[] = [];
   let workflow: WorkflowRecord;
@@ -1116,7 +1125,25 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("workflow name must remain PR Review / Advisor");
   }
   checkAdvisorRuntimePackageLock(errors, packageLockPath);
-  checkOpenShellPolicy(errors, openshellPolicyPath);
+  checkOpenShellPolicy(errors, openshellPolicyPath, {
+    label: "advisor OpenShell runtime policy",
+    readOnly: [
+      "/usr/bin",
+      "/usr/lib",
+      "/usr/share/git-core",
+      "/etc",
+      "/sandbox/advisor",
+      "/sandbox/pr-workdir",
+      "/sandbox/pr-review-advisor-context",
+      "/sandbox/pr-review-advisor-tools",
+    ],
+    readWrite: ["/dev", "/sandbox/pr-review-advisor-runtime"],
+  });
+  checkOpenShellPolicy(errors, openshellUploadPolicyPath, {
+    label: "advisor OpenShell upload policy",
+    readOnly: ["/usr/bin", "/usr/lib", "/usr/share/git-core", "/etc"],
+    readWrite: ["/dev", "/sandbox"],
+  });
   checkTargetTriggers(errors, workflow);
   const concurrencyGroup = stringValue(asRecord(workflow.concurrency).group);
   if (!concurrencyGroup.includes("github.event_name")) {

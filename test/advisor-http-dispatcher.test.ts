@@ -80,7 +80,7 @@ describe("advisor HTTP dispatcher", () => {
     );
     children.push(child);
     const stderr: Buffer[] = [];
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
     const timeout = setTimeout(() => child.kill("SIGKILL"), 3_000);
     timeout.unref();
     const [exitCode] = (await once(child, "exit")) as [number | null];

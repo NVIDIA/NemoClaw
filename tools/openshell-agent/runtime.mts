@@ -313,6 +313,16 @@ export function downloadOpenShellPath(
   });
 }
 
+export function setOpenShellSandboxPolicy(
+  env: NodeJS.ProcessEnv,
+  input: { name: string; policyPath: string },
+  tools: OpenShellTools = defaultOpenShellTools,
+): void {
+  tools.run("openshell", ["policy", "set", "--policy", input.policyPath, "--wait", input.name], {
+    env: credentialFreeEnvironment(env),
+  });
+}
+
 export function deleteOpenShellSandbox(
   env: NodeJS.ProcessEnv,
   name: string,

@@ -535,7 +535,12 @@ describe("PR review advisor OpenShell wrapper", () => {
         "--from",
         "pinned-pi-image",
         "--policy",
-        path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "openshell-policy.yaml"),
+        path.join(
+          env.ADVISOR_DIR as string,
+          "tools",
+          "pr-review-advisor",
+          "openshell-upload-policy.yaml",
+        ),
         "--upload",
         `${env.ADVISOR_DIR}:/sandbox`,
         "--upload",
@@ -552,10 +557,37 @@ describe("PR review advisor OpenShell wrapper", () => {
       "/sandbox/advisor/tools/pr-review-advisor/openshell.mts",
       "seal",
     ]);
-    expect(calls.some(([, args]) => args.slice(0, 2).join(" ") === "policy set")).toBe(false);
+    expect(
+      calls.find(
+        ([command, args]) => command === "openshell" && args.slice(0, 2).join(" ") === "policy set",
+      )?.[1],
+    ).toEqual([
+      "policy",
+      "set",
+      "--policy",
+      path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "openshell-policy.yaml"),
+      "--wait",
+      "pr-advisor-test",
+    ]);
 
     const sandboxExecCalls = calls.filter(
       ([command, args]) => command === "openshell" && args.slice(0, 2).join(" ") === "sandbox exec",
+    );
+    const checkArgs =
+      sandboxExecCalls.find(([, args]) =>
+        args.includes("/sandbox/advisor/tools/pr-review-advisor/openshell.mts"),
+      )?.[1] ?? [];
+    expect(checkArgs).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "exec",
+        "--name",
+        "pr-advisor-test",
+        "--timeout",
+        "60",
+        "/sandbox/advisor/tools/pr-review-advisor/openshell.mts",
+        "check",
+      ]),
     );
     const runArgs =
       sandboxExecCalls.find(([, args]) =>
@@ -581,6 +613,28 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(runArgs.join("\n")).not.toContain("github-host-secret");
     expect(runArgs.join("\n")).not.toContain("model-host-secret");
     expect(runArgs.join("\n")).not.toContain("advisor-host-secret");
+
+    const createIndex = calls.findIndex(
+      ([command, args]) =>
+        command === "openshell" && args.slice(0, 2).join(" ") === "sandbox create",
+    );
+    const policyIndex = calls.findIndex(
+      ([command, args]) => command === "openshell" && args.slice(0, 2).join(" ") === "policy set",
+    );
+    const checkIndex = calls.findIndex(
+      ([command, args]) =>
+        command === "openshell" &&
+        args.includes("/sandbox/advisor/tools/pr-review-advisor/openshell.mts") &&
+        args.includes("check"),
+    );
+    const analysisIndex = calls.findIndex(
+      ([command, args]) =>
+        command === "openshell" &&
+        args.includes("/sandbox/advisor/tools/pr-review-advisor/run-analysis.mts"),
+    );
+    expect(createIndex).toBeLessThan(policyIndex);
+    expect(policyIndex).toBeLessThan(checkIndex);
+    expect(checkIndex).toBeLessThan(analysisIndex);
 
     expect(
       calls.find(
