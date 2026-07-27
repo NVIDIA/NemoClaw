@@ -366,6 +366,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   const endpoint = new URL(tunnel.origin);
   const runtimeIdentityProfilePolicy = {
     providerType,
+    dnsResolution: "identity-platform-controlled",
     trustedHostnames: [endpoint.hostname],
     trustedHostSuffixes: [],
     trustedBinaries: [
@@ -469,7 +470,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "a sandbox request carries only the stable placeholder and the protected resource receives the minted bearer",
       "a second refresh uses the rotated refresh token and changes the upstream bearer without changing the placeholder",
       "status, persisted state, command artifacts, and request ledgers contain no OAuth secret material",
-      "rollback detaches and deletes the owned provider and sandbox",
+      "rollback detaches and deletes the owned provider while preserving the reused sandbox",
     ],
     openshellBoundary: "real gateway, provider refresh, attachment, sandbox exec, L7 injection",
     oauthBoundary: "public DNS and publicly trusted TLS through trycloudflare.com",
@@ -556,6 +557,9 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     credential_key: credentialKey,
     provider_created: true,
     attachment_created: true,
+  });
+  expect(parsedPersistedPlan).toMatchObject({
+    sandbox_created_by_apply: false,
   });
   for (const forbidden of [
     "E2E_CLIENT_ID",
@@ -753,12 +757,12 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     timeoutMs: 30_000,
   });
   expect(providerAfterRollback.exitCode).not.toBe(0);
-  const sandboxAfterRollback = await sandbox.status(sandboxName, {
-    artifactName: "tc-inf-12-sandbox-after-rollback",
+  const reusedSandboxAfterRollback = await sandbox.status(sandboxName, {
+    artifactName: "tc-inf-12-reused-sandbox-after-rollback",
     env: openshellEnv,
     timeoutMs: 30_000,
   });
-  expect(sandboxAfterRollback.exitCode).not.toBe(0);
+  expect(reusedSandboxAfterRollback.exitCode, resultText(reusedSandboxAfterRollback)).toBe(0);
 
   const deleteProfile = await sandbox.openshell(["provider", "profile", "delete", providerType], {
     artifactName: "tc-inf-12-delete-conformance-profile",

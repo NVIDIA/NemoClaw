@@ -119,6 +119,7 @@ export interface RuntimeIdentityValidatedDestination {
 
 export interface RuntimeIdentityProfilePolicy {
   providerType: string;
+  dnsResolution: "reject" | "identity-platform-controlled";
   trustedHostnames: readonly string[];
   trustedHostSuffixes: readonly string[];
   trustedBinaries: readonly string[];
@@ -128,6 +129,7 @@ const RUNTIME_IDENTITY_PROFILE_POLICIES: Readonly<Record<string, RuntimeIdentity
   Object.freeze({
     "okta-runtime-v1": Object.freeze({
       providerType: "okta-runtime-v1",
+      dnsResolution: "identity-platform-controlled",
       trustedHostnames: Object.freeze([]),
       trustedHostSuffixes: Object.freeze(["okta.com"]),
       trustedBinaries: OKTA_RUNTIME_BINARIES,
@@ -428,10 +430,17 @@ function parseRuntimeIdentityProfile(
 
 async function validateProfileDestinations(
   profile: ParsedRuntimeIdentityProfile,
+  policy: RuntimeIdentityProfilePolicy,
   deps: RuntimeIdentityDeps,
 ): Promise<void> {
   for (const destination of profile.destinations) {
-    await deps.validateEndpointUrl(destination);
+    const validated = await deps.validateEndpointUrl(destination);
+    if (validated.dnsResolved && policy.dnsResolution !== "identity-platform-controlled") {
+      throw new Error(
+        `DNS-backed runtime identity destination '${destination}' is outside the reviewed ` +
+          `DNS policy for '${policy.providerType}'`,
+      );
+    }
   }
 }
 
@@ -722,7 +731,7 @@ export async function prepareRuntimeIdentity(
     profilePolicy,
     "Runtime identity provider profile",
   );
-  await validateProfileDestinations(requestedProfile, deps);
+  await validateProfileDestinations(requestedProfile, profilePolicy, deps);
   const clientId = requiredEnvironmentValue(config, config.client_id_env, env);
   const refreshToken = requiredEnvironmentValue(config, config.refresh_token_env, env);
   const clientSecret = config.client_secret_env

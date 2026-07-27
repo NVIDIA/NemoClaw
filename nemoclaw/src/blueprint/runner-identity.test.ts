@@ -406,6 +406,70 @@ describe("blueprint identity wrapper", () => {
     );
   });
 
+  it("persists reused sandbox ownership and preserves it during later rollback", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          ...Array.from({ length: 4 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+      [
+        "sandbox create --from openclaw --name test-sandbox --forward 18789",
+        [{ exitCode: 1, stdout: "", stderr: "sandbox already exists" }],
+      ],
+    ]);
+
+    await actionApply("default", blueprint({ identity: oktaIdentity() }));
+
+    const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
+    expect(planEntry?.content).toBeDefined();
+    const plan = JSON.parse(planEntry!.content!);
+    expect(plan.sandbox_created_by_apply).toBe(false);
+
+    mockExeca.mockClear();
+    responseQueue([
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 0, stdout: matchingProvider, stderr: "" },
+          { exitCode: 0, stdout: matchingProvider, stderr: "" },
+        ],
+      ],
+    ]);
+    await actionRollback(plan.run_id);
+
+    const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(rollbackCommands).not.toContain("sandbox stop test-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox remove test-sandbox");
+    expect(rollbackCommands).toContain("sandbox provider detach test-sandbox acme-okta-runtime");
+    expect(rollbackCommands).toContain("provider delete acme-okta-runtime");
+  });
+
+  it("preserves a sandbox for a legacy plan without an ownership receipt", async () => {
+    const stateDir = "/fakehome/.nemoclaw/state/runs/legacy-run";
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({ sandbox_name: "pre-existing-sandbox" }),
+    });
+
+    await actionRollback("legacy-run");
+
+    const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(rollbackCommands).not.toContain("sandbox stop pre-existing-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox remove pre-existing-sandbox");
+    expect(store.get(`${stateDir}/rolled_back`)?.content).toBeDefined();
+  });
+
   it("persists an ownership receipt so failed compensation remains recoverable", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
@@ -516,6 +580,7 @@ describe("blueprint identity wrapper", () => {
       content: JSON.stringify({
         run_id: "identity-run",
         sandbox_name: "test-sandbox",
+        sandbox_created_by_apply: true,
         identity: receipt,
       }),
     });
@@ -544,6 +609,16 @@ describe("blueprint identity wrapper", () => {
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
       ["provider", "delete", "acme-okta-runtime"],
+      expect.objectContaining({ reject: false }),
+    );
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "stop", "test-sandbox"],
+      expect.objectContaining({ reject: false }),
+    );
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "remove", "test-sandbox"],
       expect.objectContaining({ reject: false }),
     );
     expect(store.get(`${stateDir}/rolled_back`)?.content).toBeDefined();

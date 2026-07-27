@@ -268,7 +268,7 @@ The blueprint schema describes the OpenShell provider binding and OAuth refresh 
   Runtime identity profiles may use DNS-backed HTTPS only within a provider type's repository-reviewed hostname suffixes.
   NemoClaw resolves every destination before import and rejects private or internal addresses.
   OpenShell performs connect-time SSRF and L7 enforcement for sandbox requests before it injects the provider credential.
-  OpenShell 0.0.85's gateway-side OAuth refresh client enforces HTTPS but does not pin the address NemoClaw resolved, so only identity-platform-controlled DNS suffixes such as `okta.com` belong in this trust table.
+  OpenShell 0.0.85's gateway-side OAuth refresh client enforces HTTPS and verifies the original hostname's certificate but does not pin the address NemoClaw resolved, so only identity-platform-controlled DNS suffixes such as `okta.com` belong in this trust table.
   Adding an attacker-controlled or customer-controlled DNS suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
 </Warning>
 
@@ -306,7 +306,7 @@ Before import, the runner validates the complete credential-delivery policy and 
 The Okta reference requires bearer presentation through the `authorization` header, the reviewed OAuth refresh-material shape, enforced REST `GET /**` endpoint rules, and exactly the bundled Node.js and curl executable allowlist.
 The runner imports a private temporary snapshot of the exact profile bytes that passed validation, so replacing the original file or its symlink cannot change the policy OpenShell receives.
 Before importing the profile, the runner requires HTTPS refresh and endpoint destinations, restricts them to the provider type's trusted host policy, and sends each through NemoClaw's DNS-aware SSRF boundary; private, loopback, link-local, and unresolved destinations are rejected.
-DNS-backed HTTPS destinations are also rejected because the pinned OpenShell runtime would resolve their hostnames again after validation.
+DNS-backed destinations require an explicit reviewed policy marking their namespace as identity-platform-controlled; other profile policies reject them before import.
 The current `okta-runtime-v1` policy accepts `okta.com` and its subdomains; custom Okta domains are not supported in this slice.
 Before applying the blueprint, export the named environment variables in the host process that runs the direct blueprint runner.
 Obtain the refresh token through an authorized OAuth bootstrap flow for the same Okta client and authorization server as the profile.
@@ -317,7 +317,7 @@ During apply, the runner first inspects the requested provider name and stops if
 It validates an existing provider's non-secret binding to produce a precise error, but never reuses it for this mutable refresh flow because OpenShell does not expose a secret-safe snapshot that rollback could restore.
 Only an absent provider proceeds to profile import, or exact export comparison when that profile is already registered, followed by provider creation, gateway-managed OAuth refresh configuration, initial token rotation, and sandbox attachment.
 Each successful apply therefore creates and owns the provider whose refresh state it mutates.
-The persisted run plan records whether that apply created the provider and its sandbox attachment.
+The persisted run plan records whether that apply created the provider, its sandbox attachment, and the sandbox itself.
 The runner writes that ownership receipt as each identity resource is acquired, so `status` and a later `rollback` retain a recovery path if automatic compensation fails.
 If a later apply step fails, the runner detaches the provider when that apply attached it, deletes the provider when that apply created it, and removes a sandbox created by that apply.
 The runner never places the refresh token or optional client secret in command arguments or persisted plans.
@@ -334,6 +334,7 @@ openshell sandbox provider list <sandbox-name>
 
 The direct runner `status` action reports the non-secret identity ownership receipt.
 The `rollback` action verifies the current provider binding again, detaches it only when that apply created the sandbox attachment, and deletes it only when that apply created the provider.
+Rollback stops and removes the sandbox only when the persisted plan proves that apply created it; reused sandboxes and legacy plans with unknown sandbox ownership are preserved.
 Rollback stops without mutating a same-name provider when the binding no longer matches the receipt.
 
 Runtime identity does not add a generic blueprint middleware surface in this slice.

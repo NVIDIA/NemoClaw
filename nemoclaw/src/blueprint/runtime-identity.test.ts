@@ -436,6 +436,29 @@ describe("runtime identity contract", () => {
     expect(calls.map(({ args }) => commandKey(args))).toContain("provider profile import --file");
   });
 
+  it("rejects DNS-backed destinations unless the reviewed profile policy owns DNS", async () => {
+    deps.validateEndpointUrl = async () => ({ dnsResolved: true });
+
+    await expect(
+      prepareRuntimeIdentity(config, {
+        ...deps,
+        profilePolicy: {
+          providerType: "okta-runtime-v1",
+          dnsResolution: "reject",
+          trustedHostnames: [],
+          trustedHostSuffixes: ["okta.com"],
+          trustedBinaries: [
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+            "/usr/local/bin/curl",
+            "/usr/bin/curl",
+          ],
+        },
+      }),
+    ).rejects.toThrow(/outside the reviewed DNS policy/);
+    expect(calls).toEqual([]);
+  });
+
   it("admits the OAuth conformance profile only through an exact-host test policy", async () => {
     const conformanceConfig: RuntimeIdentityConfig = {
       ...config,
@@ -471,6 +494,7 @@ describe("runtime identity contract", () => {
         ...deps,
         profilePolicy: {
           providerType: "oauth2-runtime-conformance-v1",
+          dnsResolution: "identity-platform-controlled",
           trustedHostnames: ["identity-fixture.trycloudflare.com"],
           trustedHostSuffixes: [],
           trustedBinaries: [

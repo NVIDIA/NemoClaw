@@ -65,6 +65,7 @@ type Action = "plan" | "apply" | "status" | "rollback";
 
 type RollbackPlanSource = {
   sandbox_name?: unknown;
+  sandbox_created_by_apply?: unknown;
   identity?: unknown;
 };
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
@@ -585,6 +586,7 @@ interface PersistedRunPlan {
   run_id: string;
   profile: string;
   sandbox_name: string;
+  sandbox_created_by_apply: boolean;
   policy_additions: PolicyAdditions;
   inference: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
@@ -600,6 +602,7 @@ type StatusRunPlan = {
     forward_ports?: number[];
   };
   sandbox_name?: string;
+  sandbox_created_by_apply?: boolean;
   policy_additions?: PolicyAdditions;
   inference?: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
@@ -665,6 +668,7 @@ function buildPersistedRunPlan(args: {
   runId: string;
   profile: string;
   sandboxName: string;
+  sandboxCreatedByApply: boolean;
   policyAdditions: PolicyAdditions;
   inferenceCfg: InferenceProfile;
   runtimeIdentityReceipt?: RuntimeIdentityReceipt;
@@ -674,6 +678,7 @@ function buildPersistedRunPlan(args: {
     run_id: args.runId,
     profile: args.profile,
     sandbox_name: args.sandboxName,
+    sandbox_created_by_apply: args.sandboxCreatedByApply,
     policy_additions: args.policyAdditions,
     inference: buildSafeInferencePlan(args.inferenceCfg),
     timestamp: args.timestamp,
@@ -722,6 +727,9 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
   const sandboxName = optionalString(source.sandbox_name);
   if (sandboxName !== undefined) {
     safePlan.sandbox_name = sandboxName;
+  }
+  if (typeof source.sandbox_created_by_apply === "boolean") {
+    safePlan.sandbox_created_by_apply = source.sandbox_created_by_apply;
   }
 
   if (isPolicyAdditions(source.policy_additions)) {
@@ -843,6 +851,7 @@ export async function actionApply(
           runId: rid,
           profile,
           sandboxName,
+          sandboxCreatedByApply,
           policyAdditions,
           inferenceCfg,
           runtimeIdentityReceipt,
@@ -884,6 +893,11 @@ export async function actionApply(
 
     const createResult = await runCmd(createArgs, { reject: false });
     sandboxCreatedByApply = createResult.exitCode === 0;
+    if (sandboxCreatedByApply && runtimeIdentityConfig) {
+      // Persist ownership immediately so a later-process rollback stays safe
+      // if apply is interrupted before its final state write.
+      persistRunPlan();
+    }
     if (createResult.exitCode !== 0) {
       if (createResult.stderr.includes("already exists")) {
         log(`Sandbox '${sandboxName}' already exists, reusing.`);
@@ -1037,7 +1051,12 @@ export async function actionApply(
       const remove = await runCmd(["openshell", "sandbox", "remove", sandboxName], {
         reject: false,
       });
-      if (remove.exitCode !== 0 && !/\b(?:not found|does not exist)\b/i.test(remove.stderr)) {
+      if (remove.exitCode === 0 || /\b(?:not found|does not exist)\b/i.test(remove.stderr)) {
+        sandboxCreatedByApply = false;
+        if (runtimeIdentityConfig) {
+          persistRunPlan();
+        }
+      } else {
         cleanupFailures.push(
           `Failed to remove sandbox '${sandboxName}': ${boundedCommandError(remove.stderr)}`,
         );
@@ -1118,6 +1137,7 @@ export async function actionRollback(rid: string): Promise<void> {
 
   const planFile = join(stateDir, "plan.json");
   let sandboxName: string;
+  let sandboxCreatedByApply = false;
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
   try {
     const planData = readFileSync(planFile, "utf-8");
@@ -1127,6 +1147,7 @@ export async function actionRollback(rid: string): Promise<void> {
         ? parsedPlan
         : null;
     sandboxName = readRollbackSandboxName(rollbackPlan);
+    sandboxCreatedByApply = rollbackPlan?.sandbox_created_by_apply === true;
     if (rollbackPlan?.identity !== undefined) {
       if (!isRuntimeIdentityReceipt(rollbackPlan.identity)) {
         throw new Error("identity ownership receipt is invalid");
@@ -1143,14 +1164,18 @@ export async function actionRollback(rid: string): Promise<void> {
     await removeRuntimeIdentity(runtimeIdentityReceipt, sandboxName, runtimeIdentityCommandDeps());
   }
 
-  try {
-    progress(30, `Stopping sandbox ${sandboxName}`);
-    await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
+  if (sandboxCreatedByApply) {
+    try {
+      progress(30, `Stopping sandbox ${sandboxName}`);
+      await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
 
-    progress(60, `Removing sandbox ${sandboxName}`);
-    await runCmd(["openshell", "sandbox", "remove", sandboxName], { reject: false });
-  } catch {
-    // Sandbox cleanup is best-effort; the rollback marker still records this run as handled.
+      progress(60, `Removing sandbox ${sandboxName}`);
+      await runCmd(["openshell", "sandbox", "remove", sandboxName], { reject: false });
+    } catch {
+      // Sandbox cleanup is best-effort; the rollback marker still records this run as handled.
+    }
+  } else {
+    progress(60, `Preserving unowned sandbox ${sandboxName}`);
   }
 
   progress(90, "Cleaning up run state");
