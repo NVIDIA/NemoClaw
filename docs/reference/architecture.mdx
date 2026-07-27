@@ -308,6 +308,7 @@ The runner imports a private temporary snapshot of the exact profile bytes that 
 Before importing the profile, the runner requires HTTPS refresh and endpoint destinations, restricts them to the provider type's trusted host policy, and sends each through NemoClaw's DNS-aware SSRF boundary; private, loopback, link-local, and unresolved destinations are rejected.
 DNS-backed destinations require an explicit reviewed policy marking their namespace as identity-platform-controlled; other profile policies reject them before import.
 The current `okta-runtime-v1` policy accepts `okta.com` and its subdomains; custom Okta domains are not supported in this slice.
+The same reviewed policy fixes the non-secret client ID source to `OKTA_CLIENT_ID`; a blueprint cannot select another host variable, and command failures redact the client ID value along with secret refresh material.
 Before applying the blueprint, export the named environment variables in the host process that runs the direct blueprint runner.
 Obtain the refresh token through an authorized OAuth bootstrap flow for the same Okta client and authorization server as the profile.
 `openshell gateway login` authenticates a CLI user to the gateway and is not part of this runtime-credential flow.

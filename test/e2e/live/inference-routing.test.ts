@@ -366,6 +366,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   const endpoint = new URL(tunnel.origin);
   const runtimeIdentityProfilePolicy = {
     providerType,
+    clientIdEnvironmentName: "E2E_CLIENT_ID",
     dnsResolution: "identity-platform-controlled",
     trustedHostnames: [endpoint.hostname],
     trustedHostSuffixes: [],

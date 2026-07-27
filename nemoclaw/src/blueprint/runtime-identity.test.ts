@@ -199,6 +199,7 @@ describe("runtime identity contract", () => {
     { ...config, provider_name: "../provider" },
     { ...config, credential_key: "lowercase" },
     { ...config, client_id_env: "1INVALID" },
+    { ...config, client_id_env: "AWS_SECRET_ACCESS_KEY" },
     { ...config, refresh_token_env: config.client_id_env },
     { ...config, client_secret_env: config.refresh_token_env },
     { ...config, refresh_token_env: "NODE_OPTIONS" },
@@ -444,6 +445,7 @@ describe("runtime identity contract", () => {
         ...deps,
         profilePolicy: {
           providerType: "okta-runtime-v1",
+          clientIdEnvironmentName: "OKTA_CLIENT_ID",
           dnsResolution: "reject",
           trustedHostnames: [],
           trustedHostSuffixes: ["okta.com"],
@@ -494,6 +496,7 @@ describe("runtime identity contract", () => {
         ...deps,
         profilePolicy: {
           providerType: "oauth2-runtime-conformance-v1",
+          clientIdEnvironmentName: "E2E_CLIENT_ID",
           dnsResolution: "identity-platform-controlled",
           trustedHostnames: ["identity-fixture.trycloudflare.com"],
           trustedHostSuffixes: [],
@@ -658,6 +661,15 @@ describe("runtime identity contract", () => {
     expect(calls).toEqual([]);
   });
 
+  it("rejects a client ID environment alias outside the reviewed profile policy", async () => {
+    environment.AWS_CLIENT_ID = "selected-host-secret";
+
+    await expect(
+      prepareRuntimeIdentity({ ...config, client_id_env: "AWS_CLIENT_ID" }, deps),
+    ).rejects.toThrow(/must be the reviewed non-secret name 'OKTA_CLIENT_ID'/);
+    expect(calls).toEqual([]);
+  });
+
   it("revalidates typed configuration before spawning a child process", async () => {
     await expect(
       prepareRuntimeIdentity({ ...config, refresh_token_env: "NODE_OPTIONS" }, deps),
@@ -712,6 +724,27 @@ describe("runtime identity contract", () => {
     expect(calls.map(({ args }) => commandKey(args))).toContain(
       "provider delete acme-okta-runtime",
     );
+  });
+
+  it("redacts client ID and secret material from refresh configuration errors", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
+    responses.set(
+      "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
+      [
+        {
+          exitCode: 1,
+          stdout: "",
+          stderr: "configure failed for client-id refresh-secret client-secret",
+        },
+      ],
+    );
+
+    const error = await prepareRuntimeIdentity(config, deps).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "configure failed for <redacted> <redacted> <redacted>",
+    );
+    expect((error as Error).message).not.toMatch(/client-id|refresh-secret|client-secret/);
   });
 
   it("reports cleanup failure after preparation fails", async () => {

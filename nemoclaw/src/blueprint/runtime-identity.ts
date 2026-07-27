@@ -20,6 +20,7 @@ import { isSubprocessEnvNameAllowed } from "../lib/subprocess-env.js";
 import { isPlainObject } from "../shared/object-record.js";
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
+const CLIENT_ID_ENV_PATTERN = /(?:^|_)CLIENT_ID$/;
 const SECRET_MATERIAL_ENV_PATTERN = /(?:^|_)(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)$/;
 const PROVIDER_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
 const PROVIDER_TYPE_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
@@ -119,6 +120,7 @@ export interface RuntimeIdentityValidatedDestination {
 
 export interface RuntimeIdentityProfilePolicy {
   providerType: string;
+  clientIdEnvironmentName: string;
   dnsResolution: "reject" | "identity-platform-controlled";
   trustedHostnames: readonly string[];
   trustedHostSuffixes: readonly string[];
@@ -129,6 +131,7 @@ const RUNTIME_IDENTITY_PROFILE_POLICIES: Readonly<Record<string, RuntimeIdentity
   Object.freeze({
     "okta-runtime-v1": Object.freeze({
       providerType: "okta-runtime-v1",
+      clientIdEnvironmentName: "OKTA_CLIENT_ID",
       dnsResolution: "identity-platform-controlled",
       trustedHostnames: Object.freeze([]),
       trustedHostSuffixes: Object.freeze(["okta.com"]),
@@ -526,6 +529,7 @@ export function isRuntimeIdentityConfig(value: unknown): value is RuntimeIdentit
     ENV_NAME_PATTERN.test(value.credential_key) &&
     typeof value.client_id_env === "string" &&
     ENV_NAME_PATTERN.test(value.client_id_env) &&
+    CLIENT_ID_ENV_PATTERN.test(value.client_id_env) &&
     typeof value.refresh_token_env === "string" &&
     ENV_NAME_PATTERN.test(value.refresh_token_env) &&
     SECRET_MATERIAL_ENV_PATTERN.test(value.refresh_token_env) &&
@@ -720,6 +724,12 @@ export async function prepareRuntimeIdentity(
       `Runtime identity provider type '${config.provider_type}' has no reviewed trust policy`,
     );
   }
+  if (config.client_id_env !== profilePolicy.clientIdEnvironmentName) {
+    throw new Error(
+      `Runtime identity client_id_env for '${config.provider_type}' must be the reviewed ` +
+        `non-secret name '${profilePolicy.clientIdEnvironmentName}'`,
+    );
+  }
   const profilePath = resolveRuntimeIdentityProfilePath(
     config.profile_path,
     deps.blueprintPath ?? process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
@@ -837,7 +847,7 @@ export async function prepareRuntimeIdentity(
     const refreshResult = await deps.run(refreshArgs, { env: refreshEnv });
     if (refreshResult.exitCode !== 0) {
       throw new Error(
-        `Failed to configure runtime identity credential refresh: ${deps.formatError(commandOutput(refreshResult), [refreshToken, clientSecret ?? ""])}`,
+        `Failed to configure runtime identity credential refresh: ${deps.formatError(commandOutput(refreshResult), [clientId, refreshToken, clientSecret ?? ""])}`,
       );
     }
 
