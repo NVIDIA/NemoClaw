@@ -258,11 +258,9 @@ type GuardLine = {
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
-
 function trustedNodePath(configDir: string): string {
   return path.join(path.dirname(configDir), ".nemoclaw-test-node");
 }
-
 function fixture() {
   const created = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-config-guard-"));
   const root = fs.realpathSync(created);
@@ -288,7 +286,6 @@ function fixture() {
   fs.chmodSync(root, 0o755);
   return { root, configDir, configPath, hashPath };
 }
-
 type GuardAction =
   | "preflight"
   | "preflight-restart"
@@ -300,7 +297,6 @@ type GuardAction =
   | "publish-startup-ready"
   | "write-config"
   | "recover";
-
 function runGuard(
   action: GuardAction,
   configDir: string,
@@ -332,7 +328,6 @@ function runGuard(
     .map((line) => JSON.parse(line) as GuardLine);
   return { ...result, lines };
 }
-
 function mode(filePath: string): number {
   return fs.lstatSync(filePath).mode & 0o7777;
 }
@@ -408,7 +403,6 @@ describe("openclaw-config-guard", () => {
     expect(first.status, JSON.stringify(first.lines)).toBe(0);
     const fileIdentities = [configPath, hashPath].map(fileIdentity);
     expect(mode(root)).toBe(0o1775);
-
     const second = runGuard("lock", configDir);
     expect(second.status, JSON.stringify(second.lines)).toBe(0);
     expect(mode(root)).toBe(0o1775);
@@ -426,11 +420,17 @@ describe("openclaw-config-guard", () => {
     expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
     for (const invalidPath of [configPath, hashPath]) {
       fs.chmodSync(invalidPath, 0o600);
-      const invalid = runGuard("unlock", configDir);
-      expect(invalid.status).not.toBe(0);
-      expect(invalid.lines).toContainEqual(expect.objectContaining({ code: "config-not-mutable" }));
-      expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
-      fs.chmodSync(invalidPath, 0o660);
+      try {
+        const invalid = runGuard("unlock", configDir);
+        expect(invalid.status).not.toBe(0);
+        expect(invalid.lines).toContainEqual(
+          expect.objectContaining({ code: "config-not-mutable" }),
+        );
+        expect(mode(invalidPath)).toBe(0o600);
+        expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
+      } finally {
+        fs.chmodSync(invalidPath, 0o660);
+      }
     }
     const drift = runGuard("unlock", configDir, "mutable-dir-drift");
     expect(drift.lines).toContainEqual(expect.objectContaining({ code: "config-not-mutable" }));
