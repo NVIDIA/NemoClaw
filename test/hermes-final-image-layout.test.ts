@@ -26,6 +26,11 @@ const HERMES_INTEGRITY_FILES = [
     source: "agents/hermes/finalize-tirith-marker.py",
     target: "/usr/local/lib/nemoclaw/finalize-tirith-marker.py",
   },
+  {
+    arg: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
+    source: "agents/hermes/patch-langfuse-credentials.mts",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
+  },
 ] as const;
 
 type LegacyDataFixture =
@@ -92,6 +97,12 @@ function readText(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
 
+function indexOfRequired(haystack: string, needle: string): number {
+  const index = haystack.indexOf(needle);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -126,6 +137,108 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
+  // source-shape-contract: compatibility -- Legacy-compatible grouped payload copies preserve the measured Hermes layer budget without invalidating earlier build work
+  it("uses grouped legacy-compatible payload layers at their cache boundaries (#7611)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const doctorLayer = dockerRunCommandBetween(
+      dockerfile,
+      "# Run Hermes' upstream repair",
+      "# Install NemoClaw plugin into Hermes",
+    );
+    const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
+    const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
+    const finalStage = stages[finalStageIndex] ?? "";
+    const payloads = [
+      { stage: "hermes-npm-patch-payload", copies: 3 },
+      { stage: "hermes-agent-payload", copies: 7 },
+      { stage: "hermes-runtime-payload", copies: 19 },
+      { stage: "hermes-wrapper-payload", copies: 1 },
+      { stage: "hermes-scan-payload", copies: 1 },
+    ] as const;
+    const npmPatchCopy = "COPY --from=hermes-npm-patch-payload / /";
+    const agentCopy = "COPY --from=hermes-agent-payload / /";
+    const runtimeCopy = "COPY --from=hermes-runtime-payload / /";
+    const wrapperCopy = "COPY --from=hermes-wrapper-payload / /";
+    const scanCopy = "COPY --from=hermes-scan-payload / /";
+
+    expect(finalStageIndex).toBe(stages.length - 1);
+    expect(dockerfile).not.toContain("RUN --mount");
+    for (const payload of payloads) {
+      const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
+      expect(stage?.match(/^COPY\b.*$/gmu)).toHaveLength(payload.copies);
+      expect(finalStage).toContain(`COPY --from=${payload.stage} / /`);
+    }
+    expect(finalStage.match(/^COPY\b.*$/gmu)).toEqual([
+      npmPatchCopy,
+      agentCopy,
+      runtimeCopy,
+      wrapperCopy,
+      scanCopy,
+    ]);
+    const npmPatch = indexOfRequired(finalStage, npmPatchCopy);
+    const agent = indexOfRequired(finalStage, agentCopy);
+    const runtime = indexOfRequired(finalStage, runtimeCopy);
+    const wrapper = indexOfRequired(finalStage, wrapperCopy);
+    const scan = indexOfRequired(finalStage, scanCopy);
+    const tarPatch = indexOfRequired(
+      finalStage,
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+    );
+    const certifiInstall = indexOfRequired(finalStage, "RUN _hermes_certifi=");
+    const agentChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/",
+    );
+    const configFind = indexOfRequired(finalStage, "RUN find /opt/nemoclaw-hermes-config");
+    const blueprintChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod -R a+rX /opt/nemoclaw-blueprint/",
+    );
+    const tirithFinalizerHash = indexOfRequired(
+      finalStage,
+      '"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"',
+    );
+    const pythonCheck = indexOfRequired(finalStage, "RUN test -x /usr/bin/python3");
+    const darwinCompatibility = indexOfRequired(
+      finalStage,
+      'RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]',
+    );
+    const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
+    const imageScan = indexOfRequired(
+      finalStage,
+      "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
+    );
+
+    expect(npmPatch).toBeLessThan(tarPatch);
+    expect(agent).toBeGreaterThan(certifiInstall);
+    expect(agent).toBeLessThan(agentChmod);
+    expect(runtime).toBeGreaterThan(configFind);
+    expect(runtime).toBeLessThan(blueprintChmod);
+    expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
+    expect(wrapper).toBeLessThan(pythonCheck);
+    expect(scan).toBeGreaterThan(darwinCompatibility);
+    expect(scan).toBeLessThan(metadataCheck);
+    for (const metadataContract of [
+      "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
+      "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
+      "/opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444'",
+      "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
+      "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
+      "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
+      "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
+      "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
+    ]) {
+      expect(finalStage).toContain(`check_metadata ${metadataContract}`);
+    }
+    expect(metadataCheck).toBeGreaterThan(scan);
+    expect(metadataCheck).toBeLessThan(imageScan);
+    expect(doctorLayer).toContain(
+      "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
+    );
+    expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& rm -rf \/sandbox\/[.]cache$/u);
+    expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
+  });
+
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image
   it("keeps security entrypoint hashes synchronized with the copied files", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");

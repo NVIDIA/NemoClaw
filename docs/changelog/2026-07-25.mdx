@@ -1,0 +1,86 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.96
+
+NemoClaw v0.0.96 adds persistent baseline network policy exclusions, DNS-backed HTTPS inference switching, host-managed default OpenShell gateways, and opt-in MCP tool discovery.
+It also hardens blueprint identifier validation, improves onboarding and recovery diagnostics, preserves Shields posture during bulk backups, locks and updates managed sandbox image dependencies, reduces Hermes image size, and strengthens release validation.
+
+- `policy exclude` and `policy restore` now persist an operator-approved removal of one exact agent baseline entry across rebuild and snapshot restore.
+  The commands preview the removed endpoints and affected features, reserve excluded keys, protect `managed_inference`, and require another review after agent or baseline drift.
+  `policy list`, `policy explain`, `status`, `doctor`, snapshot, and rebuild output report active or inconsistent exclusions.
+  The `claude-code` preset now permits the resolved npm-installed launcher path that OpenShell enforces without broadening its endpoint or HTTP method scope.
+  For more information, refer to [Network Policies](/user-guide/openclaw/reference/network-policies) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- `nemoclaw inference set --endpoint-url` now routes public DNS-backed HTTPS custom endpoints through a host-side HTTPS Pin Runtime adapter.
+  Each route receives a separate sandbox-facing credential, while the upstream endpoint and credential remain host-only.
+  OpenAI-compatible HTTP endpoints on exact loopback hosts `localhost`, `127.0.0.1`, or `[::1]` can use no authentication on ports `8000`, `11434`, or `11435`, and URL-form Node.js requests no longer forward the internal provider marker.
+  A failed compatible-provider update attempts to restore the previous provider and model.
+  For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint), and [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers).
+- Blueprint apply, rollback, snapshot, and build paths now enforce the documented sandbox and inference provider identifier constraints before state writes or OpenShell calls.
+  Rejected values use bounded terminal-safe previews.
+  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture).
+- The default OpenShell gateway on port `8080` now uses a validated host service on Linux and Apple Silicon macOS when the platform provides the supported service manager.
+  NemoClaw-managed custom ports retain the detached-process lifecycle, while a declared external supervisor retains authority for its gateway.
+  Onboarding now uses deadline-based readiness waits and omits TLS Server Name Indication for IP-literal health probes.
+  It accepts a positively identified Docker engine even when `ProductLicense` is `Apache-2.0`, and rejects a macOS Podman compatibility socket before gateway launch.
+  Invalid `NEMOCLAW_GATEWAY_MANAGEMENT` declarations now return a sanitized single-line CLI error and nonzero exit instead of a Node.js stack trace.
+  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture), [Declare the OpenShell Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority), [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Status and upgrade checks now scope gateway failure and agent-version probes to the sandbox's recorded gateway.
+  `nemoclaw list` and global `status` hide route-only reservations left by failed onboarding while preserving them for `onboard --resume`.
+  `doctor` reports incomplete lifecycle metadata without exposing stored values.
+  An explicit forced rebuild can preserve managed MCP configuration after the old sandbox loses exec access, with exact gateway, policy, and provider proofs before deletion.
+  Rebuild rechecks the canonical sandbox and recorded gateway at the delete edge, restores MCP state if that target drifts, and keeps shields unlocked when an accepted deletion remains unconfirmed.
+  When shields lock state before an OpenClaw agent first boots, NemoClaw creates the missing writable `agents/<id>/sessions/` carveout with existing containment checks.
+  This prevents the sessions-directory `EACCES` failure on that first boot.
+  Shields failures return exit code `1` without a Node.js traceback, and policy picker EOF returns nonzero.
+  A `config set` confirmation that reaches EOF exits nonzero without writing.
+  The error repeats the `--config-accept-new-path` and `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1` guidance.
+  Messaging mutation guards print the exact host command.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [About Managed MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/about-managed-mcp-servers), [Security Best Practices](/user-guide/openclaw/security/best-practices), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- `nemoclaw <sandbox> mcp status <server> --tools` now requests the configured server's current advertised tool names without invoking any tool.
+  Discovery is opt-in and sends authenticated traffic through the existing managed OpenShell credential provider and network policy.
+  The shared client returns names only, bounds time, requests, response bytes, pages, tool count, cursors, and name length, and redacts failure details.
+  `--tools` requires one server and suppresses the implicit credential probe unless `--probe` is also passed.
+  Sandboxes built from an older image must be rebuilt before discovery can run.
+  For more information, refer to [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- The installer now requires an existing OpenShell executable to report a version after sandbox backups and before gateway or onboarding changes.
+  A version-tag install reports the requested tag, and a near-miss license response such as `y` receives an in-place hint without weakening exact `yes` acceptance.
+  WSL Express selects Windows-host Ollama only with Docker Desktop integration and otherwise configures WSL-local Ollama.
+  DGX Station preparation now distinguishes an active vLLM server from unrelated diagnostic processes.
+  For more information, refer to the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart), [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes), [Prepare Windows for NemoClaw](/user-guide/openclaw/get-started/additional-setup/windows-preparation), and [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
+- The Ollama model menu now shows download size, required VRAM, and available or total GPU memory when known.
+  Re-onboarding a committed local Ollama route now reuses its persisted proxy token so the existing sandbox and restarted host proxy keep the same credential.
+  Resumed onboarding reports when a recorded reasoning setting takes precedence over `NEMOCLAW_REASONING`.
+  Passing the managed Hermes Dockerfile to `nemohermes onboard --from` now stages the repository root, and separate Hermes provider and namespaced model flags use the credential-resolving combined route without dropping the model namespace.
+  For more information, refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities), [Install Hermes Plugins](/user-guide/hermes/manage-sandboxes/install-hermes-plugins), and the [NemoHermes CLI Commands Reference](/user-guide/hermes/reference/commands).
+- `nemoclaw backup-all` now opens a separate 30-minute Shields-down window for each eligible sandbox that starts with Shields up and restores lockdown before it processes the next sandbox.
+  A sandbox that starts with Shields down remains down.
+  If lockdown cannot be restored, the batch stops and prints the recovery command without processing the remaining sandboxes.
+  Cross-sandbox snapshot restore now approves at most one pairing or scope-upgrade request that matches the restored clone, restarts that clone's gateway to publish the approval, and uses one authenticated verification as its success condition.
+  NemoClaw rejects corrupt persisted Shields state before mutation.
+  Operators must restore the state from a trusted host backup; neither `shields up` nor an ordinary rebuild replaces it.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Managed OpenClaw and Hermes sandbox Dockerfiles now avoid BuildKit-only bind mounts.
+  On Docker Engine hosts, the OpenShell gateway builder can complete the image build when the host-side BuildKit prebuild is unavailable or fails.
+  For more information, refer to [NemoClaw Prerequisites](/user-guide/openclaw/get-started/prerequisites) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- Both OpenClaw image paths now consume one authoritative production lock for OpenClaw `2026.7.1`.
+  Image assembly verifies the lock, registry integrity, installed package graph, and reviewed lifecycle before runtime exposure.
+  The OpenClaw graph replaces its affected `brace-expansion` and `fast-uri` resolutions.
+  All managed sandbox base images now install checksum-bound fixed Vim, jq, Oniguruma, and Expat packages and verify the reviewed Perl components.
+  Their bundled npm replaces its private `brace-expansion@5.0.7` copy with SRI-pinned `5.0.8`, and each image records a root-owned, read-only package inventory.
+  OpenClaw onboarding now rejects a selected base that lacks that immutable inventory before the final image build.
+  When a cached exact release is incompatible, onboarding refreshes it once.
+  If it remains incompatible, onboarding uses a current local build rather than `:latest`.
+  Hermes image assembly removes build-only caches and dependencies, reducing the measured final image by 624,394,525 bytes.
+  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture).
+- Release validation now runs approved E2E targets for fork PRs, retries one confirmed hosted-runner loss, and retries classified transient base-image pulls.
+  The required E2E observer retries transient GitHub reads after it revalidates the exact PR, head, and base identity, and redacts terminal network errors.
+  Credential-bearing E2E dispatch sends one request and reconciles uncertain responses through bounded, complete inventory reads.
+  It adopts only one exact child and fails closed on ambiguity, incomplete reads, or identity drift.
+  The reviewed npm audit gate retries only incomplete or timed-out scans within a fixed budget, evaluates complete vulnerability reports immediately, and fails closed when retries exhaust.
+  Pre-tag release qualification now binds one trusted full-mode run to the exact candidate SHA.
+  It requires the default-enabled suite plus `Exact staging Brev Launchable` qualification and cleanup evidence.
+  Newer full dispatches and protected qualification jobs do not supersede pending evidence.
+  It reuses the reviewed Hermes production image, shards macOS and WSL tests, provisions pinned OpenShell on macOS shards, and enforces orchestration timeouts, credential boundaries, and artifact handoffs.

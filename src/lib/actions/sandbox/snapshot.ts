@@ -61,6 +61,7 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -71,6 +72,8 @@ import {
   selectSandboxGatewayIfRegistered,
   usesGatewayMetadataProbe,
 } from "./sandbox-gateway-routing";
+import { formatSnapshotBaselineExclusionSummary } from "./snapshot-baseline-exclusion-summary";
+import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -272,6 +275,35 @@ function resolveCloneDashboardEnvArgs(
   return envArgs;
 }
 
+async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
+  policyPath: string;
+  cleanup?: () => boolean;
+}> {
+  if (srcEntry.baselineExclusionTransition) {
+    const transition = srcEntry.baselineExclusionTransition;
+    throw new Error(
+      `Cannot clone baseline policy while '${transition.operation} ${transition.exclusion.key}' needs repair. Re-run that policy command on '${srcEntry.name}' first.`,
+    );
+  }
+  const agentName = srcEntry.agent || "openclaw";
+  const baseline = policies.resolveAgentBaselinePolicy(agentName);
+  if (!baseline) {
+    throw new Error(`Cannot resolve the '${agentName}' baseline policy for snapshot restore.`);
+  }
+  const baselineExclusions = srcEntry.baselineExclusions ?? [];
+  if (baselineExclusions.length === 0) return { policyPath: baseline.policyPath };
+
+  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(srcEntry));
+  const activeMessagingChannels = registry
+    .getConfiguredMessagingChannelsFromEntry(srcEntry)
+    .filter((channel) => !disabledChannels.has(channel));
+  const { prepareInitialSandboxCreatePolicy } = await import("../../onboard/initial-policy");
+  return prepareInitialSandboxCreatePolicy(baseline.policyPath, activeMessagingChannels, {
+    agentName,
+    baselineExclusions,
+  });
+}
+
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
 // the source's baked image so the user does not have to re-run onboarding.
 // Returns true on success; on failure, logs and throws SnapshotCommandError.
@@ -280,10 +312,10 @@ async function autoCreateSandboxFromSource(
   dstName: string,
   srcEntry: SandboxEntry | { name: string },
   fromImage: string,
+  createPolicyPath: string,
   dstDashboardPort: number | null,
   dashboardEnvArgs: readonly string[],
 ): Promise<void> {
-  const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
@@ -305,7 +337,7 @@ async function autoCreateSandboxFromSource(
     "--from",
     fromImage,
     "--policy",
-    basePolicy,
+    createPolicyPath,
     "--auto-providers",
     "--",
     ...startupCommand,
@@ -593,6 +625,11 @@ function runSnapshotCreate(
       const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
       console.log(`  ${G}✓${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
       console.log(`    ${manifest.backupPath}`);
+      for (const line of formatSnapshotBaselineExclusionSummary(
+        registry.getBaselineExclusions(sandboxName),
+      )) {
+        console.log(`    ${line}`);
+      }
       return;
     }
     if (result.error) {
@@ -859,9 +896,13 @@ async function runSnapshotRestore(
   const target = request.to ?? sandboxName;
   const targetSandbox =
     target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
-  return withSandboxMutationLock(targetSandbox, () =>
-    runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox),
-  );
+  const lockNames = targetSandbox === sandboxName ? [sandboxName] : [sandboxName, targetSandbox];
+  const orderedNames = [...new Set(lockNames)].sort();
+  const acquire = (index: number): Promise<void> =>
+    index === orderedNames.length
+      ? runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox)
+      : withSandboxMutationLock(orderedNames[index], () => acquire(index + 1));
+  return acquire(0);
 }
 
 async function runSnapshotRestoreUnlocked(
@@ -874,8 +915,19 @@ async function runSnapshotRestoreUnlocked(
     "  Failed to query live sandbox state from OpenShell.",
   );
   const isCrossSandboxRestore = targetSandbox !== sandboxName;
+  let crossSandboxRestoreAgent: string | null = null;
   const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
   const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
+  if (targetEntry?.baselineExclusionTransition) {
+    const transition = targetEntry.baselineExclusionTransition;
+    console.error(
+      `  Cannot replace destination '${targetSandbox}' while baseline policy '${transition.operation} ${transition.exclusion.key}' needs repair.`,
+    );
+    console.error(
+      `  Re-run that policy command on '${targetSandbox}' before restoring into it with --force.`,
+    );
+    snapshotExit(1);
+  }
 
   // #3756 P1 preflight: resolve the snapshot selector AND the source pod
   // image before any destructive action. A bad selector, missing snapshot,
@@ -992,6 +1044,7 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
+      crossSandboxRestoreAgent = lockedSourceEntry.agent || "openclaw";
       if (getSandboxEntryInference(lockedSourceEntry).kind !== "configured") {
         console.error(
           `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' has no complete durable inference route.`,
@@ -1028,28 +1081,35 @@ async function runSnapshotRestoreUnlocked(
       // validation the image and gateway-route checks above already do (#3756).
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
-      if (targetExists) {
-        if (targetEntry) {
-          verifyRestoreDestinationOnOwnGateway(targetSandbox);
+      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
+      try {
+        if (targetExists) {
+          if (targetEntry) {
+            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+          }
+          deleteSandboxForRestore(targetSandbox);
+          requireLiveSandboxesOnSandboxGateway(
+            sandboxName,
+            "  Failed to re-select source sandbox gateway after deleting destination.",
+          );
         }
-        deleteSandboxForRestore(targetSandbox);
-        requireLiveSandboxesOnSandboxGateway(
+        await autoCreateSandboxFromSource(
           sandboxName,
-          "  Failed to re-select source sandbox gateway after deleting destination.",
+          targetSandbox,
+          lockedSourceEntry,
+          lockedFromImage,
+          clonePolicy.policyPath,
+          dstDashboardPort,
+          dashboardEnvArgs,
         );
+      } finally {
+        clonePolicy.cleanup?.();
       }
-      await autoCreateSandboxFromSource(
-        sandboxName,
-        targetSandbox,
-        lockedSourceEntry,
-        lockedFromImage,
-        dstDashboardPort,
-        dashboardEnvArgs,
-      );
     };
-    // Lock order matches onboard: sandbox (outer caller), host dashboard,
-    // gateway route. The host-wide lease stays held from port selection until
-    // the clone is durably registered, including across different gateways.
+    // Lock order is both sandbox names (sorted by the outer caller), host
+    // dashboard, then gateway route. The host-wide lease stays held from port
+    // selection until the clone is durably registered, including across
+    // different gateways.
     await withDashboardPortReservationLock(() =>
       withGatewayRouteMutationLock(sourceGatewayName, createAndRegisterClone),
     );
@@ -1068,6 +1128,12 @@ async function runSnapshotRestoreUnlocked(
     if (result.success) {
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
+      );
+      printHermesGatewayRestoreHint(
+        targetSandbox,
+        registry.getSandbox(targetSandbox)?.agent,
+        result.restoredFiles,
+        resolvedSnapshot?.stateFiles ?? [],
       );
     } else {
       console.error(`  Restore failed.`);
@@ -1099,6 +1165,18 @@ async function runSnapshotRestoreUnlocked(
     // managed observability binding from current target state.
     reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
   });
+  if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
+    try {
+      await establishRestoredSandboxGatewayPairing(targetSandbox);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new SnapshotCommandError([
+        `State restored into '${targetSandbox}', but gateway pairing could not be verified.`,
+        `Run \`${CLI_NAME} ${targetSandbox} connect\` to retry pairing before running an agent.`,
+        `Details: ${detail}`,
+      ]);
+    }
+  }
 }
 
 export async function runSandboxSnapshot(

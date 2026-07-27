@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -29,7 +30,6 @@ const HERMES_DASHBOARD_INTERNAL_PORT =
   process.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ?? "19119";
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
-const LIVE_TIMEOUT_MS = 70 * 60_000;
 const ONBOARD_VALIDATION_TIMEOUT_SECONDS =
   process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS ?? "60";
 
@@ -249,7 +249,7 @@ async function retryHostedInference<T>(
 
 // source-shape-contract: security -- Live execution proves the shipped Hermes manifest remains healthy and credential-safe
 test("hermes-e2e: install.sh onboards Hermes and proves health plus live inference", {
-  timeout: LIVE_TIMEOUT_MS,
+  timeout: HERMES_E2E_TEST_TIMEOUT_MS,
   meta: { e2ePhases: HERMES_E2E_PHASES },
 }, async ({ artifacts, cleanup, host, inference, progress, sandbox }) => {
   await artifacts.target.declare({

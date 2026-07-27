@@ -16,6 +16,7 @@ import {
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
   expectAuthenticatedBaselineInventoryRequest,
+  expectAuthenticatedProxyResolutionRequests,
   hostedInstallModel,
   inferenceLocalMaxTokens,
   installHermes,
@@ -142,6 +143,48 @@ describe("Hermes inference switch command shape", () => {
           },
         ],
       }),
+    ).toThrow();
+  });
+
+  it("accepts only authenticated proxy-resolution chat requests without secret markers", () => {
+    expect(() =>
+      expectAuthenticatedProxyResolutionRequests(
+        {
+          requests: () => [
+            {
+              auth: "ok",
+              authorizationSent: true,
+              bodyBytes: 64,
+              forbiddenMarkerMatches: 0,
+              method: "POST",
+              model: "nvidia/nemotron",
+              path: "/v1/chat/completions",
+            },
+          ],
+        },
+        0,
+        "nvidia/nemotron",
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      expectAuthenticatedProxyResolutionRequests(
+        {
+          requests: () => [
+            {
+              auth: "ok",
+              authorizationSent: true,
+              bodyBytes: 64,
+              forbiddenMarkerMatches: 1,
+              method: "POST",
+              model: "nvidia/nemotron",
+              path: "/v1/chat/completions",
+            },
+          ],
+        },
+        0,
+        "nvidia/nemotron",
+      ),
     ).toThrow();
   });
 

@@ -15,7 +15,7 @@ interface RunResult {
   stderr: string;
 }
 
-interface OpenRouterRuntimeAdapterCleanupRuntime {
+interface RuntimeAdapterCleanupRuntime {
   commandExists: (command: string) => boolean;
   env: NodeJS.ProcessEnv;
   existsSync: (target: string) => boolean;
@@ -27,6 +27,16 @@ interface OpenRouterRuntimeAdapterCleanupRuntime {
 
 const OPENROUTER_RUNTIME_ADAPTER_CMDLINE_MARK = "openrouter-runtime-adapter";
 const DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT = 11437;
+const HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE_MARK = "https-pin-runtime-adapter";
+const DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT = 11438;
+
+type RuntimeAdapterDescriptor = {
+  cmdlineMark: string;
+  defaultPort: number;
+  envPort: string;
+  label: string;
+  pidFile: string;
+};
 
 function splitNonEmptyLines(output: string): string[] {
   return output
@@ -35,34 +45,36 @@ function splitNonEmptyLines(output: string): string[] {
     .filter(Boolean);
 }
 
-function resolveOpenRouterRuntimeAdapterPort(
-  runtime: OpenRouterRuntimeAdapterCleanupRuntime,
+function resolveRuntimeAdapterPort(
+  runtime: RuntimeAdapterCleanupRuntime,
+  descriptor: RuntimeAdapterDescriptor,
 ): number {
-  const raw = runtime.env.NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT;
-  if (raw === undefined || raw === "") return DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT;
+  const raw = runtime.env[descriptor.envPort];
+  if (raw === undefined || raw === "") return descriptor.defaultPort;
   const trimmed = String(raw).trim();
-  if (!/^\d+$/.test(trimmed)) return DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT;
+  if (!/^\d+$/.test(trimmed)) return descriptor.defaultPort;
   const parsed = Number(trimmed);
-  if (parsed < 1024 || parsed > 65535) return DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT;
+  if (parsed < 1024 || parsed > 65535) return descriptor.defaultPort;
   return parsed;
 }
 
-function isOpenRouterRuntimeAdapterPid(
+function isRuntimeAdapterPid(
   pid: number,
-  runtime: OpenRouterRuntimeAdapterCleanupRuntime,
+  runtime: RuntimeAdapterCleanupRuntime,
+  descriptor: RuntimeAdapterDescriptor,
 ): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
-  return result.status === 0 && result.stdout.includes(OPENROUTER_RUNTIME_ADAPTER_CMDLINE_MARK);
+  return result.status === 0 && result.stdout.includes(descriptor.cmdlineMark);
 }
 
-function pidExists(pid: number, runtime: OpenRouterRuntimeAdapterCleanupRuntime): boolean {
+function pidExists(pid: number, runtime: RuntimeAdapterCleanupRuntime): boolean {
   return runtime.run("ps", ["-p", String(pid), "-o", "pid="], { env: runtime.env }).status === 0;
 }
 
 function waitForPidExit(
   pid: number,
-  runtime: OpenRouterRuntimeAdapterCleanupRuntime,
+  runtime: RuntimeAdapterCleanupRuntime,
   timeoutMs: number,
 ): boolean {
   const deadline = Date.now() + timeoutMs;
@@ -73,48 +85,47 @@ function waitForPidExit(
   return !pidExists(pid, runtime);
 }
 
-function pidOwnedByCurrentUser(
-  pid: number,
-  runtime: OpenRouterRuntimeAdapterCleanupRuntime,
-): boolean {
+function pidOwnedByCurrentUser(pid: number, runtime: RuntimeAdapterCleanupRuntime): boolean {
   const expected = runtime.env.SUDO_USER || runtime.env.LOGNAME || os.userInfo().username;
   if (!expected) return true;
   const result = runtime.run("ps", ["-p", String(pid), "-o", "user="], { env: runtime.env });
   return result.status === 0 && result.stdout.trim() === expected;
 }
 
-function tryStopOpenRouterRuntimeAdapterPid(
+function tryStopRuntimeAdapterPid(
   pid: number,
-  runtime: OpenRouterRuntimeAdapterCleanupRuntime,
+  runtime: RuntimeAdapterCleanupRuntime,
+  descriptor: RuntimeAdapterDescriptor,
 ): boolean {
   runtime.kill(pid);
   if (waitForPidExit(pid, runtime, 1000)) {
-    runtime.log(`Stopped OpenRouter Runtime adapter ${pid}`);
+    runtime.log(`Stopped ${descriptor.label} ${pid}`);
     return true;
   }
   runtime.kill(pid, "SIGKILL");
   if (waitForPidExit(pid, runtime, 1000)) {
-    runtime.log(`Stopped OpenRouter Runtime adapter ${pid}`);
+    runtime.log(`Stopped ${descriptor.label} ${pid}`);
     return true;
   }
-  runtime.warn(`Failed to stop OpenRouter Runtime adapter ${pid}`);
+  runtime.warn(`Failed to stop ${descriptor.label} ${pid}`);
   return false;
 }
 
-export function stopOpenRouterRuntimeAdapter(
+function stopRuntimeAdapter(
   paths: Pick<UninstallPaths, "nemoclawStateDir">,
-  runtime: OpenRouterRuntimeAdapterCleanupRuntime,
+  runtime: RuntimeAdapterCleanupRuntime,
+  descriptor: RuntimeAdapterDescriptor,
   options: { scanOrphans?: boolean } = {},
 ): void {
   const stopped = new Set<number>();
 
-  const pidFile = path.join(paths.nemoclawStateDir, "openrouter-runtime-adapter.pid");
+  const pidFile = path.join(paths.nemoclawStateDir, descriptor.pidFile);
   if (runtime.existsSync(pidFile)) {
     try {
       const raw = fs.readFileSync(pidFile, "utf-8").trim();
       const pid = Number.parseInt(raw, 10);
-      if (Number.isFinite(pid) && pid > 0 && isOpenRouterRuntimeAdapterPid(pid, runtime)) {
-        if (tryStopOpenRouterRuntimeAdapterPid(pid, runtime)) stopped.add(pid);
+      if (Number.isFinite(pid) && pid > 0 && isRuntimeAdapterPid(pid, runtime, descriptor)) {
+        if (tryStopRuntimeAdapterPid(pid, runtime, descriptor)) stopped.add(pid);
       }
     } catch {
       /* ignore - the State step deletes the file shortly anyway */
@@ -122,26 +133,64 @@ export function stopOpenRouterRuntimeAdapter(
   }
 
   if (options.scanOrphans === false) {
-    if (stopped.size === 0) runtime.log("No selected-gateway OpenRouter Runtime adapter found");
+    if (stopped.size === 0) runtime.log(`No selected-gateway ${descriptor.label} found`);
     return;
   }
 
   if (!runtime.commandExists("lsof")) {
     if (stopped.size === 0) {
-      runtime.warn("lsof not found; skipping orphan OpenRouter Runtime adapter scan.");
+      runtime.warn(`lsof not found; skipping orphan ${descriptor.label} scan.`);
     }
     return;
   }
 
-  const adapterPort = resolveOpenRouterRuntimeAdapterPort(runtime);
+  const adapterPort = resolveRuntimeAdapterPort(runtime, descriptor);
   const lsof = runtime.run("lsof", ["-ti", `:${adapterPort}`], { env: runtime.env });
   const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
   for (const pid of pids) {
     if (stopped.has(pid)) continue;
     if (!pidOwnedByCurrentUser(pid, runtime)) continue;
-    if (!isOpenRouterRuntimeAdapterPid(pid, runtime)) continue;
-    if (tryStopOpenRouterRuntimeAdapterPid(pid, runtime)) stopped.add(pid);
+    if (!isRuntimeAdapterPid(pid, runtime, descriptor)) continue;
+    if (tryStopRuntimeAdapterPid(pid, runtime, descriptor)) stopped.add(pid);
   }
 
-  if (stopped.size === 0) runtime.log("No OpenRouter Runtime adapter processes found");
+  if (stopped.size === 0) runtime.log(`No ${descriptor.label} processes found`);
+}
+
+export function stopOpenRouterRuntimeAdapter(
+  paths: Pick<UninstallPaths, "nemoclawStateDir">,
+  runtime: RuntimeAdapterCleanupRuntime,
+  options: { scanOrphans?: boolean } = {},
+): void {
+  stopRuntimeAdapter(
+    paths,
+    runtime,
+    {
+      cmdlineMark: OPENROUTER_RUNTIME_ADAPTER_CMDLINE_MARK,
+      defaultPort: DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
+      envPort: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+      label: "OpenRouter Runtime adapter",
+      pidFile: "openrouter-runtime-adapter.pid",
+    },
+    options,
+  );
+}
+
+export function stopHttpsPinRuntimeAdapter(
+  paths: Pick<UninstallPaths, "nemoclawStateDir">,
+  runtime: RuntimeAdapterCleanupRuntime,
+  options: { scanOrphans?: boolean } = {},
+): void {
+  stopRuntimeAdapter(
+    paths,
+    runtime,
+    {
+      cmdlineMark: HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE_MARK,
+      defaultPort: DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+      envPort: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+      label: "HTTPS Pin Runtime adapter",
+      pidFile: "https-pin-runtime-adapter.pid",
+    },
+    options,
+  );
 }

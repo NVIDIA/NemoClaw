@@ -424,33 +424,48 @@ ensure_cdi_runtime
     expect(output).toContain("cdi_contract=pass_after_refresh");
   });
 
-  it("ignores the installer process while still blocking a real vLLM workload", () => {
-    const selfOnly = runSourced(
+  it("ignores installer and diagnostic processes that mention vLLM", () => {
+    const diagnostics = runSourced(
       STATION_PREPARE,
       `
 ps() {
   printf '%s %s bash bash /tmp/NemoClaw/scripts/prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"
   printf '%s 1 bash bash /tmp/NemoClaw/scripts/install.sh\n' "$PPID"
+  printf '5464 1 grep grep -qi vllm\n'
+  printf '5465 1 rg rg vllm /var/log/station.log\n'
+  printf '5466 1 bash bash -c docker image ls | grep -qi vllm\n'
 }
 ss() { :; }
 check_agent_and_inference_conflicts
 `,
     );
-    expect(selfOnly.result.status, selfOnly.output).toBe(0);
+    expect(diagnostics.result.status, diagnostics.output).toBe(0);
+    expect(diagnostics.output).toContain("agent_inference_workloads=none port_8000=free");
+  });
 
+  it("blocks vLLM executables and Python modules without exposing model names", () => {
     const active = runSourced(
       STATION_PREPARE,
       `
-ps() { printf '999 1 python python -m vllm serve sensitive-model-name\n'; }
+ps() {
+  printf '998 1 vllm /usr/local/bin/vllm serve first-sensitive-model\n'
+  printf '999 1 python3 python3 -u -m vllm.entrypoints.openai.api_server --model second-sensitive-model\n'
+  printf '1000 1 docker-init docker-init -- /usr/bin/vllm serve third-sensitive-model\n'
+}
 ss() { :; }
 check_agent_and_inference_conflicts
 `,
     );
     expect(active.result.status, active.output).toBe(12);
-    expect(active.output).toMatch(/vLLM inference workload is active: pid=999 process=python/);
+    expect(active.output).toMatch(/vLLM inference workload is active: pid=998 process=vllm/);
+    expect(active.output).toContain("pid=999 process=python3");
+    expect(active.output).toContain("pid=1000 process=docker-init");
+    expect(active.output).toContain("stop_command='kill -- 998'");
     expect(active.output).toContain("stop_command='kill -- 999'");
-    expect(active.output).toContain("NemoClaw did not stop or modify it");
-    expect(active.output).not.toContain("sensitive-model-name");
+    expect(active.output).toContain("stop_command='kill -- 1000'");
+    expect(active.output).not.toContain("first-sensitive-model");
+    expect(active.output).not.toContain("second-sensitive-model");
+    expect(active.output).not.toContain("third-sensitive-model");
   });
 
   it("blocks vLLM during forced factory-runtime validation", () => {

@@ -105,11 +105,15 @@ describe("LangChain Deep Agents Code profile build gate", () => {
     expect(result.calls).not.toContain("--file");
   });
 
-  it("accepts NEMOCLAW_UPSTREAM_ENDPOINT_URL as a reviewed source-gate ARG", () => {
-    const result = runGateWithFakeDocker("expected-failure-with-marker");
+  it.each([
+    "NEMOCLAW_CORPORATE_CA_B64",
+    "NEMOCLAW_UPSTREAM_ENDPOINT_URL",
+  ])("accepts %s as a reviewed source-gate ARG (#6901)", (reviewedArg) => {
+    const result = runGateWithFakeDocker("expected-failure-with-marker", (fixtureRoot) =>
+      fs.appendFileSync(path.join(fixtureRoot, reviewedDockerfiles[0]), `\nARG ${reviewedArg}\n`),
+    );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(checkPath, "utf8")).toContain("NEMOCLAW_UPSTREAM_ENDPOINT_URL");
     expect(result.calls).toContain("--file agents/langchain-deepagents-code/Dockerfile");
   });
 

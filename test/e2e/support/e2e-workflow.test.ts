@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
   evaluateE2eWorkflowDispatchSelectors,
+  evaluateStagingBrevLaunchableDispatch,
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
   validateE2eWorkflow,
@@ -36,6 +37,231 @@ describe("e2e workflow boundary", () => {
 
   it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
+  });
+
+  it("rejects staging Launchable protected-environment and secret-guard drift", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          if?: string;
+          environment?: Record<string, unknown>;
+          steps?: Array<{ env?: Record<string, string>; name?: string }>;
+        }
+      >;
+    };
+    const job = workflow.jobs["staging-brev-launchable"]!;
+    job.environment = { name: "unprotected" };
+    const prepare = job.steps!.find((step) => step.name === "Prepare the trusted lane")!;
+    prepare.env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "staging-brev-launchable must use its protected non-deployment environment",
+        "staging-brev-launchable BREV_API_KEY must use the trusted-run secret guard",
+      ]),
+    );
+  });
+
+  it("keeps ordinary, full, selective, scheduled, and disabled-readiness dispatches distinct (#7487)", () => {
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: true });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        jobs: "hermes-e2e",
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        jobs: "staging-brev-launchable",
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: true });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "schedule",
+        readinessEnabled: true,
+      }),
+    ).toEqual({ failReadiness: false, runQualification: true });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        readinessEnabled: false,
+      }),
+    ).toEqual({ failReadiness: true, runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        readinessEnabled: true,
+        trustedMain: false,
+      }),
+    ).toEqual({ failReadiness: true, runQualification: false });
+  });
+
+  it("rejects full-dispatch input, correlation, selector, and readiness drift (#7487)", () => {
+    const workflow = readWorkflow() as {
+      "run-name": string;
+      on: {
+        workflow_dispatch: {
+          inputs: Record<string, { default?: boolean; description?: string; type?: string }>;
+        };
+      };
+      jobs: Record<
+        string,
+        {
+          if?: string;
+          steps?: Array<{ env?: Record<string, string>; name?: string; run?: string }>;
+        }
+      >;
+    };
+    workflow["run-name"] = "E2E";
+    workflow.on.workflow_dispatch.inputs.include_staging_brev_launchable.default = true;
+    workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'schedule' }}";
+    workflow.jobs["staging-brev-launchable-readiness"]!.if = "${{ false }}";
+    const dispatchIdentity = workflow.jobs["staging-brev-launchable"]!.steps!.find(
+      (step) => step.name === "Record E2E dispatch identity",
+    )!;
+    delete dispatchIdentity.env!.DISPATCH_JOBS;
+    dispatchIdentity.run = dispatchIdentity.run!.replace(
+      'kind: "nemoclaw-e2e-dispatch-v1"',
+      'kind: "untrusted"',
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "workflow run-name must expose the unique manual-dispatch correlation ID",
+        "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
+        "staging-brev-launchable must run for schedules, explicit selection, or an empty-selector full dispatch",
+        "staging-brev-launchable-readiness must fail only full dispatches with disabled readiness",
+        "staging-brev-launchable dispatch identity must bind DISPATCH_JOBS",
+        `step 'Record E2E dispatch identity' run script must include kind: "nemoclaw-e2e-dispatch-v1"`,
+      ]),
+    );
+  });
+
+  it("rejects superseding full-dispatch and qualification concurrency drift (#7487)", () => {
+    const workflow = readWorkflow() as {
+      concurrency: Record<string, unknown>;
+      jobs: Record<string, { concurrency?: Record<string, unknown> }>;
+    };
+    workflow.concurrency.group =
+      "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
+    delete workflow.jobs["staging-brev-launchable"]!.concurrency!.queue;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "workflow concurrency must isolate each full dispatch with github.run_id",
+        "staging-brev-launchable concurrency must queue all pending qualifications without cancellation",
+      ]),
+    );
+  });
+
+  it("keeps the retained network-policy live probes isolated with cleanup reserve (#7617)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, unknown>;
+          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
+          strategy: {
+            "fail-fast": boolean;
+            matrix: { include: Array<Record<string, string>> };
+          };
+          "timeout-minutes": number;
+        }
+      >;
+    };
+    const job = workflow.jobs["network-policy"]!;
+    const source = fs.readFileSync("test/e2e/live/network-policy.test.ts", "utf8");
+    expect(source).toContain("const TEST_TIMEOUT_MS = 65 * 60_000;");
+
+    job["timeout-minutes"] = 65;
+    job.strategy["fail-fast"] = true;
+    job.strategy.matrix.include.pop();
+    job.env.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts/live/network-policy";
+    delete job.env.NEMOCLAW_E2E_SHARD;
+    delete job.env.NEMOCLAW_SANDBOX_NAME;
+    const run = job.steps.find((step) => step.name === "Run network-policy live test")!;
+    run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
+    const upload = job.steps.find((step) => step.name === "Upload network-policy artifacts")!;
+    delete upload.with;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "network-policy scenario jobs must keep the 90 minute timeout",
+        "network-policy scenario matrix must disable fail-fast",
+        "network-policy job must keep only the isolated live-probes scenario",
+        "network-policy job must isolate artifacts by matrix.scenario",
+        "network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
+        "network-policy job must bind its sandbox name to matrix.sandbox",
+        `step 'Run network-policy live test' run script must include --selector "\${{ matrix.selector }}"`,
+        "network-policy upload-e2e-artifacts invocation must not override its contract",
+        "network-policy upload-e2e-artifacts must preserve its explicit name/path contract",
+      ]),
+    );
+  });
+
+  it("keeps common-egress scenarios isolated with bounded concurrency and cleanup reserve", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, unknown>;
+          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
+          strategy: {
+            "fail-fast": boolean;
+            "max-parallel": number;
+            matrix: { include: Array<Record<string, string>> };
+          };
+          "timeout-minutes": number;
+        }
+      >;
+    };
+    const job = workflow.jobs["common-egress-agent"]!;
+    const source = fs.readFileSync("test/e2e/live/common-egress-agent.test.ts", "utf8");
+    expect(source).toContain("const TEST_TIMEOUT_MS = 40 * 60_000;");
+
+    job["timeout-minutes"] = 40;
+    job.strategy["fail-fast"] = true;
+    job.strategy["max-parallel"] = 3;
+    job.strategy.matrix.include.pop();
+    job.env.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts/live/common-egress-agent";
+    delete job.env.NEMOCLAW_E2E_SHARD;
+    const run = job.steps.find((step) => step.name === "Run common-egress agent live test")!;
+    run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
+    const upload = job.steps.find((step) => step.name === "Upload common-egress agent artifacts")!;
+    delete upload.with;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "common-egress-agent scenario jobs must keep the 60 minute timeout",
+        "common-egress-agent scenario matrix must disable fail-fast",
+        "common-egress-agent scenario matrix must cap concurrency at two",
+        "common-egress-agent job must keep the three isolated scenario shards",
+        "common-egress-agent job must isolate artifacts by matrix.scenario",
+        "common-egress-agent job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
+        `step 'Run common-egress agent live test' run script must include --selector "\${{ matrix.selector }}"`,
+        "common-egress-agent upload-e2e-artifacts invocation must not override its contract",
+        "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
+      ]),
+    );
   });
 
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {
@@ -103,6 +329,23 @@ describe("e2e workflow boundary", () => {
 
     expect(validateE2eWorkflow(workflow)).toContain(
       "step 'Generate E2E target matrix' run script must include --ci-output",
+    );
+  });
+
+  it("keeps orchestration jobs within bounded timeouts", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { "timeout-minutes"?: number }>;
+    };
+    workflow.jobs["generate-matrix"]!["timeout-minutes"] = 11;
+    delete workflow.jobs["report-to-pr"]!["timeout-minutes"];
+    workflow.jobs.scorecard!["timeout-minutes"] = 16;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "generate-matrix job must keep the 10 minute timeout",
+        "report-to-pr job must keep the 15 minute timeout",
+        "scorecard job must keep the 15 minute timeout",
+      ]),
     );
   });
 
@@ -233,26 +476,49 @@ describe("e2e workflow boundary", () => {
     }
   });
 
-  // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
+  // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes and mutable tunnel tooling
   it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+      jobs: Record<
+        string,
+        { steps?: Array<{ name?: string; run?: string; env?: Record<string, string> }> }
+      >;
     };
     const run = workflow.jobs["inference-routing"]?.steps?.find(
       (step) => step.name === "Run inference routing live test",
     );
     expect(run).toBeDefined();
     run!.run = "npx vitest run --project e2e-live inference-routing-provider-smoke.test.ts";
+    const prerequisite = workflow.jobs["inference-routing"]?.steps?.find(
+      (step) => step.name === "Install and verify cloudflared prerequisite",
+    );
+    expect(prerequisite?.env).toBeDefined();
+    prerequisite!.env!.CLOUDFLARED_VERSION = "latest";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    const digestWorkflowPath = path.join(tmp, "digest-workflow.yaml");
+    const digestWorkflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ name?: string; env?: Record<string, string> }> }>;
+    };
+    const digestPrerequisite = digestWorkflow.jobs["inference-routing"]?.steps?.find(
+      (step) => step.name === "Install and verify cloudflared prerequisite",
+    );
+    expect(digestPrerequisite?.env).toBeDefined();
+    digestPrerequisite!.env!.CLOUDFLARED_DEB_SHA256 = "mutable";
+    fs.writeFileSync(digestWorkflowPath, YAML.stringify(digestWorkflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "step 'Run inference routing live test' run script must include test/e2e/live/inference-routing.test.ts",
           "step 'Run inference routing live test' run script must not include inference-routing-provider-smoke.test.ts",
+          "inference-routing cloudflared prerequisite step must pin CLOUDFLARED_VERSION=2026.6.1",
         ]),
+      );
+      expect(validateE2eWorkflowBoundary(digestWorkflowPath)).toContain(
+        "inference-routing cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -379,6 +645,14 @@ describe("e2e workflow boundary", () => {
         selectedFreeStandingJobs: ["network-policy"],
         registryTargets: ["ubuntu-repo-cloud-openclaw"],
       });
+      for (const selectors of [{ jobs: "hermes-dashboard" }, { targets: "hermes-dashboard" }]) {
+        expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
+          valid: true,
+          liveTargetsRun: false,
+          selectedFreeStandingJobs: ["hermes-e2e"],
+          registryTargets: [],
+        });
+      }
     },
   );
 
@@ -388,7 +662,7 @@ describe("e2e workflow boundary", () => {
   }, () => {
     const inventory = readFreeStandingJobsInventory();
     const workflow = readWorkflow() as {
-      jobs: Record<string, { env?: Record<string, string> }>;
+      jobs: Record<string, { env?: Record<string, string>; if?: string }>;
     };
     const workflowJobs = new Set(Object.keys(workflow.jobs));
 
@@ -405,6 +679,15 @@ describe("e2e workflow boundary", () => {
     );
     expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
+    const driftedWorkflow = structuredClone(workflow);
+    const compatibilityJob = driftedWorkflow.jobs["retired-selector-compatibility"] ?? {};
+    compatibilityJob.if = compatibilityJob.if?.replace(
+      ",docs-validation,",
+      ",future-retired-selector,",
+    );
+    expect(validateE2eWorkflow(driftedWorkflow)).toContain(
+      "retired-selector-compatibility job selector gate must match retired selector contract",
+    );
     expect(
       focusedE2eJobsForChangedFiles(
         [
@@ -429,31 +712,31 @@ describe("e2e workflow boundary", () => {
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
       E2E_JOB: "yes"
-      E2E_TARGET_ID: openshell-version-pin
+      E2E_TARGET_ID: fixture-version-check
 `,
-        error: 'openshell-version-pin job E2E_JOB must be "1"',
+        error: 'fixture-version-check job E2E_JOB must be "1"',
       },
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
-      E2E_TARGET_ID: openshell-version-pin
+      E2E_TARGET_ID: fixture-version-check
 `,
-        error: "openshell-version-pin job E2E_TARGET_ID requires E2E_JOB",
+        error: "fixture-version-check job E2E_TARGET_ID requires E2E_JOB",
       },
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bad:target"
 `,
-        error: "openshell-version-pin job E2E_TARGET_ID must be a selector id",
+        error: "fixture-version-check job E2E_TARGET_ID must be a selector id",
       },
       {
         body: `
@@ -608,12 +891,12 @@ jobs:
           path: .e2e/live/
           include-hidden-files: true
           if-no-files-found: ignore
-  openshell-version-pin:
+  fixture-version-check:
     runs-on: ubuntu-latest
     needs: generate-matrix
     if: \${{ inputs.targets != '' }}
     env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/openshell-version-pin
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/fixture-version-check
       NEMOCLAW_RUN_LIVE_E2E: "0"
       NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
@@ -626,23 +909,23 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
-      - name: Run OpenShell version-pin live test
+      - name: Run fixture version-check live test
         env:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload OpenShell version-pin artifacts
+      - name: Upload fixture version-check artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openshell-version-pin
-          path: .e2e/openshell-version-pin/
+          name: fixture-version-check
+          path: .e2e/fixture-version-check/
           include-hidden-files: true
           if-no-files-found: error
-  onboard-negative-paths:
+  fixture-negative-path:
     runs-on: ubuntu-latest
     needs: generate-matrix
     if: \${{ inputs.targets != '' }}
     env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/onboard-negative-paths
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/fixture-negative-path
       NEMOCLAW_RUN_LIVE_E2E: "0"
       NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
@@ -655,15 +938,15 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
-      - name: Run onboard negative-paths live test
+      - name: Run fixture negative-path live test
         env:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload onboard negative-paths artifacts
+      - name: Upload fixture negative-path artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: onboard-negative-paths
-          path: .e2e/onboard-negative-paths/
+          name: fixture-negative-path
+          path: .e2e/fixture-negative-path/
           include-hidden-files: true
           if-no-files-found: error
   network-policy:

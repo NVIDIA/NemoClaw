@@ -1074,6 +1074,8 @@ function runMacInstallerProbe(
       PATH: `${fakeBin}:/usr/bin:/bin`,
     },
     encoding: "utf8",
+    killSignal: "SIGKILL",
+    timeout: 60_000,
   });
   fs.mkdirSync(artifacts.pathFor(`macos-${name}`), { recursive: true });
   fs.writeFileSync(artifacts.pathFor(`macos-${name}/stdout.txt`), result.stdout ?? "", "utf8");
@@ -1184,6 +1186,7 @@ runLinuxOpenShellGatewayUpgrade(
       apiKey: "dummy",
       host: "0.0.0.0",
       model: "test-model",
+      progress,
       publicHost: "host.openshell.internal",
       requireAuth: OPENCLAW_STATE_UPGRADE_PROOF,
       requireAuthModels: OPENCLAW_STATE_UPGRADE_PROOF,

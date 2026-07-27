@@ -14,6 +14,10 @@ import {
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
 
+function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
+  return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
+}
+
 describe("buildDockerDriverGatewayEnv", () => {
   it("sets Docker-driver gateway networking from NemoClaw configuration", () => {
     const env = buildDockerDriverGatewayEnv({
@@ -147,7 +151,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         () => ({
           OPENSHELL_BIND_ADDRESS: "127.0.0.1",
         }),
-        { platform: "linux" },
+        { env: homeEnv(tempHome), platform: "linux" },
       );
 
       const envFileContent = fs.readFileSync(envFile, "utf-8");
@@ -159,6 +163,48 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     } finally {
       existsSpy.mockRestore();
       homedirSpy.mockRestore();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an env file swapped to a symlink after opening without writing its target", () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    const envDir = path.join(tempHome, ".config", "openshell");
+    const envFile = path.join(envDir, "gateway.env");
+    const targetFile = path.join(tempHome, "foreign.env");
+    fs.mkdirSync(envDir, { recursive: true });
+    fs.writeFileSync(envFile, "KEEP_ME=1\n");
+    fs.writeFileSync(targetFile, "FOREIGN=1\n");
+
+    const existsSpy = vi
+      .spyOn(fs, "existsSync")
+      .mockImplementation(
+        (candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service",
+      );
+    const openSync = fs.openSync.bind(fs);
+    const openSpy = vi.spyOn(fs, "openSync").mockImplementationOnce(((...args) => {
+      expect(args[0]).toBe(envFile);
+      const descriptor = openSync(...(args as Parameters<typeof fs.openSync>));
+      fs.unlinkSync(envFile);
+      fs.symlinkSync(targetFile, envFile);
+      return descriptor;
+    }) as typeof fs.openSync);
+
+    try {
+      expect(() =>
+        writeDockerGatewayDebEnvOverride(
+          () => ({
+            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+          }),
+          { env: homeEnv(tempHome), platform: "linux" },
+        ),
+      ).toThrow("regular file changed during validation");
+
+      expect(fs.lstatSync(envFile).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(targetFile, "utf-8")).toBe("FOREIGN=1\n");
+    } finally {
+      openSpy.mockRestore();
+      existsSpy.mockRestore();
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
@@ -175,7 +221,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         () => ({
           OPENSHELL_BIND_ADDRESS: "127.0.0.1",
         }),
-        { platform: "linux" },
+        { env: homeEnv(tempHome), platform: "linux" },
       );
 
       expect(wrote).toBe(false);
@@ -183,6 +229,31 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     } finally {
       existsSpy.mockRestore();
       homedirSpy.mockRestore();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the provided HOME as the config root fallback when XDG_CONFIG_HOME is unset", () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-home-"));
+    const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
+    const existsSpy = vi
+      .spyOn(fs, "existsSync")
+      .mockImplementation(
+        (candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service",
+      );
+
+    try {
+      const wrote = writeDockerGatewayDebEnvOverride(
+        () => ({
+          OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+        }),
+        { env: homeEnv(tempHome), platform: "linux" },
+      );
+
+      expect(wrote).toBe(true);
+      expect(fs.readFileSync(envFile, "utf-8")).toContain("OPENSHELL_BIND_ADDRESS=127.0.0.1\n");
+    } finally {
+      existsSpy.mockRestore();
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
@@ -207,6 +278,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          env: homeEnv(tempHome),
           exitOnFailure: false,
           gatewayEnv,
           gatewayName: "nemoclaw",

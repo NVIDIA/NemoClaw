@@ -647,7 +647,6 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
         '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
         '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-        '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
         '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         "_TOOL_REDIRECTS=()",
@@ -897,7 +896,6 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-      '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
       '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       "emit_messaging_connect_runtime_preload_exports() { :; }",
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
@@ -955,11 +953,6 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(configSet.status).toBe(1);
       expect(configSet.stderr).toContain("openclaw config set");
       expect(configSet.stderr).toContain("nemoclaw onboard --resume");
-
-      const channelsAdd = runGuardedOpenclaw(setup, ["channels", "add", "slack"]);
-      expect(channelsAdd.status).toBe(1);
-      expect(channelsAdd.stderr).toContain("openclaw channels add");
-      expect(channelsAdd.stderr).toContain("nemoclaw <sandbox> channels add");
 
       const localAgent = runGuardedOpenclaw(setup, ["agent", "--local"]);
       expect(localAgent.status).toBe(1);
@@ -1035,34 +1028,39 @@ exit 1
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-  // #2592 reported the guard did not fire for `openclaw channels add telegram`
-  // and `openclaw channels remove telegram` from inside the sandbox. The
-  // existing test above only exercises `add slack`. Lock in coverage for every
-  // (channel × op) combo so the guard cannot regress for any one of them
-  // while passing for another.
-  it("blocks every mutating channel-operation combination and surfaces the host-side hint (#2592)", () => {
+  it("blocks channel mutations and renders only validated host-side hints (#2592, #7292)", () => {
     const setup = writeProxyEnvWithGuard();
     try {
-      const channels = ["slack", "telegram", "discord", "wechat", "whatsapp"];
-      const ops = ["add", "remove"];
-      for (const op of ops) {
+      const channels = ["discord", "slack", "teams", "telegram", "wechat", "whatsapp"];
+      for (const op of ["add", "remove"]) {
         for (const channel of channels) {
-          const result = runGuardedOpenclaw(setup, ["channels", op, channel]);
+          const result = runGuardedShell(setup, [
+            "export OPENSHELL_SANDBOX=my-assistant",
+            shellOpenclawCommand(["channels", op, channel]),
+          ]);
           expect(result.status, `channels ${op} ${channel} should be blocked`).toBe(1);
-          expect(result.stderr).toContain(`openclaw channels ${op}`);
-          expect(result.stderr).toContain(`nemoclaw <sandbox> channels ${op}`);
+          expect(result.stderr).toContain(
+            `Run 'nemoclaw my-assistant channels ${op} ${channel}' on the host.`,
+          );
         }
       }
+      const marker = path.join(setup.tmpDir, "host-command-injection");
+      for (const args of [
+        ["channels", `add'; touch ${marker}; #`, "telegram"],
+        ["channels", "add", `telegram\n; touch ${marker}`],
+      ]) {
+        const result = runGuardedOpenclaw(setup, args);
+        expect(result.status).toBe(1);
+        expect(result.stderr).not.toContain(marker);
+        expect(result.stderr).toMatch(/channels (?:<operation> telegram|add <channel>)/);
+      }
+      expect(fs.existsSync(marker)).toBe(false);
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
 
-  // WhatsApp pairs entirely inside the sandbox via `openclaw channels login
-  // --channel whatsapp`, so the guard must allow that exact in-sandbox login
-  // path. WeChat completes pairing host-side and must stay blocked here so it
-  // cannot bypass NemoClaw's host-side registry/provider/rebuild path.
-  // `status` is read-only diagnostics and is similarly safe to allow.
+  // WhatsApp pairing is in-sandbox; status is read-only and does not persist changes.
   it("allows only WhatsApp `channels login` and read-only `channels status` inside the sandbox", () => {
     const setup = writeProxyEnvWithGuard();
     try {
@@ -3551,9 +3549,7 @@ describe("Telegram diagnostics (#2766)", () => {
         "_SANDBOX_HOME=/sandbox",
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
-        `_WS_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "ws-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-        `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
@@ -3784,7 +3780,6 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-        `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `_MESSAGING_CONNECT_PRELOADS_FILE=${JSON.stringify(connectPreloadsPath)}`,
         extractShellFunctionFromSource(src, "emit_messaging_connect_runtime_preload_exports"),
@@ -4767,9 +4762,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         "harden_auth_profiles() { :; }",
         '_SANDBOX_SAFETY_NET=""',
         '_PROXY_FIX_SCRIPT=""',
-        '_WS_FIX_SCRIPT=""',
         '_NEMOTRON_FIX_SCRIPT=""',
-        '_SECCOMP_GUARD_SCRIPT=""',
         '_CIAO_GUARD_SCRIPT=""',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',

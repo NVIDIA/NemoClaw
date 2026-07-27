@@ -46,6 +46,10 @@ import {
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
+import {
+  assertAuthenticatedMcpDiscovery,
+  assertAuthenticatedMcpToolDiscovery,
+} from "./mcp-bridge-tool-discovery.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
@@ -409,6 +413,7 @@ async function addBridgeAndReadStatus(
   expect(statusJson.provider.name).toMatch(
     new RegExp(`^${options.sandboxName}-mcp-${SERVER_NAME}-[a-f0-9]{16}$`),
   );
+
   return statusJson.provider.name;
 }
 
@@ -445,11 +450,8 @@ async function assertConcurrentAddSerialized(
         artifactName: `${options.artifactPrefix}-mcp-concurrent-add-${attempt}`,
         env,
         redactionValues: [HOST_SECRET],
-        // Hermes may need one host-authenticated managed restart (210s), a
-        // fresh helper-readiness window (90s), and its acknowledged config
-        // reload (300s). Keep both concurrent clients alive through that
-        // bounded recovery; the loser then acquires the lifecycle lock and
-        // rejects the committed duplicate.
+        // Keep both clients alive through Hermes' bounded restart and config
+        // reload; the loser then acquires the lock and rejects the duplicate.
         timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
       }),
     ),
@@ -709,42 +711,6 @@ async function assertDeepAgentsConfig(
   expectExitZero(result, "Deep Agents MCP config contains placeholder and no raw host secret");
 }
 
-async function assertAuthenticatedMcpDiscovery(
-  fakeMcp: Awaited<ReturnType<typeof startFakeMcpHttpsServer>>,
-  options: {
-    requestOffset: number;
-    expectedSecret: string;
-    label: string;
-  },
-): Promise<void> {
-  await expect
-    .poll(
-      () => {
-        const requests = fakeMcp.requests.slice(options.requestOffset);
-        const observed = (rpcMethod: "initialize" | "tools/list") =>
-          requests.some(
-            (request) =>
-              request.method === "POST" &&
-              request.path === "/mcp" &&
-              request.rpcMethod === rpcMethod &&
-              request.auth === `Bearer ${options.expectedSecret}`,
-          );
-        return {
-          initialized: observed("initialize"),
-          toolsListed: observed("tools/list"),
-          requests: requests.map((request) => ({
-            method: request.method,
-            path: request.path,
-            rpcMethod: request.rpcMethod,
-            credentialRewritten: request.auth === `Bearer ${options.expectedSecret}`,
-          })),
-        };
-      },
-      { interval: 500, timeout: 90_000, message: options.label },
-    )
-    .toMatchObject({ initialized: true, toolsListed: true });
-}
-
 async function assertRealAdapterToolCall(
   sandbox: SandboxClient,
   fakeMcp: Awaited<ReturnType<typeof startFakeMcpHttpsServer>>,
@@ -862,6 +828,7 @@ test("mcp-bridge", {
   const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
     cleanup,
     label: "fake MCP HTTPS server",
+    progress,
     server: fakeMcp,
   });
   const decoyMcp = await startFakeMcpHttpsServer({ secret: HOST_SECRET });
@@ -869,6 +836,7 @@ test("mcp-bridge", {
   const decoyMcpTunnel = await startPublicMcpHttpsTunnel({
     cleanup,
     label: "unconfigured decoy MCP HTTPS server",
+    progress,
     server: decoyMcp,
   });
   const hostAddress = await hostAddressForSandbox(host);
@@ -951,6 +919,11 @@ test("mcp-bridge", {
     mcpUrl,
     expectedAdapter: "mcporter",
     artifactPrefix: "openclaw",
+  });
+  await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+    sandboxName: OPENCLAW_SANDBOX_NAME,
+    artifactPrefix: "openclaw",
+    hostSecret: HOST_SECRET,
   });
   await assertBridgeInfrastructure(host, sandbox, {
     sandboxName: OPENCLAW_SANDBOX_NAME,
@@ -1213,6 +1186,7 @@ mcpBridgeShardTest("hermes")(
     const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
       cleanup,
       label: "fake Hermes MCP HTTPS server",
+      progress,
       server: fakeMcp,
     });
     const hostAddress = await hostAddressForSandbox(host);
@@ -1247,6 +1221,11 @@ mcpBridgeShardTest("hermes")(
       requestOffset: initialDiscoveryOffset,
       expectedSecret: HOST_SECRET,
       label: "Hermes initial MCP discovery",
+    });
+    await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      sandboxName: HERMES_SANDBOX_NAME,
+      artifactPrefix: "hermes",
+      hostSecret: HOST_SECRET,
     });
     await assertBridgeInfrastructure(host, sandbox, {
       sandboxName: HERMES_SANDBOX_NAME,
@@ -1378,6 +1357,7 @@ mcpBridgeShardTest("deepagents")(
     const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
       cleanup,
       label: "fake Deep Agents MCP HTTPS server",
+      progress,
       server: fakeMcp,
     });
     const hostAddress = await hostAddressForSandbox(host);
@@ -1413,6 +1393,11 @@ mcpBridgeShardTest("deepagents")(
       mcpUrl,
       expectedAdapter: "deepagents-config",
       artifactPrefix: "deepagents",
+    });
+    await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      sandboxName: DEEPAGENTS_SANDBOX_NAME,
+      artifactPrefix: "deepagents",
+      hostSecret: HOST_SECRET,
     });
     await assertBridgeInfrastructure(host, sandbox, {
       sandboxName: DEEPAGENTS_SANDBOX_NAME,

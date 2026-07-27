@@ -19,6 +19,26 @@ function openPrivateFileForWrite(file: string): number {
   }
 }
 
+/** Create a private regular file without replacing any existing path. */
+export function createPrivateRegularFile(file: string, contents: string): void {
+  const descriptor = fs.openSync(
+    file,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW | NON_BLOCK,
+    0o600,
+  );
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.nlink !== 1) {
+      throw new Error(`${file} must be a private regular file`);
+    }
+    fs.fchmodSync(descriptor, 0o600);
+    fs.writeFileSync(descriptor, contents, "utf8");
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 export function readPrivateRegularFile(
   file: string,
   options: { allowMissing?: boolean; maxBytes: number },

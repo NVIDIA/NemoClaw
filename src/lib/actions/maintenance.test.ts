@@ -8,12 +8,16 @@ const mocks = vi.hoisted(() => ({
   backupSandboxState: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   parseReadySandboxNames: vi.fn(),
+  parseLiveSandboxNames: vi.fn(),
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
   dockerRmi: vi.fn(),
   prompt: vi.fn(),
   startStoppedSandboxContainerForBackup: vi.fn(),
   backupStartedSandboxState: vi.fn(),
   returnSandboxContainerToStopped: vi.fn(),
+  isSandboxContainerDefinitivelyAbsent: vi.fn(),
+  openBackupShieldsWindow: vi.fn(),
+  relockBackupShieldsWindow: vi.fn(),
 }));
 
 vi.mock("../state/registry", () => ({
@@ -30,6 +34,15 @@ vi.mock("../openshell-sandbox-list", () => ({
 }));
 vi.mock("../runtime-recovery", () => ({
   parseReadySandboxNames: mocks.parseReadySandboxNames,
+  parseLiveSandboxNames: mocks.parseLiveSandboxNames,
+}));
+// GATEWAY_PORT is baked from NEMOCLAW_GATEWAY_PORT at module load. Pin it so
+// the #6520 orphan-classification tests (which run the real gateway-binding
+// resolvers against literal ports) don't invert on a shell that exports a
+// non-default gateway port.
+vi.mock("../core/ports", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../core/ports")>()),
+  GATEWAY_PORT: 8080,
 }));
 vi.mock("../adapters/docker", () => ({
   dockerListImagesFormat: mocks.dockerListImagesFormat,
@@ -45,6 +58,11 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
   startStoppedSandboxContainerForBackup: mocks.startStoppedSandboxContainerForBackup,
   backupStartedSandboxState: mocks.backupStartedSandboxState,
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
+  isSandboxContainerDefinitivelyAbsent: mocks.isSandboxContainerDefinitivelyAbsent,
+}));
+vi.mock("./sandbox/backup-shields-window", () => ({
+  openBackupShieldsWindow: mocks.openBackupShieldsWindow,
+  relockBackupShieldsWindow: mocks.relockBackupShieldsWindow,
 }));
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
@@ -70,8 +88,18 @@ describe("backupAll", () => {
       output: "sb-good\nsb-bad\n",
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good", "sb-bad"]));
+    // Defaults keep every pre-#6520 case on its original path: no sandbox is
+    // gateway-observed (so orphan classification is decided by the absence
+    // gate alone) and no container is ever definitively absent.
+    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
+    mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
     mocks.returnSandboxContainerToStopped.mockReturnValue(true);
+    mocks.openBackupShieldsWindow.mockImplementation(() => ({
+      relocked: false,
+      wasLocked: false,
+    }));
+    mocks.relockBackupShieldsWindow.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -174,10 +202,17 @@ describe("backupAll", () => {
 
     await backupAll();
 
-    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledWith({
-      action: "backing up registered sandboxes",
-      command: "nemoclaw backup-all",
-    });
+    // The listing must be pinned to the selected gateway (#6114/#6520):
+    // OpenShell's mutable current selection may be a sibling gateway, and an
+    // unpinned list would let the orphan classifier make a fail-open
+    // stranded call from another gateway's sandboxes.
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledWith(
+      {
+        action: "backing up registered sandboxes",
+        command: "nemoclaw backup-all",
+      },
+      { gatewayName: "nemoclaw" },
+    );
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     logSpy.mockRestore();
   });
@@ -238,6 +273,211 @@ describe("backupAll", () => {
       "backup failed (identity (permission denied), settings.json)",
     );
     logSpy.mockRestore();
+  });
+
+  it("closes each shields window before backing up the next sandbox (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }, { name: "beta" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    const events: string[] = [];
+    mocks.openBackupShieldsWindow.mockImplementation(
+      (
+        name: string,
+        options: {
+          allowLegacyHermesProtocol?: boolean;
+          deferAutoRestoreWhileOwnerAlive?: boolean;
+          shieldsUpCommand: string;
+        },
+      ) => {
+        events.push(`open:${name}`);
+        expect(options.allowLegacyHermesProtocol).toBeUndefined();
+        expect(options.deferAutoRestoreWhileOwnerAlive).toBeUndefined();
+        expect(options.shieldsUpCommand).toBe(`nemoclaw ${name} shields up`);
+        return { relocked: false, wasLocked: true };
+      },
+    );
+    mocks.backupSandboxState.mockImplementation((name: string) => {
+      events.push(`backup:${name}`);
+      return {
+        success: true,
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        manifest: { backupPath: `/backups/${name}/timestamp` },
+      };
+    });
+    mocks.relockBackupShieldsWindow.mockImplementation(
+      (name: string, window: { relocked: boolean }) => {
+        events.push(`relock:${name}`);
+        window.relocked = true;
+        return true;
+      },
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(events).toEqual([
+      "open:alpha",
+      "backup:alpha",
+      "relock:alpha",
+      "open:beta",
+      "backup:beta",
+      "relock:beta",
+    ]);
+  });
+
+  it("relocks shields after a credential permission failure and keeps the failure hard (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      backedUpDirs: ["workspace"],
+      failedDirs: ["credentials"],
+      failedDirReasons: { credentials: "permission denied" },
+      backedUpFiles: [],
+      failedFiles: [],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "backup failed (credentials (permission denied))",
+    );
+  });
+
+  it("counts an unlock failure and continues with later sandboxes (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }, { name: "beta" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    mocks.openBackupShieldsWindow.mockImplementation((name: string) =>
+      name === "alpha" ? null : { relocked: false, wasLocked: false },
+    );
+    mocks.backupSandboxState.mockImplementation((name: string) => ({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: `/backups/${name}/timestamp` },
+    }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(mocks.backupSandboxState).toHaveBeenCalledTimes(1);
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("beta");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "alpha: backup failed (could not safely unlock shields)",
+    );
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("1 backed up, 1 failed, 0 skipped");
+  });
+
+  it("aborts remaining backups when shields cannot be restored (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }, { name: "beta" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    });
+    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(backupAll()).rejects.toThrow(
+      "Shields lockdown could not be restored for 'alpha' after backup-all",
+    );
+
+    expect(mocks.backupSandboxState).toHaveBeenCalledTimes(1);
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("alpha");
+    expect(mocks.openBackupShieldsWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a backup error when shields restoration also fails (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    const backupError = new Error("EACCES: permission denied, open '/var/backups/state'");
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw backupError;
+    });
+    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const failure = await backupAll().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toContain(
+      "Backup for 'alpha' failed and Shields lockdown could not be restored",
+    );
+    expect((failure as AggregateError).errors).toEqual([
+      backupError,
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "Shields lockdown could not be restored for 'alpha' after backup-all",
+        ),
+      }),
+    ]);
+  });
+
+  it("preserves an orphan-manifest error when shields restoration also fails (#6455)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha"]));
+    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
+    const orphanMessage = "Agent 'alpha' not found: /agents/alpha/manifest.yaml";
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw new Error(orphanMessage);
+    });
+    mocks.relockBackupShieldsWindow.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const failure = await backupAll().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toContain(
+      "encountered an orphan manifest and Shields lockdown could not be restored",
+    );
+    expect((failure as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: orphanMessage }),
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "Shields lockdown could not be restored for 'alpha' after backup-all",
+        ),
+      }),
+    ]);
   });
 
   it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
@@ -310,6 +550,9 @@ describe("backupAll", () => {
     expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped");
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    expect(mocks.relockBackupShieldsWindow.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      mocks.returnSandboxContainerToStopped.mock.invocationCallOrder.at(-1)!,
+    );
     const logOutput = logSpy.mock.calls.flat().join("\n");
     expect(logOutput).toContain("Starting stopped sandbox 'sb-stopped' to back it up");
     expect(logOutput).toContain("Returned 'sb-stopped' to its stopped state");
@@ -524,6 +767,8 @@ describe("backupAll", () => {
     });
 
     await expect(backupAll()).rejects.toThrow(/EACCES/);
+
+    expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
   });
 
   it("re-throws an Agent-not-found message without the `: manifest.yaml` suffix (loadAgent contract)", async () => {
@@ -683,6 +928,184 @@ describe("backupAll", () => {
 
     errorSpy.mockRestore();
     exitSpy.mockRestore();
+  });
+
+  it("skips a stranded orphan sandbox without failing strict backup (#6520)", async () => {
+    // Uninstall + reinstall strands a sandbox: gateway registration and
+    // container removed, sandboxes.json preserved. There is nothing left to
+    // back up, so strict backup-all must warn and move on instead of aborting
+    // before the installer's recovery phase can surface the orphan.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stranded" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.parseLiveSandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.isSandboxContainerDefinitivelyAbsent.mockImplementation(
+      (name: string) => name === "sb-stranded",
+    );
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAll();
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
+    // The exemption requires a confirming second pinned listing after the loop.
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenNthCalledWith(
+      2,
+      {
+        action: "confirming stranded sandboxes remain absent from the selected gateway",
+        command: "nemoclaw backup-all",
+      },
+      { gatewayName: "nemoclaw" },
+    );
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain(
+      "1 recorded sandbox(es) were not found on their recorded gateway: sb-stranded.",
+    );
+    expect(logOutput).toContain("destroy` to clear a stranded record");
+    expect(logOutput).toContain("onboard` to rebuild it");
+    expect(logOutput).toContain("1 backed up, 0 failed, 0 skipped");
+    expect(logOutput).not.toContain("Skipping 'sb-stranded'");
+  });
+
+  it("keeps the strict abort for an absent sandbox bound to a different gateway (#6520)", async () => {
+    // A sandbox persisted against a sibling gateway may be healthy there;
+    // this gateway's backup-all must never claim it is stranded, even when
+    // its container is absent on this host.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-other", gatewayPort: 9999 }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
+    mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(true);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("Skipping 'sb-other' (not running");
+    expect(logOutput).not.toContain("were not found on their recorded gateway");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "requires every registered sandbox to be backed up",
+    );
+  });
+
+  it("keeps the strict abort when an unobserved sandbox still has a container (#6520)", async () => {
+    // Orphan classification alone is race-prone: a sandbox mid-reconnect (or
+    // one whose gateway row is drifting) is unobserved on the gateway yet its
+    // container still exists. Only definitive container absence may downgrade
+    // the strict abort to a stranded-orphan warning.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-reconnecting" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
+    mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(mocks.isSandboxContainerDefinitivelyAbsent).toHaveBeenCalledWith("sb-reconnecting");
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("Skipping 'sb-reconnecting' (not running");
+    expect(logOutput).not.toContain("were not found on their recorded gateway");
+  });
+
+  it("reverts a stranded candidate to a strict skip when the confirming listing observes it again (#6520)", async () => {
+    // The pre-loop listing can be minutes stale by the time the loop ends. A
+    // candidate the confirming second listing observes has reconnected — the
+    // exemption must not apply and strict mode must keep failing closed.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-flapping" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.captureSandboxListWithGatewayPreflightOrExit
+      .mockResolvedValueOnce({ status: 0, output: "" })
+      .mockResolvedValueOnce({
+        status: 0,
+        output: "sb-flapping  openshell  2026-07-21 10:00:00  Ready\n",
+      });
+    mocks.parseLiveSandboxNames.mockImplementation((output: string) =>
+      output.includes("sb-flapping") ? new Set(["sb-flapping"]) : new Set(),
+    );
+    mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(true);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("Skipping 'sb-flapping' (not running");
+    expect(logOutput).toContain("0 backed up, 0 failed, 1 skipped");
+    expect(logOutput).not.toContain("were not found on their recorded gateway");
+  });
+
+  it("reverts a stranded candidate to a strict skip when its container reappears (#6520)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-flapping" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "",
+    });
+    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
+    mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
+    expect(mocks.isSandboxContainerDefinitivelyAbsent).toHaveBeenCalledTimes(2);
+    expect(mocks.isSandboxContainerDefinitivelyAbsent).toHaveBeenNthCalledWith(1, "sb-flapping");
+    expect(mocks.isSandboxContainerDefinitivelyAbsent).toHaveBeenNthCalledWith(2, "sb-flapping");
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("Skipping 'sb-flapping' (not running");
+    expect(logOutput).toContain("0 backed up, 0 failed, 1 skipped");
+    expect(logOutput).not.toContain("were not found on their recorded gateway");
   });
 });
 

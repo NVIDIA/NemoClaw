@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
@@ -160,7 +161,7 @@ describe("prepareSandboxCreateLaunch", () => {
 
   it("adds Hermes dashboard env and skips OpenClaw env for non-OpenClaw agents", () => {
     const result = prepareSandboxCreateLaunch({
-      agent: { name: "hermes" } as any,
+      agent: loadAgent("hermes"),
       chatUiUrl: "http://127.0.0.1:18789/",
       createArgs: [],
       env: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30" },
@@ -394,11 +395,11 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(buildImage).toHaveBeenCalledOnce();
   });
 
-  it("renders the original Dockerfile after a local build failure", async () => {
+  it("renders the original Dockerfile for Hermes after a local build failure", async () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const result = await prepareSandboxCreateLaunchWithPrebuild({
-      agent: null,
+      agent: { name: "hermes" } as any,
       chatUiUrl: "",
       createArgs: ["--from", dockerfile, "--name", "demo"],
       env: {},

@@ -1,30 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// @module-tag e2e/credential-free
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterAll, describe, expect, it } from "vitest";
-
+import { describe, expect, it } from "vitest";
 import { nodeOptionsWithoutSourceLoader } from "./helpers/source-loader-options";
-import { testTimeoutOptions } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const ARTIFACT_ROOT = process.env.E2E_ARTIFACT_DIR;
-const WORK_ROOT = (() => {
-  const parent = ARTIFACT_ROOT ?? os.tmpdir();
-  fs.mkdirSync(parent, { recursive: true });
-  return fs.mkdtempSync(path.join(parent, "nemoclaw-gateway-drift-preflight-"));
-})();
+let workRoot: string | null = null;
+
+function createGatewayDriftWorkRoot(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-drift-preflight-"));
+}
+
+function gatewayDriftWorkRoot(): string {
+  workRoot ??= createGatewayDriftWorkRoot();
+  return workRoot;
+}
+
 const commandTimeoutMs = 45_000;
 
 const liveGatewayPids: number[] = [];
 
-afterAll(() => {
+function releaseGatewayDriftFixtures(): void {
   for (const pid of liveGatewayPids.splice(0)) {
     try {
       process.kill(pid, "SIGTERM");
@@ -32,8 +34,11 @@ afterAll(() => {
       // Already exited.
     }
   }
-  if (!ARTIFACT_ROOT) fs.rmSync(WORK_ROOT, { recursive: true, force: true });
-});
+  if (workRoot) {
+    fs.rmSync(workRoot, { recursive: true, force: true });
+    workRoot = null;
+  }
+}
 
 type CommandResult = {
   caseDir: string;
@@ -212,7 +217,7 @@ function writeHostProcessMarker(home: string, gatewayBin: string, pid = 999999):
 }
 
 function prepareCase(name: string): { binDir: string; caseDir: string; home: string } {
-  const caseDir = path.join(WORK_ROOT, name);
+  const caseDir = path.join(gatewayDriftWorkRoot(), name);
   const home = path.join(caseDir, "home");
   const binDir = path.join(caseDir, "bin");
   fs.mkdirSync(home, { recursive: true });
@@ -251,6 +256,7 @@ function runCli(caseDir: string, home: string, binDir: string, args: string[]): 
         "openshell-docker-gateway",
       ),
     },
+    killSignal: "SIGKILL",
     timeout: commandTimeoutMs,
   });
   return {
@@ -325,11 +331,11 @@ function expectSandboxListCalled(result: CommandResult, expected: boolean): void
   ).toBe(expected);
 }
 
-describe("gateway drift preflight E2E migration", () => {
-  it(
-    "fails closed before unsafe sandbox state mutation when gateway schema or binary drift is detected",
-    testTimeoutOptions(180_000),
-    () => {
+describe("gateway drift preflight", () => {
+  it("fails closed before unsafe sandbox state mutation when gateway schema or binary drift is detected", {
+    timeout: 180_000,
+  }, () => {
+    try {
       expect(fs.existsSync(CLI_ENTRYPOINT), "repo CLI entrypoint must exist").toBe(true);
 
       const protobuf = runBackupCase("protobuf-mismatch", {
@@ -432,6 +438,8 @@ describe("gateway drift preflight E2E migration", () => {
         "stale marker binary is not used to fabricate drift",
       );
       expectSandboxListCalled(stale, true);
-    },
-  );
+    } finally {
+      releaseGatewayDriftFixtures();
+    }
+  });
 });

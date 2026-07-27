@@ -27,10 +27,18 @@ const runBranchValidationE2E = shouldRunBranchValidationE2E();
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
-const canonicalOpenShellPolicyAlias = [
+const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
+// Map the generated shared .cjs specifiers back to their .cts source so
+// source-mode test projects exercise the single source of truth rather than a
+// possibly-stale build artifact.
+const canonicalSourceAliases = [
   {
     find: /^.*openshell-policy-boundary\.cjs$/,
     replacement: canonicalOpenShellPolicyBoundary,
+  },
+  {
+    find: /^.*sandbox-name\.cjs$/,
+    replacement: canonicalSandboxName,
   },
 ];
 const e2ePhaseCollectionAlias =
@@ -93,7 +101,7 @@ export default defineConfig({
         test: {
           ...vitestStateIsolation,
           name: "cli",
-          alias: canonicalOpenShellPolicyAlias,
+          alias: canonicalSourceAliases,
           env: controlledNonLiveEnv,
           testTimeout: testTimeout(),
           setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
@@ -106,7 +114,7 @@ export default defineConfig({
         test: {
           ...vitestStateIsolation,
           name: "integration",
-          alias: canonicalOpenShellPolicyAlias,
+          alias: canonicalSourceAliases,
           // Source-backed process fixtures can exceed the unit-test budget
           // when several coverage shards transpile and spawn them concurrently.
           testTimeout: testTimeout(15_000),
@@ -134,6 +142,7 @@ export default defineConfig({
             "test/e2e/support/**",
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
+            "test/install-express-wsl-ollama.test.ts",
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
@@ -144,6 +153,7 @@ export default defineConfig({
             "test/install-station-host-preparation.test.ts",
             "test/install-station-package-state.test.ts",
             "test/install-station-package-transaction.test.ts",
+            "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
         },
@@ -153,11 +163,12 @@ export default defineConfig({
         test: {
           ...vitestStateIsolation,
           name: "installer-integration",
-          alias: canonicalOpenShellPolicyAlias,
+          alias: canonicalSourceAliases,
           env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup],
           include: [
             "test/install-express-prompt.test.ts",
+            "test/install-express-wsl-ollama.test.ts",
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
@@ -168,6 +179,7 @@ export default defineConfig({
             "test/install-station-host-preparation.test.ts",
             "test/install-station-package-state.test.ts",
             "test/install-station-package-transaction.test.ts",
+            "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
           // Slow tests that spawn real bash install.sh processes. Explicit
@@ -179,7 +191,7 @@ export default defineConfig({
         test: {
           ...vitestStateIsolation,
           name: "package-contract",
-          alias: canonicalOpenShellPolicyAlias,
+          alias: canonicalSourceAliases,
           env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup],
           include: ["test/package-contract/**/*.test.ts"],
@@ -193,7 +205,7 @@ export default defineConfig({
           // Fast tests for the E2E fixture/support layer. Vitest remains the
           // only harness; this project does not define a separate runner.
           name: "e2e-support",
-          alias: canonicalOpenShellPolicyAlias,
+          alias: canonicalSourceAliases,
           env: controlledNonLiveEnv,
           testTimeout: testTimeout(),
           setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
@@ -204,7 +216,7 @@ export default defineConfig({
         ...typedSourceTransform,
         test: {
           name: "e2e-live",
-          alias: [...canonicalOpenShellPolicyAlias, ...e2ePhaseCollectionAlias],
+          alias: [...canonicalSourceAliases, ...e2ePhaseCollectionAlias],
           // Register the typed-source require hook in the worker so live suites
           // can import source modules that resolve siblings via a runtime
           // `require("../module")` (e.g. inference/ollama-runtime-context.ts).
@@ -233,7 +245,7 @@ export default defineConfig({
         ...typedSourceTransform,
         test: {
           name: "e2e-branch-validation",
-          alias: canonicalOpenShellPolicyAlias,
+          alias: canonicalSourceAliases,
           // A branch-validation retry must provision a fresh remote instance.
           // Retrying a stateful target inside one VM can overlap a timed-out
           // installer that still legitimately owns the onboarding lock.

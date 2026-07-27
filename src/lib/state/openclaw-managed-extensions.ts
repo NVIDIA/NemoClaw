@@ -22,7 +22,12 @@ const EXTENSION_NPM_BIN_RE = /^extensions\/[A-Za-z0-9][A-Za-z0-9._-]*\/node_modu
 // target; source-only matching would permit repointing it to an arbitrary file.
 const OPENCLAW_EXTENSION_PEER_LINK_RE =
   /^extensions\/[A-Za-z0-9][A-Za-z0-9._-]*\/node_modules\/openclaw$/;
-const OPENCLAW_GLOBAL_PACKAGE_PATH = "/usr/local/lib/node_modules/openclaw";
+const OPENCLAW_IMAGE_PACKAGE_PATHS: ReadonlySet<string> = new Set([
+  // Legacy global install used by older sandboxes that still need to rebuild.
+  "/usr/local/lib/node_modules/openclaw",
+  // Locked runtime install used by current images; the global path points here.
+  "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
+]);
 
 // Preserve extensions baked into the freshly rebuilt image instead of
 // replacing them with archived copies. Messaging IDs come from the reviewed
@@ -63,7 +68,7 @@ function isAllowedOpenClawExtensionPeerSymlink(relPath: string, linkTarget: stri
   const normalizedRelPath = relPath.split(path.sep).join("/");
   return (
     OPENCLAW_EXTENSION_PEER_LINK_RE.test(normalizedRelPath) &&
-    linkTarget === OPENCLAW_GLOBAL_PACKAGE_PATH
+    OPENCLAW_IMAGE_PACKAGE_PATHS.has(linkTarget)
   );
 }
 
@@ -136,11 +141,21 @@ function buildOpenClawExtensionsCleanupCommand(
   ].join(" && ");
 }
 
+function buildStaleStateDirContentsCleanupCommand(dir: string, dirName: string): string {
+  const target = shellQuote(`${dir}/${dirName}`);
+  return (
+    `d=${target}; ` +
+    'if [ -d "$d" ] && [ ! -L "$d" ]; then ' +
+    'find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; fi'
+  );
+}
+
 export function buildRestoreCleanupCommand(
   dir: string,
   localDirs: readonly string[],
   managedExtensionDirs: readonly string[],
   requiredExtensionDirs: ReadonlySet<string>,
+  staleContentDirs: readonly string[] = [],
 ): string {
   const preserveManagedExtensions = managedExtensionDirs.length > 0;
   const commands: string[] = [];
@@ -152,6 +167,12 @@ export function buildRestoreCleanupCommand(
     commands.push(
       buildOpenClawExtensionsCleanupCommand(dir, managedExtensionDirs, requiredExtensionDirs),
     );
+  }
+  const localDirSet = new Set(localDirs);
+  for (const dirName of staleContentDirs) {
+    if (localDirSet.has(dirName)) continue;
+    if (preserveManagedExtensions && dirName === "extensions") continue;
+    commands.push(buildStaleStateDirContentsCleanupCommand(dir, dirName));
   }
   return commands.length > 0 ? commands.join(" && ") : ":";
 }

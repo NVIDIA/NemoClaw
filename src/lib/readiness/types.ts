@@ -56,10 +56,8 @@ export interface ReadinessEvidence {
   [key: string]: unknown;
 }
 
-export interface SystemReadinessReport {
+interface SystemReadinessReportFields {
   schemaVersion: string;
-  status: ReadinessStatus;
-  exitCode: ReadinessExitCode;
   mutated: false;
   provenance: ReadinessProvenance;
   observations: readonly ReadinessObservation[];
@@ -69,3 +67,10 @@ export interface SystemReadinessReport {
   evidence: readonly ReadinessEvidence[];
   [key: string]: unknown;
 }
+
+type SystemReadinessOutcome =
+  | { status: "supported"; exitCode: 0 }
+  | { status: "incompatible"; exitCode: 2 }
+  | { status: "inconclusive"; exitCode: 3 };
+
+export type SystemReadinessReport = SystemReadinessReportFields & SystemReadinessOutcome;

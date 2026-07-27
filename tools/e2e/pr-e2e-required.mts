@@ -6,31 +6,29 @@ import { pathToFileURL } from "node:url";
 
 import { githubApi } from "../advisors/github.mts";
 import { parseArgs } from "../advisors/io.mts";
+import { retryableFailureReason } from "./pr-e2e-retry-receipt.mts";
 
 const COORDINATION_CHECK_NAME = "E2E / PR Gate Coordination";
 const LEGACY_COORDINATION_CHECK_NAME = "E2E / PR Gate";
 const EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
-const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
-const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
-const RETRYABLE_FAILURE_REASONS = new Set([
-  "prerequisite-ci",
-  "child-cancelled",
-  "evidence-download",
-]);
-const NEVER_RETRY_FAILURE_TITLES = new Set([
-  "Authorized E2E run requires reconciliation",
-  "PR base changed",
-  "Controller stopped early",
-  "Run could not start",
-]);
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-required";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const AUTHORIZATION_TITLES = new Set(["Maintainer approval required to skip credentialed E2E"]);
 const MAX_LOG_URLS = 20;
+const MAX_GITHUB_READ_ATTEMPTS = 3;
+const GITHUB_HTTP_ERROR_PATTERN = /^GitHub API [^\r\n]* failed: ([1-5]\d{2})\b/u;
+const RETRYABLE_HTTP_PATTERN = /^GitHub API [^\r\n]* failed: (?:429|5\d{2})\b/u;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
+type GithubReadOperation = "check runs" | "coordination checks" | "exact PR identity";
+
+export type RetryableGithubReadOptions = {
+  baseDelayMs?: number;
+  maxAttempts?: number;
+  random?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
+};
 
 export type CoordinationCheckRun = {
   id: number;
@@ -162,24 +160,72 @@ async function requireExactPullRequest(identity: RequiredGateIdentity): Promise<
   );
 }
 
-function hasRetryableFailureMarker(check: CoordinationCheckRun): boolean {
-  if (check.status !== "completed" || check.conclusion !== "failure") return false;
-  if (NEVER_RETRY_FAILURE_TITLES.has(check.output?.title ?? "")) return false;
-  const summary = check.output?.summary;
-  if (typeof summary !== "string") return false;
-  const markerBoundary = `\n\n${RETRYABLE_FAILURE_MARKER_PREFIX}`;
-  const markerStart = summary.lastIndexOf(markerBoundary);
-  if (markerStart < 0) return false;
-  const marker = summary.slice(markerStart + 2);
-  if (!marker.endsWith(RETRYABLE_FAILURE_MARKER_SUFFIX)) return false;
-  const reason = marker.slice(
-    RETRYABLE_FAILURE_MARKER_PREFIX.length,
-    -RETRYABLE_FAILURE_MARKER_SUFFIX.length,
-  );
+export function isRetryableGithubReadError(error: unknown): boolean {
   return (
-    RETRYABLE_FAILURE_REASONS.has(reason) &&
-    marker === `${RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${RETRYABLE_FAILURE_MARKER_SUFFIX}`
+    error instanceof TypeError ||
+    (error instanceof Error && RETRYABLE_HTTP_PATTERN.test(error.message))
   );
+}
+
+export async function retryableGithubRead<T>(
+  operation: GithubReadOperation,
+  read: () => Promise<T>,
+  identity: RequiredGateIdentity | null,
+  options: RetryableGithubReadOptions = {},
+): Promise<T> {
+  const maxAttempts = options.maxAttempts ?? MAX_GITHUB_READ_ATTEMPTS;
+  const baseDelayMs = options.baseDelayMs ?? 1000;
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5) {
+    throw new Error("GitHub read retry attempts must be an integer from 1 through 5");
+  }
+  if (!Number.isSafeInteger(baseDelayMs) || baseDelayMs < 1 || baseDelayMs > 4000) {
+    throw new Error("GitHub read retry delay must be an integer from 1 through 4000");
+  }
+  const random = options.random ?? Math.random;
+  const sleep =
+    options.sleep ??
+    ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+
+  let firstError: Error | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await read();
+    } catch (error: unknown) {
+      const retryable = isRetryableGithubReadError(error);
+      if (!retryable || attempt === maxAttempts) {
+        const errorClass =
+          error instanceof TypeError
+            ? "network"
+            : error instanceof Error && GITHUB_HTTP_ERROR_PATTERN.test(error.message)
+              ? "http"
+              : null;
+        if (errorClass) {
+          throw new Error(
+            `E2E / PR Gate [${operation}] attempt ${attempt}/${maxAttempts}: ${errorClass}`,
+            { cause: retryable ? (firstError ?? error) : error },
+          );
+        }
+        throw error;
+      }
+      if (error instanceof Error) firstError ??= error;
+      const errorClass = error instanceof TypeError ? "network" : "http";
+      console.log(`E2E / PR Gate [${operation}] attempt ${attempt}/${maxAttempts}: ${errorClass}`);
+
+      const jitter = 0.5 + random() * 0.5;
+      const delay = Math.min(baseDelayMs * 2 ** (attempt - 1) * jitter, 4000);
+      await sleep(delay);
+
+      if (identity) {
+        await retryableGithubRead(
+          "exact PR identity",
+          () => requireExactPullRequest(identity),
+          null,
+          options,
+        );
+      }
+    }
+  }
+  throw new Error("GitHub read retry loop ended unexpectedly");
 }
 
 function currentCoordinationCheck(
@@ -193,7 +239,7 @@ function currentCoordinationCheck(
   const active = ordered.filter((check) => check.status !== "completed");
   if (active.length > 1)
     throw new Error("Multiple active coordination checks exist for one PR/base SHA pair");
-  if (ordered.slice(0, -1).some((check) => !hasRetryableFailureMarker(check))) {
+  if (ordered.slice(0, -1).some((check) => retryableFailureReason(check) === undefined)) {
     throw new Error(
       "Coordination history contains a non-retryable older check for one PR/base SHA pair",
     );
@@ -210,10 +256,15 @@ async function matchingChecks(
   name: string,
 ): Promise<CoordinationCheckRun[]> {
   const response = validateCheckRunsResponse(
-    await githubApi<unknown>(
-      `repos/${identity.repository}/commits/${identity.headSha}/check-runs?check_name=${encodeURIComponent(name)}&filter=all&per_page=100`,
-      identity.token,
-      { userAgent: USER_AGENT },
+    await retryableGithubRead(
+      "check runs",
+      () =>
+        githubApi<unknown>(
+          `repos/${identity.repository}/commits/${identity.headSha}/check-runs?check_name=${encodeURIComponent(name)}&filter=all&per_page=100`,
+          identity.token,
+          { userAgent: USER_AGENT },
+        ),
+      identity,
     ),
   );
   const externalId = coordinationExternalId(identity.prNumber, identity.headSha, identity.baseSha);
@@ -321,10 +372,7 @@ export function classifyCoordinationCheck(
   if (check.status !== "completed") {
     return { state: "waiting", description: title, ...links };
   }
-  if (
-    check.conclusion === "failure" &&
-    (AUTHORIZATION_TITLES.has(title) || hasRetryableFailureMarker(check))
-  ) {
+  if (check.conclusion === "failure" && retryableFailureReason(check) !== undefined) {
     return { state: "waiting", description: title, ...links };
   }
   if (
@@ -369,14 +417,21 @@ export async function waitForRequiredGate(
   let lastDescription = "";
   let lastLogUrls: string[] | undefined;
 
-  await requireExactPullRequest(identity);
+  await retryableGithubRead("exact PR identity", () => requireExactPullRequest(identity), null, {
+    sleep,
+  });
   while (now() < deadline) {
     const classified = classifyCoordinationCheck(
       await findCoordinationCheck(identity),
       identity.repository,
     );
     if (classified.state === "complete") {
-      await requireExactPullRequest(identity);
+      await retryableGithubRead(
+        "exact PR identity",
+        () => requireExactPullRequest(identity),
+        null,
+        { sleep },
+      );
       return classified.result;
     }
     const message = `${classified.description}${logUrlSuffix(classified.logUrls)}`;
@@ -421,7 +476,7 @@ async function main(): Promise<void> {
     baseSha: requiredArgument(args.base, "base"),
   };
   const timeoutSeconds = parsePositiveInteger(args.timeoutSeconds, "timeout-seconds");
-  if (timeoutSeconds > 10_200) throw new Error("--timeout-seconds must not exceed 10200");
+  if (timeoutSeconds > 21_480) throw new Error("--timeout-seconds must not exceed 21480");
   const result = await waitForRequiredGate(identity, { timeoutMs: timeoutSeconds * 1000 });
   appendJobSummary();
   console.log(`E2E / PR Gate completed: ${formatRequiredGateOutcome(result)}`);
