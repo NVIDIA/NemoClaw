@@ -367,8 +367,11 @@ function runtimeUser(node: DualStationVllmPlan["local"]): string {
   return `${String(node.uid)}:${String(node.gid)}`;
 }
 
-function runtimeHomeTmpfs(node: DualStationVllmPlan["local"]): string {
-  return `${VLLM_RUNTIME_HOME}:rw,nosuid,nodev,uid=${String(node.uid)},gid=${String(node.gid)},mode=0700,size=68719476736`;
+function runtimeHomeTmpfs(
+  node: DualStationVllmPlan["local"],
+  execution: "exec" | "noexec",
+): string {
+  return `${VLLM_RUNTIME_HOME}:rw,nosuid,nodev,${execution},uid=${String(node.uid)},gid=${String(node.gid)},mode=0700,size=68719476736`;
 }
 
 function appendRuntimeHomeEnv(args: string[]): void {
@@ -406,7 +409,9 @@ function buildDualStationVllmBaseRunArgs(
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,size=17179869184",
     "--tmpfs",
-    runtimeHomeTmpfs(node),
+    // Ray is installed under this home and loads its native _raylet module.
+    // Docker tmpfs mounts default to noexec, so managed serving opts in.
+    runtimeHomeTmpfs(node, "exec"),
     "--cap-drop",
     "ALL",
     // Non-root GPU/RDMA memory registration is bounded by this explicit rlimit;
@@ -569,7 +574,7 @@ export function buildDualStationGpuSmokeRunArgs(
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,size=17179869184",
     "--tmpfs",
-    runtimeHomeTmpfs(node),
+    runtimeHomeTmpfs(node, "noexec"),
     "--cap-drop",
     "ALL",
     "--ulimit",

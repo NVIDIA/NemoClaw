@@ -253,7 +253,7 @@ describe("dual-Station managed vLLM run argv", () => {
     expect(dockerValues(args, "--workdir")).toEqual(["/home/vllm"]);
     expect(dockerValues(args, "--tmpfs")).toEqual([
       "/tmp:rw,nosuid,nodev,size=17179869184",
-      `/home/vllm:rw,nosuid,nodev,uid=${String(expectedNode.uid)},gid=${String(expectedNode.gid)},mode=0700,size=68719476736`,
+      `/home/vllm:rw,nosuid,nodev,exec,uid=${String(expectedNode.uid)},gid=${String(expectedNode.gid)},mode=0700,size=68719476736`,
     ]);
     expect(dockerValues(args, "--user")).toEqual([
       `${String(expectedNode.uid)}:${String(expectedNode.gid)}`,
@@ -360,7 +360,7 @@ describe("dual-Station managed vLLM run argv", () => {
     expect(dockerValues(args, "--device")).toEqual(expectedDevices);
     expect(dockerValues(args, "--tmpfs")).toEqual([
       "/tmp:rw,nosuid,nodev,size=17179869184",
-      `/home/vllm:rw,nosuid,nodev,uid=${String(expectedNode.uid)},gid=${String(expectedNode.gid)},mode=0700,size=68719476736`,
+      `/home/vllm:rw,nosuid,nodev,noexec,uid=${String(expectedNode.uid)},gid=${String(expectedNode.gid)},mode=0700,size=68719476736`,
     ]);
     expect(dockerValues(args, "--env")).toEqual(
       expect.arrayContaining([
