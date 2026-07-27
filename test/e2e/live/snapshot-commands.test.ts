@@ -463,9 +463,8 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     },
   );
   const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);
-  if (cloneRestoreResult === "restored" || cloneRestoreResult === "restored-pairing-unverified") {
-    progress.phase("verify the restored clone state and gateway pairing");
-  }
+  expect(["restored", "restored-pairing-unverified"]).toContain(cloneRestoreResult);
+  progress.phase("verify the restored clone state and gateway pairing");
   expect(cloneRestoreResult).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
