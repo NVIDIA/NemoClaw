@@ -184,6 +184,14 @@ If a registered docker-driver sandbox's container is stopped, `backup-all` start
 If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running.
 If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all`.
 
+When Shields are UP for an eligible sandbox, `backup-all` opens a 30-minute shields-down window before it creates that sandbox's snapshot.
+A sandbox that starts with Shields down remains down.
+An unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
+Because the timer does not defer to the backup process, it can restore lockdown when the 30-minute deadline expires.
+NemoClaw always attempts to restore Shields lockdown before it processes the next sandbox, including when the backup fails.
+If lockdown cannot be restored, `backup-all` stops and does not process the remaining sandboxes.
+Correct the reported issue, run the printed `$$nemoclaw <name> shields up` command, and rerun `$$nemoclaw backup-all`.
+
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
 
