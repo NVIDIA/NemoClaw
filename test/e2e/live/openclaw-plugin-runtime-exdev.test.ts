@@ -29,6 +29,13 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 import {
+  buildOpenClawPluginRuntimeExdevBaseImageEnv,
+  CURRENT_LIFECYCLE_TEST_SELECTOR,
+  type OpenClawPluginRuntimeExdevSelector,
+  RELEASE_BASELINE_TEST_SELECTOR,
+  RELEASE_SANDBOX_BASE_IMAGE_REF,
+} from "./openclaw-plugin-runtime-exdev-env.ts";
+import {
   createOpenShellDriverConfigTestWrapper,
   type OpenShellComponents,
   type OpenShellDriverConfigTestWrapper,
@@ -72,7 +79,6 @@ const NEMOCLAW_RELEASE_COMMIT = "e4b9111f5f0535c2fc3d6fbe8dc8dca101a6fdce";
 const NEMOCLAW_RELEASE_OPENSHELL_VERSION = "0.0.71";
 const CURRENT_OPENSHELL_VERSION = "0.0.85";
 const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
-const SANDBOX_BASE_IMAGE_REF = "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.71";
 const RELEASE_BUILDER_IMAGE_REF =
   "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
 const CURRENT_BUILDER_IMAGE_REF =
@@ -116,9 +122,6 @@ const EXDEV_PATTERNS = [
   /cross-device link not permitted/i,
 ];
 type WeatherFixtureVersion = "v1" | "v2" | "v3";
-
-const RELEASE_BASELINE_TEST_SELECTOR = "release-baseline";
-const CURRENT_LIFECYCLE_TEST_SELECTOR = "current-lifecycle";
 
 const GATEWAY_CATALOG_CALL_SOURCE = String.raw`
 import { Buffer } from "node:buffer";
@@ -488,7 +491,7 @@ function createCustomPluginDockerfile(
   ).toBe(WEATHER_OPENCLAW_VERSION);
 
   const runtime = source
-    .replace(baseImageAnchor, `ARG BASE_IMAGE=${SANDBOX_BASE_IMAGE_REF}\n`)
+    .replace(baseImageAnchor, `ARG BASE_IMAGE=${RELEASE_SANDBOX_BASE_IMAGE_REF}\n`)
     .replace(builderImageAnchor, `FROM ${builderImageRef} AS builder\n`)
     .replace(runtimeAnchor, "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n");
   const pluginDirName = path.basename(context.pluginDirPath);
@@ -925,6 +928,7 @@ async function startDeploymentFixture(
   artifacts: ArtifactSink,
   cleanup: CleanupRegistry,
   progress: TestProgress,
+  selector: OpenClawPluginRuntimeExdevSelector,
 ): Promise<NodeJS.ProcessEnv> {
   const fake = await startFakeOpenAiCompatibleServer({
     apiKey: "nemoclaw-exdev-dummy-key",
@@ -944,12 +948,12 @@ async function startDeploymentFixture(
   });
 
   return liveEnv({
+    ...buildOpenClawPluginRuntimeExdevBaseImageEnv(selector),
     COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
     NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
     NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
     NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    NEMOCLAW_SANDBOX_BASE_IMAGE_REF: SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_PREFERRED_API: "openai-completions",
     NEMOCLAW_PROVIDER: "custom",
@@ -999,7 +1003,7 @@ test("the release-baseline custom plugin loads with its exact NemoClaw and OpenS
     nemoclawSourceRelease: NEMOCLAW_RELEASE_TAG,
     nemoclawSourceCommit: NEMOCLAW_RELEASE_COMMIT,
     taggedOpenshellVersion: NEMOCLAW_RELEASE_OPENSHELL_VERSION,
-    sandboxBaseImageRef: SANDBOX_BASE_IMAGE_REF,
+    sandboxBaseImageRef: RELEASE_SANDBOX_BASE_IMAGE_REF,
     openclawVersion: WEATHER_OPENCLAW_VERSION,
   });
 
@@ -1047,7 +1051,12 @@ test("the release-baseline custom plugin loads with its exact NemoClaw and OpenS
   );
   const taggedOpenShellWrapper = createOpenShellTmpfsWrapper(taggedPinnedOpenshell.cli);
   cleanup.add("remove v0.0.71 EXDEV OpenShell PATH wrapper", taggedOpenShellWrapper.remove);
-  const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress);
+  const deploymentEnv = await startDeploymentFixture(
+    artifacts,
+    cleanup,
+    progress,
+    RELEASE_BASELINE_TEST_SELECTOR,
+  );
   const taggedSandboxEnv = withOpenShellWrapperEnv(
     deploymentEnv,
     taggedOpenShellWrapper,
@@ -1154,6 +1163,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     regressionTargets: ["#6108", "#3513", "#3127"],
     contract: [
       "the current CLI uses OpenShell 0.0.85 for current lifecycle coverage",
+      "the current CLI selects and validates its compatible sandbox base image",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
       "custom-plugin v1 survives restart, recreation installs v2, and rebuild installs v3",
       "workspace state survives both onboarding recreation and rebuild",
@@ -1167,7 +1177,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     nemoclawSourceRelease: NEMOCLAW_RELEASE_TAG,
     nemoclawSourceCommit: NEMOCLAW_RELEASE_COMMIT,
     currentOpenshellVersion: CURRENT_OPENSHELL_VERSION,
-    sandboxBaseImageRef: SANDBOX_BASE_IMAGE_REF,
+    sandboxBaseImageResolution: "current-cli",
     openclawVersion: WEATHER_OPENCLAW_VERSION,
   });
 
@@ -1218,7 +1228,12 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     cleanup,
     CURRENT_BUILDER_IMAGE_REF,
   );
-  const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress);
+  const deploymentEnv = await startDeploymentFixture(
+    artifacts,
+    cleanup,
+    progress,
+    CURRENT_LIFECYCLE_TEST_SELECTOR,
+  );
   progress.phase("install current OpenShell and onboard plugin v1");
   await stopOpenShellGatewayBeforeVersionSwitch(host, "existing");
   const pinnedOpenshell = await installAndResolvePinnedOpenShell(
