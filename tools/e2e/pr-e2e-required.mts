@@ -6,23 +6,11 @@ import { pathToFileURL } from "node:url";
 
 import { githubApi } from "../advisors/github.mts";
 import { parseArgs } from "../advisors/io.mts";
+import { retryableFailureReason } from "./pr-e2e-retry-receipt.mts";
 
 const COORDINATION_CHECK_NAME = "E2E / PR Gate Coordination";
 const LEGACY_COORDINATION_CHECK_NAME = "E2E / PR Gate";
 const EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
-const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
-const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
-const RETRYABLE_FAILURE_REASONS = new Set([
-  "prerequisite-ci",
-  "child-cancelled",
-  "evidence-download",
-]);
-const NEVER_RETRY_FAILURE_TITLES = new Set([
-  "Authorized E2E run requires reconciliation",
-  "PR base changed",
-  "Controller stopped early",
-  "Run could not start",
-]);
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-required";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
@@ -240,26 +228,6 @@ export async function retryableGithubRead<T>(
   throw new Error("GitHub read retry loop ended unexpectedly");
 }
 
-function hasRetryableFailureMarker(check: CoordinationCheckRun): boolean {
-  if (check.status !== "completed" || check.conclusion !== "failure") return false;
-  if (NEVER_RETRY_FAILURE_TITLES.has(check.output?.title ?? "")) return false;
-  const summary = check.output?.summary;
-  if (typeof summary !== "string") return false;
-  const markerBoundary = `\n\n${RETRYABLE_FAILURE_MARKER_PREFIX}`;
-  const markerStart = summary.lastIndexOf(markerBoundary);
-  if (markerStart < 0) return false;
-  const marker = summary.slice(markerStart + 2);
-  if (!marker.endsWith(RETRYABLE_FAILURE_MARKER_SUFFIX)) return false;
-  const reason = marker.slice(
-    RETRYABLE_FAILURE_MARKER_PREFIX.length,
-    -RETRYABLE_FAILURE_MARKER_SUFFIX.length,
-  );
-  return (
-    RETRYABLE_FAILURE_REASONS.has(reason) &&
-    marker === `${RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${RETRYABLE_FAILURE_MARKER_SUFFIX}`
-  );
-}
-
 function currentCoordinationCheck(
   checks: CoordinationCheckRun[],
 ): CoordinationCheckRun | undefined {
@@ -271,7 +239,7 @@ function currentCoordinationCheck(
   const active = ordered.filter((check) => check.status !== "completed");
   if (active.length > 1)
     throw new Error("Multiple active coordination checks exist for one PR/base SHA pair");
-  if (ordered.slice(0, -1).some((check) => !hasRetryableFailureMarker(check))) {
+  if (ordered.slice(0, -1).some((check) => retryableFailureReason(check) === undefined)) {
     throw new Error(
       "Coordination history contains a non-retryable older check for one PR/base SHA pair",
     );
@@ -404,7 +372,7 @@ export function classifyCoordinationCheck(
   if (check.status !== "completed") {
     return { state: "waiting", description: title, ...links };
   }
-  if (check.conclusion === "failure" && hasRetryableFailureMarker(check)) {
+  if (check.conclusion === "failure" && retryableFailureReason(check) !== undefined) {
     return { state: "waiting", description: title, ...links };
   }
   if (
