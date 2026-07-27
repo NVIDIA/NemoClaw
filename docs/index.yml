@@ -593,6 +593,31 @@ navigation:
                   - page: "Transfer State Manually"
                     path: _build/agent-variants/manage-sandboxes/transfer-state-manually.deepagents.generated.mdx
                     slug: transfer-state-manually
+          - section: "Network Policy"
+            slug: network-policy
+            collapsed: open-by-default
+            contents:
+              - page: "Approve or Deny Network Requests"
+                path: _build/agent-variants/network-policy/approve-network-requests.deepagents.generated.mdx
+                slug: approve-network-requests
+              - page: "Customize the Network Policy"
+                path: _build/agent-variants/network-policy/customize-network-policy.deepagents.generated.mdx
+                slug: customize-network-policy
+              - section: "Configure Policies"
+                slug: configure-policies
+                contents:
+                  - page: "Change the Baseline Policy"
+                    path: _build/agent-variants/network-policy/change-baseline-network-policy.deepagents.generated.mdx
+                    slug: change-baseline-network-policy
+                  - page: "Apply Policy Presets"
+                    path: _build/agent-variants/network-policy/apply-policy-presets.deepagents.generated.mdx
+                    slug: apply-policy-presets
+                  - page: "Create Custom Presets"
+                    path: _build/agent-variants/network-policy/create-custom-policy-presets.deepagents.generated.mdx
+                    slug: create-custom-policy-presets
+                  - page: "Replace the Live Policy"
+                    path: _build/agent-variants/network-policy/replace-live-network-policy.deepagents.generated.mdx
+                    slug: replace-live-network-policy
           - section: "Deployment"
             slug: deployment
             collapsed: open-by-default
