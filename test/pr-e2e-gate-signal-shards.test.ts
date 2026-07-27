@@ -28,8 +28,8 @@ describe("PR E2E signal shard policy", () => {
       "onboard-repair": ["default"],
       "onboard-resume": ["default"],
     });
-    expect(expectedSignalShards(["docs-validation"])).toEqual({
-      "docs-validation": ["default"],
+    expect(expectedSignalShards(["vllm-docker-storage"])).toEqual({
+      "vllm-docker-storage": ["default"],
     });
     expect(expectedSignalShards(["hermes-inference-switch", "openclaw-inference-switch"])).toEqual({
       "hermes-inference-switch": ["hosted", "anthropic"],
