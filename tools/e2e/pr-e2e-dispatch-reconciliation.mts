@@ -11,6 +11,7 @@ import {
   type DispatchFailureKind,
   type DispatchNotObservedReceipt,
   dispatchNotObservedReceiptMarker,
+  MAX_DISPATCH_RECONCILIATION_WINDOW_MS,
 } from "./pr-e2e-retry-receipt.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
@@ -21,11 +22,11 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_CLOCK_SKEW_MS = 10_000;
 const DEFAULT_DISPATCH_TIMEOUT_MS = 10_000;
 const DEFAULT_API_TIMEOUT_MS = 5_000;
-const MAX_RECONCILIATION_WINDOW_MS = 120_000;
 const MAX_DISPATCH_TIMEOUT_MS = 30_000;
 const MAX_API_TIMEOUT_MS = 10_000;
 const MAX_DISPATCH_AND_RECONCILIATION_BUDGET_MS = 65_000;
 const MAX_WORKFLOW_RUNS = 100;
+const MAX_WORKFLOW_RUN_PAGES = 10;
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const CORRELATION_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
@@ -184,7 +185,7 @@ function assertTimingOptions(options: {
   if (
     !positiveSafeInteger(options.sentAtMs) ||
     !positiveSafeInteger(options.reconciliationWindowMs) ||
-    options.reconciliationWindowMs > MAX_RECONCILIATION_WINDOW_MS ||
+    options.reconciliationWindowMs > MAX_DISPATCH_RECONCILIATION_WINDOW_MS ||
     !positiveSafeInteger(options.pollIntervalMs) ||
     options.pollIntervalMs > options.reconciliationWindowMs ||
     !Number.isSafeInteger(options.clockSkewMs) ||
@@ -265,14 +266,14 @@ function validateWorkflowRun(value: unknown): WorkflowRun {
   };
 }
 
-function validateWorkflowRunInventory(value: unknown): WorkflowRunInventory {
+function validateWorkflowRunInventoryPage(value: unknown): WorkflowRunInventory {
   if (
     !isObjectRecord(value) ||
     !Number.isSafeInteger(value.total_count) ||
     (value.total_count as number) < 0 ||
     !Array.isArray(value.workflow_runs) ||
     value.workflow_runs.length > MAX_WORKFLOW_RUNS ||
-    value.workflow_runs.length !== value.total_count
+    value.workflow_runs.length > (value.total_count as number)
   ) {
     throw new Error("GitHub returned an invalid or incomplete workflow run listing");
   }
@@ -283,11 +284,20 @@ function validateWorkflowRunInventory(value: unknown): WorkflowRunInventory {
   return { totalCount: value.total_count as number, runs };
 }
 
+function validateWorkflowRunInventory(value: unknown): WorkflowRunInventory {
+  const inventory = validateWorkflowRunInventoryPage(value);
+  if (inventory.runs.length !== inventory.totalCount) {
+    throw new Error("GitHub returned an invalid or incomplete workflow run listing");
+  }
+  return inventory;
+}
+
 function inventoryApiPath(options: {
   repository: string;
   workflowSha: string;
   lowerBoundMs: number;
   upperBoundMs: number;
+  page?: number;
 }): string {
   const created = `${new Date(options.lowerBoundMs).toISOString()}..${new Date(options.upperBoundMs).toISOString()}`;
   const query = new URLSearchParams({
@@ -296,8 +306,54 @@ function inventoryApiPath(options: {
     head_sha: options.workflowSha,
     created,
     per_page: String(MAX_WORKFLOW_RUNS),
+    ...(options.page === undefined ? {} : { page: String(options.page) }),
   });
   return `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/runs?${query}`;
+}
+
+async function readPaginatedInventory(
+  options: {
+    repository: string;
+    token: string;
+    workflowSha: string;
+    lowerBoundMs: number;
+    upperBoundMs: number;
+  },
+  api: GithubApi,
+  timeoutMs: number,
+): Promise<WorkflowRunInventory> {
+  return boundedOperation("Paginated workflow run inventory read", timeoutMs, async (signal) => {
+    const runs: WorkflowRun[] = [];
+    const runIds = new Set<number>();
+    let totalCount: number | undefined;
+    for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page += 1) {
+      const inventory = validateWorkflowRunInventoryPage(
+        await api(inventoryApiPath({ ...options, page }), options.token, {
+          userAgent: USER_AGENT,
+          signal,
+        }),
+      );
+      totalCount ??= inventory.totalCount;
+      if (
+        inventory.totalCount !== totalCount ||
+        totalCount > MAX_WORKFLOW_RUNS * MAX_WORKFLOW_RUN_PAGES
+      ) {
+        throw new Error("GitHub returned an unstable or oversized workflow run listing");
+      }
+      for (const run of inventory.runs) {
+        if (runIds.has(run.id)) {
+          throw new Error("GitHub returned duplicate workflow run IDs across pages");
+        }
+        runIds.add(run.id);
+        runs.push(run);
+      }
+      if (runs.length === totalCount) return { totalCount, runs };
+      if (runs.length > totalCount || inventory.runs.length < MAX_WORKFLOW_RUNS) {
+        throw new Error("GitHub returned an invalid or incomplete workflow run listing");
+      }
+    }
+    throw new Error("GitHub returned an incomplete workflow run listing after pagination");
+  });
 }
 
 async function readInventory(
@@ -704,7 +760,7 @@ export async function assertDispatchStillNotObserved(
   const correlatedRunIds = new Set<number>();
   let inventory: WorkflowRunInventory;
   try {
-    inventory = await readInventory(
+    inventory = await readPaginatedInventory(
       {
         repository: options.repository,
         token: options.token,

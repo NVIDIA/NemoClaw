@@ -70,7 +70,7 @@ describe("ShellCheck SARIF workflow boundary", () => {
     expect(checkout.with?.["persist-credentials"]).toBe(false);
 
     const trustedCheckout = requiredStep("Check out the trusted ShellCheck converter");
-    expect(trustedCheckout.uses).toBe("actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10");
+    expect(trustedCheckout.uses).toBe("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1");
     expect(trustedCheckout.with).toMatchObject({
       ref: "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.workflow_sha }}",
       path: "trusted-shellcheck-converter",

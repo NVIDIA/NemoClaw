@@ -625,7 +625,18 @@ describe("PR E2E dispatch-not-observed recovery", () => {
     ]);
   });
 
-  it("accepts an exact child authorization after the PATCH response is lost", async () => {
+  it.each([
+    {
+      label: "exact child URL",
+      publishedDetailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+    },
+    {
+      label: "canonical check URL",
+      publishedDetailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/17",
+    },
+  ])("accepts an exact child authorization with $label after the PATCH response is lost", async ({
+    publishedDetailsUrl,
+  }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-auth-response-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -633,7 +644,7 @@ describe("PR E2E dispatch-not-observed recovery", () => {
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
-    let check = reservedCheck();
+    let check: Record<string, unknown> = reservedCheck();
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -665,9 +676,15 @@ describe("PR E2E dispatch-not-observed recovery", () => {
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => {
-              check = { ...check, ...((request.body ?? {}) as Record<string, unknown>) };
               const title = (request.body as { output?: { title?: string } } | undefined)?.output
                 ?.title;
+              check = {
+                ...check,
+                ...((request.body ?? {}) as Record<string, unknown>),
+                ...(title?.startsWith("Running ")
+                  ? { details_url: publishedDetailsUrl }
+                  : undefined),
+              };
               return title?.startsWith("Running ")
                 ? new Response("{", { status: 200 })
                 : githubResponse(check);
@@ -697,7 +714,7 @@ describe("PR E2E dispatch-not-observed recovery", () => {
       expect(check).toMatchObject({
         status: "in_progress",
         conclusion: null,
-        details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+        details_url: publishedDetailsUrl,
         output: { title: expect.stringMatching(/^Running /u) },
       });
       expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);

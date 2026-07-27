@@ -12,13 +12,13 @@
 // config set:          Host-initiated config mutation with validation.
 // config rotate-token: Credential rotation via stdin or env var.
 
-const readline = require("readline");
 const { createHash } = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { promises: dnsPromises } = require("node:dns");
 const { isIP } = require("node:net");
+const { isErrnoException }: typeof import("../core/errno") = require("../core/errno");
 const { validateName } = require("../runner");
 const { shellQuote } = require("../core/shell-quote");
 const { dockerExecFileSync, dockerSpawnSync } = require("../adapters/docker/exec");
@@ -1175,7 +1175,19 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
       ]);
     }
     if (gate.mode === "prompt") {
-      const confirmed = await confirmYesNo("  Write this new key? [y/N] ");
+      let confirmed: boolean;
+      try {
+        confirmed = await confirmYesNo("  Write this new key? [y/N] ");
+      } catch (error) {
+        // The shared prompt re-raises SIGINT; only EOF needs config-specific remediation here.
+        if (isErrnoException(error) && error.code === "EOF") {
+          configFail([
+            "  No input available on stdin, so config set cannot confirm the new key.",
+            "  Re-run with --config-accept-new-path or set NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1.",
+          ]);
+        }
+        throw error;
+      }
       if (!confirmed) {
         configFail("  Aborted.");
       }
@@ -1417,21 +1429,10 @@ function readStdin(): Promise<string> {
  * Ask a yes/no question on stderr. Returns true only when the answer matches
  * /^y(es)?$/i — empty, "no", or unparseable input is treated as no.
  */
-function confirmYesNo(prompt: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    // Re-attach stdin to the event loop — unref() on exit is sticky and
-    // would otherwise leave a follow-up prompt waiting on a detached handle.
-    if (typeof process.stdin.ref === "function") process.stdin.ref();
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(prompt, (answer: string) => {
-      rl.close();
-      // pause+unref so the process exits naturally after the last prompt.
-      // The matching ref() above keeps subsequent prompts working.
-      if (typeof process.stdin.pause === "function") process.stdin.pause();
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      resolve(/^y(es)?$/i.test(answer.trim()));
-    });
-  });
+function confirmYesNo(question: string): Promise<boolean> {
+  const { prompt: askPrompt } =
+    require("../credentials/store") as typeof import("../credentials/store");
+  return askPrompt(question).then((answer) => /^y(es)?$/i.test(answer));
 }
 
 // ---------------------------------------------------------------------------
