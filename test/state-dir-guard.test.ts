@@ -136,6 +136,33 @@ finally:
     os.close(config_fd)
 `;
 
+const RUN_CARVEOUT_MKDIR_RACE = String.raw`
+import importlib.util
+import json
+import os
+import sys
+
+guard_path, config_dir = sys.argv[1:3]
+spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_carveout", guard_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+identity = module.Identity(
+    root_uid=os.getuid(), root_gid=os.getgid(),
+    sandbox_uid=os.getuid(), sandbox_gid=os.getgid(),
+)
+
+def racing_mkdir(*args, **kwargs):
+    raise FileExistsError(17, "File exists", "sessions")
+
+module.os.mkdir = racing_mkdir
+result = module.run_guard("lock", config_dir, identity)
+print(json.dumps({
+    "ok": result.ok,
+    "issues": [issue.as_json() for issue in result.issues],
+}))
+`;
+
 const RUN_FAKE_MOUNT_BOUNDARY = String.raw`
 import importlib.util
 import json
@@ -863,6 +890,95 @@ describe("state-dir-guard", () => {
     expect(mode(executablePath)).toBe(0o770);
     expect(mode(path.join(configDir, "agents"))).toBe(0o2770);
     expect(mode(agentDir)).toBe(0o2770);
+  });
+
+  it("creates a missing sessions carveout during lock so a first-boot agent can write sessions (#7545)", () => {
+    const { configDir } = fixture(".openclaw");
+    const agentDir = path.join(configDir, "agents", "main");
+    const sessionsDir = path.join(agentDir, "sessions");
+    const memoryDir = path.join(agentDir, "memory");
+    const stagedDir = path.join(configDir, "agents", "second");
+    const stagedSessions = path.join(stagedDir, "sessions");
+    const pluginsDir = path.join(configDir, "plugins", "nested");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.mkdirSync(memoryDir);
+    fs.mkdirSync(stagedDir, { recursive: true });
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "agent.js"), "export {};\n", { mode: 0o664 });
+    fs.symlinkSync("../../plugins/nested", stagedSessions);
+
+    const locked = runGuard("lock", configDir);
+
+    expect(locked.status, locked.stderr).toBe(0);
+    expect(fs.statSync(sessionsDir).isDirectory()).toBe(true);
+    expect(mode(sessionsDir)).toBe(0o2770);
+    expect(fs.lstatSync(stagedSessions).isDirectory()).toBe(true);
+    expect(mode(stagedSessions)).toBe(0o2770);
+    expect(fs.existsSync(path.join(memoryDir, "sessions"))).toBe(false);
+    expect(fs.existsSync(path.join(pluginsDir, "sessions"))).toBe(false);
+    expect(fs.existsSync(path.join(configDir, "agents", "sessions"))).toBe(false);
+
+    const sessionPath = path.join(sessionsDir, "active.jsonl");
+    fs.writeFileSync(sessionPath, "runtime\n", { mode: 0o660 });
+    expect(fs.readFileSync(sessionPath, "utf-8")).toBe("runtime\n");
+
+    const relocked = runGuard("lock", configDir);
+
+    expect(relocked.status, relocked.stderr).toBe(0);
+    expect(mode(sessionsDir)).toBe(0o2770);
+    expect(fs.readFileSync(sessionPath, "utf-8")).toBe("runtime\n");
+
+    const unlocked = runGuard("unlock", configDir);
+
+    expect(unlocked.status, unlocked.stderr).toBe(0);
+    expect(mode(sessionsDir)).toBe(0o2770);
+  });
+
+  it("fails closed when a sessions entry appears between the carveout check and its mkdir (#7545)", () => {
+    const { configDir } = fixture(".openclaw");
+    const agentDir = path.join(configDir, "agents", "main");
+    fs.mkdirSync(agentDir, { recursive: true });
+
+    const result = spawnSync("python3", ["-c", RUN_CARVEOUT_MKDIR_RACE, GUARD_PATH, configDir], {
+      encoding: "utf-8",
+      timeout: 15_000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual(
+      expect.objectContaining({
+        ok: false,
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: "carveout-create-failed",
+            path: path.join(agentDir, "sessions"),
+          }),
+        ]),
+      }),
+    );
+    expect(fs.existsSync(path.join(agentDir, "sessions"))).toBe(false);
+  });
+
+  it("keeps a regular-file sessions entry locked instead of creating a writable carveout (#7545)", () => {
+    const { configDir } = fixture(".openclaw");
+    const agentDir = path.join(configDir, "agents", "main");
+    const sessionsPath = path.join(agentDir, "sessions");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(sessionsPath, "not a directory\n", { mode: 0o664 });
+    const oldInode = fs.statSync(sessionsPath).ino;
+
+    const locked = runGuard("lock", configDir);
+
+    expect(locked.status, locked.stderr).toBe(0);
+    expect(fs.lstatSync(sessionsPath).isFile()).toBe(true);
+    expect(mode(sessionsPath)).toBe(0o644);
+    expect(fs.statSync(sessionsPath).ino).not.toBe(oldInode);
+
+    const relocked = runGuard("lock", configDir);
+
+    expect(relocked.status, relocked.stderr).toBe(0);
+    expect(fs.lstatSync(sessionsPath).isFile()).toBe(true);
+    expect(mode(sessionsPath)).toBe(0o644);
   });
 
   it("rejects hardlinks and special entries during the read-only preflight", () => {
