@@ -72,16 +72,20 @@ describe("retired E2E selector compatibility", () => {
   it("runs each ordinary replacement project once and emits bound signals (#7616)", () => {
     const target = workspace();
     const commands: string[] = [];
+    const suppliedEnvironment = environment(
+      target,
+      ["cloud-onboard", ...RETIRED_CONTROLLER_SELECTOR_IDS].join(","),
+    );
     try {
-      const selected = runRetiredSelectorCompatibility(
-        environment(target, ["cloud-onboard", ...RETIRED_CONTROLLER_SELECTOR_IDS].join(",")),
-        {
-          allowedJobs: ["cloud-onboard"],
-          repositoryRoot: target.root,
-          resolveHead: () => EXPECTED_SHA,
-          runCommand: (command, args) => commands.push([command, ...args].join(" ")),
+      const selected = runRetiredSelectorCompatibility(suppliedEnvironment, {
+        allowedJobs: ["cloud-onboard"],
+        repositoryRoot: target.root,
+        resolveHead: () => EXPECTED_SHA,
+        runCommand: (command, args, _cwd, commandEnvironment) => {
+          expect(commandEnvironment).toBe(suppliedEnvironment);
+          commands.push([command, ...args].join(" "));
         },
-      );
+      });
 
       expect(selected).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS].sort());
       expect(commands).toEqual([

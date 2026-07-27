@@ -8,7 +8,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createPrivateRegularFile } from "./private-file.mts";
 import * as importedRiskSignal from "./risk-signal.ts";
-import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
+import {
+  RETIRED_CONTROLLER_SELECTOR_IDS,
+  readFreeStandingJobsInventory,
+} from "./workflow-boundary.mts";
+
+export { RETIRED_CONTROLLER_SELECTOR_IDS } from "./workflow-boundary.mts";
 
 const riskSignal = (
   "default" in importedRiskSignal && importedRiskSignal.default
@@ -20,15 +25,6 @@ const { buildRiskSignal, configuredRiskSignalEnvironment, RISK_SIGNAL_FILE } = r
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/u;
-
-export const RETIRED_CONTROLLER_SELECTOR_IDS = [
-  "docs-validation",
-  "gateway-drift-preflight",
-  "gateway-health-honest",
-  "onboard-negative-paths",
-  "openshell-version-pin",
-  "ubuntu-repo-cli-smoke",
-] as const;
 
 type RetiredControllerSelectorId = (typeof RETIRED_CONTROLLER_SELECTOR_IDS)[number];
 type ReplacementTest = {
@@ -111,7 +107,12 @@ export function selectedRetiredControllerJobs(options: {
 }
 
 type Command = { command: string; args: string[] };
-type CommandRunner = (command: string, args: readonly string[], cwd: string) => void;
+type CommandRunner = (
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+) => void;
 
 function replacementCommands(selected: readonly RetiredControllerSelectorId[]): Command[] {
   const replacements = selected.map((id) => REPLACEMENTS[id]);
@@ -135,10 +136,15 @@ function replacementCommands(selected: readonly RetiredControllerSelectorId[]): 
   return commands;
 }
 
-function runCommand(command: string, args: readonly string[], cwd: string): void {
+function runCommand(
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+): void {
   const result = spawnSync(command, args, {
     cwd,
-    env: process.env,
+    env: environment,
     killSignal: "SIGKILL",
     stdio: "inherit",
     timeout: 10 * 60_000,
@@ -204,7 +210,7 @@ export function runRetiredSelectorCompatibility(
 
   const commands = replacementCommands(selected);
   for (const command of commands) {
-    (options.runCommand ?? runCommand)(command.command, command.args, repositoryRoot);
+    (options.runCommand ?? runCommand)(command.command, command.args, repositoryRoot, environment);
   }
 
   fs.mkdirSync(artifactRoot, { recursive: true, mode: 0o700 });
