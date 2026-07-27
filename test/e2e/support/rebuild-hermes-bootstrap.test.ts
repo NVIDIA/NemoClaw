@@ -18,6 +18,7 @@ import {
   requirePublishedRebuildHermesCurrentBase,
   requireRebuildHermesDashboardPort,
   requireRebuildHermesHostedInferenceRoute,
+  requireRebuildHermesOpenshellBin,
   resolveRebuildHermesCurrentBase,
   resolveRebuildHermesDashboardPort,
   trackRebuildHermesCleanupPort,
@@ -188,6 +189,34 @@ describe("rebuild-Hermes direct bootstrap", () => {
         return { ...extra, NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1" };
       }, "/opt/openshell"),
     ).toThrow(/must disable local base construction/);
+  });
+
+  it("accepts only the workflow-selected executable OpenShell binary (#7144)", () => {
+    const host = fakeHost([]).host;
+    const access = vi.spyOn(fs, "accessSync");
+    try {
+      vi.stubEnv("OPENSHELL_BIN", "");
+      expect(() => requireRebuildHermesOpenshellBin(host)).toThrow(/requires absolute/);
+
+      vi.stubEnv("OPENSHELL_BIN", "relative/openshell");
+      expect(() => requireRebuildHermesOpenshellBin(host)).toThrow(/requires absolute/);
+
+      vi.stubEnv("OPENSHELL_BIN", "/opt/other-openshell");
+      expect(() => requireRebuildHermesOpenshellBin(host)).toThrow(/must use the same/);
+
+      vi.stubEnv("OPENSHELL_BIN", "/opt/openshell");
+      access.mockImplementationOnce(() => {
+        throw new Error("permission denied");
+      });
+      expect(() => requireRebuildHermesOpenshellBin(host)).toThrow(/not executable/);
+
+      access.mockImplementation(() => undefined);
+      expect(requireRebuildHermesOpenshellBin(host)).toBe("/opt/openshell");
+      expect(access).toHaveBeenLastCalledWith("/opt/openshell", fs.constants.X_OK);
+    } finally {
+      vi.unstubAllEnvs();
+      access.mockRestore();
+    }
   });
 
   it("starts the product gateway and configures its exact hosted route (#7144)", () => {
