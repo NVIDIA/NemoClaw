@@ -14,17 +14,28 @@ function writeExecutable(file: string, content: string): void {
   fs.writeFileSync(file, content, { encoding: "utf8", mode: 0o755 });
 }
 
-function isLiveNonZombieProcess(pid: number): boolean {
+function readOptionalFile(file: string): string {
   try {
-    process.kill(pid, 0);
-    const state = spawnSync("ps", ["-p", String(pid), "-o", "state="], {
-      encoding: "utf8",
-      killSignal: "SIGKILL",
-      timeout: 5_000,
-    }).stdout.trim();
-    return state !== "" && !state.startsWith("Z");
+    return fs.readFileSync(file, "utf8");
   } catch {
-    return false;
+    return "";
+  }
+}
+
+function readGatewayPid(file: string): number | null {
+  try {
+    const pid = Number.parseInt(fs.readFileSync(file, "utf8"), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function stopGatewayProcess(pid: number | null): void {
+  try {
+    pid === null || process.kill(pid, "SIGKILL");
+  } catch {
+    // The expected crashed process has already exited.
   }
 }
 
@@ -93,7 +104,7 @@ exit 0
     );
     const output = `${result.stdout}${result.stderr}`;
     const gatewayLogPath = path.join(stateDir, "openshell-gateway.log");
-    const gatewayLog = fs.existsSync(gatewayLogPath) ? fs.readFileSync(gatewayLogPath, "utf8") : "";
+    const gatewayLog = readOptionalFile(gatewayLogPath);
 
     expect(`${output}\n${gatewayLog}`).toMatch(/GLIBC_2\.38|openshell-gateway-sabotage/);
     expect(output).not.toContain("Docker-driver gateway is healthy");
@@ -103,20 +114,20 @@ exit 0
       /Docker-driver gateway failed to start|exited with code 127|__startGateway_failed__/i,
     );
 
-    if (fs.existsSync(pidFile)) {
-      gatewayPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
-      if (Number.isInteger(gatewayPid) && gatewayPid > 0) {
-        expect(isLiveNonZombieProcess(gatewayPid)).toBe(false);
-      }
-    }
+    gatewayPid = readGatewayPid(pidFile);
+    const lingeringGateway = spawnSync(
+      "bash",
+      [
+        "-c",
+        'kill -0 "$1" 2>/dev/null || exit 0; ps -p "$1" -o state= 2>/dev/null | tr -d "[:space:]" | grep -Eq "^Z|^$"',
+        "gateway-process-check",
+        String(gatewayPid ?? ""),
+      ],
+      { encoding: "utf8", killSignal: "SIGKILL", timeout: 5_000 },
+    );
+    expect(lingeringGateway.status, `${lingeringGateway.stdout}${lingeringGateway.stderr}`).toBe(0);
   } finally {
-    if (gatewayPid !== null && Number.isInteger(gatewayPid) && gatewayPid > 0) {
-      try {
-        process.kill(gatewayPid, "SIGKILL");
-      } catch {
-        // The expected crashed process has already exited.
-      }
-    }
+    stopGatewayProcess(gatewayPid);
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
