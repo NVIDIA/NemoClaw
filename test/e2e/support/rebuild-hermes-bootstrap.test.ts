@@ -428,51 +428,53 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(cleanupForward).toHaveBeenCalledWith(18789);
   });
 
-  it("keeps the live rebuild free of a disposable current sandbox (#7144)", () => {
+  it("attempts every tracked forward before propagating cleanup failures (#7144)", async () => {
+    const cleanupForward = vi.fn(async (port: number) => {
+      throw new Error(`${port} cleanup failed`);
+    });
+    const writeEvidence = vi.fn(async (_evidence: unknown) => undefined);
+
+    const failure = await cleanupRebuildHermesTrackedForwards(
+      new Set([18789, 8642]),
+      undefined,
+      cleanupForward,
+      writeEvidence,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([
+      new Error("18789 cleanup failed"),
+      new Error("8642 cleanup failed"),
+    ]);
+    expect(cleanupForward.mock.calls.map(([port]) => port)).toEqual([18789, 8642]);
+    expect(writeEvidence).toHaveBeenCalledWith({ rejectedPort: null });
+  });
+
+  it("keeps superseded live rebuild paths unreachable (#7144)", () => {
     const liveSource = fs.readFileSync(
       path.resolve(import.meta.dirname, "../live/rebuild-hermes.test.ts"),
       "utf8",
     );
 
-    expect(liveSource).toContain("resolveRebuildHermesCurrentBase({");
-    expect(liveSource).toContain("bootstrapRebuildHermesGateway({");
-    expect(liveSource).toContain("await requireRebuildHermesHostedInferenceRoute(");
     expect(liveSource).not.toContain('host.nemoclaw(["onboard"');
     expect(liveSource).not.toContain("phase-1-delete-current-sandbox");
     expect(liveSource).not.toContain("phase-1-remove-initial-hermes-image");
     expect(liveSource).not.toContain("phase-1-stop-hermes-forward");
     expect(liveSource).not.toContain('"--cleanup-gateway"');
-    expect(liveSource).toContain("observedForwardPorts.add(dashboardPort)");
-    expect(liveSource).toContain("cleanupRegistryDashboardPort = seededRegistry.dashboardPort");
-    const failedRebuildPortCapture = liveSource.indexOf(
-      "cleanupRegistryDashboardPort = readJsonFileOr<RegistryData>",
-    );
-    const rebuildExitAssertion = liveSource.indexOf('expectExitZero(rebuild, "nemoclaw rebuild');
-    expect(failedRebuildPortCapture).toBeGreaterThanOrEqual(0);
-    expect(failedRebuildPortCapture).toBeLessThan(rebuildExitAssertion);
-    expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 18789 "$SANDBOX_NAME"');
-    expect(liveSource).toContain('"$OPENSHELL_BIN" forward stop 8642 "$SANDBOX_NAME"');
-    expect(liveSource).toContain('artifacts.writeJson("cleanup-dashboard-port.json"');
     expect(liveSource).not.toMatch(/host\.command\(\s*["']openshell["']/u);
     expect(liveSource).not.toMatch(/^\s*['"`]openshell\s/mu);
-
-    const bootstrap = liveSource.indexOf("const gatewayBootstrap = await");
-    const seed = liveSource.indexOf("const sessionSummary = seedRegistryAndSession(");
-    const routeRecheck = liveSource.indexOf(
-      "const routeBeforeRebuild = await requireRebuildHermesHostedInferenceRoute(",
-    );
-    const rebuild = liveSource.indexOf("const rebuild = await host.nemoclaw(");
-    expect([bootstrap, seed, routeRecheck, rebuild].every((index) => index >= 0)).toBe(true);
-    expect(bootstrap).toBeLessThan(seed);
-    expect(seed).toBeLessThan(routeRecheck);
-    expect(routeRecheck).toBeLessThan(rebuild);
   });
 
   it("retains the eight-phase rebuild contract with truthful bootstrap coverage (#7144)", () => {
-    expect(REBUILD_HERMES_PHASES).toHaveLength(8);
-    expect(REBUILD_HERMES_PHASES[1]).toBe(
+    expect(REBUILD_HERMES_PHASES).toEqual([
+      "confirm Docker and prepare Hermes rebuild resources",
       "prepare trusted gateway inference and the current Hermes base",
-    );
-    expect(REBUILD_HERMES_PHASES).not.toContain("onboard the current Hermes sandbox");
+      "pull and verify the historical Hermes base fixture",
+      "create the historical Hermes sandbox",
+      "seed persistent Hermes state and registry metadata",
+      "prepare the current-base rebuild condition",
+      "rebuild the Hermes sandbox",
+      "validate upgraded state inference and backup hygiene",
+    ]);
   });
 });

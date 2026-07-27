@@ -409,12 +409,27 @@ export async function cleanupRebuildHermesTrackedForwards(
   }) => Promise<unknown>,
 ): Promise<void> {
   const rejectedPort = trackRebuildHermesCleanupPort(ports, recordedDashboardPort);
+  const failures: unknown[] = [];
   try {
     for (const port of ports) {
-      await cleanupForward(port);
+      try {
+        await cleanupForward(port);
+      } catch (error) {
+        failures.push(error);
+      }
     }
   } finally {
-    await writeEvidence({ rejectedPort });
+    try {
+      await writeEvidence({ rejectedPort });
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length === 1) {
+    throw failures[0];
+  }
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "Hermes tracked forward cleanup failed");
   }
 }
 
