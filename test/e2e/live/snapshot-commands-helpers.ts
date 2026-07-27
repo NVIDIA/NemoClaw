@@ -64,6 +64,7 @@ export function classifySnapshotRestoreResult(result: {
 }): SnapshotRestoreResultClassification {
   const output = `${result.stdout}\n${result.stderr}`;
   if (
+    result.exitCode !== null &&
     result.exitCode !== 0 &&
     /\bState restored into\b/.test(output) &&
     /gateway pairing could not be verified/i.test(output)
