@@ -751,7 +751,7 @@ exit 1`,
           ...(expectedStatus === 0 ? ["--prefix"] : []),
         ]);
         expect(fs.readFileSync(untrustCount, "utf-8").trim()).toBe("1");
-        if (expectedStatus !== 0) expect(fs.existsSync(formulaTmpDir)).toBe(false);
+        expect(fs.existsSync(formulaTmpDir)).toBe(false);
       }
 
       fs.writeFileSync(brewLog, "");
