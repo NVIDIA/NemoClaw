@@ -309,13 +309,68 @@ _PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS = frozenset(
 )
 # Mirror the pinned Hermes v0.18 `_coalesce_session_name_args` boundaries:
 # unquoted session names consume words until a flag or known subcommand.
-_HERMES_SUBCOMMANDS = frozenset(
-    """
-    chat model gateway setup whatsapp whatsapp-cloud login logout auth status
-    cron doctor config pairing skills tools mcp sessions insights version update
-    uninstall profile dashboard serve desktop gui honcho claw plugins security
-    acp webhook memory dump debug backup import completion logs
-    """.split()
+_HERMES_SUBCOMMANDS = (
+    "acp",
+    "auth",
+    "backup",
+    "bundles",
+    "chat",
+    "checkpoints",
+    "claw",
+    "completion",
+    "computer-use",
+    "config",
+    "cron",
+    "curator",
+    "dashboard",
+    "debug",
+    "desktop",
+    "doctor",
+    "dump",
+    "fallback",
+    "gateway",
+    "gui",
+    "hooks",
+    "import",
+    "insights",
+    "journey",
+    "kanban",
+    "learning",
+    "login",
+    "logout",
+    "logs",
+    "lsp",
+    "mcp",
+    "memory",
+    "memory-graph",
+    "migrate",
+    "moa",
+    "model",
+    "pairing",
+    "pets",
+    "plugins",
+    "portal",
+    "postinstall",
+    "profile",
+    "project",
+    "prompt-size",
+    "proxy",
+    "secrets",
+    "security",
+    "send",
+    "serve",
+    "sessions",
+    "setup",
+    "skills",
+    "slack",
+    "status",
+    "tools",
+    "uninstall",
+    "update",
+    "version",
+    "webhook",
+    "whatsapp",
+    "whatsapp-cloud",
 )
 
 

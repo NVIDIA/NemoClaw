@@ -218,6 +218,25 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     expect(run.realArgv).toEqual(argv);
   });
 
+  it("does not consume a pinned Hermes subcommand as continuation text (#7361)", () => {
+    const argv = [
+      "-c",
+      "my",
+      "project",
+      "hooks",
+      "list",
+      "--provider",
+      "nvidia-prod",
+      "--model",
+      "nvidia/nemotron-3-super-120b-a12b",
+    ];
+
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
   it("passes through --provider alone without -m (#7361)", () => {
     const run = runWrapper(["--provider", "opencode-zen"], {});
 
