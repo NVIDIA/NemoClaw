@@ -731,10 +731,32 @@ describe("pull request and main workflow contracts", () => {
 
   it("keeps routine, broad, and repository validation commands distinct (#7550)", () => {
     const scripts = packageJson.scripts;
+    const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
+    const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
     const broadCheckCalls = runLoggedPackageScript(scripts.check);
     const routinePrCalls = runLoggedPackageScript(scripts["validate:pr"]);
     const repositoryCheckCalls = runLoggedPackageScript(scripts["checks:repository"]);
 
+    expect(cliCoverageCalls.map(([command]) => command)).toEqual([
+      "npm", "npm", "tsx", "vitest", "tsx",
+    ]);
+    expect(cliCoverageCalls[3]).toEqual(
+      expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
+    );
+    expect(cliCoverageCalls[4]).toEqual([
+      "tsx", "scripts/check-coverage-ratchet.mts", "coverage/cli/coverage-summary.json",
+      "ci/coverage-threshold-cli.json", "CLI coverage",
+    ]);
+    expect(pluginCoverageCalls[0]).toEqual(
+      expect.arrayContaining([
+        "--project", "plugin", "--coverage.include=nemoclaw/src/**/*.ts",
+        "--coverage.include=nemoclaw/src/**/*.cts",
+      ]),
+    );
+    expect(pluginCoverageCalls[1]).toEqual([
+      "tsx", "scripts/check-coverage-ratchet.mts", "coverage/plugin/coverage-summary.json",
+      "ci/coverage-threshold-plugin.json", "Plugin coverage",
+    ]);
     expect(broadCheckCalls).toEqual([
       ["npx", "prek", "run", "--all-files", "--stage", "pre-commit"],
       ["npx", "prek", "run", "--all-files", "--stage", "manual"],
