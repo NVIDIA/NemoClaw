@@ -201,6 +201,7 @@ function runWorkflowShellStepWithJobs(
   }
 }
 
+// source-shape-contract: compatibility -- Package scripts must retain their documented validation command scopes and aliases
 function runLoggedPackageScript(script: string): string[][] {
   const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
   const fakeBin = join(temp, "bin");
