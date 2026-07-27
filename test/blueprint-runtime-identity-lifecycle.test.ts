@@ -210,8 +210,11 @@ describe("blueprint runtime identity lifecycle integration", () => {
       persistReceipt: (receipt) => persistedReceipts.push({ ...receipt }),
       run,
       // This test intentionally bypasses DNS validation and uses a fake OpenShell to isolate lifecycle orchestration.
-      // TC-INF-12 runs the real runner with controlled DNS and a fake OpenShell logger to prove only the fail-closed path.
-      // Neither test proves a successful OpenShell 0.0.85/Okta refresh, presentation, or attachment path.
+      // TC-INF-12 separately proves the successful path through a real
+      // OpenShell gateway, OAuth refresh exchange, provider attachment,
+      // sandbox placeholder, bearer injection, rotation, and rollback.
+      // A real-tenant Okta acceptance remains separate from that deterministic
+      // standards-conformance proof.
       validateEndpointUrl: async () => ({ dnsResolved: false }),
     };
 

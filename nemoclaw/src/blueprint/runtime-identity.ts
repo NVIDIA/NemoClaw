@@ -32,17 +32,12 @@ const MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024;
 const MAX_PROFILE_BYTES = 64 * 1024;
 const MAX_PROFILE_ENDPOINTS = 32;
 const MAX_DESTINATION_URL_LENGTH = 2048;
-const TRUSTED_PROFILE_HOST_SUFFIXES: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  "okta-runtime-v1": Object.freeze(["okta.com"]),
-});
-const TRUSTED_PROFILE_BINARIES: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  "okta-runtime-v1": Object.freeze([
-    "/usr/local/bin/node",
-    "/usr/bin/node",
-    "/usr/local/bin/curl",
-    "/usr/bin/curl",
-  ]),
-});
+const OKTA_RUNTIME_BINARIES = Object.freeze([
+  "/usr/local/bin/node",
+  "/usr/bin/node",
+  "/usr/local/bin/curl",
+  "/usr/bin/curl",
+]);
 const RUNTIME_IDENTITY_PROFILE_KEYS = Object.freeze([
   "id",
   "display_name",
@@ -122,9 +117,27 @@ export interface RuntimeIdentityValidatedDestination {
   dnsResolved: boolean;
 }
 
+export interface RuntimeIdentityProfilePolicy {
+  providerType: string;
+  trustedHostnames: readonly string[];
+  trustedHostSuffixes: readonly string[];
+  trustedBinaries: readonly string[];
+}
+
+const RUNTIME_IDENTITY_PROFILE_POLICIES: Readonly<Record<string, RuntimeIdentityProfilePolicy>> =
+  Object.freeze({
+    "okta-runtime-v1": Object.freeze({
+      providerType: "okta-runtime-v1",
+      trustedHostnames: Object.freeze([]),
+      trustedHostSuffixes: Object.freeze(["okta.com"]),
+      trustedBinaries: OKTA_RUNTIME_BINARIES,
+    }),
+  });
+
 export interface RuntimeIdentityDeps extends RuntimeIdentityCommandDeps {
   validateEndpointUrl(url: string): Promise<RuntimeIdentityValidatedDestination>;
   persistReceipt(receipt: RuntimeIdentityReceipt): void;
+  profilePolicy?: RuntimeIdentityProfilePolicy;
 }
 
 interface RuntimeIdentityProviderMetadata {
@@ -183,12 +196,11 @@ function requireExactRefreshMaterial(
 
 function requireTrustedBinaries(
   value: unknown,
-  config: RuntimeIdentityConfig,
+  policy: RuntimeIdentityProfilePolicy,
   label: string,
 ): string[] {
-  const trusted = TRUSTED_PROFILE_BINARIES[config.provider_type];
+  const trusted = policy.trustedBinaries;
   if (
-    !trusted ||
     !Array.isArray(value) ||
     value.length !== trusted.length ||
     !value.every((entry) => typeof entry === "string") ||
@@ -196,7 +208,7 @@ function requireTrustedBinaries(
     !trusted.every((binary) => value.includes(binary))
   ) {
     throw new Error(
-      `${label} must declare exactly the reviewed executable allowlist for '${config.provider_type}'`,
+      `${label} must declare exactly the reviewed executable allowlist for '${policy.providerType}'`,
     );
   }
   return [...trusted];
@@ -204,23 +216,29 @@ function requireTrustedBinaries(
 
 function requireTrustedProfileHostname(
   hostname: string,
-  config: RuntimeIdentityConfig,
+  policy: RuntimeIdentityProfilePolicy,
   label: string,
 ): void {
   const normalized = hostname.toLowerCase().replace(/\.$/u, "");
-  const trustedSuffixes = TRUSTED_PROFILE_HOST_SUFFIXES[config.provider_type] ?? [];
+  const trustedHostnames = policy.trustedHostnames.map((candidate) =>
+    candidate.toLowerCase().replace(/\.$/u, ""),
+  );
+  const trustedSuffixes = policy.trustedHostSuffixes.map((candidate) =>
+    candidate.toLowerCase().replace(/\.$/u, ""),
+  );
   if (
+    !trustedHostnames.includes(normalized) &&
     !trustedSuffixes.some((suffix) => normalized === suffix || normalized.endsWith(`.${suffix}`))
   ) {
     throw new Error(
-      `${label} host '${hostname}' is outside the trusted destination policy for '${config.provider_type}'`,
+      `${label} host '${hostname}' is outside the trusted destination policy for '${policy.providerType}'`,
     );
   }
 }
 
 function requireHttpsDestination(
   value: string,
-  config: RuntimeIdentityConfig,
+  policy: RuntimeIdentityProfilePolicy,
   label: string,
 ): string {
   if (value.length === 0 || value.length > MAX_DESTINATION_URL_LENGTH) {
@@ -238,14 +256,14 @@ function requireHttpsDestination(
   if (parsed.username !== "" || parsed.password !== "") {
     throw new Error(`${label} must not include URL credentials`);
   }
-  requireTrustedProfileHostname(parsed.hostname, config, label);
+  requireTrustedProfileHostname(parsed.hostname, policy, label);
   return parsed.toString();
 }
 
 function parseRuntimeIdentityEndpoint(
   endpoint: unknown,
   index: number,
-  config: RuntimeIdentityConfig,
+  policy: RuntimeIdentityProfilePolicy,
 ): { destination: string; document: Record<string, unknown> } {
   const label = `Runtime identity provider profile endpoint ${String(index + 1)}`;
   if (!isPlainObject(endpoint) || !hasOnlyKeys(endpoint, RUNTIME_IDENTITY_ENDPOINT_KEYS)) {
@@ -283,7 +301,7 @@ function parseRuntimeIdentityEndpoint(
   }
   const urlHost = unbracketedHost.includes(":") ? `[${unbracketedHost}]` : unbracketedHost;
   return {
-    destination: requireHttpsDestination(`https://${urlHost}:${String(port)}/`, config, label),
+    destination: requireHttpsDestination(`https://${urlHost}:${String(port)}/`, policy, label),
     document: {
       host,
       port,
@@ -297,6 +315,7 @@ function parseRuntimeIdentityEndpoint(
 function parseRuntimeIdentityProfile(
   content: string,
   config: RuntimeIdentityConfig,
+  policy: RuntimeIdentityProfilePolicy,
   label: string,
 ): ParsedRuntimeIdentityProfile {
   if (Buffer.byteLength(content, "utf8") > MAX_PROFILE_BYTES) {
@@ -361,7 +380,7 @@ function parseRuntimeIdentityProfile(
     throw new Error(`${label} must declare a refresh token_url`);
   }
   const material = requireExactRefreshMaterial(refresh.material, `${label} refresh material`);
-  const tokenUrl = requireHttpsDestination(refresh.token_url, config, `${label} refresh token_url`);
+  const tokenUrl = requireHttpsDestination(refresh.token_url, policy, `${label} refresh token_url`);
   const endpoints = parsed.endpoints;
   if (
     !Array.isArray(endpoints) ||
@@ -373,9 +392,9 @@ function parseRuntimeIdentityProfile(
     );
   }
   const parsedEndpoints = endpoints.map((endpoint, index) =>
-    parseRuntimeIdentityEndpoint(endpoint, index, config),
+    parseRuntimeIdentityEndpoint(endpoint, index, policy),
   );
-  const binaries = requireTrustedBinaries(parsed.binaries, config, `${label} binaries`);
+  const binaries = requireTrustedBinaries(parsed.binaries, policy, `${label} binaries`);
   return {
     document: {
       id: config.provider_type,
@@ -412,14 +431,7 @@ async function validateProfileDestinations(
   deps: RuntimeIdentityDeps,
 ): Promise<void> {
   for (const destination of profile.destinations) {
-    const validated = await deps.validateEndpointUrl(destination);
-    if (validated.dnsResolved) {
-      throw new Error(
-        `DNS-backed runtime identity destination '${destination}' is not supported because ` +
-          "OpenShell can resolve the hostname again after NemoClaw validation. Use this " +
-          "provider profile only after OpenShell can preserve the validated peer and HTTPS identity.",
-      );
-    }
+    await deps.validateEndpointUrl(destination);
   }
 }
 
@@ -692,6 +704,13 @@ export async function prepareRuntimeIdentity(
     throw new Error("Runtime identity configuration is invalid");
   }
   const env = deps.env ?? process.env;
+  const profilePolicy =
+    deps.profilePolicy ?? RUNTIME_IDENTITY_PROFILE_POLICIES[config.provider_type];
+  if (!profilePolicy || profilePolicy.providerType !== config.provider_type) {
+    throw new Error(
+      `Runtime identity provider type '${config.provider_type}' has no reviewed trust policy`,
+    );
+  }
   const profilePath = resolveRuntimeIdentityProfilePath(
     config.profile_path,
     deps.blueprintPath ?? process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
@@ -700,6 +719,7 @@ export async function prepareRuntimeIdentity(
   const requestedProfile = parseRuntimeIdentityProfile(
     profileSource,
     config,
+    profilePolicy,
     "Runtime identity provider profile",
   );
   await validateProfileDestinations(requestedProfile, deps);
@@ -743,6 +763,7 @@ export async function prepareRuntimeIdentity(
       existingProfile = parseRuntimeIdentityProfile(
         profileExport.stdout,
         config,
+        profilePolicy,
         "Existing runtime identity provider profile",
       );
     } catch {

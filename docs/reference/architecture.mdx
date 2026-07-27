@@ -265,10 +265,11 @@ The bundled Okta profile is the first data-only implementation of the component.
 The blueprint schema describes the OpenShell provider binding and OAuth refresh inputs without using the identity provider as a schema discriminator.
 
 <Warning>
-  The pinned OpenShell runtime resolves the OAuth token URL and provider endpoint hostnames again after NemoClaw validates them.
-  Because that boundary cannot yet preserve both the validated peer and the original HTTPS identity, the direct runner rejects every DNS-backed runtime identity destination before profile import.
-  The current `okta-runtime-v1` trust policy admits only `okta.com` hostnames, so the bundled profile is a reference contract and does not currently provide an activatable production Okta path.
-  Remove this fail-closed restriction only when the OpenShell refresh and provider endpoint contracts atomically validate and connect to the same peer.
+  Runtime identity profiles may use DNS-backed HTTPS only within a provider type's repository-reviewed hostname suffixes.
+  NemoClaw resolves every destination before import and rejects private or internal addresses.
+  OpenShell performs connect-time SSRF and L7 enforcement for sandbox requests before it injects the provider credential.
+  OpenShell 0.0.85's gateway-side OAuth refresh client enforces HTTPS but does not pin the address NemoClaw resolved, so only identity-platform-controlled DNS suffixes such as `okta.com` belong in this trust table.
+  Adding an attacker-controlled or customer-controlled DNS suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
 </Warning>
 
 Enable provider-derived policy on the target gateway before applying a blueprint that attaches this component:

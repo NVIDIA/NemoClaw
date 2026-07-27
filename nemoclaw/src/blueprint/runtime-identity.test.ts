@@ -421,18 +421,75 @@ describe("runtime identity contract", () => {
     expect(calls).toEqual([]);
   });
 
-  it.each([
-    ["https://example.okta.com/oauth2/default/v1/token"],
-    ["https://api.example.okta.com/"],
-  ])("rejects a DNS-backed destination before profile import: %s", async (destination) => {
-    deps.validateEndpointUrl = async (url) => ({
-      dnsResolved: url === destination,
-    });
+  it("accepts DNS-backed destinations only after public-address validation", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    deps.validateEndpointUrl = async (url) => {
+      validatedDestinations.push(url);
+      return { dnsResolved: true };
+    };
 
-    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
-      /DNS-backed runtime identity destination/,
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
+    expect(validatedDestinations).toEqual([
+      "https://example.okta.com/oauth2/default/v1/token",
+      "https://api.example.okta.com/",
+    ]);
+    expect(calls.map(({ args }) => commandKey(args))).toContain("provider profile import --file");
+  });
+
+  it("admits the OAuth conformance profile only through an exact-host test policy", async () => {
+    const conformanceConfig: RuntimeIdentityConfig = {
+      ...config,
+      profile_path: "provider-profiles/oauth2-runtime-conformance-v1.yaml",
+      provider_type: "oauth2-runtime-conformance-v1",
+      provider_name: "e2e-oauth-runtime",
+      credential_key: "E2E_ACCESS_TOKEN",
+      client_id_env: "E2E_CLIENT_ID",
+      refresh_token_env: "E2E_REFRESH_TOKEN",
+      client_secret_env: "E2E_CLIENT_SECRET",
+    };
+    const conformanceProfile = profileDocument
+      .replace("id: okta-runtime-v1", "id: oauth2-runtime-conformance-v1")
+      .replaceAll("OKTA_ACCESS_TOKEN", "E2E_ACCESS_TOKEN")
+      .replace(
+        "https://example.okta.com/oauth2/default/v1/token",
+        "https://identity-fixture.trycloudflare.com/oauth/token",
+      )
+      .replace("api.example.okta.com", "identity-fixture.trycloudflare.com");
+    writeFileSync(join(root, conformanceConfig.profile_path), conformanceProfile);
+    environment.E2E_CLIENT_ID = "client-id";
+    environment.E2E_REFRESH_TOKEN = "refresh-secret";
+    environment.E2E_CLIENT_SECRET = "client-secret";
+    responses.set("provider get e2e-oauth-runtime", [missingProvider]);
+
+    await expect(prepareRuntimeIdentity(conformanceConfig, deps)).rejects.toThrow(
+      /has no reviewed trust policy/,
     );
     expect(calls).toEqual([]);
+
+    await expect(
+      prepareRuntimeIdentity(conformanceConfig, {
+        ...deps,
+        profilePolicy: {
+          providerType: "oauth2-runtime-conformance-v1",
+          trustedHostnames: ["identity-fixture.trycloudflare.com"],
+          trustedHostSuffixes: [],
+          trustedBinaries: [
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+            "/usr/local/bin/curl",
+            "/usr/bin/curl",
+          ],
+        },
+      }),
+    ).resolves.toMatchObject({
+      provider_type: "oauth2-runtime-conformance-v1",
+      provider_name: "e2e-oauth-runtime",
+      credential_key: "E2E_ACCESS_TOKEN",
+    });
+    expect(validatedDestinations).toEqual([
+      "https://identity-fixture.trycloudflare.com/oauth/token",
+      "https://identity-fixture.trycloudflare.com/",
+    ]);
   });
 
   it.each([

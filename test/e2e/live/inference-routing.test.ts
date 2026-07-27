@@ -37,6 +37,7 @@ import {
   writeFakeOpenShellForBlueprintFailClosed,
 } from "./inference-routing-helpers.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
+import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server.ts";
 
 // This is the PR-required inference-routing lane. Credential-backed provider
 // smokes live in inference-routing-provider-smoke.test.ts and are never selected
@@ -244,33 +245,182 @@ await main(["apply"]);
   expect(openshellLog).toBe("");
 });
 
-test("TC-INF-12 runtime identity reference plans safely and leaves no identity mutation on rejection", {
-  timeout: 5 * 60_000,
+test("TC-INF-12 runtime identity refreshes and injects a delegated bearer through real OpenShell", {
+  timeout: 20 * 60_000,
   meta: {
     e2ePhases: [
-      "prepare the provider-neutral runtime identity blueprint",
+      "confirm live runtime identity prerequisites",
+      "onboard a real OpenShell sandbox",
+      "start the public OAuth issuer and protected resource",
       "plan the non-secret runtime identity reference",
-      "reject DNS-backed identity apply before OpenShell mutation",
-      "verify persisted state and rollback ownership boundaries",
+      "apply and attach the runtime identity through OpenShell",
+      "call the protected resource with the injected bearer",
+      "rotate the credential without changing the placeholder",
+      "verify secret-safe status and deterministic rollback",
     ],
   },
-}, async ({ artifacts, cleanup, progress }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  progress.phase("confirm live runtime identity prerequisites");
+  await requireLivePrerequisites(host, skip);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-identity-e2e-"));
   const workdir = path.join(root, "blueprint");
   const profileDir = path.join(workdir, "provider-profiles");
-  const fakeBinDir = path.join(root, "bin");
-  const home = path.join(root, "home");
   fs.mkdirSync(profileDir, { recursive: true });
-  fs.mkdirSync(fakeBinDir, { recursive: true });
-  fs.mkdirSync(home, { recursive: true });
   cleanup.add(`remove runtime identity E2E temp root ${root}`, () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  const commandLogPath = writeFakeOpenShellForBlueprintFailClosed(fakeBinDir);
-  fs.copyFileSync(
-    path.join(REPO_ROOT, "nemoclaw-blueprint", "provider-profiles", "okta-runtime-v1.yaml"),
-    path.join(profileDir, "okta-runtime-v1.yaml"),
+  const model = "nemoclaw-e2e-runtime-identity";
+  const inferenceKey = "sk-runtime-identity-TEST-NOT-A-REAL-VALUE";
+  const sandboxName = inferenceSandboxName("e2e-runtime-id");
+  const providerType = "oauth2-runtime-conformance-v1";
+  const providerName = `e2e-oauth-runtime-${String(process.pid)}`;
+  const credentialKey = "E2E_ACCESS_TOKEN";
+  const clientId = "e2e-runtime-identity-client-id";
+  const refreshToken = "e2e-runtime-identity-refresh-token-v1";
+  const clientSecret = "e2e-runtime-identity-client-secret";
+  const openshellEnv = {
+    ...buildAvailabilityProbeEnv(),
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+  };
+
+  cleanup.add(`best-effort runtime identity sandbox cleanup for ${sandboxName}`, () =>
+    cleanupSandbox(host, sandbox, sandboxName),
+  );
+  await cleanupSandbox(host, sandbox, sandboxName);
+
+  const inference = await startFakeOpenAiCompatibleServer({
+    apiKey: inferenceKey,
+    chatContent: "PONG",
+    host: "0.0.0.0",
+    model,
+    port: 8000,
+    progress,
+    publicHost: "localhost",
+    requireAuth: true,
+    requireAuthModels: true,
+  });
+  cleanup.add("close runtime identity inference prerequisite", () => inference.close());
+
+  progress.phase("onboard a real OpenShell sandbox");
+  const onboard = await onboardSandbox(
+    artifacts,
+    sandboxName,
+    {
+      COMPATIBLE_API_KEY: inferenceKey,
+      NEMOCLAW_ENDPOINT_URL: inference.baseUrl,
+      NEMOCLAW_MODEL: model,
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_PROVIDER: "custom",
+    },
+    [inferenceKey],
+    "tc-inf-12-onboard-real-openshell-sandbox",
+    progress,
+    15 * 60_000,
+  );
+  expectOnboardSuccess(onboard, "TC-INF-12 real OpenShell prerequisite onboard");
+  cleanup.add(`strict runtime identity sandbox cleanup for ${sandboxName}`, () =>
+    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+  );
+
+  // Remove stale fixture-owned objects left by a previously interrupted local
+  // run. Both operations are best-effort and target only this E2E namespace.
+  await sandbox.openshell(["provider", "delete", providerName], {
+    artifactName: "tc-inf-12-preclean-provider",
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  await sandbox.openshell(["provider", "profile", "delete", providerType], {
+    artifactName: "tc-inf-12-preclean-profile",
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+
+  progress.phase("start the public OAuth issuer and protected resource");
+  const oauth = await startRuntimeIdentityOAuthServer({
+    clientId,
+    clientSecret,
+    initialRefreshToken: refreshToken,
+  });
+  cleanup.add("close runtime identity OAuth fixture", async () => {
+    try {
+      await artifacts.writeJson("tc-inf-12-oauth-token-requests.json", oauth.tokenRequests());
+      await artifacts.writeJson(
+        "tc-inf-12-protected-resource-requests.json",
+        oauth.resourceRequests(),
+      );
+    } finally {
+      await oauth.close();
+    }
+  });
+  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
+  const tunnel = await startPublicMcpHttpsTunnel({
+    cloudflaredBin,
+    cleanup,
+    label: "runtime identity OAuth",
+    progress,
+    readinessPath: "/resource",
+    readinessStatus: 401,
+    server: oauth,
+  });
+  const endpoint = new URL(tunnel.origin);
+  const runtimeIdentityProfilePolicy = {
+    providerType,
+    trustedHostnames: [endpoint.hostname],
+    trustedHostSuffixes: [],
+    trustedBinaries: [
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ],
+  };
+  const profilePath = path.join(profileDir, "oauth2-runtime-conformance-v1.yaml");
+  fs.writeFileSync(
+    profilePath,
+    [
+      `id: ${providerType}`,
+      "display_name: OAuth2 Runtime Identity Conformance v1",
+      "description: Deterministic OAuth refresh and bearer-injection conformance profile",
+      "category: agent",
+      "credentials:",
+      `  - name: ${credentialKey}`,
+      "    description: Short-lived conformance access token",
+      "    env_vars:",
+      `      - ${credentialKey}`,
+      "    required: true",
+      "    auth_style: bearer",
+      "    header_name: authorization",
+      "    refresh:",
+      "      strategy: oauth2_refresh_token",
+      `      token_url: ${tunnel.origin}/oauth/token`,
+      "      refresh_before_seconds: 300",
+      "      max_lifetime_seconds: 3600",
+      "      material:",
+      "        - name: client_id",
+      "          required: true",
+      "        - name: refresh_token",
+      "          required: true",
+      "          secret: true",
+      "        - name: client_secret",
+      "          required: false",
+      "          secret: true",
+      "endpoints:",
+      `  - host: ${endpoint.hostname}`,
+      "    port: 443",
+      "    protocol: rest",
+      "    enforcement: enforce",
+      "    rules:",
+      '      - allow: { method: GET, path: "/**" }',
+      "binaries:",
+      "  - /usr/local/bin/node",
+      "  - /usr/bin/node",
+      "  - /usr/local/bin/curl",
+      "  - /usr/bin/curl",
+      "inference_capable: false",
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
   );
   fs.writeFileSync(
     path.join(workdir, "blueprint.yaml"),
@@ -279,49 +429,50 @@ test("TC-INF-12 runtime identity reference plans safely and leaves no identity m
       "components:",
       "  sandbox:",
       "    image: openclaw",
-      "    name: e2e-runtime-identity",
+      `    name: ${sandboxName}`,
       "  inference:",
       "    profiles:",
       "      default:",
       "        provider_type: openai",
-      "        provider_name: default",
-      "        model: e2e-model",
+      "        provider_name: compatible-endpoint",
+      `        model: ${model}`,
       "  identity:",
-      "    profile_path: provider-profiles/okta-runtime-v1.yaml",
-      "    provider_type: okta-runtime-v1",
-      "    provider_name: e2e-okta-runtime",
-      "    credential_key: OKTA_ACCESS_TOKEN",
-      "    client_id_env: OKTA_CLIENT_ID",
-      "    refresh_token_env: OKTA_REFRESH_TOKEN",
-      "    client_secret_env: OKTA_CLIENT_SECRET",
+      "    profile_path: provider-profiles/oauth2-runtime-conformance-v1.yaml",
+      `    provider_type: ${providerType}`,
+      `    provider_name: ${providerName}`,
+      `    credential_key: ${credentialKey}`,
+      "    client_id_env: E2E_CLIENT_ID",
+      "    refresh_token_env: E2E_REFRESH_TOKEN",
+      "    client_secret_env: E2E_CLIENT_SECRET",
       "",
     ].join("\n"),
+    { mode: 0o600 },
   );
 
-  const clientId = "runtime-identity-e2e-client-id";
-  const refreshToken = "runtime-identity-e2e-refresh-token";
-  const clientSecret = "runtime-identity-e2e-client-secret";
-  const redactionValues = [clientId, refreshToken, clientSecret];
+  const redactionValues = [...oauth.secretValues(), inferenceKey];
   const runnerPath = path.join(REPO_ROOT, "nemoclaw/src/blueprint/runner.ts");
   const tsxPath = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
   const runnerEnv = {
-    HOME: home,
-    PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
-    OKTA_CLIENT_ID: clientId,
-    OKTA_REFRESH_TOKEN: refreshToken,
-    OKTA_CLIENT_SECRET: clientSecret,
+    ...openshellEnv,
+    E2E_CLIENT_ID: clientId,
+    E2E_REFRESH_TOKEN: refreshToken,
+    E2E_CLIENT_SECRET: clientSecret,
   };
 
   await artifacts.target.declare({
-    id: "runtime-identity-reference-fail-closed-lifecycle",
+    id: "runtime-identity-reference-real-oauth-lifecycle",
     issue: 6871,
     contract: [
       "plan exposes only the provider-neutral, non-secret identity binding",
-      "DNS-backed refresh and API destinations fail before any OpenShell identity mutation",
-      "failed apply state contains no ownership receipt for resources that were never acquired",
-      "status remains non-secret and rollback never deletes or detaches an unowned identity provider",
-      "this controlled-DNS, fake-OpenShell scenario does not prove successful OpenShell 0.0.85/Okta refresh, presentation, or attachment",
+      "the blueprint runner imports the profile, creates and attaches the provider through real OpenShell",
+      "OpenShell exchanges the refresh token at a public HTTPS OAuth endpoint",
+      "a sandbox request carries only the stable placeholder and the protected resource receives the minted bearer",
+      "a second refresh uses the rotated refresh token and changes the upstream bearer without changing the placeholder",
+      "status, persisted state, command artifacts, and request ledgers contain no OAuth secret material",
+      "rollback detaches and deletes the owned provider and sandbox",
     ],
+    openshellBoundary: "real gateway, provider refresh, attachment, sandbox exec, L7 injection",
+    oauthBoundary: "public DNS and publicly trusted TLS through trycloudflare.com",
   });
 
   progress.phase("plan the non-secret runtime identity reference");
@@ -345,33 +496,27 @@ test("TC-INF-12 runtime identity reference plans safely and leaves no identity m
   );
   const planText = resultText(plan);
   expect(plan.exitCode, planText).toBe(0);
-  expect(planText).toContain('"provider_type": "okta-runtime-v1"');
-  expect(planText).toContain('"provider_name": "e2e-okta-runtime"');
-  expect(planText).toContain('"credential_key": "OKTA_ACCESS_TOKEN"');
+  expect(planText).toContain(`"provider_type": "${providerType}"`);
+  expect(planText).toContain(`"provider_name": "${providerName}"`);
+  expect(planText).toContain(`"credential_key": "${credentialKey}"`);
   for (const forbidden of [
-    "OKTA_CLIENT_ID",
-    "OKTA_REFRESH_TOKEN",
-    "OKTA_CLIENT_SECRET",
+    "E2E_CLIENT_ID",
+    "E2E_REFRESH_TOKEN",
+    "E2E_CLIENT_SECRET",
     ...redactionValues,
   ]) {
     expect(planText).not.toContain(forbidden);
   }
 
-  const applyScript = `
-import dns from "node:dns";
-const originalLookup = dns.promises.lookup;
-const identityHosts = new Set(["example.okta.com", "api.example.okta.com"]);
-dns.promises.lookup = ((hostname, options) => identityHosts.has(hostname)
-  ? Promise.resolve([{ address: "93.184.216.34", family: 4 }])
-  : originalLookup.call(dns.promises, hostname, options));
-const { main } = await import(${JSON.stringify(runnerPath)});
-await main(["apply"]);
-`;
-
-  progress.phase("reject DNS-backed identity apply before OpenShell mutation");
+  progress.phase("apply and attach the runtime identity through OpenShell");
   const apply = await runRawCommand(
     process.execPath,
-    [tsxPath, "--input-type=module", "--eval", applyScript],
+    [
+      tsxPath,
+      "--input-type=module",
+      "--eval",
+      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["apply"], { runtimeIdentityProfilePolicy: ${JSON.stringify(runtimeIdentityProfilePolicy)} });`,
+    ],
     {
       artifactName: "tc-inf-12-runtime-identity-apply",
       artifacts,
@@ -379,31 +524,183 @@ await main(["apply"]);
       env: runnerEnv,
       progress,
       redactionValues,
-      timeoutMs: 60_000,
+      timeoutMs: 5 * 60_000,
     },
   );
   const applyText = resultText(apply);
-  expectOnboardFailure(apply, "TC-INF-12 DNS-backed runtime identity apply");
-  expect(applyText).toMatch(/DNS-backed runtime identity destination/);
+  expect(apply.exitCode, applyText).toBe(0);
+  expect(applyText).toContain(`Sandbox '${sandboxName}' is ready.`);
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
-  expect(fs.existsSync(commandLogPath) ? fs.readFileSync(commandLogPath, "utf8") : "").toBe("");
+  expect(oauth.tokenRequests()).toEqual([
+    {
+      method: "POST",
+      path: "/oauth/token",
+      grantTypeOk: true,
+      clientIdOk: true,
+      refreshTokenOk: true,
+      clientSecretOk: true,
+      issuedVersion: 1,
+    },
+  ]);
 
   const runId = /^RUN_ID:(\S+)$/m.exec(apply.stdout)?.[1];
   expect(runId).toMatch(/^nc-[A-Za-z0-9-]+$/);
-  const stateDir = path.join(home, ".nemoclaw", "state", "runs", runId!);
+  const stateDir = path.join(os.homedir(), ".nemoclaw", "state", "runs", runId!);
   const persistedPlan = fs.readFileSync(path.join(stateDir, "plan.json"), "utf8");
-  const parsedPersistedPlan = JSON.parse(persistedPlan) as Record<string, unknown>;
-  expect(parsedPersistedPlan).not.toHaveProperty("identity");
+  const parsedPersistedPlan = JSON.parse(persistedPlan) as {
+    identity?: Record<string, unknown>;
+  };
+  expect(parsedPersistedPlan.identity).toMatchObject({
+    provider_type: providerType,
+    provider_name: providerName,
+    credential_key: credentialKey,
+    provider_created: true,
+    attachment_created: true,
+  });
   for (const forbidden of [
-    "OKTA_CLIENT_ID",
-    "OKTA_REFRESH_TOKEN",
-    "OKTA_CLIENT_SECRET",
+    "E2E_CLIENT_ID",
+    "E2E_REFRESH_TOKEN",
+    "E2E_CLIENT_SECRET",
     ...redactionValues,
   ]) {
     expect(persistedPlan).not.toContain(forbidden);
   }
 
-  progress.phase("verify persisted state and rollback ownership boundaries");
+  const refreshStatus = await sandbox.openshell(
+    ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
+    {
+      artifactName: "tc-inf-12-provider-refresh-status-v1",
+      env: openshellEnv,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(refreshStatus.exitCode, resultText(refreshStatus)).toBe(0);
+  expect(resultText(refreshStatus)).toMatch(/refreshed/i);
+
+  progress.phase("call the protected resource with the injected bearer");
+  let placeholder = "";
+  let placeholderProbeAttempt = 0;
+  await expect
+    .poll(
+      async () => {
+        placeholderProbeAttempt += 1;
+        const probe = await sandbox.exec(sandboxName, ["/usr/bin/printenv", credentialKey], {
+          artifactName: `tc-inf-12-placeholder-before-rotation-${placeholderProbeAttempt}`,
+          env: openshellEnv,
+          timeoutMs: 30_000,
+        });
+        placeholder = probe.exitCode === 0 ? probe.stdout.trim() : "";
+        return placeholder;
+      },
+      { interval: 2_000, timeout: 35_000 },
+    )
+    .toMatch(new RegExp(`^openshell:resolve:env:(?:v[0-9]+_)?${credentialKey}$`));
+  expect(placeholder).toMatch(new RegExp(`^openshell:resolve:env:(?:v[0-9]+_)?${credentialKey}$`));
+  for (const secret of redactionValues) expect(placeholder).not.toContain(secret);
+
+  const resourceV1 = await sandbox.exec(
+    sandboxName,
+    [
+      "/usr/bin/curl",
+      "-fsS",
+      "-H",
+      `Authorization: Bearer ${placeholder}`,
+      `${tunnel.origin}/resource`,
+    ],
+    {
+      artifactName: "tc-inf-12-protected-resource-v1",
+      env: openshellEnv,
+      timeoutMs: 60_000,
+    },
+  );
+  expect(resourceV1.exitCode, resultText(resourceV1)).toBe(0);
+  expect(JSON.parse(resourceV1.stdout)).toEqual({
+    authenticated: true,
+    access_token_version: 1,
+  });
+  expect(oauth.resourceRequests()).toEqual([
+    {
+      method: "GET",
+      path: "/resource",
+      auth: "ok",
+      accessTokenVersion: 1,
+    },
+  ]);
+
+  progress.phase("rotate the credential without changing the placeholder");
+  const rotate = await sandbox.openshell(
+    ["provider", "refresh", "rotate", providerName, "--credential-key", credentialKey],
+    {
+      artifactName: "tc-inf-12-provider-refresh-rotate-v2",
+      env: openshellEnv,
+      timeoutMs: 60_000,
+    },
+  );
+  expect(rotate.exitCode, resultText(rotate)).toBe(0);
+  expect(oauth.tokenRequests()).toHaveLength(2);
+  expect(oauth.tokenRequests()[1]).toEqual({
+    method: "POST",
+    path: "/oauth/token",
+    grantTypeOk: true,
+    clientIdOk: true,
+    refreshTokenOk: true,
+    clientSecretOk: true,
+    issuedVersion: 2,
+  });
+
+  let rotationProbeAttempt = 0;
+  await expect
+    .poll(
+      async () => {
+        rotationProbeAttempt += 1;
+        const placeholderAfter = await sandbox.exec(
+          sandboxName,
+          ["/usr/bin/printenv", credentialKey],
+          {
+            artifactName: `tc-inf-12-placeholder-after-rotation-${rotationProbeAttempt}`,
+            env: openshellEnv,
+            timeoutMs: 30_000,
+          },
+        );
+        if (placeholderAfter.exitCode !== 0 || placeholderAfter.stdout.trim() !== placeholder) {
+          return false;
+        }
+        const resourceV2 = await sandbox.exec(
+          sandboxName,
+          [
+            "/usr/bin/curl",
+            "-fsS",
+            "-H",
+            `Authorization: Bearer ${placeholder}`,
+            `${tunnel.origin}/resource`,
+          ],
+          {
+            artifactName: `tc-inf-12-protected-resource-v2-${rotationProbeAttempt}`,
+            env: openshellEnv,
+            timeoutMs: 60_000,
+          },
+        );
+        if (resourceV2.exitCode !== 0) return false;
+        try {
+          return (
+            JSON.parse(resourceV2.stdout).authenticated === true &&
+            JSON.parse(resourceV2.stdout).access_token_version === 2
+          );
+        } catch {
+          return false;
+        }
+      },
+      { interval: 2_000, timeout: 35_000 },
+    )
+    .toBe(true);
+  expect(oauth.resourceRequests().at(-1)).toEqual({
+    method: "GET",
+    path: "/resource",
+    auth: "ok",
+    accessTokenVersion: 2,
+  });
+
+  progress.phase("verify secret-safe status and deterministic rollback");
   const status = await runRawCommand(
     process.execPath,
     [
@@ -425,7 +722,7 @@ await main(["apply"]);
   const statusText = resultText(status);
   expect(status.exitCode, statusText).toBe(0);
   expect(statusText).toContain(`"run_id": "${runId}"`);
-  expect(statusText).not.toContain('"identity"');
+  expect(statusText).toContain(`"provider_name": "${providerName}"`);
   for (const secret of redactionValues) expect(statusText).not.toContain(secret);
 
   const rollback = await runRawCommand(
@@ -443,24 +740,31 @@ await main(["apply"]);
       env: runnerEnv,
       progress,
       redactionValues,
-      timeoutMs: 60_000,
+      timeoutMs: 2 * 60_000,
     },
   );
   expect(rollback.exitCode, resultText(rollback)).toBe(0);
   expect(fs.existsSync(path.join(stateDir, "rolled_back"))).toBe(true);
 
-  const openshellCalls = fs
-    .readFileSync(commandLogPath, "utf8")
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { args: string[] });
-  await artifacts.writeJson("tc-inf-12-openshell-commands.json", openshellCalls);
-  expect(openshellCalls).toEqual([
-    { args: ["sandbox", "stop", "e2e-runtime-identity"] },
-    { args: ["sandbox", "remove", "e2e-runtime-identity"] },
-  ]);
-  expect(openshellCalls.some(({ args }) => args.includes("e2e-okta-runtime"))).toBe(false);
+  const providerAfterRollback = await sandbox.openshell(["provider", "get", providerName], {
+    artifactName: "tc-inf-12-provider-after-rollback",
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(providerAfterRollback.exitCode).not.toBe(0);
+  const sandboxAfterRollback = await sandbox.status(sandboxName, {
+    artifactName: "tc-inf-12-sandbox-after-rollback",
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(sandboxAfterRollback.exitCode).not.toBe(0);
+
+  const deleteProfile = await sandbox.openshell(["provider", "profile", "delete", providerType], {
+    artifactName: "tc-inf-12-delete-conformance-profile",
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(deleteProfile.exitCode, resultText(deleteProfile)).toBe(0);
 });
 
 test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)", {

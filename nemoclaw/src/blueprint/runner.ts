@@ -25,9 +25,6 @@ import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
-import type { SnapshotCommandOptions } from "./snapshot-command.js";
-import { actionSnapshots } from "./snapshot-command.js";
-import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
@@ -35,14 +32,18 @@ import {
   isRuntimeIdentityConfig,
   isRuntimeIdentityReceipt,
   prepareRuntimeIdentity,
-  removeRuntimeIdentity,
-  type RuntimeIdentityCommandOptions,
   type RuntimeIdentityCommandDeps,
+  type RuntimeIdentityCommandOptions,
   type RuntimeIdentityConfig,
   type RuntimeIdentityDeps,
   type RuntimeIdentityPlan,
+  type RuntimeIdentityProfilePolicy,
   type RuntimeIdentityReceipt,
+  removeRuntimeIdentity,
 } from "./runtime-identity.js";
+import type { SnapshotCommandOptions } from "./snapshot-command.js";
+import { actionSnapshots } from "./snapshot-command.js";
+import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
 
 // The compiled plugin exposes named CommonJS exports. Source-mode tsx maps the
 // .cjs specifier back to .cts and exposes that same module as its default.
@@ -474,6 +475,7 @@ function runtimeIdentityCommandDeps(): RuntimeIdentityCommandDeps {
 
 function runtimeIdentityDeps(
   persistReceipt: (receipt: RuntimeIdentityReceipt) => void,
+  profilePolicy?: RuntimeIdentityProfilePolicy,
 ): RuntimeIdentityDeps {
   return {
     ...runtimeIdentityCommandDeps(),
@@ -481,6 +483,7 @@ function runtimeIdentityDeps(
     persistReceipt,
     blueprintPath: process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
     env: process.env,
+    profilePolicy,
   };
 }
 
@@ -801,7 +804,12 @@ export async function actionPlan(
 export async function actionApply(
   profile: string,
   blueprint: Blueprint,
-  options?: { planPath?: string; endpointUrl?: string },
+  options?: {
+    planPath?: string;
+    endpointUrl?: string;
+    /** Code-only conformance-test seam. No CLI flag or environment input populates this policy. */
+    runtimeIdentityProfilePolicy?: RuntimeIdentityProfilePolicy;
+  },
 ): Promise<void> {
   if (options?.planPath) {
     throw new Error(
@@ -848,7 +856,7 @@ export async function actionApply(
   const identityDeps = runtimeIdentityDeps((receipt) => {
     runtimeIdentityReceipt = receipt;
     persistRunPlan();
-  });
+  }, options?.runtimeIdentityProfilePolicy);
 
   try {
     if (runtimeIdentityConfig) {
@@ -1155,7 +1163,11 @@ export async function actionRollback(rid: string): Promise<void> {
 
 export async function main(
   argv: string[] = process.argv.slice(2),
-  options: { snapshotCommand?: SnapshotCommandOptions } = {},
+  options: {
+    snapshotCommand?: SnapshotCommandOptions;
+    /** Code-only conformance-test seam. No CLI flag or environment input populates this policy. */
+    runtimeIdentityProfilePolicy?: RuntimeIdentityProfilePolicy;
+  } = {},
 ): Promise<void> {
   const rawAction = argv.at(0);
   const action = isAction(rawAction) ? rawAction : undefined;
@@ -1208,7 +1220,11 @@ export async function main(
     }
     case "apply": {
       const blueprint = loadBlueprint();
-      await actionApply(profile, blueprint, { planPath, endpointUrl });
+      await actionApply(profile, blueprint, {
+        planPath,
+        endpointUrl,
+        runtimeIdentityProfilePolicy: options.runtimeIdentityProfilePolicy,
+      });
       break;
     }
     case "status":
