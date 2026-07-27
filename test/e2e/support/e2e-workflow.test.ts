@@ -173,7 +173,7 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("keeps network-policy scenarios isolated with cleanup reserve", () => {
+  it("keeps the retained network-policy live probes isolated with cleanup reserve (#7617)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
@@ -207,7 +207,7 @@ describe("e2e workflow boundary", () => {
       expect.arrayContaining([
         "network-policy scenario jobs must keep the 90 minute timeout",
         "network-policy scenario matrix must disable fail-fast",
-        "network-policy job must keep the two isolated scenario shards",
+        "network-policy job must keep only the isolated live-probes scenario",
         "network-policy job must isolate artifacts by matrix.scenario",
         "network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
         "network-policy job must bind its sandbox name to matrix.sandbox",

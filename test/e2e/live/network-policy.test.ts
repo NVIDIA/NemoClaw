@@ -1073,18 +1073,11 @@ NEMOCLAW_WEB_FETCH_PROBE`,
   });
 });
 
-// Invalid state: a default restricted OpenClaw onboard (no web-search, no
-// OpenClaw OTEL) used to leave `openclaw-pricing` applied, contradicting the
-// linked issue's "zero presets" acceptance clause. Source boundary: live
-// OpenShell `policy-list` after onboard and before any operator mutation.
-// Source-fix constraint: unit/handler tests stub policy APIs and the
-// brave-enabled `network-policy` scenario above probes the suppressed
-// preset names only, so neither proves the post-onboard applied set is
-// literally empty. Regression test: this scenario onboards a default
-// restricted OpenClaw sandbox and asserts `policy-list` shows no `●`
-// bullets. Removal condition: when the agent-required addition list moves
-// into per-agent declarative metadata so tier filtering happens at the
-// metadata layer (see `src/lib/onboard/policy-tier-suppression.ts`).
+// Transitional workflow shim for #7617. The normal integration suite now
+// owns the zero-preset plan contract. Keep this test for one merge so the
+// trusted base workflow, which still dispatches the old zero-presets shard
+// while reviewing the workflow change, can collect passing head evidence.
+// Delete it after the one-row network-policy matrix is present on main.
 //
 // Acceptance note (`NEMOCLAW_OPENCLAW_OTEL=1`): the OTEL-enabled live
 // variant is deferred to a follow-up nightly extension to keep this

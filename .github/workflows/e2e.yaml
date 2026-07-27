@@ -2596,9 +2596,6 @@ jobs:
           - scenario: live-probes
             selector: "^network-policy:.+probes$"
             sandbox: e2e-net-policy-live-probes
-          - scenario: zero-presets
-            selector: "^network-policy:.+presets$"
-            sandbox: e2e-net-policy-zero-presets
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "network-policy"

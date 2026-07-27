@@ -219,11 +219,6 @@ const NETWORK_POLICY_SCENARIO_MATRIX = {
       selector: "^network-policy:.+probes$",
       sandbox: "e2e-net-policy-live-probes",
     },
-    {
-      scenario: "zero-presets",
-      selector: "^network-policy:.+presets$",
-      sandbox: "e2e-net-policy-zero-presets",
-    },
   ],
 } as const;
 const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
@@ -1377,7 +1372,7 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("network-policy scenario matrix must disable fail-fast");
   }
   if (!isDeepStrictEqual(asRecord(strategy.matrix), NETWORK_POLICY_SCENARIO_MATRIX)) {
-    errors.push("network-policy job must keep the two isolated scenario shards");
+    errors.push("network-policy job must keep only the isolated live-probes scenario");
   }
 
   const jobEnv = asRecord(job.env);
