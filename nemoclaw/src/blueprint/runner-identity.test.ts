@@ -19,7 +19,10 @@ const missingEntry = (path: string): never => {
   throw new Error(`ENOENT: ${path}`);
 };
 
-vi.mock("node:os", () => ({ homedir: () => "/fakehome" }));
+vi.mock("node:os", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:os")>();
+  return { ...original, homedir: () => "/fakehome" };
+});
 vi.mock("node:crypto", () => ({ randomUUID: () => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }));
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
@@ -236,15 +239,16 @@ describe("blueprint identity wrapper", () => {
 
     await actionApply("default", blueprint({ identity: oktaIdentity() }));
 
-    expect(mockExeca).toHaveBeenCalledWith(
-      "openshell",
-      [
-        "provider",
-        "profile",
-        "import",
-        "--file",
-        "/blueprint/provider-profiles/okta-runtime-v1.yaml",
-      ],
+    const importCall = mockExeca.mock.calls.find(
+      (call) =>
+        Array.isArray(call[1]) &&
+        call[1].slice(0, 4).join(" ") === "provider profile import --file",
+    );
+    expect(importCall).toBeDefined();
+    const [, importArguments, importOptions] = importCall!;
+    expect(importArguments[4]).toMatch(/nemoclaw-runtime-identity-profile-.+\/profile\.yaml$/u);
+    expect(importArguments[4]).not.toBe("/blueprint/provider-profiles/okta-runtime-v1.yaml");
+    expect(importOptions).toEqual(
       expect.objectContaining({ reject: false, env: expect.any(Object) }),
     );
     expect(mockExeca).toHaveBeenCalledWith(

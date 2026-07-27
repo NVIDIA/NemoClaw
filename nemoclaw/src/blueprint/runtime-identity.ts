@@ -1,8 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
@@ -656,6 +665,25 @@ async function compensatePreparationFailure(
   throw error;
 }
 
+async function importValidatedProfile(
+  profileSource: string,
+  deps: RuntimeIdentityCommandDeps,
+): Promise<RuntimeIdentityCommandResult> {
+  const snapshotDir = mkdtempSync(join(tmpdir(), "nemoclaw-runtime-identity-profile-"));
+  const snapshotPath = join(snapshotDir, "profile.yaml");
+  try {
+    chmodSync(snapshotDir, 0o700);
+    writeFileSync(snapshotPath, profileSource, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    return await deps.run(["openshell", "provider", "profile", "import", "--file", snapshotPath]);
+  } finally {
+    rmSync(snapshotDir, { recursive: true, force: true });
+  }
+}
+
 export async function prepareRuntimeIdentity(
   config: RuntimeIdentityConfig,
   deps: RuntimeIdentityDeps,
@@ -668,8 +696,9 @@ export async function prepareRuntimeIdentity(
     config.profile_path,
     deps.blueprintPath ?? process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
   );
+  const profileSource = readFileSync(profilePath, "utf8");
   const requestedProfile = parseRuntimeIdentityProfile(
-    readFileSync(profilePath, "utf8"),
+    profileSource,
     config,
     "Runtime identity provider profile",
   );
@@ -688,14 +717,7 @@ export async function prepareRuntimeIdentity(
     );
   }
 
-  const profileImport = await deps.run([
-    "openshell",
-    "provider",
-    "profile",
-    "import",
-    "--file",
-    profilePath,
-  ]);
+  const profileImport = await importValidatedProfile(profileSource, deps);
   if (profileImport.exitCode !== 0) {
     if (!/already exists/i.test(commandOutput(profileImport))) {
       throw new Error(

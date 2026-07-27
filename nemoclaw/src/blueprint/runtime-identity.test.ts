@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,12 +24,12 @@ import {
   isRuntimeIdentityReceipt,
   parseRuntimeIdentityProviderMetadata,
   prepareRuntimeIdentity,
-  removeRuntimeIdentity,
-  resolveRuntimeIdentityProfilePath,
   type RuntimeIdentityCommandResult,
   type RuntimeIdentityConfig,
   type RuntimeIdentityDeps,
   type RuntimeIdentityReceipt,
+  removeRuntimeIdentity,
+  resolveRuntimeIdentityProfilePath,
 } from "./runtime-identity.js";
 
 const success: RuntimeIdentityCommandResult = { exitCode: 0, stdout: "", stderr: "" };
@@ -103,7 +112,10 @@ const createdReceipt: RuntimeIdentityReceipt = {
 };
 
 function commandKey(args: string[]): string {
-  return args.slice(1).join(" ");
+  return args
+    .slice(1)
+    .join(" ")
+    .replace(/^provider profile import --file .+$/u, "provider profile import --file");
 }
 
 describe("runtime identity contract", () => {
@@ -115,6 +127,8 @@ describe("runtime identity contract", () => {
   let deps: RuntimeIdentityDeps;
   let validatedDestinations: string[];
   let persistedReceipts: RuntimeIdentityReceipt[];
+  let importedProfilePaths: string[];
+  let importedProfileSources: string[];
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "nemoclaw-runtime-identity-"));
@@ -126,6 +140,8 @@ describe("runtime identity contract", () => {
     responses = new Map();
     validatedDestinations = [];
     persistedReceipts = [];
+    importedProfilePaths = [];
+    importedProfileSources = [];
     environment = {
       OKTA_CLIENT_ID: "client-id",
       OKTA_REFRESH_TOKEN: "refresh-secret",
@@ -134,6 +150,13 @@ describe("runtime identity contract", () => {
     deps = {
       run: async (args, options) => {
         calls.push({ args, env: options?.env });
+        const captureCommand: Partial<Record<string, () => void>> = {
+          "provider profile import --file": () => {
+            importedProfilePaths.push(args[5]);
+            importedProfileSources.push(readFileSync(args[5], "utf8"));
+          },
+        };
+        captureCommand[commandKey(args)]?.();
         return responses.get(commandKey(args))?.shift() ?? success;
       },
       formatError: (output, secretValues = []) =>
@@ -268,7 +291,7 @@ describe("runtime identity contract", () => {
 
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
       "provider get acme-okta-runtime",
-      `provider profile import --file ${profilePath}`,
+      "provider profile import --file",
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
       "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
       "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
@@ -283,6 +306,9 @@ describe("runtime identity contract", () => {
       "https://example.okta.com/oauth2/default/v1/token",
       "https://api.example.okta.com/",
     ]);
+    expect(importedProfileSources).toEqual([profileDocument]);
+    expect(importedProfilePaths[0]).not.toBe(profilePath);
+    expect(existsSync(importedProfilePaths[0])).toBe(false);
   });
 
   it("rejects a matching pre-existing provider before any mutable refresh operation", async () => {
@@ -296,7 +322,7 @@ describe("runtime identity contract", () => {
 
   it("accepts an already imported profile", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider]);
-    responses.set(`provider profile import --file ${profilePath}`, [
+    responses.set("provider profile import --file", [
       { exitCode: 1, stdout: "", stderr: "profile already exists" },
     ]);
     responses.set("provider profile export okta-runtime-v1 --output yaml", [
@@ -308,7 +334,7 @@ describe("runtime identity contract", () => {
 
   it("rejects an incompatible existing profile", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider]);
-    responses.set(`provider profile import --file ${profilePath}`, [
+    responses.set("provider profile import --file", [
       { exitCode: 1, stdout: "", stderr: "profile already exists" },
     ]);
     responses.set("provider profile export okta-runtime-v1 --output yaml", [
@@ -327,7 +353,7 @@ describe("runtime identity contract", () => {
 
   it("reports a failure to export an existing profile", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider]);
-    responses.set(`provider profile import --file ${profilePath}`, [
+    responses.set("provider profile import --file", [
       { exitCode: 1, stdout: "", stderr: "profile already exists" },
     ]);
     responses.set("provider profile export okta-runtime-v1 --output yaml", [
@@ -501,16 +527,35 @@ describe("runtime identity contract", () => {
     expect(calls.at(-2)?.env).toEqual({ OKTA_REFRESH_TOKEN: "refresh-secret" });
   });
 
+  it("imports the validated bytes when the original profile is replaced before import", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    const replacement = profileDocument.replace(
+      "  - /usr/bin/curl\n",
+      "  - /usr/bin/curl\n  - /bin/sh\n",
+    );
+    deps.validateEndpointUrl = async () => {
+      writeFileSync(profilePath, replacement);
+      return { dnsResolved: false };
+    };
+
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
+
+    expect(readFileSync(profilePath, "utf8")).toBe(replacement);
+    expect(importedProfileSources).toEqual([profileDocument]);
+    expect(importedProfilePaths[0]).not.toBe(profilePath);
+    expect(existsSync(importedProfilePaths[0])).toBe(false);
+  });
+
   it("fails when profile import is rejected", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider]);
-    responses.set(`provider profile import --file ${profilePath}`, [
+    responses.set("provider profile import --file", [
       { exitCode: 1, stdout: "", stderr: "invalid profile" },
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/invalid profile/);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
       "provider get acme-okta-runtime",
-      `provider profile import --file ${profilePath}`,
+      "provider profile import --file",
     ]);
   });
 

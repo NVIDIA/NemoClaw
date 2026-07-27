@@ -303,6 +303,7 @@ The profile path must name an existing regular file whose resolved path stays in
 The profile `id` must match `provider_type`, and the profile must declare exactly one credential whose name matches `credential_key`.
 Before import, the runner validates the complete credential-delivery policy and rejects unknown fields.
 The Okta reference requires bearer presentation through the `authorization` header, the reviewed OAuth refresh-material shape, enforced REST `GET /**` endpoint rules, and exactly the bundled Node.js and curl executable allowlist.
+The runner imports a private temporary snapshot of the exact profile bytes that passed validation, so replacing the original file or its symlink cannot change the policy OpenShell receives.
 Before importing the profile, the runner requires HTTPS refresh and endpoint destinations, restricts them to the provider type's trusted host policy, and sends each through NemoClaw's DNS-aware SSRF boundary; private, loopback, link-local, and unresolved destinations are rejected.
 DNS-backed HTTPS destinations are also rejected because the pinned OpenShell runtime would resolve their hostnames again after validation.
 The current `okta-runtime-v1` policy accepts `okta.com` and its subdomains; custom Okta domains are not supported in this slice.
