@@ -228,10 +228,7 @@ def is_local_pairing_transition(device):
         return 'operator.write' in scopes
     if is_repair not in (None, False):
         return False
-    return (
-        scopes == {'operator.pairing'}
-        or {'operator.pairing', 'operator.write'}.issubset(scopes)
-    )
+    return scopes == {'operator.pairing'} or 'operator.write' in scopes
 
 related_pending = [
     device for device in pending

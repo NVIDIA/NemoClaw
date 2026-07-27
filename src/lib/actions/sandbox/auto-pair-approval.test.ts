@@ -303,6 +303,17 @@ process.exit(2);
       expect(combinedInitial.status).toBe(0);
       expect(combinedInitial.stdout).toContain(`${SUMMARY_MARKER}=1`);
       expect(readApprovals()).toEqual(["clone-pairing-with-write"]);
+      resetLogs();
+      const writeOnlyInitialRequest = {
+        ...localRequest,
+        requestId: "clone-write-only",
+        isRepair: false,
+        scopes: ["operator.write"],
+      };
+      const writeOnlyInitial = run([foreignRequest, writeOnlyInitialRequest]);
+      expect(writeOnlyInitial.status).toBe(0);
+      expect(writeOnlyInitial.stdout).toContain(`${SUMMARY_MARKER}=1`);
+      expect(readApprovals()).toEqual(["clone-write-only"]);
 
       const { scopes: _ignoredScopes, ...repairWithoutScopes } = repairRequest;
       for (const rejected of [
@@ -313,7 +324,7 @@ process.exit(2);
         [{ ...repairRequest, requestedScopes: ["operator.admin"] }],
         [{ ...repairRequest, requestedScopes: repairRequest.scopes }],
         [{ ...repairRequest, scopes: [] }],
-        [{ ...localRequest, requestId: "unpaired-write-only", scopes: ["operator.write"] }],
+        [{ ...localRequest, requestId: "unpaired-read-only", scopes: ["operator.read"] }],
         [repairWithoutScopes],
       ]) {
         resetLogs();
