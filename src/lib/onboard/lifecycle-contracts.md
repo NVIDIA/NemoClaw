@@ -46,7 +46,8 @@ Every nonterminal state has one production owner or an explicit internal designa
 | `sandbox` | `machine/handlers/sandbox.ts`, with resume and messaging decisions delegated to `sandbox-resume.ts` and `sandbox-messaging.ts` |
 | `openclaw`, `agent_setup` | `machine/handlers/agent-setup.ts` |
 | `policies` | `machine/handlers/policies.ts` |
-| `finalizing`, `post_verify` | `machine/handlers/finalization.ts` |
+| `finalizing` | `handleFinalizationState` in `machine/handlers/finalization.ts` |
+| `post_verify` | `handlePostVerifyState` in `machine/handlers/finalization.ts` |
 | `complete`, `failed` | Terminal; no handler |
 
 FSM transitions remain step-granular. For OpenClaw onboarding, the sandbox handler additionally checkpoints each completed secret-free prompt group: sandbox name, web search selection, messaging selection and non-secret configuration, and resource profile. After the sandbox name and web search are checkpointed, a validated web search credential may be registered in OpenShell before messaging. After messaging is checkpointed, validated messaging credentials may be registered before the resource prompt. Each successful registration saves a secret-free provider-name receipt. The machine still cannot resume inside gateway startup, an individual credential upsert, sandbox creation, policy application, or another handler-owned effect group.

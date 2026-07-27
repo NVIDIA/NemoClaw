@@ -577,11 +577,13 @@ describe("OnboardRuntimeBoundary", () => {
       advanceTo("finalizing", { metadata: { state: "policies" } }),
     );
 
-    await boundary.recordPostVerifyStarted();
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+    );
     const completed = await boundary.recordStateResultWithStepCompatibility(
       completeOnboardMachine(
         { sandboxName: "openclaw-sb", provider: "nvidia", model: "nemotron" },
-        { state: "finalizing" },
+        { state: "post_verify" },
       ),
     );
 

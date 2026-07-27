@@ -45,7 +45,6 @@ describe("final onboard flow runtime boundary", () => {
       recordStateSkipped: recorders.recordStateSkipped,
       startRecordedStep: recorders.startRecordedStep,
       recordStepComplete: recorders.recordStepComplete,
-      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
     const recordStateResult = vi.fn(
       harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
@@ -82,6 +81,9 @@ describe("final onboard flow runtime boundary", () => {
       model: "nvidia/test",
       machine: { state: "complete" },
     });
+    expect(
+      harness.events.filter((event) => event.type === "state.entered").map((event) => event.state),
+    ).toEqual(["policies", "finalizing", "post_verify", "complete"]);
   });
 
   it.each([
@@ -98,7 +100,6 @@ describe("final onboard flow runtime boundary", () => {
       recordStateSkipped: recorders.recordStateSkipped,
       startRecordedStep: recorders.startRecordedStep,
       recordStepComplete: recorders.recordStepComplete,
-      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
     const recordStateResult = vi.fn(
       harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
@@ -160,7 +161,6 @@ describe("final onboard flow runtime boundary", () => {
       recordStateSkipped: recorders.recordStateSkipped,
       startRecordedStep: recorders.startRecordedStep,
       recordStepComplete: recorders.recordStepComplete,
-      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
     const recordStateResult = vi.fn(
       harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
@@ -200,7 +200,7 @@ describe("final onboard flow runtime boundary", () => {
     });
   });
 
-  it("updates the live final context before strict final verification", async () => {
+  it("enters post verification with the updated live final context", async () => {
     const order: string[] = [];
     let liveChannels: string[] = [];
     const harness = createRuntimeHarness(sessionAt("openclaw"));
@@ -211,9 +211,9 @@ describe("final onboard flow runtime boundary", () => {
       recordStateSkipped: recorders.recordStateSkipped,
       startRecordedStep: recorders.startRecordedStep,
       recordStepComplete: recorders.recordStepComplete,
-      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
       mergePolicyMessagingChannels: () => ["slack", "discord"],
       verifyDeployment: vi.fn(async () => {
+        expect(harness.getSession().machine.state).toBe("post_verify");
         order.push(`verify:${liveChannels.join(",")}`);
         return {
           healthy: true,
@@ -294,7 +294,6 @@ describe("final onboard flow runtime boundary", () => {
       recordStateSkipped: recorders.recordStateSkipped,
       startRecordedStep: recorders.startRecordedStep,
       recordStepComplete: recorders.recordStepComplete,
-      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
       verifyDeployment: vi.fn(async () => {
         order.push("verify");
         throw new Error("verification failed");
@@ -344,7 +343,6 @@ describe("final onboard flow runtime boundary", () => {
       recordStateSkipped: recorders.recordStateSkipped,
       startRecordedStep: recorders.startRecordedStep,
       recordStepComplete: recorders.recordStepComplete,
-      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
       verifyDeployment,
     });
 

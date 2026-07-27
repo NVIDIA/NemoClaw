@@ -3883,8 +3883,6 @@ const recordInvalidatedStateResult =
   onboardRuntimeBoundary.recordInvalidatedStateResult.bind(onboardRuntimeBoundary);
 const recordInitialPreflightTransition =
   onboardRuntimeBoundary.recordInitialPreflightTransition.bind(onboardRuntimeBoundary);
-const recordPostVerifyStarted =
-  onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 /** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
@@ -4506,7 +4504,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
     let liveFinalFlowContext = finalFlowContext;
 
-    const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
+    const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
       import("./verify-deployment").VerifyDeploymentResult
@@ -4571,7 +4569,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
-        recordPostVerifyStarted,
         toSessionUpdates: (updates) =>
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
@@ -4623,7 +4620,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const finalFlowResult = await runFinalOnboardFlowSlice({
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
-      phases: [branchSetupPhase, policiesPhase, finalizationPhase],
+      phases: finalFlowPhases,
       recordStateResult,
       recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {

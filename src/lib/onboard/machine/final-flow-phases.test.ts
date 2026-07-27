@@ -15,11 +15,15 @@ describe("final onboard flow phases", () => {
 
   it("runs policies before final verification", async () => {
     const order: string[] = [];
-    const [branchPhase, policiesPhase, finalizationPhase] = createPhases("openclaw", order);
+    const [branchPhase, policiesPhase, finalizationPhase, postVerifyPhase] = createPhases(
+      "openclaw",
+      order,
+    );
 
     const branchResult = await branchPhase.run(context());
     const policiesResult = await policiesPhase.run(branchResult.context);
-    await finalizationPhase.run(policiesResult.context);
+    const finalizationResult = await finalizationPhase.run(policiesResult.context);
+    await postVerifyPhase.run(finalizationResult.context);
 
     expect(order).toEqual(["openclaw", "policies", "set-default", "agent-forward", "verify"]);
   });
@@ -35,7 +39,8 @@ describe("final onboard flow phases", () => {
   });
 
   it("rejects final phases when required context is missing", async () => {
-    const [branchPhase, policiesPhase, finalizationPhase] = createPhases("openclaw");
+    const [branchPhase, policiesPhase, finalizationPhase, postVerifyPhase] =
+      createPhases("openclaw");
     const incomplete = context({ sandboxName: null });
 
     await expect(branchPhase.run(incomplete)).rejects.toThrow(
@@ -46,6 +51,9 @@ describe("final onboard flow phases", () => {
     );
     await expect(finalizationPhase.run(incomplete)).rejects.toThrow(
       "Onboarding state is incomplete before finalization.",
+    );
+    await expect(postVerifyPhase.run(incomplete)).rejects.toThrow(
+      "Onboarding state is incomplete before post verification.",
     );
   });
 
@@ -92,6 +100,6 @@ describe("final onboard flow phases", () => {
       "agent-forward",
       "verify",
     ]);
-    expect(recorded).toEqual(["policies", "finalizing", "complete"]);
+    expect(recorded).toEqual(["policies", "finalizing", "post_verify", "complete"]);
   });
 });

@@ -8,10 +8,15 @@ import {
   createFinalizationPhase,
   createOpenclawSetupPhase,
   createPoliciesPhase,
+  createPostVerifyPhase,
 } from "./flow-phases/agent-policy-finalization";
 import { runFinalOnboardFlowSequence } from "./flow-slices";
 import { type AgentSetupStateOptions, handleAgentSetupState } from "./handlers/agent-setup";
-import { type FinalizationStateOptions, handleFinalizationState } from "./handlers/finalization";
+import {
+  type FinalizationStateOptions,
+  handleFinalizationState,
+  handlePostVerifyState,
+} from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
 import {
   type InvalidatedOnboardStateResultRecorder,
@@ -48,7 +53,12 @@ export function createFinalOnboardFlowPhases<
   VerificationResult = unknown,
 >(
   options: FinalOnboardFlowPhaseOptions<Context, VerifyChain, VerificationResult>,
-): [OnboardSequencePhase<Context>, OnboardSequencePhase<Context>, OnboardSequencePhase<Context>] {
+): [
+  OnboardSequencePhase<Context>,
+  OnboardSequencePhase<Context>,
+  OnboardSequencePhase<Context>,
+  OnboardSequencePhase<Context>,
+] {
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {
@@ -115,7 +125,25 @@ export function createFinalOnboardFlowPhases<
     return { result: finalizationResult.stateResult };
   });
 
-  return [branchSetupPhase, policiesPhase, finalizationPhase];
+  const postVerifyPhase = createPostVerifyPhase<Context>(async (context) => {
+    assertSandboxCreatedContext(context, "post verification");
+    const postVerifyResult = await handlePostVerifyState({
+      sandboxName: context.sandboxName,
+      model: context.model,
+      provider: context.provider,
+      nimContainer: context.nimContainer,
+      agent: context.agent,
+      hermesAuthMethod: context.hermesAuthMethod,
+      hermesToolGateways: context.hermesToolGateways,
+      stagedLegacyKeys: options.finalization.stagedLegacyKeys,
+      migratedLegacyKeys: options.finalization.migratedLegacyKeys,
+      webSearchEnabled: options.finalization.webSearchEnabled(context.webSearchConfig),
+      deps: options.finalizationDeps,
+    });
+    return { result: postVerifyResult.stateResult };
+  });
+
+  return [branchSetupPhase, policiesPhase, finalizationPhase, postVerifyPhase];
 }
 
 function isPoliciesAppliedResult(result: OnboardStateResult): boolean {

@@ -41,7 +41,6 @@ export type RecorderOverrides = {
     },
   ) => Promise<void>;
   recordStepComplete?: (stepName: string, updates?: SessionUpdates) => Promise<Session>;
-  recordPostVerifyStarted?: () => Promise<Session>;
   mergePolicyMessagingChannels?: PoliciesStateOptions<
     Agent | null,
     WebSearchConfig
@@ -243,8 +242,6 @@ export function createPhases(
       setDefaultSandbox: vi.fn(() => {
         order.push("set-default");
       }),
-      recordPostVerifyStarted:
-        recorders.recordPostVerifyStarted ?? vi.fn(async () => createSession()),
       toSessionUpdates: (updates) => updates as NonNullable<SessionUpdates>,
       removeLegacyCredentialsFile: vi.fn(),
       cleanupStaleHostFiles: vi.fn(),
