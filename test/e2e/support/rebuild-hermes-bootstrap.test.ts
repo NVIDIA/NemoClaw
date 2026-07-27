@@ -8,6 +8,7 @@ import { findAvailableDashboardPort } from "../../../src/lib/onboard/dashboard-p
 import type { HostCliClient } from "../fixtures/clients/index.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  bootstrapRebuildHermesGateway,
   buildRebuildHermesCurrentBaseEnv,
   buildRebuildHermesCurrentBaseScript,
   buildRebuildHermesGatewayBootstrapScript,
@@ -232,6 +233,30 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(script).not.toContain('["gateway", "start"');
     expect(script).not.toContain("onboard(");
     expect(script).not.toContain("sandbox create");
+  });
+
+  it("stops before gateway probes when bootstrap omits completion evidence (#7144)", async () => {
+    const markerlessHost = fakeHost([probe("gateway setup returned without completion evidence")]);
+    const writeJson = vi.fn(async (_name: string, _value: unknown) => "unused-artifact.json");
+
+    await expect(
+      bootstrapRebuildHermesGateway({
+        host: markerlessHost.host,
+        envFactory,
+        redactionValues: ["secret"],
+        onOutput: () => {},
+        activeOpenshellBin: "/opt/openshell",
+        apiKey: "secret",
+        artifacts: { writeJson },
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        expectedModel: "nvidia/example-model",
+        sandboxName: "e2e-rebuild-hermes-markerless",
+      }),
+    ).rejects.toThrow(/completion marker/);
+
+    expect(markerlessHost.command).toHaveBeenCalledTimes(1);
+    expect(markerlessHost.command.mock.calls[0]?.[0]).toBe(process.execPath);
+    expect(writeJson).not.toHaveBeenCalled();
   });
 
   it("requires the exact compatible-endpoint provider and model (#7144)", async () => {
