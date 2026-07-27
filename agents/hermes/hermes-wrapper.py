@@ -302,6 +302,21 @@ _BOOLEAN_FLAGS = {
     "--ignore-user-config",
     "--ignore-rules",
 }
+_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS = frozenset(("-c", "--continue", "-r", "--resume"))
+_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS = frozenset(
+    (set(_VALUE_FLAGS) - _PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS)
+    | {"-z", "--oneshot", "-p", "--profile"}
+)
+# Mirror the pinned Hermes v0.18 `_coalesce_session_name_args` boundaries:
+# unquoted session names consume words until a flag or known subcommand.
+_HERMES_SUBCOMMANDS = frozenset(
+    """
+    chat model gateway setup whatsapp whatsapp-cloud login logout auth status
+    cron doctor config pairing skills tools mcp sessions insights version update
+    uninstall profile dashboard serve desktop gui honcho claw plugins security
+    acp webhook memory dump debug backup import completion logs
+    """.split()
+)
 
 
 def _split_flag_value(arg: str) -> tuple[str, str] | None:
@@ -452,17 +467,68 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
 #   - Tracking: NVIDIA/NemoClaw#7361
 
 
+def _supports_provider_model_merge(argv: list[str]) -> bool:
+    """Return whether argv is a top-level or chat invocation.
+
+    Hermes accepts provider/model selection at the top level and on `chat`.
+    Other positional commands own their remaining flags, so leave those
+    invocations untouched. Unknown options with separate values fail closed:
+    their first positional token is treated as a command.
+    """
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+
+        if arg == "--":
+            return True
+
+        if _split_flag_value(arg) is not None:
+            i += 1
+            continue
+
+        if arg in _PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS:
+            i += 2
+            continue
+
+        if arg in _PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS:
+            i += 1
+            if i < len(argv) and not argv[i].startswith("-"):
+                i += 1
+            while (
+                i < len(argv)
+                and not argv[i].startswith("-")
+                and argv[i] not in _HERMES_SUBCOMMANDS
+            ):
+                i += 1
+            continue
+
+        if arg.startswith("-"):
+            i += 1
+            continue
+
+        return arg == "chat"
+
+    return True
+
+
 def _merge_provider_into_model(argv: list[str]) -> list[str]:
     """Merge separate --provider and -m/--model flags into the combined form.
 
     When both --provider <name> and -m/--model <model> are present as separate
-    flags and the model value does not already contain '/', rewrite to the
-    combined 'provider/model' form so the invocation routes through the
-    OpenShell proxy rewrite path that resolves credential placeholders.
+    flags and the model value is not already prefixed by that provider,
+    rewrite to the combined 'provider/model' form so the invocation routes
+    through the OpenShell proxy rewrite path that resolves credential
+    placeholders. Model ids may contain their own namespace separator, such
+    as 'nvidia/nemotron', without already being provider-prefixed.
 
-    Returns argv unchanged on ambiguity (missing flag, model already combined,
-    empty values, duplicates). Pure function, no side effects.
+    A model already prefixed by the selected provider keeps its value while the
+    redundant provider flag is removed. Returns argv unchanged for other
+    positional commands or on ambiguity (missing flag, empty values,
+    duplicates). Pure function, no side effects.
     """
+    if not _supports_provider_model_merge(argv):
+        return argv
+
     provider: str | None = None
     provider_idx: int = -1
     provider_val_idx: int = -1
@@ -523,10 +589,10 @@ def _merge_provider_into_model(argv: list[str]) -> list[str]:
         return argv
     if not provider or not model:
         return argv
-    if "/" in model:
-        return argv
-
-    merged_model = f"{provider}/{model}"
+    provider_prefix = f"{provider}/"
+    merged_model = (
+        model if model.casefold().startswith(provider_prefix.casefold()) else f"{provider}/{model}"
+    )
 
     # Build new argv: remove provider flag+value, replace model value with merged
     skip = {provider_idx}
