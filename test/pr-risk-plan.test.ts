@@ -28,7 +28,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(6);
+    expect(first.version).toBe(7);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -52,8 +52,8 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(canonical)).toContain("cloud-onboard");
     expect(ordinaryLiveTest.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
     expect(riskPlanRequiredJobIds(ordinaryLiveTest)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
     ]);
   });
@@ -263,7 +263,7 @@ describe("deterministic PR risk plan", () => {
     {
       file: "src/lib/credentials/provider-list.ts",
       family: "credentials-security",
-      jobs: ["credential-sanitization", "security-posture"],
+      jobs: ["cloud-inference", "security-posture"],
     },
   ])("maps $family changes to a reviewed E2E floor", ({ file, family, jobs }) => {
     const result = plan(file);
@@ -289,22 +289,22 @@ describe("deterministic PR risk plan", () => {
     {
       file: "nemoclaw-blueprint/private-networks.yaml",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
     },
     {
       file: "nemoclaw/src/blueprint/private-networks.ts",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
     },
     {
       file: "src/lib/policy/managed-policy-binding.ts",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
     },
     {
       file: "src/lib/shields/verify-lock.ts",
       families: ["credentials-security"],
-      jobs: ["credential-sanitization", "security-posture"],
+      jobs: ["cloud-inference", "security-posture"],
     },
   ])("keeps the $file security boundary in the deterministic floor", ({ file, families, jobs }) => {
     const result = plan(file);
@@ -348,7 +348,7 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["cloud-onboard", "credential-sanitization", "security-posture"]),
+      expect.arrayContaining(["cloud-onboard", "cloud-inference", "security-posture"]),
     );
   });
 
@@ -410,8 +410,8 @@ describe("deterministic PR risk plan", () => {
     );
 
     expect(riskPlanRequiredJobIds(result)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",
