@@ -23,7 +23,9 @@ describe("verifyRestoredSandboxGatewayPairing", () => {
   it("accepts an authenticated gateway verification run that exits successfully (#7431)", () => {
     const deps = verifierDeps({ status: 0, stdout: '{"result":"pong"}', stderr: "" });
 
-    expect(verifyRestoredSandboxGatewayPairing("beta", SESSION_ID_PREFIX, deps)).toBe(true);
+    expect(verifyRestoredSandboxGatewayPairing("beta", SESSION_ID_PREFIX, deps)).toEqual({
+      ok: true,
+    });
     expect(deps.spawnSync).toHaveBeenCalledWith(
       "/usr/bin/openshell",
       expect.arrayContaining(["sandbox", "exec", "--name", "beta"]),
@@ -34,23 +36,28 @@ describe("verifyRestoredSandboxGatewayPairing", () => {
   it("rejects an authenticated gateway verification run that exits unsuccessfully (#7431)", () => {
     expect(
       verifyRestoredSandboxGatewayPairing("beta", SESSION_ID_PREFIX, verifierDeps({ status: 1 })),
-    ).toBe(false);
+    ).toEqual({ ok: false, failureLayer: "command-failure" });
   });
 
   it.each([
-    "EMBEDDED FALLBACK: gateway unavailable",
-    '{"fallbackFrom":"gateway"}',
-    '{"transport":"embedded"}',
-    "gateway connect failed: device pairing required",
-    "scope upgrade pending approval",
-  ])("rejects a zero-exit verification run with fallback or pairing output (#7431)", (output) => {
+    ["EMBEDDED FALLBACK: gateway unavailable", "embedded-fallback"],
+    ['{"fallbackFrom":"gateway"}', "embedded-fallback"],
+    ['{"transport":"embedded"}', "embedded-fallback"],
+    ["gateway connect failed", "gateway-connect-failure"],
+    ["gateway connect failed: device pairing required", "device-pairing-required"],
+    ["scope upgrade pending approval", "scope-upgrade-pending"],
+    [
+      "gateway connect failed: pairing required: device is asking for more scopes",
+      "scope-upgrade-pending",
+    ],
+  ] as const)("classifies a verification run with fallback or pairing output (#7431)", (output, failureLayer) => {
     expect(
       verifyRestoredSandboxGatewayPairing(
         "beta",
         SESSION_ID_PREFIX,
         verifierDeps({ status: 0, stdout: output }),
       ),
-    ).toBe(false);
+    ).toEqual({ ok: false, failureLayer });
   });
 
   it("accepts changed output when the gateway run exits successfully without a failure signal (#7431)", () => {
@@ -60,7 +67,27 @@ describe("verifyRestoredSandboxGatewayPairing", () => {
         SESSION_ID_PREFIX,
         verifierDeps({ status: 0, stdout: '{"futureResult":"ok"}' }),
       ),
-    ).toBe(true);
+    ).toEqual({ ok: true });
+  });
+
+  it("rejects an empty successful verification run (#7431)", () => {
+    expect(
+      verifyRestoredSandboxGatewayPairing(
+        "beta",
+        SESSION_ID_PREFIX,
+        verifierDeps({ status: 0, stdout: "", stderr: "" }),
+      ),
+    ).toEqual({ ok: false, failureLayer: "empty-output" });
+  });
+
+  it("rejects a successful verification run with only a stderr warning (#7431)", () => {
+    expect(
+      verifyRestoredSandboxGatewayPairing(
+        "beta",
+        SESSION_ID_PREFIX,
+        verifierDeps({ status: 0, stdout: "", stderr: "unrelated warning" }),
+      ),
+    ).toEqual({ ok: false, failureLayer: "empty-output" });
   });
 
   it("rejects an authenticated gateway verification run that times out (#7431)", () => {
@@ -71,9 +98,9 @@ describe("verifyRestoredSandboxGatewayPairing", () => {
       verifyRestoredSandboxGatewayPairing(
         "beta",
         SESSION_ID_PREFIX,
-        verifierDeps({ status: null, error }),
+        verifierDeps({ status: null, error, stdout: '{"result":"pong"}' }),
       ),
-    ).toBe(false);
+    ).toEqual({ ok: false, failureLayer: "execution-timeout" });
   });
 
   it("rejects verification when the OpenShell executable cannot be resolved (#7431)", () => {
@@ -84,7 +111,7 @@ describe("verifyRestoredSandboxGatewayPairing", () => {
         resolveOpenshell: () => null,
         spawnSync: spawn,
       }),
-    ).toBe(false);
+    ).toEqual({ ok: false, failureLayer: "openshell-unavailable" });
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -96,6 +123,36 @@ describe("verifyRestoredSandboxGatewayPairing", () => {
           throw new Error("spawn failed");
         },
       }),
-    ).toBe(false);
+    ).toEqual({ ok: false, failureLayer: "spawn-failure" });
+  });
+
+  it("rejects a returned process error before inspecting buffered output (#7431)", () => {
+    const error = new Error("not found") as NodeJS.ErrnoException;
+    error.code = "ENOENT";
+
+    expect(
+      verifyRestoredSandboxGatewayPairing(
+        "beta",
+        SESSION_ID_PREFIX,
+        verifierDeps({
+          status: 0,
+          error,
+          stdout: '{"result":"pong"}',
+          stderr: "token=do-not-report",
+        }),
+      ),
+    ).toEqual({ ok: false, failureLayer: "spawn-failure" });
+  });
+
+  it("does not expose verifier output in a classified failure (#7431)", () => {
+    const secretOutput = "scope upgrade pending approval token=do-not-report";
+
+    expect(
+      verifyRestoredSandboxGatewayPairing(
+        "beta",
+        SESSION_ID_PREFIX,
+        verifierDeps({ status: 0, stderr: secretOutput }),
+      ),
+    ).toEqual({ ok: false, failureLayer: "scope-upgrade-pending" });
   });
 });

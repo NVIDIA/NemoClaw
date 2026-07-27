@@ -6,11 +6,12 @@
 ## v0.0.96
 
 NemoClaw v0.0.96 adds persistent baseline network policy exclusions, DNS-backed HTTPS inference switching, host-managed default OpenShell gateways, and opt-in MCP tool discovery.
-It also hardens blueprint identifier validation, improves onboarding and recovery diagnostics, locks and updates managed sandbox image dependencies, reduces Hermes image size, and strengthens release validation.
+It also hardens blueprint identifier validation, improves onboarding and recovery diagnostics, preserves Shields posture during bulk backups, locks and updates managed sandbox image dependencies, reduces Hermes image size, and strengthens release validation.
 
 - `policy exclude` and `policy restore` now persist an operator-approved removal of one exact agent baseline entry across rebuild and snapshot restore.
   The commands preview the removed endpoints and affected features, reserve excluded keys, protect `managed_inference`, and require another review after agent or baseline drift.
   `policy list`, `policy explain`, `status`, `doctor`, snapshot, and rebuild output report active or inconsistent exclusions.
+  The `claude-code` preset now permits the resolved npm-installed launcher path that OpenShell enforces without broadening its endpoint or HTTP method scope.
   For more information, refer to [Network Policies](/user-guide/openclaw/reference/network-policies) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - `nemoclaw inference set --endpoint-url` now routes public DNS-backed HTTPS custom endpoints through a host-side HTTPS Pin Runtime adapter.
   Each route receives a separate sandbox-facing credential, while the upstream endpoint and credential remain host-only.
@@ -24,8 +25,10 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   NemoClaw-managed custom ports retain the detached-process lifecycle, while a declared external supervisor retains authority for its gateway.
   Onboarding now uses deadline-based readiness waits and omits TLS Server Name Indication for IP-literal health probes.
   It accepts a positively identified Docker engine even when `ProductLicense` is `Apache-2.0`, and rejects a macOS Podman compatibility socket before gateway launch.
-  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture), [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  Invalid `NEMOCLAW_GATEWAY_MANAGEMENT` declarations now return a sanitized single-line CLI error and nonzero exit instead of a Node.js stack trace.
+  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture), [Declare the OpenShell Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority), [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Status and upgrade checks now scope gateway failure and agent-version probes to the sandbox's recorded gateway.
+  `nemoclaw list` and global `status` hide route-only reservations left by failed onboarding while preserving them for `onboard --resume`.
   `doctor` reports incomplete lifecycle metadata without exposing stored values.
   An explicit forced rebuild can preserve managed MCP configuration after the old sandbox loses exec access, with exact gateway, policy, and provider proofs before deletion.
   Rebuild rechecks the canonical sandbox and recorded gateway at the delete edge, restores MCP state if that target drifts, and keeps shields unlocked when an accepted deletion remains unconfirmed.
@@ -48,9 +51,17 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   DGX Station preparation now distinguishes an active vLLM server from unrelated diagnostic processes.
   For more information, refer to the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart), [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes), [Prepare Windows for NemoClaw](/user-guide/openclaw/get-started/additional-setup/windows-preparation), and [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
 - The Ollama model menu now shows download size, required VRAM, and available or total GPU memory when known.
+  Re-onboarding a committed local Ollama route now reuses its persisted proxy token so the existing sandbox and restarted host proxy keep the same credential.
   Resumed onboarding reports when a recorded reasoning setting takes precedence over `NEMOCLAW_REASONING`.
-  Passing the managed Hermes Dockerfile to `nemohermes onboard --from` now stages the repository root, and separate Hermes provider and model flags use the credential-resolving combined route.
+  Passing the managed Hermes Dockerfile to `nemohermes onboard --from` now stages the repository root, and separate Hermes provider and namespaced model flags use the credential-resolving combined route without dropping the model namespace.
   For more information, refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities), [Install Hermes Plugins](/user-guide/hermes/manage-sandboxes/install-hermes-plugins), and the [NemoHermes CLI Commands Reference](/user-guide/hermes/reference/commands).
+- `nemoclaw backup-all` now opens a separate 30-minute Shields-down window for each eligible sandbox that starts with Shields up and restores lockdown before it processes the next sandbox.
+  A sandbox that starts with Shields down remains down.
+  If lockdown cannot be restored, the batch stops and prints the recovery command without processing the remaining sandboxes.
+  Cross-sandbox snapshot restore now approves at most one pairing or scope-upgrade request that matches the restored clone, restarts that clone's gateway to publish the approval, and uses one authenticated verification as its success condition.
+  NemoClaw rejects corrupt persisted Shields state before mutation.
+  Operators must restore the state from a trusted host backup; neither `shields up` nor an ordinary rebuild replaces it.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Managed OpenClaw and Hermes sandbox Dockerfiles now avoid BuildKit-only bind mounts.
   On Docker Engine hosts, the OpenShell gateway builder can complete the image build when the host-side BuildKit prebuild is unavailable or fails.
   For more information, refer to [NemoClaw Prerequisites](/user-guide/openclaw/get-started/prerequisites) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
@@ -59,6 +70,9 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   The OpenClaw graph replaces its affected `brace-expansion` and `fast-uri` resolutions.
   All managed sandbox base images now install checksum-bound fixed Vim, jq, Oniguruma, and Expat packages and verify the reviewed Perl components.
   Their bundled npm replaces its private `brace-expansion@5.0.7` copy with SRI-pinned `5.0.8`, and each image records a root-owned, read-only package inventory.
+  OpenClaw onboarding now rejects a selected base that lacks that immutable inventory before the final image build.
+  When a cached exact release is incompatible, onboarding refreshes it once.
+  If it remains incompatible, onboarding uses a current local build rather than `:latest`.
   Hermes image assembly removes build-only caches and dependencies, reducing the measured final image by 624,394,525 bytes.
   For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture).
 - Release validation now runs approved E2E targets for fork PRs, retries one confirmed hosted-runner loss, and retries classified transient base-image pulls.

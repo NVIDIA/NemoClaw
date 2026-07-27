@@ -256,13 +256,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/gateway-health-honest.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -411,16 +404,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/openshell-version-pin.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-workflow.test.ts",
-        "test/install-openshell-version-check.test.ts",
-        "test/installer-hash-check.test.ts",
-        "test/onboard-openshell-version.test.ts",
-        "test/runner.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/overlayfs-autofix.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -531,15 +514,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/docs-validation.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-progress-fixture.test.ts",
-        "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts",
-        "test/e2e/support/workflow-e2e-progress.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
@@ -576,15 +550,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/onboard-negative-paths.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-progress-fixture.test.ts",
-        "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts",
-        "test/e2e/support/workflow-e2e-progress.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/registry-targets.test.ts",
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
@@ -604,15 +569,6 @@
     },
     {
       "live": "test/e2e/live/tunnel-lifecycle.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-progress-fixture.test.ts",
-        "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts",
-        "test/e2e/support/workflow-e2e-progress.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/ubuntu-repo-cli-smoke.test.ts",
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
