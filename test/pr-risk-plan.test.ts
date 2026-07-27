@@ -28,7 +28,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(7);
+    expect(first.version).toBe(8);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -233,7 +233,7 @@ describe("deterministic PR risk plan", () => {
     {
       file: "src/lib/actions/upgrade-sandboxes.ts",
       family: "upgrade-rebuild",
-      jobs: ["state-backup-restore", "upgrade-stale-sandbox"],
+      jobs: ["rebuild-openclaw", "state-backup-restore"],
     },
     {
       file: "src/lib/actions/sandbox/agents/apply.ts",
@@ -421,8 +421,8 @@ describe("deterministic PR risk plan", () => {
       "network-policy",
       "onboard-repair",
       "onboard-resume",
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
   });
 

@@ -100,12 +100,41 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
       },
     ],
   },
+  "sandbox-rebuild": {
+    legacyFile: "test/e2e/live/sandbox-rebuild.test.ts",
+    tests: [
+      {
+        files: [
+          "src/lib/actions/sandbox/rebuild-finalization.test.ts",
+          "src/lib/actions/sandbox/rebuild-flow-helpers.test.ts",
+        ],
+        project: "cli",
+      },
+      {
+        files: ["test/rebuild-stale-recovery.test.ts"],
+        project: "integration",
+      },
+    ],
+  },
   "ubuntu-repo-cli-smoke": {
     legacyFile: "test/e2e/live/ubuntu-repo-cli-smoke.test.ts",
     tests: [
       {
         files: ["test/package-contract/cli/public-cli-contracts.test.ts"],
         project: "package-contract",
+      },
+    ],
+  },
+  "upgrade-stale-sandbox": {
+    legacyFile: "test/e2e/live/upgrade-stale-sandbox.test.ts",
+    tests: [
+      {
+        files: ["src/lib/sandbox/version.test.ts"],
+        project: "cli",
+      },
+      {
+        files: ["test/cli/list-share-live-inference.test.ts"],
+        project: "integration",
       },
     ],
   },

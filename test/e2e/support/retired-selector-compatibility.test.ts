@@ -17,7 +17,11 @@ const EXPECTED_SHA = "a".repeat(40);
 const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const REPLACEMENT_FILES = [
+  "src/lib/actions/sandbox/rebuild-finalization.test.ts",
+  "src/lib/actions/sandbox/rebuild-flow-helpers.test.ts",
+  "src/lib/sandbox/version.test.ts",
   "src/lib/security/credential-filter-secret-patterns.test.ts",
+  "test/cli/list-share-live-inference.test.ts",
   "test/credential-migration-reconciliation.test.ts",
   "test/package-contract/cli/debug-cli-command.test.ts",
   "test/package-contract/cli/public-cli-contracts.test.ts",
@@ -26,6 +30,7 @@ const REPLACEMENT_FILES = [
   "test/credentials.test.ts",
   "test/package-contract/onboard/invalid-nvidia-key.test.ts",
   "test/install-openshell-version-pin.test.ts",
+  "test/rebuild-stale-recovery.test.ts",
 ] as const;
 
 function workspace(): { artifactRoot: string; output: string; root: string } {
@@ -92,8 +97,8 @@ describe("retired E2E selector compatibility", () => {
 
       expect(selected).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS].sort());
       expect(commands).toEqual([
-        "npx vitest run --project cli src/lib/security/credential-filter-secret-patterns.test.ts",
-        "npx vitest run --project integration test/credential-migration-reconciliation.test.ts test/credentials.test.ts test/gateway-drift-preflight.test.ts test/gateway-health-honest.test.ts",
+        "npx vitest run --project cli src/lib/actions/sandbox/rebuild-finalization.test.ts src/lib/actions/sandbox/rebuild-flow-helpers.test.ts src/lib/sandbox/version.test.ts src/lib/security/credential-filter-secret-patterns.test.ts",
+        "npx vitest run --project integration test/cli/list-share-live-inference.test.ts test/credential-migration-reconciliation.test.ts test/credentials.test.ts test/gateway-drift-preflight.test.ts test/gateway-health-honest.test.ts test/rebuild-stale-recovery.test.ts",
         "npx vitest run --project installer-integration test/install-openshell-version-pin.test.ts",
         "npx vitest run --project package-contract test/package-contract/cli/debug-cli-command.test.ts test/package-contract/cli/public-cli-contracts.test.ts test/package-contract/onboard/invalid-nvidia-key.test.ts",
       ]);
