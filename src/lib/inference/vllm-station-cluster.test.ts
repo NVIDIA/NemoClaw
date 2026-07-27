@@ -1202,7 +1202,6 @@ def fixture_run(argv, **_kwargs):
             "dst": peer,
             "lladdr": mac,
             "state": ["REACHABLE"],
-            "dev": netdev,
         }]))
     return FixtureResult(127)
 

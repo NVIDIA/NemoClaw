@@ -626,7 +626,11 @@ for offset in (0, 3):
         try:
             neighbors = json.loads(neighbor_output)
             neighbor = neighbors[0] if isinstance(neighbors, list) and neighbors else {}
-            if isinstance(neighbor, dict) and neighbor.get("dst") == peer and neighbor.get("dev") == netdev:
+            if (
+                isinstance(neighbor, dict)
+                and neighbor.get("dst") == peer
+                and neighbor.get("dev", netdev) == netdev
+            ):
                 peer_mac = str(neighbor.get("lladdr", "")).lower()
                 raw_state = neighbor.get("state", "")
                 peer_neighbor_state = ",".join(raw_state) if isinstance(raw_state, list) else str(raw_state)
