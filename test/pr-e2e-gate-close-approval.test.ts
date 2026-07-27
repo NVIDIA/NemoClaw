@@ -111,6 +111,18 @@ function checkListingRoute(check: Record<string, unknown>) {
   );
 }
 
+function deterministicPolling(timeoutMs = 10) {
+  let time = 0;
+  return {
+    pollIntervalMs: 1,
+    timeoutMs,
+    now: () => time,
+    sleep: async (ms: number) => {
+      time += ms;
+    },
+  };
+}
+
 describe("PR E2E close approval cleanup", () => {
   it("cancels the exact controller from an earlier base and closes its check (#7140)", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
@@ -121,6 +133,7 @@ describe("PR E2E close approval cleanup", () => {
       external_id: prGateExternalId(42, HEAD_SHA, earlierBaseSha),
     });
     let runReads = 0;
+    let terminalControllerRead = -1;
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -134,9 +147,15 @@ describe("PR E2E close approval cleanup", () => {
             ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
             () => {
               runReads += 1;
+              const terminal = runReads >= 4;
+              if (terminal) terminalControllerRead = requests.length - 1;
               return githubResponse(
                 approvalControllerRun(
-                  runReads < 3 ? {} : { status: "completed", conclusion: "cancelled" },
+                  runReads === 1
+                    ? {}
+                    : terminal
+                      ? { status: "completed", conclusion: "cancelled" }
+                      : { status: "in_progress", conclusion: null },
                 ),
               );
             },
@@ -152,7 +171,7 @@ describe("PR E2E close approval cleanup", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
-            () => githubResponse({ message: "run already completed" }, 409),
+            () => githubResponse(undefined, 202),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
@@ -167,8 +186,10 @@ describe("PR E2E close approval cleanup", () => {
       ),
     );
 
-    await expect(cancelPrGate(42, HEAD_SHA, HEAD_SHA, BASE_SHA)).resolves.toBe(1);
-    expect(runReads).toBe(3);
+    await expect(
+      cancelPrGate(42, HEAD_SHA, HEAD_SHA, BASE_SHA, deterministicPolling()),
+    ).resolves.toBe(1);
+    expect(runReads).toBe(4);
     const cancellation = requests.findIndex((request) =>
       request.url.endsWith("/actions/runs/23/cancel"),
     );
@@ -176,6 +197,7 @@ describe("PR E2E close approval cleanup", () => {
       (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
     );
     expect(completion).toBeGreaterThan(cancellation);
+    expect(completion).toBeGreaterThan(terminalControllerRead);
     expect(requests[completion]?.body).toMatchObject({
       status: "completed",
       conclusion: "cancelled",
@@ -185,6 +207,54 @@ describe("PR E2E close approval cleanup", () => {
         summary: expect.stringContaining("head `aaaaaaa` on base `ccccccc` no longer applies"),
       },
     });
+  });
+
+  it("does not close a pending check while cancellation remains nonterminal (#7140)", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", REPOSITORY);
+    const requests: RecordedGitHubRequest[] = [];
+    const check = pendingApprovalCheck();
+    let runReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          emptyActiveRunsRoute(),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest("closed")),
+          ),
+          checkListingRoute(check),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => {
+              runReads += 1;
+              return githubResponse(approvalControllerRun());
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/runs/23/pending_deployments") && method === "GET",
+            () => githubResponse(pendingDeployments()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(
+      cancelPrGate(42, HEAD_SHA, HEAD_SHA, BASE_SHA, deterministicPolling(3)),
+    ).rejects.toThrow("Approval controller 23 did not become terminal within 3ms");
+    expect(runReads).toBe(5);
+    expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(true);
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
   it("does not cancel when the PR reopens before close reconciliation (#7140)", async () => {
@@ -225,7 +295,7 @@ describe("PR E2E close approval cleanup", () => {
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
-  it("does not overwrite a check that advances while its controller is cancelled (#7140)", async () => {
+  it("closes a check that advances while its controller is cancelled (#7140)", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", REPOSITORY);
     const requests: RecordedGitHubRequest[] = [];
@@ -252,7 +322,11 @@ describe("PR E2E close approval cleanup", () => {
               runReads += 1;
               return githubResponse(
                 approvalControllerRun(
-                  runReads === 1 ? {} : { status: "in_progress", conclusion: null },
+                  runReads === 1
+                    ? {}
+                    : runReads === 2
+                      ? { status: "in_progress", conclusion: null }
+                      : { status: "completed", conclusion: "cancelled" },
                 ),
               );
             },
@@ -270,15 +344,32 @@ describe("PR E2E close approval cleanup", () => {
             ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
             () => githubResponse(undefined, 202),
           ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) =>
+              githubResponse({
+                ...advancedCheck,
+                ...(request.body as Record<string, unknown> | undefined),
+              }),
+          ),
         ],
         requests,
       ),
     );
 
-    await expect(cancelPrGate(42, HEAD_SHA, HEAD_SHA, BASE_SHA)).resolves.toBe(1);
+    await expect(
+      cancelPrGate(42, HEAD_SHA, HEAD_SHA, BASE_SHA, deterministicPolling()),
+    ).resolves.toBe(1);
     expect(runReads).toBe(3);
     expect(requests.some((request) => request.url.endsWith("/cancel"))).toBe(true);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    const completion = requests.find(
+      (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+    );
+    expect(completion?.body).toMatchObject({
+      status: "completed",
+      conclusion: "cancelled",
+      output: { title: "PR closed — gate no longer applies" },
+    });
   });
 
   it("rejects a waiting controller bound to another approval environment (#7140)", async () => {

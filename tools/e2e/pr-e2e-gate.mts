@@ -81,6 +81,8 @@ const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
 const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
 const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
 const CHILD_CANCELLATION_TIMEOUT_MS = 5_000;
+const CANCELLATION_RECONCILIATION_POLL_INTERVAL_MS = 1_000;
+const CANCELLATION_RECONCILIATION_TIMEOUT_MS = 2 * 60_000;
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const CHECK_EXTERNAL_ID_PATTERN =
@@ -4237,18 +4239,30 @@ function pendingApprovalController(
 }
 
 type ApprovalControllerRunState = {
-  status: "waiting" | "in_progress" | "completed";
+  status: string;
   conclusion: null | "cancelled";
+  identity: ApprovalControllerRunIdentity;
+};
+
+type ApprovalControllerRunIdentity = {
+  workflowId: number;
+  workflowSha: string;
 };
 
 function validateApprovalControllerRun(
   value: unknown,
-  options: { repository: string; runId: number; runUrl: string },
+  options: {
+    repository: string;
+    runId: number;
+    runUrl: string;
+    expected?: ApprovalControllerRunIdentity;
+  },
 ): ApprovalControllerRunState {
   const expectedName = `E2E Gate workflow_run ${options.runId}`;
   const active =
     isObjectRecord(value) &&
-    (value.status === "waiting" || value.status === "in_progress") &&
+    typeof value.status === "string" &&
+    ACTIVE_WORKFLOW_RUN_STATUS_SET.has(value.status) &&
     value.conclusion === null;
   const cancelled =
     isObjectRecord(value) && value.status === "completed" && value.conclusion === "cancelled";
@@ -4272,9 +4286,21 @@ function validateApprovalControllerRun(
   ) {
     throw new Error("linked E2E approval controller is not the expected workflow run");
   }
+  const identity = {
+    workflowId: value.workflow_id as number,
+    workflowSha: value.head_sha as string,
+  };
+  if (
+    options.expected &&
+    (identity.workflowId !== options.expected.workflowId ||
+      identity.workflowSha !== options.expected.workflowSha)
+  ) {
+    throw new Error("linked E2E approval controller identity changed during cancellation");
+  }
   return {
     status: value.status as ApprovalControllerRunState["status"],
     conclusion: value.conclusion as ApprovalControllerRunState["conclusion"],
+    identity,
   };
 }
 
@@ -4431,6 +4457,77 @@ function samePendingApprovalController(
   return approval;
 }
 
+type CancellationReconciliationDeps = {
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+};
+
+type CancellationPollConfig = {
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  pollIntervalMs: number;
+  timeoutMs: number;
+};
+
+function cancellationPollConfig(deps: CancellationReconciliationDeps): CancellationPollConfig {
+  const pollIntervalMs = deps.pollIntervalMs ?? CANCELLATION_RECONCILIATION_POLL_INTERVAL_MS;
+  const timeoutMs = deps.timeoutMs ?? CANCELLATION_RECONCILIATION_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(pollIntervalMs) ||
+    pollIntervalMs < 1 ||
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < pollIntervalMs
+  ) {
+    throw new Error("cancellation reconciliation polling configuration is invalid");
+  }
+  return {
+    sleep: deps.sleep ?? sleep,
+    now: deps.now ?? Date.now,
+    pollIntervalMs,
+    timeoutMs,
+  };
+}
+
+async function waitForCancelledApprovalController(
+  repository: string,
+  token: string,
+  approval: PendingApprovalController,
+  expected: ApprovalControllerRunIdentity,
+  config: CancellationPollConfig,
+): Promise<void> {
+  const deadline = config.now() + config.timeoutMs;
+  while (true) {
+    const remaining = deadline - config.now();
+    if (remaining <= 0) {
+      throw new Error(
+        `Approval controller ${approval.runId} did not become terminal within ${config.timeoutMs}ms`,
+      );
+    }
+    const run = validateApprovalControllerRun(
+      await githubApi<unknown>(`repos/${repository}/actions/runs/${approval.runId}`, token, {
+        userAgent: USER_AGENT,
+        signal: AbortSignal.timeout(remaining),
+      }),
+      {
+        repository,
+        runId: approval.runId,
+        runUrl: approval.runUrl,
+        expected,
+      },
+    );
+    if (run.status === "completed" && run.conclusion === "cancelled") return;
+    const waitMs = Math.min(config.pollIntervalMs, deadline - config.now());
+    if (waitMs <= 0) {
+      throw new Error(
+        `Approval controller ${approval.runId} did not become terminal within ${config.timeoutMs}ms`,
+      );
+    }
+    await config.sleep(waitMs);
+  }
+}
+
 async function cancelClosedPendingApprovalPrGate(options: {
   repository: string;
   token: string;
@@ -4438,6 +4535,7 @@ async function cancelClosedPendingApprovalPrGate(options: {
   headSha?: string;
   supersededHeadSha?: string;
   baseSha?: string;
+  deps: CancellationReconciliationDeps;
 }): Promise<number> {
   if (
     !options.headSha ||
@@ -4464,6 +4562,7 @@ async function cancelClosedPendingApprovalPrGate(options: {
     prNumber: options.prNumber,
     headSha: options.headSha,
   });
+  const config = cancellationPollConfig(options.deps);
   let cancelled = 0;
   for (const candidate of candidates) {
     const approval = pendingApprovalController(options.repository, candidate.check);
@@ -4512,30 +4611,34 @@ async function cancelClosedPendingApprovalPrGate(options: {
         options.token,
         { userAgent: USER_AGENT },
       ),
-      runOptions,
+      { ...runOptions, expected: initialRun.identity },
     );
-    let reconciled = currentRun.status === "completed";
-    if (!reconciled) {
+    if (currentRun.status !== "completed") {
       await cancelChildRun(options.repository, options.token, approval.runId);
-      reconciled = true;
     }
-
-    const afterRun = validateApprovalControllerRun(
-      await githubApi<unknown>(
-        `repos/${options.repository}/actions/runs/${approval.runId}`,
-        options.token,
-        { userAgent: USER_AGENT },
-      ),
-      runOptions,
+    await waitForCancelledApprovalController(
+      options.repository,
+      options.token,
+      approval,
+      initialRun.identity,
+      config,
     );
+    const finalPull = await readCloseEventPull(closeEvent);
     const after = await readExactPrGateCheck({
       repository: options.repository,
       token: options.token,
       checkRunId: candidate.check.id,
       identity: candidate.identity,
     });
-    const stillPending = samePendingApprovalController(options.repository, after, approval);
-    if (stillPending) {
+    if (after.status === "completed") {
+      cancelled += 1;
+      continue;
+    }
+    if (after.status !== "in_progress" || after.conclusion !== null) {
+      throw new Error("PR gate check has an invalid final cancellation state");
+    }
+    samePendingApprovalController(options.repository, after, approval);
+    if (finalPull.state === "closed") {
       await completeCheck(
         { repository: options.repository, checkRunId: candidate.check.id },
         options.token,
@@ -4543,9 +4646,9 @@ async function cancelClosedPendingApprovalPrGate(options: {
         approval.runUrl,
       );
     }
-    if (reconciled) cancelled += 1;
+    cancelled += 1;
     console.log(
-      `Reconciled closed-PR approval controller: pr=${options.prNumber} run=${approval.runId} check=${candidate.check.id} controller_status=${afterRun.status} check_closed=${Boolean(stillPending)}`,
+      `Reconciled closed-PR approval controller: pr=${options.prNumber} run=${approval.runId} check=${candidate.check.id} check_closed=${finalPull.state === "closed"}`,
     );
   }
   return cancelled;
@@ -4603,6 +4706,7 @@ export async function cancelPrGate(
   headSha?: string,
   supersededHeadSha?: string,
   baseSha?: string,
+  deps: CancellationReconciliationDeps = {},
 ): Promise<number> {
   const { token, repository } = tokenAndRepository();
   if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("PR number is invalid");
@@ -4667,6 +4771,7 @@ export async function cancelPrGate(
     headSha,
     supersededHeadSha,
     baseSha,
+    deps,
   });
   if (active.size === 0 && closedApprovalControllers === 0) {
     console.log(`No active E2E runs found for PR #${prNumber}`);
