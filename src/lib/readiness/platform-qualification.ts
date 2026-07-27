@@ -55,7 +55,8 @@ export interface PlatformQualificationProjection {
 export interface CollectPlatformIdentityOptions {
   readFile?: (filePath: string) => string;
   readdir?: (directory: string) => readonly string[];
-  stat?: (filePath: string) => {
+  openFile?: (filePath: string, flags: number) => number;
+  statFileDescriptor?: (fileDescriptor: number) => {
     isFile(): boolean;
     isSymbolicLink(): boolean;
     size: number;
@@ -63,6 +64,8 @@ export interface CollectPlatformIdentityOptions {
     gid: number;
     mode: number;
   };
+  readFileDescriptor?: (fileDescriptor: number, maxBytes: number) => string;
+  closeFileDescriptor?: (fileDescriptor: number) => void;
   productNamePath?: string;
   stationReleasePath?: string;
   pciDevicesPath?: string;
@@ -208,12 +211,24 @@ function stationHasGb300PciGpu(
   }
 }
 
+function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
+  const contents = Buffer.alloc(maxBytes + 1);
+  const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);
+  if (bytesRead > maxBytes) throw new Error("identity file exceeds the size limit");
+  return contents.toString("utf8", 0, bytesRead);
+}
+
 export function collectPlatformIdentity(
   options: CollectPlatformIdentityOptions = {},
 ): PlatformIdentity {
   const readFile = options.readFile ?? ((filePath: string) => fs.readFileSync(filePath, "utf8"));
   const readdir = options.readdir ?? ((directory: string) => fs.readdirSync(directory));
-  const stat = options.stat ?? ((filePath: string) => fs.lstatSync(filePath));
+  const openFile = options.openFile ?? ((filePath, flags) => fs.openSync(filePath, flags));
+  const statFileDescriptor =
+    options.statFileDescriptor ?? ((fileDescriptor) => fs.fstatSync(fileDescriptor));
+  const readFileDescriptor = options.readFileDescriptor ?? readOpenedFile;
+  const closeFileDescriptor =
+    options.closeFileDescriptor ?? ((fileDescriptor) => fs.closeSync(fileDescriptor));
   const productName = readOptional(
     readFile,
     options.productNamePath ?? "/sys/class/dmi/id/product_name",
@@ -226,11 +241,21 @@ export function collectPlatformIdentity(
   const stationReleasePath = options.stationReleasePath ?? "/etc/dgx-release";
   let stationProfile: StationProfile = "generic-ubuntu";
   try {
-    const metadata = stat(stationReleasePath);
-    if (!isTrustedStationReleaseMarker(metadata)) {
-      stationProfile = "unsupported-dgx-os";
-    } else {
-      stationProfile = parseStationRelease(readFile(stationReleasePath));
+    const fileDescriptor = openFile(
+      stationReleasePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    try {
+      const metadata = statFileDescriptor(fileDescriptor);
+      if (!isTrustedStationReleaseMarker(metadata)) {
+        stationProfile = "unsupported-dgx-os";
+      } else {
+        stationProfile = parseStationRelease(
+          readFileDescriptor(fileDescriptor, IDENTITY_FILE_MAX_BYTES),
+        );
+      }
+    } finally {
+      closeFileDescriptor(fileDescriptor);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") stationProfile = "unknown";

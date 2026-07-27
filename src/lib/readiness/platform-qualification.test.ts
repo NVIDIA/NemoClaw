@@ -105,9 +105,12 @@ function collectStationIdentity(release: string, markerStat = trustedMarkerStat(
     stationReleasePath: "/fixtures/dgx-release",
     pciDevicesPath: "/fixtures/pci",
     readFile: (filePath) =>
-      filePath.endsWith("dgx-release") ? release : stationFixtureReadFile(filePath),
+      filePath.endsWith("dgx-release") ? "" : stationFixtureReadFile(filePath),
     readdir: () => ["0000:01:00.0"],
-    stat: () => markerStat,
+    openFile: () => 17,
+    statFileDescriptor: () => markerStat,
+    readFileDescriptor: () => release,
+    closeFileDescriptor: () => undefined,
   });
 }
 
@@ -333,7 +336,10 @@ describe("platform readiness qualification (#7410)", () => {
   it("collects only bounded identity reads and never invokes host preparation", () => {
     const readFile = vi.fn(stationFixtureReadFile);
     const readdir = vi.fn(() => ["0000:01:00.0"]);
-    const stat = vi.fn(() => trustedMarkerStat());
+    const openFile = vi.fn(() => 17);
+    const statFileDescriptor = vi.fn(() => trustedMarkerStat());
+    const readFileDescriptor = vi.fn(() => "");
+    const closeFileDescriptor = vi.fn();
 
     expect(
       collectPlatformIdentity({
@@ -343,7 +349,10 @@ describe("platform readiness qualification (#7410)", () => {
         pciDevicesPath: "/fixtures/pci",
         readFile,
         readdir,
-        stat,
+        openFile,
+        statFileDescriptor,
+        readFileDescriptor,
+        closeFileDescriptor,
       }),
     ).toEqual({
       productName: "NVIDIA DGX Station GB300",
@@ -353,8 +362,43 @@ describe("platform readiness qualification (#7410)", () => {
       osId: "ubuntu",
       osVersionId: "24.04",
     });
-    expect(stat).toHaveBeenCalledWith("/fixtures/dgx-release");
+    expect(openFile).toHaveBeenCalledWith("/fixtures/dgx-release", expect.any(Number));
+    expect(statFileDescriptor).toHaveBeenCalledWith(17);
+    expect(readFileDescriptor).toHaveBeenCalledWith(17, 4096);
+    expect(closeFileDescriptor).toHaveBeenCalledWith(17);
     expect(readFile.mock.calls.every(([path]) => String(path).startsWith("/fixtures/"))).toBe(true);
+  });
+
+  it("does not parse a Station marker replacement after opening the trusted file", () => {
+    const replacement = noOtaStationRelease();
+    let replaced = false;
+    const readFile = vi.fn((filePath: string) =>
+      replaced && filePath.endsWith("dgx-release") ? replacement : stationFixtureReadFile(filePath),
+    );
+    const readFileDescriptor = vi.fn(() => {
+      throw Object.assign(new Error("opened marker became unreadable"), { code: "EIO" });
+    });
+
+    expect(
+      collectPlatformIdentity({
+        productNamePath: "/fixtures/product_name",
+        osReleasePath: "/fixtures/os-release",
+        stationReleasePath: "/fixtures/dgx-release",
+        pciDevicesPath: "/fixtures/pci",
+        readFile,
+        readdir: () => ["0000:01:00.0"],
+        openFile: () => 17,
+        statFileDescriptor: () => {
+          replaced = true;
+          return trustedMarkerStat();
+        },
+        readFileDescriptor,
+        closeFileDescriptor: () => undefined,
+      }),
+    ).toMatchObject({ stationProfile: "unknown" });
+    expect(replaced).toBe(true);
+    expect(readFileDescriptor).toHaveBeenCalledWith(17, 4096);
+    expect(readFile).not.toHaveBeenCalledWith("/fixtures/dgx-release");
   });
 
   it.each([
@@ -394,7 +438,10 @@ describe("platform readiness qualification (#7410)", () => {
       pciDevicesPath: "/fixtures/pci",
       readFile,
       readdir: () => devices,
-      stat: () => trustedMarkerStat(),
+      openFile: () => 17,
+      statFileDescriptor: () => trustedMarkerStat(),
+      readFileDescriptor: () => "",
+      closeFileDescriptor: () => undefined,
     });
 
     expect(isStationGb300PciDevice("0x10DE", "0x31c2", "0x030000")).toBe(true);
@@ -423,7 +470,10 @@ describe("platform readiness qualification (#7410)", () => {
       pciDevicesPath: "/fixtures/pci",
       readFile: nonGb300StationFixtureReadFile,
       readdir: () => ["0000:01:00.0"],
-      stat: () => trustedMarkerStat(),
+      openFile: () => 17,
+      statFileDescriptor: () => trustedMarkerStat(),
+      readFileDescriptor: () => noOtaStationRelease(),
+      closeFileDescriptor: () => undefined,
     });
 
     expect(isStationGb300PciDevice("0x10DE", "0xffff", "0x030000")).toBe(false);
