@@ -61,6 +61,10 @@ describe("plugin Vitest project contract", () => {
         find: /^.*openshell-policy-boundary\.cjs$/,
         replacement: path.join(repositoryRoot, "nemoclaw/src/shared/openshell-policy-boundary.cts"),
       },
+      {
+        find: /^.*sandbox-name\.cjs$/,
+        replacement: path.join(repositoryRoot, "nemoclaw/src/shared/sandbox-name.cts"),
+      },
     ]);
     expect(pluginVitestProjectOptions.test).not.toHaveProperty("globalSetup");
     expect(rootPluginProjects).toEqual([pluginVitestProjectOptions]);
