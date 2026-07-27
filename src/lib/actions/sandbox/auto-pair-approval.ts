@@ -194,10 +194,15 @@ def gated_pairing_request_id(out, err):
     )
     if not initial_pairing and not scope_upgrade:
         return None
-    if len(re.findall(r'\\brequestId\\b', message)) != 1:
-        return None
+    # OpenClaw's JSON transport envelope repeats the same close reason in its
+    # message and reason fields. Accept only those two identical canonical IDs.
     matches = GATED_REQUEST_ID_RE.findall(message)
-    return matches[0] if len(matches) == 1 else None
+    request_id_tokens = re.findall(r'\\brequestId\\b', message)
+    if len(matches) not in (1, 2):
+        return None
+    if len(request_id_tokens) != len(matches) or len(set(matches)) != 1:
+        return None
+    return matches[0]
 
 def load_clone_local_pending():
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'

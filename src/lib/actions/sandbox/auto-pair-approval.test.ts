@@ -261,22 +261,43 @@ if (args[0] === "devices" && args[1] === "list") {
   }
   if (process.env.NEMOCLAW_LIST_GATE_REQUEST_ID) {
     const requestId = process.env.NEMOCLAW_LIST_GATE_REQUEST_ID;
-    const detail =
+    const detailFor = (id) =>
       process.env.NEMOCLAW_LIST_GATE_KIND === "other"
         ? "raw unrelated list failure"
         : process.env.NEMOCLAW_LIST_GATE_KIND === "scope"
-          ? "scope upgrade pending approval (requestId: " + requestId + ")"
+          ? "scope upgrade pending approval (requestId: " + id + ")"
           : process.env.NEMOCLAW_LIST_GATE_KIND === "scope-pairing"
             ? "pairing required: device is asking for more scopes (requestId: " +
-              requestId +
+              id +
               ")"
             : "pairing required: device is not approved yet (requestId: " +
-              requestId +
+              id +
               ")";
+    const detail = detailFor(requestId);
     const extra = process.env.NEMOCLAW_LIST_GATE_EXTRA_ID
       ? " requestId: " + process.env.NEMOCLAW_LIST_GATE_EXTRA_ID
       : "";
-    process.stderr.write("raw private list output " + detail + extra + "\\n");
+    const third = process.env.NEMOCLAW_LIST_GATE_THIRD_ID
+      ? " " + detailFor(process.env.NEMOCLAW_LIST_GATE_THIRD_ID)
+      : "";
+    // Match OpenClaw's JSON transport envelope: the canonical close reason is
+    // serialized once inside error.message and once as error.reason.
+    process.stdout.write(
+      JSON.stringify({
+        ok: false,
+        error: {
+          type: "gateway_transport_error",
+          kind: "closed",
+          message: "gateway closed (1008): " + detail + extra + third,
+          code: 1008,
+          reason: detailFor(process.env.NEMOCLAW_LIST_GATE_REASON_ID || requestId),
+        },
+        gateway: {
+          url: "ws://127.0.0.1:18789",
+          urlSource: "gateway.bind=loopback",
+        },
+      }) + "\\n",
+    );
     process.exit(1);
   }
   process.stdout.write(process.env.NEMOCLAW_LIST_RESPONSE + "\\n");
@@ -315,6 +336,8 @@ process.exit(2);
           gatedRequestId?: string;
           gatedKind?: "pairing" | "scope" | "scope-pairing" | "other";
           gatedExtraId?: string;
+          gatedReasonId?: string;
+          gatedThirdId?: string;
           pendingById?: Record<string, unknown>;
         } = {},
       ) => {
@@ -330,6 +353,8 @@ process.exit(2);
             NEMOCLAW_LIST_GATE_REQUEST_ID: options.gatedRequestId ?? "",
             NEMOCLAW_LIST_GATE_KIND: options.gatedKind ?? "pairing",
             NEMOCLAW_LIST_GATE_EXTRA_ID: options.gatedExtraId ?? "",
+            NEMOCLAW_LIST_GATE_REASON_ID: options.gatedReasonId ?? "",
+            NEMOCLAW_LIST_GATE_THIRD_ID: options.gatedThirdId ?? "",
             NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
@@ -511,6 +536,26 @@ process.exit(2);
         expect(`${rejected.stdout}${rejected.stderr}`.includes("raw private list output")).toBe(
           false,
         );
+      }
+
+      for (const [gatedReasonId, gatedThirdId] of [
+        ["conflicting-request", undefined],
+        [undefined, writeOnlyInitialRequest.requestId],
+      ] as const) {
+        resetLogs();
+        const rejectedEnvelope = run([], {
+          pendingById: clonePendingById,
+          gatedRequestId: writeOnlyInitialRequest.requestId,
+          gatedReasonId,
+          gatedThirdId,
+        });
+        expect(parseAutoPairApprovalReceipt(rejectedEnvelope.stdout)).toBe("list-failed");
+        expect(readApprovals()).toEqual([]);
+        expect(
+          `${rejectedEnvelope.stdout}${rejectedEnvelope.stderr}`.includes(
+            writeOnlyInitialRequest.requestId,
+          ),
+        ).toBe(false);
       }
 
       const clonePendingPath = path.join(devicesDir, "pending.json");
