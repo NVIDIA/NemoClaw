@@ -55,6 +55,20 @@ describe("destroySandbox flow", () => {
     expectSuccessfulLiveDestroy(harness, exitSpy);
   });
 
+  it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {
+    const routeId = "a".repeat(64);
+    const harness = createDestroyHarness({
+      endpointUrl: `http://host.openshell.internal:11438/route/${routeId}`,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.revokeHttpsPinRuntimeAdapterRouteSpy).toHaveBeenCalledWith(routeId);
+    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.revokeHttpsPinRuntimeAdapterRouteSpy.mock.invocationCallOrder[0],
+    );
+  });
+
   it.each([
     ["--yes", "darwin", { yes: true }, "", true],
     ["NEMOCLAW_NON_INTERACTIVE=1", "darwin", {}, "1", true],
@@ -150,6 +164,7 @@ describe("destroySandbox flow", () => {
     // ...but shared host services are preserved on the unconfirmed delete.
     expect(harness.stopAllSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.revokeHttpsPinRuntimeAdapterRouteSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

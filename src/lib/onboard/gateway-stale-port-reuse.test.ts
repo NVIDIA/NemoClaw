@@ -71,13 +71,14 @@ describe("classifyGatewayPortReuse", () => {
 });
 
 const BASE_INPUT = {
+  kind: "gateway" as const,
   port: 8080,
-  gatewayPort: 8080,
   dashboardPort: 18789,
   label: "OpenShell gateway",
   runtimeDisplayName: "NemoClaw",
   gatewayName: "nemoclaw",
   gatewayReuseState: "healthy" as GatewayReuseState,
+  externallySupervised: false,
   portCheckOptions: undefined,
   supportsLifecycleCommands: true,
 };
@@ -99,9 +100,10 @@ describe("applyHealthyPortReuse", () => {
     expect(result).toBeNull();
   });
 
-  it("returns null for ports that are neither the gateway nor dashboard port", async () => {
+  it("returns null for an unrelated preflight port role", async () => {
     const result = await applyHealthyPortReuse({
       ...BASE_INPUT,
+      kind: "other",
       port: 9999,
       destroyGateway: () => true,
       runOpenshell: vi.fn(),
@@ -109,6 +111,65 @@ describe("applyHealthyPortReuse", () => {
       verifyGatewayContainerRunning: vi.fn(),
     });
     expect(result).toBeNull();
+  });
+
+  it.each([
+    "healthy",
+    "missing",
+  ] as GatewayReuseState[])("preserves an externally supervised gateway port for downstream attachment from %s state (#6576)", async (gatewayReuseState) => {
+    const destroyGateway = vi.fn(() => true);
+    const runOpenshell = vi.fn();
+    const checkPortAvailable = vi.fn();
+    const verifyGatewayContainerRunning = vi.fn(() => "missing" as GatewayContainerState);
+
+    const result = await applyHealthyPortReuse({
+      ...BASE_INPUT,
+      gatewayReuseState,
+      externallySupervised: true,
+      destroyGateway,
+      runOpenshell,
+      checkPortAvailable,
+      verifyGatewayContainerRunning,
+    });
+
+    expect(result).toBe("continue");
+    expect(verifyGatewayContainerRunning).not.toHaveBeenCalled();
+    expect(destroyGateway).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(checkPortAvailable).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { gatewayReuseState: "missing", port: 18789, relationship: "distinct" },
+    { gatewayReuseState: "healthy", port: 18789, relationship: "distinct" },
+    { gatewayReuseState: "missing", port: 8080, relationship: "equal-number" },
+    { gatewayReuseState: "healthy", port: 8080, relationship: "equal-number" },
+  ] as const)("retains conflict handling for a $relationship external dashboard from $gatewayReuseState state (#6576)", async ({
+    gatewayReuseState,
+    port,
+  }) => {
+    const destroyGateway = vi.fn(() => true);
+    const runOpenshell = vi.fn();
+    const checkPortAvailable = vi.fn();
+    const verifyGatewayContainerRunning = vi.fn();
+
+    const result = await applyHealthyPortReuse({
+      ...BASE_INPUT,
+      kind: "dashboard",
+      port,
+      gatewayReuseState,
+      externallySupervised: true,
+      destroyGateway,
+      runOpenshell,
+      checkPortAvailable,
+      verifyGatewayContainerRunning,
+    });
+
+    expect(result).toBeNull();
+    expect(verifyGatewayContainerRunning).not.toHaveBeenCalled();
+    expect(destroyGateway).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(checkPortAvailable).not.toHaveBeenCalled();
   });
 
   it("cleans up stale metadata and returns downgraded state when the port frees up", async () => {
@@ -217,6 +278,7 @@ describe("applyHealthyPortReuse", () => {
 
     const result = await applyHealthyPortReuse({
       ...BASE_INPUT,
+      kind: "dashboard",
       port: 18789,
       label: "NemoClaw dashboard",
       destroyGateway: () => true,

@@ -319,6 +319,19 @@ interface E2eCoordinationEvidence {
   trustedLegacyCheckId?: number;
 }
 
+const E2E_RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
+const E2E_RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
+const E2E_RETRYABLE_FAILURE_REASONS = new Set([
+  "prerequisite-ci",
+  "child-cancelled",
+  "evidence-download",
+]);
+const E2E_NEVER_RETRY_FAILURE_TITLES = new Set([
+  "Authorized E2E run requires reconciliation",
+  "PR base changed",
+  "Controller stopped early",
+  "Run could not start",
+]);
 function parseGitHubTimestamp(value: string | undefined): number {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/u);
   if (!match) return Number.NaN;
@@ -335,6 +348,48 @@ function parseGitHubTimestamp(value: string | undefined): number {
     : Number.NaN;
 }
 
+function hasRetryableE2eFailureMarker(check: Record<string, unknown>): boolean {
+  if (check.status !== "completed" || check.conclusion !== "failure") return false;
+  const output = check.output;
+  if (typeof output !== "object" || output === null || Array.isArray(output)) return false;
+  const { summary, title } = output as Record<string, unknown>;
+  if (
+    (title !== undefined && title !== null && typeof title !== "string") ||
+    E2E_NEVER_RETRY_FAILURE_TITLES.has(typeof title === "string" ? title : "")
+  ) {
+    return false;
+  }
+  if (typeof summary !== "string") return false;
+  const markerBoundary = `\n\n${E2E_RETRYABLE_FAILURE_MARKER_PREFIX}`;
+  const markerStart = summary.lastIndexOf(markerBoundary);
+  if (markerStart < 0) return false;
+  const marker = summary.slice(markerStart + 2);
+  if (!marker.endsWith(E2E_RETRYABLE_FAILURE_MARKER_SUFFIX)) return false;
+  const reason = marker.slice(
+    E2E_RETRYABLE_FAILURE_MARKER_PREFIX.length,
+    -E2E_RETRYABLE_FAILURE_MARKER_SUFFIX.length,
+  );
+  return (
+    E2E_RETRYABLE_FAILURE_REASONS.has(reason) &&
+    marker ===
+      `${E2E_RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${E2E_RETRYABLE_FAILURE_MARKER_SUFFIX}`
+  );
+}
+
+function currentE2eCoordinationCheck(
+  checks: Array<Record<string, unknown>>,
+): Record<string, unknown> | undefined {
+  if (checks.length === 0) return undefined;
+  const ordered = [...checks].sort((left, right) => (left.id as number) - (right.id as number));
+  const active = ordered.filter((check) => check.status !== "completed");
+  if (active.length > 1) return undefined;
+  if (ordered.slice(0, -1).some((check) => !hasRetryableE2eFailureMarker(check))) {
+    return undefined;
+  }
+  const current = ordered.at(-1)!;
+  if (active[0] && active[0].id !== current.id) return undefined;
+  return current;
+}
 function fetchE2eCoordinationEvidence(
   repo: string,
   exactDiff: ExactDiffIdentity,
@@ -391,9 +446,30 @@ function fetchE2eCoordinationEvidence(
   }
 
   const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
-  const exactChecks = checkRuns.filter((check) => check.external_id === externalId);
-  if (exactChecks.length !== 1) return { valid: false };
-  const exact = exactChecks[0];
+  const claimedChecks = checkRuns.filter((check) => check.external_id === externalId);
+  if (
+    claimedChecks.some(
+      (check) =>
+        check.head_sha !== exactDiff.headSha ||
+        typeof check.name !== "string" ||
+        !checkNames.includes(check.name) ||
+        typeof check.app !== "object" ||
+        check.app === null ||
+        Array.isArray(check.app) ||
+        (check.app as Record<string, unknown>).id !== 15368,
+    )
+  ) {
+    return { valid: false };
+  }
+  const currentNameChecks = claimedChecks.filter(
+    (check) => check.name === "E2E / PR Gate Coordination",
+  );
+  const exactChecks =
+    currentNameChecks.length > 0
+      ? currentNameChecks
+      : claimedChecks.filter((check) => check.name === "E2E / PR Gate");
+  const exact = currentE2eCoordinationCheck(exactChecks);
+  if (!exact) return { valid: false };
   const app = exact.app;
   const startedAt =
     typeof exact.started_at === "string" ? parseGitHubTimestamp(exact.started_at) : Number.NaN;
@@ -448,6 +524,7 @@ const INSTALLER_HASH_RUN_TITLE =
   /^Installer Hash PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
 const E2E_GATE_RUN_TITLE =
   /^E2E Gate PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
+const REPOSITORY_NAME_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const REQUIRED_CHECK_WORKFLOW_PATHS = new Map([
   ["checks", ".github/workflows/pr.yaml"],
   ["changes", ".github/workflows/pr.yaml"],
@@ -945,27 +1022,53 @@ function currentCheckRollup(
     check.detailsUrl?.match(/\/runs\/(\d+)(?:[/?#]|$)/u)?.[1] ===
       String(e2eCoordinationEvidence.trustedLegacyCheckId);
 
+  const associationLessHeadBinding = (
+    metadata: ActionRunMetadata,
+  ): "current" | "other" | "unknown" => {
+    if (
+      metadata.hasPullRequests !== false ||
+      (metadata.event !== "pull_request" && metadata.event !== "pull_request_target")
+    ) {
+      return "unknown";
+    }
+    if (
+      metadata.headShaMatches === false ||
+      metadata.headRefNameMatches === false ||
+      metadata.headRepositoryMatches === false
+    ) {
+      return "other";
+    }
+    return metadata.headShaMatches === true &&
+      metadata.headRefNameMatches === true &&
+      metadata.headRepositoryMatches === true
+      ? "current"
+      : "unknown";
+  };
+
   function runIdentityEvidence(
     runId: string,
     requiresExactDiff: boolean,
   ): "current" | "other" | "unknown" {
     const metadata = actionRunMetadata(runId);
     if (!metadata?.event || !metadata.path) return "unknown";
+    const headBinding = associationLessHeadBinding(metadata);
     if (
       metadata.event === "pull_request" &&
-      metadata.path === ".github/workflows/installer-hash-check.yaml"
+      (metadata.path === ".github/workflows/installer-hash-check.yaml" ||
+        metadata.path === ".github/workflows/pr.yaml")
     ) {
       if (
         metadata.immutablePrDiff === false ||
         metadata.exactDiff === false ||
-        metadata.headShaMatches === false
+        metadata.headShaMatches === false ||
+        headBinding === "other"
       ) {
         return "other";
       }
       if (
         metadata.immutablePrDiff === true &&
         metadata.headShaMatches === true &&
-        (metadata.exactDiff === true || metadata.hasPullRequests === false)
+        (metadata.exactDiff === true || headBinding === "current")
       ) {
         return "current";
       }
@@ -973,11 +1076,6 @@ function currentCheckRollup(
     }
     if (metadata.exactDiff === true) {
       if (metadata.headShaMatches === true) {
-        if (metadata.event === "pull_request" && metadata.path === ".github/workflows/pr.yaml") {
-          if (metadata.immutablePrDiff === true) return "current";
-          if (metadata.immutablePrDiff === false) return "other";
-          return "unknown";
-        }
         return "current";
       }
       if (metadata.headShaMatches === false) return "other";
@@ -988,6 +1086,13 @@ function currentCheckRollup(
     if (e2eHeadBinding === "other") return "other";
     if (e2eHeadBinding === "current") {
       return e2eCoordinationIsEnclosed(metadata) ? "current" : "unknown";
+    }
+    if (
+      exactDiff.headRepository !== repo &&
+      metadata.path !== ".github/workflows/pr-e2e-gate.yaml" &&
+      headBinding !== "unknown"
+    ) {
+      return headBinding;
     }
     if (
       !requiresExactDiff &&
@@ -1654,6 +1759,37 @@ interface PrRevisionSnapshot {
   headRepository: string;
 }
 
+function parseHeadRepository(headRepository: unknown, headRepositoryOwner: unknown): string | null {
+  if (
+    typeof headRepository !== "object" ||
+    headRepository === null ||
+    Array.isArray(headRepository)
+  ) {
+    return null;
+  }
+  const repository = headRepository as Record<string, unknown>;
+  const direct =
+    typeof repository.nameWithOwner === "string" &&
+    REPOSITORY_NAME_PATTERN.test(repository.nameWithOwner)
+      ? repository.nameWithOwner
+      : null;
+  let derived: string | null = null;
+  if (
+    typeof repository.name === "string" &&
+    /^[A-Za-z0-9_.-]+$/u.test(repository.name) &&
+    typeof headRepositoryOwner === "object" &&
+    headRepositoryOwner !== null &&
+    !Array.isArray(headRepositoryOwner)
+  ) {
+    const login = (headRepositoryOwner as Record<string, unknown>).login;
+    if (typeof login === "string" && /^[A-Za-z0-9_.-]+$/u.test(login)) {
+      derived = `${login}/${repository.name}`;
+    }
+  }
+  if (direct && derived && direct !== derived) return null;
+  return direct ?? derived;
+}
+
 function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapshot | null {
   const value = ghJson([
     "pr",
@@ -1662,11 +1798,11 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     "--repo",
     repo,
     "--json",
-    "title,body,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository",
+    "title,body,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,headRepositoryOwner",
   ]);
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  const headRepository = record.headRepository;
+  const headRepository = parseHeadRepository(record.headRepository, record.headRepositoryOwner);
   if (
     typeof record.title !== "string" ||
     typeof record.body !== "string" ||
@@ -1678,10 +1814,7 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     typeof record.baseRefOid !== "string" ||
     typeof record.headRefName !== "string" ||
     typeof record.baseRefName !== "string" ||
-    typeof headRepository !== "object" ||
-    headRepository === null ||
-    Array.isArray(headRepository) ||
-    typeof (headRepository as Record<string, unknown>).nameWithOwner !== "string"
+    !headRepository
   ) {
     return null;
   }
@@ -1696,7 +1829,7 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     baseRefOid: record.baseRefOid,
     headRefName: record.headRefName,
     baseRefName: record.baseRefName,
-    headRepository: (headRepository as Record<string, unknown>).nameWithOwner as string,
+    headRepository,
   };
 }
 
@@ -1773,7 +1906,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,body,files,statusCheckRollup,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,author",
+    "number,title,url,body,files,statusCheckRollup,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,headRepositoryOwner,author",
   ]) as {
     number: number;
     title: string;
@@ -1789,12 +1922,18 @@ function main(): void {
     baseRefOid: string;
     headRefName: string;
     baseRefName: string;
-    headRepository: { nameWithOwner: string };
+    headRepository: { name: string; nameWithOwner: string };
+    headRepositoryOwner: { login: string } | null;
     author: PrIdentity | null;
   } | null;
 
   if (!prData) {
     console.error(`Failed to fetch PR #${prNumber} from ${repo}`);
+    process.exit(1);
+  }
+  const headRepository = parseHeadRepository(prData.headRepository, prData.headRepositoryOwner);
+  if (!headRepository) {
+    console.error(`Failed to resolve PR #${prNumber} head repository from ${repo}`);
     process.exit(1);
   }
 
@@ -1803,7 +1942,7 @@ function main(): void {
     headSha: prData.headRefOid,
     baseSha: prData.baseRefOid,
     headRefName: prData.headRefName,
-    headRepository: prData.headRepository.nameWithOwner,
+    headRepository,
   });
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
@@ -1832,7 +1971,7 @@ function main(): void {
       baseRefOid: prData.baseRefOid,
       headRefName: prData.headRefName,
       baseRefName: prData.baseRefName,
-      headRepository: prData.headRepository.nameWithOwner,
+      headRepository,
     },
     currentRevision,
     currentBaseSha,

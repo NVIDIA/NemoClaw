@@ -55,6 +55,9 @@ describe("sandbox status --json keeps stdout clean during gateway recovery", () 
     expect(report.name).toBe("ghost-sandbox");
     expect(report.found).toBe(false);
     expect(report.gatewayState).toBe("gateway_unreachable_after_restart");
+    expect(report.baselineExclusions).toEqual([]);
+    expect(report.baselineExclusionStates).toEqual([]);
+    expect(report.baselineExclusionTransition).toBeNull();
   });
 
   it("reports unknown runtime when a non-OpenClaw registry agent cannot be loaded", async () => {
@@ -66,13 +69,56 @@ describe("sandbox status --json keeps stdout clean during gateway recovery", () 
           provider: "nvidia-prod",
           model: "test-model",
           policies: [],
+          baselineExclusions: [
+            {
+              version: 1,
+              agent: "missing-terminal-agent",
+              key: "nous_research",
+              digest: "a".repeat(64),
+            },
+          ],
           openshellDriver: "native",
         }) as never,
       reconcile: async () => ({ state: "missing", output: "" }),
+      getBaselineExclusionRuntimeStatus: () => "live-policy-mismatch",
     });
 
     expect(report.agent).toBe("missing-terminal-agent");
     expect(report.agentRuntime).toBe("unknown");
     expect(report.agentLoadError).toMatch(/missing-terminal-agent/);
+    expect(report.baselineExclusions).toEqual(["nous_research"]);
+    expect(report.baselineExclusionStates).toEqual([
+      { key: "nous_research", status: "live-policy-mismatch" },
+    ]);
+  });
+
+  it("reports a pending baseline policy transaction separately from committed exclusions", async () => {
+    const report = await getSandboxStatusReport("repairing-sandbox", {
+      getSandbox: () =>
+        ({
+          name: "repairing-sandbox",
+          policies: [],
+          baselineExclusions: [],
+          baselineExclusionTransition: {
+            id: "tx-1",
+            operation: "exclude",
+            exclusion: {
+              version: 1,
+              agent: "openclaw",
+              key: "nous_research",
+              digest: "a".repeat(64),
+            },
+            targetLiveDigest: null,
+            startedAt: "2026-07-19T00:00:00.000Z",
+          },
+        }) as never,
+      reconcile: async () => ({ state: "missing", output: "" }),
+    });
+
+    expect(report.baselineExclusions).toEqual([]);
+    expect(report.baselineExclusionTransition).toEqual({
+      operation: "exclude",
+      key: "nous_research",
+    });
   });
 });

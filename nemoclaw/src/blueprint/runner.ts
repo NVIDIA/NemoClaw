@@ -24,6 +24,7 @@ import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
+import * as importedSandboxName from "../shared/sandbox-name.cjs";
 import type { SnapshotCommandOptions } from "./snapshot-command.js";
 import { actionSnapshots } from "./snapshot-command.js";
 import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
@@ -36,6 +37,13 @@ const sourceOrGeneratedOpenShellPolicyBoundary =
   };
 const { parseOpenShellPolicy, withoutProviderComposedPolicies } =
   sourceOrGeneratedOpenShellPolicyBoundary.default ?? sourceOrGeneratedOpenShellPolicyBoundary;
+
+// sourceOfTruth: nemoclaw/src/shared/sandbox-name.cts
+const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
+  default?: typeof importedSandboxName;
+};
+const { assertValidName, assertValidProviderName } =
+  sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
@@ -295,7 +303,9 @@ function readRollbackSandboxName(value: RollbackPlanSource | null): string {
     throw new Error("rollback plan sandbox_name must be a non-empty string");
   }
 
-  return value.sandbox_name;
+  // The persisted plan is untrusted input at this boundary too: validate before
+  // the name reaches `openshell sandbox stop/remove`, mirroring the apply path.
+  return assertValidName(value.sandbox_name, "sandbox name");
 }
 
 // ── Utilities ───────────────────────────────────────────────────
@@ -452,6 +462,20 @@ async function resolveRunConfig(
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
   const routerCfg = blueprint.components?.router ?? {};
+
+  // A blueprint is untrusted input. Validate the identifiers that flow into
+  // `openshell ... --name <value>` argv slots (and onward to shell scripts and
+  // Kubernetes pod names) at this ingestion boundary and fail closed, so every
+  // downstream consumer receives a name that is safe by construction. Absent
+  // values fall back to validated defaults ("openclaw" / "default") at the use
+  // sites and are intentionally not rejected here.
+  if (sandboxCfg.name !== undefined) {
+    assertValidName(sandboxCfg.name, "sandbox name");
+  }
+  if (inferenceCfg.provider_name !== undefined) {
+    assertValidProviderName(inferenceCfg.provider_name);
+  }
+
   return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg };
 }
 

@@ -3,6 +3,7 @@
 
 import { CLI_DISPLAY_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
+import { redactForLog } from "../../security/redact";
 
 export type DoctorStatus = "ok" | "warn" | "fail" | "info";
 type DoctorReportStatus = Exclude<DoctorStatus, "info">;
@@ -98,7 +99,12 @@ function renderSummary(report: DoctorReport): void {
 
 export function renderDoctorReport(report: DoctorReport, asJson: boolean): number {
   if (asJson) {
-    console.log(JSON.stringify(report, null, 2));
+    // Parity with `sandbox status --json` (#4310): this console.log egress
+    // bypasses the oclif logJson redaction boundary (#3657), so route the
+    // machine-readable report through the centralized redactForLog source of
+    // truth before check details (subprocess stderr, probe errors) reach
+    // stdout.
+    console.log(JSON.stringify(redactForLog(report), null, 2));
     return report.failed > 0 ? 1 : 0;
   }
 

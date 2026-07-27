@@ -18,8 +18,14 @@ import {
   type E2EInferenceAdapter,
   requirePublicNvidiaInferenceKey,
 } from "../fixtures/inference-adapter.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 
 const adapters: E2EInferenceAdapter[] = [];
+const NOOP_PROGRESS = startTestProgress(
+  "inference adapter support",
+  ["serve inference endpoint", "verify inference adapter"],
+  { logLine: () => undefined },
+);
 
 function artifacts(): ArtifactSink {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-adapter-test-"));
@@ -117,6 +123,7 @@ async function createAdapter(options: {
     artifacts: options.artifacts ?? artifacts(),
     env: options.env ?? {},
     provider: options.provider ?? provider(),
+    progress: NOOP_PROGRESS,
     secrets: secrets(options.secrets ?? {}),
   });
   adapters.push(adapter);
@@ -173,7 +180,7 @@ describe("E2E inference adapter", () => {
       });
       expect(Object.values(adapter.env())).not.toContain(secretValue);
 
-      const fake = await startFakeOpenAiCompatibleServer();
+      const fake = await startFakeOpenAiCompatibleServer({ progress: NOOP_PROGRESS });
       try {
         expect(fake.environmentKeys()).toContain("NEMOCLAW_FAKE_OPENAI_API_KEY");
         expect(fake.environmentKeys()).not.toContain(secretName);

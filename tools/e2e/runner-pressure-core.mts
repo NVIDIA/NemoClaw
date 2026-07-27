@@ -71,7 +71,20 @@ export function parseMeminfo(text: string): MeminfoSample {
     const match = /^([A-Za-z()_]+):\s+(\d+)\s*kB?\s*$/u.exec(line.trim());
     if (!match) continue;
     const key = MEMINFO_FIELDS[match[1] as string];
-    if (key) sample[key] = Number(match[2]);
+    const value = Number(match[2]);
+    if (key && Number.isSafeInteger(value) && value >= 0) sample[key] = value;
+  }
+  if (sample.memTotalKb !== null) {
+    for (const key of ["memFreeKb", "memAvailableKb", "cachedKb", "sReclaimableKb"] as const) {
+      if (sample[key] !== null && sample[key] > sample.memTotalKb) sample[key] = null;
+    }
+  }
+  if (
+    sample.swapTotalKb !== null &&
+    sample.swapFreeKb !== null &&
+    sample.swapFreeKb > sample.swapTotalKb
+  ) {
+    sample.swapFreeKb = null;
   }
   return sample;
 }
@@ -86,14 +99,18 @@ export interface LoadSample {
 export function parseLoadAverages(text: string): LoadSample | null {
   const match = /^(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)\s/u.exec(text.trim());
   if (!match) return null;
-  return { load1: Number(match[1]), load5: Number(match[2]), load15: Number(match[3]) };
+  const values = match.slice(1, 4).map(Number);
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) return null;
+  return { load1: values[0]!, load5: values[1]!, load15: values[2]! };
 }
 
 /** Parse a cgroup v2 scalar file such as `memory.current`; "max" becomes null. */
 export function parseCgroupScalar(text: string): number | null {
   const value = text.trim();
   if (value === "max") return null;
-  return /^\d+$/u.test(value) ? Number(value) : null;
+  if (!/^\d+$/u.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
 export interface CgroupMemoryEvents {
@@ -107,8 +124,10 @@ export function parseCgroupMemoryEvents(text: string): CgroupMemoryEvents {
   for (const line of text.split("\n")) {
     const match = /^([a-z_]+)\s+(\d+)\s*$/u.exec(line.trim());
     if (!match) continue;
-    if (match[1] === "oom") events.oom = Number(match[2]);
-    if (match[1] === "oom_kill") events.oomKill = Number(match[2]);
+    const value = Number(match[2]);
+    if (!Number.isSafeInteger(value) || value < 0) continue;
+    if (match[1] === "oom") events.oom = value;
+    if (match[1] === "oom_kill") events.oomKill = value;
   }
   return events;
 }
@@ -131,12 +150,24 @@ export function parsePressure(text: string): PressureSample {
   for (const line of text.split("\n")) {
     const match = /^(some|full)\s+avg10=(\d+\.\d+)\s+avg60=(\d+\.\d+)\s/u.exec(line.trim());
     if (!match) continue;
+    const avg10 = Number(match[2]);
+    const avg60 = Number(match[3]);
+    if (
+      !Number.isFinite(avg10) ||
+      !Number.isFinite(avg60) ||
+      avg10 < 0 ||
+      avg60 < 0 ||
+      avg10 > 100 ||
+      avg60 > 100
+    ) {
+      continue;
+    }
     if (match[1] === "some") {
-      sample.someAvg10 = Number(match[2]);
-      sample.someAvg60 = Number(match[3]);
+      sample.someAvg10 = avg10;
+      sample.someAvg60 = avg60;
     } else {
-      sample.fullAvg10 = Number(match[2]);
-      sample.fullAvg60 = Number(match[3]);
+      sample.fullAvg10 = avg10;
+      sample.fullAvg60 = avg60;
     }
   }
   return sample;
@@ -146,16 +177,246 @@ export interface ProcessSample {
   rssKb: number;
 }
 
+export const PROCESS_CLASSES = ["docker-buildkit", "openshell", "other"] as const;
+export type ProcessClass = (typeof PROCESS_CLASSES)[number];
+
+export interface ClassifiedProcessSample {
+  class: ProcessClass;
+  rssKb: number;
+  breakdown?: ProcessMemoryBreakdown | null;
+}
+
+export interface ProcessMemoryBreakdown {
+  vmRssKb: number;
+  rssAnonKb: number;
+  rssFileKb: number;
+  rssShmemKb: number;
+  vmSwapKb: number | null;
+}
+
+export function isCoherentProcessMemoryBreakdown(
+  breakdown: Pick<ProcessMemoryBreakdown, "vmRssKb" | "rssAnonKb" | "rssFileKb" | "rssShmemKb">,
+): boolean {
+  const residentTotalKb = breakdown.rssAnonKb + breakdown.rssFileKb + breakdown.rssShmemKb;
+  return Number.isSafeInteger(residentTotalKb) && residentTotalKb === breakdown.vmRssKb;
+}
+
+export interface CpuTicksSample {
+  logicalCpuCount: number;
+  idleTicks: number;
+  totalTicks: number;
+}
+
+/** Parse aggregate and per-CPU `/proc/stat` lines into monotonic tick counters. */
+export function parseCpuTicks(text: string): CpuTicksSample | null {
+  const lines = text.split("\n");
+  const aggregate = lines.find((line) => /^cpu\s+/u.test(line));
+  const logicalCpuCount = lines.filter((line) => /^cpu\d+\s+/u.test(line)).length;
+  if (!aggregate || logicalCpuCount < 1) return null;
+  const values = aggregate.trim().split(/\s+/u).slice(1, 9);
+  if (values.length !== 8 || values.some((value) => !/^\d+$/u.test(value))) return null;
+  const counters = values.map(Number);
+  if (counters.some((value) => !Number.isSafeInteger(value) || value < 0)) return null;
+  const idleTicks = counters[3]! + counters[4]!;
+  const totalTicks = counters.reduce((sum, value) => sum + value, 0);
+  if (
+    !Number.isSafeInteger(idleTicks) ||
+    !Number.isSafeInteger(totalTicks) ||
+    idleTicks > totalTicks
+  ) {
+    return null;
+  }
+  return { logicalCpuCount, idleTicks, totalTicks };
+}
+
+const DOCKER_PROCESS_NAMES = new Set([
+  "buildctl",
+  "buildkitd",
+  "buildx",
+  "containerd",
+  "containerd-shim",
+  "docker",
+  "docker-buildx",
+  "dockerd",
+]);
+const OPENSHELL_PROCESS_NAMES = new Set(["openshell", "openshell-cli", "openshelld"]);
+
+function classifyProcessName(name: string): ProcessClass {
+  if (DOCKER_PROCESS_NAMES.has(name)) return "docker-buildkit";
+  if (OPENSHELL_PROCESS_NAMES.has(name)) return "openshell";
+  return "other";
+}
+
+interface PrivateProcessCandidate {
+  pid: number;
+  comm: string;
+  class: ProcessClass;
+  rssKb: number;
+}
+
+function selectLargestProcessCandidate(text: string): PrivateProcessCandidate | null {
+  let largest: PrivateProcessCandidate | null = null;
+  for (const line of text.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/u.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const rssKb = Number(match[2]);
+    if (!Number.isSafeInteger(pid) || pid < 1 || !Number.isSafeInteger(rssKb) || rssKb < 0) {
+      continue;
+    }
+    if (largest === null || rssKb > largest.rssKb) {
+      largest = {
+        pid,
+        comm: match[3]!,
+        class: classifyProcessName(match[3]!),
+        rssKb,
+      };
+    }
+  }
+  return largest;
+}
+
 /**
- * Parse `ps -eo rss=` output into the top RSS consumers. Process-controlled
+ * Reduce `ps -eo pid=,rss=,comm=` output to one fixed-enum largest process.
+ * Process names never cross this parser boundary.
+ */
+export function parseLargestClassifiedProcess(text: string): ClassifiedProcessSample | null {
+  const largest = selectLargestProcessCandidate(text);
+  return largest === null ? null : { class: largest.class, rssKb: largest.rssKb };
+}
+
+const PROCESS_STATUS_FIELDS = ["VmRSS", "RssAnon", "RssFile", "RssShmem", "VmSwap"] as const;
+type ProcessStatusField = (typeof PROCESS_STATUS_FIELDS)[number];
+
+/**
+ * Parse the resident-memory components from `/proc/<pid>/status`.
+ *
+ * The four resident fields must be present and coherent. `VmSwap` is optional
+ * because some kernels omit it. Unknown lines, including process-controlled
+ * names, never enter the returned evidence.
+ */
+export function parseProcessMemoryStatus(text: string): ProcessMemoryBreakdown | null {
+  const values = new Map<ProcessStatusField, number>();
+  for (const line of text.split("\n")) {
+    const keyMatch = /^([A-Za-z][A-Za-z0-9_]*):/u.exec(line.trim());
+    if (!keyMatch || !PROCESS_STATUS_FIELDS.includes(keyMatch[1] as ProcessStatusField)) continue;
+    const key = keyMatch[1] as ProcessStatusField;
+    if (values.has(key)) return null;
+    const valueMatch = new RegExp(`^${key}:\\s+(\\d+)\\s+kB\\s*$`, "u").exec(line.trim());
+    if (!valueMatch) return null;
+    const value = Number(valueMatch[1]);
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    values.set(key, value);
+  }
+
+  const vmRssKb = values.get("VmRSS");
+  const rssAnonKb = values.get("RssAnon");
+  const rssFileKb = values.get("RssFile");
+  const rssShmemKb = values.get("RssShmem");
+  if (
+    vmRssKb === undefined ||
+    rssAnonKb === undefined ||
+    rssFileKb === undefined ||
+    rssShmemKb === undefined
+  ) {
+    return null;
+  }
+  const breakdown: ProcessMemoryBreakdown = {
+    vmRssKb,
+    rssAnonKb,
+    rssFileKb,
+    rssShmemKb,
+    vmSwapKb: values.get("VmSwap") ?? null,
+  };
+  return isCoherentProcessMemoryBreakdown(breakdown) ? breakdown : null;
+}
+
+interface PrivateProcessIdentity {
+  comm: string;
+  startTimeTicks: number;
+}
+
+function parseProcessIdentity(text: string, expectedPid: number): PrivateProcessIdentity | null {
+  const trimmed = text.trim();
+  if (trimmed.includes("\n") || trimmed.includes("\r")) return null;
+  const prefix = `${expectedPid} (`;
+  if (!trimmed.startsWith(prefix)) return null;
+  const commEnd = trimmed.lastIndexOf(") ");
+  if (commEnd < prefix.length) return null;
+  const fieldsAfterComm = trimmed.slice(commEnd + 2).split(/\s+/u);
+  const startTimeRaw = fieldsAfterComm[19];
+  if (fieldsAfterComm.length < 20 || !startTimeRaw || !/^\d+$/u.test(startTimeRaw)) return null;
+  const startTimeTicks = Number(startTimeRaw);
+  if (!Number.isSafeInteger(startTimeTicks) || startTimeTicks < 0) return null;
+  return {
+    comm: trimmed.slice(prefix.length, commEnd),
+    startTimeTicks,
+  };
+}
+
+/**
+ * Preserve the globally largest-process selection and enrich only a selected
+ * Docker/BuildKit process. PID and exact `comm` stay private to this collector.
+ *
+ * Checking `/proc/<pid>/stat` on both sides of the status read rejects process
+ * exit and PID reuse. A tiny race remains between `ps` and the first identity
+ * read; requiring the exact allowlisted `comm` constrains that window.
+ */
+export function collectLargestClassifiedProcess(
+  text: string,
+  readText: (file: string) => string | null,
+): ClassifiedProcessSample | null {
+  const largest = selectLargestProcessCandidate(text);
+  if (largest === null) return null;
+  const classified = { class: largest.class, rssKb: largest.rssKb };
+  if (largest.class !== "docker-buildkit" || !DOCKER_PROCESS_NAMES.has(largest.comm)) {
+    return classified;
+  }
+
+  const withMissingBreakdown: ClassifiedProcessSample = {
+    ...classified,
+    breakdown: null,
+  };
+  try {
+    const statPath = `/proc/${largest.pid}/stat`;
+    const beforeText = readText(statPath);
+    const statusText = readText(`/proc/${largest.pid}/status`);
+    const afterText = readText(statPath);
+    if (beforeText === null || statusText === null || afterText === null) {
+      return withMissingBreakdown;
+    }
+    const before = parseProcessIdentity(beforeText, largest.pid);
+    const after = parseProcessIdentity(afterText, largest.pid);
+    if (
+      before === null ||
+      after === null ||
+      before.comm !== largest.comm ||
+      after.comm !== largest.comm ||
+      before.startTimeTicks !== after.startTimeTicks
+    ) {
+      return withMissingBreakdown;
+    }
+    return {
+      ...classified,
+      breakdown: parseProcessMemoryStatus(statusText),
+    };
+  } catch {
+    return withMissingBreakdown;
+  }
+}
+
+/**
+ * Parse `ps -eo pid=,rss=,comm=` output into the top RSS consumers. Process-controlled
  * names and argv are intentionally discarded so they cannot enter evidence.
  */
 export function parseTopProcesses(text: string, limit = TOP_PROCESS_LIMIT): ProcessSample[] {
   const rows: ProcessSample[] = [];
   for (const line of text.split("\n")) {
-    const match = /(?:^|\s)(\d+)\s*$/u.exec(line.trim());
+    const match = /^\s*\d+\s+(\d+)(?:\s+.+?)?\s*$/u.exec(line);
     if (!match) continue;
-    rows.push({ rssKb: Number(match[1]) });
+    const rssKb = Number(match[1]);
+    if (!Number.isSafeInteger(rssKb) || rssKb < 0) continue;
+    rows.push({ rssKb });
   }
   rows.sort((a, b) => b.rssKb - a.rssKb);
   return rows.slice(0, limit);
@@ -179,7 +440,8 @@ export function parseDockerSize(value: string): number | null {
     TB: 1000 ** 4,
     TiB: 1024 ** 4,
   };
-  return Math.round(magnitude * (scale[unit] as number));
+  const bytes = Math.round(magnitude * (scale[unit] as number));
+  return Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null;
 }
 
 export interface ContainerStatSample {
@@ -188,15 +450,21 @@ export interface ContainerStatSample {
   memLimitBytes: number | null;
 }
 
+export interface DockerStatsEvidence {
+  containers: ContainerStatSample[];
+  maximumCpuPercent: number | null;
+}
+
 /**
  * Parse `docker stats --no-stream --format '{{json .}}'` lines. Malformed
  * lines are skipped. Container-controlled names are intentionally discarded.
- * Rows are sorted before limiting so evidence reports the largest consumers.
+ * The retained rows are memory-ranked and bounded, while the numeric CPU
+ * maximum covers every row in the already bounded command output.
  */
-export function parseDockerStats(
+export function parseDockerStatsEvidence(
   text: string,
   limit = CONTAINER_STAT_LIMIT,
-): ContainerStatSample[] {
+): DockerStatsEvidence {
   const rows: ContainerStatSample[] = [];
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
@@ -212,8 +480,10 @@ export function parseDockerStats(
     const memParts = typeof record.MemUsage === "string" ? record.MemUsage.split("/") : [];
     const cpuMatch =
       typeof record.CPUPerc === "string" ? /^(\d+(?:\.\d+)?)%$/u.exec(record.CPUPerc.trim()) : null;
+    const cpuPercent = cpuMatch ? Number(cpuMatch[1]) : null;
     rows.push({
-      cpuPercent: cpuMatch ? Number(cpuMatch[1]) : null,
+      cpuPercent:
+        cpuPercent !== null && Number.isFinite(cpuPercent) && cpuPercent >= 0 ? cpuPercent : null,
       memBytes: memParts[0] !== undefined ? parseDockerSize(memParts[0]) : null,
       memLimitBytes: memParts[1] !== undefined ? parseDockerSize(memParts[1]) : null,
     });
@@ -223,7 +493,20 @@ export function parseDockerStats(
       (b.memBytes ?? Number.NEGATIVE_INFINITY) - (a.memBytes ?? Number.NEGATIVE_INFINITY) ||
       (b.cpuPercent ?? Number.NEGATIVE_INFINITY) - (a.cpuPercent ?? Number.NEGATIVE_INFINITY),
   );
-  return rows.slice(0, limit);
+  const cpuValues = rows
+    .map((row) => row.cpuPercent)
+    .filter((value): value is number => value !== null);
+  return {
+    containers: rows.slice(0, Math.max(0, limit)),
+    maximumCpuPercent: cpuValues.length === 0 ? null : Math.max(...cpuValues),
+  };
+}
+
+export function parseDockerStats(
+  text: string,
+  limit = CONTAINER_STAT_LIMIT,
+): ContainerStatSample[] {
+  return parseDockerStatsEvidence(text, limit).containers;
 }
 
 export interface DockerDiskSample {
@@ -271,6 +554,7 @@ export interface DiskSample {
 export interface ResourceSnapshot {
   phase: string;
   at: string;
+  cpu: CpuTicksSample | null;
   meminfo: MeminfoSample | null;
   load: LoadSample | null;
   cgroup: {
@@ -282,7 +566,9 @@ export interface ResourceSnapshot {
   memoryPressure: PressureSample | null;
   ioPressure: PressureSample | null;
   topProcesses: ProcessSample[];
+  largestProcess: ClassifiedProcessSample | null;
   containers: ContainerStatSample[];
+  maximumContainerCpuPercent?: number | null;
   dockerDisk: DockerDiskSample | null;
   disk: DiskSample | null;
 }
@@ -314,8 +600,49 @@ export function assertCanonicalTimestamp(value: string | undefined): string {
   return value;
 }
 
-const number_ = (value: number | null | undefined): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
+const nonNegativeNumber = (value: number | null | undefined): number | null =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+
+const nonNegativeInteger = (value: number | null | undefined): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+const percentage = (value: number | null | undefined): number | null => {
+  const parsed = nonNegativeNumber(value);
+  return parsed !== null && parsed <= 100 ? parsed : null;
+};
+
+function renderCpu(sample: CpuTicksSample | null): CpuTicksSample | null {
+  if (sample === null) return null;
+  const logicalCpuCount = nonNegativeInteger(sample.logicalCpuCount);
+  const idleTicks = nonNegativeInteger(sample.idleTicks);
+  const totalTicks = nonNegativeInteger(sample.totalTicks);
+  if (
+    logicalCpuCount === null ||
+    logicalCpuCount < 1 ||
+    idleTicks === null ||
+    totalTicks === null ||
+    idleTicks > totalTicks
+  ) {
+    return null;
+  }
+  return { logicalCpuCount, idleTicks, totalTicks };
+}
+
+function renderProcessMemoryBreakdown(
+  breakdown: ProcessMemoryBreakdown | null | undefined,
+): ProcessMemoryBreakdown | null {
+  if (breakdown === null || breakdown === undefined) return null;
+  const vmRssKb = nonNegativeInteger(breakdown.vmRssKb);
+  const rssAnonKb = nonNegativeInteger(breakdown.rssAnonKb);
+  const rssFileKb = nonNegativeInteger(breakdown.rssFileKb);
+  const rssShmemKb = nonNegativeInteger(breakdown.rssShmemKb);
+  const vmSwapKb = nonNegativeInteger(breakdown.vmSwapKb);
+  if (vmRssKb === null || rssAnonKb === null || rssFileKb === null || rssShmemKb === null) {
+    return null;
+  }
+  const rendered = { vmRssKb, rssAnonKb, rssFileKb, rssShmemKb, vmSwapKb };
+  return isCoherentProcessMemoryBreakdown(rendered) ? rendered : null;
+}
 
 /**
  * Serialize a snapshot to one bounded line. Every field is copied explicitly —
@@ -330,39 +657,40 @@ export function renderSnapshotLine(snapshot: ResourceSnapshot): string {
       v: 1,
       phase: assertPhaseLabel(snapshot.phase),
       at: assertCanonicalTimestamp(snapshot.at),
+      cpu: renderCpu(snapshot.cpu),
       meminfo:
         snapshot.meminfo === null
           ? null
           : {
-              memTotalKb: number_(snapshot.meminfo.memTotalKb),
-              memFreeKb: number_(snapshot.meminfo.memFreeKb),
-              memAvailableKb: number_(snapshot.meminfo.memAvailableKb),
-              cachedKb: number_(snapshot.meminfo.cachedKb),
-              sReclaimableKb: number_(snapshot.meminfo.sReclaimableKb),
-              swapTotalKb: number_(snapshot.meminfo.swapTotalKb),
-              swapFreeKb: number_(snapshot.meminfo.swapFreeKb),
+              memTotalKb: nonNegativeInteger(snapshot.meminfo.memTotalKb),
+              memFreeKb: nonNegativeInteger(snapshot.meminfo.memFreeKb),
+              memAvailableKb: nonNegativeInteger(snapshot.meminfo.memAvailableKb),
+              cachedKb: nonNegativeInteger(snapshot.meminfo.cachedKb),
+              sReclaimableKb: nonNegativeInteger(snapshot.meminfo.sReclaimableKb),
+              swapTotalKb: nonNegativeInteger(snapshot.meminfo.swapTotalKb),
+              swapFreeKb: nonNegativeInteger(snapshot.meminfo.swapFreeKb),
             },
       load:
         snapshot.load === null
           ? null
           : {
-              load1: number_(snapshot.load.load1),
-              load5: number_(snapshot.load.load5),
-              load15: number_(snapshot.load.load15),
+              load1: nonNegativeNumber(snapshot.load.load1),
+              load5: nonNegativeNumber(snapshot.load.load5),
+              load15: nonNegativeNumber(snapshot.load.load15),
             },
       cgroup:
         snapshot.cgroup === null
           ? null
           : {
-              currentBytes: number_(snapshot.cgroup.currentBytes),
-              peakBytes: number_(snapshot.cgroup.peakBytes),
-              limitBytes: number_(snapshot.cgroup.limitBytes),
+              currentBytes: nonNegativeInteger(snapshot.cgroup.currentBytes),
+              peakBytes: nonNegativeInteger(snapshot.cgroup.peakBytes),
+              limitBytes: nonNegativeInteger(snapshot.cgroup.limitBytes),
               events:
                 snapshot.cgroup.events === null
                   ? null
                   : {
-                      oom: number_(snapshot.cgroup.events.oom),
-                      oomKill: number_(snapshot.cgroup.events.oomKill),
+                      oom: nonNegativeInteger(snapshot.cgroup.events.oom),
+                      oomKill: nonNegativeInteger(snapshot.cgroup.events.oomKill),
                     },
             },
       memoryPressure: renderPressure(snapshot.memoryPressure),
@@ -370,32 +698,47 @@ export function renderSnapshotLine(snapshot: ResourceSnapshot): string {
       topProcesses: withLists
         ? snapshot.topProcesses
             .slice(0, TOP_PROCESS_LIMIT)
-            .map((p, index) => ({ rank: index + 1, rssKb: number_(p.rssKb) }))
+            .map((p, index) => ({ rank: index + 1, rssKb: nonNegativeInteger(p.rssKb) }))
         : [],
+      largestProcess:
+        snapshot.largestProcess === null
+          ? null
+          : {
+              class: PROCESS_CLASSES.includes(snapshot.largestProcess.class)
+                ? snapshot.largestProcess.class
+                : "other",
+              rssKb: nonNegativeInteger(snapshot.largestProcess.rssKb),
+              ...(snapshot.largestProcess.class === "docker-buildkit" &&
+              Object.hasOwn(snapshot.largestProcess, "breakdown")
+                ? {
+                    breakdown: renderProcessMemoryBreakdown(snapshot.largestProcess.breakdown),
+                  }
+                : {}),
+            },
       containers: withLists
         ? snapshot.containers.slice(0, CONTAINER_STAT_LIMIT).map((c, index) => ({
             rank: index + 1,
-            cpuPercent: number_(c.cpuPercent),
-            memBytes: number_(c.memBytes),
-            memLimitBytes: number_(c.memLimitBytes),
+            cpuPercent: nonNegativeNumber(c.cpuPercent),
+            memBytes: nonNegativeInteger(c.memBytes),
+            memLimitBytes: nonNegativeInteger(c.memLimitBytes),
           }))
         : [],
       dockerDisk:
         snapshot.dockerDisk === null
           ? null
           : {
-              imagesBytes: number_(snapshot.dockerDisk.imagesBytes),
-              containersBytes: number_(snapshot.dockerDisk.containersBytes),
-              buildCacheBytes: number_(snapshot.dockerDisk.buildCacheBytes),
+              imagesBytes: nonNegativeInteger(snapshot.dockerDisk.imagesBytes),
+              containersBytes: nonNegativeInteger(snapshot.dockerDisk.containersBytes),
+              buildCacheBytes: nonNegativeInteger(snapshot.dockerDisk.buildCacheBytes),
             },
       disk:
         snapshot.disk === null
           ? null
           : {
-              freeBytes: number_(snapshot.disk.freeBytes),
-              totalBytes: number_(snapshot.disk.totalBytes),
-              inodesFree: number_(snapshot.disk.inodesFree),
-              inodesTotal: number_(snapshot.disk.inodesTotal),
+              freeBytes: nonNegativeInteger(snapshot.disk.freeBytes),
+              totalBytes: nonNegativeInteger(snapshot.disk.totalBytes),
+              inodesFree: nonNegativeInteger(snapshot.disk.inodesFree),
+              inodesTotal: nonNegativeInteger(snapshot.disk.inodesTotal),
             },
     };
     return `${SNAPSHOT_LINE_PREFIX}${JSON.stringify(safe)}`;
@@ -407,10 +750,10 @@ export function renderSnapshotLine(snapshot: ResourceSnapshot): string {
 function renderPressure(sample: PressureSample | null): PressureSample | null {
   if (sample === null) return null;
   return {
-    someAvg10: number_(sample.someAvg10),
-    someAvg60: number_(sample.someAvg60),
-    fullAvg10: number_(sample.fullAvg10),
-    fullAvg60: number_(sample.fullAvg60),
+    someAvg10: percentage(sample.someAvg10),
+    someAvg60: percentage(sample.someAvg60),
+    fullAvg10: percentage(sample.fullAvg10),
+    fullAvg60: percentage(sample.fullAvg60),
   };
 }
 

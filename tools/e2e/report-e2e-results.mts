@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeE2eSelectorCsv } from "./selector-aliases.mts";
+
 export type ReportApiJob = {
   completed_at?: string | null;
   conclusion?: string | null;
@@ -173,8 +175,12 @@ export function renderE2eReport(input: {
   const rawRequestedTargets = env.JOB_TARGETS || "";
   const rawRequestedTestIds = env.JOBS || "";
   const selectorValidationPassed = needs["generate-matrix"]?.result === "success";
-  const requestedTargets = selectorValidationPassed ? rawRequestedTargets : "";
-  const requestedTestIdsCsv = selectorValidationPassed ? rawRequestedTestIds : "";
+  const requestedTargets = selectorValidationPassed
+    ? normalizeE2eSelectorCsv(rawRequestedTargets)
+    : "";
+  const requestedTestIdsCsv = selectorValidationPassed
+    ? normalizeE2eSelectorCsv(rawRequestedTestIds)
+    : "";
   const explicitOnlyReasons: Record<string, { job: string; target: string; reason: string }> = {
     "openshell-gateway-auth-contract": {
       job: "openshell-gateway-auth-contract",

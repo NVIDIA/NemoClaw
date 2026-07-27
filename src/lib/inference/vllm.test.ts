@@ -58,6 +58,7 @@ import {
   assertVllmRegistryDigestRef,
   buildVllmRunArgs,
   detectVllmProfile,
+  hfDownloadAuthentication,
   installVllm,
   isNemoClawManagedVllmRunning,
   NEMOCLAW_VLLM_CONTAINER_NAME,
@@ -120,6 +121,26 @@ function mockDockerSpawnSuccess(): EventEmitter & {
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
   process.nextTick(() => proc.emit("exit", 0));
+  return proc;
+}
+
+function mockDockerSpawnFailure(
+  chunks: readonly { stream: "stdout" | "stderr"; data: string | Buffer }[],
+  exitCode = 1,
+): EventEmitter & { stdout: EventEmitter; stderr: EventEmitter } {
+  const proc = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+  };
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  process.nextTick(() => {
+    for (const chunk of chunks) {
+      const data = Buffer.isBuffer(chunk.data) ? chunk.data : Buffer.from(chunk.data);
+      proc[chunk.stream].emit("data", data);
+    }
+    proc.emit("exit", exitCode);
+  });
   return proc;
 }
 
@@ -589,6 +610,7 @@ describe("installVllm model resolution", () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   let mkdirSpy: ReturnType<typeof vi.spyOn>;
   let stdoutWrite: ReturnType<typeof vi.spyOn>;
+  let stderrWrite: ReturnType<typeof vi.spyOn>;
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
@@ -597,6 +619,7 @@ describe("installVllm model resolution", () => {
     errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     delete process.env.NEMOCLAW_VLLM_MODEL;
     delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
     delete process.env.HF_TOKEN;
@@ -612,6 +635,7 @@ describe("installVllm model resolution", () => {
     errSpy.mockRestore();
     mkdirSpy.mockRestore();
     stdoutWrite.mockRestore();
+    stderrWrite.mockRestore();
     process.env = { ...originalEnv };
   });
 
@@ -667,6 +691,10 @@ describe("installVllm model resolution", () => {
     const summary = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(summary).toContain("Model: nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(summary).not.toContain("NEMOCLAW_VLLM_MODEL override");
+    expect(summary).toContain("Hugging Face download: continuing anonymously");
+    expect(summary).toContain("HTTP 429 rate limiting");
+    expect(summary).toContain("https://huggingface.co/settings/tokens");
+    expect(summary).toContain("export HF_TOKEN=<read-token>");
   });
 
   it("rejects a local image ID before callbacks, prompts, or Docker work", async () => {
@@ -730,6 +758,66 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain(
       "NVIDIA Nemotron 3 Ultra 550B NVFP4 is not supported on Linux + NVIDIA GPU",
     );
+  });
+
+  it("rejects a Spark-only override without a runtime before side effects on generic Linux (#7358)", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(errors).toContain("Qwen3.6 35B-A3B NVFP4 is not supported on Linux + NVIDIA GPU");
+  });
+
+  it("rejects the Station-only V4 Flash override before its 352 GB download on generic Linux (#7358)", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "deepseek-v4-flash";
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(errors).toContain("DeepSeek V4 Flash is not supported on Linux + NVIDIA GPU");
+  });
+
+  it("still accepts a platform-matched override on its own platform (#7358)", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const promptFn = vi.fn<(q: string) => Promise<string>>();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(promptFn).not.toHaveBeenCalled();
+    const summary = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(summary).toContain("Model: nvidia/Qwen3.6-35B-A3B-NVFP4 (NEMOCLAW_VLLM_MODEL override)");
+    const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(errors).not.toContain("is not supported on");
   });
 
   it("installs the complete Nemotron Ultra Station recipe without another selection", async () => {
@@ -823,9 +911,19 @@ describe("installVllm model resolution", () => {
     expect(questions.length).toBeGreaterThanOrEqual(2);
     expect(questions[0]).toContain("Choose model [1]");
     expect(questions[1]).toContain("Continue?");
+    const summary = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(summary).toContain("Hugging Face authentication is optional for this public model");
+    expect(summary).toContain("https://huggingface.co/settings/tokens");
+    expect(summary).toContain("export HF_TOKEN=<read-token>");
+    const guidanceCall = logSpy.mock.calls.findIndex((call: unknown[]) =>
+      String(call[0]).includes("Hugging Face authentication is optional"),
+    );
+    expect(logSpy.mock.invocationCallOrder[guidanceCall]).toBeLessThan(
+      promptFn.mock.invocationCallOrder[1],
+    );
   });
 
-  it("fails the env override before any docker work when a gated model has no HF token", async () => {
+  it("fails the env override before guidance or docker work when a gated model has no HF token (#7157)", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "deepseek-r1-distill-70b";
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const promptFn = vi.fn<(q: string) => Promise<string>>();
@@ -841,6 +939,9 @@ describe("installVllm model resolution", () => {
     expect(mocks.runCapture).not.toHaveBeenCalled();
     const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(errors).toMatch(/gated on Hugging Face/);
+    const summary = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(summary).not.toContain("Hugging Face download:");
+    expect(summary).not.toContain("Hugging Face authentication is optional");
   });
 
   it("guards the effective served model before any docker work (#6315)", async () => {
@@ -977,7 +1078,8 @@ describe("installVllm model resolution", () => {
   });
 
   it("limits the Hugging Face token to the one-shot download container", async () => {
-    process.env.HF_TOKEN = "hf_test";
+    const token = `hf_${"s".repeat(32)}`;
+    process.env.HF_TOKEN = token;
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     mockSuccessfulVllmInstall(profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
@@ -995,9 +1097,9 @@ describe("installVllm model resolution", () => {
       { env?: Record<string, string> },
     ];
     expect(downloadArgs).toEqual(expect.arrayContaining(["-e", "HF_TOKEN"]));
-    expect(downloadArgs.join(" ")).not.toContain("hf_test");
+    expect(downloadArgs.join(" ")).not.toContain(token);
     expect(downloadOpts).toEqual(
-      expect.objectContaining({ env: expect.objectContaining({ HF_TOKEN: "hf_test" }) }),
+      expect.objectContaining({ env: expect.objectContaining({ HF_TOKEN: token }) }),
     );
     expect(mocks.dockerRunDetached).toHaveBeenCalledTimes(1);
     const [args, opts] = mocks.dockerRunDetached.mock.calls[0] as [
@@ -1014,10 +1116,80 @@ describe("installVllm model resolution", () => {
       ]),
     );
     expect(args).not.toContain("HF_TOKEN");
-    expect(args.join(" ")).not.toContain("hf_test");
+    expect(args.join(" ")).not.toContain(token);
     expect(args.some((arg) => arg.includes("docker run"))).toBe(false);
     expect(args[args.indexOf("-lc") + 1]).toContain("vllm serve");
     expect(opts.env).not.toHaveProperty("HF_TOKEN");
+    const summary = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(summary).toContain("Hugging Face download: authenticated with HF_TOKEN");
+    expect(summary).not.toContain(token);
+  });
+
+  it("redacts a token across downloader streams while preserving stream ownership (#7157)", async () => {
+    const token = `hf_${"r".repeat(32)}`;
+    process.env.HF_TOKEN = token;
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    const splitAt = 17;
+    const unicodeOutput = Buffer.from("Downloading café\n");
+    const unicodeSplitAt = unicodeOutput.indexOf(0xc3) + 1;
+    mocks.dockerSpawn.mockReturnValue(
+      mockDockerSpawnFailure([
+        { stream: "stdout", data: unicodeOutput.subarray(0, unicodeSplitAt) },
+        { stream: "stdout", data: unicodeOutput.subarray(unicodeSplitAt) },
+        {
+          stream: "stdout",
+          data: `Downloading 50% value=${token.slice(0, splitAt)}`,
+        },
+        {
+          stream: "stderr",
+          data: `${token.slice(splitAt)} HTTP 429 Too Many Requests\n`,
+        },
+        { stream: "stdout", data: "\n" },
+      ]),
+    );
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    const stdout = stdoutWrite.mock.calls.map((call: unknown[]) => String(call[0])).join("");
+    const stderr = stderrWrite.mock.calls.map((call: unknown[]) => String(call[0])).join("");
+    const logs = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(`${stdout}\n${stderr}\n${logs}\n${errors}`).not.toContain(token);
+    expect(`${stdout}\n${stderr}\n${logs}\n${errors}`).not.toContain(token.slice(0, splitAt));
+    expect(`${stdout}\n${stderr}\n${logs}\n${errors}`).not.toContain(token.slice(splitAt));
+    expect(stdout).toContain("Downloading café");
+    expect(stdout).toContain("Downloading 50% value=<REDACTED>");
+    expect(stderrWrite.mock.calls[0]?.[0]).toBe(" HTTP 429 Too Many Requests\n");
+    expect(`${stdout}\n${stderr}`).not.toContain("�");
+    expect(stderr).toContain("HTTP 429 Too Many Requests");
+    expect(stderr).toContain("Hugging Face rate limiting was detected");
+    expect(stderr).toContain("https://huggingface.co/settings/tokens");
+    expect(stderr).toContain("export HF_TOKEN=<read-token>");
+    expect(stderr).toContain("onboard --resume");
+    expect(stderr).toContain("~/.cache/huggingface");
+  });
+
+  it("reports only Hugging Face authentication source metadata (#7157)", () => {
+    const token = `hf_${"a".repeat(32)}`;
+    expect(hfDownloadAuthentication({ HF_TOKEN: token } as NodeJS.ProcessEnv)).toEqual({
+      authenticated: true,
+      source: "HF_TOKEN",
+    });
+    expect(
+      hfDownloadAuthentication({ HUGGING_FACE_HUB_TOKEN: token } as NodeJS.ProcessEnv),
+    ).toEqual({
+      authenticated: true,
+      source: "HUGGING_FACE_HUB_TOKEN",
+    });
+    expect(hfDownloadAuthentication({} as NodeJS.ProcessEnv)).toEqual({ authenticated: false });
   });
 
   it("replaces only an existing managed container by its inspected ID", async () => {

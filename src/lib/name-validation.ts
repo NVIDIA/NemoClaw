@@ -1,12 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const NAME_MAX_LENGTH = 63;
-export const NAME_ALLOWED_FORMAT =
-  `1-${NAME_MAX_LENGTH} characters, lowercase, starts with a letter, ` +
-  "letters/numbers/internal hyphens only, ends with letter/number";
+import {
+  NAME_ALLOWED_FORMAT as CANONICAL_NAME_ALLOWED_FORMAT,
+  NAME_MAX_LENGTH as CANONICAL_NAME_MAX_LENGTH,
+  NAME_VALID_PATTERN as CANONICAL_NAME_VALID_PATTERN,
+} from "../../nemoclaw/dist/shared/sandbox-name.cjs";
 
-export const NAME_VALID_PATTERN = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+// sourceOfTruth: nemoclaw/src/shared/sandbox-name.cts
+// generatedBoundary: build:cli emits the canonical .cjs/.d.cts before this
+// module is compiled (mirrors src/lib/policy/merge.ts). Keep the name grammar
+// definition-free here so the CLI, the plugin, and CI share one rule and cannot
+// drift.
+export const NAME_MAX_LENGTH = CANONICAL_NAME_MAX_LENGTH;
+export const NAME_ALLOWED_FORMAT = CANONICAL_NAME_ALLOWED_FORMAT;
+export const NAME_VALID_PATTERN = CANONICAL_NAME_VALID_PATTERN;
 
 function validationSubject(label: string): string {
   const normalized = label.trim().toLowerCase();

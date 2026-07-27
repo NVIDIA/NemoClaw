@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -25,7 +26,6 @@ const COMPATIBLE_API_KEY = "hermes-shields-e2e-key";
 const COMPATIBLE_MODEL = "hermes-shields-e2e-model";
 const CONFIG_PATH = "/sandbox/.hermes/config.yaml";
 const HERMES_DIR = "/sandbox/.hermes";
-const TEST_TIMEOUT_MS = 45 * 60_000;
 const COMMAND_TIMEOUT_MS = 120_000;
 
 validateSandboxName(SANDBOX_NAME);
@@ -153,8 +153,18 @@ async function completeShieldsCycle(
 }
 
 test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields cycles (#6381)", {
-  timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox }) => {
+  timeout: HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS,
+  meta: {
+    e2ePhases: [
+      "prepare Hermes shields fixture",
+      "onboard non-root Hermes sandbox",
+      "verify fresh Hermes runtime state",
+      "complete first shields cycle",
+      "complete second shields cycle",
+      "verify preserved config and ready state",
+    ],
+  },
+}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox }) => {
   await artifacts.target.declare({
     id: "hermes-shields-config",
     boundary: "fresh CPU-only Hermes onboard plus two real shields down/up transitions",
@@ -179,6 +189,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     apiKey: COMPATIBLE_API_KEY,
     host: "0.0.0.0",
     model: COMPATIBLE_MODEL,
+    progress,
     publicHost: "host.openshell.internal",
     requireAuth: true,
   });
@@ -239,6 +250,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
   await preClean(host);
 
   const env = commandEnv(fake.baseUrl);
+  progress.phase("onboard non-root Hermes sandbox");
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
     artifactName: "fresh-hermes-onboard",
     cwd: REPO_ROOT,
@@ -257,6 +269,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
   assertExitZero(status, "read fresh Hermes status");
   expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
 
+  progress.phase("verify fresh Hermes runtime state");
   const trigger = await sandboxShell(
     sandbox,
     [
@@ -274,9 +287,12 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
   const configHashBefore = triggerLines.at(-1) ?? "";
   expect(configHashBefore).toMatch(/^[0-9a-f]{64}$/);
 
+  progress.phase("complete first shields cycle");
   await completeShieldsCycle(host, sandbox, 1);
+  progress.phase("complete second shields cycle");
   await completeShieldsCycle(host, sandbox, 2);
 
+  progress.phase("verify preserved config and ready state");
   const configHashAfter = await sandboxShell(
     sandbox,
     `sha256sum ${CONFIG_PATH} | awk '{print $1}'`,

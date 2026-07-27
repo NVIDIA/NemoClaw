@@ -238,6 +238,15 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
   );
 }
 
+async function assertBuildCachesAbsent(probe: DockerProbe, container: string): Promise<void> {
+  await expectContainerSh(
+    probe,
+    container,
+    "build-only Hermes caches are present in the runtime image",
+    'for path in /root/.npm /root/.cache/electron /root/.cache/node-gyp; do test ! -e "$path" && test ! -L "$path"; done',
+  );
+}
+
 async function assertBearerAuth(probe: DockerProbe, container: string): Promise<void> {
   await expectContainerSh(
     probe,
@@ -366,6 +375,7 @@ async function runCleanVariant(
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
+  await assertBuildCachesAbsent(probe, container);
   await assertBearerAuth(probe, container);
   await assertDashboardHome(probe, container);
 }
@@ -404,14 +414,22 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   );
 }
 
-test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migration", async ({
-  artifacts,
-  cleanup,
-  secrets,
-  skip,
-}) => {
-  const probe = new DockerProbe(artifacts, (text, extraValues) =>
-    secrets.redact(text, extraValues),
+test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migration", {
+  meta: {
+    e2ePhases: [
+      "check Docker and Hermes image inputs",
+      "build Hermes root-entrypoint image",
+      "validate clean root-entrypoint startup",
+      "validate legacy PID migration",
+    ],
+  },
+}, async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+  const probe = new DockerProbe(
+    artifacts,
+    (text, extraValues) => secrets.redact(text, extraValues),
+    undefined,
+    progress,
+    signal,
   );
   const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
   const image =
@@ -429,6 +447,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       "gateway process runs as gateway user",
       "gateway log has no PID race or config load failure",
       "Hermes v0.14 writable runtime directories are present",
+      "build-only root caches are absent from the runtime image",
       "gateway.pid is migrated to a regular top-level file",
       "gateway user cannot remove config.yaml from sticky config root",
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
@@ -451,8 +470,11 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
   await requireDocker(probe, skip);
 
   try {
+    progress.phase("build Hermes root-entrypoint image");
     await buildImageIfNeeded(probe, image, baseImage);
+    progress.phase("validate clean root-entrypoint startup");
     await runCleanVariant(probe, image, runId, containers);
+    progress.phase("validate legacy PID migration");
     await runLegacyVariant(probe, image, runId, containers);
   } catch (error) {
     for (const container of containers) {
@@ -468,6 +490,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy pid migra
       cleanStartupHealthy: true,
       legacyStartupHealthy: true,
       runtimeLayoutVerified: true,
+      buildCachesAbsent: true,
       gatewayPrivilegeSeparationVerified: true,
       bearerAuthVerified: true,
       dashboardHomeVerified: true,

@@ -3,12 +3,17 @@
 
 import * as registry from "../state/registry";
 import {
+  getBaselineExclusionRuntimeStatus,
   getGatewayPresets,
   getPresetEndpoints,
   listCustomPresets,
   listPresets,
   loadPresetForSandbox,
 } from ".";
+import {
+  BASELINE_EXCLUSION_SUPPORT_IMPACT,
+  type BaselineExclusionRuntimeStatus,
+} from "./baseline-exclusion";
 import { hostStemsFromEndpoints } from "./host-redaction";
 import { getTier } from "./tiers";
 
@@ -60,7 +65,36 @@ export interface PolicyContextApprovalPath {
   inspect: string;
   add: string;
   remove: string;
+  excludeBaseline: string;
+  restoreBaseline: string;
   documentation: string;
+}
+
+export type PolicyContextExclusionStatus =
+  | BaselineExclusionRuntimeStatus
+  | "pending-exclude-repair"
+  | "pending-restore-repair";
+
+export interface PolicyContextExclusion {
+  key: string;
+  digest: string;
+  acknowledgedAt: string | null;
+  /**
+   * `excluded` — the current baseline still defines this key at the reviewed
+   * digest and the observed live policy omits it.
+   * `content-changed` — a release redefined this key's content since
+   * approval; rebuild fails closed and requires re-approval before the
+   * exclusion applies again.
+   * `no-longer-in-baseline` — the current baseline no longer defines this
+   * key; the exclusion record is inert until restored or replaced.
+   * `live-policy-*` — live enforcement is unreadable or still contains the
+   * excluded key, so registry intent must not be treated as enforcement.
+   * `agent-changed` — the approval belongs to a different agent baseline.
+   * `pending-*-repair` — the live mutation was interrupted; its durable
+   * journal blocks rebuild until the exact policy command reconciles it.
+   */
+  status: PolicyContextExclusionStatus;
+  supportImpact: string;
 }
 
 export interface PolicyContext {
@@ -68,6 +102,7 @@ export interface PolicyContext {
   tier: PolicyContextTier | null;
   activePresets: PolicyContextPreset[];
   knownUnappliedPresets: PolicyContextPreset[];
+  baselineExclusions: PolicyContextExclusion[];
   approvalPath: PolicyContextApprovalPath;
   supportBoundaries: PolicyContextSupportBoundary[];
   generatedAt: string;
@@ -166,11 +201,52 @@ function partitionPresets(
   return { active, unapplied };
 }
 
+function buildBaselineExclusions(
+  sandboxName: string,
+  transition: registry.BaselineExclusionTransition | null,
+): PolicyContextExclusion[] {
+  const pendingKey = transition?.exclusion.key ?? null;
+  const byKey = new Map<string, PolicyContextExclusion>(
+    registry.getBaselineExclusions(sandboxName).map((exclusion) => {
+      const status: PolicyContextExclusionStatus =
+        exclusion.key === pendingKey
+          ? transition?.operation === "exclude"
+            ? "pending-exclude-repair"
+            : "pending-restore-repair"
+          : getBaselineExclusionRuntimeStatus(sandboxName, exclusion);
+      return [
+        exclusion.key,
+        {
+          key: exclusion.key,
+          digest: exclusion.digest,
+          acknowledgedAt: exclusion.acknowledgedAt ?? null,
+          status,
+          supportImpact: BASELINE_EXCLUSION_SUPPORT_IMPACT,
+        },
+      ] as const;
+    }),
+  );
+  if (transition) {
+    const exclusion = transition.exclusion;
+    byKey.set(exclusion.key, {
+      key: exclusion.key,
+      digest: exclusion.digest,
+      acknowledgedAt: exclusion.acknowledgedAt ?? null,
+      status:
+        transition.operation === "exclude" ? "pending-exclude-repair" : "pending-restore-repair",
+      supportImpact: BASELINE_EXCLUSION_SUPPORT_IMPACT,
+    });
+  }
+  return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
 function buildApprovalPath(sandboxName: string): PolicyContextApprovalPath {
   return {
-    inspect: `nemoclaw ${sandboxName} policy-list`,
-    add: `nemoclaw ${sandboxName} policy-add <preset>`,
-    remove: `nemoclaw ${sandboxName} policy-remove <preset>`,
+    inspect: `nemoclaw ${sandboxName} policy list`,
+    add: `nemoclaw ${sandboxName} policy add <preset>`,
+    remove: `nemoclaw ${sandboxName} policy remove <preset>`,
+    excludeBaseline: `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
+    restoreBaseline: `nemoclaw ${sandboxName} policy restore <key>`,
     documentation: POLICY_DOC_URL,
   };
 }
@@ -290,6 +366,10 @@ export function buildPolicyContext(
     tier,
     activePresets: active.sort((a, b) => a.name.localeCompare(b.name)),
     knownUnappliedPresets: unapplied.sort((a, b) => a.name.localeCompare(b.name)),
+    baselineExclusions: buildBaselineExclusions(
+      sandboxName,
+      sandbox?.baselineExclusionTransition ?? null,
+    ),
     approvalPath: buildApprovalPath(sandboxName),
     supportBoundaries: buildSupportBoundaries(tier),
     generatedAt: new Date().toISOString(),
@@ -307,6 +387,38 @@ function verificationTag(verification: PolicyContextPresetVerification): string 
     case "gateway-unavailable":
       return "gateway-unavailable";
   }
+}
+
+function exclusionStatusTag(status: PolicyContextExclusionStatus): string {
+  switch (status) {
+    case "excluded":
+      return "excluded";
+    case "content-changed":
+      return "content-changed (release redefined this entry; rebuild requires re-approval)";
+    case "no-longer-in-baseline":
+      return "no-longer-in-baseline (record is inert)";
+    case "baseline-unreadable":
+      return "baseline-unreadable (current release scope could not be inspected)";
+    case "agent-changed":
+      return "agent-changed (approval belongs to a different agent baseline)";
+    case "live-policy-unreadable":
+      return "live-policy-unreadable (enforcement could not be inspected)";
+    case "live-policy-mismatch":
+      return "live-policy-mismatch (excluded key remains in the live policy)";
+    case "pending-exclude-repair":
+      return "repair-required (exclude transaction was interrupted; rebuild blocked)";
+    case "pending-restore-repair":
+      return "repair-required (restore transaction was interrupted; rebuild blocked)";
+  }
+}
+
+function formatExclusionLine(exclusion: PolicyContextExclusion, sandboxName: string): string {
+  return [
+    `- \`${exclusion.key}\` — status: ${exclusionStatusTag(exclusion.status)}`,
+    `  acknowledged: ${exclusion.acknowledgedAt ?? "(unknown)"}`,
+    `  impact: ${exclusion.supportImpact}`,
+    `  restore: \`nemoclaw ${sandboxName} policy restore ${exclusion.key}\``,
+  ].join("\n");
 }
 
 function formatPresetLine(preset: PolicyContextPreset): string {
@@ -362,10 +474,21 @@ export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
     }
   }
   lines.push("");
+  lines.push("## Baseline exclusions");
+  if (ctx.baselineExclusions.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const exclusion of ctx.baselineExclusions) {
+      lines.push(formatExclusionLine(exclusion, ctx.sandboxName));
+    }
+  }
+  lines.push("");
   lines.push("## Approval and remediation");
   lines.push(`- inspect: \`${ctx.approvalPath.inspect}\``);
   lines.push(`- add a preset: \`${ctx.approvalPath.add}\``);
   lines.push(`- remove a preset: \`${ctx.approvalPath.remove}\``);
+  lines.push(`- preview a baseline exclusion: \`${ctx.approvalPath.excludeBaseline}\``);
+  lines.push(`- restore a baseline entry: \`${ctx.approvalPath.restoreBaseline}\``);
   lines.push(`- documentation: ${ctx.approvalPath.documentation}`);
   lines.push("");
   lines.push("## Support boundaries");

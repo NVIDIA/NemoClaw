@@ -306,6 +306,8 @@ Two exemption kinds keep runtime data writable.
 The lock inventory omits top-level Hermes runtime dirs (`sessions/`, `memories/`, `logs/`, `cache/`, `plans/`) and the image-build-regenerated `openclaw-weixin/`.
 The lock helper never touches those paths.
 Inside a locked tree, the helper keeps each `agents/<agent-id>/sessions/` root at `sandbox:sandbox 2770` so the OpenClaw TUI can create and write session metadata under an otherwise root-owned parent.
+After containment, when an agent directory has no `sessions` entry, lockdown creates that carve-out root.
+An agent booting for the first time under an active lock can then write sessions.
 It validates the carve-out root but deliberately does not traverse or rewrite live session descendants.
 Cross-device entries, detected traversal races, or failures to remove or replace an unsafe entry make lockdown fail closed with the exact path and reason.
 
