@@ -322,6 +322,18 @@ process.exit(2);
         expect(result.stdout).not.toContain(`${SUMMARY_MARKER}=1`);
         expect(readApprovals()).toEqual([]);
       }
+
+      resetLogs();
+      const hashMismatchedDeviceId = "0".repeat(64);
+      fs.writeFileSync(
+        path.join(identityDir, "device.json"),
+        JSON.stringify({ deviceId: hashMismatchedDeviceId, publicKey }),
+      );
+      const invalidIdentity = run([{ ...localRequest, deviceId: hashMismatchedDeviceId }]);
+      expect(invalidIdentity.status).toBe(0);
+      expect(invalidIdentity.stdout).not.toContain(`${SUMMARY_MARKER}=1`);
+      expect(readApprovals()).toEqual([]);
+      expect(fs.existsSync(approveEnvFile)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
