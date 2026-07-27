@@ -112,6 +112,7 @@ describe("runtime identity contract", () => {
         ),
       validateEndpointUrl: async (url) => {
         validatedDestinations.push(url);
+        return { dnsResolved: false };
       },
       persistReceipt: (receipt) => {
         persistedReceipts.push({ ...receipt });
@@ -335,6 +336,20 @@ describe("runtime identity contract", () => {
   });
 
   it.each([
+    ["https://example.okta.com/oauth2/default/v1/token"],
+    ["https://api.example.okta.com/"],
+  ])("rejects a DNS-backed destination before profile import: %s", async (destination) => {
+    deps.validateEndpointUrl = async (url) => ({
+      dnsResolved: url === destination,
+    });
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      /DNS-backed runtime identity destination/,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
     ["loopback.example.okta.com", "loopback"],
     ["link-local.example.okta.com", "link-local"],
     ["private.example.okta.com", "private"],
@@ -345,7 +360,7 @@ describe("runtime identity contract", () => {
       validatedDestinations.push(url);
       return url.includes(host)
         ? Promise.reject(new Error(`${reason} destination rejected`))
-        : Promise.resolve();
+        : Promise.resolve({ dnsResolved: false });
     };
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(reason);

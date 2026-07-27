@@ -563,9 +563,7 @@ function runtimeIdentityDeps(
 ): RuntimeIdentityDeps {
   return {
     ...runtimeIdentityCommandDeps(),
-    validateEndpointUrl: async (url) => {
-      await validateEndpointUrl(url);
-    },
+    validateEndpointUrl,
     persistReceipt,
     blueprintPath: process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
     env: process.env,

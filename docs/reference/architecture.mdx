@@ -264,6 +264,13 @@ This experimental reference capability is not enabled by the shipped blueprint, 
 The bundled Okta profile is the first data-only implementation of the component.
 The blueprint schema describes the OpenShell provider binding and OAuth refresh inputs without using the identity provider as a schema discriminator.
 
+<Warning>
+  The pinned OpenShell runtime resolves the OAuth token URL and provider endpoint hostnames again after NemoClaw validates them.
+  Because that boundary cannot yet preserve both the validated peer and the original HTTPS identity, the direct runner rejects every DNS-backed runtime identity destination before profile import.
+  The current `okta-runtime-v1` trust policy admits only `okta.com` hostnames, so the bundled profile is a reference contract and does not currently provide an activatable production Okta path.
+  Remove this fail-closed restriction only when the OpenShell refresh and provider endpoint contracts atomically validate and connect to the same peer.
+</Warning>
+
 Enable provider-derived policy on the target gateway before applying a blueprint that attaches this component:
 
 ```bash
@@ -295,6 +302,7 @@ Subprocess-control names such as `NODE_OPTIONS` and names forwarded by the gener
 The profile path must name an existing regular file whose resolved path stays inside the blueprint directory; absolute paths, outward traversal, and outward symlinks are rejected.
 The profile `id` must match `provider_type`, and the profile must declare exactly one credential whose name matches `credential_key`.
 Before importing the profile, the runner requires HTTPS refresh and endpoint destinations, restricts them to the provider type's trusted host policy, and sends each through NemoClaw's DNS-aware SSRF boundary; private, loopback, link-local, and unresolved destinations are rejected.
+DNS-backed HTTPS destinations are also rejected because the pinned OpenShell runtime would resolve their hostnames again after validation.
 The current `okta-runtime-v1` policy accepts `okta.com` and its subdomains; custom Okta domains are not supported in this slice.
 Before applying the blueprint, export the named environment variables in the host process that runs the direct blueprint runner.
 Obtain the refresh token through an authorized OAuth bootstrap flow for the same Okta client and authorization server as the profile.

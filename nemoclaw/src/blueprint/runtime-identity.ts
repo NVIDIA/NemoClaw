@@ -68,8 +68,12 @@ export interface RuntimeIdentityCommandDeps {
   env?: NodeJS.ProcessEnv;
 }
 
+export interface RuntimeIdentityValidatedDestination {
+  dnsResolved: boolean;
+}
+
 export interface RuntimeIdentityDeps extends RuntimeIdentityCommandDeps {
-  validateEndpointUrl(url: string): Promise<void>;
+  validateEndpointUrl(url: string): Promise<RuntimeIdentityValidatedDestination>;
   persistReceipt(receipt: RuntimeIdentityReceipt): void;
 }
 
@@ -210,7 +214,14 @@ async function validateProfileDestinations(
   deps: RuntimeIdentityDeps,
 ): Promise<void> {
   for (const destination of profile.destinations) {
-    await deps.validateEndpointUrl(destination);
+    const validated = await deps.validateEndpointUrl(destination);
+    if (validated.dnsResolved) {
+      throw new Error(
+        `DNS-backed runtime identity destination '${destination}' is not supported because ` +
+          "OpenShell can resolve the hostname again after NemoClaw validation. Use this " +
+          "provider profile only after OpenShell can preserve the validated peer and HTTPS identity.",
+      );
+    }
   }
 }
 
