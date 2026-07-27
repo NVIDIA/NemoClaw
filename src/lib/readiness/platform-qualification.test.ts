@@ -296,23 +296,29 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
-    ["unreadable vendor", "vendor", "throw"],
-    ["oversized device", "device", "oversized"],
-    ["unreadable class", "class", "throw"],
-  ] as const)("keeps Station qualification inconclusive with %s evidence", (_scenario, field, fault) => {
+    [
+      "unreadable vendor",
+      "vendor",
+      () => {
+        throw Object.assign(new Error("unreadable PCI identity"), { code: "EIO" });
+      },
+    ],
+    ["oversized device", "device", () => "0x31c2".padEnd(5000, "0")],
+    [
+      "unreadable class",
+      "class",
+      () => {
+        throw Object.assign(new Error("unreadable PCI identity"), { code: "EIO" });
+      },
+    ],
+  ] as const)("keeps Station qualification inconclusive with %s evidence", (_scenario, field, readFault) => {
+    const pciFaults = new Map([[`/fixtures/pci/0000:01:00.0/${field}`, readFault]]);
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
       osReleasePath: "/fixtures/os-release",
       stationReleasePath: "/fixtures/dgx-release",
       pciDevicesPath: "/fixtures/pci",
-      readFile: (filePath) => {
-        if (filePath.endsWith(`/${field}`)) {
-          if (fault === "throw")
-            throw Object.assign(new Error("unreadable PCI identity"), { code: "EIO" });
-          return "0x31c2".padEnd(5000, "0");
-        }
-        return stationFixtureReadFile(filePath);
-      },
+      readFile: (filePath) => pciFaults.get(filePath)?.() ?? stationFixtureReadFile(filePath),
       readdir: () => ["0000:01:00.0"],
       openFile: () => 17,
       statFileDescriptor: () => trustedMarkerStat(),
