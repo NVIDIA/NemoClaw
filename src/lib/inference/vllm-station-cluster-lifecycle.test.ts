@@ -253,6 +253,7 @@ describe("dual-Station managed vLLM run argv", () => {
     expect(dockerValues(args, "--workdir")).toEqual(["/home/vllm"]);
     expect(dockerValues(args, "--tmpfs")).toEqual([
       "/tmp:rw,nosuid,nodev,size=17179869184",
+      `/usr/local/lib/python3.12/dist-packages/flashinfer_cubin/cubins/flashinfer:rw,nosuid,nodev,noexec,uid=${String(expectedNode.uid)},gid=${String(expectedNode.gid)},mode=0700,size=16777216`,
       `/home/vllm:rw,nosuid,nodev,exec,uid=${String(expectedNode.uid)},gid=${String(expectedNode.gid)},mode=0700,size=68719476736`,
     ]);
     expect(dockerValues(args, "--user")).toEqual([

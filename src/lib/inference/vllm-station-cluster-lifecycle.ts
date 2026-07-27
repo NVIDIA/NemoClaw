@@ -42,6 +42,8 @@ const HEAD_API_PORT = 8000;
 const VLLM_RUNTIME_HOME = "/home/vllm";
 const HF_CACHE_CONTAINER_DIR = `${VLLM_RUNTIME_HOME}/.cache/huggingface`;
 const HF_HUB_CACHE_CONTAINER_DIR = "/model-cache";
+const FLASHINFER_CUBIN_RUNTIME_DIR =
+  "/usr/local/lib/python3.12/dist-packages/flashinfer_cubin/cubins/flashinfer";
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const DOCKER_MUTATION_TIMEOUT_MS = 60_000;
 const DOCKER_GPU_SMOKE_TIMEOUT_MS = 30_000;
@@ -374,6 +376,10 @@ function runtimeHomeTmpfs(
   return `${VLLM_RUNTIME_HOME}:rw,nosuid,nodev,${execution},uid=${String(node.uid)},gid=${String(node.gid)},mode=0700,size=68719476736`;
 }
 
+function flashinferCubinTmpfs(node: DualStationVllmPlan["local"]): string {
+  return `${FLASHINFER_CUBIN_RUNTIME_DIR}:rw,nosuid,nodev,noexec,uid=${String(node.uid)},gid=${String(node.gid)},mode=0700,size=16777216`;
+}
+
 function appendRuntimeHomeEnv(args: string[]): void {
   appendEnv(args, "HOME", VLLM_RUNTIME_HOME);
   appendEnv(args, "USER", "vllm");
@@ -408,6 +414,11 @@ function buildDualStationVllmBaseRunArgs(
     "no-new-privileges:true",
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,size=17179869184",
+    "--tmpfs",
+    // FlashInfer links generated-kernel headers beneath its installed cubin
+    // package. Keep only that empty subtree writable; packaged cubins and the
+    // rest of the image remain read-only.
+    flashinferCubinTmpfs(node),
     "--tmpfs",
     // Ray is installed under this home and loads its native _raylet module.
     // Docker tmpfs mounts default to noexec, so managed serving opts in.
