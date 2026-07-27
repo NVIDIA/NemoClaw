@@ -361,6 +361,23 @@ describe("probeDualStationVllmCapability", () => {
     expect(deps.calls.localHost).not.toHaveBeenCalled();
   });
 
+  it("accepts the local default Docker context selected by Station host preparation", () => {
+    const deps = fixtureDeps();
+
+    expect(
+      probeDualStationVllmCapability({
+        env: {
+          [NEMOCLAW_DGX_STATION_PEER_ENV]: "nvidia@station-b",
+          [NEMOCLAW_DGX_STATION_SSH_BINDING_ENV]: sshFixture.token,
+          DOCKER_CONTEXT: "default",
+        },
+        deps,
+      }),
+    ).toMatchObject({ kind: "ready" });
+    expect(deps.calls.sshConfig).toHaveBeenCalledOnce();
+    expect(deps.calls.localHost).toHaveBeenCalledOnce();
+  });
+
   it.each([
     "station-b",
     "nvidia@station-b",

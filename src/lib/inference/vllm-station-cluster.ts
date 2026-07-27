@@ -1524,9 +1524,10 @@ export function probeDualStationVllmCapability(
       `${NEMOCLAW_DGX_STATION_SSH_BINDING_ENV} must identify the installer-qualified peer`,
     );
   }
-  const localDockerOverride = DUAL_STATION_LOCAL_DOCKER_OVERRIDE_ENV_NAMES.find(
-    (name) => env[name] !== undefined && String(env[name]).trim() !== "",
-  );
+  const localDockerOverride = DUAL_STATION_LOCAL_DOCKER_OVERRIDE_ENV_NAMES.find((name) => {
+    const value = String(env[name] ?? "").trim();
+    return value !== "" && !(name === "DOCKER_CONTEXT" && value === "default");
+  });
   if (localDockerOverride) {
     return unavailable(
       "local-docker-unavailable",
