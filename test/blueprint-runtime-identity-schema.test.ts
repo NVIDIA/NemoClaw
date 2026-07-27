@@ -59,4 +59,27 @@ describe("blueprint runtime identity schema", () => {
       ),
     ).toBe(false);
   });
+
+  it("rejects more middleware entries than the runner accepts", () => {
+    const middlewares = Object.fromEntries(
+      Array.from({ length: 11 }, (_, index) => [
+        `guard_${index}`,
+        {
+          middleware: "example/guard",
+          order: index,
+          endpoints: { include: ["api.example.com"] },
+        },
+      ]),
+    );
+
+    expect(
+      validate({
+        ...baseBlueprint,
+        components: {
+          ...baseBlueprint.components,
+          policy: { base: "policies/openclaw-sandbox.yaml", middlewares },
+        },
+      }),
+    ).toBe(false);
+  });
 });

@@ -132,6 +132,7 @@
             },
             "middlewares": {
               "type": "object",
+              "maxProperties": 10,
               "additionalProperties": {
                 "$ref": "#/$defs/policyMiddleware"
               }

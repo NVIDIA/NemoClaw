@@ -41,6 +41,12 @@ const matchingProviderResult: RuntimeIdentityCommandResult = {
   stdout: matchingProvider,
   stderr: "",
 };
+const profileDocument = [
+  "id: okta-runtime-v1",
+  "credentials:",
+  "  - name: OKTA_ACCESS_TOKEN",
+  "",
+].join("\n");
 
 const config: RuntimeIdentityConfig = {
   profile_path: "provider-profiles/okta-runtime-v1.yaml",
@@ -76,7 +82,7 @@ describe("runtime identity contract", () => {
     root = mkdtempSync(join(tmpdir(), "nemoclaw-runtime-identity-"));
     mkdirSync(join(root, "provider-profiles"));
     profilePath = join(root, config.profile_path);
-    writeFileSync(profilePath, "name: okta-runtime-v1\n");
+    writeFileSync(profilePath, profileDocument);
     profilePath = realpathSync(profilePath);
     calls = [];
     responses = new Map();
@@ -238,15 +244,59 @@ describe("runtime identity contract", () => {
   });
 
   it("accepts an already imported profile", async () => {
-    responses.set("provider profile import --file", []);
     responses.set(`provider profile import --file ${profilePath}`, [
       { exitCode: 1, stdout: "", stderr: "profile already exists" },
+    ]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 0, stdout: profileDocument, stderr: "" },
     ]);
     responses.set("provider get acme-okta-runtime", [matchingProviderResult]);
 
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject({
       provider_created: false,
     });
+  });
+
+  it("rejects an incompatible existing profile", async () => {
+    responses.set(`provider profile import --file ${profilePath}`, [
+      { exitCode: 1, stdout: "", stderr: "profile already exists" },
+    ]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      {
+        exitCode: 0,
+        stdout: profileDocument.replace("OKTA_ACCESS_TOKEN", "DIFFERENT_TOKEN"),
+        stderr: "",
+      },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      /profile 'okta-runtime-v1' exists with an incompatible binding/,
+    );
+    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+      "provider get acme-okta-runtime",
+    );
+  });
+
+  it("reports a failure to export an existing profile", async () => {
+    responses.set(`provider profile import --file ${profilePath}`, [
+      { exitCode: 1, stdout: "", stderr: "profile already exists" },
+    ]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 1, stdout: "", stderr: "export denied" },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/export denied/);
+  });
+
+  it.each([
+    ["id: another-profile\ncredentials:\n  - name: OKTA_ACCESS_TOKEN\n", /must declare id/],
+    ["id: okta-runtime-v1\ncredentials:\n  - name: DIFFERENT_TOKEN\n", /exactly one credential/],
+    ["not: [valid", /not valid YAML/],
+  ])("rejects an incompatible local profile", async (profile, message) => {
+    writeFileSync(profilePath, profile);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(message);
+    expect(calls).toEqual([]);
   });
 
   it("supports refresh without a client secret", async () => {

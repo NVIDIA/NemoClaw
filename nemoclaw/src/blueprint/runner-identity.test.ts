@@ -129,7 +129,9 @@ describe("blueprint identity wrapper", () => {
     store.set("/blueprint", { type: "dir" });
     store.set("/blueprint/provider-profiles/okta-runtime-v1.yaml", {
       type: "file",
-      content: "name: okta-runtime-v1",
+      content: ["id: okta-runtime-v1", "credentials:", "  - name: OKTA_ACCESS_TOKEN", ""].join(
+        "\n",
+      ),
     });
   });
 
@@ -241,6 +243,14 @@ describe("blueprint identity wrapper", () => {
     expect(refreshArguments).not.toContain("client-secret");
     expect(refreshOptions.env.OKTA_REFRESH_TOKEN).toBe("refresh-secret");
     expect(refreshOptions.env.OKTA_CLIENT_SECRET).toBe("client-secret");
+    expect(refreshOptions.extendEnv).toBe(false);
+    const sandboxCreateCall = mockExeca.mock.calls.find(
+      (call) => Array.isArray(call[1]) && call[1][0] === "sandbox" && call[1][1] === "create",
+    );
+    expect(sandboxCreateCall).toBeDefined();
+    expect(sandboxCreateCall![2].env.OKTA_REFRESH_TOKEN).toBeUndefined();
+    expect(sandboxCreateCall![2].env.OKTA_CLIENT_SECRET).toBeUndefined();
+    expect(sandboxCreateCall![2].extendEnv).toBe(false);
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "provider", "attach", "test-sandbox", "acme-okta-runtime"],
@@ -421,5 +431,54 @@ describe("blueprint identity wrapper", () => {
         on_error: "fail_closed",
       },
     });
+  });
+
+  it("rejects middleware collisions without replacing existing policy", async () => {
+    responseQueue([
+      [
+        "policy get --base test-sandbox",
+        [
+          {
+            exitCode: 0,
+            stdout: [
+              "Version: 1",
+              "Hash: sha256:test",
+              "---",
+              "version: 1",
+              "network_policies: {}",
+              "network_middlewares:",
+              "  identity_guard:",
+              "    middleware: existing/guard",
+              "    endpoints:",
+              "      include: [api.example.okta.com]",
+              "",
+            ].join("\n"),
+            stderr: "",
+          },
+        ],
+      ],
+    ]);
+
+    await expect(
+      actionApply(
+        "default",
+        blueprint({
+          policy: {
+            middlewares: {
+              identity_guard: {
+                middleware: "replacement/guard",
+                endpoints: { include: ["api.example.okta.com"] },
+              },
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/Refusing to replace existing network middleware: identity_guard/);
+
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "policy" && call[1][1] === "set",
+      ),
+    ).toBe(false);
   });
 });

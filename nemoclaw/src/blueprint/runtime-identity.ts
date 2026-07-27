@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { realpathSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+
+import YAML from "yaml";
 
 import { isPlainObject } from "../shared/object-record.js";
 
@@ -16,6 +19,7 @@ const ANSI_CSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/gu;
 const UNSAFE_CONTROL_PATTERN = /[\x00-\x08\x0A-\x1F\x7F-\x9F]/u;
 const MISSING_RESOURCE_PATTERN = /\b(?:not found|does not exist|unknown provider)\b/i;
 const MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024;
+const MAX_PROFILE_BYTES = 64 * 1024;
 
 export interface RuntimeIdentityConfig {
   profile_path: string;
@@ -63,6 +67,37 @@ interface RuntimeIdentityProviderMetadata {
   type: string;
   credentialKeys: string[];
   configKeys: string[];
+}
+
+function parseRuntimeIdentityProfile(
+  content: string,
+  config: RuntimeIdentityConfig,
+  label: string,
+): Record<string, unknown> {
+  if (Buffer.byteLength(content, "utf8") > MAX_PROFILE_BYTES) {
+    throw new Error(`${label} exceeds the ${MAX_PROFILE_BYTES}-byte limit`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    throw new Error(`${label} is not valid YAML`);
+  }
+  if (!isPlainObject(parsed) || parsed.id !== config.provider_type) {
+    throw new Error(`${label} must declare id '${config.provider_type}'`);
+  }
+  const credentials = parsed.credentials;
+  if (
+    !Array.isArray(credentials) ||
+    credentials.length !== 1 ||
+    !isPlainObject(credentials[0]) ||
+    credentials[0].name !== config.credential_key
+  ) {
+    throw new Error(
+      `${label} must declare exactly one credential named '${config.credential_key}'`,
+    );
+  }
+  return parsed;
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
@@ -322,6 +357,11 @@ export async function prepareRuntimeIdentity(
     config.profile_path,
     deps.blueprintPath ?? process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
   );
+  const requestedProfile = parseRuntimeIdentityProfile(
+    readFileSync(profilePath, "utf8"),
+    config,
+    "Runtime identity provider profile",
+  );
   const clientId = requiredEnvironmentValue(config, config.client_id_env, env);
   const refreshToken = requiredEnvironmentValue(config, config.refresh_token_env, env);
   const clientSecret = config.client_secret_env
@@ -337,10 +377,43 @@ export async function prepareRuntimeIdentity(
     "--file",
     profilePath,
   ]);
-  if (profileImport.exitCode !== 0 && !/already exists/i.test(commandOutput(profileImport))) {
-    throw new Error(
-      `Failed to import runtime identity provider profile: ${deps.formatError(commandOutput(profileImport))}`,
-    );
+  if (profileImport.exitCode !== 0) {
+    if (!/already exists/i.test(commandOutput(profileImport))) {
+      throw new Error(
+        `Failed to import runtime identity provider profile: ${deps.formatError(commandOutput(profileImport))}`,
+      );
+    }
+    const profileExport = await deps.run([
+      "openshell",
+      "provider",
+      "profile",
+      "export",
+      config.provider_type,
+      "--output",
+      "yaml",
+    ]);
+    if (profileExport.exitCode !== 0) {
+      throw new Error(
+        `Failed to inspect existing runtime identity provider profile: ${deps.formatError(commandOutput(profileExport))}`,
+      );
+    }
+    let existingProfile: Record<string, unknown>;
+    try {
+      existingProfile = parseRuntimeIdentityProfile(
+        profileExport.stdout,
+        config,
+        "Existing runtime identity provider profile",
+      );
+    } catch {
+      throw new Error(
+        `Runtime identity provider profile '${config.provider_type}' exists with an incompatible binding`,
+      );
+    }
+    if (!isDeepStrictEqual(existingProfile, requestedProfile)) {
+      throw new Error(
+        `Runtime identity provider profile '${config.provider_type}' exists with an incompatible binding`,
+      );
+    }
   }
 
   const providerState = await inspectProvider(plan, deps);

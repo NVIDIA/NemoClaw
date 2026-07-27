@@ -482,6 +482,14 @@ function mergePolicyAdditions(
   if (!isPlainObject(existingMiddlewares)) {
     throw new Error("network_middlewares must be a YAML mapping");
   }
+  const middlewareCollisions = Object.keys(middlewares)
+    .filter((name) => Object.hasOwn(existingMiddlewares, name))
+    .sort();
+  if (middlewareCollisions.length > 0) {
+    throw new Error(
+      `Refusing to replace existing network middleware: ${middlewareCollisions.join(", ")}`,
+    );
+  }
   if (Object.keys(existingMiddlewares).length > 0 || Object.keys(middlewares).length > 0) {
     output.network_middlewares = { ...existingMiddlewares, ...middlewares };
   }
@@ -514,6 +522,8 @@ async function runCmd(
     reject: options?.reject ?? true,
     stdout: "pipe",
     stderr: "pipe",
+    env: buildSubprocessEnv(),
+    extendEnv: false,
   });
   return {
     exitCode: result.exitCode ?? 0,
@@ -531,6 +541,7 @@ async function runRuntimeIdentityCommand(
     stdout: "pipe",
     stderr: "pipe",
     env: buildSubprocessEnv(options?.env),
+    extendEnv: false,
   });
   return {
     exitCode: result.exitCode ?? 0,
@@ -549,7 +560,12 @@ function runtimeIdentityDeps(): RuntimeIdentityDeps {
 }
 
 async function openshellAvailable(): Promise<boolean> {
-  const result = await execa("which", ["openshell"], { reject: false, stdout: "pipe" });
+  const result = await execa("which", ["openshell"], {
+    reject: false,
+    stdout: "pipe",
+    env: buildSubprocessEnv(),
+    extendEnv: false,
+  });
   return result.exitCode === 0;
 }
 
@@ -969,6 +985,7 @@ export async function actionApply(
       stdout: "pipe",
       stderr: "pipe",
       env: buildSubprocessEnv(credEnv),
+      extendEnv: false,
     });
     // A required mutation: a silently-ignored failure would persist plan.json and
     // report a ready sandbox that cannot perform inference. Mirror the
