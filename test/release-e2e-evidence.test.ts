@@ -66,6 +66,7 @@ function runEvidence(
         html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${attempt}/job/${index + 1}`,
         name: execution.expectedName,
         run_attempt: attempt,
+        run_id: attempt,
         status: options.status?.(execution) ?? "completed",
       })),
     },
@@ -201,6 +202,36 @@ describe("release E2E evidence", () => {
 
     expect(ledger.entries.find((entry) => entry.id === skippedId)).toMatchObject({
       attempts: [{ conclusion: "skipped", status: "completed" }],
+      status: "missing",
+    });
+  });
+
+  it("ignores job evidence from another workflow run", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    const ignoredId = plan.executions.find((execution) => execution.group === "default")!.id;
+    const jobs = evidence.jobs as { jobs: Array<Record<string, unknown>> };
+    jobs.jobs[0]!.run_id = 999;
+
+    const ledger = buildReleaseE2eLedger(plan, [evidence]);
+
+    expect(ledger.entries.find((entry) => entry.id === ignoredId)).toMatchObject({
+      attempts: [],
+      status: "missing",
+    });
+  });
+
+  it("ignores job evidence newer than the enclosing workflow run attempt", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    const ignoredId = plan.executions.find((execution) => execution.group === "default")!.id;
+    const jobs = evidence.jobs as { jobs: Array<Record<string, unknown>> };
+    jobs.jobs[0]!.run_attempt = 2;
+
+    const ledger = buildReleaseE2eLedger(plan, [evidence]);
+
+    expect(ledger.entries.find((entry) => entry.id === ignoredId)).toMatchObject({
+      attempts: [],
       status: "missing",
     });
   });

@@ -446,6 +446,9 @@ export function buildReleaseE2eLedger(
     );
 
     for (const job of flattenJobs(evidence.jobs)) {
+      const jobRunId = numberField(job, "run_id", `runs[${runIndex}].job`);
+      const jobAttempt = numberField(job, "run_attempt", `runs[${runIndex}].job`);
+      if (jobRunId !== runId || jobAttempt > runAttempt) continue;
       const name = stringField(job, "name", `runs[${runIndex}].job`);
       const matches = selectedExecutions.filter((execution) =>
         matchesExpectedName(name, execution.expectedName),
@@ -461,7 +464,7 @@ export function buildReleaseE2eLedger(
       const execution = matches[0]!;
       const values = attempts.get(execution.id) ?? [];
       values.push({
-        attempt: numberField(job, "run_attempt", `runs[${runIndex}].job`),
+        attempt: jobAttempt,
         conclusion: stringField(job, "conclusion", `runs[${runIndex}].job`),
         status: stringField(job, "status", `runs[${runIndex}].job`),
         jobUrl: stringField(job, "html_url", `runs[${runIndex}].job`),
