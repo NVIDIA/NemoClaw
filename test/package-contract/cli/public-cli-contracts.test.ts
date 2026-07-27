@@ -67,4 +67,26 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI_ENTRYPOINT)} "$@"
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
   });
+
+  it("validates every repository-local documentation link (#7616)", {
+    timeout: 150_000,
+  }, () => {
+    const result = spawnSync("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        CHECK_DOC_LINKS_REMOTE: "0",
+      },
+      killSignal: "SIGKILL",
+      timeout: 120_000,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("check-docs: running: [links]");
+    expect(result.stdout).toContain("remote: skipped (local paths only)");
+    expect(result.stdout).toContain("phase 2/2: skipped");
+  });
 });
