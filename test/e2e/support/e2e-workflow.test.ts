@@ -680,13 +680,11 @@ describe("e2e workflow boundary", () => {
     expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     const driftedWorkflow = structuredClone(workflow);
-    const compatibilityJob = driftedWorkflow.jobs["retired-selector-compatibility"];
-    if (compatibilityJob) {
-      compatibilityJob.if = compatibilityJob.if?.replace(
-        ",docs-validation,",
-        ",future-retired-selector,",
-      );
-    }
+    const compatibilityJob = driftedWorkflow.jobs["retired-selector-compatibility"] ?? {};
+    compatibilityJob.if = compatibilityJob.if?.replace(
+      ",docs-validation,",
+      ",future-retired-selector,",
+    );
     expect(validateE2eWorkflow(driftedWorkflow)).toContain(
       "retired-selector-compatibility job selector gate must match retired selector contract",
     );
