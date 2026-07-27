@@ -18,6 +18,7 @@ import {
   env,
   envHash,
   expectAuthenticatedBaselineInventoryRequest,
+  expectAuthenticatedProxyResolutionRequests,
   expectedApiMode,
   expectedBaseUrl,
   hashCheck,
@@ -505,23 +506,5 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(proxyResolutionCli.exitCode, resultText(proxyResolutionCli)).toBe(0);
   expect(proxyResolutionCli.stdout).toMatch(/\bPONG\b/iu);
 
-  if (mockBaseline) {
-    const proxyAttemptRequests = mockBaseline.requests().slice(requestOffset);
-    expect(
-      proxyAttemptRequests.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0),
-    ).toEqual([]);
-    const proxyRequests = proxyAttemptRequests.filter(
-      (request) =>
-        request.method === "POST" &&
-        ["/v1/chat/completions", "/chat/completions"].includes(request.path),
-    );
-    expect(proxyRequests.length).toBeGreaterThan(0);
-    for (const request of proxyRequests) {
-      expect(request).toMatchObject({
-        auth: "ok",
-        authorizationSent: true,
-        model: proxyResolutionModel,
-      });
-    }
-  }
+  expectAuthenticatedProxyResolutionRequests(mockBaseline, requestOffset, proxyResolutionModel);
 });

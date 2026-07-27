@@ -98,6 +98,31 @@ export function expectAuthenticatedBaselineInventoryRequest(
   );
 }
 
+export function expectAuthenticatedProxyResolutionRequests(
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
+  requestOffset: number,
+  expectedModel: string,
+): void {
+  if (!baseline) return;
+  const attemptRequests = baseline.requests().slice(requestOffset);
+  expect(attemptRequests.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual(
+    [],
+  );
+  const proxyRequests = attemptRequests.filter(
+    (request) =>
+      request.method === "POST" &&
+      ["/v1/chat/completions", "/chat/completions"].includes(request.path),
+  );
+  expect(proxyRequests.length).toBeGreaterThan(0);
+  for (const request of proxyRequests) {
+    expect(request).toMatchObject({
+      auth: "ok",
+      authorizationSent: true,
+      model: expectedModel,
+    });
+  }
+}
+
 export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
   return (
     runtimeEnv.NEMOCLAW_MODEL ?? runtimeEnv.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL
