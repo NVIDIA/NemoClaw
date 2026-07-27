@@ -18,10 +18,21 @@ function hasBuildKitRunMount(dockerfile: string): boolean {
   return dockerfile
     .replace(/\\\r?\n[ \t]*/gu, " ")
     .split(/\r?\n/u)
-    .some((instruction) => /^\s*RUN\s+--mount(?:\s|=)/iu.test(instruction));
+    .some((instruction) => {
+      const runOptionPrefix = instruction.match(/^\s*RUN((?:\s+--\S+)*)/iu)?.[1] ?? "";
+      return /(?:^|\s)--mount(?:=|$)/iu.test(runOptionPrefix);
+    });
 }
 
 describe("OpenClaw final image layout", () => {
+  it.each([
+    ["same-line", "RUN --network=none --mount=type=cache,target=/tmp true", true],
+    ["line-continuation", "RUN --security=sandbox \\\n  --mount=type=secret,id=token true", true],
+    ["shell-command argument", "RUN printf '%s' --mount=type=cache", false],
+  ] as const)("recognizes BuildKit mounts only in the RUN option prefix for %s form (#7611)", (_form, dockerfile, expected) => {
+    expect(hasBuildKitRunMount(dockerfile)).toBe(expected);
+  });
+
   // source-shape-contract: compatibility -- Legacy-compatible grouped payload copies preserve cold-onboard export work while retaining intentional cache and scan boundaries
   it("uses grouped legacy-compatible payload layers at their cache boundaries (#7611)", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
