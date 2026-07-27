@@ -367,11 +367,14 @@ export function projectHostReadiness(
     ({ severity }) => severity === "blocking" || severity === "fatal",
   );
   const hasUnknown = capabilities.some(({ state }) => state === "unknown");
-  const status = hasBlocking ? "incompatible" : hasUnknown ? "inconclusive" : "supported";
+  const outcome = hasBlocking
+    ? ({ status: "incompatible", exitCode: 2 } as const)
+    : hasUnknown
+      ? ({ status: "inconclusive", exitCode: 3 } as const)
+      : ({ status: "supported", exitCode: 0 } as const);
   return {
     schemaVersion: SYSTEM_READINESS_SCHEMA_VERSION,
-    status,
-    exitCode: status === "supported" ? 0 : status === "incompatible" ? 2 : 3,
+    ...outcome,
     mutated: false,
     provenance: {
       nemoclawVersion: options.nemoclawVersion,
