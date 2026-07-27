@@ -28,55 +28,55 @@ export type WebSearchVerifyDeps = {
 
 export type WebSearchEnvBoundary = "absent" | "placeholder" | "raw-secret";
 
-const WEB_SEARCH_ENV_BOUNDARY_SENTINELS: readonly WebSearchEnvBoundary[] = [
-  "absent",
-  "placeholder",
-  "raw-secret",
-];
+// Unique marker prefixing the sentinel so the host can extract it even when a
+// shell prints unrelated text; the marker cannot appear in incidental output.
+const WEB_SEARCH_ENV_BOUNDARY_MARKER = "__nemoclaw_wsenv__";
+const WEB_SEARCH_ENV_BOUNDARY_PATTERN = /__nemoclaw_wsenv__:(absent|placeholder|raw-secret)/;
 
 /**
  * Shell that classifies a web-search provider's credential env var *inside* the
- * sandbox and prints only a sentinel — never the value. This keeps the guard
- * from pulling the very credential it is checking back across the host boundary.
- * The profile-backed provider keeps the key gateway-side and rewrites it at
- * egress, so the sandbox env is unset (`absent`) or carries the
+ * sandbox and prints only a marked sentinel — never the value. This keeps the
+ * guard from pulling the very credential it is checking back across the host
+ * boundary. The profile-backed provider keeps the key gateway-side and rewrites
+ * it at egress, so the sandbox env is unset (`absent`) or carries the
  * `openshell:resolve:env:<NAME>` reference (`placeholder`); a `generic`-typed
  * provider instead injects the plaintext credential (`raw-secret`), which the
  * agent can read and print (#7425).
  */
 function buildWebSearchEnvBoundaryScript(envKey: string): string {
+  const marker = WEB_SEARCH_ENV_BOUNDARY_MARKER;
   return [
     `v="$(printenv ${envKey} 2>/dev/null || true)"`,
     'case "$v" in',
-    "  '') printf absent ;;",
-    "  openshell:resolve:env:*) printf placeholder ;;",
-    "  *) printf raw-secret ;;",
+    `  '') printf '${marker}:absent' ;;`,
+    `  openshell:resolve:env:*) printf '${marker}:placeholder' ;;`,
+    `  *) printf '${marker}:raw-secret' ;;`,
     "esac",
   ].join("\n");
 }
 
 /**
- * Map the in-sandbox sentinel to the typed boundary state. Anything other than a
- * recognized sentinel (including a failed probe returning null) is treated as
- * `absent` so a probe hiccup never raises a false security alert.
+ * Extract the typed boundary state from the marked sentinel. The marker match
+ * ignores any surrounding shell noise, so login banners cannot mask a real
+ * `raw-secret` result as `absent`. Absent marker (including a failed probe
+ * returning null) is treated as `absent` so a probe hiccup never raises a false
+ * security alert.
  */
 export function classifyWebSearchEnvBoundary(
-  sentinel: string | null | undefined,
+  probeOutput: string | null | undefined,
 ): WebSearchEnvBoundary {
-  const value = (sentinel ?? "").trim();
-  return (WEB_SEARCH_ENV_BOUNDARY_SENTINELS as readonly string[]).includes(value)
-    ? (value as WebSearchEnvBoundary)
-    : "absent";
+  const match = (probeOutput ?? "").match(WEB_SEARCH_ENV_BOUNDARY_PATTERN);
+  return (match?.[1] as WebSearchEnvBoundary) ?? "absent";
 }
 
 /**
  * Runtime secret-boundary guard: assert the live sandbox container env does not
  * expose the web-search provider's raw credential. `openclaw.json` inspection
  * alone misses this — the key leaks through the process environment, not the
- * config file. Classification runs in-sandbox and only a sentinel returns, so
- * the raw value never reaches the host. On a raw-secret exposure it surfaces a
- * prominent, actionable alert. Returns true when a raw credential was detected.
- * Best-effort and non-fatal, matching the surrounding verification.
+ * config file. Classification runs in-sandbox and only a marked sentinel
+ * returns, so the raw value never reaches the host. On a raw-secret exposure it
+ * surfaces a prominent, actionable alert. Returns true when a raw credential was
+ * detected. Best-effort and non-fatal, matching the surrounding verification.
  */
 function checkWebSearchEnvSecretBoundary(
   sandboxName: string,
@@ -86,6 +86,8 @@ function checkWebSearchEnvSecretBoundary(
 ): boolean {
   const envKey = webSearchEnvFor(provider);
   const probe = deps.runCaptureOpenshell(
+    // `sh -c` (not `-lc`): no login profiles run, so their output cannot
+    // contaminate the sentinel the host classifies.
     [
       "sandbox",
       "exec",
@@ -93,7 +95,7 @@ function checkWebSearchEnvSecretBoundary(
       sandboxName,
       "--",
       "sh",
-      "-lc",
+      "-c",
       buildWebSearchEnvBoundaryScript(envKey),
     ],
     { ignoreError: true, timeout: 10_000 },

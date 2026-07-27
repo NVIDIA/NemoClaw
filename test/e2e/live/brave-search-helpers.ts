@@ -290,9 +290,16 @@ export function assertOptionalBraveEnv(value: string, braveKey: string): void {
  * the agent can *read* the key at all. So rather than feed the real key back
  * through the live LLM loop (which would exfiltrate it to the inference provider
  * in the exact failure mode under test), this proves the raw key is absent from
- * every surface the agent can read: its entire process environment (any var
- * name, matching the reporter's "all env vars") and the OpenClaw config/state
- * tree it can `cat`. The scan runs in-sandbox against the uploaded key and
+ * every surface the agent can read:
+ *   1. every readable process environment inside the sandbox via
+ *      `/proc/<pid>/environ` — a credential injected per-process is invisible to
+ *      a fresh shell yet still readable by the running agent. The OpenShell
+ *      gateway that legitimately holds the key runs outside the sandbox
+ *      namespace, so it is not among these processes and cannot false-positive;
+ *   2. a fresh login-style shell environment (container-wide injection);
+ *   3. the OpenClaw config/state tree the agent can `cat`.
+ * The probe's own process tree references the leak-check file, so it is skipped
+ * to avoid matching itself. The scan runs in-sandbox against the uploaded key and
  * returns only an exit code, so the raw value never crosses back to the host
  * (where fixture redaction would otherwise mask a real leak). Exit 0 = no
  * readable channel to the key; 1 = the key is readable and could be disclosed.
@@ -307,16 +314,26 @@ export async function assertAgentHasNoReadableBraveKey(
   const probe = await sandboxShell(
     sandbox,
     `leaked=0
-# The agent's full process environment, under any variable name.
+# 1. Every readable process environment in the sandbox (the agent included,
+#    whatever its argv). Skip this probe's own tree: it — and its grep children —
+#    carry the leak-check file path in their command line, so match on that.
+for environ in /proc/[0-9]*/environ; do
+  pid_dir=\${environ%/environ}
+  cmd=$(tr '\\0' ' ' < "$pid_dir/cmdline" 2>/dev/null) || continue
+  case "$cmd" in *${remoteSecretFile}*) continue ;; esac
+  [ -r "$environ" ] || continue
+  grep -qaF -f ${remoteSecretFile} "$environ" 2>/dev/null && leaked=1
+done
+# 2. A fresh login-style shell environment (container-wide injection).
 env | grep -qF -f ${remoteSecretFile} && leaked=1
-# Every OpenClaw config/state file the agent can read.
+# 3. Every OpenClaw config/state file the agent can read.
 grep -rqF -f ${remoteSecretFile} /sandbox/.openclaw 2>/dev/null && leaked=1
 [ "$leaked" -eq 0 ]`,
     { artifactName: "phase-4c-agent-readable-key-scan", timeoutMs: 60_000, redactionValues },
   );
   expect(
     probe.exitCode,
-    "the real Brave key is readable by the agent (present in its environment or OpenClaw config), so it could be disclosed when prompted to print secrets",
+    "the real Brave key is readable by the agent — present in a sandbox process environment, a login shell environment, or the OpenClaw config",
   ).toBe(0);
 }
 

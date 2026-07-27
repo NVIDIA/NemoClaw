@@ -28,7 +28,7 @@ describe("verifyWebSearchInsideSandbox", () => {
     // key is exposed.
     const d = deps([
       "web:\n  backend: tavily\n",
-      "absent",
+      "__nemoclaw_wsenv__:absent",
       JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
     ]);
 
@@ -44,7 +44,8 @@ describe("verifyWebSearchInsideSandbox", () => {
       "cat",
       "/sandbox/.hermes/config.yaml",
     ]);
-    // The boundary probe classifies in-sandbox and returns only a sentinel.
+    // The boundary probe classifies in-sandbox with `sh -c` (no login profiles)
+    // and returns only a marked sentinel.
     expect(d.runCaptureOpenshell.mock.calls[1][0].slice(0, 7)).toEqual([
       "sandbox",
       "exec",
@@ -52,7 +53,7 @@ describe("verifyWebSearchInsideSandbox", () => {
       "alpha",
       "--",
       "sh",
-      "-lc",
+      "-c",
     ]);
     expect(d.runCaptureOpenshell.mock.calls[1][0][7]).toContain("printenv TAVILY_API_KEY");
     expect(d.runCaptureOpenshell.mock.calls[1][0][7]).not.toContain("cat ");
@@ -113,7 +114,7 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
-      "absent",
+      "__nemoclaw_wsenv__:absent",
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
@@ -127,7 +128,7 @@ describe("verifyWebSearchInsideSandbox", () => {
       "alpha",
       "--",
       "sh",
-      "-lc",
+      "-c",
     ]);
     expect(d.runCaptureOpenshell.mock.calls[1][0][7]).toContain("printenv BRAVE_API_KEY");
     expect(d.runCaptureOpenshell.mock.calls[2][0]).toEqual([
@@ -260,7 +261,7 @@ describe("verifyWebSearchInsideSandbox", () => {
             search: {
               enabled: true,
               provider: "brave",
-              apiKey: "BSA-real-looking-secret-do-not-interpolate",
+              apiKey: "literal-secret-do-not-interpolate",
             },
           },
         },
@@ -280,10 +281,10 @@ describe("verifyWebSearchInsideSandbox", () => {
       "alpha",
       "--",
       "sh",
-      "-lc",
+      "-c",
     ]);
     for (const call of d.runCaptureOpenshell.mock.calls) {
-      expect(call[0]).not.toContain("BSA-real-looking-secret-do-not-interpolate");
+      expect(call[0]).not.toContain("literal-secret-do-not-interpolate");
     }
     expect(d.warn).toHaveBeenCalledWith(
       "  ⚠ Brave Search apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.",
@@ -336,7 +337,7 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
-      "raw-secret",
+      "__nemoclaw_wsenv__:raw-secret",
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
@@ -363,7 +364,7 @@ describe("verifyWebSearchInsideSandbox", () => {
           },
         },
       }),
-      "placeholder",
+      "__nemoclaw_wsenv__:placeholder",
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
@@ -377,15 +378,19 @@ describe("verifyWebSearchInsideSandbox", () => {
 });
 
 describe("classifyWebSearchEnvBoundary", () => {
-  it("maps in-sandbox sentinels and treats anything else as absent", () => {
-    expect(classifyWebSearchEnvBoundary("absent")).toBe("absent");
-    expect(classifyWebSearchEnvBoundary("placeholder")).toBe("placeholder");
-    expect(classifyWebSearchEnvBoundary("raw-secret")).toBe("raw-secret");
-    expect(classifyWebSearchEnvBoundary(" raw-secret\n")).toBe("raw-secret");
-    // A failed probe (null) or unexpected output must never raise a false alarm.
+  it("extracts the marked sentinel and tolerates surrounding shell noise", () => {
+    expect(classifyWebSearchEnvBoundary("__nemoclaw_wsenv__:absent")).toBe("absent");
+    expect(classifyWebSearchEnvBoundary("__nemoclaw_wsenv__:placeholder")).toBe("placeholder");
+    expect(classifyWebSearchEnvBoundary("__nemoclaw_wsenv__:raw-secret")).toBe("raw-secret");
+    // A login banner or MOTD before the marker must not mask a raw-secret result.
+    expect(
+      classifyWebSearchEnvBoundary("Welcome to the sandbox!\n__nemoclaw_wsenv__:raw-secret"),
+    ).toBe("raw-secret");
+    // A failed probe (null) or unmarked output must never raise a false alarm.
     expect(classifyWebSearchEnvBoundary(null)).toBe("absent");
     expect(classifyWebSearchEnvBoundary(undefined)).toBe("absent");
     expect(classifyWebSearchEnvBoundary("")).toBe("absent");
-    expect(classifyWebSearchEnvBoundary("BSAabcdefghijklmnopqrstuvwxyz012345")).toBe("absent");
+    expect(classifyWebSearchEnvBoundary("raw-secret")).toBe("absent");
+    expect(classifyWebSearchEnvBoundary("unexpected output")).toBe("absent");
   });
 });
