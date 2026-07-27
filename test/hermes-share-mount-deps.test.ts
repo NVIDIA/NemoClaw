@@ -12,9 +12,15 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
 
 function extractAptInstallCommand(dockerfile: string): string {
-  const match = dockerfile.match(
-    /RUN\s+apt-get update\s*&&\s*apt-get install -y --no-install-recommends[\s\S]*?&&\s*rm -rf \/var\/lib\/apt\/lists\/\*/m,
+  const runtimeStage = dockerfile.indexOf(
+    "FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c",
   );
+  expect(runtimeStage).toBeGreaterThanOrEqual(0);
+  const match = dockerfile
+    .slice(runtimeStage)
+    .match(
+      /RUN\s+apt-get update\s*&&\s*apt-get install -y --no-install-recommends[\s\S]*?&&\s*rm -rf \/var\/lib\/apt\/lists\/\*/m,
+    );
   expect(match).not.toBeNull();
   return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
 }
@@ -194,14 +200,25 @@ describe("Hermes share mount package parity (#2947)", () => {
     const securityDebs = path.join(tmp, "security-debs");
     const inventoryDirectory = path.join(tmp, "security-inventory");
     const inventory = path.join(inventoryDirectory, "security-packages.txt");
+    const fixedParser = path.join(tmp, "python3.13", "html", "parser.py");
     fs.mkdirSync(lists);
+    fs.mkdirSync(securityDebs);
+    fs.mkdirSync(path.dirname(fixedParser), { recursive: true });
+    fs.writeFileSync(path.join(securityDebs, "libssh2-1t64.deb"), "fixed libssh2");
+    fs.writeFileSync(
+      path.join(securityDebs, "nemoclaw-python3.13-htmlparser-fix.deb"),
+      "fixed HTMLParser",
+    );
+    fs.writeFileSync(fixedParser, "fixed HTMLParser");
 
     try {
       const command = extractAptInstallCommand(dockerfile)
         .replaceAll("/var/lib/apt/lists", lists)
         .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
+        .replaceAll("/tmp/nemoclaw-native-security", securityDebs)
         .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
-        .replaceAll("/usr/local/share/nemoclaw", inventoryDirectory);
+        .replaceAll("/usr/local/share/nemoclaw", inventoryDirectory)
+        .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
       const { result, calls } = runLoggedShell(command, tmp, [
         'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
         'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',

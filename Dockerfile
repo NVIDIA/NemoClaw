@@ -1736,6 +1736,8 @@ RUN set -eu; \
         "jq=1.8.2-1" \
         "vim-common=2:9.2.0782-1" \
         "vim-tiny=2:9.2.0782-1" \
+        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
+        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         | cmp -s - "$security_inventory"; \
     test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
@@ -1743,10 +1745,18 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1"; \
+    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
     printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \
     python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION"; \
+    printf '%s  %s\n' \
+        "33a7eeead8d1ccb04efd282502b766e44c36cca17bbb44d9e6fa3911fd8f226f" \
+        /usr/lib/python3.13/html/parser.py \
+        | sha256sum -c -; \
+    python3 -c "from html.parser import HTMLParser; p=HTMLParser(); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''"; \
+    python3 -c "import ctypes; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; assert lib.libssh2_version(0) == b'1.11.1'"; \
     vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.

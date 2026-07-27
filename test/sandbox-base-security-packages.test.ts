@@ -51,19 +51,30 @@ function sandboxSecurityCommand(
   const inventory = path.join(inventoryDirectory, "security-packages.txt");
   const fakePython3 = path.join(tmp, "usr-bin", "python3");
   const fakePythonLink = path.join(tmp, "usr-local-bin", "python");
+  const fixedParser = path.join(tmp, "python3.13", "html", "parser.py");
   fs.mkdirSync(lists);
+  fs.mkdirSync(securityDebs);
   fs.mkdirSync(path.dirname(fakePython3), { recursive: true });
   fs.mkdirSync(path.dirname(fakePythonLink), { recursive: true });
+  fs.mkdirSync(path.dirname(fixedParser), { recursive: true });
   fs.writeFileSync(fakePython3, "#!/bin/sh\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(securityDebs, "libssh2-1t64.deb"), "fixed libssh2");
+  fs.writeFileSync(
+    path.join(securityDebs, "nemoclaw-python3.13-htmlparser-fix.deb"),
+    "fixed HTMLParser",
+  );
+  fs.writeFileSync(fixedParser, "fixed HTMLParser");
 
   const dockerfile = fs.readFileSync(image.dockerfile, "utf-8");
   const command = dockerRunCommandBetween(dockerfile, image.startMarker, image.endMarker)
     .replaceAll("/var/lib/apt/lists", lists)
     .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
+    .replaceAll("/tmp/nemoclaw-native-security", securityDebs)
     .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
     .replaceAll("/usr/local/share/nemoclaw", inventoryDirectory)
     .replaceAll("/usr/local/bin/python", fakePythonLink)
-    .replaceAll("/usr/bin/python3", fakePython3);
+    .replaceAll("/usr/bin/python3", fakePython3)
+    .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
   return { command, inventory, securityDebs };
 }
 
@@ -76,6 +87,8 @@ function securityInventory(architecture: (typeof ARCHITECTURES)[number]): string
     "jq=1.8.2-1",
     "vim-common=2:9.2.0782-1",
     "vim-tiny=2:9.2.0782-1",
+    "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1",
+    "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
     "",
   ].join("\n");
 }
@@ -86,13 +99,18 @@ function completedImageSecurityCommand(
   architecture: (typeof ARCHITECTURES)[number],
 ): { command: string; inventory: string } {
   const inventory = path.join(tmp, "security-packages.txt");
+  const fixedParser = path.join(tmp, "python3.13", "html", "parser.py");
+  fs.mkdirSync(path.dirname(fixedParser), { recursive: true });
   fs.writeFileSync(inventory, securityInventory(architecture), { mode: 0o444 });
+  fs.writeFileSync(fixedParser, "fixed HTMLParser");
   const dockerfile = fs.readFileSync(image.finalDockerfile, "utf-8");
   const command = dockerRunCommandBetween(
     dockerfile,
     "# Verify the immutable security package inventory in the completed image.",
     "# End completed-image security package verification.",
-  ).replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory);
+  )
+    .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
+    .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
   return { command, inventory };
 }
 
