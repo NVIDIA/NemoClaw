@@ -98,10 +98,15 @@ function evidence(entry: ReadinessEvidence): ReadinessEvidence {
 export function createPublicReadinessReport(
   report: Readonly<SystemReadinessReport>,
 ): SystemReadinessReport {
+  const outcome =
+    report.status === "supported"
+      ? ({ status: report.status, exitCode: report.exitCode } as const)
+      : report.status === "incompatible"
+        ? ({ status: report.status, exitCode: report.exitCode } as const)
+        : ({ status: report.status, exitCode: report.exitCode } as const);
   return {
     schemaVersion: report.schemaVersion,
-    status: report.status,
-    exitCode: report.exitCode,
+    ...outcome,
     mutated: false,
     provenance: {
       nemoclawVersion: bounded(report.provenance.nemoclawVersion, 128),
