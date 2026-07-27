@@ -22,7 +22,7 @@ import {
   getHeadSha,
   gitOutput,
 } from "../advisors/git.mts";
-import { githubRest, githubRestPaginated } from "../advisors/github.mts";
+import { githubRest } from "../advisors/github.mts";
 import { parseArgs, parsePositiveInt, readJson, writeJson } from "../advisors/io.mts";
 import {
   enumValue,
@@ -48,6 +48,13 @@ import {
 } from "../advisors/session.mts";
 import { focusedE2eJobsForChangedFiles } from "../e2e/workflow-boundary.mts";
 import {
+  collectGitHubReviewContext,
+  extractIssueRefs,
+  type GitHubReviewContext,
+  type PreviousAdvisorReview,
+  readPreparedGitHubContext,
+} from "./github-context.mts";
+import {
   createReviewFindingLedger,
   createReviewLedgerToolController,
   type ReviewFinding,
@@ -55,6 +62,9 @@ import {
   type ReviewFindingLedgerSnapshot,
   reviewLedgerStageCommitGuidance,
 } from "./review-ledger.mts";
+
+export type { GitHubReviewContext, PreviousAdvisorReview };
+export { extractIssueRefs, readPreparedGitHubContext };
 
 const root = process.cwd();
 export const DEFAULT_ADVISOR_COMMENT_MARKER = "<!-- nemoclaw-pr-review-advisor -->";
@@ -69,8 +79,6 @@ const ADVISOR_WORKFLOW_NAME =
 const ADVISOR_WORKFLOW_PATH =
   process.env.PR_REVIEW_ADVISOR_WORKFLOW_PATH || DEFAULT_ADVISOR_WORKFLOW_PATH;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
-const OPEN_PR_OVERLAP_LIMIT = 80;
-const OPEN_PR_OVERLAP_CONCURRENCY = 6;
 const RISK_CONTEXT_PATH_SAMPLE_LIMIT = 20;
 const RISK_CONTEXT_PATH_CHARACTER_LIMIT = 240;
 const METADATA_CHANGED_FILE_LIMIT = 20;
@@ -296,38 +304,6 @@ type DriftEvidence = {
   file: string;
   recentHistory: string[];
   renameHints: string[];
-};
-
-type OpenPrOverlap = {
-  number: number;
-  title: string;
-  labels: string[];
-  linkedIssues: number[];
-  sameFiles: string[];
-  duplicateLinkedIssues: number[];
-};
-
-type GitHubReviewContext = {
-  repo: string;
-  prNumber: number;
-  fetchError?: string;
-  pullRequest?: unknown;
-  issueReferenceLines?: string[];
-  linkedIssues?: LinkedIssue[];
-  openPrOverlaps?: OpenPrOverlap[];
-  previousAdvisorReview?: PreviousAdvisorReview | null;
-};
-
-export type PreviousAdvisorReview = {
-  headSha?: string;
-  body: string;
-};
-
-type LinkedIssue = {
-  number: number;
-  issue?: unknown;
-  comments?: unknown[];
-  fetchError?: string;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -1281,188 +1257,19 @@ function collectDriftEvidence(baseRef: string, changedFiles: string[]): DriftEvi
   });
 }
 
-async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
-  const repo = process.env.GITHUB_REPOSITORY;
-  const prNumber = Number.parseInt(
-    process.env.PR_NUMBER || process.env.GITHUB_REF_NAME?.match(/^(\d+)\//)?.[1] || "",
-    10,
-  );
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  if (!repo || !Number.isFinite(prNumber) || prNumber <= 0 || !token) return null;
-
-  const context: GitHubReviewContext = { repo, prNumber };
-  try {
-    const loadPreviousReview = process.env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW === "true";
-    const [pullRequest, issueComments, openPulls] = await Promise.all([
-      githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
-      loadPreviousReview
-        ? githubRestPaginated<unknown>(`repos/${repo}/issues/${prNumber}/comments`, token, 100)
-        : Promise.resolve([]),
-      githubRestPaginated<unknown>(
-        `repos/${repo}/pulls?state=open&sort=updated&direction=desc`,
-        token,
-        100,
-      ),
-    ]);
-    context.pullRequest = pullRequest;
-    context.previousAdvisorReview = loadPreviousReview
-      ? await collectTrustedPreviousAdvisorReview(repo, token, issueComments, {
-          marker: ADVISOR_COMMENT_MARKER,
-          workflowName: ADVISOR_WORKFLOW_NAME,
-          workflowPath: ADVISOR_WORKFLOW_PATH,
-          prNumber,
-          currentBaseSha: stringOrUndefined(getPath<unknown>(pullRequest, ["base", "sha"])),
-        })
-      : null;
-    const prTitle = stringOrUndefined(getPath<unknown>(pullRequest, ["title"])) || "";
-    const prBody = stringOrUndefined(getPath<unknown>(pullRequest, ["body"])) || "";
-    const prText = [
-      prTitle,
-      prBody,
-      stringOrUndefined(getPath<unknown>(pullRequest, ["head", "ref"])),
-    ]
-      .filter(Boolean)
-      .join("\n");
-    const issueNumbers = extractIssueRefs(prText, prNumber).slice(0, 5);
-    context.issueReferenceLines = [prTitle, ...prBody.split("\n")]
-      .map((line) => line.trim())
-      .filter((line) => line && extractIssueRefs(line, prNumber).length > 0)
-      .slice(0, 20);
-    context.linkedIssues = await Promise.all(
-      issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token)),
-    );
-    context.openPrOverlaps = await collectOpenPrOverlaps(
-      repo,
-      prNumber,
-      token,
-      openPulls,
-      issueNumbers,
-    );
-  } catch (error: unknown) {
-    context.fetchError = error instanceof Error ? error.message : String(error);
-  }
-  return context;
-}
-
-async function collectLinkedIssue(
-  repo: string,
-  number: number,
-  token: string,
-): Promise<LinkedIssue> {
-  try {
-    const [issue, comments] = await Promise.all([
-      githubRest<unknown>(`repos/${repo}/issues/${number}`, token),
-      githubRestPaginated<unknown>(`repos/${repo}/issues/${number}/comments`, token, 50),
-    ]);
-    return { number, issue, comments };
-  } catch (error: unknown) {
-    return { number, fetchError: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-async function mapWithConcurrency<T, U>(
-  items: readonly T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<U>,
-): Promise<U[]> {
-  const results = new Array<U>(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(Math.max(1, concurrency), items.length);
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index] as T, index);
-    }
+export async function collectGitHubContext(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<GitHubReviewContext | null> {
+  return collectGitHubReviewContext(env, {
+    collectPreviousReview: ({ currentBaseSha, issueComments, prNumber, repo, token }) =>
+      collectTrustedPreviousAdvisorReview(repo, token, issueComments, {
+        marker: ADVISOR_COMMENT_MARKER,
+        workflowName: ADVISOR_WORKFLOW_NAME,
+        workflowPath: ADVISOR_WORKFLOW_PATH,
+        prNumber,
+        currentBaseSha,
+      }),
   });
-  await Promise.all(workers);
-  return results;
-}
-
-async function collectOpenPrOverlaps(
-  repo: string,
-  currentPrNumber: number,
-  token: string,
-  openPulls: unknown[],
-  currentLinkedIssues: number[],
-): Promise<OpenPrOverlap[]> {
-  const currentFiles = new Set<string>(
-    (
-      await githubRestPaginated<{ filename?: string }>(
-        `repos/${repo}/pulls/${currentPrNumber}/files`,
-        token,
-        300,
-      )
-    )
-      .map((file) => file.filename)
-      .filter((file): file is string => typeof file === "string"),
-  );
-  const candidatePulls = openPulls
-    .filter((pull) => getPath<number>(pull, ["number"]) !== currentPrNumber)
-    .slice(0, OPEN_PR_OVERLAP_LIMIT);
-  const overlaps = await mapWithConcurrency(
-    candidatePulls,
-    OPEN_PR_OVERLAP_CONCURRENCY,
-    async (pull): Promise<OpenPrOverlap | null> => {
-      const number = getPath<number>(pull, ["number"]);
-      if (!number) return null;
-      const title = stringOrDefault(getPath<unknown>(pull, ["title"]), `PR #${number}`);
-      const body = stringOrDefault(getPath<unknown>(pull, ["body"]), "");
-      const labels = recordItems(getPath<unknown>(pull, ["labels"]))
-        .map((label) => stringOrUndefined(label.name))
-        .filter((label): label is string => Boolean(label));
-      const linkedIssues = extractIssueRefs(`${title}\n${body}`, number);
-      const duplicateLinkedIssues = linkedIssues.filter((issue) =>
-        currentLinkedIssues.includes(issue),
-      );
-      let sameFiles: string[] = [];
-      if (currentFiles.size > 0) {
-        try {
-          sameFiles = (
-            await githubRestPaginated<{ filename?: string }>(
-              `repos/${repo}/pulls/${number}/files`,
-              token,
-              300,
-            )
-          )
-            .map((file) => file.filename)
-            .filter((file): file is string => typeof file === "string" && currentFiles.has(file));
-        } catch {
-          sameFiles = [];
-        }
-      }
-      if (sameFiles.length === 0 && duplicateLinkedIssues.length === 0) return null;
-      return { number, title, labels, linkedIssues, sameFiles, duplicateLinkedIssues };
-    },
-  );
-  return overlaps
-    .filter((overlap): overlap is OpenPrOverlap => overlap !== null)
-    .sort(
-      (a, b) =>
-        b.sameFiles.length - a.sameFiles.length ||
-        b.duplicateLinkedIssues.length - a.duplicateLinkedIssues.length ||
-        a.number - b.number,
-    )
-    .slice(0, 25);
-}
-
-export function extractIssueRefs(text: string, prNumber: number): number[] {
-  const numbers = new Set<number>();
-  const relationPattern =
-    /\b(?:fixes|closes|resolves|refs?|references?|related(?:\s+issue)?|linked(?:\s+issue)?|follow[- ]?up(?:\s+to)?)\s+(#\d+(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)#\d+)*)/giu;
-  for (const relation of text.matchAll(relationPattern)) {
-    for (const match of (relation[1] ?? "").matchAll(/#(\d+)/gu)) {
-      const number = Number.parseInt(match[1] || "", 10);
-      if (Number.isFinite(number) && number > 0 && number !== prNumber) numbers.add(number);
-    }
-  }
-  for (const pattern of [/\(#(\d+)\)/gu, /issue[-_/](\d+)/giu]) {
-    for (const match of text.matchAll(pattern)) {
-      const number = Number.parseInt(match[1] || "", 10);
-      if (Number.isFinite(number) && number > 0 && number !== prNumber) numbers.add(number);
-    }
-  }
-  return [...numbers].sort((a, b) => a - b);
 }
 
 export function extractPreviousAdvisorReview(

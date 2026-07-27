@@ -492,6 +492,31 @@
       "category": "security"
     },
     {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "binds host-prepared GitHub context to the selected repository and pull request",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "fails closed around the credential-free OpenShell filesystem and network boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "keeps GitHub and upstream model credentials in separate host-only steps",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "pins trusted helper and bind sources to their checkout directories",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "preserves credential-free unavailable artifacts for manual dry runs",
+      "category": "compatibility"
+    },
+    {
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
       "test": "rejects deleting or weakening analysis-workspace symlink removal",
       "category": "security"
