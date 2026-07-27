@@ -100,7 +100,11 @@ vi.mock("./vllm-api-key", () => ({
   loadDualStationVllmApiKey: mocks.loadApiKey,
 }));
 
-import { detectVllmProfile, installVllm } from "./vllm";
+import {
+  detectVllmProfile,
+  installVllm,
+  persistConfiguredDualStationVllmRuntimeReceipt,
+} from "./vllm";
 import { DUAL_STATION_VLLM_RUNTIME, type DualStationVllmPlan } from "./vllm-station-cluster";
 import {
   createDualStationSshBindingFixture,
@@ -296,6 +300,33 @@ afterEach(() => {
   stdoutSpy.mockRestore();
   sshFixture.cleanup();
   process.env = { ...originalEnv };
+});
+
+describe("dual DGX Station running-runtime receipt adoption", () => {
+  it("persists cleanup ownership for the exact configured running pair", async () => {
+    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+      ok: true,
+      persisted: true,
+    });
+
+    expect(mocks.probeCapability).toHaveBeenCalledOnce();
+    expect(mocks.preflightOwnership).toHaveBeenCalledWith(plan());
+    expect(mocks.areContainersRunning).toHaveBeenCalledWith(plan());
+    expect(mocks.persistRuntimeReceipt).toHaveBeenCalledWith(plan());
+  });
+
+  it("fails closed when the configured pair no longer has exact ownership", async () => {
+    mocks.preflightOwnership.mockReturnValue({
+      ok: false,
+      reason: "worker ownership changed",
+    });
+
+    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+      ok: false,
+      reason: "worker ownership changed",
+    });
+    expect(mocks.persistRuntimeReceipt).not.toHaveBeenCalled();
+  });
 });
 
 describe("dual DGX Station vLLM install orchestration", () => {

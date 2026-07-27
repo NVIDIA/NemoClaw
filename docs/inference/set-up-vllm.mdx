@@ -216,6 +216,7 @@ NemoClaw does not modify rail configuration, enroll SSH trust, or reboot either 
 If the local host requires a reboot during initial preparation, the installer stops with status `10`; its owner-only receipt preserves the printed exact revision and Express selections.
 After reciprocal peer qualification begins, the pair state additionally binds SSH, GPU, and rail identity and names either host that must be rebooted manually.
 After the managed pair passes readiness and container validation, NemoClaw writes an owner-only cleanup receipt and a copied SSH binding under the selected gateway state root.
+A later onboarding run that reuses the same validated managed pair recreates this cleanup ownership before accepting the endpoint.
 The receipt contains no serving API key.
 It records the exact peer, cluster, and GPU identities needed to revalidate and remove both managed containers during full uninstall.
 If NemoClaw cannot write this receipt, setup stops and rolls back a newly started pair instead of leaving a runtime that full uninstall cannot safely reach.
@@ -261,7 +262,7 @@ NEMOCLAW_PROVIDER=install-vllm \
 On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is sufficient for a non-interactive run.
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
-The commands above invoke `nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the `deepseek-v4-flash` profile default.
+The commands above invoke `$$nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the `deepseek-v4-flash` profile default.
 Supplying `NEMOCLAW_PROVIDER=install-vllm` to the shell installer enters the Station host-preparation boundary while retaining that profile default.
 To request a non-interactive pair through this path, also set `NEMOCLAW_DGX_STATION_PEER`; the exact peer must qualify, and the installer selects the distributed Nemotron 3 Ultra recipe.
 

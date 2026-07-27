@@ -1732,7 +1732,13 @@ function executePlan(
               ? [GATEWAYS_SUBDIR, path.basename(paths.managedSwapMarkerPath)]
               : []),
             ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
-            ...(scopedToSelectedGateway ? HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES : []),
+            ...(scopedToSelectedGateway
+              ? [
+                  ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+                  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+                  `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
+                ]
+              : []),
           ],
           runtime,
         )

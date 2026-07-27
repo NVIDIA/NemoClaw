@@ -884,6 +884,52 @@ export function isNemoClawManagedVllmRunning(): boolean {
   return (ownership.kind === "managed" || ownership.kind === "dual-managed") && ownership.running;
 }
 
+export type PersistConfiguredDualStationVllmRuntimeResult =
+  | { ok: true; persisted: boolean }
+  | { ok: false; reason: string };
+
+/**
+ * Adopt an already-running installer-qualified pair into durable uninstall
+ * ownership after onboarding has authenticated and validated its endpoint.
+ */
+export async function persistConfiguredDualStationVllmRuntimeReceipt(): Promise<PersistConfiguredDualStationVllmRuntimeResult> {
+  const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
+  if (!configuredPeer) return { ok: true, persisted: false };
+
+  const capability = probeDualStationVllmCapability();
+  if (capability.kind !== "ready") {
+    const reason =
+      capability.kind === "unavailable"
+        ? capability.reason
+        : "the configured dual-Station peer disappeared";
+    return { ok: false, reason };
+  }
+
+  try {
+    return await withDualStationManagedVllmLifecycle(async () => {
+      const preflight = preflightDualStationManagedVllm(capability.plan);
+      if (!preflight.ok) return { ok: false, reason: preflight.reason };
+      if (!areDualStationManagedVllmContainersRunning(capability.plan)) {
+        return {
+          ok: false,
+          reason: "the managed dual-Station containers changed before receipt persistence",
+        };
+      }
+      try {
+        persistDualStationVllmRuntimeReceipt(capability.plan);
+      } catch (error) {
+        return { ok: false, reason: (error as Error).message };
+      }
+      return { ok: true, persisted: true };
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `dual-Station lifecycle lock failed: ${(error as Error).message}`,
+    };
+  }
+}
+
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,

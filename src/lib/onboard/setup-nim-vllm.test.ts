@@ -40,6 +40,10 @@ function deps(overrides: Partial<SetupNimVllmDeps> = {}): SetupNimVllmDeps {
     applyVllmRuntimeContextWindow: vi.fn(),
     isDgxSparkHost: () => false,
     isNemoClawManagedVllmRunning: () => false,
+    persistConfiguredDualStationVllmRuntimeReceipt: async () => ({
+      ok: true,
+      persisted: false,
+    }),
     exitProcess: (code) => {
       throw new Error(`exit ${code}`);
     },
@@ -173,6 +177,47 @@ describe("setupNim vLLM route containment", () => {
     expect(queryVllmModels).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
       "  Managed vLLM authentication state is unsafe or unreadable.",
+    );
+  });
+
+  it("persists cleanup ownership after validating a managed dual endpoint", async () => {
+    const persistConfiguredDualStationVllmRuntimeReceipt = vi.fn(async () => ({
+      ok: true,
+      persisted: true,
+    }));
+    const handler = createSetupNimVllmHandler(
+      deps({
+        getManagedVllmProviderBinding: () => ({
+          baseUrl: "http://10.40.0.1:8000/v1",
+          apiKey: "a".repeat(64),
+        }),
+        queryVllmModels: () => JSON.stringify({ data: [{ id: "served/model" }] }),
+        persistConfiguredDualStationVllmRuntimeReceipt,
+      }),
+    );
+
+    await expect(handler(state(null))).resolves.toBe("selected");
+    expect(persistConfiguredDualStationVllmRuntimeReceipt).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when managed dual cleanup ownership cannot be persisted", async () => {
+    const handler = createSetupNimVllmHandler(
+      deps({
+        getManagedVllmProviderBinding: () => ({
+          baseUrl: "http://10.40.0.1:8000/v1",
+          apiKey: "a".repeat(64),
+        }),
+        queryVllmModels: () => JSON.stringify({ data: [{ id: "served/model" }] }),
+        persistConfiguredDualStationVllmRuntimeReceipt: async () => ({
+          ok: false,
+          reason: "pair identity changed",
+        }),
+      }),
+    );
+
+    await expect(handler(state(null))).rejects.toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(
+      "  Managed dual-Station cleanup ownership could not be persisted: pair identity changed",
     );
   });
 
