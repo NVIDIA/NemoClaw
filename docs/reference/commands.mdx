@@ -2202,8 +2202,27 @@ Identical HTTP 400, 401, or 403 rejections raise a warning that names the hypoth
 For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders and agent runtimes receive the same auth failure and skip the server; HTTP 400 remains inconclusive because the endpoint may reject the probe request itself.
 Every other outcome — differing rejections (an endpoint may reject two different literal bearers differently), endpoints that skip authentication, endpoint outages, policy denials, and unreachable sandboxes — reports as `unknown` rather than blaming the credential rewrite, and a persisted URL that fails the current authenticated-endpoint boundary is never probed.
 
+Pass `--tools` with one server name to request a live tool inventory.
+The shared client runs through the managed registration's existing OpenShell credential provider and policy; OpenShell injects the credential at that boundary, and the runtime never accepts it as an argument, environment value, or authorization option.
+It performs `initialize`, `notifications/initialized`, and paginated `tools/list`, then attempts to close the MCP session and transport.
+Cleanup errors do not replace the bounded discovery result.
+It retains and returns deterministic tool names only, never prints the other tool-definition fields returned by `tools/list`, and never calls a tool.
+The operation is bounded by total and per-request timeouts plus response-byte, page, tool-count, cursor-length, and tool-name limits.
+
+Use `--tools` only with a configured endpoint you trust to advertise names while authenticated.
+The endpoint controls its returned names and can derive them from the request or credential it receives; NemoClaw validates and bounds the text but cannot prove that the endpoint did not encode credential-derived data in an otherwise valid name.
+
+The `toolDiscovery` JSON field contains `ok`, `count`, `tools`, and `truncated`, plus a redacted `detail` on failure or a bounded partial result.
+These names are the server's point-in-time advertised tools, not an attestation of the exact tools visible to the model after agent filters, progressive disclosure, or session state.
+An older sandbox image without the shared client reports that the sandbox must be rebuilt.
+
+Tool discovery is opt-in and sends authenticated network traffic to the configured endpoint.
+Passing `--tools` suppresses the named-server credential-resolution probe that otherwise runs by default.
+Pass `--probe --tools` to request both checks explicitly.
+An unsuccessful discovery does not remove the ordinary provider, policy, environment, or adapter status from the result.
+
 ```bash
-$$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe]
+$$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe] [--tools]
 ```
 
 | Flag | Description |
@@ -2211,6 +2230,7 @@ $$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe]
 | `--json` | Emit status as JSON without credential values |
 | `--probe` | Request the wire-level credential-resolution probe for every listed server; entries that fail readiness checks are skipped |
 | `--no-probe` | Skip the probe; it defaults on only when a single server is named |
+| `--tools` | Request advertised tool names from one trusted configured endpoint through its managed credential provider; suppresses the implicit credential probe unless `--probe` is also passed |
 
 ### `$$nemoclaw <name> mcp restart`
 

@@ -14,6 +14,14 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+import { configureAdvisorHttpDispatcher } from "./http-dispatcher.mts";
+import {
+  ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+  ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
+  DEFAULT_ADVISOR_MODEL,
+  DEFAULT_ADVISOR_PROVIDER,
+  NEMOTRON_ULTRA_ADVISOR_MODEL,
+} from "./provider-constants.mts";
 import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
   type AdvisorContextToolResult,
@@ -32,6 +40,13 @@ import {
 } from "./turn-protocol.mts";
 
 export {
+  ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+  ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
+  DEFAULT_ADVISOR_MODEL,
+  DEFAULT_ADVISOR_PROVIDER,
+  NEMOTRON_ULTRA_ADVISOR_MODEL,
+} from "./provider-constants.mts";
+export {
   type AdvisorContextToolContentType,
   type AdvisorContextToolResult,
   type AdvisorPromptTurn,
@@ -46,10 +61,7 @@ export {
   resolveAdvisorTurnTools,
 } from "./turn-protocol.mts";
 
-export const DEFAULT_ADVISOR_PROVIDER = "openai";
-export const DEFAULT_ADVISOR_MODEL = "azure/openai/gpt-5.6-terra";
-export const NEMOTRON_ULTRA_ADVISOR_MODEL = "nvidia/nvidia/nemotron-3-ultra";
-export const ADVISOR_OPENAI_COMPATIBLE_BASE_URL = "https://inference-api.nvidia.com/v1";
+const ADVISOR_BASE_URL_ENV = "PR_REVIEW_ADVISOR_BASE_URL";
 
 export function advisorRetrySettings(modelId: string) {
   return {
@@ -170,10 +182,21 @@ export async function settleAdvisorTurn(options: {
   return { turn, didThrow, thrown, callbackError };
 }
 
-export function openAiAdvisorProviderConfig(credentialEnv: string): AdvisorProviderConfig {
+export function advisorInferenceBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const value = env[ADVISOR_BASE_URL_ENV] || ADVISOR_OPENAI_COMPATIBLE_BASE_URL;
+  if (![ADVISOR_OPENAI_COMPATIBLE_BASE_URL, ADVISOR_OPENSHELL_INFERENCE_BASE_URL].includes(value)) {
+    throw new Error(`${ADVISOR_BASE_URL_ENV} must use an approved advisor inference endpoint`);
+  }
+  return value;
+}
+
+export function openAiAdvisorProviderConfig(
+  credentialEnv: string,
+  baseUrl = ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+): AdvisorProviderConfig {
   return {
     api: "openai-completions",
-    baseUrl: ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+    baseUrl,
     models: [
       advisorModel(
         DEFAULT_ADVISOR_MODEL,
@@ -315,12 +338,20 @@ export async function runReadOnlyAdvisor(
   fs.mkdirSync(options.configDir, { recursive: true });
   const provider = options.provider || DEFAULT_ADVISOR_PROVIDER;
   const modelId = options.modelId || DEFAULT_ADVISOR_MODEL;
-  const { authStorage, modelRegistry } = prepareAdvisorConfig(provider, options.credentialEnv);
+  const baseUrl = advisorInferenceBaseUrl();
+  const { authStorage, modelRegistry } = prepareAdvisorConfig(
+    provider,
+    options.credentialEnv,
+    baseUrl,
+  );
   const model = modelRegistry.find(provider, modelId);
   if (!model || !modelRegistry.hasConfiguredAuth(model)) {
     throw new Error(
       `Could not configure advisor model ${provider}/${modelId}; set ${options.credentialEnv}`,
     );
+  }
+  if (baseUrl === ADVISOR_OPENSHELL_INFERENCE_BASE_URL) {
+    configureAdvisorHttpDispatcher();
   }
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
@@ -754,6 +785,7 @@ export class CappedBuffer {
 function prepareAdvisorConfig(
   provider: string,
   credentialEnv: string,
+  baseUrl: string,
 ): { authStorage: AuthStorage; modelRegistry: ModelRegistry } {
   const authStorage = AuthStorage.inMemory();
   const modelRegistry = ModelRegistry.inMemory(authStorage);
@@ -761,7 +793,7 @@ function prepareAdvisorConfig(
   if (credential) {
     try {
       authStorage.setRuntimeApiKey(provider, credential);
-      modelRegistry.registerProvider(provider, openAiAdvisorProviderConfig(credentialEnv));
+      modelRegistry.registerProvider(provider, openAiAdvisorProviderConfig(credentialEnv, baseUrl));
     } finally {
       delete process.env[credentialEnv];
     }

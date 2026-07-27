@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version: 1
+
+filesystem_policy:
+  include_workdir: false
+  read_only:
+    - /usr/bin
+    - /usr/lib
+    - /usr/share/git-core
+    - /etc
+    - /advisor
+    - /pr-workdir
+    - /pr-review-advisor-context
+    - /pr-review-advisor-tools
+  read_write:
+    - /dev
+    - /sandbox/pr-review-advisor-runtime
+
+landlock:
+  compatibility: hard_requirement
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies: {}
