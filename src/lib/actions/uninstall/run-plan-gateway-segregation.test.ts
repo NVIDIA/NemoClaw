@@ -1004,7 +1004,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(result.exitCode).toBe(1);
       expect(logs.join("\n")).toContain("resources owned by gateway 'nemoclaw'");
       expect(warnings.join("\n")).toContain(
-        "openshell not found; skipping gateway/provider/sandbox cleanup",
+        "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.",
       );
       expect(calls.some(({ command }) => command === "npm")).toBe(false);
     } finally {

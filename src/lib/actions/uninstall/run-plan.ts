@@ -1034,8 +1034,10 @@ function removeOpenShellResources(
   externallySupervised: boolean,
 ): boolean {
   if (!runtime.commandExists("openshell")) {
-    runtime.warn("openshell not found; skipping gateway/provider/sandbox cleanup.");
-    return !scopedToSelectedGateway;
+    runtime.error(
+      "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.",
+    );
+    return false;
   }
   const gatewayLabel = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
   if (scopedToSelectedGateway) {
