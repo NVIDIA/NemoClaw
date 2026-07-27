@@ -2,22 +2,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  configureOpenShellInference as configureSharedOpenShellInference,
+  createOpenShellSandbox,
+  defaultOpenShellTools,
+  deleteOpenShellSandbox,
+  downloadOpenShellPath,
+  execOpenShellSandbox,
+  type OpenShellCommandOptions,
+  type OpenShellStartOptions,
+  type OpenShellTools,
+  required,
+} from "../openshell-agent/runtime.mts";
 import { type ConflictMatrixEntry, parseConflictMatrixEntry } from "./discover.mts";
 import { ConflictFixerError, prepareMerge, samePaths } from "./merge.mts";
 
 export const RESOLVER_MODEL_ID = "azure/openai/gpt-5.6-terra";
 
-const HOST_CREDENTIALS = [
-  "GH_TOKEN",
-  "GITHUB_TOKEN",
-  "OPENAI_API_KEY",
-  "PR_REVIEW_ADVISOR_API_KEY",
-] as const;
 const PI_COMMAND = [
   "/usr/bin/node",
   "/usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
@@ -49,27 +54,9 @@ final_tree="$(git write-tree)"
 git diff --binary "$CONFLICT_TREE" "$final_tree" > /sandbox/resolution.patch
 `.trim();
 
-export interface ResolverCommandOptions {
-  capture?: boolean;
-  env: NodeJS.ProcessEnv;
-  timeout?: number;
-}
-
-export interface ResolverStartOptions {
-  env: NodeJS.ProcessEnv;
-  logPath: string;
-}
-
-export interface ResolverTools {
-  run: (command: string, args: readonly string[], options: ResolverCommandOptions) => string;
-  start: (command: string, args: readonly string[], options: ResolverStartOptions) => void;
-  wait: (milliseconds: number) => Promise<void>;
-}
-
-function required(value: string | undefined, name: string): string {
-  if (!value) throw new ConflictFixerError(`${name} is required`);
-  return value;
-}
+export type ResolverCommandOptions = OpenShellCommandOptions;
+export type ResolverStartOptions = OpenShellStartOptions;
+export type ResolverTools = OpenShellTools;
 
 export function resolverModelConfiguration(): string {
   return `${JSON.stringify(
@@ -104,35 +91,6 @@ export function resolverModelConfiguration(): string {
     null,
     2,
   )}\n`;
-}
-
-function gatewayConfiguration(input: {
-  bindAddress: string;
-  directory: string;
-  supervisor: string;
-}): string {
-  return `[openshell]
-version = 1
-
-[openshell.gateway]
-bind_address = "${input.bindAddress}"
-compute_drivers = ["docker"]
-disable_tls = true
-
-[openshell.gateway.auth]
-allow_unauthenticated_users = true
-
-[openshell.gateway.gateway_jwt]
-signing_key_path = "${path.join(input.directory, "jwt", "signing.pem")}"
-public_key_path = "${path.join(input.directory, "jwt", "public.pem")}"
-kid_path = "${path.join(input.directory, "jwt", "kid")}"
-gateway_id = "pr-conflict-fixer"
-ttl_secs = 3600
-
-[openshell.drivers.docker]
-grpc_endpoint = "http://host.openshell.internal:8080"
-supervisor_bin = "${input.supervisor}"
-`;
 }
 
 export function resolverPrompt(): string {
@@ -174,241 +132,109 @@ export function prepareResolutionWorkspace(input: {
   return merge.conflictTree;
 }
 
-function openshellEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const home = required(env.HOME, "HOME");
-  const binaryDirectory = env.XDG_BIN_HOME ?? path.join(home, ".local", "bin");
-  return {
-    ...env,
-    PATH: [binaryDirectory, env.PATH ?? ""].filter(Boolean).join(path.delimiter),
-  };
-}
-
-function credentialFreeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const result = openshellEnvironment(env);
-  for (const name of HOST_CREDENTIALS) delete result[name];
-  return result;
-}
-
-function loopbackBindAddress(endpoint: URL): string {
-  if (!["127.0.0.1", "[::1]"].includes(endpoint.hostname)) {
-    throw new ConflictFixerError("OPENSHELL_GATEWAY_ENDPOINT must use a loopback address");
-  }
-  return endpoint.host;
-}
-
-const defaultTools: ResolverTools = {
-  run(command, args, options): string {
-    const output = execFileSync(command, [...args], {
-      encoding: "utf8",
-      env: options.env,
-      stdio: options.capture ? ["ignore", "pipe", "inherit"] : "inherit",
-      timeout: options.timeout,
-    });
-    return String(output ?? "").trim();
-  },
-  start(command, args, options): void {
-    const log = openSync(options.logPath, "w", 0o600);
-    try {
-      const child = spawn(command, [...args], {
-        detached: true,
-        env: options.env,
-        stdio: ["ignore", log, log],
-      });
-      child.on("error", () => undefined);
-      child.unref();
-    } finally {
-      closeSync(log);
-    }
-  },
-  wait(milliseconds): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds));
-  },
-};
-
 export async function configureOpenShellInference(
   env: NodeJS.ProcessEnv,
-  tools: ResolverTools = defaultTools,
+  tools: ResolverTools = defaultOpenShellTools,
 ): Promise<void> {
-  const providerApiKey = required(env.OPENAI_API_KEY, "OPENAI_API_KEY");
-  const commandEnv = credentialFreeEnvironment(env);
-  const providerEnv = { ...commandEnv, OPENAI_API_KEY: providerApiKey };
-  const gatewayDirectory = path.join(required(env.RUNNER_TEMP, "RUNNER_TEMP"), "openshell-gateway");
-  const gatewayEndpoint = new URL(
-    required(env.OPENSHELL_GATEWAY_ENDPOINT, "OPENSHELL_GATEWAY_ENDPOINT"),
-  );
-  const bindAddress = loopbackBindAddress(gatewayEndpoint);
-  const supervisor = required(
-    tools.run("which", ["openshell-sandbox"], { capture: true, env: commandEnv }),
-    "openshell-sandbox",
-  );
-  mkdirSync(gatewayDirectory, { recursive: true });
-  tools.run("openshell-gateway", ["generate-certs", "--output-dir", gatewayDirectory], {
-    env: commandEnv,
-  });
-  const configurationPath = path.join(gatewayDirectory, "gateway.toml");
-  writeFileSync(
-    configurationPath,
-    gatewayConfiguration({
-      bindAddress,
-      directory: gatewayDirectory,
-      supervisor,
-    }),
-    { mode: 0o600 },
-  );
-  tools.start("openshell-gateway", ["--config", configurationPath], {
-    env: commandEnv,
-    logPath: path.join(gatewayDirectory, "gateway.log"),
-  });
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    try {
-      tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
-      break;
-    } catch {
-      await tools.wait(1000);
-    }
-  }
-  tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
-  tools.run(
-    "openshell",
-    [
-      "provider",
-      "create",
-      "--name",
-      "terra",
-      "--type",
-      "openai",
-      "--credential",
-      "OPENAI_API_KEY",
-      "--config",
-      "OPENAI_BASE_URL=https://inference-api.nvidia.com/v1",
-    ],
-    { env: providerEnv },
-  );
-  tools.run(
-    "openshell",
-    ["inference", "set", "--provider", "terra", "--model", RESOLVER_MODEL_ID, "--timeout", "900"],
-    { env: commandEnv },
+  await configureSharedOpenShellInference(
+    env,
+    {
+      gatewayId: "pr-conflict-fixer",
+      modelId: RESOLVER_MODEL_ID,
+      providerName: "terra",
+    },
+    tools,
   );
 }
 
 export function createResolutionSandbox(
   env: NodeJS.ProcessEnv,
-  tools: ResolverTools = defaultTools,
+  tools: ResolverTools = defaultOpenShellTools,
 ): void {
-  tools.run(
-    "openshell",
-    [
-      "sandbox",
-      "create",
-      "--name",
-      required(env.SANDBOX_NAME, "SANDBOX_NAME"),
-      "--from",
-      required(env.PI_IMAGE, "PI_IMAGE"),
-      "--policy",
-      path.join(
+  createOpenShellSandbox(
+    env,
+    {
+      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      image: required(env.PI_IMAGE, "PI_IMAGE"),
+      policyPath: path.join(
         required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"),
         "tools",
         "pr-merge-conflict-fixer",
         "policy.yaml",
       ),
-      "--upload",
-      `${required(env.RESOLUTION_WORKDIR, "RESOLUTION_WORKDIR")}:/sandbox`,
-      "--upload",
-      `${required(env.RESOLVER_CONFIG_DIR, "RESOLVER_CONFIG_DIR")}:/sandbox`,
-      "--no-git-ignore",
-      "--no-tty",
-      "--",
-      "/usr/bin/git",
-      "-C",
-      "/sandbox/repo",
-      "status",
-      "--short",
-    ],
-    { env: credentialFreeEnvironment(env) },
+      uploads: [
+        {
+          source: required(env.RESOLUTION_WORKDIR, "RESOLUTION_WORKDIR"),
+          destination: "/sandbox",
+        },
+        {
+          source: required(env.RESOLVER_CONFIG_DIR, "RESOLVER_CONFIG_DIR"),
+          destination: "/sandbox",
+        },
+      ],
+      command: ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
+    },
+    tools,
   );
 }
 
 export function runResolutionTask(
   env: NodeJS.ProcessEnv,
-  tools: ResolverTools = defaultTools,
+  tools: ResolverTools = defaultOpenShellTools,
 ): void {
-  tools.run(
-    "openshell",
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      required(env.SANDBOX_NAME, "SANDBOX_NAME"),
-      "--timeout",
-      "1200",
-      "--workdir",
-      "/sandbox/repo",
-      "--env",
-      "HOME=/sandbox",
-      "--env",
-      "PI_CODING_AGENT_DIR=/sandbox/pi-config",
-      "--env",
-      "PI_OFFLINE=1",
-      "--env",
-      "TMPDIR=/sandbox",
-      "--",
-      ...PI_COMMAND,
-    ],
-    { env: credentialFreeEnvironment(env) },
+  execOpenShellSandbox(
+    env,
+    {
+      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      timeoutSeconds: 1200,
+      workdir: "/sandbox/repo",
+      environment: {
+        HOME: "/sandbox",
+        PI_CODING_AGENT_DIR: "/sandbox/pi-config",
+        PI_OFFLINE: "1",
+        TMPDIR: "/sandbox",
+      },
+      command: PI_COMMAND,
+    },
+    tools,
   );
 }
 
 export function exportResolutionPatch(
   env: NodeJS.ProcessEnv,
-  tools: ResolverTools = defaultTools,
+  tools: ResolverTools = defaultOpenShellTools,
 ): void {
-  const commandEnv = credentialFreeEnvironment(env);
   const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
-  tools.run(
-    "openshell",
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--workdir",
-      "/sandbox/repo",
-      "--env",
-      `CONFLICT_TREE=${required(env.CONFLICT_TREE, "CONFLICT_TREE")}`,
-      "--",
-      "/usr/bin/bash",
-      "-c",
-      EXPORT_PATCH_COMMAND,
-    ],
-    { env: commandEnv },
+  execOpenShellSandbox(
+    env,
+    {
+      name: sandboxName,
+      workdir: "/sandbox/repo",
+      environment: {
+        CONFLICT_TREE: required(env.CONFLICT_TREE, "CONFLICT_TREE"),
+      },
+      command: ["/usr/bin/bash", "-c", EXPORT_PATCH_COMMAND],
+    },
+    tools,
   );
   const artifactDirectory = required(env.ARTIFACT_DIR, "ARTIFACT_DIR");
   mkdirSync(artifactDirectory, { recursive: true });
-  tools.run(
-    "openshell",
-    ["sandbox", "download", sandboxName, "/sandbox/resolution.patch", `${artifactDirectory}/`],
-    { env: commandEnv },
+  downloadOpenShellPath(
+    env,
+    {
+      name: sandboxName,
+      source: "/sandbox/resolution.patch",
+      destination: `${artifactDirectory}/`,
+    },
+    tools,
   );
 }
 
 export function deleteResolutionSandbox(
   env: NodeJS.ProcessEnv,
-  tools: ResolverTools = defaultTools,
+  tools: ResolverTools = defaultOpenShellTools,
 ): void {
-  const commandEnv = credentialFreeEnvironment(env);
-  const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
-  let names: string;
-  try {
-    names = tools.run("openshell", ["sandbox", "list", "--names"], {
-      capture: true,
-      env: commandEnv,
-    });
-  } catch {
-    return;
-  }
-  if (names.split(/\r?\n/u).includes(sandboxName)) {
-    tools.run("openshell", ["sandbox", "delete", sandboxName], { env: commandEnv });
-  }
+  deleteOpenShellSandbox(env, required(env.SANDBOX_NAME, "SANDBOX_NAME"), tools);
 }
 
 function prepare(env: NodeJS.ProcessEnv): void {
