@@ -988,6 +988,45 @@ export function prGateExternalId(prNumber: number, headSha: string, baseSha: str
   return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:${baseSha}`;
 }
 
+type PrGateExternalIdentity = {
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+};
+
+function parsePrGateExternalIdentity(value: unknown): PrGateExternalIdentity | null {
+  if (typeof value !== "string") return null;
+  const match = CHECK_EXTERNAL_ID_PATTERN.exec(value);
+  if (!match) return null;
+  return {
+    prNumber: parsePositiveId(match[1]!, "PR gate external PR number"),
+    headSha: match[2]!,
+    baseSha: match[3]!,
+  };
+}
+
+function closedPrGateVerdict(repository: string, identity: PrGateExternalIdentity): PrGateVerdict {
+  return {
+    conclusion: "cancelled",
+    title: "PR closed — gate no longer applies",
+    summary: `[PR #${identity.prNumber}](https://github.com/${repository}/pull/${identity.prNumber}) closed before this gate completed. This check for head \`${identity.headSha.slice(0, 7)}\` on base \`${identity.baseSha.slice(0, 7)}\` no longer applies.`,
+  };
+}
+
+function isRestartableClosedPrGateCheck(
+  repository: string,
+  identity: PrGateExternalIdentity,
+  check: CheckRun,
+): boolean {
+  const verdict = closedPrGateVerdict(repository, identity);
+  return (
+    check.status === "completed" &&
+    check.conclusion === verdict.conclusion &&
+    check.output?.title === verdict.title &&
+    check.output.summary === verdict.summary
+  );
+}
+
 function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
   if (
     !isObjectRecord(value) ||
@@ -1105,7 +1144,10 @@ function withRunnerLossLineage(
   };
 }
 
-function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
+function currentExactDiffCheck(
+  checks: CheckRun[],
+  options: { repository: string; identity: PrGateExternalIdentity },
+): CheckRun | undefined {
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => left.id - right.id);
   if (new Set(ordered.map((check) => check.id)).size !== ordered.length) {
@@ -1115,7 +1157,13 @@ function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
   if (active.length > 1)
     throw new Error("Multiple active PR gate checks exist for one PR/base SHA pair");
   const history = ordered.slice(0, -1);
-  if (history.some((check) => retryableFailureReason(check) === undefined)) {
+  if (
+    history.some(
+      (check) =>
+        retryableFailureReason(check) === undefined &&
+        !isRestartableClosedPrGateCheck(options.repository, options.identity, check),
+    )
+  ) {
     throw new Error(
       "PR gate history contains a non-retryable older check for one PR/base SHA pair",
     );
@@ -1145,7 +1193,14 @@ async function matchingPrGateHistory(options: {
   const history = sameIdentity
     .filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID)
     .sort((left, right) => left.id - right.id);
-  currentExactDiffCheck(history);
+  currentExactDiffCheck(history, {
+    repository: options.repository,
+    identity: {
+      prNumber: options.prNumber,
+      headSha: options.headSha,
+      baseSha: options.baseSha,
+    },
+  });
   return history;
 }
 
@@ -1243,6 +1298,7 @@ async function ensurePrGateCheck(options: {
   baseSha: string;
   prNumber: number;
   replaceRetryableCompleted?: boolean;
+  replaceClosedCompleted?: boolean;
 }): Promise<number> {
   const checks = await listPrGateChecks(options);
   const lineage = checks.filter((check) =>
@@ -1253,12 +1309,24 @@ async function ensurePrGateCheck(options: {
   }
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
   const existing = lineage.filter((check) => check.external_id === externalId);
-  const current = currentExactDiffCheck(existing);
+  const identity = {
+    prNumber: options.prNumber,
+    headSha: options.headSha,
+    baseSha: options.baseSha,
+  };
+  const current = currentExactDiffCheck(existing, {
+    repository: options.repository,
+    identity,
+  });
   // A base retarget can create another exact identity after this caller's live
   // PR validation. Never mutate checks owned by a different base from here.
   if (
     current &&
-    !(options.replaceRetryableCompleted && retryableFailureReason(current) !== undefined)
+    !(
+      (options.replaceRetryableCompleted && retryableFailureReason(current) !== undefined) ||
+      (options.replaceClosedCompleted &&
+        isRestartableClosedPrGateCheck(options.repository, identity, current))
+    )
   ) {
     return current.id;
   }
@@ -1281,6 +1349,7 @@ export async function seedPrGate(
     headSha,
     baseSha,
     prNumber,
+    replaceClosedCompleted: true,
   });
   console.log(
     `PR gate reserved: pr=${prNumber} pr_sha=${headSha} base_sha=${baseSha} check=${checkRunId}`,
@@ -1315,7 +1384,11 @@ async function markCheckInProgress(
   });
 }
 
-function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string): void {
+function assertCheckCanStart(
+  check: CheckRun | undefined,
+  ciConclusion: string,
+  options: { repository: string; identity: PrGateExternalIdentity },
+): void {
   if (!check) return;
   if (
     check.status === "in_progress" &&
@@ -1326,7 +1399,12 @@ function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string):
     return;
   }
   const reason = retryableFailureReason(check);
-  if (ciConclusion === "success" && reason) return;
+  if (
+    ciConclusion === "success" &&
+    (reason || isRestartableClosedPrGateCheck(options.repository, options.identity, check))
+  ) {
+    return;
+  }
   const title = normalizedCiMetadata(check.output?.title ?? "untitled", "untitled");
   throw new Error(
     `Existing PR gate state for this PR/base SHA pair is not retryable: status=${check.status ?? "unknown"} conclusion=${check.conclusion ?? "none"} title=${title}`,
@@ -1647,11 +1725,13 @@ async function requireLiveExactDiff(options: {
   }
   const prUrl = `https://github.com/${options.repository}/pull/${options.prNumber}`;
   if (pull.state === "closed") {
-    throw new ObsoleteExactDiffError({
-      conclusion: "cancelled",
-      title: "PR closed — gate no longer applies",
-      summary: `[PR #${options.prNumber}](${prUrl}) closed before this gate completed. This check for head \`${options.headSha.slice(0, 7)}\` on base \`${options.baseSha.slice(0, 7)}\` no longer applies.`,
-    });
+    throw new ObsoleteExactDiffError(
+      closedPrGateVerdict(options.repository, {
+        prNumber: options.prNumber,
+        headSha: options.headSha,
+        baseSha: options.baseSha,
+      }),
+    );
   }
   if (!pull.head.repo || pull.head.sha !== options.headSha || pull.base.sha !== options.baseSha) {
     throw new ObsoleteExactDiffError({
@@ -3089,7 +3169,14 @@ export async function startPrGate(
   ) {
     throw new Error("PR repository or branch does not match the triggering CI run");
   }
-  assertCheckCanStart(existingChecks[0], command.ciConclusion);
+  assertCheckCanStart(existingChecks[0], command.ciConclusion, {
+    repository,
+    identity: {
+      prNumber: ciIdentity.prNumber,
+      headSha: ciIdentity.headSha,
+      baseSha: ciIdentity.baseSha,
+    },
+  });
   if (retryableFailureReason(existingChecks[0] ?? {}) === "dispatch-not-observed") {
     const summary = existingChecks[0]?.output?.summary;
     const receipt =
@@ -3112,6 +3199,7 @@ export async function startPrGate(
     baseSha: ciIdentity.baseSha,
     prNumber: ciIdentity.prNumber,
     replaceRetryableCompleted: command.ciConclusion === "success",
+    replaceClosedCompleted: command.ciConclusion === "success",
   });
   if (checkRunId !== existingCheckRunId) appendOutput("check_id", String(checkRunId));
   await markCheckInProgress(

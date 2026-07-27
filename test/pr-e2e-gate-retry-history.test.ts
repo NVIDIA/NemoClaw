@@ -155,6 +155,63 @@ describe("PR E2E controller retry history", () => {
     });
   });
 
+  it("reserves a fresh check when the same revision reopens after close cleanup (#7140)", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const completedClosedCheck = exactPrGateCheck({
+      status: "completed",
+      conclusion: "cancelled",
+      output: {
+        title: "PR closed — gate no longer applies",
+        summary:
+          "[PR #42](https://github.com/NVIDIA/NemoClaw/pull/42) closed before this gate completed. This check for head `aaaaaaa` on base `bbbbbbb` no longer applies.",
+      },
+    });
+    const checkRuns = [completedClosedCheck];
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: checkRuns.length, check_runs: checkRuns }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            (request) => {
+              const created = exactPrGateCheck({
+                id: 18,
+                ...(request.body as Record<string, unknown> | undefined),
+              });
+              checkRuns.push(created);
+              return githubResponse(created);
+            },
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(seedPrGate(42, HEAD_SHA, BASE_SHA)).resolves.toBe(18);
+    expect(
+      requests.filter(
+        (request) => request.url.endsWith("/check-runs") && request.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(checkRuns[0]).toEqual(completedClosedCheck);
+    expect(checkRuns[1]).toMatchObject({
+      id: 18,
+      status: "in_progress",
+      conclusion: null,
+      output: { title: "Waiting for PR CI" },
+    });
+  });
+
   it("creates a fresh check after a marker-backed infrastructure failure before internal PR code can receive E2E credentials (#7052)", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-control-"));
     const outputPath = path.join(workDir, "github-output");
