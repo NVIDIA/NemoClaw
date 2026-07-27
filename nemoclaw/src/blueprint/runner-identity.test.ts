@@ -520,9 +520,8 @@ describe("blueprint identity wrapper", () => {
 
     const input = blueprint({ identity: oktaIdentity() });
     const inferenceProfile = input.components?.inference?.profiles?.default;
-    if (!inferenceProfile)
-      throw new Error("test blueprint is missing its default inference profile");
-    inferenceProfile.timeout_secs = 300;
+    expect(inferenceProfile).toBeDefined();
+    inferenceProfile!.timeout_secs = 300;
     await actionApply("default", input);
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
