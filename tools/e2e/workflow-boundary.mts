@@ -49,7 +49,10 @@ import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
 } from "./trusted-hermes-swap-workflow-boundary.mts";
-import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  UPLOAD_E2E_ARTIFACTS_ACTION,
+  validateUploadE2eArtifactsWorkflowBoundary,
+} from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -4090,6 +4093,42 @@ function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: Workflo
     errors.push(
       "retired-selector-compatibility job selector gate must match retired selector contract",
     );
+  }
+
+  const steps = asSteps(job.steps);
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("retired-selector-compatibility job must check out the candidate revision");
+  } else {
+    requireFullShaAction(errors, checkout, "retired-selector-compatibility checkout");
+    const checkoutWith = asRecord(checkout.with);
+    if (
+      checkoutWith.repository !== "${{ inputs.checkout_repository || github.repository }}" ||
+      checkoutWith.ref !== "${{ inputs.checkout_sha || github.sha }}" ||
+      checkoutWith["persist-credentials"] !== false
+    ) {
+      errors.push("retired-selector-compatibility job must check out the candidate revision");
+    }
+  }
+
+  const verify = namedStep(steps, "Verify retired selector replacements");
+  if (
+    stringValue(verify?.run) !== "npx tsx tools/e2e/retired-selector-compatibility.mts" ||
+    asRecord(verify?.env).JOBS !== "${{ inputs.jobs }}"
+  ) {
+    errors.push("retired-selector-compatibility job must invoke the replacement helper");
+  }
+
+  const upload = namedStep(steps, "Upload retired selector compatibility evidence");
+  if (
+    upload?.if !== "always()" ||
+    upload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION ||
+    !isDeepStrictEqual(asRecord(upload?.with), {
+      name: "e2e-retired-selector-compatibility",
+      path: "e2e-artifacts/live/retired-selector-compatibility/",
+    })
+  ) {
+    errors.push("retired-selector-compatibility job must upload compatibility evidence");
   }
 }
 
