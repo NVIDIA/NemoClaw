@@ -208,6 +208,34 @@ describe("sandbox base-image release resolution", () => {
     });
   });
 
+  it("builds locally when the selected OpenClaw release predates its security inventory (#7605)", () => {
+    const state = installDockerState({
+      allowBuild: true,
+      present: [RELEASE_REF],
+      pullable: [RELEASE_REF],
+    });
+    const options = {
+      ...versionedResolutionOptions("1"),
+      validateImage: state.validateImage,
+      validationDescription: "the immutable security package inventory",
+    };
+
+    const resolved = resolveSandboxBaseImage(options);
+
+    expect(resolved).toMatchObject({
+      ref: LOCAL_TAG,
+      source: "local",
+    });
+    expect(dockerMocks.pull).toHaveBeenCalledWith(RELEASE_REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.pull).toHaveBeenCalledTimes(1);
+    expect(state.validateImage).toHaveBeenNthCalledWith(1, RELEASE_REF);
+    expect(state.validateImage).toHaveBeenNthCalledWith(2, RELEASE_REF);
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed when a release-tag base is unavailable and local builds are disabled (#6456)", () => {
     installDockerState();
 
