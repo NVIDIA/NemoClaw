@@ -271,6 +271,9 @@ process.exit(0);
     `#!/usr/bin/env node
 const fs = require("node:fs");
 const a = process.argv.slice(2);
+const { isOpenClawSecurityInventoryProbe } = require(${JSON.stringify(
+      path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs"),
+    )});
 const provenancePath = ${JSON.stringify(path.join(tmpDir, "docker-base-provenance"))};
 const readProvenance = () => fs.existsSync(provenancePath) ? JSON.parse(fs.readFileSync(provenancePath, "utf8")) : {};
 if (a[0]==="info") {
@@ -308,6 +311,10 @@ if (a[0]==="image" && a[1]==="inspect" && a[2]==="--format") {
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="run" && a.includes("nslookup")) {
   process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  process.exit(0);
+}
+if (a[0]==="run" && isOpenClawSecurityInventoryProbe(a)) {
+  process.stdout.write("nemoclaw-security-inventory-ok\\n");
   process.exit(0);
 }
 if (a[0]==="run" && a.includes("/usr/bin/ldd")) {

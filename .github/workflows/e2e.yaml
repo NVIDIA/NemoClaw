@@ -344,6 +344,35 @@ jobs:
             fi
           fi
 
+  retired-selector-compatibility:
+    needs: generate-matrix
+    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/retired-selector-compatibility
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Verify retired selector replacements
+        env:
+          JOBS: ${{ inputs.jobs }}
+        run: npx tsx tools/e2e/retired-selector-compatibility.mts
+
+      - name: Upload retired selector compatibility evidence
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-retired-selector-compatibility
+          path: e2e-artifacts/live/retired-selector-compatibility/
+
   staging-brev-launchable:
     name: Exact staging Brev Launchable
     needs: generate-matrix
@@ -2596,9 +2625,6 @@ jobs:
           - scenario: live-probes
             selector: "^network-policy:.+probes$"
             sandbox: e2e-net-policy-live-probes
-          - scenario: zero-presets
-            selector: "^network-policy:.+presets$"
-            sandbox: e2e-net-policy-zero-presets
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "network-policy"
@@ -5202,45 +5228,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  gateway-health-honest:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.targets), ',gateway-health-honest,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "gateway-health-honest"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/gateway-health-honest
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-
-      - name: Install OpenShell CLI
-        run: bash scripts/install-openshell.sh
-
-      - name: Run gateway health honesty live test
-        # It invokes
-        # real startGateway() with a sabotaged Docker-driver gateway binary
-        # and asserts the crashed process is never reported healthy.
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/gateway-health-honest.test.ts
-
-      - name: Upload gateway health honesty artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
   device-auth-health:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',device-auth-health,') || contains(format(',{0},', inputs.targets), ',device-auth-health,') }}
@@ -5877,6 +5864,7 @@ jobs:
       [
         base-image-publication,
         generate-matrix,
+        retired-selector-compatibility,
         staging-brev-launchable,
         staging-brev-launchable-readiness,
         live,
@@ -5942,7 +5930,6 @@ jobs:
         openclaw-inference-switch,
         bedrock-runtime-compatible-anthropic,
         issue-2478-crash-loop-recovery,
-        gateway-health-honest,
         device-auth-health,
         channels-add-remove,
         tunnel-lifecycle,

@@ -16,7 +16,7 @@ import {
 } from "./helpers/openclaw-device-self-approval-patch-harness";
 
 describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
-  it("forwards stored device auth only for the exact same-device repair", async () => {
+  it("forwards stored device auth only for exact same-device transitions", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-stored-auth-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -36,21 +36,24 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
           setList: setPairingLists,
         })`,
       );
-      runtime.setList({ pending: [validPending()], paired: [validPaired()] });
+      for (const pending of [validPending(), validPending({ isRepair: false })]) {
+        runtime.calls.length = 0;
+        runtime.setList({ pending: [pending], paired: [validPaired()] });
 
-      await runtime.approve({ json: true }, "request-1");
+        await runtime.approve({ json: true }, "request-1");
 
-      expect(runtime.calls).toHaveLength(2);
-      for (const [method, call] of [
-        ["device.pair.list", runtime.calls[0]],
-        ["device.pair.approve", runtime.calls[1]],
-      ] as const) {
-        expect(call).toMatchObject({
-          method,
-          scopes: ["operator.pairing"],
-          useStoredDeviceAuth: true,
-          requiredStoredDeviceAuthScopes: ["operator.pairing"],
-        });
+        expect(runtime.calls).toHaveLength(2);
+        for (const [method, call] of [
+          ["device.pair.list", runtime.calls[0]],
+          ["device.pair.approve", runtime.calls[1]],
+        ] as const) {
+          expect(call).toMatchObject({
+            method,
+            scopes: ["operator.pairing"],
+            useStoredDeviceAuth: true,
+            requiredStoredDeviceAuthScopes: ["operator.pairing"],
+          });
+        }
       }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -63,7 +66,12 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
     ["mismatched key", validPending(), validPaired({ publicKey: "public-key-2" }), true],
     ["missing device", validPending({ deviceId: "" }), validPaired(), true],
     ["missing key", validPending({ publicKey: "" }), validPaired(), true],
-    ["new pairing", validPending({ isRepair: false }), validPaired(), false],
+    [
+      "nonrepair pairing-only request",
+      validPending({ isRepair: false, scopes: ["operator.pairing"] }),
+      validPaired(),
+      false,
+    ],
     ["wrong client", validPending({ clientId: "openclaw-control-ui" }), validPaired(), false],
     ["wrong mode", validPending({ clientMode: "webchat" }), validPaired(), false],
     ["multiple roles", validPending({ roles: ["operator", "node"] }), validPaired(), false],

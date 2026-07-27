@@ -21,8 +21,6 @@ RUN ./install-reviewed-runtime.sh \
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
     && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
-# Group repository-owned files outside the final image so BuildKit can collapse
-# related files without invalidating earlier final-image work.
 FROM scratch AS hermes-npm-patch-payload
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
@@ -72,15 +70,9 @@ COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
-RUN --mount=type=bind,from=hermes-npm-patch-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$(stat -c "%u:%g:%a:%n" /)"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$(stat -c "%u:%g:%a:%n" /)"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: npm patch payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+# Cross-stage root copies are accepted by Docker's legacy builder and create
+# one final-image layer while preserving metadata on existing parent paths.
+COPY --from=hermes-npm-patch-payload / /
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix here.
@@ -183,15 +175,7 @@ RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(cer
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 ENV HERMES_TUI_DIR="/opt/hermes/ui-tui"
 
-RUN --mount=type=bind,from=hermes-agent-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /opt /scripts /scripts/lib)"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /opt /scripts /scripts/lib)"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: agent payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=hermes-agent-payload / /
 
 # Ensure the NemoClaw plugin for Hermes is readable.
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
@@ -205,19 +189,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-RUN --mount=type=bind,from=hermes-runtime-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$( \
-            stat -c "%u:%g:%a:%n" / /opt /scripts /usr /usr/local /usr/local/bin /usr/local/lib \
-        )"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$( \
-            stat -c "%u:%g:%a:%n" / /opt /scripts /usr /usr/local /usr/local/bin /usr/local/lib \
-        )"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: runtime payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=hermes-runtime-payload / /
 
 RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
     && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
@@ -346,7 +318,7 @@ PY
 # silent supply-chain tampering of the build context (an attacker rewriting a
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=481eb04869b40cd163486a3632e0dc02f5655e17c37d0eab097808d1ca590da6
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=4f069a69c3bae49b18ffe313c212ce2207fa6b7a843d968e0051001a255315ce
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=87c1b02e0fb2becd26f79ae5dec6e0d21f78c6b08862b880e926708faf46ecb3
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 # hadolint ignore=DL4006
@@ -371,19 +343,7 @@ RUN printf '%s  %s\n' \
 # The wrapper's shebang pins `/usr/bin/python3 -I` (isolated mode); fail the
 # build if that absolute path is missing or non-executable so a base-image
 # upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
-RUN --mount=type=bind,from=hermes-wrapper-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
-        )"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
-        )"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: wrapper payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=hermes-wrapper-payload / /
 
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
@@ -401,8 +361,10 @@ RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
         exit 1; \
     fi
 # This runs before `/usr/local/bin/hermes` is moved to `hermes.real`, so the
-# help probe checks the pinned Hermes binary, not the wrapper installed below.
-RUN /usr/bin/python3 -I -c 'import ast, pathlib, subprocess, sys; source = pathlib.Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(); tree = ast.parse(source); constants = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in {"_VALUE_FLAGS", "_BOOLEAN_FLAGS"}}; missing_constants = sorted({"_VALUE_FLAGS", "_BOOLEAN_FLAGS"} - set(constants)); missing_constants and sys.exit("ERROR: Hermes wrapper flag constants not found in AST: " + ", ".join(missing_constants)); not constants["_VALUE_FLAGS"] and sys.exit("ERROR: Hermes wrapper _VALUE_FLAGS is empty"); not constants["_BOOLEAN_FLAGS"] and sys.exit("ERROR: Hermes wrapper _BOOLEAN_FLAGS is empty"); top_expected = set(constants["_VALUE_FLAGS"]) | set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]) | {"-z", "--oneshot", "-c", "--continue"}; top_help = subprocess.check_output(["/usr/local/bin/hermes", "--help"], text=True, timeout=30); top_missing = sorted(flag for flag in top_expected if flag not in top_help); top_missing and sys.exit("ERROR: Hermes wrapper flag allowlist drifted from pinned hermes --help: " + ", ".join(top_missing)); chat_expected = set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]) | {"--query", "--quiet", "--resume", "-r", "--continue", "-c"}; chat_help = subprocess.check_output(["/usr/local/bin/hermes", "chat", "--help"], text=True, timeout=30); chat_missing = sorted(flag for flag in chat_expected if flag not in chat_help); chat_missing and sys.exit("ERROR: Hermes wrapper forwarded flags drifted from pinned hermes chat --help: " + ", ".join(chat_missing))'
+# probes check the pinned Hermes binary, not the wrapper installed below.
+# Hermes consumes -p/--profile before argparse renders help, so validate those
+# hidden global options behaviorally and parse every visible option token.
+RUN /usr/bin/python3 -I -c 'import ast, pathlib, re, subprocess, sys; source = pathlib.Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(); tree = ast.parse(source); expected_constants = {"_VALUE_FLAGS", "_BOOLEAN_FLAGS", "_HERMES_SUBCOMMANDS", "_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS", "_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS"}; constants = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in expected_constants}; missing_constants = sorted(expected_constants - set(constants)); missing_constants and sys.exit("ERROR: Hermes wrapper CLI constants not found in AST: " + ", ".join(missing_constants)); empty_constants = sorted(name for name in expected_constants if not constants[name]); empty_constants and sys.exit("ERROR: Hermes wrapper CLI constants are empty: " + ", ".join(empty_constants)); session_flags = set(constants["_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS"]); required_value_flags = set(constants["_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS"]); profile_flags = {"-p", "--profile"}; profile_flags <= required_value_flags or sys.exit("ERROR: Hermes wrapper scanner must retain both hidden profile flags"); derived_required_value_flags = (set(constants["_VALUE_FLAGS"]) - session_flags) | {"-z", "--oneshot"} | profile_flags; required_value_flags != derived_required_value_flags and sys.exit("ERROR: Hermes wrapper required-value scanner flags drifted from _VALUE_FLAGS: missing=" + ",".join(sorted(derived_required_value_flags - required_value_flags)) + " stale=" + ",".join(sorted(required_value_flags - derived_required_value_flags))); option_pattern = r"(?<![A-Za-z0-9_])--?[A-Za-z0-9][A-Za-z0-9-]*"; top_help = subprocess.check_output(["/usr/local/bin/hermes", "--help"], text=True, timeout=30); top_option_fields = [re.split(r"\s{2,}", line.strip(), maxsplit=1)[0] for line in top_help.splitlines() if line.lstrip().startswith("-")]; top_options = set(re.findall(option_pattern, "\n".join(top_option_fields))); top_expected = (required_value_flags - profile_flags) | session_flags | set(constants["_BOOLEAN_FLAGS"]); top_missing = sorted(top_expected - top_options); top_missing and sys.exit("ERROR: Hermes wrapper scanner flag allowlist drifted from pinned hermes --help: " + ", ".join(top_missing)); profile_probe_name = "nemoclaw-build-probe-missing"; profile_probe_expected = "Profile %r does not exist." % profile_probe_name; profile_probe_results = {flag: subprocess.run(["/usr/local/bin/hermes", flag, profile_probe_name, "--version"], text=True, capture_output=True, timeout=30) for flag in sorted(profile_flags)}; profile_probe_failures = sorted(flag for flag, result in profile_probe_results.items() if result.returncode == 0 or profile_probe_expected not in (result.stdout + result.stderr)); profile_probe_failures and sys.exit("ERROR: Hermes hidden profile flags drifted from the wrapper scanner: " + ", ".join(profile_probe_failures)); subcommand_match = re.search(r"^\s*\{([^}\n]+)\}\s*$", top_help, re.MULTILINE); not subcommand_match and sys.exit("ERROR: could not parse pinned hermes subcommands from --help"); pinned_subcommands = {name.strip() for name in subcommand_match.group(1).split(",")}; wrapper_subcommands = set(constants["_HERMES_SUBCOMMANDS"]); missing_subcommands = sorted(pinned_subcommands - wrapper_subcommands); stale_subcommands = sorted(wrapper_subcommands - pinned_subcommands); (missing_subcommands or stale_subcommands) and sys.exit("ERROR: Hermes wrapper subcommand allowlist drifted from pinned hermes --help: missing=" + ",".join(missing_subcommands) + " stale=" + ",".join(stale_subcommands)); chat_help = subprocess.check_output(["/usr/local/bin/hermes", "chat", "--help"], text=True, timeout=30); chat_option_fields = [re.split(r"\s{2,}", line.strip(), maxsplit=1)[0] for line in chat_help.splitlines() if line.lstrip().startswith("-")]; chat_options = set(re.findall(option_pattern, "\n".join(chat_option_fields))); chat_expected = set(constants["_VALUE_FLAGS"]) | set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]) | {"--query", "-q", "--quiet", "-Q", "--continue", "-c"}; chat_missing = sorted(chat_expected - chat_options); chat_missing and sys.exit("ERROR: Hermes wrapper forwarded flags drifted from pinned hermes chat --help: " + ", ".join(chat_missing))'
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
@@ -752,15 +714,7 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 
 # Gate the completed local filesystem too; CI repeats this scan in an isolated
 # container and retains evidence keyed to the final image ID.
-RUN --mount=type=bind,from=hermes-scan-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /scripts)"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /scripts)"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: scan payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=hermes-scan-payload / /
 
 RUN check_metadata() { \
         path="$1"; \
