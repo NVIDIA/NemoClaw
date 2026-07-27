@@ -7,6 +7,19 @@
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c925afe7c0742474166a4813a59f5961a93da4d130e9b35fb04088a384702142
+ARG NEMOCLAW_CORPORATE_CA_B64=
+
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
+ARG NEMOCLAW_CORPORATE_CA_B64
+ENV NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+WORKDIR /opt/mcp-tool-discovery-runtime
+COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/*.ts ./
+RUN ./install-reviewed-runtime.sh \
+    && rm -f ./install-reviewed-runtime.sh
+RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
+    && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
 # Group repository-owned files outside the final image so BuildKit can collapse
 # related files without invalidating earlier final-image work.
@@ -28,6 +41,7 @@ COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediat
 
 FROM scratch AS hermes-runtime-payload
 
+COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
@@ -204,6 +218,11 @@ RUN --mount=type=bind,from=hermes-runtime-payload,source=/,target=/run/nemoclaw-
         [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
             || { echo "ERROR: runtime payload changed parent directory ownership or mode" >&2; exit 1; } \
     '
+
+RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
+    && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
+    && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$discovery_unsafe"
 
 # Ensure sandbox user can read blueprint files copied as root
 RUN chmod -R a+rX /opt/nemoclaw-blueprint/
@@ -422,7 +441,7 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # here; the RUN below decodes it to a root-owned file that the entrypoint
 # appends to the OpenShell trust bundle at runtime. The CA is a public
 # certificate, not a secret, so baking it into an image layer is acceptable.
-ARG NEMOCLAW_CORPORATE_CA_B64=
+ARG NEMOCLAW_CORPORATE_CA_B64
 # Total model context window (input + output tokens). Empty by default so
 # Hermes auto-detects from the endpoint's /v1/models max_model_len; onboard
 # rewrites this ARG (via dockerfile-patch) when it probes a runtime value or
