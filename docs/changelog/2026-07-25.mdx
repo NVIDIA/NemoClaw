@@ -60,7 +60,7 @@ It also hardens blueprint identifier validation, improves onboarding and recover
   If lockdown cannot be restored, the batch stops and prints the recovery command without processing the remaining sandboxes.
   Cross-sandbox snapshot restore now approves at most one pairing or scope-upgrade request that matches the restored clone, restarts that clone's gateway to publish the approval, and uses one authenticated verification as its success condition.
   NemoClaw rejects corrupt persisted Shields state before mutation.
-  Restore the state from a trusted host backup; neither `shields up` nor an ordinary rebuild replaces it.
+  Operators must restore the state from a trusted host backup; neither `shields up` nor an ordinary rebuild replaces it.
   For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Managed OpenClaw and Hermes sandbox Dockerfiles now avoid BuildKit-only bind mounts.
   On Docker Engine hosts, the OpenShell gateway builder can complete the image build when the host-side BuildKit prebuild is unavailable or fails.
