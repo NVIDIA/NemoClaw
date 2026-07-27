@@ -97,6 +97,12 @@ function readText(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
 
+function indexOfRequired(haystack: string, needle: string): number {
+  const index = haystack.indexOf(needle);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -131,8 +137,8 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
-  // source-shape-contract: compatibility -- Grouped payload layers preserve the measured Hermes layer budget without invalidating earlier build work
-  it("keeps repository payload layers at their cache boundaries (#7144)", () => {
+  // source-shape-contract: compatibility -- Legacy-compatible grouped payload copies preserve the measured Hermes layer budget without invalidating earlier build work
+  it("uses grouped legacy-compatible payload layers at their cache boundaries (#7611)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const doctorLayer = dockerRunCommandBetween(
       dockerfile,
@@ -142,62 +148,76 @@ describe("Hermes final image layout", () => {
     const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
-    const payloadLayers = [
-      "RUN --mount=type=bind,from=hermes-npm-patch-payload,source=/,target=/run/nemoclaw-payload",
-      "RUN --mount=type=bind,from=hermes-agent-payload,source=/,target=/run/nemoclaw-payload",
-      "RUN --mount=type=bind,from=hermes-runtime-payload,source=/,target=/run/nemoclaw-payload",
-      "RUN --mount=type=bind,from=hermes-wrapper-payload,source=/,target=/run/nemoclaw-payload",
-      "RUN --mount=type=bind,from=hermes-scan-payload,source=/,target=/run/nemoclaw-payload",
-    ];
+    const payloads = [
+      { stage: "hermes-npm-patch-payload", copies: 3 },
+      { stage: "hermes-agent-payload", copies: 7 },
+      { stage: "hermes-runtime-payload", copies: 19 },
+      { stage: "hermes-wrapper-payload", copies: 1 },
+      { stage: "hermes-scan-payload", copies: 1 },
+    ] as const;
+    const npmPatchCopy = "COPY --from=hermes-npm-patch-payload / /";
+    const agentCopy = "COPY --from=hermes-agent-payload / /";
+    const runtimeCopy = "COPY --from=hermes-runtime-payload / /";
+    const wrapperCopy = "COPY --from=hermes-wrapper-payload / /";
+    const scanCopy = "COPY --from=hermes-scan-payload / /";
 
-    for (const payloadLayer of payloadLayers) {
-      const stageName = payloadLayer.match(/,from=([^,]+)/u)?.[1];
-      const payloadStart = finalStage.indexOf(payloadLayer);
-      const payloadBlock = finalStage.slice(payloadStart, finalStage.indexOf("\n\n", payloadStart));
-      expect(stages.some((stage) => stage.startsWith(`FROM scratch AS ${stageName}`))).toBe(true);
-      expect(payloadBlock).toContain("/bin/bash -euo pipefail -c");
-      expect(payloadBlock).toContain("tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \\");
-      expect(payloadBlock).toContain(
-        "| tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -;",
-      );
-      expect(payloadBlock.match(/stat -c "%u:%g:%a:%n"/gu)).toHaveLength(2);
-      expect(payloadBlock).toContain(
-        '[[ "$payload_metadata_before" == "$payload_metadata_after" ]]',
-      );
-      expect(payloadBlock).not.toMatch(/\b(?:mktemp|trap|rm)\b/u);
-    }
     expect(finalStageIndex).toBe(stages.length - 1);
-    expect(finalStage.match(/^RUN --mount=.*$/gmu)).toEqual(
-      payloadLayers.map((payloadLayer) => `${payloadLayer} \\`),
+    expect(dockerfile).not.toContain("RUN --mount");
+    for (const payload of payloads) {
+      const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
+      expect(stage?.match(/^COPY\b.*$/gmu)).toHaveLength(payload.copies);
+      expect(finalStage).toContain(`COPY --from=${payload.stage} / /`);
+    }
+    expect(finalStage.match(/^COPY\b.*$/gmu)).toEqual([
+      npmPatchCopy,
+      agentCopy,
+      runtimeCopy,
+      wrapperCopy,
+      scanCopy,
+    ]);
+    const npmPatch = indexOfRequired(finalStage, npmPatchCopy);
+    const agent = indexOfRequired(finalStage, agentCopy);
+    const runtime = indexOfRequired(finalStage, runtimeCopy);
+    const wrapper = indexOfRequired(finalStage, wrapperCopy);
+    const scan = indexOfRequired(finalStage, scanCopy);
+    const tarPatch = indexOfRequired(
+      finalStage,
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
-    expect(finalStage).not.toMatch(/^(?:ADD|COPY)\b/mu);
-    expect(finalStage.indexOf(payloadLayers[0])).toBeLessThan(
-      finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
+    const certifiInstall = indexOfRequired(finalStage, "RUN _hermes_certifi=");
+    const agentChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/",
     );
-    expect(finalStage.indexOf(payloadLayers[1])).toBeGreaterThan(
-      finalStage.indexOf("RUN _hermes_certifi="),
+    const configFind = indexOfRequired(finalStage, "RUN find /opt/nemoclaw-hermes-config");
+    const blueprintChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod -R a+rX /opt/nemoclaw-blueprint/",
     );
-    expect(finalStage.indexOf(payloadLayers[1])).toBeLessThan(
-      finalStage.indexOf("RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/"),
+    const tirithFinalizerHash = indexOfRequired(
+      finalStage,
+      '"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"',
     );
-    expect(finalStage.indexOf(payloadLayers[2])).toBeGreaterThan(
-      finalStage.indexOf("RUN find /opt/nemoclaw-hermes-config"),
+    const pythonCheck = indexOfRequired(finalStage, "RUN test -x /usr/bin/python3");
+    const darwinCompatibility = indexOfRequired(
+      finalStage,
+      'RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]',
     );
-    expect(finalStage.indexOf(payloadLayers[2])).toBeLessThan(
-      finalStage.indexOf("RUN chmod -R a+rX /opt/nemoclaw-blueprint/"),
+    const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
+    const imageScan = indexOfRequired(
+      finalStage,
+      "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
     );
-    expect(finalStage.indexOf(payloadLayers[3])).toBeGreaterThan(
-      finalStage.indexOf('"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"'),
-    );
-    expect(finalStage.indexOf(payloadLayers[3])).toBeLessThan(
-      finalStage.indexOf("RUN test -x /usr/bin/python3"),
-    );
-    expect(finalStage.indexOf(payloadLayers[4])).toBeGreaterThan(
-      finalStage.indexOf('RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]'),
-    );
-    expect(finalStage.indexOf(payloadLayers[4])).toBeLessThan(
-      finalStage.indexOf("RUN check_metadata()"),
-    );
+
+    expect(npmPatch).toBeLessThan(tarPatch);
+    expect(agent).toBeGreaterThan(certifiInstall);
+    expect(agent).toBeLessThan(agentChmod);
+    expect(runtime).toBeGreaterThan(configFind);
+    expect(runtime).toBeLessThan(blueprintChmod);
+    expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
+    expect(wrapper).toBeLessThan(pythonCheck);
+    expect(scan).toBeGreaterThan(darwinCompatibility);
+    expect(scan).toBeLessThan(metadataCheck);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
@@ -210,12 +230,8 @@ describe("Hermes final image layout", () => {
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
-    expect(finalStage.indexOf("RUN check_metadata()")).toBeGreaterThan(
-      finalStage.indexOf(payloadLayers[4]),
-    );
-    expect(finalStage.indexOf("RUN check_metadata()")).toBeLessThan(
-      finalStage.indexOf("node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts"),
-    );
+    expect(metadataCheck).toBeGreaterThan(scan);
+    expect(metadataCheck).toBeLessThan(imageScan);
     expect(doctorLayer).toContain(
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );

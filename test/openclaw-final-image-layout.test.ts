@@ -8,66 +8,47 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 
+function indexOfRequired(haystack: string, needle: string): number {
+  const index = haystack.indexOf(needle);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
 describe("OpenClaw final image layout", () => {
-  // source-shape-contract: compatibility -- Grouped payload layers preserve cold-onboard export work while retaining intentional cache and scan boundaries
-  it("keeps repository payload layers at their cache boundaries (#6660)", () => {
+  // source-shape-contract: compatibility -- Legacy-compatible grouped payload copies preserve cold-onboard export work while retaining intentional cache and scan boundaries
+  it("uses grouped legacy-compatible payload layers at their cache boundaries (#7611)", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
     const payloads = [
-      {
-        stage: "openclaw-dependency-payload",
-        copies: 12,
-        metadata: "/ /usr /usr/local /usr/local/lib",
-      },
-      {
-        stage: "openclaw-plugin-payload",
-        copies: 3,
-        metadata: "/ /opt /opt/nemoclaw",
-      },
-      {
-        stage: "openclaw-patch-payload",
-        copies: 8,
-        metadata: "/ /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw",
-      },
-      {
-        stage: "openclaw-runtime-payload",
-        copies: 20,
-        metadata:
-          "/ /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts",
-      },
+      { stage: "openclaw-dependency-payload", copies: 12 },
+      { stage: "openclaw-plugin-payload", copies: 3 },
+      { stage: "openclaw-patch-payload", copies: 8 },
+      { stage: "openclaw-runtime-payload", copies: 20 },
     ] as const;
-
-    for (const payload of payloads) {
-      const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
-      const layer = `RUN --mount=type=bind,from=${payload.stage},source=/,target=/run/nemoclaw-payload`;
-      const layerStart = finalStage.indexOf(layer);
-      const layerBlock = finalStage.slice(layerStart, finalStage.indexOf("\n\n", layerStart));
-
-      expect(stage?.match(/^COPY\b.*$/gmu)).toHaveLength(payload.copies);
-      expect(layerBlock).toContain("/bin/bash -euo pipefail -c");
-      expect(layerBlock).toContain(`stat -c "%u:%g:%a:%n" ${payload.metadata}`);
-      expect(layerBlock.match(/stat -c "%u:%g:%a:%n"/gu)).toHaveLength(2);
-      expect(layerBlock).toContain("tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \\");
-      expect(layerBlock).toContain(
-        "| tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -;",
-      );
-      expect(layerBlock).toContain('[[ "$payload_metadata_before" == "$payload_metadata_after" ]]');
-      expect(layerBlock).not.toMatch(/\b(?:mktemp|trap|rm)\b/u);
-    }
+    const dependencyCopy = "COPY --from=openclaw-dependency-payload / /";
+    const pluginCopy = "COPY --from=openclaw-plugin-payload / /";
+    const patchCopy = "COPY --from=openclaw-patch-payload / /";
+    const runtimeCopy = "COPY --from=openclaw-runtime-payload / /";
+    const scanCopy =
+      "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts";
 
     expect(finalStageIndex).toBe(stages.length - 1);
-    expect(finalStage.match(/^RUN --mount=.*$/gmu)).toEqual(
-      payloads.map(
-        (payload) =>
-          `RUN --mount=type=bind,from=${payload.stage},source=/,target=/run/nemoclaw-payload \\`,
-      ),
-    );
+    expect(dockerfile).not.toContain("RUN --mount");
+    for (const payload of payloads) {
+      const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
+      expect(stage?.match(/^COPY\b.*$/gmu)).toHaveLength(payload.copies);
+      expect(finalStage).toContain(`COPY --from=${payload.stage} / /`);
+    }
     expect(finalStage.match(/^COPY\b.*$/gmu)).toEqual([
       "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
+      dependencyCopy,
       "COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/",
-      "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
+      pluginCopy,
+      patchCopy,
+      runtimeCopy,
+      scanCopy,
     ]);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755'",
@@ -82,32 +63,47 @@ describe("OpenClaw final image layout", () => {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
 
-    const [dependency, plugin, patch, runtime] = payloads.map((payload) =>
-      finalStage.indexOf(`RUN --mount=type=bind,from=${payload.stage}`),
+    const dependency = indexOfRequired(finalStage, dependencyCopy);
+    const plugin = indexOfRequired(finalStage, pluginCopy);
+    const patch = indexOfRequired(finalStage, patchCopy);
+    const runtime = indexOfRequired(finalStage, runtimeCopy);
+    const scan = indexOfRequired(finalStage, scanCopy);
+    const tarPatch = indexOfRequired(
+      finalStage,
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
-    expect(dependency).toBeLessThan(
-      finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
+    const braceExpansionPatch = indexOfRequired(
+      finalStage,
+      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
     );
-    expect(
-      finalStage.indexOf("RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts"),
-    ).toBeLessThan(
-      finalStage.indexOf(
-        "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
-      ),
+    const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
+    const pluginChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/",
     );
-    expect(plugin).toBeGreaterThan(finalStage.indexOf("RUN npm ci --omit=dev"));
-    expect(plugin).toBeLessThan(
-      finalStage.indexOf("RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/"),
+    const wechatInstall = indexOfRequired(
+      finalStage,
+      "RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime",
     );
-    expect(patch).toBeGreaterThan(
-      finalStage.indexOf("RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime"),
+    const patchChmod = indexOfRequired(
+      finalStage,
+      "RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts",
     );
-    expect(patch).toBeLessThan(
-      finalStage.indexOf("RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts"),
+    const blueprintSetup = indexOfRequired(
+      finalStage,
+      "RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0",
     );
-    expect(runtime).toBeGreaterThan(
-      finalStage.indexOf("RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0"),
-    );
-    expect(runtime).toBeLessThan(finalStage.indexOf("RUN chmod 755 /usr/local/bin/nemoclaw-start"));
+    const runtimeChmod = indexOfRequired(finalStage, "RUN chmod 755 /usr/local/bin/nemoclaw-start");
+    const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
+
+    expect(dependency).toBeLessThan(tarPatch);
+    expect(tarPatch).toBeLessThan(braceExpansionPatch);
+    expect(plugin).toBeGreaterThan(pluginInstall);
+    expect(plugin).toBeLessThan(pluginChmod);
+    expect(patch).toBeGreaterThan(wechatInstall);
+    expect(patch).toBeLessThan(patchChmod);
+    expect(runtime).toBeGreaterThan(blueprintSetup);
+    expect(runtime).toBeLessThan(runtimeChmod);
+    expect(scan).toBeLessThan(metadataCheck);
   });
 });

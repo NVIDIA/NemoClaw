@@ -21,8 +21,6 @@ RUN ./install-reviewed-runtime.sh \
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
     && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
-# Group repository-owned files outside the final image so BuildKit can collapse
-# related files without invalidating earlier final-image work.
 FROM scratch AS hermes-npm-patch-payload
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
@@ -72,15 +70,9 @@ COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
-RUN --mount=type=bind,from=hermes-npm-patch-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$(stat -c "%u:%g:%a:%n" /)"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$(stat -c "%u:%g:%a:%n" /)"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: npm patch payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+# Cross-stage root copies are accepted by Docker's legacy builder and create
+# one final-image layer while preserving metadata on existing parent paths.
+COPY --from=hermes-npm-patch-payload / /
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix here.
@@ -183,15 +175,7 @@ RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(cer
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 ENV HERMES_TUI_DIR="/opt/hermes/ui-tui"
 
-RUN --mount=type=bind,from=hermes-agent-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /opt /scripts /scripts/lib)"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /opt /scripts /scripts/lib)"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: agent payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=hermes-agent-payload / /
 
 # Ensure the NemoClaw plugin for Hermes is readable.
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
@@ -205,19 +189,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-RUN --mount=type=bind,from=hermes-runtime-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$( \
-            stat -c "%u:%g:%a:%n" / /opt /scripts /usr /usr/local /usr/local/bin /usr/local/lib \
-        )"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$( \
-            stat -c "%u:%g:%a:%n" / /opt /scripts /usr /usr/local /usr/local/bin /usr/local/lib \
-        )"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: runtime payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=hermes-runtime-payload / /
 
 RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
     && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
@@ -371,19 +343,7 @@ RUN printf '%s  %s\n' \
 # The wrapper's shebang pins `/usr/bin/python3 -I` (isolated mode); fail the
 # build if that absolute path is missing or non-executable so a base-image
 # upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
-RUN --mount=type=bind,from=hermes-wrapper-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
-        )"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
-        )"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: wrapper payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=hermes-wrapper-payload / /
 
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
@@ -754,15 +714,7 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 
 # Gate the completed local filesystem too; CI repeats this scan in an isolated
 # container and retains evidence keyed to the final image ID.
-RUN --mount=type=bind,from=hermes-scan-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /scripts)"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /scripts)"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: scan payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=hermes-scan-payload / /
 
 RUN check_metadata() { \
         path="$1"; \
