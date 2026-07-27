@@ -1187,6 +1187,15 @@ export async function actionApply(
     }
 
     if (runtimeIdentityReceipt) {
+      const attachmentSandbox = await runCmd(["openshell", "sandbox", "get", sandboxName], {
+        reject: false,
+      });
+      if (attachmentSandbox.exitCode !== 0) {
+        throw new Error(
+          `Failed to inspect sandbox '${sandboxName}' immediately before runtime identity attachment: ${boundedCommandError(`${attachmentSandbox.stderr}\n${attachmentSandbox.stdout}`)}`,
+        );
+      }
+      assertReusableRuntimeIdentitySandbox(attachmentSandbox.stdout, sandboxName);
       const attachmentCreated = await attachRuntimeIdentity(
         runtimeIdentityReceipt,
         sandboxName,

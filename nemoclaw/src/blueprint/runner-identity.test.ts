@@ -108,8 +108,15 @@ function responseQueue(
     ["inference get", [{ exitCode: 0, stdout: matchingInferenceRoute, stderr: "" }]],
     ...overrides,
   ]);
+  const fallbacks = new Map([
+    [
+      "sandbox get test-sandbox",
+      { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" },
+    ],
+  ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
-    return responses.get(args.join(" "))?.shift() ?? success;
+    const command = args.join(" ");
+    return responses.get(command)?.shift() ?? fallbacks.get(command) ?? success;
   });
 }
 
@@ -516,6 +523,45 @@ describe("blueprint identity wrapper", () => {
       "openshell provider get test-provider",
       "openshell inference get",
     ]);
+  });
+
+  it("revalidates the sandbox immediately before attaching runtime identity", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [
+          { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" },
+          { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Provisioning", stderr: "" },
+        ],
+      ],
+      [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          ...Array.from({ length: 4 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /Sandbox 'test-sandbox' is not reusable.*Ready phase.*Provisioning/,
+    );
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands.filter((command) => command === "sandbox get test-sandbox")).toHaveLength(2);
+    expect(commands).not.toContain("sandbox provider attach test-sandbox acme-okta-runtime");
+    expect(commands).toContain("provider delete acme-okta-runtime");
   });
 
   it.each([
