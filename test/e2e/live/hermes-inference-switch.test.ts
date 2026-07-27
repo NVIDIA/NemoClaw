@@ -468,6 +468,17 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     },
   );
   expect(setProxyRoute.exitCode, resultText(setProxyRoute)).toBe(0);
+  const persistedProxyRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+    artifactName: "proxy-resolution-route-after-set",
+    env: env(),
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  expect(persistedProxyRoute.exitCode, resultText(persistedProxyRoute)).toBe(0);
+  expect(parseInferenceRoute(persistedProxyRoute.stdout)).toEqual({
+    provider: PROXY_RESOLUTION_PROVIDER,
+    model: proxyResolutionModel,
+  });
 
   const requestOffset = mockBaseline?.requests().length ?? 0;
   const proxyResolutionCli = await runHermesCliPongWithRetry({
