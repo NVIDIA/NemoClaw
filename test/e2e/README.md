@@ -793,12 +793,15 @@ evidence for every selected item completes coordination successfully. Failed,
 missing, skipped, pending, or mismatched evidence keeps the required gate from
 passing. Any new commit or base change requires a new approval.
 
-The Vitest reporter writes one `risk-signal.json` for each selected job shard
-and typed target. Typed targets bind the signal identity to the exact matrix ID
-and use the `default` evidence shard. The checked workflow boundary requires
-every policy-selected execution path to expose its matching identity, attach
-the reporter to every Vitest invocation, and always upload its evidence
-artifact.
+The canonical risk-signal layer writes one `risk-signal.json` for each selected
+job shard and typed target. The Vitest reporter writes normal test evidence. The
+explicit-only MCP dev compatibility preflight may instead write passing shard
+evidence only after it rejects an OpenShell version outside the reviewed
+credential boundary; the aligned full-lifecycle path leaves evidence to the
+reporter. Typed targets bind the signal identity to the exact matrix ID and use
+the `default` evidence shard. The checked workflow boundary requires every
+policy-selected execution path to expose its matching identity, attach the
+reporter to every Vitest invocation, and always upload its evidence artifact.
 Each signal binds the observed checkout SHA, expected SHA, plan hash,
 correlation ID, and pass, failure, skip, pending, and unhandled-error counts.
 The controller retains `pr-e2e-risk-plan-<sha>` for 14 days, while each
