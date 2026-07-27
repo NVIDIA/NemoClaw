@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { execa } from "execa";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   attachRuntimeIdentity,
   prepareRuntimeIdentity,
-  removeRuntimeIdentity,
   type RuntimeIdentityCommandOptions,
   type RuntimeIdentityCommandResult,
   type RuntimeIdentityDeps,
   type RuntimeIdentityReceipt,
+  removeRuntimeIdentity,
 } from "../nemoclaw/src/blueprint/runtime-identity.ts";
 
 interface FakeOpenShellCall {
@@ -155,15 +155,17 @@ async function readState(fakeOpenShell: string): Promise<FakeOpenShellState> {
 }
 
 describe("blueprint runtime identity lifecycle integration", () => {
-  let root: string | undefined;
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-identity-lifecycle-"));
+  });
 
   afterEach(() => {
-    if (root) rmSync(root, { recursive: true, force: true });
-    root = undefined;
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("configures, attaches, and removes only its owned provider through the command boundary", async () => {
-    root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-identity-lifecycle-"));
     const profileDir = path.join(root, "provider-profiles");
     const profilePath = path.join(profileDir, "okta-runtime-v1.yaml");
     const statePath = path.join(root, "openshell-state.json");
