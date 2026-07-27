@@ -661,8 +661,10 @@ describe("pull request and main workflow contracts", () => {
     expect(cliCoverageCalls[3]).toEqual(
       expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
     );
-    expect(cliCoverageCalls[4].join(" ")).toBe(
-      "tsx scripts/check-coverage-ratchet.mts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json CLI coverage",
+    expect(cliCoverageCalls[4]).toEqual(
+      "tsx|scripts/check-coverage-ratchet.mts|coverage/cli/coverage-summary.json|ci/coverage-threshold-cli.json|CLI coverage".split(
+        "|",
+      ),
     );
     expect(pluginCoverageCalls[0]).toEqual(
       expect.arrayContaining([
@@ -672,8 +674,10 @@ describe("pull request and main workflow contracts", () => {
         "--coverage.include=nemoclaw/src/**/*.cts",
       ]),
     );
-    expect(pluginCoverageCalls[1].join(" ")).toBe(
-      "tsx scripts/check-coverage-ratchet.mts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json Plugin coverage",
+    expect(pluginCoverageCalls[1]).toEqual(
+      "tsx|scripts/check-coverage-ratchet.mts|coverage/plugin/coverage-summary.json|ci/coverage-threshold-plugin.json|Plugin coverage".split(
+        "|",
+      ),
     );
     expect(broadCheckCalls.map((call) => call.join(" "))).toEqual([
       "npx prek run --all-files --stage pre-commit",
@@ -773,7 +777,6 @@ describe("pull request and main workflow contracts", () => {
     }
     expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
   });
-
 
   // source-shape-contract: security -- Pull requests must execute base-trusted actions while main uses reviewed repository actions
   it("reuses the same shared CI actions in PR and main workflows", () => {
