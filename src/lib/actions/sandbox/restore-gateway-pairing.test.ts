@@ -22,7 +22,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     const autoPairScopeApproval = vi.fn(() => order.push("approve"));
     const verifyGatewayPairing = vi.fn(() => {
       order.push("verify");
-      return true;
+      return { ok: true as const };
     });
 
     await establishRestoredSandboxGatewayPairing("beta", {
@@ -46,11 +46,11 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       .fn()
       .mockImplementationOnce(() => {
         order.push("verify");
-        return false;
+        return { ok: false as const, failureLayer: "scope-upgrade-pending" as const };
       })
       .mockImplementationOnce(() => {
         order.push("verify");
-        return true;
+        return { ok: true as const };
       });
 
     await establishRestoredSandboxGatewayPairing("beta", {
@@ -97,7 +97,9 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     });
     const verifyGatewayPairing = vi.fn(() => {
       order.push(`verify:${runningTransitions}`);
-      return runningTransitions === transitions.length;
+      return runningTransitions === transitions.length
+        ? { ok: true as const }
+        : { ok: false as const, failureLayer: "scope-upgrade-pending" as const };
     });
 
     await establishRestoredSandboxGatewayPairing("beta", {
@@ -127,7 +129,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
   it("fails before pairing when the restored gateway cannot restart (#7431)", async () => {
     const warmupScopeUpgrade = vi.fn();
     const autoPairScopeApproval = vi.fn();
-    const verifyGatewayPairing = vi.fn(() => true);
+    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
 
     await expect(
       establishRestoredSandboxGatewayPairing("beta", {
@@ -157,7 +159,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     const autoPairScopeApproval = vi.fn(() => order.push("approve"));
     const verifyGatewayPairing = vi.fn(() => {
       order.push("verify");
-      return true;
+      return { ok: true as const };
     });
 
     await expect(
@@ -178,7 +180,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       throw new Error("gateway not up");
     });
     const autoPairScopeApproval = vi.fn();
-    const verifyGatewayPairing = vi.fn(() => true);
+    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
 
     await expect(
       establishRestoredSandboxGatewayPairing("beta", {
@@ -196,7 +198,16 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     const restartRestoredSandboxGateway = vi.fn();
     const warmupScopeUpgrade = vi.fn();
     const autoPairScopeApproval = vi.fn();
-    const verifyGatewayPairing = vi.fn(() => false);
+    const verifyGatewayPairing = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: false as const,
+        failureLayer: "device-pairing-required" as const,
+      })
+      .mockReturnValueOnce({
+        ok: false as const,
+        failureLayer: "scope-upgrade-pending" as const,
+      });
 
     await expect(
       establishRestoredSandboxGatewayPairing("beta", {
@@ -205,7 +216,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
         autoPairScopeApproval,
         verifyGatewayPairing,
       }),
-    ).rejects.toThrow("authenticated gateway verification run did not succeed");
+    ).rejects.toThrow("authenticated gateway verification run failed (scope-upgrade-pending)");
     expect(restartRestoredSandboxGateway).toHaveBeenCalledTimes(3);
     expect(warmupScopeUpgrade).toHaveBeenCalledTimes(2);
     expect(autoPairScopeApproval).toHaveBeenCalledTimes(2);

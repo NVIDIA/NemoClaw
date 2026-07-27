@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { verifyRestoredSandboxGatewayPairing } from "../../adapters/openshell/restore-gateway-pairing";
+import {
+  type RestoreGatewayPairingVerificationResult,
+  verifyRestoredSandboxGatewayPairing,
+} from "../../adapters/openshell/restore-gateway-pairing";
 import type { GatewayRestartResult } from "./gateway-restart";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
@@ -9,7 +12,7 @@ export type RestoreGatewayPairingDeps = {
   restartRestoredSandboxGateway: (sandboxName: string) => void;
   warmupScopeUpgrade: (sandboxName: string) => void;
   autoPairScopeApproval: (sandboxName: string) => void;
-  verifyGatewayPairing: (sandboxName: string) => boolean;
+  verifyGatewayPairing: (sandboxName: string) => RestoreGatewayPairingVerificationResult;
 };
 
 // A restored clone starts without runtime device credentials. Restart once so
@@ -59,6 +62,7 @@ export async function establishRestoredSandboxGatewayPairing(
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
   try {
+    let lastFailure: Extract<RestoreGatewayPairingVerificationResult, { ok: false }> | null = null;
     deps.restartRestoredSandboxGateway(targetSandbox);
     for (let cycle = 0; cycle < RESTORE_GATEWAY_PAIRING_CYCLES; cycle += 1) {
       deps.warmupScopeUpgrade(targetSandbox);
@@ -67,11 +71,15 @@ export async function establishRestoredSandboxGatewayPairing(
       // verification. This also recovers the host forward through the existing
       // supervisor-mediated restart path.
       deps.restartRestoredSandboxGateway(targetSandbox);
-      if (deps.verifyGatewayPairing(targetSandbox)) {
+      const verification = deps.verifyGatewayPairing(targetSandbox);
+      if (verification.ok) {
         return;
       }
+      lastFailure = verification;
     }
-    throw new Error("the authenticated gateway verification run did not succeed");
+    throw new Error(
+      `the authenticated gateway verification run failed (${lastFailure?.failureLayer ?? "unknown"})`,
+    );
   } catch (err) {
     throw new Error(
       `could not establish gateway pairing for '${targetSandbox}': ${
