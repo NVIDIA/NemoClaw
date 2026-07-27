@@ -86,6 +86,79 @@ async function expectOpenAiProvider(
   expect(plain).toContain("OPENAI_BASE_URL");
 }
 
+async function prepareProxyResolutionRoute({
+  apiKey,
+  host,
+  mockBaseline,
+  publicProvider,
+  redactionValues,
+}: {
+  apiKey: string;
+  host: Parameters<typeof expectOpenAiProvider>[0];
+  mockBaseline: Awaited<ReturnType<typeof startFakeOpenAiCompatibleServer>> | undefined;
+  publicProvider: Awaited<ReturnType<typeof registerPublicNvidiaSwitchProvider>> | null;
+  redactionValues: string[];
+}): Promise<{ model: string; requestOffset: number }> {
+  const endpoint =
+    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+  const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
+  const requestOffset = mockBaseline?.requests().length ?? 0;
+
+  // Hosted mode already registered and attached the exact nvidia-prod
+  // provider. The mock path needs an OpenAI provider for its local fixture.
+  if (publicProvider !== null) {
+    return { model, requestOffset };
+  }
+
+  const registered = await host.command(
+    "openshell",
+    [
+      "provider",
+      "create",
+      "-g",
+      "nemoclaw",
+      "--name",
+      PROXY_RESOLUTION_PROVIDER,
+      "--type",
+      "openai",
+      "--credential",
+      "NVIDIA_INFERENCE_API_KEY",
+      "--config",
+      `OPENAI_BASE_URL=${endpoint}`,
+    ],
+    {
+      artifactName: "register-proxy-resolution-provider",
+      env: env(undefined, { NVIDIA_INFERENCE_API_KEY: apiKey }),
+      redactionValues,
+      timeoutMs: 120_000,
+    },
+  );
+  expect(registered.exitCode, resultText(registered)).toBe(0);
+  await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY");
+
+  const setRoute = await host.command(
+    "node",
+    [
+      CLI,
+      "inference",
+      "set",
+      "--provider",
+      PROXY_RESOLUTION_PROVIDER,
+      "--model",
+      model,
+      "--no-verify",
+    ],
+    {
+      artifactName: "set-proxy-resolution-route",
+      env: env(),
+      redactionValues,
+      timeoutMs: 180_000,
+    },
+  );
+  expect(setRoute.exitCode, resultText(setRoute)).toBe(0);
+  return { model, requestOffset };
+}
+
 test("Hermes inference set updates route/config and preserves live runtime", {
   timeout: TIMEOUT_MS,
   meta: {
@@ -418,63 +491,13 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(hermesCli.stdout).toMatch(/\bPONG\b/iu);
 
   progress.phase("prove split provider/model credential resolution");
-  const proxyResolutionEndpoint =
-    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
-  const proxyResolutionModel = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
-  // Hosted mode already registered and attached the exact nvidia-prod provider.
-  // Reuse it there; the mock path needs an OpenAI provider for its local fixture.
-  const registerProxyProvider =
-    publicProvider ??
-    (await host.command(
-      "openshell",
-      [
-        "provider",
-        "create",
-        "-g",
-        "nemoclaw",
-        "--name",
-        PROXY_RESOLUTION_PROVIDER,
-        "--type",
-        "openai",
-        "--credential",
-        "NVIDIA_INFERENCE_API_KEY",
-        "--config",
-        `OPENAI_BASE_URL=${proxyResolutionEndpoint}`,
-      ],
-      {
-        artifactName: "register-proxy-resolution-provider",
-        env: env(undefined, { NVIDIA_INFERENCE_API_KEY: apiKey }),
-        redactionValues,
-        timeoutMs: 120_000,
-      },
-    ));
-  expect(registerProxyProvider.exitCode, resultText(registerProxyProvider)).toBe(0);
-  publicProvider === null &&
-    (await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY"));
-
-  const setProxyRoute =
-    publicProvider === null
-      ? await host.command(
-          "node",
-          [
-            CLI,
-            "inference",
-            "set",
-            "--provider",
-            PROXY_RESOLUTION_PROVIDER,
-            "--model",
-            proxyResolutionModel,
-            "--no-verify",
-          ],
-          {
-            artifactName: "set-proxy-resolution-route",
-            env: env(),
-            redactionValues,
-            timeoutMs: 180_000,
-          },
-        )
-      : null;
-  setProxyRoute && expect(setProxyRoute.exitCode, resultText(setProxyRoute)).toBe(0);
+  const { model: proxyResolutionModel, requestOffset } = await prepareProxyResolutionRoute({
+    apiKey,
+    host,
+    mockBaseline,
+    publicProvider,
+    redactionValues,
+  });
   const persistedProxyRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
     artifactName: "proxy-resolution-route-after-set",
     env: env(),
@@ -487,7 +510,6 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     model: proxyResolutionModel,
   });
 
-  const requestOffset = mockBaseline?.requests().length ?? 0;
   const proxyResolutionCli = await runHermesCliPongWithRetry({
     run: (attempt) =>
       sandbox.exec(
