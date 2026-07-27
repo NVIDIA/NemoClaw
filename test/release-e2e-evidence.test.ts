@@ -42,6 +42,7 @@ function runEvidence(
   } = {},
 ): ReleaseE2eRunEvidence {
   const attempt = options.attempt ?? 1;
+  const runId = 1000 + attempt;
   const executions = plan.executions.filter(
     (execution) => execution.group === group && (options.only?.(execution) ?? true),
   );
@@ -58,26 +59,26 @@ function runEvidence(
       kind: "nemoclaw-e2e-dispatch-v1",
       targets: "",
       workflowRunAttempt: attempt,
-      workflowRunId: String(attempt),
+      workflowRunId: String(runId),
     },
     jobs: {
       jobs: executions.map((execution, index) => ({
         conclusion: options.conclusion?.(execution) ?? "success",
-        html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${attempt}/job/${index + 1}`,
+        html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${index + 1}`,
         name: execution.expectedName,
         run_attempt: attempt,
-        run_id: attempt,
+        run_id: runId,
         status: options.status?.(execution) ?? "completed",
       })),
     },
     run: {
       event: "workflow_dispatch",
       head_branch: "main",
-      id: attempt,
+      id: runId,
       path: ".github/workflows/e2e.yaml",
       run_attempt: attempt,
       head_sha: options.sha ?? candidateSha,
-      html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${attempt}`,
+      html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
     },
   };
 }
