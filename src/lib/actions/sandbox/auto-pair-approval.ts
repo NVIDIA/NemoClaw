@@ -97,6 +97,10 @@ export type AutoPairApprovalReceipt =
 const AUTO_PAIR_RECEIPT_LINE_RE =
   /^__NEMOCLAW_AUTO_PAIR_RECEIPT__=(policy-missing|exec-failed|list-failed|clone-no-match|clone-ambiguous|request-rejected|approve-failed|approved-one)$/;
 
+/**
+ * Parse one fixed receipt only when it is the sole receipt and terminal output
+ * line. Any other shape fails closed without exposing command output.
+ */
 export function parseAutoPairApprovalReceipt(output: string): AutoPairApprovalReceipt | null {
   const markerPrefix = "__NEMOCLAW_AUTO_PAIR_RECEIPT__=";
   const receiptLines = output.split(/\r?\n/).filter((line) => line.startsWith(markerPrefix));

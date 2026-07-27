@@ -85,6 +85,41 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(verifyGatewayPairing).not.toHaveBeenCalled();
   });
 
+  it("classifies a transient-looking restart failure without retrying authorization (#7431)", async () => {
+    const restartSandboxGateway = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: false as const,
+        failureLayer: "health timeout",
+        detail: "raw transient output must stay private",
+      })
+      .mockReturnValueOnce({
+        ok: true as const,
+        restarted: true as const,
+        healthPassed: true as const,
+        forwardRecovered: true,
+      });
+    const warmupScopeUpgrade = vi.fn();
+    const approveRestoredClonePairing = vi.fn();
+    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
+
+    const failure = await establishRestoredSandboxGatewayPairing("beta", {
+      restartRestoredSandboxGateway: (sandboxName) =>
+        restartRestoredSandboxGateway(sandboxName, { restartSandboxGateway }),
+      warmupScopeUpgrade,
+      approveRestoredClonePairing,
+      verifyGatewayPairing,
+    }).catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("health timeout");
+    expect((failure as Error).message).not.toContain("raw transient output");
+    expect(restartSandboxGateway).toHaveBeenCalledOnce();
+    expect(warmupScopeUpgrade).not.toHaveBeenCalled();
+    expect(approveRestoredClonePairing).not.toHaveBeenCalled();
+    expect(verifyGatewayPairing).not.toHaveBeenCalled();
+  });
+
   it("fails without verification when the post-approval gateway restart fails (#7431)", async () => {
     const order: string[] = [];
     const restartRestoredSandboxGateway = vi

@@ -23,6 +23,9 @@
  * convergence, explicitly use OpenClaw's stored device credential with
  * operator.pairing. Then let the gateway's canonical approveDevicePairing path
  * reload, lock, rotate the token, persist, broadcast, and respond.
+ * The ordinary patch tests and pinned real-dist proof cover this paired
+ * pre-convergence transition separately from a cold clone, which has no paired
+ * record and must not select stored device authentication.
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope

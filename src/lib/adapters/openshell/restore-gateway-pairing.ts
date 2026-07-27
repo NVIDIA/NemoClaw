@@ -35,8 +35,9 @@ export type RestoreGatewayPairingVerificationResult =
 // JSON output does not expose a supported, stable transport discriminator.
 // These compatibility signals match the gateway-auth live tests. Keep the
 // returned classification fixed and output-free so restore diagnostics never
-// expose agent output or credentials. Remove this classifier once OpenClaw
-// provides a machine-readable gateway-only result.
+// expose agent output or credentials. The pinned OpenClaw dependency-review
+// gate is the removal checkpoint: reevaluate and remove this classifier when
+// OpenClaw provides a supported machine-readable gateway-only result.
 const RESTORE_GATEWAY_PAIRING_REJECTIONS: ReadonlyArray<{
   pattern: RegExp;
   failureLayer: RestoreGatewayPairingFailureLayer;

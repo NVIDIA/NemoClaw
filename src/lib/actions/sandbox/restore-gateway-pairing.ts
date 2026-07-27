@@ -78,6 +78,8 @@ export async function establishRestoredSandboxGatewayPairing(
   targetSandbox: string,
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
+  // Deliberately do not retry this authorization sequence internally. A fixed
+  // failure lets the caller retry the restore command as a new bounded attempt.
   try {
     deps.restartRestoredSandboxGateway(targetSandbox);
     deps.warmupScopeUpgrade(targetSandbox);
