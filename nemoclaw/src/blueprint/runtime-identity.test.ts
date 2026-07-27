@@ -343,7 +343,9 @@ describe("runtime identity contract", () => {
     writeFileSync(profilePath, profileDocument.replace("api.example.okta.com", host));
     deps.validateEndpointUrl = async (url) => {
       validatedDestinations.push(url);
-      if (url.includes(host)) throw new Error(`${reason} destination rejected`);
+      return url.includes(host)
+        ? Promise.reject(new Error(`${reason} destination rejected`))
+        : Promise.resolve();
     };
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(reason);
