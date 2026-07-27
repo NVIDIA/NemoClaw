@@ -22,6 +22,22 @@ vi.mock("../../lib/readiness/index", () => ({
 
 import HostProbeCommand from "./probe";
 
+type ReadinessOutcome =
+  | { status: "supported"; exitCode: 0 }
+  | { status: "incompatible"; exitCode: 2 }
+  | { status: "inconclusive"; exitCode: 3 };
+
+const READINESS_OUTCOMES = [
+  { status: "supported", exitCode: 0 },
+  { status: "incompatible", exitCode: 2 },
+  { status: "inconclusive", exitCode: 3 },
+] as const satisfies readonly ReadinessOutcome[];
+
+const NON_SUPPORTED_OUTCOMES = [
+  { status: "incompatible", exitCode: 2 },
+  { status: "inconclusive", exitCode: 3 },
+] as const satisfies readonly ReadinessOutcome[];
+
 function throwSchemaErrors(errors: unknown): never {
   throw new Error(JSON.stringify(errors));
 }
@@ -33,14 +49,10 @@ function assertSchemaValid(value: unknown): void {
   validate(value) || throwSchemaErrors(validate.errors);
 }
 
-function report(
-  status: SystemReadinessReport["status"],
-  exitCode: SystemReadinessReport["exitCode"],
-): SystemReadinessReport {
+function report(outcome: ReadinessOutcome): SystemReadinessReport {
   return {
     schemaVersion: "1.0.0",
-    status,
-    exitCode,
+    ...outcome,
     mutated: false,
     provenance: { nemoclawVersion: "0.1.0", observedAt: "2026-06-01T12:00:00.000Z" },
     observations: [],
@@ -54,7 +66,7 @@ function report(
 describe("host probe command (#7412)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.createHostReadinessReport.mockReturnValue(report("supported", 0));
+    mocks.createHostReadinessReport.mockReturnValue(report(READINESS_OUTCOMES[0]));
     mocks.createPublicReadinessReport.mockImplementation((value) => value);
     mocks.renderReadinessReport.mockReturnValue("System readiness: supported");
   });
@@ -63,28 +75,21 @@ describe("host probe command (#7412)", () => {
     vi.restoreAllMocks();
   });
 
-  it.each([
-    ["supported", 0],
-    ["incompatible", 2],
-    ["inconclusive", 3],
-  ] as const)("returns the deterministic %s exit code", async (status, exitCode) => {
+  it.each(READINESS_OUTCOMES)("returns the deterministic $status exit code", async (outcome) => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
-    mocks.createHostReadinessReport.mockReturnValueOnce(report(status, exitCode));
+    mocks.createHostReadinessReport.mockReturnValueOnce(report(outcome));
 
     try {
       await HostProbeCommand.run([], process.cwd());
-      expect(process.exitCode).toBe(exitCode);
+      expect(process.exitCode).toBe(outcome.exitCode);
     } finally {
       process.exitCode = previousExitCode;
     }
   });
 
-  it.each([
-    ["incompatible", 2],
-    ["inconclusive", 3],
-  ] as const)("emits schema-valid JSON for %s hosts", async (status, exitCode) => {
-    const expectedReport = report(status, exitCode);
+  it.each(NON_SUPPORTED_OUTCOMES)("emits schema-valid JSON for $status hosts", async (outcome) => {
+    const expectedReport = report(outcome);
     mocks.createHostReadinessReport.mockReturnValueOnce(expectedReport);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const previousExitCode = process.exitCode;
@@ -96,7 +101,7 @@ describe("host probe command (#7412)", () => {
 
       assertSchemaValid(output);
       expect(output).toEqual(expectedReport);
-      expect(process.exitCode).toBe(exitCode);
+      expect(process.exitCode).toBe(outcome.exitCode);
       expect(mocks.renderReadinessReport).not.toHaveBeenCalled();
     } finally {
       process.exitCode = previousExitCode;
@@ -104,7 +109,7 @@ describe("host probe command (#7412)", () => {
   });
 
   it("runs before gateway or sandbox registration and uses one report for human output", async () => {
-    const publicReport = report("supported", 0);
+    const publicReport = report(READINESS_OUTCOMES[0]);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     mocks.createPublicReadinessReport.mockReturnValueOnce(publicReport);
 

@@ -5,11 +5,27 @@ import { describe, expect, it } from "vitest";
 import { createPublicReadinessReport, renderReadinessReport } from "./presentation";
 import type { SystemReadinessReport } from "./types";
 
-function report(overrides: Partial<SystemReadinessReport> = {}): SystemReadinessReport {
+type ReadinessOutcome =
+  | { status: "supported"; exitCode: 0 }
+  | { status: "incompatible"; exitCode: 2 }
+  | { status: "inconclusive"; exitCode: 3 };
+
+type ReportOverrides = Partial<
+  Omit<Extract<SystemReadinessReport, { status: "supported" }>, "status" | "exitCode">
+>;
+
+const NON_SUPPORTED_OUTCOMES = [
+  { status: "incompatible", exitCode: 2 },
+  { status: "inconclusive", exitCode: 3 },
+] as const satisfies readonly ReadinessOutcome[];
+
+function report(
+  overrides: ReportOverrides = {},
+  outcome: ReadinessOutcome = { status: "supported", exitCode: 0 },
+): SystemReadinessReport {
   return {
     schemaVersion: "1.0.0",
-    status: "supported",
-    exitCode: 0,
+    ...outcome,
     mutated: false,
     provenance: {
       nemoclawVersion: "0.1.0",
@@ -25,13 +41,10 @@ function report(overrides: Partial<SystemReadinessReport> = {}): SystemReadiness
 }
 
 describe("public readiness presentation (#7412)", () => {
-  it.each([
-    ["incompatible", 2],
-    ["inconclusive", 3],
-  ] as const)("preserves %s status and exit code %i", (status, exitCode) => {
-    const publicReport = createPublicReadinessReport(report({ status, exitCode }));
+  it.each(NON_SUPPORTED_OUTCOMES)("preserves $status status and exit code $exitCode", (outcome) => {
+    const publicReport = createPublicReadinessReport(report({}, outcome));
 
-    expect(publicReport).toMatchObject({ status, exitCode, mutated: false });
+    expect(publicReport).toMatchObject({ ...outcome, mutated: false });
   });
 
   it.each([
@@ -54,17 +67,18 @@ describe("public readiness presentation (#7412)", () => {
 
   it("renders human output from the same public report used for JSON", () => {
     const publicReport = createPublicReadinessReport(
-      report({
-        status: "incompatible",
-        exitCode: 2,
-        findings: [
-          {
-            id: "host.docker.unavailable",
-            severity: "blocking",
-            summary: "Docker is not installed.",
-          },
-        ],
-      }),
+      report(
+        {
+          findings: [
+            {
+              id: "host.docker.unavailable",
+              severity: "blocking",
+              summary: "Docker is not installed.",
+            },
+          ],
+        },
+        { status: "incompatible", exitCode: 2 },
+      ),
     );
 
     expect(renderReadinessReport(publicReport)).toContain("System readiness: incompatible");
