@@ -14,7 +14,11 @@ import type {
 
 const MAX_SUMMARY_LENGTH = 512;
 const MAX_EVIDENCE_LENGTH = 1024;
+const MAX_OBSERVATIONS = 256;
+const MAX_CAPABILITIES = 256;
+const MAX_QUALIFICATIONS = 128;
 const MAX_FINDINGS = 256;
+const MAX_EVIDENCE = 256;
 const SOURCE_REVISION_PATTERN = /^[0-9a-f]{40,64}$/;
 const ENVIRONMENT_DETAIL_KEYS = new Set([
   "env",
@@ -76,7 +80,7 @@ function finding(entry: ReadinessFinding): ReadinessFinding {
   };
 }
 
-function boundedFindings(entries: readonly ReadinessFinding[]): ReadinessFinding[] {
+function boundedFindings(entries: readonly ReadinessFinding[]): readonly ReadinessFinding[] {
   const required = entries.filter(
     ({ severity }) => severity === "blocking" || severity === "fatal",
   );
@@ -89,7 +93,37 @@ function boundedFindings(entries: readonly ReadinessFinding[]): ReadinessFinding
     if (selected.size >= MAX_FINDINGS) break;
     selected.add(entry);
   }
-  return entries.filter((entry) => selected.has(entry)).map(finding);
+  return entries.filter((entry) => selected.has(entry));
+}
+
+function addReferences(target: Set<string>, references: readonly string[] | undefined): void {
+  for (const id of references ?? []) target.add(id);
+}
+
+function boundedReferencedEntries<T extends { readonly id: string }>(
+  entries: readonly T[],
+  requiredIds: ReadonlySet<string>,
+  maxEntries: number,
+  entityName: string,
+): readonly T[] {
+  if (requiredIds.size > maxEntries) {
+    throw new Error(
+      `Readiness report exceeds the public boundary for referenced ${entityName} entries.`,
+    );
+  }
+
+  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
+  const missingIds = [...requiredIds].filter((id) => !entriesById.has(id));
+  if (missingIds.length > 0) {
+    throw new Error(`Readiness report contains unresolved ${entityName} references.`);
+  }
+
+  const selected = new Set([...requiredIds].map((id) => entriesById.get(id) as T));
+  for (const entry of entries) {
+    if (selected.size >= maxEntries) break;
+    selected.add(entry);
+  }
+  return entries.filter((entry) => selected.has(entry));
 }
 
 function evidence(entry: ReadinessEvidence): ReadinessEvidence {
@@ -124,6 +158,38 @@ export function createPublicReadinessReport(
       : report.status === "incompatible"
         ? ({ status: report.status, exitCode: report.exitCode } as const)
         : ({ status: report.status, exitCode: report.exitCode } as const);
+  const selectedObservations = report.observations.slice(0, MAX_OBSERVATIONS);
+  const selectedQualifications = report.qualifications.slice(0, MAX_QUALIFICATIONS);
+  const selectedFindings = boundedFindings(report.findings);
+  const requiredCapabilityIds = new Set<string>();
+  for (const entry of selectedQualifications) {
+    addReferences(requiredCapabilityIds, entry.capabilityIds);
+  }
+  for (const entry of selectedFindings) {
+    addReferences(requiredCapabilityIds, entry.capabilityIds);
+  }
+  const selectedCapabilities = boundedReferencedEntries(
+    report.capabilities,
+    requiredCapabilityIds,
+    MAX_CAPABILITIES,
+    "capability",
+  );
+  const requiredEvidenceIds = new Set<string>();
+  for (const entry of selectedObservations) {
+    addReferences(requiredEvidenceIds, entry.evidenceIds);
+  }
+  for (const entry of selectedCapabilities) {
+    addReferences(requiredEvidenceIds, entry.evidenceIds);
+  }
+  for (const entry of selectedFindings) {
+    addReferences(requiredEvidenceIds, entry.evidenceIds);
+  }
+  const selectedEvidence = boundedReferencedEntries(
+    report.evidence,
+    requiredEvidenceIds,
+    MAX_EVIDENCE,
+    "evidence",
+  );
   return {
     schemaVersion: report.schemaVersion,
     ...outcome,
@@ -136,11 +202,11 @@ export function createPublicReadinessReport(
         : {}),
       observedAt: report.provenance.observedAt,
     },
-    observations: report.observations.slice(0, 256).map(observation),
-    capabilities: report.capabilities.slice(0, 256).map(capability),
-    qualifications: report.qualifications.slice(0, 128).map(qualification),
-    findings: boundedFindings(report.findings),
-    evidence: report.evidence.slice(0, 256).map(evidence),
+    observations: selectedObservations.map(observation),
+    capabilities: selectedCapabilities.map(capability),
+    qualifications: selectedQualifications.map(qualification),
+    findings: selectedFindings.map(finding),
+    evidence: selectedEvidence.map(evidence),
   };
 }
 
