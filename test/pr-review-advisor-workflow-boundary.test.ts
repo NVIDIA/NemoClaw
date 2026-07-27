@@ -334,7 +334,8 @@ function readTextBySuffix(
 
 function supportedAdvisorReadText(input: ReturnType<typeof advisorAnalysisInput>) {
   return readTextBySuffix([
-    ["session.mts", input.model],
+    ["session.mts", "provider constants import"],
+    ["provider-constants.mts", input.model],
     ["analyze.mts", "PR_REVIEW_ADVISOR_MODEL"],
     ["comment.mts", "PR_REVIEW_ADVISOR_COMMENT_MARKER"],
   ]);
@@ -343,6 +344,7 @@ function supportedAdvisorReadText(input: ReturnType<typeof advisorAnalysisInput>
 function missingSessionReadText() {
   return readTextBySuffix([
     ["session.mts", new Error("missing session.mts")],
+    ["provider-constants.mts", new Error("missing provider-constants.mts")],
     ["analyze.mts", "PR_REVIEW_ADVISOR_MODEL"],
     ["comment.mts", "PR_REVIEW_ADVISOR_COMMENT_MARKER"],
   ]);
@@ -495,20 +497,26 @@ describe("PR review advisor workflow boundary", () => {
 
   it("rejects executing advisor helpers from the untrusted analysis worktree", () => {
     const errors = validateMutation((source) =>
-      source.replace(
-        '"$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"',
-        '"$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"\n          node --experimental-strip-types "$ADVISOR_WORKDIR/tools/pr-review-advisor/run-analysis.mts"',
-      ),
+      mutateWorkflowSource(source, (workflow) => {
+        const step = workflow.jobs.review.steps.find(
+          (candidate: { name?: string }) => candidate.name === "Run PR review advisor",
+        );
+        step.run +=
+          '\nnode --experimental-strip-types --no-warnings "$ADVISOR_WORKDIR/tools/pr-review-advisor/openshell.mts" run';
+      }),
     );
     expect(errors).toContain(
       "review step 'Run PR review advisor' must not execute pr-review-advisor helpers from ADVISOR_WORKDIR",
     );
 
     const bracedWorkdir = validateMutation((source) =>
-      source.replace(
-        '"$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"',
-        '"${ADVISOR_WORKDIR}/tools/pr-review-advisor/run-analysis.mts"',
-      ),
+      mutateWorkflowSource(source, (workflow) => {
+        const step = workflow.jobs.review.steps.find(
+          (candidate: { name?: string }) => candidate.name === "Run PR review advisor",
+        );
+        step.run =
+          'node --experimental-strip-types --no-warnings "${ADVISOR_WORKDIR}/tools/pr-review-advisor/openshell.mts" run';
+      }),
     );
     expect(bracedWorkdir).toEqual(
       expect.arrayContaining([
@@ -518,10 +526,13 @@ describe("PR review advisor workflow boundary", () => {
     );
 
     const relativeAfterCd = validateMutation((source) =>
-      source.replace(
-        '"$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"',
-        '"tools/pr-review-advisor/run-analysis.mts"',
-      ),
+      mutateWorkflowSource(source, (workflow) => {
+        const step = workflow.jobs.review.steps.find(
+          (candidate: { name?: string }) => candidate.name === "Run PR review advisor",
+        );
+        step.run =
+          "node --experimental-strip-types --no-warnings tools/pr-review-advisor/openshell.mts run";
+      }),
     );
     expect(relativeAfterCd).toEqual(
       expect.arrayContaining([
@@ -628,8 +639,10 @@ describe("PR review advisor workflow boundary", () => {
             (step) => step.name === "Remove symlinks from analysis workspace",
           );
           const cleanup = steps.splice(cleanupIndex, 1)[0]!;
-          const analysisIndex = steps.findIndex((step) => step.name === "Run PR review advisor");
-          steps.splice(analysisIndex + 1, 0, cleanup);
+          const configureIndex = steps.findIndex(
+            (step) => step.name === "Configure OpenShell inference",
+          );
+          steps.splice(configureIndex + 1, 0, cleanup);
         },
       },
       {
@@ -1292,6 +1305,7 @@ process.exitCode = valid ? 0 : 1;`,
     const errors = validateMutation((source) =>
       source
         .replace('      FD_FIND_VERSION: "9.0.0-1"', '      FD_FIND_VERSION: "latest"')
+        .replace('      UNDICI_VERSION: "8.5.0"', '      UNDICI_VERSION: "latest"')
         .replace('      VITEST_VERSION: "4.1.9"', '      VITEST_VERSION: "latest"')
         .replace('      YAML_VERSION: "2.8.3"', '      YAML_VERSION: "latest"')
         .replace(
@@ -1303,6 +1317,7 @@ process.exitCode = valid ? 0 : 1;`,
     expect(errors).toEqual(
       expect.arrayContaining([
         "review job env.FD_FIND_VERSION must be 9.0.0-1",
+        "review job env.UNDICI_VERSION must be 8.5.0",
         "review job env.VITEST_VERSION must be 4.1.9",
         "review job env.YAML_VERSION must be 2.8.3",
         "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be false",
@@ -1360,6 +1375,7 @@ process.exitCode = valid ? 0 : 1;`,
         expect.arrayContaining([
           "advisor package lock must pin @earendil-works/pi-coding-agent@0.80.6",
           "advisor package lock must pin typebox@1.1.38",
+          "advisor package lock must pin undici@8.5.0",
           "advisor package lock must pin yaml@2.8.3",
           "advisor package lock must pin vitest@4.1.9",
         ]),

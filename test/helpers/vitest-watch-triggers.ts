@@ -103,6 +103,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
+    testsToRun: runTests(
+      "test/pr-review-advisor-workflow-boundary.test.ts",
+      "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
+    testsToRun: runTests("test/pr-review-advisor-openshell-workflow-boundary.test.ts"),
+  },
+  {
     pattern:
       /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|wsl-e2e|macos-e2e|platform-vitest-main)\.yaml$/,
     testsToRun: runTests("test/hosted-runner-recovery-workflow.test.ts"),

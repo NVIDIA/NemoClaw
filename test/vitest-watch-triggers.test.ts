@@ -60,6 +60,8 @@ const OPAQUE_INPUTS = [
   ".github/workflows/e2e.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/pr-e2e-gate.yaml",
+  ".github/workflows/pr-review-advisor.yaml",
+  "tools/pr-review-advisor/openshell-policy.yaml",
   ".github/workflows/hosted-runner-recovery.yaml",
   ".github/workflows/wsl-e2e.yaml",
   ".github/workflows/macos-e2e.yaml",
@@ -115,6 +117,13 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/pr-e2e-gate.yaml")).toEqual([
       "test/pr-e2e-gate-workflow.test.ts",
       "test/pr-e2e-required.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
+      "test/pr-review-advisor-workflow-boundary.test.ts",
+      "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+    ]);
+    expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
+      "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
