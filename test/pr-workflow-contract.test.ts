@@ -655,8 +655,8 @@ describe("pull request and main workflow contracts", () => {
     const routinePrCalls = runLoggedPackageScript(scripts["validate:pr"]);
     const repositoryCheckCalls = runLoggedPackageScript(scripts["checks:repository"]);
 
-    expect(cliCoverageCalls.map(([command]) => command).join(" ")).toBe(
-      "npm npm tsx vitest tsx",
+    expect(cliCoverageCalls.map(([command]) => command)).toEqual(
+      "npm npm tsx vitest tsx".split(" "),
     );
     expect(cliCoverageCalls[3]).toEqual(
       expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
