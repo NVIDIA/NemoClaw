@@ -236,7 +236,7 @@ async function expectSandboxCredentialBoundary(
     [
       "sh",
       "-lc",
-      "find /sandbox -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print 2>/dev/null | head -5",
+      "find /sandbox -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print",
     ],
     {
       artifactName: "phase-3-sandbox-auth-profiles-probe",
@@ -249,28 +249,48 @@ async function expectSandboxCredentialBoundary(
     "",
   );
 
-  const secretProbe = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "sh",
-      "-lc",
-      "for dir in /sandbox/.openclaw /sandbox/.nemoclaw; do " +
-        '[ -d "$dir" ] || continue; ' +
-        "grep -rE 'nvapi-|ghp_|npm_' \"$dir\" 2>/dev/null " +
-        "| grep -v 'STRIPPED' " +
-        "| grep -v '/policies/' " +
-        "| grep -v '/plugin-runtime-deps/' " +
-        "| grep -Ev '/extensions/[^/]+/(dist|node_modules)/' " +
-        "| head -5 || true; " +
-        "done",
-    ],
-    {
-      artifactName: "phase-3-sandbox-secret-pattern-probe",
-      env: testEnv(home),
-      redactionValues: [apiKey],
-      timeoutMs: SANDBOX_PROBE_TIMEOUT_MS,
-    },
-  );
+  const secretScanCommand = [
+    "for dir in /sandbox/.openclaw /sandbox/.nemoclaw; do",
+    '  [ -d "$dir" ] || continue',
+    `  matches=$(grep -rIlE 'nvapi-|ghp_|npm_' "$dir")`,
+    "  scan_status=$?",
+    '  case "$scan_status" in',
+    `    0) filtered=$(printf '%s\\n' "$matches" | grep -Ev '/policies/|/plugin-runtime-deps/|/extensions/[^/]+/(dist|node_modules)/')`,
+    "       filter_status=$?",
+    '       case "$filter_status" in',
+    `         0) printf '%s\\n' "$filtered" | while IFS= read -r file; do`,
+    `              matching_lines=$(grep -IE 'nvapi-|ghp_|npm_' "$file")`,
+    "              match_status=$?",
+    '              case "$match_status" in',
+    `                0) printf '%s' "$matching_lines" | grep -qv 'STRIPPED'`,
+    "                   unstripped_status=$?",
+    '                   case "$unstripped_status" in',
+    `                     0) printf '%s\\n' "$file" ;;`,
+    "                     1) ;;",
+    '                     *) exit "$unstripped_status" ;;',
+    "                   esac",
+    "                   ;;",
+    "                1) ;;",
+    '                *) exit "$match_status" ;;',
+    "              esac",
+    "            done",
+    "            ;;",
+    "         1) ;;",
+    '         *) exit "$filter_status" ;;',
+    "       esac",
+    "       ;;",
+    "    1) ;;",
+    '    *) exit "$scan_status" ;;',
+    "  esac",
+    "done",
+  ].join("\n");
+
+  const secretProbe = await sandbox.exec(SANDBOX_NAME, ["sh", "-lc", secretScanCommand], {
+    artifactName: "phase-3-sandbox-secret-pattern-probe",
+    env: testEnv(home),
+    redactionValues: [apiKey],
+    timeoutMs: SANDBOX_PROBE_TIMEOUT_MS,
+  });
   expect(secretProbe.exitCode, resultText(secretProbe)).toBe(0);
   expect(secretProbe.stdout.trim(), "sandbox config must not contain secret-shaped tokens").toBe(
     "",

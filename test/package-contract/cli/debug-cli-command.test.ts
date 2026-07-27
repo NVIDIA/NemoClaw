@@ -72,18 +72,17 @@ describe("compiled diagnostics CLI", () => {
 
     writeExecutable(path.join(bin, "openshell"), [
       "#!/usr/bin/env bash",
-      'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-      "  printf 'NAME\\nalpha Ready\\n'",
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ]; then',
-      "  exit 1",
-      "fi",
+      'case "$1 $2" in',
+      "  \"sandbox list\") printf 'NAME\\nalpha Ready\\n'; exit 0 ;;",
+      '  "sandbox ssh-config") exit 1 ;;',
+      "esac",
       `printf 'NVIDIA_INFERENCE_API_KEY=%s\\nGITHUB_TOKEN=%s\\n' ${NVIDIA_TEST_SECRET} ${GITHUB_TEST_SECRET}`,
     ]);
     writeExecutable(path.join(bin, "docker"), [
       "#!/usr/bin/env bash",
-      'if printf "%s\\n" "$*" | grep -q -- "--format"; then exit 0; fi',
+      'case "$*" in',
+      '  *"--format"*) exit 0 ;;',
+      "esac",
       `printf 'container credential %s\\n' ${NVIDIA_TEST_SECRET}`,
     ]);
     for (const command of ["dmesg", "log", "nvidia-smi"]) {
