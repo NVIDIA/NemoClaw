@@ -90,6 +90,18 @@ export function renderMcpBridgeStatus(
         }`,
       );
     }
+    const discovery = status.toolDiscovery;
+    if (discovery) {
+      console.log(
+        `    tool discovery: ${
+          discovery.ok ? "successful" : `FAILED${discovery.detail ? ` (${discovery.detail})` : ""}`
+        }`,
+      );
+      console.log(
+        `    tools discovered: ${discovery.count}${discovery.truncated ? " (partial)" : ""}`,
+      );
+      for (const tool of discovery.tools) console.log(`      - ${tool}`);
+    }
     for (const warning of status.warnings) console.log(`    warning: ${warning}`);
   }
   console.log("");

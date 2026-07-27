@@ -36,7 +36,6 @@ const PROTECTED_JOBS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "common-egress-agent",
-  "hermes-dashboard",
   "hermes-discord",
   "hermes-e2e",
   "hermes-inference-switch",
@@ -267,6 +266,12 @@ describe("trusted Hermes swap workflow boundary", () => {
       expect(provision.run?.trimEnd()).toBe(TRUSTED_HERMES_SWAP_SCRIPT);
       expect(JSON.stringify(provision.env)).not.toContain("secrets.");
     }
+    expect(trustedSwapStep(workflow, "hermes-e2e").if).toContain(
+      "inputs.jobs), ',hermes-dashboard,'",
+    );
+    expect(trustedSwapStep(workflow, "hermes-e2e").if).toContain(
+      "inputs.targets), ',hermes-dashboard,'",
+    );
   });
 
   it("keeps the trusted program fail-closed, bounded, and syntactically valid (#7145)", () => {
@@ -534,7 +539,7 @@ describe("trusted Hermes swap workflow boundary", () => {
 
     const hermesE2eProvision = trustedSwapStep(workflow, "hermes-e2e");
     hermesE2eProvision.if = hermesE2eProvision.if!.replace(
-      " && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,')))",
+      " && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))",
       "",
     );
 
