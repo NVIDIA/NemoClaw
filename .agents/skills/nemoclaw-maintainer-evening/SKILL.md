@@ -50,14 +50,28 @@ If a docs PR or any other intended PR merges after `release:plan`, regenerate th
 
 ## Step 4: Cut the Tag and Publish Release Notes
 
-Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag carry-forward and label-retirement plan, and release notes draft for confirmation. After the release plan freezes the candidate SHA, review the pre-tag E2E evidence ledger derived from `.github/workflows/e2e.yaml` at that commit. Do not ask for the release confirmation phrase until every test has green evidence or an explicit itemized maintainer exception. NemoClaw releases are tag-based: tag the confirmed release commit with `vX.Y.Z`, let the workflow move `latest`, automatically carry remaining open issues/PRs to the next patch label, delete the released label, and prepare the release notes announcement for the maintainer to post.
+Load `cut-release-tag`.
+The version is already known, so use a patch bump unless the maintainer selects another bump.
+Show the commit, changelog, carry-forward plan, label-retirement plan, and release notes draft.
+
+After the release plan freezes the candidate SHA, load `nemoclaw-maintainer-e2e`.
+Run full mode when that SHA has no applicable exact Brev Launchable evidence.
+Review the pre-tag E2E evidence ledger from `.github/workflows/e2e.yaml` at that commit.
+Require a successful `Exact staging Brev Launchable` job, matching qualification identity, and verified workspace absence.
+Each missing test result requires its own itemized maintainer exception.
+Missing or invalid qualification requires a separate itemized exception with run and job URLs, the result or missing receipt, and rationale.
+Do not ask for the release confirmation phrase until each required result has successful evidence or its own exception.
+
+Tag the confirmed release commit with `vX.Y.Z`.
+Let the workflow move `latest`, carry open work forward, and delete the released label.
+Prepare the Announcement draft for the maintainer to post.
 
 ## Step 5: Confirm and Share
 
 After the tag is cut and release notes are drafted or posted by the maintainer, present the final summary:
 
 - **Tag**: `v0.0.8` at commit `abc1234`
-- **Pre-tag E2E evidence**: 12/13 tests green for the candidate SHA; 1 itemized maintainer exception
+- **Pre-tag E2E evidence**: 12/13 tests and exact Brev Launchable qualification passing for the candidate SHA; 1 itemized maintainer exception
 - **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
 - **Shipped**: 4 items (#1234, #1235, #1236, #1237)
 - **Moved to v0.0.9**: 1 item (#1238 — still needs CI fix)

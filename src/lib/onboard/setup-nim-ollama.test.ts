@@ -341,6 +341,46 @@ describe("createSetupNimOllamaHandlers", () => {
     assert.equal(state.allowToolsIncompatible, true);
   });
 
+  it("fronts installed WSL-local Ollama with the sandbox proxy when host loopback is not container-reachable (#7318)", async () => {
+    const state = makeState();
+    const install = vi.fn(() => ({ ok: true }));
+    const startProxy = vi.fn(() => true);
+    const selectModel = vi.fn<Deps["selectAndValidateOllamaModel"]>(async () => ({
+      outcome: "selected",
+      model: "qwen3:0.6b",
+      allowToolsIncompatible: false,
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        process: { ...process, platform: "linux" } as NodeJS.Process,
+        installOllamaOnLinux: install,
+        shouldFrontOllamaWithProxy: () => true,
+        startOllamaAuthProxy: startProxy,
+        getLocalProviderBaseUrl: () => "http://host.openshell.internal:11435/v1",
+        selectAndValidateOllamaModel: selectModel,
+      }),
+    );
+
+    const result = await handleInstallOllamaSelection(null, null, null, state, {
+      hasUpgradableOllama: false,
+    });
+
+    expect(result).toBe("selected");
+    expect(install).toHaveBeenCalledTimes(1);
+    expect(startProxy).toHaveBeenCalledTimes(1);
+    expect(state).toMatchObject({
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      model: "qwen3:0.6b",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(state.endpointUrl).not.toContain("127.0.0.1");
+    expect(log).toHaveBeenCalledWith("  ✓ Using Ollama on localhost:11434 (proxy on :11435)");
+    log.mockRestore();
+  });
+
   it("fails closed on unknown Ollama startup outcomes without mutating state", async () => {
     const state = makeState();
     const before = { ...state, hermesToolGateways: [...state.hermesToolGateways] };

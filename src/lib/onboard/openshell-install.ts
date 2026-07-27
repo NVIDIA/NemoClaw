@@ -200,7 +200,7 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
         } else if (needsDockerDriverBinaries) {
           const required = platform === "linux" ? "gateway and sandbox" : "gateway";
           deps.log(
-            `  OpenShell standalone gateway onboarding requires the ${required} binaries. Reinstalling...`,
+            `  OpenShell Docker-driver gateway onboarding requires the ${required} binaries. Reinstalling...`,
           );
         } else if (needsMessagingFeatures) {
           deps.log(

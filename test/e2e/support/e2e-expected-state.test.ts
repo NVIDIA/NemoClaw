@@ -200,8 +200,8 @@ describe("target expected-state references", () => {
     }
   });
 
-  // source-shape-contract: security -- Post-reboot targets must retain host registry and container preservation probes
-  it("compiles host-preservation probes for every post-reboot recovery target", () => {
+  // source-shape-contract: security -- Post-reboot targets must retain host preservation and gateway recovery probes
+  it("compiles gateway-health and host-preservation probes for every post-reboot recovery target", () => {
     const recoveryTargets = listTargets().filter(
       (target) => target.environment?.lifecycle === "post-reboot-recovery",
     );
@@ -211,6 +211,7 @@ describe("target expected-state references", () => {
       const probes = probesForState(requireExpectedState(target.expectedStateId!));
       expect(probes, target.id).toEqual(
         expect.arrayContaining([
+          "gateway-healthy",
           "local-registry-entry-present",
           "docker-sandbox-container-present",
         ]),

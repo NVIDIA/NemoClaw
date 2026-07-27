@@ -27,11 +27,18 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { execa } from "execa";
 
+import * as importedSandboxName from "../shared/sandbox-name.cjs";
+
 const HOME = homedir();
 const OPENCLAW_DIR = join(HOME, ".openclaw");
 const NEMOCLAW_DIR = join(HOME, ".nemoclaw");
 const SNAPSHOTS_DIR = join(NEMOCLAW_DIR, "snapshots");
-const SANDBOX_NAME_RE = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+
+// sourceOfTruth: nemoclaw/src/shared/sandbox-name.cts
+const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
+  default?: typeof importedSandboxName;
+};
+const { assertValidName } = sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
 function compactTimestamp(): string {
   return new Date()
@@ -93,16 +100,6 @@ function collectFiles(dir: string): { files: string[]; symlinks: string[] } {
   return { files, symlinks };
 }
 
-function validateSandboxName(sandboxName: string): void {
-  if (!SANDBOX_NAME_RE.test(sandboxName) || sandboxName.length > 63) {
-    const preview = sandboxName.length > 80 ? `${sandboxName.slice(0, 80)}…` : sandboxName;
-    throw new Error(
-      `Invalid sandbox name: '${preview}'. ` +
-        "Allowed format: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
-    );
-  }
-}
-
 export function createSnapshot(): string | null {
   if (!existsSync(OPENCLAW_DIR)) {
     return null;
@@ -144,7 +141,7 @@ export async function restoreIntoSandbox(
   snapshotDir: string,
   sandboxName = "openclaw",
 ): Promise<boolean> {
-  validateSandboxName(sandboxName);
+  assertValidName(sandboxName, "sandbox name");
 
   const source = join(snapshotDir, "openclaw");
   if (!existsSync(source)) {

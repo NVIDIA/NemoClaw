@@ -267,7 +267,7 @@ function buildBasicChannelReport(
       : `${policyLabel} preset not applied`,
     hint: presetInRegistry
       ? undefined
-      : `run \`${CLI_NAME} ${sandboxName} policy-add ${policyPresets[0]}\``,
+      : `run \`${CLI_NAME} ${sandboxName} policy add ${policyPresets[0]}\``,
   });
   if (enabled) {
     signals.push(...buildConfigStatusSignals(sandboxName, channelName, entry, agent, deps));

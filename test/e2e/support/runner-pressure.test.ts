@@ -25,6 +25,7 @@ import {
   BASELINE_LINE_PREFIX,
   CLASSIFICATION_LINE_PREFIX,
   classifyFailure,
+  collectLargestClassifiedProcess,
   countKernelOomKills,
   decideRetry,
   detectRunnerLoss,
@@ -44,6 +45,7 @@ import {
   parseLoadAverages,
   parseMeminfo,
   parsePressure,
+  parseProcessMemoryStatus,
   parseTopProcesses,
   type ResourceSnapshot,
   renderBaselineLine,
@@ -138,7 +140,17 @@ function baseSnapshot(): ResourceSnapshot {
     memoryPressure: { someAvg10: 12.5, someAvg60: 4.2, fullAvg10: 1.1, fullAvg60: 0.3 },
     ioPressure: { someAvg10: 0.0, someAvg60: 0.0, fullAvg10: 0.0, fullAvg60: 0.0 },
     topProcesses: [{ rssKb: 900000 }, { rssKb: 400000 }],
-    largestProcess: { class: "docker-buildkit", rssKb: 900000 },
+    largestProcess: {
+      class: "docker-buildkit",
+      rssKb: 900000,
+      breakdown: {
+        vmRssKb: 900000,
+        rssAnonKb: 700000,
+        rssFileKb: 190000,
+        rssShmemKb: 10000,
+        vmSwapKb: 1000,
+      },
+    },
     containers: [
       {
         cpuPercent: 95.2,
@@ -159,6 +171,19 @@ function baseSnapshot(): ResourceSnapshot {
     },
   };
 }
+
+function procStat(pid: number, comm: string, startTimeTicks = 12345): string {
+  return `${pid} (${comm}) ${["S", ...Array.from({ length: 18 }, () => "0"), startTimeTicks].join(" ")}\n`;
+}
+
+const BUILDKIT_STATUS = [
+  "Name:\tbuildkitd",
+  "RssFile:\t4000 kB",
+  "VmSwap:\t100 kB",
+  "VmRSS:\t13000 kB",
+  "RssShmem:\t1000 kB",
+  "RssAnon:\t8000 kB",
+].join("\n");
 
 describe("host measurement parsers (#7146)", () => {
   it("reads MemAvailable, Cached, SReclaimable, and swap from /proc/meminfo", () => {
@@ -227,33 +252,138 @@ describe("host measurement parsers (#7146)", () => {
 
   it("keeps only RSS ranks for top processes, sorted and bounded", () => {
     const ps = [
-      "900000 node",
-      "400000 dockerd",
-      "8000 sshd",
-      "700000 vitest",
-      "100000 tar",
-      "4000 bash",
-      "2000 gpg",
+      "100 900000 node",
+      "101 400000 dockerd",
+      "102 8000 sshd",
+      "103 700000 vitest",
+      "104 100000 tar",
+      "105 4000 bash",
+      "106 2000 gpg",
     ].join("\n");
     const top = parseTopProcesses(ps);
     expect(top).toHaveLength(5);
     expect(top[0]).toEqual({ rssKb: 900000 });
     expect(JSON.stringify(top)).not.toContain("node");
     expect(top.map((p) => p.rssKb)).toEqual([...top.map((p) => p.rssKb)].sort((a, b) => b - a));
+    expect(parseTopProcesses("123\n")).toEqual([]);
+    expect(parseTopProcesses("123 45678\n")).toEqual([{ rssKb: 45678 }]);
   });
 
   it("reduces the largest process name to a fixed class", () => {
     const largest = parseLargestClassifiedProcess(
-      "12000 openshelld\n130000 buildkitd\n900000 user controlled secret\n",
+      "10 12000 openshelld\n11 130000 buildkitd\n12 900000 user controlled secret\n",
     );
     expect(largest).toEqual({ class: "other", rssKb: 900000 });
-    expect(parseLargestClassifiedProcess("12000 openshelld\n130000 buildkitd\n")).toEqual({
+    expect(parseLargestClassifiedProcess("10 12000 openshelld\n11 130000 buildkitd\n")).toEqual({
       class: "docker-buildkit",
       rssKb: 130000,
     });
     expect(JSON.stringify(largest)).not.toContain("user controlled secret");
-    expect(parseTopProcesses("130000 buildkitd\n900000 user controlled secret\n")[0]).toEqual({
-      rssKb: 900000,
+    expect(parseTopProcesses("11 130000 buildkitd\n12 900000 user controlled secret\n")[0]).toEqual(
+      { rssKb: 900000 },
+    );
+  });
+
+  it("parses one coherent process-memory breakdown in any field order", () => {
+    expect(parseProcessMemoryStatus(BUILDKIT_STATUS)).toEqual({
+      vmRssKb: 13000,
+      rssAnonKb: 8000,
+      rssFileKb: 4000,
+      rssShmemKb: 1000,
+      vmSwapKb: 100,
+    });
+    expect(parseProcessMemoryStatus(BUILDKIT_STATUS.replace("VmSwap:\t100 kB\n", ""))).toEqual({
+      vmRssKb: 13000,
+      rssAnonKb: 8000,
+      rssFileKb: 4000,
+      rssShmemKb: 1000,
+      vmSwapKb: null,
+    });
+  });
+
+  it.each([
+    ["missing resident field", BUILDKIT_STATUS.replace("RssAnon:\t8000 kB", "")],
+    ["negative field", BUILDKIT_STATUS.replace("RssAnon:\t8000 kB", "RssAnon:\t-1 kB")],
+    [
+      "overflowing field",
+      BUILDKIT_STATUS.replace("RssAnon:\t8000 kB", "RssAnon:\t9007199254740992 kB"),
+    ],
+    ["wrong unit", BUILDKIT_STATUS.replace("RssAnon:\t8000 kB", "RssAnon:\t8000 MB")],
+    ["duplicate field", `${BUILDKIT_STATUS}\nRssAnon:\t8000 kB`],
+    ["incoherent components", BUILDKIT_STATUS.replace("RssAnon:\t8000 kB", "RssAnon:\t8001 kB")],
+  ])("rejects a %s in process-memory status", (_label, status) => {
+    expect(parseProcessMemoryStatus(status)).toBeNull();
+  });
+
+  it("keeps PID and comm private while enriching only the globally largest Docker process", () => {
+    const paths: string[] = [];
+    const procfs = new Map([
+      ["/proc/42/stat", procStat(42, "buildkitd")],
+      ["/proc/42/status", `${BUILDKIT_STATUS}\nToken: ghp_status_secret\n`],
+    ]);
+    const selected = collectLargestClassifiedProcess(
+      "41 12000 openshelld\n42 13000 buildkitd\n",
+      (file) => {
+        paths.push(file);
+        return procfs.get(file) ?? null;
+      },
+    );
+    expect(selected).toEqual({
+      class: "docker-buildkit",
+      rssKb: 13000,
+      breakdown: {
+        vmRssKb: 13000,
+        rssAnonKb: 8000,
+        rssFileKb: 4000,
+        rssShmemKb: 1000,
+        vmSwapKb: 100,
+      },
+    });
+    expect(paths).toEqual(["/proc/42/stat", "/proc/42/status", "/proc/42/stat"]);
+    expect(JSON.stringify(selected)).not.toMatch(/42|buildkitd|ghp_status_secret/u);
+
+    let readAttempted = false;
+    const globalOther = collectLargestClassifiedProcess(
+      "42 13000 buildkitd\n43 14000 attacker-secret\n",
+      () => {
+        readAttempted = true;
+        return null;
+      },
+    );
+    expect(globalOther).toEqual({ class: "other", rssKb: 14000 });
+    expect(readAttempted).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "permission denial",
+      statReads: [null, null],
+      status: null,
+    },
+    {
+      label: "process exit",
+      statReads: [procStat(42, "buildkitd"), null],
+      status: BUILDKIT_STATUS,
+    },
+    {
+      label: "exact comm change",
+      statReads: [procStat(42, "buildkitd"), procStat(42, "dockerd")],
+      status: BUILDKIT_STATUS,
+    },
+    {
+      label: "same-class PID reuse",
+      statReads: [procStat(42, "buildkitd", 100), procStat(42, "buildkitd", 101)],
+      status: BUILDKIT_STATUS,
+    },
+  ])("retains total RSS but drops breakdown on $label", ({ statReads, status }) => {
+    let statIndex = 0;
+    const selected = collectLargestClassifiedProcess("42 13000 buildkitd\n", (file) =>
+      file.endsWith("/stat") ? (statReads[statIndex++] ?? null) : status,
+    );
+    expect(selected).toEqual({
+      class: "docker-buildkit",
+      rssKb: 13000,
+      breakdown: null,
     });
   });
 
@@ -312,29 +442,37 @@ describe("host measurement parsers (#7146)", () => {
 describe("runner pressure collection profiles (#7146)", () => {
   function snapshotSources(
     calls: Array<{ command: string; args: string[]; timeout: number }>,
+    processOrder: string[] = [],
   ): ResourceSnapshotSources {
     return {
       now: () => new Date("2026-07-23T12:00:00.000Z"),
-      readText: (file) =>
-        new Map([
-          ["/proc/stat", "cpu  10 0 5 20 0 0 0 0\ncpu0 1 0 1 2 0 0 0 0\n"],
-          ["/proc/meminfo", MEMINFO_FIXTURE],
-          ["/sys/fs/cgroup/memory.current", "1000\n"],
-          ["/sys/fs/cgroup/memory.peak", "2000\n"],
-          ["/sys/fs/cgroup/memory.max", "max\n"],
-          ["/sys/fs/cgroup/memory.events", "oom 0\noom_kill 0\n"],
-          ["/sys/fs/cgroup/memory.pressure", "full avg10=1.00 avg60=2.00 avg300=1.00 total=1\n"],
-          ["/sys/fs/cgroup/io.pressure", "full avg10=3.00 avg60=4.00 avg300=1.00 total=1\n"],
-        ]).get(file) ?? null,
+      readText: (file) => {
+        processOrder.push(file.startsWith("/proc/123/") ? file : "");
+        return (
+          new Map([
+            ["/proc/stat", "cpu  10 0 5 20 0 0 0 0\ncpu0 1 0 1 2 0 0 0 0\n"],
+            ["/proc/meminfo", MEMINFO_FIXTURE],
+            ["/sys/fs/cgroup/memory.current", "1000\n"],
+            ["/sys/fs/cgroup/memory.peak", "2000\n"],
+            ["/sys/fs/cgroup/memory.max", "max\n"],
+            ["/sys/fs/cgroup/memory.events", "oom 0\noom_kill 0\n"],
+            ["/sys/fs/cgroup/memory.pressure", "full avg10=1.00 avg60=2.00 avg300=1.00 total=1\n"],
+            ["/sys/fs/cgroup/io.pressure", "full avg10=3.00 avg60=4.00 avg300=1.00 total=1\n"],
+            ["/proc/123/stat", procStat(123, "buildkitd")],
+            ["/proc/123/status", BUILDKIT_STATUS],
+          ]).get(file) ?? null
+        );
+      },
       run: (command, args, timeout) => {
         calls.push({ command, args, timeout });
+        processOrder.push(command === "ps" ? "ps" : `${command} ${args[0] ?? ""}`);
         const dockerDisk = [
           JSON.stringify({ Type: "Images", Size: "3GiB" }),
           JSON.stringify({ Type: "Containers", Size: "1GiB" }),
           JSON.stringify({ Type: "Build Cache", Size: "2GiB" }),
         ].join("\n");
         const response = new Map([
-          ["ps", "13000 buildkitd\n"],
+          ["ps", "123 13000 buildkitd\n"],
           ["stats", `${JSON.stringify({ CPUPerc: "25%", MemUsage: "256MiB / 16GiB" })}\n`],
         ]).get(command === "ps" ? command : (args[0] ?? ""));
         return response ?? dockerDisk;
@@ -382,22 +520,41 @@ describe("runner pressure collection profiles (#7146)", () => {
       containerTimeoutMs: null,
       dockerDiskTimeoutMs: null,
     });
-    expect(calls).toEqual([{ command: "ps", args: ["-eo", "rss=,comm="], timeout: 1_000 }]);
-    expect(snapshot.largestProcess).toEqual({ class: "docker-buildkit", rssKb: 13000 });
+    expect(calls).toEqual([{ command: "ps", args: ["-eo", "pid=,rss=,comm="], timeout: 1_000 }]);
+    expect(snapshot.largestProcess).toEqual({
+      class: "docker-buildkit",
+      rssKb: 13000,
+      breakdown: {
+        vmRssKb: 13000,
+        rssAnonKb: 8000,
+        rssFileKb: 4000,
+        rssShmemKb: 1000,
+        vmSwapKb: 100,
+      },
+    });
     expect(snapshot.containers).toEqual([]);
     expect(snapshot.dockerDisk).toBeNull();
   });
 
   it("retains bounded Docker evidence at phase boundaries", () => {
     const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const processOrder: string[] = [];
     const snapshot = collectResourceSnapshot(
       "rebuild-hermes.export",
       "comparison-phase",
-      snapshotSources(calls),
+      snapshotSources(calls, processOrder),
     );
 
+    expect(processOrder.filter(Boolean)).toEqual([
+      "ps",
+      "/proc/123/stat",
+      "/proc/123/status",
+      "/proc/123/stat",
+      "docker stats",
+      "docker system",
+    ]);
     expect(calls).toEqual([
-      { command: "ps", args: ["-eo", "rss=,comm="], timeout: 1_000 },
+      { command: "ps", args: ["-eo", "pid=,rss=,comm="], timeout: 1_000 },
       {
         command: "docker",
         args: ["stats", "--no-stream", "--format", "{{json .}}"],
@@ -418,6 +575,22 @@ describe("runner pressure collection profiles (#7146)", () => {
       containersBytes: 1024 ** 3,
       buildCacheBytes: 2 * 1024 ** 3,
     });
+  });
+
+  it("enriches the selected process before long full-profile Docker probes", () => {
+    const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
+    const processOrder: string[] = [];
+    collectResourceSnapshot("failure", "full", snapshotSources(calls, processOrder));
+
+    expect(processOrder.filter(Boolean)).toEqual([
+      "ps",
+      "/proc/123/stat",
+      "/proc/123/status",
+      "/proc/123/stat",
+      "docker stats",
+      "docker system",
+    ]);
+    expect(calls.map((call) => call.timeout)).toEqual([15_000, 15_000, 15_000]);
   });
 });
 
@@ -446,7 +619,17 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
     expect(payload.cpu).toEqual({ logicalCpuCount: 4, idleTicks: 200, totalTicks: 500 });
     expect(payload.cgroup.limitBytes).toBeNull();
     expect(payload.topProcesses[0]).toEqual({ rank: 1, rssKb: 900000 });
-    expect(payload.largestProcess).toEqual({ class: "docker-buildkit", rssKb: 900000 });
+    expect(payload.largestProcess).toEqual({
+      class: "docker-buildkit",
+      rssKb: 900000,
+      breakdown: {
+        vmRssKb: 900000,
+        rssAnonKb: 700000,
+        rssFileKb: 190000,
+        rssShmemKb: 10000,
+        vmSwapKb: 1000,
+      },
+    });
     expect(payload.containers[0]).toEqual({
       rank: 1,
       cpuPercent: 95.2,
@@ -461,12 +644,15 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
     (poisoned.meminfo as unknown as Record<string, unknown>).AWS_SECRET_ACCESS_KEY = "leak";
     (poisoned.topProcesses[0] as unknown as Record<string, unknown>).comm = "ghp_process_secret";
     (poisoned.containers[0] as unknown as Record<string, unknown>).name = "ghp_container_secret";
+    (poisoned.largestProcess?.breakdown as unknown as Record<string, unknown>).processSecret =
+      "ghp_breakdown_secret";
     const line = renderSnapshotLine(poisoned);
     expect(line).not.toContain("leak");
     expect(line).not.toContain("ghp_secret_value");
     expect(line).not.toContain("AWS_SECRET_ACCESS_KEY");
     expect(line).not.toContain("ghp_process_secret");
     expect(line).not.toContain("ghp_container_secret");
+    expect(line).not.toContain("ghp_breakdown_secret");
   });
 
   it("stays within the line bound by limiting ranked lists before rendering", () => {

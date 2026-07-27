@@ -386,6 +386,22 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "(--yes, -y, --dry-run)",
     },
   ],
+  "sandbox:policy:exclude": [
+    {
+      group: "Policy Presets",
+      order: 21,
+      description: "Exclude a baseline policy entry (persisted, replayed on rebuild)",
+      flags: "(--force, -f, --yes, -y, --dry-run)",
+    },
+  ],
+  "sandbox:policy:restore": [
+    {
+      group: "Policy Presets",
+      order: 22,
+      description: "Restore a previously excluded baseline entry",
+      flags: "(--dry-run)",
+    },
+  ],
   "sandbox:rebuild": [
     {
       group: "Sandbox Management",

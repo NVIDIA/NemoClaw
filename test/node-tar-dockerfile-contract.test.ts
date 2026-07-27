@@ -76,13 +76,11 @@ describe("node-tar image remediation contract", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const source = completedStage(dockerfile);
     const patchPayloadStage = ["hermes-npm-patch-payload", "openclaw-dependency-payload"].find(
-      (stage) => source.includes(`RUN --mount=type=bind,from=${stage}`),
+      (stage) => source.includes(`COPY --from=${stage} / /`),
     );
     const patchPayloadLayer =
-      patchPayloadStage === undefined
-        ? -1
-        : source.indexOf(`RUN --mount=type=bind,from=${patchPayloadStage}`);
-    const scanPayloadLayer = source.indexOf("RUN --mount=type=bind,from=hermes-scan-payload");
+      patchPayloadStage === undefined ? -1 : source.indexOf(`COPY --from=${patchPayloadStage} / /`);
+    const scanPayloadLayer = source.indexOf("COPY --from=hermes-scan-payload / /");
     const patchInputStage =
       patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
     const scanInputStage =

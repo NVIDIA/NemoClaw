@@ -24,6 +24,7 @@ const PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS = path.join(
   "scripts",
   "patch-openclaw-shared-state-permissions.mts",
 );
+const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REAL_OPENCLAW_NODE_ENV = "NEMOCLAW_REAL_OPENCLAW_NODE";
 // Focused patch scripts also scan the full generated dist. APFS cold-cache
 // reads can exceed one minute, so keep them bounded without using unit-fixture
@@ -173,11 +174,17 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function runDockerfilePatchBlock(dist: string, tmp: string, version: string) {
-  const command = dockerRunCommandBetween(
+function dockerfilePatchCommand(dist: string): string {
+  return dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
     "# Patch OpenClaw chat.send gateway behavior",
-  ).replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist);
+  )
+    .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
+    .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
+}
+
+function runDockerfilePatchBlock(dist: string, tmp: string, version: string) {
+  const command = dockerfilePatchCommand(dist);
   const scriptPath = path.join(tmp, "patch-openclaw-dist.sh");
   fs.writeFileSync(
     scriptPath,
@@ -273,6 +280,13 @@ function materializeReviewedTarball(
 }
 
 describe("OpenClaw real patched-dist materialization guard", () => {
+  it("maps container-only patch helpers to their repository fixtures", () => {
+    const command = dockerfilePatchCommand("/tmp/reviewed-openclaw-dist");
+
+    expect(command).not.toContain("/usr/local/lib/nemoclaw/extract-semver");
+    expect(command).toContain(shellQuote(OPENCLAW_VERSION_EXTRACTOR));
+  });
+
   it("rejects an unsupported explicit real-dist Node runtime before OpenClaw starts", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-node-runtime-"));
     try {

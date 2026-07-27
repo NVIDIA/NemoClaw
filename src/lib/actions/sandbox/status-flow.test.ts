@@ -130,6 +130,64 @@ describe("showSandboxStatus flow", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("reports active baseline exclusions and their support impact (#7178)", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        baselineExclusions: [
+          { version: 1, agent: "openclaw", key: "nous_research", digest: "digest" },
+        ],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Baseline exclusions: nous_research");
+    expect(output).toContain("Support impact:");
+    expect(output).toContain("unsupported");
+    expect(output).toContain("policy restore <key>");
+  });
+
+  it("warns when a recorded exclusion is still present in the live policy (#7178)", async () => {
+    const harness = createStatusFlowHarness({
+      baselineExclusionStatus: "live-policy-mismatch",
+      sandboxEntry: {
+        baselineExclusions: [{ version: 1, agent: "openclaw", key: "pypi", digest: "digest" }],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("pypi: excluded key is present in live policy");
+  });
+
+  it("reports interrupted baseline policy repair and the exact reconciliation command (#7178)", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        baselineExclusionTransition: {
+          id: "tx-1",
+          operation: "restore",
+          exclusion: {
+            version: 1,
+            agent: "openclaw",
+            key: "nous_research",
+            digest: "digest",
+          },
+          targetLiveDigest: "current-digest",
+          startedAt: "2026-07-19T00:00:00.000Z",
+        },
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Baseline policy repair required: interrupted restore");
+    expect(output).toContain("rebuild blocked");
+    expect(output).toContain("nemoclaw alpha policy restore nous_research");
+  });
+
   it("omits serving-process status when the gateway is unavailable (#7003)", async () => {
     const harness = createStatusFlowHarness({
       lookupState: "missing",

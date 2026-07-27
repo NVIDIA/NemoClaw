@@ -92,7 +92,7 @@ export function help(): void {
     `    ${D}• Check inference route:   ${CLI_NAME} inference get${R}`,
     `    ${D}• Change inference model:  ${CLI_NAME} inference set --model <model> --provider <provider>${R}`,
   );
-  lines.push(`    ${D}• Add network presets:     use the policy-add command on your sandbox${R}`);
+  lines.push(`    ${D}• Add network presets:     use the policy add command on your sandbox${R}`);
   lines.push(
     `    ${D}• Change credentials:      credentials reset <PROVIDER>, then re-run onboard${R}`,
   );

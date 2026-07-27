@@ -192,7 +192,11 @@ describe("legacy Docker-driver gateway identity upgrade", () => {
         { ok: false, process: "openshell-gateway", pid: legacyPid },
         { gatewayBin, platform: process.platform },
       );
-      expect(listenerScan).toEqual({ complete: true, pids: [legacyPid] });
+      expect(listenerScan).toEqual({
+        complete: true,
+        pids: [legacyPid],
+        unverifiedPids: [],
+      });
 
       const restartReasons: string[] = [];
       const verifyBridge = vi.fn(async () => undefined);

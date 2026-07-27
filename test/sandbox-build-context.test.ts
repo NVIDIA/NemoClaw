@@ -39,13 +39,28 @@ describe("sandbox build context staging", () => {
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
     );
-    for (const runtimeName of ["mcporter-runtime", "wechat-runtime"]) {
+    for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
       for (const fileName of ["package.json", "package-lock.json"]) {
         writeFixture(
           path.join("agents", "openclaw", runtimeName, fileName),
           runtimeManifestFixture(runtimeName, fileName),
         );
       }
+    }
+    for (const fileName of [
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "install-reviewed-runtime.sh",
+      "build-runtime.ts",
+      "mcp-tool-discovery.ts",
+      "tool-discovery-core.ts",
+    ]) {
+      writeFixture(
+        path.join("tools", "mcp-tool-discovery-runtime", fileName),
+        "fixture\n",
+        fileName === "install-reviewed-runtime.sh" ? 0o755 : 0o644,
+      );
     }
     for (const fileName of [
       "package.json",
@@ -119,6 +134,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
+    writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-tar.mts"));
     writeFixture(path.join("scripts", "upgrade-bundled-npm.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
@@ -189,7 +205,7 @@ describe("sandbox build context staging", () => {
   }
 
   function expectStagedOpenClawRuntimeGraphs(buildCtx: string, sourceRoot: string) {
-    for (const runtimeName of ["mcporter-runtime", "wechat-runtime"]) {
+    for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
       const runtimeDir = path.join(buildCtx, "agents", "openclaw", runtimeName);
       expect(fs.readdirSync(runtimeDir).sort()).toEqual(["package-lock.json", "package.json"]);
       for (const fileName of ["package.json", "package-lock.json"]) {
@@ -206,6 +222,30 @@ describe("sandbox build context staging", () => {
       expect(
         (fs.statSync(path.join(runtimeDir, "package-lock.json")).mode & 0o777).toString(8),
       ).toBe("644");
+    }
+  }
+
+  function expectStagedMcpToolDiscoveryRuntime(buildCtx: string, sourceRoot: string) {
+    const runtimeDir = path.join(buildCtx, "tools", "mcp-tool-discovery-runtime");
+    expect(fs.readdirSync(runtimeDir).sort()).toEqual([
+      "build-runtime.ts",
+      "install-reviewed-runtime.sh",
+      "mcp-tool-discovery.ts",
+      "package-lock.json",
+      "package.json",
+      "tool-discovery-core.ts",
+      "tsconfig.json",
+    ]);
+    for (const fileName of fs.readdirSync(runtimeDir)) {
+      expect(fs.readFileSync(path.join(runtimeDir, fileName), "utf8")).toBe(
+        fs.readFileSync(
+          path.join(sourceRoot, "tools", "mcp-tool-discovery-runtime", fileName),
+          "utf8",
+        ),
+      );
+      expect((fs.statSync(path.join(runtimeDir, fileName)).mode & 0o777).toString(8)).toBe(
+        fileName === "install-reviewed-runtime.sh" ? "755" : "644",
+      );
     }
   }
 
@@ -290,6 +330,7 @@ describe("sandbox build context staging", () => {
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
+      expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
       expectStagedToolDisclosureContract(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
@@ -320,6 +361,7 @@ describe("sandbox build context staging", () => {
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
+      expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
       expectStagedToolDisclosureContract(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
@@ -427,6 +469,7 @@ describe("sandbox build context staging", () => {
         fs.readFileSync(path.join(repoRoot, "ci", "npm-audit-exceptions.json"), "utf8"),
       );
       expectStagedOpenClawRuntimeGraphs(buildCtx, repoRoot);
+      expectStagedMcpToolDiscoveryRuntime(buildCtx, repoRoot);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
@@ -524,6 +567,9 @@ describe("sandbox build context staging", () => {
         ),
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-tar.mts"))).toBe(true);
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-brace-expansion.mts")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "checks", "node-tar-image-scan.mts")),

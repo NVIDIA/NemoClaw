@@ -56,5 +56,6 @@ describe("created sandbox Ready stability", () => {
     expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
     expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
     expect(sleep).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenNthCalledWith(1, 2);
   });
 });

@@ -388,7 +388,7 @@ describe("PR E2E controller lifecycle", () => {
     }
   });
 
-  it("cancels the child and closes the check when startup fails after dispatch", async () => {
+  it("revokes and cancels when a lost PATCH publishes a foreign check URL", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-start-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -397,6 +397,7 @@ describe("PR E2E controller lifecycle", () => {
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
     let checkPatches = 0;
+    let failedRunningUpdate: Record<string, unknown> | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -435,6 +436,24 @@ describe("PR E2E controller lifecycle", () => {
               }),
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () =>
+              githubResponse(
+                exactPrGateCheck({
+                  ...(failedRunningUpdate ?? {
+                    output: {
+                      title: "Evaluating PR commit",
+                      summary:
+                        "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
+                    },
+                  }),
+                  ...(failedRunningUpdate
+                    ? { details_url: "https://github.com/NVIDIA/NemoClaw/runs/999" }
+                    : undefined),
+                }),
+              ),
+          ),
+          githubFetchRoute(
             ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
             () => githubResponse(undefined, 202),
           ),
@@ -442,6 +461,10 @@ describe("PR E2E controller lifecycle", () => {
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => {
               checkPatches += 1;
+              failedRunningUpdate =
+                checkPatches === 2
+                  ? ((request.body ?? {}) as Record<string, unknown>)
+                  : failedRunningUpdate;
               return checkPatches === 2
                 ? githubResponse({ message: "simulated update failure" }, 500)
                 : prGateMutationResponse(request);
@@ -457,9 +480,18 @@ describe("PR E2E controller lifecycle", () => {
       expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(
         true,
       );
-      const checkUpdates = requests.filter((request) => request.url.endsWith("/check-runs/17"));
-      expect(checkUpdates).toHaveLength(3);
+      const checkUpdates = requests.filter(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(checkUpdates).toHaveLength(4);
       expect(checkUpdates[2]?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: {
+          title: "Child authorization publication was not confirmed",
+        },
+      });
+      expect(checkUpdates[3]?.body).toMatchObject({
         status: "completed",
         conclusion: "failure",
         output: {
@@ -467,6 +499,11 @@ describe("PR E2E controller lifecycle", () => {
           summary: expect.stringContaining("The controller could not complete the check."),
         },
       });
+      const revocationIndex = requests.indexOf(checkUpdates[2]!);
+      const cancellationIndex = requests.findIndex((request) =>
+        request.url.endsWith("/actions/runs/23/cancel"),
+      );
+      expect(cancellationIndex).toBeGreaterThan(revocationIndex);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });

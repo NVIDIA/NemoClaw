@@ -132,3 +132,34 @@ export function buildSubprocessEnv(extra?: Record<string, string>): Record<strin
   withLocalNoProxy(env);
   return env;
 }
+
+// Names a Node.js child process needs to start and to resolve its own state
+// directory consistently with the parent CLI process, independent of what
+// work the child actually does.
+const ADAPTER_RUNTIME_NAMES = ["HOME", "PATH", "NODE_ENV"];
+
+/**
+ * Purpose-built allowlist for a long-lived, detached, credential-bearing
+ * local adapter process (for example the HTTPS Pin Runtime adapter): only
+ * the Node runtime variables above, plus the variables Node itself reads to
+ * validate the adapter's own outbound HTTPS connections to the real
+ * upstream provider. Unlike `buildSubprocessEnv`, this intentionally omits
+ * `TOOLCHAIN` (`DOCKER_HOST`, `KUBECONFIG`, `SSH_AUTH_SOCK`, ...) and
+ * `PROXY`: a credential-bearing adapter with no need for those capabilities
+ * should not inherit them just because an ordinary CLI subprocess might.
+ */
+export function buildMinimalCredentialAdapterEnv(
+  extra?: Record<string, string>,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (ADAPTER_RUNTIME_NAMES.includes(key) || TLS.includes(key)) {
+      env[key] = value;
+    }
+  }
+  if (extra) {
+    Object.assign(env, extra);
+  }
+  return env;
+}
