@@ -344,7 +344,10 @@ describe("probeDualStationVllmCapability", () => {
     expect(deps.calls.localHost).not.toHaveBeenCalled();
   });
 
-  it("rejects an ambient Docker client override before mixing it with local hardware", () => {
+  it.each([
+    ["named Docker context", { DOCKER_CONTEXT: "remote-builder" }],
+    ["remote Docker host", { DOCKER_HOST: "ssh://builder.example" }],
+  ])("rejects an ambient %s before mixing it with local hardware", (_label, dockerEnv) => {
     const deps = fixtureDeps();
 
     expect(
@@ -352,7 +355,7 @@ describe("probeDualStationVllmCapability", () => {
         env: {
           [NEMOCLAW_DGX_STATION_PEER_ENV]: "nvidia@station-b",
           [NEMOCLAW_DGX_STATION_SSH_BINDING_ENV]: sshFixture.token,
-          DOCKER_CONTEXT: "remote-builder",
+          ...dockerEnv,
         },
         deps,
       }),
@@ -361,7 +364,14 @@ describe("probeDualStationVllmCapability", () => {
     expect(deps.calls.localHost).not.toHaveBeenCalled();
   });
 
-  it("accepts the local default Docker context selected by Station host preparation", () => {
+  it.each([
+    ["context selected by Station host preparation", { DOCKER_CONTEXT: "default" }],
+    ["socket detected by the NemoClaw runner", { DOCKER_HOST: "unix:///run/docker.sock" }],
+    [
+      "socket alias detected by the NemoClaw runner",
+      { DOCKER_HOST: "unix:///var/run/docker.sock" },
+    ],
+  ])("accepts the local default Docker %s", (_label, dockerEnv) => {
     const deps = fixtureDeps();
 
     expect(
@@ -369,7 +379,7 @@ describe("probeDualStationVllmCapability", () => {
         env: {
           [NEMOCLAW_DGX_STATION_PEER_ENV]: "nvidia@station-b",
           [NEMOCLAW_DGX_STATION_SSH_BINDING_ENV]: sshFixture.token,
-          DOCKER_CONTEXT: "default",
+          ...dockerEnv,
         },
         deps,
       }),

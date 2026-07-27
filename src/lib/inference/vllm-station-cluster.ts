@@ -1526,7 +1526,11 @@ export function probeDualStationVllmCapability(
   }
   const localDockerOverride = DUAL_STATION_LOCAL_DOCKER_OVERRIDE_ENV_NAMES.find((name) => {
     const value = String(env[name] ?? "").trim();
-    return value !== "" && !(name === "DOCKER_CONTEXT" && value === "default");
+    const isLocalDefaultSelection =
+      (name === "DOCKER_CONTEXT" && value === "default") ||
+      (name === "DOCKER_HOST" &&
+        (value === "unix:///run/docker.sock" || value === "unix:///var/run/docker.sock"));
+    return value !== "" && !isLocalDefaultSelection;
   });
   if (localDockerOverride) {
     return unavailable(
