@@ -334,6 +334,34 @@ describe("blueprint identity wrapper", () => {
     expect(commandLines).toEqual(["openshell sandbox get test-sandbox"]);
   });
 
+  it("fails before identity mutation when a reused sandbox's inference provider cannot be inspected", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
+      ],
+      [
+        "provider get test-provider",
+        [{ exitCode: 1, stdout: "", stderr: "gateway configuration not found" }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /Failed to inspect inference provider 'test-provider'.*gateway configuration not found/,
+    );
+
+    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
+      [command, ...(args ?? [])].join(" "),
+    );
+    expect(commandLines).toEqual([
+      "openshell sandbox get test-sandbox",
+      "openshell provider get test-provider",
+    ]);
+  });
+
   it("plans only the non-secret runtime identity binding", async () => {
     const plan = await actionPlan("default", blueprint({ identity: oktaIdentity() }));
 
@@ -457,6 +485,10 @@ describe("blueprint identity wrapper", () => {
     expect(applyCommands).not.toContain(
       "sandbox create --from openclaw --name test-sandbox --forward 18789",
     );
+    expect(applyCommands).toContain("provider get test-provider");
+    expect(applyCommands).not.toContain(
+      "provider create --name test-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
+    );
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
     expect(planEntry?.content).toBeDefined();
     const plan = JSON.parse(planEntry!.content!);
@@ -495,6 +527,43 @@ describe("blueprint identity wrapper", () => {
     expect(rollbackCommands).not.toContain("sandbox stop pre-existing-sandbox");
     expect(rollbackCommands).not.toContain("sandbox remove pre-existing-sandbox");
     expect(store.get(`${stateDir}/rolled_back`)?.content).toBeDefined();
+  });
+
+  it("creates an explicitly missing inference provider for a reused sandbox", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get test-sandbox",
+        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
+      ],
+      ["provider get test-provider", [{ exitCode: 1, stdout: "", stderr: "provider not found" }]],
+      [
+        "provider get acme-okta-runtime",
+        [
+          { exitCode: 1, stdout: "", stderr: "provider not found" },
+          { exitCode: 0, stdout: matchingProvider, stderr: "" },
+        ],
+      ],
+    ]);
+
+    await actionApply("default", blueprint({ identity: oktaIdentity() }));
+
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      [
+        "provider",
+        "create",
+        "--name",
+        "test-provider",
+        "--type",
+        "openai",
+        "--config",
+        "OPENAI_BASE_URL=https://api.example.com/v1",
+      ],
+      expect.objectContaining({ reject: false }),
+    );
   });
 
   it("keeps an owned sandbox receipt retryable when removal fails", async () => {

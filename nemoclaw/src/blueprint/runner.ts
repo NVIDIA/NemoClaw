@@ -104,6 +104,8 @@ const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
 const MISSING_SANDBOX_PATTERN = /\b(?:not found|does not exist)\b/i;
 const MISSING_SANDBOX_INSPECTION_PATTERN =
   /(?:\bsandbox\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bsandbox\b)/i;
+const MISSING_PROVIDER_INSPECTION_PATTERN =
+  /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 
 function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
@@ -841,6 +843,16 @@ export async function actionApply(
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
   const policyAdditions = blueprint.components?.policy?.additions ?? {};
   const runtimeIdentityConfig = blueprint.components?.identity;
+  const providerName = inferenceCfg.provider_name ?? "default";
+  const providerType = inferenceCfg.provider_type ?? "openai";
+  const endpoint = inferenceCfg.endpoint ?? "";
+  const model = inferenceCfg.model ?? "";
+  const credentialEnv = inferenceCfg.credential_env;
+  const credentialDefault = inferenceCfg.credential_default ?? "";
+  let credential = "";
+  if (credentialEnv) {
+    credential = process.env[credentialEnv] ?? credentialDefault;
+  }
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
   mkdirSync(stateDir, { recursive: true });
 
@@ -872,6 +884,7 @@ export async function actionApply(
 
   try {
     let reuseExistingSandbox = false;
+    let reuseExistingInferenceProvider = false;
     if (runtimeIdentityConfig) {
       const sandboxResult = await runCmd(["openshell", "sandbox", "get", sandboxName], {
         reject: false,
@@ -879,6 +892,17 @@ export async function actionApply(
       const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
       if (sandboxResult.exitCode === 0) {
         reuseExistingSandbox = true;
+        const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
+          reject: false,
+        });
+        const providerOutput = `${providerResult.stderr}\n${providerResult.stdout}`;
+        if (providerResult.exitCode === 0) {
+          reuseExistingInferenceProvider = true;
+        } else if (!MISSING_PROVIDER_INSPECTION_PATTERN.test(providerOutput)) {
+          throw new Error(
+            `Failed to inspect inference provider '${providerName}' before runtime identity apply: ${boundedCommandError(providerOutput)}`,
+          );
+        }
       } else if (!MISSING_SANDBOX_INSPECTION_PATTERN.test(sandboxOutput)) {
         throw new Error(
           `Failed to inspect sandbox '${sandboxName}' before runtime identity apply: ${boundedCommandError(sandboxOutput)}`,
@@ -940,58 +964,50 @@ export async function actionApply(
     }
 
     progress(50, "Configuring inference provider");
-    const providerName = inferenceCfg.provider_name ?? "default";
-    const providerType = inferenceCfg.provider_type ?? "openai";
-    const endpoint = inferenceCfg.endpoint ?? "";
-    const model = inferenceCfg.model ?? "";
+    if (reuseExistingInferenceProvider) {
+      log(`Provider '${providerName}' already exists, reusing.`);
+    } else {
+      const providerArgs = [
+        "openshell",
+        "provider",
+        "create",
+        "--name",
+        providerName,
+        "--type",
+        providerType,
+      ];
+      // Pass the env-var NAME (not the value) to --credential; openshell reads the value from the env.
+      // Scope the credential to the subprocess to avoid leaking into later commands.
+      const credEnv: Record<string, string> = {};
+      if (credential) {
+        credEnv.OPENAI_API_KEY = credential;
+        providerArgs.push("--credential", "OPENAI_API_KEY");
+      }
+      if (endpoint) {
+        providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
+      }
 
-    const credentialEnv = inferenceCfg.credential_env;
-    const credentialDefault = inferenceCfg.credential_default ?? "";
-    let credential = "";
-    if (credentialEnv) {
-      credential = process.env[credentialEnv] ?? credentialDefault;
-    }
-
-    const providerArgs = [
-      "openshell",
-      "provider",
-      "create",
-      "--name",
-      providerName,
-      "--type",
-      providerType,
-    ];
-    // Pass the env-var NAME (not the value) to --credential; openshell reads the value from the env.
-    // Scope the credential to the subprocess to avoid leaking into later commands.
-    const credEnv: Record<string, string> = {};
-    if (credential) {
-      credEnv.OPENAI_API_KEY = credential;
-      providerArgs.push("--credential", "OPENAI_API_KEY");
-    }
-    if (endpoint) {
-      providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
-    }
-
-    const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
-      reject: false,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: buildSubprocessEnv(credEnv),
-      extendEnv: false,
-    });
-    // A required mutation: a silently-ignored failure would persist plan.json and
-    // report a ready sandbox that cannot perform inference. Mirror the
-    // sandbox-create contract above — tolerate an already-existing provider as a
-    // reuse (keeps re-apply idempotent) and fail on any other non-zero result.
-    // The credential is passed via env (never argv); redact it from stderr before
-    // surfacing bounded diagnostic context. (#6703)
-    if (providerResult.exitCode !== 0) {
-      if (providerResult.stderr.includes("already exists")) {
-        log(`Provider '${providerName}' already exists, reusing.`);
-      } else {
-        throw new Error(
-          `Failed to create inference provider '${providerName}': ${boundedCommandError(providerResult.stderr, [credential])}`,
-        );
+      const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
+        reject: false,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: buildSubprocessEnv(credEnv),
+        extendEnv: false,
+      });
+      // A required mutation: a silently-ignored failure would persist plan.json and
+      // report a ready sandbox that cannot perform inference. Mirror the
+      // sandbox-create contract above — tolerate an already-existing provider as a
+      // reuse (keeps re-apply idempotent) and fail on any other non-zero result.
+      // The credential is passed via env (never argv); redact it from stderr before
+      // surfacing bounded diagnostic context. (#6703)
+      if (providerResult.exitCode !== 0) {
+        if (providerResult.stderr.includes("already exists")) {
+          log(`Provider '${providerName}' already exists, reusing.`);
+        } else {
+          throw new Error(
+            `Failed to create inference provider '${providerName}': ${boundedCommandError(providerResult.stderr, [credential])}`,
+          );
+        }
       }
     }
 
