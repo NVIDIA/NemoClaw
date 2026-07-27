@@ -871,19 +871,33 @@ def _preflight(
 
 
 def _expected_ids(
-    policy: Policy, action: Action, identity: Identity
+    policy: Policy,
+    action: Action,
+    identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> tuple[int, int]:
     if action == "unlock":
         return identity.sandbox_uid, identity.sandbox_gid
     if policy == "confidentiality":
+        if is_confidentiality_root:
+            return identity.root_uid, identity.sandbox_gid
         return identity.root_uid, identity.root_gid
     return identity.root_uid, identity.sandbox_gid
 
 
-def _expected_dir_mode(policy: Policy, action: Action) -> int:
+def _expected_dir_mode(
+    policy: Policy, action: Action, is_confidentiality_root: bool = False
+) -> int:
     if action == "unlock":
         return 0o2770
-    return 0o700 if policy == "confidentiality" else 0o755
+    if policy == "confidentiality":
+        # The confidentiality root stays traversable (group execute, no read)
+        # so a sandbox probe for a missing name directly under the root, such
+        # as the legacy credentials/oauth.json, resolves as ENOENT instead of
+        # EACCES.  Nested directories and every file keep the sealed posture,
+        # so contents and the subtree shape stay unreadable.
+        return 0o710 if is_confidentiality_root else 0o700
+    return 0o755
 
 
 def _expected_file_mode(policy: Policy, action: Action, old_mode: int) -> int:
@@ -907,10 +921,11 @@ def _set_dir_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> None:
-    uid, gid = _expected_ids(policy, action, identity)
+    uid, gid = _expected_ids(policy, action, identity, is_confidentiality_root)
     os.fchown(dir_fd, uid, gid)
-    os.fchmod(dir_fd, _expected_dir_mode(policy, action))
+    os.fchmod(dir_fd, _expected_dir_mode(policy, action, is_confidentiality_root))
 
 
 def _copy_extent(
@@ -1253,7 +1268,9 @@ def _mutate_dir(
             # mutation through directory descriptors opened by the sandbox
             # before shields-up, and it happens before visiting descendants.
             _freeze_dir_for_lock(dir_fd)
-            _set_dir_metadata(dir_fd, policy, action, identity)
+            _set_dir_metadata(
+                dir_fd, policy, action, identity, is_root and policy == "confidentiality"
+            )
         elif is_root:
             # Keep the subtree inaccessible while descendants are restored.
             os.fchmod(dir_fd, 0o700)
@@ -1430,8 +1447,11 @@ def _verify_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> Issue | None:
-    expected_uid, expected_gid = _expected_ids(policy, action, identity)
+    expected_uid, expected_gid = _expected_ids(
+        policy, action, identity, is_confidentiality_root
+    )
     if st.st_uid != expected_uid or st.st_gid != expected_gid:
         return Issue(
             "verification-owner-mismatch",
@@ -1442,7 +1462,7 @@ def _verify_metadata(
         return None
     mode = stat.S_IMODE(st.st_mode)
     if entry_type == "directory":
-        expected_mode = _expected_dir_mode(policy, action)
+        expected_mode = _expected_dir_mode(policy, action, is_confidentiality_root)
         if mode != expected_mode:
             return Issue(
                 "verification-mode-mismatch",
@@ -1489,6 +1509,7 @@ def _verify_dir(
     replaced_inodes: dict[str, int],
     issues: list[Issue],
     depth: int,
+    is_root: bool = False,
 ) -> None:
     if depth > MAX_TRAVERSAL_DEPTH:
         issues.append(
@@ -1506,6 +1527,7 @@ def _verify_dir(
         policy,
         action,
         identity,
+        is_root and policy == "confidentiality",
     )
     if dir_issue is not None:
         issues.append(dir_issue)
@@ -1781,6 +1803,7 @@ def _run_guard_unserialized(
                     replaced_inodes,
                     result.issues,
                     1,
+                    is_root=True,
                 )
             finally:
                 os.close(root_fd)
