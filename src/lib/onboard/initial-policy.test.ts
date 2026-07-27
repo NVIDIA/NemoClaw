@@ -21,6 +21,7 @@ vi.mock("../policy", () => ({
 import {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
+  discoverHostStationGb300SysfsReadOnlyPaths,
   discoverStationGb300SysfsReadOnlyPaths,
   getNetworkPolicyNames,
   isStationGb300ProductName,
@@ -161,6 +162,23 @@ describe("initial sandbox policy helpers", () => {
     expect(() =>
       discoverStationGb300SysfsReadOnlyPaths("NVIDIA DGX Station GB300", noGpuSysfsRoot),
     ).toThrow("no exact NVIDIA GB300 PCI device was found");
+  });
+
+  it("rejects a Station-classified non-GB300 product before GPU policy creation", () => {
+    expect(() =>
+      discoverHostStationGb300SysfsReadOnlyPaths({
+        platform: "linux",
+        architecture: "arm64",
+        identity: {
+          nvidiaPlatform: "station",
+          productName: "NVIDIA DGX Station A100",
+          stationProfile: "supported-dgx-os",
+          stationGb300PciGpu: true,
+          osId: "ubuntu",
+          osVersionId: "24.04",
+        },
+      }),
+    ).toThrow("the detected Station product is not a qualified GB300 system");
   });
 
   it("scopes sysfs read access and lets OpenShell own /proc GPU enrichment (#7103)", () => {
