@@ -137,6 +137,10 @@ export const RETIRED_CONTROLLER_SELECTOR_IDS = [
   "ubuntu-repo-cli-smoke",
   "upgrade-stale-sandbox",
 ] as const;
+export const RETIRED_CONTROLLER_TARGET_SELECTOR_IDS = [
+  "sandbox-rebuild",
+  "upgrade-stale-sandbox",
+] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
@@ -4085,10 +4089,13 @@ function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: Workflo
     errors.push("workflow missing retired-selector-compatibility job");
     return;
   }
-  const selectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
+  const jobSelectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
     (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
   ).join(" || ");
-  const expectedIf = `\${{ inputs.checkout_sha != '' && (${selectorGate}) }}`;
+  const targetSelectorGate = RETIRED_CONTROLLER_TARGET_SELECTOR_IDS.map(
+    (id) => `contains(format(',{0},', inputs.targets), ',${id},')`,
+  ).join(" || ");
+  const expectedIf = `\${{ inputs.checkout_sha != '' && (${jobSelectorGate} || ${targetSelectorGate}) }}`;
   if (job.if !== expectedIf) {
     errors.push(
       "retired-selector-compatibility job selector gate must match retired selector contract",
@@ -4117,6 +4124,9 @@ function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: Workflo
     asRecord(verify?.env).JOBS !== "${{ inputs.jobs }}"
   ) {
     errors.push("retired-selector-compatibility job must invoke the replacement helper");
+  }
+  if (asRecord(verify?.env).TARGETS !== "${{ inputs.targets }}") {
+    errors.push("retired-selector-compatibility job must forward target selectors");
   }
 
   const upload = namedStep(steps, "Upload retired selector compatibility evidence");

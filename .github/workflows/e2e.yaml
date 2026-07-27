@@ -390,7 +390,7 @@ jobs:
 
   retired-selector-compatibility:
     needs: generate-matrix
-    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,') || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,')) }}
+    if: ${{ inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',credential-migration,') || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.jobs), ',diagnostics,') || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.jobs), ',gateway-health-honest,') || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.jobs), ',ubuntu-repo-cli-smoke,') || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -408,6 +408,7 @@ jobs:
       - name: Verify retired selector replacements
         env:
           JOBS: ${{ inputs.jobs }}
+          TARGETS: ${{ inputs.targets }}
         run: npx tsx tools/e2e/retired-selector-compatibility.mts
 
       - name: Upload retired selector compatibility evidence

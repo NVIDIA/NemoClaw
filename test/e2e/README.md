@@ -84,9 +84,9 @@ the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
 PR-gate requests using the retired `sandbox-rebuild` and
-`upgrade-stale-sandbox` job selectors run focused replacement tests through the
-compatibility controller. `rebuild-openclaw` is the canonical live rebuild and
-upgrade seam.
+`upgrade-stale-sandbox` job or target selectors run focused replacement tests
+through the compatibility controller. `rebuild-openclaw` is the canonical live
+rebuild and upgrade seam.
 
 ## Larger-runner routing
 

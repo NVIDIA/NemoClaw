@@ -207,6 +207,48 @@ describe("E2E workflow plan", () => {
     }
   });
 
+  it("emits an empty live plan for P2 selectors handled by target compatibility (#7615)", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    const plan = {
+      matrix: [],
+      testMatrix: [],
+      hermesSelected: false,
+      explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+    };
+    try {
+      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          JOBS: "",
+          TARGETS: "sandbox-rebuild,upgrade-stale-sandbox",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+        timeout: 30_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(
+        [
+          "matrix=[]",
+          "test_matrix=[]",
+          "hermes_selected=false",
+          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          "",
+        ].join("\n"),
+      );
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects the retired bootstrap job outside a PR controller checkout", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     try {

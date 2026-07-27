@@ -7,6 +7,9 @@ import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type WorkflowStep = Record<string, unknown>;
+type MutableWorkflow = ReturnType<typeof readWorkflow> & {
+  jobs: Record<string, { if?: unknown; steps?: WorkflowStep[] }>;
+};
 
 function requiredStep(
   steps: WorkflowStep[],
@@ -23,11 +26,9 @@ function requiredStep(
 
 function compatibilitySteps(): {
   steps: WorkflowStep[];
-  workflow: ReturnType<typeof readWorkflow>;
+  workflow: MutableWorkflow;
 } {
-  const workflow = readWorkflow() as ReturnType<typeof readWorkflow> & {
-    jobs: Record<string, { steps?: WorkflowStep[] }>;
-  };
+  const workflow = readWorkflow() as MutableWorkflow;
   const steps =
     workflow.jobs["retired-selector-compatibility"]?.steps ??
     (() => {
@@ -38,8 +39,19 @@ function compatibilitySteps(): {
 
 const DRIFT_CASES = [
   {
+    name: "target selector gate",
+    mutate: (_steps: WorkflowStep[], workflow: MutableWorkflow) => {
+      const job = workflow.jobs["retired-selector-compatibility"] as WorkflowStep;
+      job.if = String(job.if).replace(
+        " || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,')",
+        "",
+      );
+    },
+    error: "retired-selector-compatibility job selector gate must match retired selector contract",
+  },
+  {
     name: "candidate checkout",
-    mutate: (steps: WorkflowStep[]) => {
+    mutate: (steps: WorkflowStep[], _workflow: MutableWorkflow) => {
       const checkout = requiredStep(
         steps,
         (step) => String(step.uses).startsWith("actions/checkout@"),
@@ -51,7 +63,7 @@ const DRIFT_CASES = [
   },
   {
     name: "replacement helper",
-    mutate: (steps: WorkflowStep[]) => {
+    mutate: (steps: WorkflowStep[], _workflow: MutableWorkflow) => {
       const step = requiredStep(
         steps,
         (candidate) => candidate.name === "Verify retired selector replacements",
@@ -62,8 +74,20 @@ const DRIFT_CASES = [
     error: "retired-selector-compatibility job must invoke the replacement helper",
   },
   {
+    name: "target selector forwarding",
+    mutate: (steps: WorkflowStep[], _workflow: MutableWorkflow) => {
+      const step = requiredStep(
+        steps,
+        (candidate) => candidate.name === "Verify retired selector replacements",
+        "replacement helper",
+      );
+      delete (step.env as Record<string, unknown>).TARGETS;
+    },
+    error: "retired-selector-compatibility job must forward target selectors",
+  },
+  {
     name: "compatibility artifact upload",
-    mutate: (steps: WorkflowStep[]) => {
+    mutate: (steps: WorkflowStep[], _workflow: MutableWorkflow) => {
       const step = requiredStep(
         steps,
         (candidate) => candidate.name === "Upload retired selector compatibility evidence",
@@ -80,7 +104,7 @@ it.each(DRIFT_CASES)("rejects retired-selector compatibility drift in $name (#76
   error,
 }) => {
   const { steps, workflow } = compatibilitySteps();
-  mutate(steps);
+  mutate(steps, workflow);
 
   expect(validateE2eWorkflow(workflow)).toContain(error);
 });
