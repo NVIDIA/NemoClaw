@@ -48,9 +48,10 @@ It also hardens blueprint identifier validation, improves onboarding and recover
 - The Ollama model menu now shows download size, required VRAM, and available or total GPU memory when known.
   Resumed onboarding reports when a recorded reasoning setting takes precedence over `NEMOCLAW_REASONING`.
   Passing the managed Hermes Dockerfile to `nemohermes onboard --from` now stages the repository root, and separate Hermes provider and model flags use the credential-resolving combined route.
-  When an exact managed Hermes image build starts in host-side BuildKit on a local Docker-driver gateway and fails, NemoClaw preserves the failure.
-  It does not retry the BuildKit-only Dockerfile through the incompatible gateway builder.
-  For more information, refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities), [Install Hermes Plugins](/user-guide/hermes/manage-sandboxes/install-hermes-plugins), the [NemoHermes CLI Commands Reference](/user-guide/hermes/reference/commands), and [Troubleshooting](/user-guide/hermes/reference/troubleshooting).
+  For more information, refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities), [Install Hermes Plugins](/user-guide/hermes/manage-sandboxes/install-hermes-plugins), and the [NemoHermes CLI Commands Reference](/user-guide/hermes/reference/commands).
+- Managed OpenClaw and Hermes sandbox Dockerfiles now avoid BuildKit-only bind mounts.
+  On Docker Engine hosts, the OpenShell gateway builder can complete the image build when the host-side BuildKit prebuild is unavailable or fails.
+  For more information, refer to [NemoClaw Prerequisites](/user-guide/openclaw/get-started/prerequisites) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
 - Both OpenClaw image paths now consume one authoritative production lock for OpenClaw `2026.7.1`.
   Image assembly verifies the lock, registry integrity, installed package graph, and reviewed lifecycle before runtime exposure.
   The OpenClaw graph replaces its affected `brace-expansion` and `fast-uri` resolutions.
