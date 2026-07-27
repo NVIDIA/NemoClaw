@@ -85,12 +85,14 @@ export function buildOpenShellGatewayUserServiceStageScript(): string {
     "systemctl --user daemon-reload",
     "if systemctl --user cat openshell-gateway >/dev/null 2>&1; then",
     `  printf '%s%s\\n' "$result_prefix" upstream`,
+    "  trap - EXIT",
     "  exit 0",
     "fi",
     `if [ ! -f "$unit" ] || ! grep -Fxq "$marker" "$unit"; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
     'if [ "$had_marked_unit" -eq 0 ]; then outcome=staged; else outcome=existing; fi',
     "systemctl --user enable nemoclaw-openshell-gateway >/dev/null",
     `printf '%s%s\\n' "$result_prefix" "$outcome"`,
+    "trap - EXIT",
   ].join("\n");
 }
 
