@@ -4339,6 +4339,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  if (Object.hasOwn(jobs, "staging-brev-launchable-readiness")) {
+    errors.push("workflow must not define superseded staging-brev-launchable-readiness job");
+  }
   const expectedRunName =
     "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
   if (workflow["run-name"] !== expectedRunName) {

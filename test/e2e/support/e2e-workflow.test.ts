@@ -85,6 +85,13 @@ describe("e2e workflow boundary", () => {
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
+        includeStagingBrevLaunchable: true,
+        targets: "cloud-onboard",
+      }),
+    ).toEqual({ runQualification: false });
+    expect(
+      evaluateStagingBrevLaunchableDispatch({
+        eventName: "workflow_dispatch",
         jobs: "staging-brev-launchable",
       }),
     ).toEqual({ runQualification: true });
@@ -121,6 +128,7 @@ describe("e2e workflow boundary", () => {
     workflow["run-name"] = "E2E";
     workflow.on.workflow_dispatch.inputs.include_staging_brev_launchable.default = true;
     workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'schedule' }}";
+    workflow.jobs["staging-brev-launchable-readiness"] = {};
     const dispatchIdentity = workflow.jobs["staging-brev-launchable"]!.steps!.find(
       (step) => step.name === "Record E2E dispatch identity",
     )!;
@@ -134,6 +142,7 @@ describe("e2e workflow boundary", () => {
       expect.arrayContaining([
         "workflow run-name must expose the unique manual-dispatch correlation ID",
         "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
+        "workflow must not define superseded staging-brev-launchable-readiness job",
         "staging-brev-launchable must run for explicit selection or an empty-selector full dispatch",
         "staging-brev-launchable dispatch identity must bind DISPATCH_JOBS",
         `step 'Record E2E dispatch identity' run script must include kind: "nemoclaw-e2e-dispatch-v1"`,
