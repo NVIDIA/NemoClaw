@@ -309,9 +309,10 @@ Obtain the refresh token through an authorized OAuth bootstrap flow for the same
 `openshell gateway login` authenticates a CLI user to the gateway and is not part of this runtime-credential flow.
 
 During plan, the runner reports only the non-secret provider type, provider name, and credential key.
-During apply, the runner imports the profile or exports an existing profile and requires its parsed YAML content to match the requested profile.
-It then creates or verifies the runtime-credential provider, configures gateway-managed OAuth refresh, rotates an initial access token, and attaches the provider to the sandbox.
-The runner refuses to reuse a same-name provider unless its type, credential key, and absence of unrelated configuration match the requested binding.
+During apply, the runner first inspects the requested provider name and stops if any same-name provider already exists.
+It validates an existing provider's non-secret binding to produce a precise error, but never reuses it for this mutable refresh flow because OpenShell does not expose a secret-safe snapshot that rollback could restore.
+Only an absent provider proceeds to profile import, or exact export comparison when that profile is already registered, followed by provider creation, gateway-managed OAuth refresh configuration, initial token rotation, and sandbox attachment.
+Each successful apply therefore creates and owns the provider whose refresh state it mutates.
 The persisted run plan records whether that apply created the provider and its sandbox attachment.
 The runner writes that ownership receipt as each identity resource is acquired, so `status` and a later `rollback` retain a recovery path if automatic compensation fails.
 If a later apply step fails, the runner detaches the provider when that apply attached it, deletes the provider when that apply created it, and removes a sandbox created by that apply.

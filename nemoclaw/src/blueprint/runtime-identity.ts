@@ -495,6 +495,13 @@ export async function prepareRuntimeIdentity(
     ? requiredEnvironmentValue(config, config.client_secret_env, env)
     : undefined;
   const plan = buildRuntimeIdentityPlan(config);
+  const providerState = await inspectProvider(plan, deps);
+  if (providerState === "matching") {
+    throw new Error(
+      `Runtime identity provider '${config.provider_name}' already exists and cannot be safely ` +
+        "reused because its prior refresh configuration cannot be restored",
+    );
+  }
 
   const profileImport = await deps.run([
     "openshell",
@@ -543,33 +550,30 @@ export async function prepareRuntimeIdentity(
     }
   }
 
-  const providerState = await inspectProvider(plan, deps);
   const receipt: RuntimeIdentityReceipt = {
     ...plan,
-    provider_created: providerState === "absent",
+    provider_created: true,
     attachment_created: false,
   };
   let providerAcquired = false;
   try {
-    if (receipt.provider_created) {
-      const providerCreate = await deps.run([
-        "openshell",
-        "provider",
-        "create",
-        "--name",
-        config.provider_name,
-        "--type",
-        config.provider_type,
-        "--runtime-credentials",
-      ]);
-      if (providerCreate.exitCode !== 0) {
-        throw new Error(
-          `Failed to create runtime identity provider '${config.provider_name}': ${deps.formatError(commandOutput(providerCreate))}`,
-        );
-      }
-      providerAcquired = true;
-      deps.persistReceipt(receipt);
+    const providerCreate = await deps.run([
+      "openshell",
+      "provider",
+      "create",
+      "--name",
+      config.provider_name,
+      "--type",
+      config.provider_type,
+      "--runtime-credentials",
+    ]);
+    if (providerCreate.exitCode !== 0) {
+      throw new Error(
+        `Failed to create runtime identity provider '${config.provider_name}': ${deps.formatError(commandOutput(providerCreate))}`,
+      );
     }
+    providerAcquired = true;
+    deps.persistReceipt(receipt);
 
     const refreshArgs = [
       "openshell",

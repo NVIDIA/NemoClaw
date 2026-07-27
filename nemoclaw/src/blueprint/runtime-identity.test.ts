@@ -236,8 +236,8 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
 
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
-      `provider profile import --file ${profilePath}`,
       "provider get acme-okta-runtime",
+      `provider profile import --file ${profilePath}`,
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
       "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
       "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
@@ -254,33 +254,29 @@ describe("runtime identity contract", () => {
     ]);
   });
 
-  it("reuses only an exactly matching non-secret provider binding", async () => {
+  it("rejects a matching pre-existing provider before any mutable refresh operation", async () => {
     responses.set("provider get acme-okta-runtime", [matchingProviderResult]);
 
-    await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual({
-      ...createdReceipt,
-      provider_created: false,
-    });
-    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
-      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      /cannot be safely reused.*prior refresh configuration cannot be restored/,
     );
+    expect(calls.map(({ args }) => commandKey(args))).toEqual(["provider get acme-okta-runtime"]);
   });
 
   it("accepts an already imported profile", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
     responses.set(`provider profile import --file ${profilePath}`, [
       { exitCode: 1, stdout: "", stderr: "profile already exists" },
     ]);
     responses.set("provider profile export okta-runtime-v1 --output yaml", [
       { exitCode: 0, stdout: profileDocument, stderr: "" },
     ]);
-    responses.set("provider get acme-okta-runtime", [matchingProviderResult]);
 
-    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject({
-      provider_created: false,
-    });
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
   });
 
   it("rejects an incompatible existing profile", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
     responses.set(`provider profile import --file ${profilePath}`, [
       { exitCode: 1, stdout: "", stderr: "profile already exists" },
     ]);
@@ -295,12 +291,11 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
       /profile 'okta-runtime-v1' exists with an incompatible binding/,
     );
-    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
-      "provider get acme-okta-runtime",
-    );
+    expect(calls.map(({ args }) => commandKey(args))).toContain("provider get acme-okta-runtime");
   });
 
   it("reports a failure to export an existing profile", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
     responses.set(`provider profile import --file ${profilePath}`, [
       { exitCode: 1, stdout: "", stderr: "profile already exists" },
     ]);
@@ -415,21 +410,25 @@ describe("runtime identity contract", () => {
 
   it("supports refresh without a client secret", async () => {
     const configWithoutSecret = { ...config, client_secret_env: undefined };
-    responses.set("provider get acme-okta-runtime", [matchingProviderResult]);
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
 
-    await expect(prepareRuntimeIdentity(configWithoutSecret, deps)).resolves.toMatchObject({
-      provider_created: false,
-    });
+    await expect(prepareRuntimeIdentity(configWithoutSecret, deps)).resolves.toEqual(
+      createdReceipt,
+    );
     expect(calls.at(-2)?.env).toEqual({ OKTA_REFRESH_TOKEN: "refresh-secret" });
   });
 
   it("fails when profile import is rejected", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
     responses.set(`provider profile import --file ${profilePath}`, [
       { exitCode: 1, stdout: "", stderr: "invalid profile" },
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/invalid profile/);
-    expect(calls).toHaveLength(1);
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "provider get acme-okta-runtime",
+      `provider profile import --file ${profilePath}`,
+    ]);
   });
 
   it("fails when a missing provider cannot be created", async () => {
@@ -480,17 +479,11 @@ describe("runtime identity contract", () => {
     );
   });
 
-  it("does not delete a reused provider when refresh fails", async () => {
+  it("leaves a matching pre-existing provider unchanged when apply preparation is rejected", async () => {
     responses.set("provider get acme-okta-runtime", [matchingProviderResult]);
-    responses.set(
-      "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
-      [{ exitCode: 1, stdout: "", stderr: "rejected refresh-secret" }],
-    );
 
-    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/rejected <redacted>/);
-    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
-      "provider delete acme-okta-runtime",
-    );
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/cannot be safely reused/);
+    expect(calls.map(({ args }) => commandKey(args))).toEqual(["provider get acme-okta-runtime"]);
   });
 
   it.each([

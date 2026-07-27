@@ -346,6 +346,26 @@ describe("blueprint identity wrapper", () => {
     });
   });
 
+  it("rejects a matching pre-existing provider without changing its refresh state", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      ["provider get acme-okta-runtime", [{ exitCode: 0, stdout: matchingProvider, stderr: "" }]],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /cannot be safely reused.*prior refresh configuration cannot be restored/,
+    );
+
+    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
+      [command, ...(args ?? [])].join(" "),
+    );
+    expect(commandLines.join("\n")).not.toContain("provider refresh configure");
+    expect(commandLines.join("\n")).not.toContain("provider refresh rotate");
+    expect(commandLines.join("\n")).not.toContain("provider delete acme-okta-runtime");
+  });
+
   it("compensates a sandbox even when an identity component is not configured", async () => {
     responseQueue([
       [
