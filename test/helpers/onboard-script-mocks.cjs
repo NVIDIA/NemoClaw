@@ -43,11 +43,8 @@ function registerSourceRequire() {
   require(sourceLoader);
 }
 
-const helperPath = path.resolve(__filename);
-const loadedAsPreload =
-  process.execArgv.some((value) => path.resolve(value) === helperPath) ||
-  String(process.env.NODE_OPTIONS || "").includes(helperPath);
-loadedAsPreload && registerSourceRequire();
+// Vitest setup files and NODE_OPTIONS preloads both depend on this hook.
+registerSourceRequire();
 
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
