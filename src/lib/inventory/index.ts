@@ -467,8 +467,8 @@ function normalizeGatewayAuthority(
 export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
   const sandboxList = deps.listSandboxes();
   // Hide route-only reservations from a failed onboard (#7609) — same as
-  // `nemoclaw list`. resolveDefaultSandboxName already excludes them, so
-  // filtering here keeps `status` consistent with `list`.
+  // `nemoclaw list`. Pending reservations cannot become the registry default;
+  // explicit environment overrides still control host-service selection.
   const sandboxes = sandboxList.sandboxes.filter(
     (sandbox) => !isRouteOnlySandboxReservation(sandbox),
   );
