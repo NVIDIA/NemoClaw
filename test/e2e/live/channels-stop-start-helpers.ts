@@ -406,9 +406,12 @@ async function runChannelCommand(
   expectExitZero(result, `channels ${action} ${channel}`);
   const expectedText = `Marked ${channel} ${action === "stop" ? "disabled" : "enabled"}`;
   expect(resultText(result)).toContain(expectedText);
+  expect(resultText(result)).toContain(
+    `Change queued. Run 'nemoclaw ${SANDBOX_NAME} rebuild' to apply`,
+  );
 }
 
-export const CHANNELS_STOP_START_TEST_NAME = `${AGENT} channels stop/start preserves credentials and toggles runtime config`;
+export const CHANNELS_STOP_START_TEST_NAME = `${AGENT} channels stop/start preserves credentials and validates runtime config lifecycle`;
 
 export async function runChannelsStopStartTarget({
   artifacts,
@@ -434,7 +437,7 @@ export async function runChannelsStopStartTarget({
   await artifacts.target.declare({
     id: "channels-stop-start",
     boundary:
-      "install.sh messaging onboard + channels stop/start CLI + rebuild + sandbox config probes",
+      "install.sh messaging onboard + channels stop/start CLI + agent-scoped rebuilds + sandbox config probes",
     agent: AGENT,
     sandboxName: SANDBOX_NAME,
     channels: CHANNELS,
@@ -524,25 +527,29 @@ export async function runChannelsStopStartTarget({
     ).toBe("inactive");
   }
 
-  progress.phase("re-enable channels and rebuild sandbox");
+  progress.phase("re-enable channels and validate lifecycle state");
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
-  const startRebuild = await rebuildSandbox(
-    host,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    `rebuild-start-all-${AGENT}`,
-  );
-  expectExitZero(startRebuild, "rebuild after starting all channels");
-  await expectAgentConfig(sandbox, "present", redactions);
+  if (AGENT === "openclaw") {
+    const startRebuild = await rebuildSandbox(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      `rebuild-start-all-${AGENT}`,
+    );
+    expectExitZero(startRebuild, "rebuild after starting all channels");
+    await expectAgentConfig(sandbox, "present", redactions);
+  } else {
+    await expectAgentConfig(sandbox, "absent", redactions);
+  }
   await expectProvidersExist(host, env, redactions, "after-start");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   for (const channel of CHANNELS) {
     expect(
       await policyPresetState(host, env, redactions, channel),
-      `${channel} policy active after start+rebuild`,
+      `${channel} policy active after start${AGENT === "openclaw" ? "+rebuild" : ""}`,
     ).toBe("active");
   }
 }

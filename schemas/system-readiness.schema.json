@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "title": "NemoClaw system readiness report",
+  "description": "Version 1 consumer-neutral contract for a read-only system readiness report. Unknown major versions are incompatible. Consumers must ignore unrecognized optional fields in major version 1. IDs must be unique within each entity collection, and every capabilityIds or evidenceIds reference must resolve within its target collection. These cross-array rules require semantic validation after JSON Schema validation. Evidence is bounded diagnostic context and does not affect compatibility decisions unless a capability or finding references its ID in evidenceIds.",
+  "type": "object",
+  "required": ["schemaVersion", "status", "exitCode", "mutated", "provenance", "observations", "capabilities", "qualifications", "findings", "evidence"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Semantic contract version. Consumers must reject unknown major versions. New optional fields may be added within major version 1."
+    },
+    "status": {
+      "enum": ["supported", "incompatible", "inconclusive"],
+      "description": "Overall readiness result. supported maps to exit 0, incompatible to exit 2, and inconclusive to exit 3."
+    },
+    "exitCode": {
+      "enum": [0, 2, 3],
+      "description": "Deterministic process result: 0 supported, 2 incompatible, 3 inconclusive."
+    },
+    "mutated": {
+      "const": false,
+      "description": "The report operation did not mutate the host or NemoClaw state."
+    },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "observations": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/observation" },
+      "description": "Observation IDs must be unique. Each evidenceIds value must identify an evidence item in this report."
+    },
+    "capabilities": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/capability" },
+      "description": "Capability IDs must be unique. Each evidenceIds value must identify an evidence item in this report."
+    },
+    "qualifications": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/qualification" },
+      "description": "Qualification IDs must be unique. Each capabilityIds value must identify a capability in this report."
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/finding" },
+      "description": "Finding IDs must be unique. Each capabilityIds or evidenceIds value must identify an entity in its target collection."
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/evidence" },
+      "description": "Bounded diagnostic context with unique IDs. Evidence is not a compatibility input unless a stable capability or finding references its ID."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "supported" } }, "required": ["status"] },
+      "then": { "properties": { "exitCode": { "const": 0 } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "incompatible" } }, "required": ["status"] },
+      "then": { "properties": { "exitCode": { "const": 2 } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "inconclusive" } }, "required": ["status"] },
+      "then": { "properties": { "exitCode": { "const": 3 } } }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$",
+      "maxLength": 128,
+      "description": "Stable machine identifier. It must not derive from a display title or remediation text."
+    },
+    "state": {
+      "enum": ["present", "absent", "unknown"],
+      "description": "present means observed or derived to exist; absent means checked and not found; unknown means the check could not determine presence."
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["nemoclawVersion", "observedAt"],
+      "properties": {
+        "nemoclawVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sourceRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "Immutable source revision when the build provides one."
+        },
+        "observedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true
+    },
+    "observation": {
+      "type": "object",
+      "required": ["id", "state"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "state": { "$ref": "#/$defs/state" },
+        "value": { "$ref": "#/$defs/scalar" },
+        "evidenceIds": { "$ref": "#/$defs/evidenceIds" }
+      },
+      "additionalProperties": true
+    },
+    "capability": {
+      "type": "object",
+      "required": ["id", "state"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "state": { "$ref": "#/$defs/state" },
+        "evidenceIds": { "$ref": "#/$defs/evidenceIds" }
+      },
+      "additionalProperties": true
+    },
+    "qualification": {
+      "type": "object",
+      "required": ["id", "status"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "status": { "enum": ["qualified", "unqualified", "unknown"] },
+        "capabilityIds": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/stableId" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "finding": {
+      "type": "object",
+      "required": ["id", "severity", "summary"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "severity": { "enum": ["info", "warning", "blocking", "fatal"] },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "capabilityIds": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/stableId" }
+        },
+        "evidenceIds": { "$ref": "#/$defs/evidenceIds" }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["id", "summary"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "details": {
+          "type": "object",
+          "maxProperties": 16,
+          "additionalProperties": { "$ref": "#/$defs/scalar" }
+        }
+      },
+      "additionalProperties": { "$ref": "#/$defs/scalar" }
+    },
+    "evidenceIds": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/stableId" }
+    },
+    "scalar": {
+      "oneOf": [
+        { "type": "string", "maxLength": 1024 },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    }
+  }
+}

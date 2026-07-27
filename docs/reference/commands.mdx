@@ -1058,6 +1058,44 @@ $$nemoclaw my-assistant config get --key model --format yaml
 | `--key <dotpath>` | Print one value from the sanitized config |
 | `--format json\|yaml` | Output format. Defaults to JSON |
 
+#### `$$nemoclaw <name> config set`
+
+<AgentOnly variant="openclaw,hermes">
+
+Write one value into the agent configuration in a sandbox.
+The command validates every HTTP and HTTPS URL in the value, including URLs nested inside JSON objects or arrays.
+It pins an HTTP host to the validated IP address.
+Config changes are unavailable while shields are up, so lower shields with `$$nemoclaw <name> shields down` first.
+
+```bash
+$$nemoclaw my-assistant config set --key agents.defaults.model.primary --value nvidia/nemotron
+$$nemoclaw my-assistant config set --key agents.defaults.timeoutSeconds --value 600 --restart
+```
+
+| Flag | Description |
+|------|-------------|
+| `--key <dotpath>` | Dotpath to update in the config. Required |
+| `--value <value>` | Value to write. The command parses a JSON value when it can, and otherwise writes the text as a string. Required |
+| `--restart` | Restart a supported OpenClaw or Hermes gateway after writing |
+| `--config-accept-new-path` | Write a dotpath that does not already exist in the config |
+
+The command treats a dotpath that does not already exist in the config as a possible typo.
+An interactive run asks for confirmation before writing the new dotpath.
+A run without a TTY, or a run with `NEMOCLAW_NON_INTERACTIVE=1`, refuses the write.
+Pass `--config-accept-new-path`, or set `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1`, to write the new dotpath without the confirmation.
+If the confirmation reaches the end of input, for example when you press `Ctrl-D` or run the command from a harness that closes stdin, the command exits non-zero without writing and repeats the same guidance.
+
+The command refuses to write `gateway` or any dotpath under `gateway.`, which holds credentials.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+For Deep Agents sandboxes, `config set` is unavailable because the `dcode` configuration is baked into the sandbox image at build time.
+Run `$$nemoclaw onboard --agent dcode --name <sandbox-name> --fresh` when you need to change it.
+Use `$$nemoclaw <name> config get` to read the current values.
+
+</AgentOnly>
+
 #### `$$nemoclaw <name> shields`
 
 Manage the sandbox config lockdown posture from the host.
@@ -3668,7 +3706,6 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability probe during onboard (useful in restricted networks). |
 | `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION` | `1`, `true`, `yes`, or `on` to enable | Skips the live Slack `auth.test` and `apps.connections.open` credential probes during onboard and `channels add slack`. Use only in restricted networks or hermetic test environments; Slack token format checks still apply. |
 </AgentOnly>
-| `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | `1` to enable | Accepts a new sandbox config path without an interactive prompt when the stored path differs from the discovered one. |
 | `NEMOCLAW_RESOURCE_PROFILE` | profile name or `default` | Selects a sandbox CPU/RAM resource profile from the blueprint during onboarding. `default` means no resource preference, so NemoClaw passes no OpenShell CPU or memory flags. Unknown names fail fast. |
 | `NEMOCLAW_CPU` | percentage or Kubernetes CPU quantity | Overrides the selected profile's CPU size passed to OpenShell `--cpu`. Percentages resolve against detected capacity. |
 | `NEMOCLAW_RAM` | percentage or Kubernetes memory quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages resolve against detected capacity. |
@@ -3827,6 +3864,9 @@ The following flags change defaults for commands that manage existing sandboxes.
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Overrides the platform default (macOS unattended: cleanup; Linux/Windows: preserve) for whether `$$nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
+<AgentOnly variant="openclaw,hermes">
+| `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | Exactly `"1"` to opt in (`true`, `yes`, `on` are not accepted) | Allows `$$nemoclaw <name> config set` to write a dotpath that does not already exist in the sandbox config, without the interactive confirmation. Equivalent to passing `--config-accept-new-path`, and it takes precedence over `NEMOCLAW_NON_INTERACTIVE=1`. Without it, a run without a TTY refuses the write instead. |
+</AgentOnly>
 | `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` | Exact JSON array of sandbox names | Confirms to the installer that the exact listed set of pre-fingerprint OpenClaw or Hermes sandboxes used NemoClaw-managed images, allowing recovery onto the current managed image. The normalized names must exactly match the installer's printed array. Set it only after verifying every named sandbox. Recorded custom-image evidence remains blocked. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `$$nemoclaw <name> connect` and `$$nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 | `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH` | `1` to enable | Skips the automatic trusted container recreation during `$$nemoclaw <name> recover` when two managed scans find no supervisor while PID 1 remains stable. Use only as a troubleshooting escape hatch; recovery then falls back to the rebuild or re-onboard guidance. |
