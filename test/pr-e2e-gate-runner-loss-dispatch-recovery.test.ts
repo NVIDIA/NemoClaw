@@ -65,7 +65,7 @@ function state(): PrGateState {
 function sourceCheck() {
   return {
     id: 17,
-    name: "E2E / PR Gate Coordination",
+    name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "completed",

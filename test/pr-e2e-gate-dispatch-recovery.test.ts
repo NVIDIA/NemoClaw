@@ -64,7 +64,7 @@ function pullRequestListItem(): Omit<PullRequest, "changed_files"> {
 function reservedCheck(id = 17, overrides: Record<string, unknown> = {}) {
   return {
     id,
-    name: "E2E / PR Gate Coordination",
+    name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
