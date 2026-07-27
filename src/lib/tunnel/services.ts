@@ -349,6 +349,17 @@ function stopService(pidDir: string, name: ServiceName): void {
     return;
   }
 
+  // The recorded process may have exited and had its PID recycled by the OS to
+  // an unrelated (possibly system) process. Signalling it would terminate a
+  // bystander, so verify the live PID still names cloudflared before signalling
+  // (same cmdline check readCloudflaredState uses). Drop the stale pid file.
+  const cmdline = readProcessCommandLine(pid);
+  if (cmdline !== null && !commandLineNamesCloudflared(cmdline)) {
+    info(`${name} was not running`);
+    removePid(pidDir, name);
+    return;
+  }
+
   // Send SIGTERM
   try {
     process.kill(pid, "SIGTERM");

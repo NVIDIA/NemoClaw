@@ -479,6 +479,44 @@ describe("stopAll", () => {
     rmSync(pidDir, { recursive: true, force: true });
   });
 
+  it("does not signal a recycled PID whose process is not cloudflared", () => {
+    // A real bystander process standing in for a PID the OS recycled after the
+    // recorded cloudflared exited. It must not be SIGTERM/SIGKILLed.
+    const bystander = childProcess.spawn("sleep", ["30"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    bystander.unref();
+    const bpid = bystander.pid as number;
+    expect(bpid).toBeGreaterThan(0);
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(bpid), { mode: 0o600 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    stopAll({ pidDir });
+    logSpy.mockRestore();
+
+    // A SIGTERM/SIGKILLed child becomes an unreaped zombie whose PID still
+    // answers `kill(pid, 0)`, so assert on the process state: a live sleep is
+    // sleeping (S), a signalled one is a zombie (Z) or gone.
+    let liveState: string | null = null;
+    try {
+      const stat = readFileSync(`/proc/${bpid}/stat`, "utf-8");
+      const match = stat.match(/\) (\S)/);
+      liveState = match ? match[1] : null;
+    } catch {
+      liveState = null;
+    }
+    try {
+      process.kill(bpid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+
+    expect(liveState).not.toBeNull();
+    expect(liveState).not.toBe("Z");
+    expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+  });
+
   it("removes stale PID files", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
