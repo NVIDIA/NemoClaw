@@ -265,8 +265,12 @@ function printProxyPortConflict(owners: { pids: number[]; descriptions: string[]
 // so poll with backoff instead of the previous single 2s probe (issue #4820).
 const PROXY_START_ATTEMPTS = 12;
 
-function startOllamaAuthProxy(backendUrl?: string): boolean {
+function generateProxyToken(): string {
   const crypto = require("crypto");
+  return crypto.randomBytes(24).toString("hex");
+}
+
+function startOllamaAuthProxyWithToken(proxyToken: string, backendUrl?: string): boolean {
   killStaleProxy();
 
   // After clearing any stale NemoClaw proxy, a process still holding the port
@@ -281,11 +285,10 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
     return false;
   }
 
-  const proxyToken = crypto.randomBytes(24).toString("hex");
   ollamaProxyToken = proxyToken;
-  // Don't persist yet — wait until provider is confirmed in setupInference.
-  // If the user backs out to a different provider, the token stays in memory
-  // only and is discarded.
+  // Don't commit the selected backend yet — wait until setupInference confirms
+  // the provider. A newly generated token remains in memory and is discarded
+  // if the user backs out.
   const pid = spawnOllamaAuthProxy(proxyToken, backendUrl || `http://127.0.0.1:${OLLAMA_PORT}`);
 
   // Poll for readiness with backoff. Three terminal outcomes:
@@ -325,9 +328,17 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
   return false;
 }
 
+function startOllamaAuthProxy(backendUrl?: string): boolean {
+  // Re-onboarding the committed local Ollama route must keep the credential
+  // already mounted in the sandbox. A compatible custom endpoint uses the
+  // explicit fresh-token path below until provider selection commits it.
+  const proxyToken = loadPersistedProxyToken() ?? generateProxyToken();
+  return startOllamaAuthProxyWithToken(proxyToken, backendUrl);
+}
+
 function noAuthProxy(endpointUrl: string) {
   const endpoint = new URL(endpointUrl);
-  if (!startOllamaAuthProxy(endpoint.origin)) {
+  if (!startOllamaAuthProxyWithToken(generateProxyToken(), endpoint.origin)) {
     restorePersistedOllamaAuthProxy();
     throw new Error("Could not start the protected loopback route.");
   }

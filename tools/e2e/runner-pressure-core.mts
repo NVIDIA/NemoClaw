@@ -183,6 +183,22 @@ export type ProcessClass = (typeof PROCESS_CLASSES)[number];
 export interface ClassifiedProcessSample {
   class: ProcessClass;
   rssKb: number;
+  breakdown?: ProcessMemoryBreakdown | null;
+}
+
+export interface ProcessMemoryBreakdown {
+  vmRssKb: number;
+  rssAnonKb: number;
+  rssFileKb: number;
+  rssShmemKb: number;
+  vmSwapKb: number | null;
+}
+
+export function isCoherentProcessMemoryBreakdown(
+  breakdown: Pick<ProcessMemoryBreakdown, "vmRssKb" | "rssAnonKb" | "rssFileKb" | "rssShmemKb">,
+): boolean {
+  const residentTotalKb = breakdown.rssAnonKb + breakdown.rssFileKb + breakdown.rssShmemKb;
+  return Number.isSafeInteger(residentTotalKb) && residentTotalKb === breakdown.vmRssKb;
 }
 
 export interface CpuTicksSample {
@@ -231,32 +247,172 @@ function classifyProcessName(name: string): ProcessClass {
   return "other";
 }
 
-/**
- * Reduce `ps -eo rss=,comm=` output to one fixed-enum largest process.
- * Process names never cross this parser boundary.
- */
-export function parseLargestClassifiedProcess(text: string): ClassifiedProcessSample | null {
-  let largest: ClassifiedProcessSample | null = null;
+interface PrivateProcessCandidate {
+  pid: number;
+  comm: string;
+  class: ProcessClass;
+  rssKb: number;
+}
+
+function selectLargestProcessCandidate(text: string): PrivateProcessCandidate | null {
+  let largest: PrivateProcessCandidate | null = null;
   for (const line of text.split("\n")) {
-    const match = /^\s*(\d+)\s+(.+?)\s*$/u.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/u.exec(line);
     if (!match) continue;
-    const rssKb = Number(match[1]);
-    if (!Number.isSafeInteger(rssKb) || rssKb < 0) continue;
+    const pid = Number(match[1]);
+    const rssKb = Number(match[2]);
+    if (!Number.isSafeInteger(pid) || pid < 1 || !Number.isSafeInteger(rssKb) || rssKb < 0) {
+      continue;
+    }
     if (largest === null || rssKb > largest.rssKb) {
-      largest = { class: classifyProcessName(match[2]!), rssKb };
+      largest = {
+        pid,
+        comm: match[3]!,
+        class: classifyProcessName(match[3]!),
+        rssKb,
+      };
     }
   }
   return largest;
 }
 
 /**
- * Parse `ps -eo rss=` output into the top RSS consumers. Process-controlled
+ * Reduce `ps -eo pid=,rss=,comm=` output to one fixed-enum largest process.
+ * Process names never cross this parser boundary.
+ */
+export function parseLargestClassifiedProcess(text: string): ClassifiedProcessSample | null {
+  const largest = selectLargestProcessCandidate(text);
+  return largest === null ? null : { class: largest.class, rssKb: largest.rssKb };
+}
+
+const PROCESS_STATUS_FIELDS = ["VmRSS", "RssAnon", "RssFile", "RssShmem", "VmSwap"] as const;
+type ProcessStatusField = (typeof PROCESS_STATUS_FIELDS)[number];
+
+/**
+ * Parse the resident-memory components from `/proc/<pid>/status`.
+ *
+ * The four resident fields must be present and coherent. `VmSwap` is optional
+ * because some kernels omit it. Unknown lines, including process-controlled
+ * names, never enter the returned evidence.
+ */
+export function parseProcessMemoryStatus(text: string): ProcessMemoryBreakdown | null {
+  const values = new Map<ProcessStatusField, number>();
+  for (const line of text.split("\n")) {
+    const keyMatch = /^([A-Za-z][A-Za-z0-9_]*):/u.exec(line.trim());
+    if (!keyMatch || !PROCESS_STATUS_FIELDS.includes(keyMatch[1] as ProcessStatusField)) continue;
+    const key = keyMatch[1] as ProcessStatusField;
+    if (values.has(key)) return null;
+    const valueMatch = new RegExp(`^${key}:\\s+(\\d+)\\s+kB\\s*$`, "u").exec(line.trim());
+    if (!valueMatch) return null;
+    const value = Number(valueMatch[1]);
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    values.set(key, value);
+  }
+
+  const vmRssKb = values.get("VmRSS");
+  const rssAnonKb = values.get("RssAnon");
+  const rssFileKb = values.get("RssFile");
+  const rssShmemKb = values.get("RssShmem");
+  if (
+    vmRssKb === undefined ||
+    rssAnonKb === undefined ||
+    rssFileKb === undefined ||
+    rssShmemKb === undefined
+  ) {
+    return null;
+  }
+  const breakdown: ProcessMemoryBreakdown = {
+    vmRssKb,
+    rssAnonKb,
+    rssFileKb,
+    rssShmemKb,
+    vmSwapKb: values.get("VmSwap") ?? null,
+  };
+  return isCoherentProcessMemoryBreakdown(breakdown) ? breakdown : null;
+}
+
+interface PrivateProcessIdentity {
+  comm: string;
+  startTimeTicks: number;
+}
+
+function parseProcessIdentity(text: string, expectedPid: number): PrivateProcessIdentity | null {
+  const trimmed = text.trim();
+  if (trimmed.includes("\n") || trimmed.includes("\r")) return null;
+  const prefix = `${expectedPid} (`;
+  if (!trimmed.startsWith(prefix)) return null;
+  const commEnd = trimmed.lastIndexOf(") ");
+  if (commEnd < prefix.length) return null;
+  const fieldsAfterComm = trimmed.slice(commEnd + 2).split(/\s+/u);
+  const startTimeRaw = fieldsAfterComm[19];
+  if (fieldsAfterComm.length < 20 || !startTimeRaw || !/^\d+$/u.test(startTimeRaw)) return null;
+  const startTimeTicks = Number(startTimeRaw);
+  if (!Number.isSafeInteger(startTimeTicks) || startTimeTicks < 0) return null;
+  return {
+    comm: trimmed.slice(prefix.length, commEnd),
+    startTimeTicks,
+  };
+}
+
+/**
+ * Preserve the globally largest-process selection and enrich only a selected
+ * Docker/BuildKit process. PID and exact `comm` stay private to this collector.
+ *
+ * Checking `/proc/<pid>/stat` on both sides of the status read rejects process
+ * exit and PID reuse. A tiny race remains between `ps` and the first identity
+ * read; requiring the exact allowlisted `comm` constrains that window.
+ */
+export function collectLargestClassifiedProcess(
+  text: string,
+  readText: (file: string) => string | null,
+): ClassifiedProcessSample | null {
+  const largest = selectLargestProcessCandidate(text);
+  if (largest === null) return null;
+  const classified = { class: largest.class, rssKb: largest.rssKb };
+  if (largest.class !== "docker-buildkit" || !DOCKER_PROCESS_NAMES.has(largest.comm)) {
+    return classified;
+  }
+
+  const withMissingBreakdown: ClassifiedProcessSample = {
+    ...classified,
+    breakdown: null,
+  };
+  try {
+    const statPath = `/proc/${largest.pid}/stat`;
+    const beforeText = readText(statPath);
+    const statusText = readText(`/proc/${largest.pid}/status`);
+    const afterText = readText(statPath);
+    if (beforeText === null || statusText === null || afterText === null) {
+      return withMissingBreakdown;
+    }
+    const before = parseProcessIdentity(beforeText, largest.pid);
+    const after = parseProcessIdentity(afterText, largest.pid);
+    if (
+      before === null ||
+      after === null ||
+      before.comm !== largest.comm ||
+      after.comm !== largest.comm ||
+      before.startTimeTicks !== after.startTimeTicks
+    ) {
+      return withMissingBreakdown;
+    }
+    return {
+      ...classified,
+      breakdown: parseProcessMemoryStatus(statusText),
+    };
+  } catch {
+    return withMissingBreakdown;
+  }
+}
+
+/**
+ * Parse `ps -eo pid=,rss=,comm=` output into the top RSS consumers. Process-controlled
  * names and argv are intentionally discarded so they cannot enter evidence.
  */
 export function parseTopProcesses(text: string, limit = TOP_PROCESS_LIMIT): ProcessSample[] {
   const rows: ProcessSample[] = [];
   for (const line of text.split("\n")) {
-    const match = /^\s*(\d+)(?:\s+.+?)?\s*$/u.exec(line);
+    const match = /^\s*\d+\s+(\d+)(?:\s+.+?)?\s*$/u.exec(line);
     if (!match) continue;
     const rssKb = Number(match[1]);
     if (!Number.isSafeInteger(rssKb) || rssKb < 0) continue;
@@ -472,6 +628,22 @@ function renderCpu(sample: CpuTicksSample | null): CpuTicksSample | null {
   return { logicalCpuCount, idleTicks, totalTicks };
 }
 
+function renderProcessMemoryBreakdown(
+  breakdown: ProcessMemoryBreakdown | null | undefined,
+): ProcessMemoryBreakdown | null {
+  if (breakdown === null || breakdown === undefined) return null;
+  const vmRssKb = nonNegativeInteger(breakdown.vmRssKb);
+  const rssAnonKb = nonNegativeInteger(breakdown.rssAnonKb);
+  const rssFileKb = nonNegativeInteger(breakdown.rssFileKb);
+  const rssShmemKb = nonNegativeInteger(breakdown.rssShmemKb);
+  const vmSwapKb = nonNegativeInteger(breakdown.vmSwapKb);
+  if (vmRssKb === null || rssAnonKb === null || rssFileKb === null || rssShmemKb === null) {
+    return null;
+  }
+  const rendered = { vmRssKb, rssAnonKb, rssFileKb, rssShmemKb, vmSwapKb };
+  return isCoherentProcessMemoryBreakdown(rendered) ? rendered : null;
+}
+
 /**
  * Serialize a snapshot to one bounded line. Every field is copied explicitly —
  * numbers and fixed rank values only — so content outside the
@@ -536,6 +708,12 @@ export function renderSnapshotLine(snapshot: ResourceSnapshot): string {
                 ? snapshot.largestProcess.class
                 : "other",
               rssKb: nonNegativeInteger(snapshot.largestProcess.rssKb),
+              ...(snapshot.largestProcess.class === "docker-buildkit" &&
+              Object.hasOwn(snapshot.largestProcess, "breakdown")
+                ? {
+                    breakdown: renderProcessMemoryBreakdown(snapshot.largestProcess.breakdown),
+                  }
+                : {}),
             },
       containers: withLists
         ? snapshot.containers.slice(0, CONTAINER_STAT_LIMIT).map((c, index) => ({

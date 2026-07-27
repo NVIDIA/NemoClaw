@@ -19,13 +19,17 @@ import {
   RUNNER_COMPARISON_LEDGER_FILE,
   RUNNER_COMPARISON_MAX_SAMPLES,
   RUNNER_COMPARISON_SUMMARY_FILE,
+  RUNNER_COMPARISON_SUMMARY_MAX_BYTES,
   type RunnerComparisonSample,
   type RunnerComparisonSampleV1,
   type RunnerComparisonSummary,
   renderRunnerComparisonSummary,
   summarizeRunnerComparison,
 } from "../../../tools/e2e/runner-comparison-core.mts";
-import type { ResourceSnapshot } from "../../../tools/e2e/runner-pressure-core.mts";
+import type {
+  ProcessMemoryBreakdown,
+  ResourceSnapshot,
+} from "../../../tools/e2e/runner-pressure-core.mts";
 
 const REPO_ROOT = process.cwd();
 const TSX_IMPORT = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "loader.mjs");
@@ -116,6 +120,17 @@ function currentSample(overrides: CurrentOverrides = {}): RunnerComparisonSample
 
 function currentLedger(...samples: RunnerComparisonSample[]): string {
   return `${samples.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+}
+
+function processBreakdown(overrides: Partial<ProcessMemoryBreakdown> = {}): ProcessMemoryBreakdown {
+  return {
+    vmRssKb: 1000,
+    rssAnonKb: 700,
+    rssFileKb: 250,
+    rssShmemKb: 50,
+    vmSwapKb: 10,
+    ...overrides,
+  };
 }
 
 function emptyCurrentSample(
@@ -225,7 +240,17 @@ describe("runner comparison collection", () => {
       memoryPressure: { someAvg10: 1, someAvg60: 1, fullAvg10: 2, fullAvg60: 2 },
       ioPressure: { someAvg10: 3, someAvg60: 3, fullAvg10: 4, fullAvg60: 4 },
       topProcesses: [{ rssKb: 999 }],
-      largestProcess: { class: "docker-buildkit", rssKb: 999 },
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 999,
+        breakdown: {
+          vmRssKb: 999,
+          rssAnonKb: 700,
+          rssFileKb: 250,
+          rssShmemKb: 49,
+          vmSwapKb: 10,
+        },
+      },
       containers: [
         { cpuPercent: 12.5, memBytes: 500, memLimitBytes: 1_000 },
         { cpuPercent: 3, memBytes: 700, memLimitBytes: 1_000 },
@@ -278,7 +303,17 @@ describe("runner comparison collection", () => {
         maximumContainerMemoryBytes: 700,
         maximumContainerCpuPercent: 99,
       },
-      largestProcess: { class: "docker-buildkit", rssKb: 999 },
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 999,
+        breakdown: {
+          vmRssKb: 999,
+          rssAnonKb: 700,
+          rssFileKb: 250,
+          rssShmemKb: 49,
+          vmSwapKb: 10,
+        },
+      },
     });
   });
 });
@@ -393,6 +428,108 @@ describe("runner comparison v2 schema", () => {
     expect(parseRunnerComparisonLedger(currentLedger(...samples))).toEqual(samples);
   });
 
+  it("round-trips both historical two-key and enriched three-key process shapes", () => {
+    const historical = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "build",
+      largestProcess: { class: "docker-buildkit", rssKb: 1000 },
+    });
+    const historicalLine = JSON.stringify(historical);
+    const parsedHistorical = parseRunnerComparisonSample(historicalLine);
+    expect(parsedHistorical.v).toBe(2);
+    const parsedCurrent = parsedHistorical as RunnerComparisonSample;
+    expect(JSON.stringify(parsedCurrent)).toBe(historicalLine);
+    expect(parsedCurrent.largestProcess).not.toHaveProperty("breakdown");
+
+    const enriched = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "build",
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 1100,
+        breakdown: processBreakdown(),
+      },
+    });
+    expect(parseRunnerComparisonSample(JSON.stringify(enriched))).toEqual(enriched);
+
+    const denied = currentSample({
+      sequence: 1,
+      kind: "periodic",
+      phase: "build",
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: null,
+      },
+    });
+    expect(parseRunnerComparisonSample(JSON.stringify(denied))).toEqual(denied);
+  });
+
+  it.each([
+    [
+      "breakdown for a non-Docker process",
+      { class: "openshell", rssKb: 1000, breakdown: processBreakdown() },
+    ],
+    [
+      "unknown breakdown field",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: { ...processBreakdown(), command: "ghp_nested_secret" },
+      },
+    ],
+    [
+      "missing resident field",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: {
+          vmRssKb: 1000,
+          rssAnonKb: 700,
+          rssFileKb: 250,
+          vmSwapKb: 10,
+        },
+      },
+    ],
+    [
+      "negative component",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: processBreakdown({ rssAnonKb: -1 }),
+      },
+    ],
+    [
+      "overflowing component sum",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: processBreakdown({
+          vmRssKb: Number.MAX_SAFE_INTEGER,
+          rssAnonKb: Number.MAX_SAFE_INTEGER,
+        }),
+      },
+    ],
+    [
+      "incoherent resident total",
+      {
+        class: "docker-buildkit",
+        rssKb: 1000,
+        breakdown: processBreakdown({ vmRssKb: 999 }),
+      },
+    ],
+  ])("rejects a process %s", (_label, largestProcess) => {
+    const candidate = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "build",
+      largestProcess: largestProcess as RunnerComparisonSample["largestProcess"],
+    });
+    expect(() => parseRunnerComparisonSample(JSON.stringify(candidate))).toThrow();
+  });
+
   it.each([
     [
       "zero logical CPUs",
@@ -466,6 +603,10 @@ describe("runner comparison v2 schema", () => {
     expect(() => parseRunnerComparisonLedger(currentLedger(...samples))).toThrow(
       "between one and 256",
     );
+  });
+
+  it("enforces the 4096-byte sample limit before parsing attacker-controlled JSON", () => {
+    expect(() => parseRunnerComparisonSample(" ".repeat(4097))).toThrow("exceeds its size bound");
   });
 });
 
@@ -555,7 +696,17 @@ describe("runner comparison summary", () => {
           maximumContainerMemoryBytes: 900,
           maximumContainerCpuPercent: 80,
         },
-        largestProcess: { class: "docker-buildkit", rssKb: 999 },
+        largestProcess: {
+          class: "docker-buildkit",
+          rssKb: 999,
+          breakdown: {
+            vmRssKb: 999,
+            rssAnonKb: 100,
+            rssFileKb: 849,
+            rssShmemKb: 50,
+            vmSwapKb: 10,
+          },
+        },
       }),
       currentSample({
         sequence: 3,
@@ -580,7 +731,17 @@ describe("runner comparison summary", () => {
           maximumContainerMemoryBytes: 500,
           maximumContainerCpuPercent: 10,
         },
-        largestProcess: { class: "openshell", rssKb: 500 },
+        largestProcess: {
+          class: "docker-buildkit",
+          rssKb: 500,
+          breakdown: {
+            vmRssKb: 500,
+            rssAnonKb: 400,
+            rssFileKb: 90,
+            rssShmemKb: 10,
+            vmSwapKb: 200,
+          },
+        },
       }),
       currentSample({
         sequence: 4,
@@ -612,6 +773,13 @@ describe("runner comparison summary", () => {
       class: "docker-buildkit",
       rssKb: 999,
       phase: "build",
+      breakdown: {
+        vmRssKb: 999,
+        rssAnonKb: 100,
+        rssFileKb: 849,
+        rssShmemKb: 50,
+        vmSwapKb: 10,
+      },
     });
   });
 
@@ -775,6 +943,176 @@ describe("runner comparison summary", () => {
     expect(() =>
       parseRunnerComparisonSummary(`${JSON.stringify(poisonedGrowth, null, 2)}\n`),
     ).toThrow("requires both endpoint");
+  });
+
+  it("preserves historical shape and sequential RSS drift in one co-sampled breakdown", () => {
+    const initialize = currentSample();
+    const historicalPhase = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "build",
+      at: "2026-07-22T10:01:00.000Z",
+      largestProcess: { class: "docker-buildkit", rssKb: 1000 },
+    });
+    const finalize = currentSample({
+      sequence: 2,
+      kind: "finalize",
+      at: "2026-07-22T10:02:00.000Z",
+      cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
+    });
+    const historical = expectCurrentSummary(
+      summarizeRunnerComparison([initialize, historicalPhase, finalize]),
+    );
+    const historicalText = renderRunnerComparisonSummary(historical);
+    expect(historical.largestProcess).not.toHaveProperty("breakdown");
+    expect(renderRunnerComparisonSummary(parseRunnerComparisonSummary(historicalText))).toBe(
+      historicalText,
+    );
+
+    const highTotal = currentSample({
+      sequence: 1,
+      kind: "phase",
+      phase: "export",
+      at: "2026-07-22T10:00:30.000Z",
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 1100,
+        breakdown: processBreakdown({
+          rssAnonKb: 100,
+          rssFileKb: 850,
+          rssShmemKb: 50,
+        }),
+      },
+    });
+    const lowerTotalWithHigherAnon = currentSample({
+      sequence: 2,
+      kind: "periodic",
+      phase: "export",
+      at: "2026-07-22T10:01:00.000Z",
+      largestProcess: {
+        class: "docker-buildkit",
+        rssKb: 900,
+        breakdown: {
+          vmRssKb: 900,
+          rssAnonKb: 800,
+          rssFileKb: 90,
+          rssShmemKb: 10,
+          vmSwapKb: 20,
+        },
+      },
+    });
+    const enrichedFinalize = currentSample({
+      sequence: 3,
+      kind: "finalize",
+      at: "2026-07-22T10:02:00.000Z",
+      cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
+    });
+    const enriched = expectCurrentSummary(
+      summarizeRunnerComparison([
+        initialize,
+        highTotal,
+        lowerTotalWithHigherAnon,
+        enrichedFinalize,
+      ]),
+    );
+    expect(enriched.largestProcess).toEqual({
+      class: "docker-buildkit",
+      rssKb: 1100,
+      phase: "export",
+      breakdown: {
+        vmRssKb: 1000,
+        rssAnonKb: 100,
+        rssFileKb: 850,
+        rssShmemKb: 50,
+        vmSwapKb: 10,
+      },
+    });
+    const enrichedText = renderRunnerComparisonSummary(enriched);
+    expect(Buffer.byteLength(enrichedText)).toBeLessThanOrEqual(
+      RUNNER_COMPARISON_SUMMARY_MAX_BYTES,
+    );
+    expect(parseRunnerComparisonSummary(enrichedText)).toEqual(enriched);
+
+    const poisoned = structuredClone(enriched) as RunnerComparisonSummary & {
+      largestProcess: RunnerComparisonSummary["largestProcess"] & {
+        breakdown: ProcessMemoryBreakdown & { token: string };
+      };
+    };
+    expect(poisoned.largestProcess.breakdown).not.toBeNull();
+    poisoned.largestProcess.breakdown!.token = "ghp_summary_secret";
+    expect(() => parseRunnerComparisonSummary(`${JSON.stringify(poisoned, null, 2)}\n`)).toThrow(
+      "unsupported shape",
+    );
+  });
+
+  it.each([
+    "vmRssKb",
+    "rssAnonKb",
+    "rssFileKb",
+    "rssShmemKb",
+    "vmSwapKb",
+  ] as const)("rejects a negative %s in an enriched summary", (field) => {
+    const summary = expectCurrentSummary(
+      summarizeRunnerComparison([
+        currentSample(),
+        currentSample({
+          sequence: 1,
+          kind: "phase",
+          phase: "export",
+          at: "2026-07-22T10:01:00.000Z",
+          largestProcess: {
+            class: "docker-buildkit",
+            rssKb: 1100,
+            breakdown: processBreakdown(),
+          },
+        }),
+        currentSample({
+          sequence: 2,
+          kind: "finalize",
+          at: "2026-07-22T10:02:00.000Z",
+          cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
+        }),
+      ]),
+    );
+    const poisoned = structuredClone(summary);
+    expect(poisoned.largestProcess.breakdown).not.toBeNull();
+    poisoned.largestProcess.breakdown![field] = -1;
+
+    expect(() => parseRunnerComparisonSummary(`${JSON.stringify(poisoned, null, 2)}\n`)).toThrow(
+      "non-negative safe integer",
+    );
+  });
+
+  it("preserves a null breakdown when procfs details were unavailable", () => {
+    const summary = expectCurrentSummary(
+      summarizeRunnerComparison([
+        currentSample(),
+        currentSample({
+          sequence: 1,
+          kind: "periodic",
+          phase: "export",
+          at: "2026-07-22T10:01:00.000Z",
+          largestProcess: {
+            class: "docker-buildkit",
+            rssKb: 1000,
+            breakdown: null,
+          },
+        }),
+        currentSample({
+          sequence: 2,
+          kind: "finalize",
+          at: "2026-07-22T10:02:00.000Z",
+          cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
+        }),
+      ]),
+    );
+    expect(summary.largestProcess.breakdown).toBeNull();
+  });
+
+  it("enforces the 8192-byte summary limit before parsing attacker-controlled JSON", () => {
+    expect(() =>
+      parseRunnerComparisonSummary(" ".repeat(RUNNER_COMPARISON_SUMMARY_MAX_BYTES + 1)),
+    ).toThrow("exceeds its size bound");
   });
 });
 

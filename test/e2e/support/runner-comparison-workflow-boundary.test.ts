@@ -33,7 +33,6 @@ const JOBS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "common-egress-agent",
-  "hermes-dashboard",
   "hermes-discord",
   "hermes-e2e",
   "hermes-inference-switch",
@@ -62,7 +61,7 @@ function telemetrySteps(workflow: Workflow, jobId: string): WorkflowStep[] {
 }
 
 describe("runner comparison E2E workflow boundary (#7140)", () => {
-  it("accepts 14 routed workflow lane identities / 17 concrete job executions", () => {
+  it("accepts 13 routed workflow lane identities / 16 concrete job executions", () => {
     const workflow = loadWorkflow();
 
     expect(validateRunnerComparisonWorkflowBoundary(workflow)).toEqual([]);
@@ -88,11 +87,11 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
     const routedLanes = JOBS.length - 1 + mcpLanes;
     const concreteExecutions =
       routedLanes + commonEgressScenarios!.length - 1 + inferenceSwitchModes!.length - 1;
-    expect(routedLanes).toBe(14);
-    expect(concreteExecutions).toBe(17);
+    expect(routedLanes).toBe(13);
+    expect(concreteExecutions).toBe(16);
   });
 
-  it("locks the matrix topology that produces seventeen concrete executions", () => {
+  it("locks the matrix topology that produces sixteen concrete executions", () => {
     const workflow = loadWorkflow();
     workflow.jobs["bedrock-runtime-compatible-anthropic"]!.strategy!.matrix!.agent = [
       "openclaw",
@@ -126,7 +125,7 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
     );
   });
 
-  it("rejects runner comparison consumers outside the thirteen comparison jobs", () => {
+  it("rejects runner comparison consumers outside the twelve comparison jobs", () => {
     const workflow = loadWorkflow();
     workflow.jobs["shields-config"]!.steps.push(
       structuredClone(telemetrySteps(workflow, "common-egress-agent")[0]!),

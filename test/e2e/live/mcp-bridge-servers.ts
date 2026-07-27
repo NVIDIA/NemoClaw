@@ -32,6 +32,8 @@ export interface FakeMcpHttpsServer extends StartedHttpServer {
     path: string;
     auth: string;
     body: string;
+    sessionId: string;
+    protocolVersion: string;
     rpcMethod?: string;
   }>;
 }
@@ -47,7 +49,7 @@ type TunnelCleanupRegistry = Pick<CleanupRegistry, "add">;
 interface McpRequestPayload {
   id?: unknown;
   method?: unknown;
-  params?: { name?: unknown; arguments?: { challenge?: unknown } };
+  params?: { name?: unknown; arguments?: { challenge?: unknown }; cursor?: unknown };
 }
 
 const MCP_NOTIFICATION_METHODS = new Set([
@@ -601,6 +603,8 @@ export async function startFakeMcpHttpsServer(options: {
   tls?: { cert: Buffer; key: Buffer };
 }): Promise<FakeMcpHttpsServer> {
   let expectedSecret = options.secret;
+  let nextSessionId = 1;
+  const sessions = new Map<string, string>();
   const tls =
     options.tls ??
     (() => {
@@ -618,6 +622,8 @@ export async function startFakeMcpHttpsServer(options: {
     path: string;
     auth: string;
     body: string;
+    sessionId: string;
+    protocolVersion: string;
   }> = [];
   const server = https.createServer(tls, async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "https://fake-mcp.local").pathname;
@@ -625,6 +631,12 @@ export async function startFakeMcpHttpsServer(options: {
     const auth = Array.isArray(req.headers.authorization)
       ? req.headers.authorization.join(",")
       : (req.headers.authorization ?? "");
+    const sessionId = Array.isArray(req.headers["mcp-session-id"])
+      ? req.headers["mcp-session-id"].join(",")
+      : (req.headers["mcp-session-id"] ?? "");
+    const protocolVersion = Array.isArray(req.headers["mcp-protocol-version"])
+      ? req.headers["mcp-protocol-version"].join(",")
+      : (req.headers["mcp-protocol-version"] ?? "");
     let parsedPayload: McpRequestPayload | null = null;
     try {
       parsedPayload = JSON.parse(body) as McpRequestPayload;
@@ -640,6 +652,8 @@ export async function startFakeMcpHttpsServer(options: {
         path: requestPath,
         auth,
         body,
+        sessionId,
+        protocolVersion,
         ...(typeof parsedPayload?.method === "string" ? { rpcMethod: parsedPayload.method } : {}),
       });
     }
@@ -652,7 +666,7 @@ export async function startFakeMcpHttpsServer(options: {
       res.end();
       return;
     }
-    if (req.method !== "POST") {
+    if (req.method !== "POST" && req.method !== "DELETE") {
       jsonResponse(res, 405, { error: { message: "method not allowed" } });
       return;
     }
@@ -660,10 +674,32 @@ export async function startFakeMcpHttpsServer(options: {
       jsonResponse(res, 401, { error: { message: "missing rewritten bearer credential" } });
       return;
     }
+    if (req.method === "DELETE") {
+      const negotiatedProtocolVersion = sessions.get(sessionId);
+      if (!negotiatedProtocolVersion || protocolVersion !== negotiatedProtocolVersion) {
+        jsonResponse(res, 400, { error: { message: "missing negotiated MCP session metadata" } });
+        return;
+      }
+      sessions.delete(sessionId);
+      res.writeHead(204);
+      res.end();
+      return;
+    }
 
     if (!parsedPayload) {
       jsonResponse(res, 400, { error: { message: "invalid json" } });
       return;
+    }
+    // This shared fixture also serves intentional stateless policy probes.
+    // Validate any supplied session metadata as an all-or-nothing pair; the
+    // focused discovery assertion separately requires the negotiated pair on
+    // every post-initialize request.
+    if (parsedPayload.method !== "initialize" && (sessionId !== "" || protocolVersion !== "")) {
+      const negotiatedProtocolVersion = sessions.get(sessionId);
+      if (!negotiatedProtocolVersion || protocolVersion !== negotiatedProtocolVersion) {
+        jsonResponse(res, 400, { error: { message: "missing negotiated MCP session metadata" } });
+        return;
+      }
     }
     if (
       typeof parsedPayload.method === "string" &&
@@ -678,26 +714,51 @@ export async function startFakeMcpHttpsServer(options: {
       const request = JSON.parse(body) as {
         params?: { protocolVersion?: string };
       };
+      const negotiatedProtocolVersion = request.params?.protocolVersion ?? "2025-03-26";
+      const negotiatedSessionId = `fake-session-${nextSessionId}`;
+      nextSessionId += 1;
+      sessions.set(negotiatedSessionId, negotiatedProtocolVersion);
+      res.setHeader("mcp-session-id", negotiatedSessionId);
       result = {
-        protocolVersion: request.params?.protocolVersion ?? "2025-03-26",
+        protocolVersion: negotiatedProtocolVersion,
         capabilities: { tools: {} },
         serverInfo: { name: "fake", version: "1.0.0" },
       };
     } else if (parsedPayload.method === "tools/list") {
-      result = {
-        tools: [
-          {
-            name: "fake_echo",
-            description: "Returns an authenticated MCP proof token",
-            inputSchema: {
-              type: "object",
-              properties: { challenge: { type: "string" } },
-              required: ["challenge"],
-              additionalProperties: false,
+      if (parsedPayload.params?.cursor === undefined) {
+        result = {
+          tools: [
+            {
+              name: "fake_echo",
+              description: "Returns an authenticated MCP proof token",
+              inputSchema: {
+                type: "object",
+                properties: { challenge: { type: "string" } },
+                required: ["challenge"],
+                additionalProperties: false,
+              },
             },
-          },
-        ],
-      };
+          ],
+          nextCursor: "fake-page-2",
+        };
+      } else if (parsedPayload.params.cursor === "fake-page-2") {
+        result = {
+          tools: [
+            {
+              name: "fake_status",
+              description: "Returns fixture status",
+              inputSchema: { type: "object", properties: {}, additionalProperties: false },
+            },
+          ],
+        };
+      } else {
+        jsonResponse(res, 200, {
+          jsonrpc: "2.0",
+          id: parsedPayload.id ?? 1,
+          error: { code: -32602, message: "invalid tools/list cursor" },
+        });
+        return;
+      }
     } else if (parsedPayload.method === "tools/call") {
       const challenge = parsedPayload.params?.arguments?.challenge;
       if (
