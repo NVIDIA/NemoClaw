@@ -246,6 +246,8 @@ const warnedHomebrewIdentityCheckReasons = new Set<string>();
 // not evidence of a wrong formula, and managing the service through brew would
 // fail the same way. Continue on the standalone gateway fallback instead of
 // aborting; any other brew failure keeps the fail-closed abort (#7707).
+// The match is against Homebrew's literal refusal text: if Homebrew rewords
+// it, this case reverts to the fail-closed abort, not to a bypass.
 function isPinnedTapLoadRefusal(reason: string): boolean {
   return reason
     .replace(/\s+/g, " ")
@@ -258,7 +260,7 @@ function warnHomebrewIdentityCheckUnavailable(reason: string): void {
   if (warnedHomebrewIdentityCheckReasons.has(reason)) return;
   warnedHomebrewIdentityCheckReasons.add(reason);
   console.warn(
-    `  Homebrew could not confirm the OpenShell formula identity; continuing on the standalone gateway fallback.\n  ${reason}`,
+    `  Homebrew could not confirm the OpenShell formula identity; falling back to the standalone gateway.\n  ${reason}`,
   );
 }
 
