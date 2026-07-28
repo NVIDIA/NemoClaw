@@ -54,6 +54,7 @@ const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
   "1197b99bdb996b37a3e4e386a507dfabcdfb2c26a40b015d617f97208668187d",
   "5cc53ef9c588470f325c5df8189a2eb1525140d947332ae2c0a80fccb2f36ccb",
   "83567d1fa0e73bef6a3333383c13ace05e26704964ae6a7a76ee24a2f2be3d7e",
+  "ca1f7b1cb9dd5d467f806792c4072a84ef1e6402c3e8650b6325b95cc186ccdf",
 ]);
 
 function instructionSha256(text: string): string {

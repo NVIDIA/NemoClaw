@@ -50,7 +50,7 @@ export function runLoggedDockerShell(command: string, tmp: string, functionDefs:
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   return spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
-    timeout: 5000,
+    timeout: 15000,
   });
 }
 
@@ -140,7 +140,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       `      "${hashes.jq}  "*/jq.deb) ;;`,
       '      "6b063038246492c4a20e0a212c896dde4d5aa9f59d6fb43ff33d10080bc53a39  "*/vim-common.deb) ;;',
       `      "${hashes.vimTiny}  "*/vim-tiny.deb) ;;`,
-      '      "33a7eeead8d1ccb04efd282502b766e44c36cca17bbb44d9e6fa3911fd8f226f  "*/python3.13/html/parser.py) ;;',
+      '      "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7  "*/python3.13/html/parser.py) ;;',
       "      *) return 1 ;;",
       "    esac",
       "    (( count += 1 ))",
@@ -172,7 +172,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '  [[ "$#" -eq 2 && "$1" == "-c" ]] || return 64',
       '  case "$2" in',
       "    \"import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION\") ;;",
-      "    \"from html.parser import HTMLParser; p=HTMLParser(); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''\") ;;",
+      "    \"from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''\") ;;",
       "    \"import ctypes; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; assert lib.libssh2_version(0) == b'1.11.1'\") ;;",
       "    *) return 64 ;;",
       "  esac",

@@ -51,14 +51,23 @@ describe("native security package remediation", () => {
 
     const pythonPatch = fs.readFileSync(PYTHON_PATCH, "utf-8");
     expect(pythonPatch).toContain("7933f4bf7131aa4140750f9404f5de0aa2969ced");
+    expect(pythonPatch).toContain("if not data:");
     expect(pythonPatch).toContain("self._pending_len += len(data)");
     expect(pythonPatch).toContain("self._parse_threshold = len(self.rawdata)");
   });
 
-  it.each(BASE_DOCKERFILES)("installs and proves both native packages in %s", (dockerfile) => {
+  it.each(BASE_DOCKERFILES)("wires both native packages into %s", (dockerfile) => {
     const content = fs.readFileSync(dockerfile, "utf-8");
     expect(content).toContain("AS native-security-builder");
-    expect(content).toContain("COPY scripts/security /scripts/security");
+    expect(content).toContain(
+      "COPY scripts/security/build-native-security-packages.sh /scripts/security/build-native-security-packages.sh",
+    );
+    expect(content).toContain(
+      "COPY scripts/security/patches/libssh2-1.11.1-cve-2026.patch /scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
+    );
+    expect(content).toContain(
+      "COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
+    );
     expect(content).toContain("bash /scripts/security/build-native-security-packages.sh /out");
     expect(content).toContain("openssh-server=1:10.0p1-7+deb13u4");
     expect(content).toContain("/tmp/nemoclaw-native-security/libssh2-1t64.deb");
@@ -67,7 +76,8 @@ describe("native security package remediation", () => {
     );
     expect(content).toContain("libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1");
     expect(content).toContain("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1");
-    expect(content).toContain("33a7eeead8d1ccb04efd282502b766e44c36cca17bbb44d9e6fa3911fd8f226f");
+    expect(content).toContain("4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7");
+    expect(content).toContain("[p.feed('') for _ in range(20000)]");
     expect(content).toContain("lib.libssh2_version(0) == b'1.11.1'");
   });
 });

@@ -20,7 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         zlib1g-dev=1:1.3.dfsg+really1.3.1-1+b1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY scripts/security /scripts/security
+COPY scripts/security/build-native-security-packages.sh /scripts/security/build-native-security-packages.sh
+COPY scripts/security/patches/libssh2-1.11.1-cve-2026.patch /scripts/security/patches/libssh2-1.11.1-cve-2026.patch
+COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch
 
 RUN bash /scripts/security/build-native-security-packages.sh /out
 
@@ -131,10 +133,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
     && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION" \
     && printf '%s  %s\n' \
-        "33a7eeead8d1ccb04efd282502b766e44c36cca17bbb44d9e6fa3911fd8f226f" \
+        "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7" \
         /usr/lib/python3.13/html/parser.py \
         | sha256sum -c - \
-    && python3 -c "from html.parser import HTMLParser; p=HTMLParser(); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''" \
+    && python3 -c "from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''" \
     && python3 -c "import ctypes; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; assert lib.libssh2_version(0) == b'1.11.1'" \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
     && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \

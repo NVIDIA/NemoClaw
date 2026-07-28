@@ -253,10 +253,10 @@ RUN set -eu; \
     printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \
     python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION"; \
     printf '%s  %s\n' \
-        "33a7eeead8d1ccb04efd282502b766e44c36cca17bbb44d9e6fa3911fd8f226f" \
+        "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7" \
         /usr/lib/python3.13/html/parser.py \
         | sha256sum -c -; \
-    python3 -c "from html.parser import HTMLParser; p=HTMLParser(); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''"; \
+    python3 -c "from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''"; \
     python3 -c "import ctypes; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; assert lib.libssh2_version(0) == b'1.11.1'"; \
     vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
     test -z "$(dpkg --audit)"

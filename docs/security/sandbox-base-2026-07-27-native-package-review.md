@@ -31,7 +31,8 @@ The original Debian package SHA-256 values are:
 | `libpython3.13-stdlib_3.13.5-2+deb13u4` | `0def2d972310b59704ad119abee5a97f95409e14ff1359edd8cc7b8892cfd43f` | `37cce6086b7c1ca93086f83b68761737607689e634693b6972b5dbfd6c080872` |
 
 The unmodified Debian `html/parser.py` input is bound to SHA-256 `f91ec3de6331206bbe2ec3e54a05f646bd23d3c61a18d4a01b25164e070bacc9`.
-The fixed file is bound to SHA-256 `33a7eeead8d1ccb04efd282502b766e44c36cca17bbb44d9e6fa3911fd8f226f`.
+The fixed file is bound to SHA-256 `4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7`.
+The file contains the reviewed upstream batching fix plus an empty-input guard so repeated `feed("")` calls remain no-ops instead of accumulating pending entries.
 
 ## Package contracts
 
@@ -48,7 +49,7 @@ Every managed base image:
 1. installs both native packages;
 2. verifies their exact dpkg versions;
 3. verifies the fixed HTMLParser file hash;
-4. exercises incremental HTML comment parsing across 20,000 input chunks;
+4. verifies 20,000 empty `feed()` calls leave no pending entries and exercises incremental HTML comment parsing across 20,000 input chunks;
 5. loads `libssh2.so.1` and verifies the 1.11.1 runtime identity;
 6. records both packages in the root-owned, read-only security inventory; and
 7. removes the temporary package artifacts.
