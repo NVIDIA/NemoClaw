@@ -154,12 +154,14 @@ function validateHermesSessionId(rawKey: string): string {
 async function deleteHermesSession(
   sandboxName: string,
   opts: SessionsDeleteOptions,
-): Promise<SessionsDeleteResult> {
+): Promise<never> {
   rejectOpenClawOnlyDeleteOptions(opts);
   const sessionId = validateHermesSessionId(opts.key);
 
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  // execSandbox streams the native command output and exits the process with
+  // its exit code, so control never returns here and there is no NemoClaw-side
+  // result envelope to build (unlike the OpenClaw gateway path above).
   await execSandbox(sandboxName, ["hermes", "sessions", "delete", sessionId, "--yes"]);
-
-  return { key: sessionId, removedTranscript: false };
+  throw new Error("unreachable: execSandbox terminates the process");
 }

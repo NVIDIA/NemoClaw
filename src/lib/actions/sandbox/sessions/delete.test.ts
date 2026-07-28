@@ -183,12 +183,17 @@ describe("deleteSandboxSession", () => {
 describe("deleteSandboxSession (hermes sandbox)", () => {
   beforeEach(() => {
     getSandboxMock.mockReturnValue({ name: "sb-h", agent: "hermes" });
+    // execSandbox streams the native output and exits the process with its
+    // code; model that terminal behavior so the routing never returns a value.
+    execSandboxMock.mockImplementation(async () => {
+      process.exit(0);
+    });
   });
 
   it("routes to the native hermes sessions delete without the OpenClaw gateway (#7642)", async () => {
-    const result = await deleteSandboxSession("sb-h", {
-      key: "20260727_130357_cb2b61",
-    });
+    await expect(deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61" })).rejects.toThrow(
+      /process\.exit:0/,
+    );
 
     expect(gatewayMock).not.toHaveBeenCalled();
     expect(ensureMock).toHaveBeenCalledWith("sb-h", { allowNonReadyPhase: true });
@@ -199,11 +204,12 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
       "20260727_130357_cb2b61",
       "--yes",
     ]);
-    expect(result.key).toBe("20260727_130357_cb2b61");
   });
 
   it("passes the native hermes session id through without OpenClaw canonicalization (#7642)", async () => {
-    await deleteSandboxSession("sb-h", { key: "20260727_121145_238595" });
+    await expect(deleteSandboxSession("sb-h", { key: "20260727_121145_238595" })).rejects.toThrow(
+      /process\.exit:0/,
+    );
 
     expect(execSandboxMock.mock.calls[0]?.[1]).toContain("20260727_121145_238595");
     expect(execSandboxMock.mock.calls[0]?.[1]?.join(" ")).not.toContain("agent:");
@@ -232,7 +238,9 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
   });
 
   it("accepts --agent hermes as a no-op alias and still routes to the native command (#7642)", async () => {
-    await deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", agent: "hermes" });
+    await expect(
+      deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", agent: "hermes" }),
+    ).rejects.toThrow(/process\.exit:0/);
 
     expect(execSandboxMock).toHaveBeenCalledWith("sb-h", [
       "hermes",
