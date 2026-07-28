@@ -32,15 +32,18 @@ type SetupJetsonRun = {
   status: number | null;
   stdout: string;
   stderr: string;
+  headArgs: string;
 };
 
 function withJetsonReleaseSandbox<T>(
-  run: (paths: { releasePath: string; stubDir: string }) => T,
+  run: (paths: { headArgsPath: string; releasePath: string; stubDir: string }) => T,
 ): T {
   const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-jetson-release-"));
 
   try {
     const stubDir = path.join(tempDir, "bin");
+    const headArgsPath = path.join(tempDir, "head-args");
+    const releasePath = path.join(tempDir, "nv_tegra_release");
     mkdirSync(stubDir);
     for (const command of HOST_MUTATION_COMMANDS) {
       const stubPath = path.join(stubDir, command);
@@ -48,35 +51,59 @@ function withJetsonReleaseSandbox<T>(
       chmodSync(stubPath, 0o755);
     }
 
-    return run({ releasePath: path.join(tempDir, "nv_tegra_release"), stubDir });
+    const headStubPath = path.join(stubDir, "head");
+    writeFileSync(
+      headStubPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `printf '%s\\n' "$*" > ${JSON.stringify(headArgsPath)}`,
+        `if [[ -f ${JSON.stringify(releasePath)} ]]; then`,
+        `  cat ${JSON.stringify(releasePath)}`,
+        "fi",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(headStubPath, 0o755);
+
+    return run({ headArgsPath, releasePath, stubDir });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
-function spawnSetupJetson(stubDir: string, releasePath: string): SetupJetsonRun {
+function spawnSetupJetson(
+  stubDir: string,
+  headArgsPath: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+): SetupJetsonRun {
   const result = spawnSync("bash", [SCRIPT_PATH], {
     encoding: "utf-8",
     env: {
       ...process.env,
+      ...extraEnv,
       PATH: `${stubDir}${path.delimiter}${process.env.PATH ?? ""}`,
-      NEMOCLAW_TEST_NV_TEGRA_RELEASE_PATH: releasePath,
     },
   });
 
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    headArgs: readFileSync(headArgsPath, "utf-8").trim(),
+  };
 }
 
 function runSetupJetson(releaseLine: string): SetupJetsonRun {
-  return withJetsonReleaseSandbox(({ releasePath, stubDir }) => {
+  return withJetsonReleaseSandbox(({ headArgsPath, releasePath, stubDir }) => {
     writeFileSync(releasePath, `${releaseLine}\n`);
-    return spawnSetupJetson(stubDir, releasePath);
+    return spawnSetupJetson(stubDir, headArgsPath);
   });
 }
 
 function runSetupJetsonWithoutReleaseFile(): SetupJetsonRun {
-  return withJetsonReleaseSandbox(({ releasePath, stubDir }) =>
-    spawnSetupJetson(stubDir, releasePath),
+  return withJetsonReleaseSandbox(({ headArgsPath, stubDir }) =>
+    spawnSetupJetson(stubDir, headArgsPath),
   );
 }
 
@@ -258,6 +285,24 @@ describe("setup-jetson host setup on an unrecognized L4T release (#7612)", () =>
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
+  });
+
+  it("ignores an inherited test release-path override during normal installation", () => {
+    const result = withJetsonReleaseSandbox(({ headArgsPath, releasePath, stubDir }) => {
+      const inheritedOverridePath = path.join(path.dirname(releasePath), "inherited-release");
+      writeFileSync(
+        inheritedOverridePath,
+        "# R36 (release), REVISION: 5.1, GCID: 12345678, BOARD: t186ref\n",
+      );
+      return spawnSetupJetson(stubDir, headArgsPath, {
+        NEMOCLAW_TEST_NV_TEGRA_RELEASE_PATH: inheritedOverridePath,
+      });
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(result.headArgs).toBe("-n1 /etc/nv_tegra_release");
   });
 
   it("resolves a recognized release to its host configuration without warning", () => {

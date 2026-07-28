@@ -7,8 +7,6 @@ set -euo pipefail
 SUDO=()
 ((EUID != 0)) && SUDO=(sudo)
 
-NV_TEGRA_RELEASE_PATH="${NEMOCLAW_TEST_NV_TEGRA_RELEASE_PATH:-/etc/nv_tegra_release}"
-
 info() {
   printf "[INFO]  %s\n" "$*"
 }
@@ -68,7 +66,7 @@ warn_host_setup_skipped() {
 get_jetpack_version() {
   local release_line release revision l4t_version
 
-  release_line="$(head -n1 "$NV_TEGRA_RELEASE_PATH" 2>/dev/null || true)"
+  release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
   [[ -n "$release_line" ]] || return 0
 
   release="$(printf '%s\n' "$release_line" | sed -n 's/^# R\([0-9][0-9]*\) (release).*/\1/p')"
@@ -76,7 +74,7 @@ get_jetpack_version() {
   l4t_version="${release}.${revision}"
 
   if [[ -z "$release" ]]; then
-    warn "Jetson detected but the L4T release could not be parsed from $NV_TEGRA_RELEASE_PATH."
+    warn "Jetson detected but the L4T release could not be parsed from /etc/nv_tegra_release."
     warn_host_setup_skipped
     return 0
   fi
