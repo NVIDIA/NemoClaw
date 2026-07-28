@@ -245,7 +245,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
 RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
 
-# Hermes v0.18.0 computes `sessions list` preview from the first user message,
+# Hermes v0.18.2 computes `sessions list` preview from the first user message,
 # while #5254's user-facing expectation is that the existing row reflects the
 # latest resumed/continued one-shot turn. Patch only the pinned query shape and
 # prove the SessionDB list contract at build time so a Hermes update cannot
@@ -266,7 +266,7 @@ assert rows and rows[0]["id"] == session_id, rows
 assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
 PY
 
-# Hermes v0.18.0's bundled Langfuse plugin rejects OpenShell resolver
+# Hermes v0.18.2's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
 # the exact public/secret placeholder bound to the matching standard Langfuse
 # key; raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
@@ -354,10 +354,10 @@ RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
         echo "ERROR: could not parse Hermes semver from: $hermes_version_output" >&2; \
         exit 1; \
     fi \
-    && if [ "$hermes_semver" != "0.18.0" ] \
+    && if [ "$hermes_semver" != "0.18.2" ] \
         && { grep -q '_translate_resumed_oneshot' /usr/local/lib/nemoclaw/hermes-wrapper.py \
           || grep -q 'EXPECTED_OCCURRENCES' /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py; }; then \
-        echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.18.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
+        echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.18.2 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
         exit 1; \
     fi
 # This runs before `/usr/local/bin/hermes` is moved to `hermes.real`, so the
