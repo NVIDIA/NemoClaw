@@ -283,16 +283,16 @@ describe("public readiness presentation (#7412)", () => {
       id: `host.capability.${index}`,
       state: "present" as const,
     }));
-    const blocker = {
-      id: "host.boundary.blocker",
+    const blockers = Array.from({ length: 5 }, (_, index) => ({
+      id: `host.boundary.blocker.${index}`,
       severity: "blocking" as const,
-      summary: "A blocker with too many required capabilities.",
-      capabilityIds: capabilities.map(({ id }) => id),
-    };
+      summary: "A blocker with required capabilities.",
+      capabilityIds: capabilities.slice(index * 64, (index + 1) * 64).map(({ id }) => id),
+    }));
 
     expect(() =>
       createPublicReadinessReport(
-        report({ capabilities, findings: [blocker] }, { status: "incompatible", exitCode: 2 }),
+        report({ capabilities, findings: blockers }, { status: "incompatible", exitCode: 2 }),
       ),
     ).toThrow("Readiness report exceeds the public boundary for referenced capability entries.");
   });
