@@ -109,16 +109,58 @@ function fixture(runner: FakeRunner, cleanup: FakeCleanup): LifecyclePhaseFixtur
   return new LifecyclePhaseFixture(host, sandbox, cleanup);
 }
 
+async function preparedPostRebootFixture(
+  runner: FakeRunner,
+  cleanup: FakeCleanup,
+  stage: "upstream" | "existing" | "staged" = "existing",
+): Promise<LifecyclePhaseFixture> {
+  runner.enqueue(shellResult(0)); // openshell-gateway available
+  runner.enqueue(shellResult(0, `NEMOCLAW_E2E_GATEWAY_USER_SERVICE=${stage}\n`));
+  const prepared = fixture(runner, cleanup);
+  await prepared.preparePostReboot();
+  return prepared;
+}
+
 function restoreEnv(name: string, value: string | undefined): void {
   Reflect.deleteProperty(process.env, name);
   Object.assign(process.env, value === undefined ? {} : { [name]: value });
 }
 
+describe("LifecyclePhaseFixture.preparePostReboot", () => {
+  it("installs OpenShell and stages the gateway user service when openshell-gateway is unavailable", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1)); // openshell-gateway unavailable
+    runner.enqueue(shellResult(0)); // install OpenShell
+    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=staged\n"));
+    const cleanup = new FakeCleanup();
+
+    const result = await fixture(runner, cleanup).preparePostReboot();
+
+    expect(result).toBe("staged");
+    expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
+      expect.stringContaining('bash -lc command -v "$1"'),
+      expect.stringContaining("bash "),
+      expect.stringContaining("bash -lc set -eu"),
+    ]);
+    expect(runner.calls[1]?.options?.artifactName).toBe("lifecycle-prereq-install-openshell");
+    expect(cleanup.calls.map((call) => call.name)).toEqual([
+      "lifecycle.remove-staged-gateway-user-service",
+    ]);
+  });
+
+  it("rejects post-reboot simulation that was not prepared before onboarding", async () => {
+    await expect(
+      fixture(new FakeRunner(), new FakeCleanup()).simulate("post-reboot-recovery", instance()),
+    ).rejects.toThrow(/must be prepared before post-reboot onboarding/);
+  });
+});
+
 describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", () => {
   it("stops the labeled container, restarts the gateway service, then runs status", async () => {
     const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup, "staged");
     runner.enqueue(shellResult(0, "openshell-cluster-e2e-ubuntu-repo-cloud-openclaw\n")); // discover
-    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=staged\n")); // stage service
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
@@ -127,9 +169,8 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status (non-zero on unfixed)
-    const cleanup = new FakeCleanup();
 
-    const result = await fixture(runner, cleanup).simulate("post-reboot-recovery", instance());
+    const result = await prepared.simulate("post-reboot-recovery", instance());
 
     expect(result.profile).toBe("post-reboot-recovery");
     expect(result.steps.map((step) => step.id)).toEqual([
@@ -139,8 +180,9 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
       "nemoclaw-status:e2e-ubuntu-repo-cloud-openclaw",
     ]);
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
-      "docker ps -a --filter label=openshell.ai/sandbox-name=e2e-ubuntu-repo-cloud-openclaw --format {{.Names}}",
+      expect.stringContaining('bash -lc command -v "$1"'),
       expect.stringContaining("bash -lc set -eu"),
+      "docker ps -a --filter label=openshell.ai/sandbox-name=e2e-ubuntu-repo-cloud-openclaw --format {{.Names}}",
       "docker stop openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
@@ -158,8 +200,9 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
 
   it("tolerates a non-zero status exit (the bug succeeds at destroying state)", async () => {
     const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup);
     runner.enqueue(shellResult(0, "container-1\n")); // discover
-    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=existing\n")); // service
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
@@ -168,9 +211,8 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status non-zero
-    const cleanup = new FakeCleanup();
 
-    const result = await fixture(runner, cleanup).simulate("post-reboot-recovery", instance());
+    const result = await prepared.simulate("post-reboot-recovery", instance());
 
     // simulate() does not throw; the post-status invariants belong
     // to the state-validation phase that runs after.
@@ -179,39 +221,41 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
 
   it("fails when no Docker container carries the OpenShell sandbox-name label", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "\n")); // discover returns nothing
     const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup);
+    runner.enqueue(shellResult(0, "\n")); // discover returns nothing
 
-    await expect(
-      fixture(runner, cleanup).simulate("post-reboot-recovery", instance()),
-    ).rejects.toThrow(/expected at least one Docker container labeled/);
+    await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
+      /expected at least one Docker container labeled/,
+    );
   });
 
   it("fails when docker discover returns non-zero", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(1, "Cannot connect to the Docker daemon"));
     const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup);
+    runner.enqueue(shellResult(1, "Cannot connect to the Docker daemon"));
 
-    await expect(
-      fixture(runner, cleanup).simulate("post-reboot-recovery", instance()),
-    ).rejects.toThrow(/could not query Docker for label/);
+    await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
+      /could not query Docker for label/,
+    );
   });
 
   it("fails when the managed OpenShell gateway user service is unavailable", async () => {
     const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup);
     runner.enqueue(shellResult(0, "container-1\n")); // discover
-    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=existing\n")); // service
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
     runner.enqueue(shellResult(0)); // pid stop
     runner.enqueue(shellResult(0)); // container stop
     runner.enqueue(shellResult(75, "")); // no managed user service available
-    const cleanup = new FakeCleanup();
 
-    await expect(
-      fixture(runner, cleanup).simulate("post-reboot-recovery", instance()),
-    ).rejects.toThrow(/OpenShell gateway user service is not available/);
+    await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
+      /OpenShell gateway user service is not available/,
+    );
 
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual(
       expect.arrayContaining([expect.stringContaining('systemctl --user cat "$service"')]),
@@ -222,8 +266,9 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
 describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-backup)", () => {
   it("stops, then renames the labeled container to a *-nemoclaw-gpu-backup-* sibling", async () => {
     const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup);
     runner.enqueue(shellResult(0, "openshell-cluster-e2e-x\n")); // discover
-    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=existing\n")); // service
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // docker rename
     runner.enqueue(shellResult(0)); // forward stop
@@ -233,9 +278,8 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status
-    const cleanup = new FakeCleanup();
 
-    const result = await fixture(runner, cleanup).simulate(
+    const result = await prepared.simulate(
       "post-reboot-recovery",
       instance({ sandboxName: "e2e-x" }),
       { mode: "rename-to-gpu-backup" },
@@ -333,6 +377,29 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       "nemoclaw status",
       "openshell status",
     ]);
+  });
+
+  it("captures the OpenShell gateway user service status and journal when gateway health never recovers", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1, "Connection refused")); // openshell status
+    runner.enqueue(shellResult(0, "ActiveState=failed\nResult=exit-code\n")); // diagnostics
+    const cleanup = new FakeCleanup();
+    const fx = fixture(runner, cleanup);
+
+    await expect(fx.waitForGatewayConnected({ attempts: 1, intervalMs: 1 })).rejects.toThrow(
+      /service diagnostics: \/tmp\/result\.json/,
+    );
+
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[1]).toMatchObject({
+      command: "sh",
+      options: {
+        artifactName: "lifecycle-gateway-user-service-diagnostics",
+      },
+    });
+    expect(runner.calls[1]?.args[1]).toContain(
+      'journalctl --user --unit "$service" --no-pager --lines=200',
+    );
   });
 
   it("stops only the exact gateway container when a sandbox has the gateway-name prefix", async () => {
