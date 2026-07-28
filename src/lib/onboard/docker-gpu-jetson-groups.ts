@@ -24,6 +24,10 @@ type DeviceGroupAccess = {
   mode: number;
 };
 
+/**
+ * Find real DRI render character devices without following symlinks or
+ * scanning other DRI device families.
+ */
 function discoverTegraRenderDevicePaths(): string[] {
   try {
     return fs
@@ -40,10 +44,8 @@ function discoverTegraRenderDevicePaths(): string[] {
 }
 
 /**
- * A DRI render device can have a different owner GID from the selected Tegra
- * device nodes. The render node number also varies across hosts, so discover
- * only real render character devices in the flat DRI directory. Do not follow
- * symlinks or scan other DRI/Tegra device families.
+ * Combine the selected Tegra GPU nodes with DRI render devices, whose owner
+ * GID and node number can differ across hosts.
  */
 function listTegraGpuDevicePaths(): string[] {
   return [...TEGRA_GPU_DEVICE_NODES, ...discoverTegraRenderDevicePaths()];

@@ -55,14 +55,19 @@ describe("detectTegraDeviceGroupGids", () => {
       }),
     ).toEqual([]);
 
-    vi.spyOn(fs, "lstatSync").mockImplementation(() => {
+    const lstat = vi.spyOn(fs, "lstatSync").mockImplementation(() => {
       throw new Error("EACCES");
     });
-    expect(detectTegraDeviceGroupGids({ listDevicePaths: () => ["/dev/nvmap"] })).toEqual([]);
+    try {
+      expect(detectTegraDeviceGroupGids({ listDevicePaths: () => ["/dev/nvmap"] })).toEqual([]);
+    } finally {
+      lstat.mockRestore();
+    }
   });
 
   it("rejects regular files and symlinks before reading their group", () => {
-    vi.spyOn(fs, "lstatSync")
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
       .mockReturnValueOnce({
         gid: 110,
         mode: 0o660,
@@ -76,15 +81,19 @@ describe("detectTegraDeviceGroupGids", () => {
         isSymbolicLink: () => true,
       } as fs.Stats);
 
-    expect(
-      detectTegraDeviceGroupGids({
-        listDevicePaths: () => ["/dev/nvgpu/igpu0/not-a-device", "/dev/nvgpu/igpu0/link"],
-      }),
-    ).toEqual([]);
+    try {
+      expect(
+        detectTegraDeviceGroupGids({
+          listDevicePaths: () => ["/dev/nvgpu/igpu0/not-a-device", "/dev/nvgpu/igpu0/link"],
+        }),
+      ).toEqual([]);
+    } finally {
+      lstat.mockRestore();
+    }
   });
 
   it("adds the host render group from real DRI render devices only", () => {
-    vi.spyOn(fs, "readdirSync").mockImplementation(
+    const readdir = vi.spyOn(fs, "readdirSync").mockImplementation(
       () =>
         [
           {
@@ -104,21 +113,21 @@ describe("detectTegraDeviceGroupGids", () => {
           },
         ] as never,
     );
-    const lstat = vi.spyOn(fs, "lstatSync").mockImplementation((path) => {
-      if (path === "/dev/dri/renderD128") {
-        return {
-          gid: 104,
-          mode: 0o660,
-          isCharacterDevice: () => true,
-          isSymbolicLink: () => false,
-        } as fs.Stats;
-      }
-      throw new Error("ENOENT");
-    });
+    const lstat = vi.spyOn(fs, "lstatSync").mockReturnValue({
+      gid: 104,
+      mode: 0o660,
+      isCharacterDevice: () => true,
+      isSymbolicLink: () => false,
+    } as fs.Stats);
 
-    expect(detectTegraDeviceGroupGids()).toEqual(["104"]);
-    expect(lstat).toHaveBeenCalledWith("/dev/dri/renderD128");
-    expect(lstat).not.toHaveBeenCalledWith("/dev/dri/renderD129");
-    expect(lstat).not.toHaveBeenCalledWith("/dev/dri/card0");
+    try {
+      expect(detectTegraDeviceGroupGids()).toEqual(["104"]);
+      expect(lstat).toHaveBeenCalledWith("/dev/dri/renderD128");
+      expect(lstat).not.toHaveBeenCalledWith("/dev/dri/renderD129");
+      expect(lstat).not.toHaveBeenCalledWith("/dev/dri/card0");
+    } finally {
+      lstat.mockRestore();
+      readdir.mockRestore();
+    }
   });
 });
