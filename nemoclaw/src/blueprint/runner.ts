@@ -109,8 +109,6 @@ const MISSING_SANDBOX_INSPECTION_PATTERN =
   /(?:\bsandbox\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bsandbox\b)/i;
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
-const UNCONFIGURED_INFERENCE_ROUTE_PATTERN =
-  /^Gateway inference:\s*(?:\r?\n\s*)*Not configured\s*$/im;
 
 interface InferenceRouteBinding {
   provider: string;
@@ -153,6 +151,17 @@ function parseInferenceRouteBinding(output: string): InferenceRouteBinding | nul
     if (timeoutMatch) timeoutSeconds = Number(timeoutMatch[1]);
   }
   return provider && model ? { provider, model, timeoutSeconds } : null;
+}
+
+function isUnconfiguredInferenceRoute(output: string): boolean {
+  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) => /^Gateway inference:\s*$/i.test(line));
+  if (headingIndex < 0) return false;
+  const routeLines = lines
+    .slice(headingIndex + 1)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return routeLines.length === 1 && routeLines[0]?.toLowerCase() === "not configured";
 }
 
 function isAction(value: string | undefined): value is Action {
@@ -1026,7 +1035,7 @@ export async function actionApply(
           );
         }
         const activeRoute = parseInferenceRouteBinding(routeResult.stdout);
-        if (!activeRoute && !UNCONFIGURED_INFERENCE_ROUTE_PATTERN.test(routeResult.stdout)) {
+        if (!activeRoute && !isUnconfiguredInferenceRoute(routeResult.stdout)) {
           throw new Error(
             `Failed to parse the active inference route before runtime identity apply: ${boundedCommandError(routeOutput)}`,
           );
