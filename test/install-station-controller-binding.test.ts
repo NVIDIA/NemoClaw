@@ -330,7 +330,7 @@ printf 'MIGRATE=%s REUSE=%s\\n' "$_STATION_EXPRESS_MIGRATING_LEGACY_HEAD" "$_STA
         "true",
         "true",
         "head",
-        "1",
+        "2",
         "c".repeat(64),
         "d".repeat(64),
         "e".repeat(64),
