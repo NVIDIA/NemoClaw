@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureHttpsPinRuntimeAdapter as realEnsureHttpsPinRuntimeAdapter } from "../inference/https-pin-runtime-adapter";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet compatible providers", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("reuses durable endpoint metadata for same-provider model switches", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
@@ -175,6 +177,122 @@ describe("runInferenceSet compatible providers", () => {
 
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an HTTPS IP-literal", "https://198.51.100.10/v1", "https://198.51.100.10/v1"],
+    ["a DNS-pinned HTTP", "http://compatible.example/v1", "http://198.51.100.10/v1"],
+  ])("creates an absent direct compatible provider for %s endpoint (#7725)", async (_kind, endpointUrl, validatedEndpointUrl) => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    let providerCreated = false;
+    const captureOpenshell = vi.fn((args: string[]) => {
+      switch (`${args[0]}:${args[1]}`) {
+        case "inference:set":
+          return providerCreated
+            ? { status: 0, output: "", stdout: "", stderr: "" }
+            : {
+                status: 1,
+                output: "Error: provider 'compatible-endpoint' not found",
+                stdout: "",
+                stderr: "Error: provider 'compatible-endpoint' not found",
+              };
+        case "provider:get": {
+          if (!providerCreated) {
+            return {
+              status: 1,
+              output:
+                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+            };
+          }
+          const output = [
+            "Name: compatible-endpoint",
+            "Id: 11111111-2222-4333-8444-555555555555",
+            "Type: openai",
+            "Resource version: 1",
+            "Credential keys: COMPATIBLE_API_KEY",
+            "Config keys: OPENAI_BASE_URL",
+          ].join("\n");
+          return { status: 0, output, stdout: output, stderr: "" };
+        }
+        case "provider:create":
+          providerCreated = true;
+          return { status: 0, output: "", stdout: "", stderr: "" };
+        default:
+          return { status: 0, output: "", stdout: "", stderr: "" };
+      }
+    });
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      }),
+      captureOpenshell,
+      rewriteConfigUrlsWithDnsPinning: async () => validatedEndpointUrl,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "mock-model",
+          noVerify: true,
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).resolves.toMatchObject({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "mock-model",
+    });
+
+    const providerCreateIndex = captureOpenshell.mock.calls.findIndex(
+      ([args]) => args[0] === "provider" && args[1] === "create",
+    );
+    const successfulSetIndex = captureOpenshell.mock.calls.findIndex(
+      ([args], index) =>
+        index > providerCreateIndex && args[0] === "inference" && args[1] === "set",
+    );
+    expect(providerCreateIndex).toBeGreaterThanOrEqual(0);
+    expect(successfulSetIndex).toBeGreaterThan(providerCreateIndex);
+    expect(captureOpenshell.mock.calls[providerCreateIndex]).toEqual([
+      [
+        "provider",
+        "create",
+        "-g",
+        "nemoclaw",
+        "--name",
+        "compatible-endpoint",
+        "--type",
+        "openai",
+        "--credential",
+        "COMPATIBLE_API_KEY",
+        "--config",
+        `OPENAI_BASE_URL=${validatedEndpointUrl}`,
+      ],
+      expect.objectContaining({
+        env: { COMPATIBLE_API_KEY: "real-upstream-secret" },
+      }),
+    ]);
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        endpointUrl: validatedEndpointUrl,
+      }),
+    ]);
   });
 
   it("preserves explicit inference API through the final registry and session sync", async () => {

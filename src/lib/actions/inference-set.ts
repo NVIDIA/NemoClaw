@@ -53,7 +53,11 @@ import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
-import { InferenceSetError, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER } from "./inference-set-error";
+import {
+  InferenceSetError,
+  OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+  openshellReportsProviderNotFound,
+} from "./inference-set-error";
 import {
   completeInferenceGatewayRestart,
   defaultInferenceGatewayRestart,
@@ -62,7 +66,7 @@ import {
   type InferenceMutation,
   readPreviousOpenClawInferenceApi,
 } from "./inference-set-gateway-restart";
-import { prepareHttpsPinProviderBinding } from "./inference-set-https-pin-provider";
+import { prepareInferenceSetProviderBinding } from "./inference-set-provider";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 import {
   applyOpenClawAnthropicReplyBudget,
@@ -765,28 +769,31 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  const { registryMetadata, explicitPreferredInferenceApi, httpsPinProviderBinding } =
-    await finalizeInferenceSetRoute({
-      prepared: preparedRoute,
-      sandboxName,
-      provider,
-      model,
-      canReuseRecordedRoute:
-        entry.provider === provider &&
-        typeof entry.endpointUrl === "string" &&
-        entry.endpointUrl.trim().length > 0 &&
-        typeof entry.preferredInferenceApi === "string" &&
-        entry.preferredInferenceApi.trim().length > 0,
-      onboardEndpointUrl:
-        entry.provider === provider && entry.endpointSource === "onboard"
-          ? (entry.endpointUrl ?? null)
-          : null,
-      getSandboxes: () => deps.listSandboxes().sandboxes,
-      rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
-      ensureHttpsPinRuntimeAdapter: deps.ensureHttpsPinRuntimeAdapter,
-      effectiveInferenceApi:
-        preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
-    });
+  const {
+    registryMetadata,
+    explicitPreferredInferenceApi,
+    directProviderBinding,
+    httpsPinProviderBinding,
+  } = await finalizeInferenceSetRoute({
+    prepared: preparedRoute,
+    sandboxName,
+    provider,
+    model,
+    canReuseRecordedRoute:
+      entry.provider === provider &&
+      typeof entry.endpointUrl === "string" &&
+      entry.endpointUrl.trim().length > 0 &&
+      typeof entry.preferredInferenceApi === "string" &&
+      entry.preferredInferenceApi.trim().length > 0,
+    onboardEndpointUrl:
+      entry.provider === provider && entry.endpointSource === "onboard"
+        ? (entry.endpointUrl ?? null)
+        : null,
+    getSandboxes: () => deps.listSandboxes().sandboxes,
+    rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
+    ensureHttpsPinRuntimeAdapter: deps.ensureHttpsPinRuntimeAdapter,
+    effectiveInferenceApi: preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
+  });
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
   // host.openshell.internal hostname, which the host-side `openshell inference set`
@@ -831,7 +838,7 @@ async function runInferenceSetWithoutHostLock(
     provider,
     registryMetadata.endpointUrl ?? null,
     deps,
-    httpsPinProviderBinding,
+    httpsPinProviderBinding ?? directProviderBinding,
   );
 
   // Read the in-sandbox config *before* mutating the gateway route or registry.
@@ -843,20 +850,20 @@ async function runInferenceSetWithoutHostLock(
   const previousProvider = typeof entry.provider === "string" ? entry.provider.trim() : "";
   const previousModel = typeof entry.model === "string" ? entry.model.trim() : "";
 
-  let appliedHttpsPinProvider = false;
+  let appliedProvider = false;
   let appliedInferenceSelection = false;
   let restoredSelectionAfterProviderFailure = false;
-  let httpsPinProviderMutation: ReturnType<typeof prepareHttpsPinProviderBinding> | null = null;
+  let providerMutation: ReturnType<typeof prepareInferenceSetProviderBinding> | null = null;
   try {
     if (httpsPinProviderBinding) {
-      httpsPinProviderMutation = prepareHttpsPinProviderBinding({
+      providerMutation = prepareInferenceSetProviderBinding({
         gatewayName: preparedRoute.gatewayName,
         providerName: provider,
         binding: httpsPinProviderBinding,
         captureOpenshell: deps.captureOpenshell,
       });
-      appliedHttpsPinProvider = httpsPinProviderMutation.action === "create";
-      if (httpsPinProviderMutation.action === "update" && (!previousProvider || !previousModel)) {
+      appliedProvider = providerMutation.action === "create";
+      if (providerMutation.action === "update" && (!previousProvider || !previousModel)) {
         throw new InferenceSetError(
           `Cannot update existing HTTPS-pinned provider '${provider}' because sandbox '${sandboxName}' ` +
             `does not record the previous provider and model needed to restore its inference selection.`,
@@ -866,28 +873,54 @@ async function runInferenceSetWithoutHostLock(
     }
 
     deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
-    const setResult = deps.captureOpenshell(
-      openshellInferenceSetArgs({
-        gatewayName: preparedRoute.gatewayName,
+    const setInferenceRoute = () =>
+      deps.captureOpenshell(
+        openshellInferenceSetArgs({
+          gatewayName: preparedRoute.gatewayName,
+          provider,
+          model,
+          noVerify: effectiveNoVerify,
+        }),
+        {
+          ignoreError: true,
+          includeStreams: true,
+          maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+        },
+      );
+    let setResult = setInferenceRoute();
+    if (
+      setResult.status !== 0 &&
+      directProviderBinding &&
+      openshellReportsProviderNotFound(
+        `${setResult.stderr ?? ""}\n${setResult.stdout ?? ""}`,
         provider,
-        model,
-        noVerify: effectiveNoVerify,
-      }),
-      {
-        ignoreError: true,
-        includeStreams: true,
-        maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-      },
-    );
+      )
+    ) {
+      providerMutation = prepareInferenceSetProviderBinding({
+        gatewayName: preparedRoute.gatewayName,
+        providerName: provider,
+        binding: directProviderBinding,
+        captureOpenshell: deps.captureOpenshell,
+      });
+      appliedProvider = providerMutation.action === "create";
+      if (providerMutation.action === "update" && (!previousProvider || !previousModel)) {
+        throw new InferenceSetError(
+          `Cannot update existing provider '${provider}' because sandbox '${sandboxName}' ` +
+            `does not record the previous provider and model needed to restore its inference selection.`,
+          2,
+        );
+      }
+      setResult = setInferenceRoute();
+    }
     if (setResult.status !== 0) {
       const failure = buildInferenceSetFailure(setResult, provider, deps);
       throw new InferenceSetError(failure.message, failure.exitCode);
     }
     appliedInferenceSelection = true;
-    if (httpsPinProviderMutation) {
+    if (providerMutation) {
       try {
-        httpsPinProviderMutation.commit();
-        appliedHttpsPinProvider = true;
+        providerMutation.commit();
+        appliedProvider = true;
       } catch (providerError) {
         const providerDetail =
           providerError instanceof Error ? providerError.message : String(providerError);
@@ -1112,13 +1145,13 @@ async function runInferenceSetWithoutHostLock(
       deps,
     );
   } catch (error) {
-    if (!httpsPinProviderMutation) throw error;
+    if (!providerMutation) throw error;
     if (restoredSelectionAfterProviderFailure) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
     if (!appliedInferenceSelection) {
       try {
-        httpsPinProviderMutation.rollback();
+        providerMutation.rollback();
       } catch (rollbackError) {
         const rollbackDetail =
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
@@ -1128,14 +1161,18 @@ async function runInferenceSetWithoutHostLock(
         );
       }
       const unchanged =
-        httpsPinProviderMutation.action === "create"
+        providerMutation.action === "create"
           ? "The newly created OpenShell provider was removed; the inference selection was not changed."
           : "The existing OpenShell provider binding and inference selection were not changed.";
       throw new InferenceSetError(`${detail}\n  ${unchanged}`, exitCode);
     }
-    const residual = appliedHttpsPinProvider
-      ? "The OpenShell provider and inference selection remain committed to the safer HTTPS-pinned adapter, but NemoClaw state may not have converged. Retry this command; if convergence still fails, rebuild the sandbox."
-      : "The inference selection changed, but the HTTPS-pinned provider binding did not converge. Retry this command immediately; if convergence still fails, rebuild the sandbox.";
+    const residual = appliedProvider
+      ? httpsPinProviderBinding
+        ? "The OpenShell provider and inference selection remain committed to the safer HTTPS-pinned adapter, but NemoClaw state may not have converged. Retry this command; if convergence still fails, rebuild the sandbox."
+        : "The OpenShell provider and inference selection remain committed, but NemoClaw state may not have converged. Retry this command; if convergence still fails, rebuild the sandbox."
+      : httpsPinProviderBinding
+        ? "The inference selection changed, but the HTTPS-pinned provider binding did not converge. Retry this command immediately; if convergence still fails, rebuild the sandbox."
+        : "The inference selection changed, but the OpenShell provider binding did not converge. Retry this command immediately; if convergence still fails, rebuild the sandbox.";
     throw new InferenceSetError(`${detail}\n  ${residual}`, exitCode);
   }
 }
