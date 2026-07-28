@@ -64,12 +64,20 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/claude-code\.yaml$/,
+    testsToRun: runTests("test/effective-policy-contracts.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/(?:mcp-config-transaction|runtime-config-guard)\.py$/,
     testsToRun: runTests("src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts"),
   },
   {
     pattern: /(?:^|\/)test\/e2e\/lib\/ci-compatible-inference\.sh$/,
     testsToRun: runTests("test/e2e/support/hosted-inference.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/setup-jetson\.sh$/,
+    testsToRun: runTests("test/setup-jetson.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,

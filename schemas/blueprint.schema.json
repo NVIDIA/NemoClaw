@@ -131,6 +131,10 @@
               }
             }
           }
+        },
+        "identity": {
+          "description": "Optional experimental provider-neutral runtime identity reference for the direct OpenClaw blueprint runner.",
+          "$ref": "#/$defs/runtimeIdentity"
         }
       }
     }
@@ -168,6 +172,52 @@
           "minItems": 1
         }
       }
+    },
+    "runtimeIdentity": {
+      "type": "object",
+      "required": [
+        "profile_path",
+        "provider_type",
+        "provider_name",
+        "credential_key",
+        "client_id_env",
+        "refresh_token_env"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "profile_path": { "type": "string", "minLength": 1 },
+        "provider_type": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{0,63}$" },
+        "provider_name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$" },
+        "credential_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,255}$" },
+        "client_id_env": { "$ref": "#/$defs/runtimeIdentityClientIdEnvName" },
+        "refresh_token_env": {
+          "$ref": "#/$defs/runtimeIdentitySecretEnvName"
+        },
+        "client_secret_env": {
+          "$ref": "#/$defs/runtimeIdentitySecretEnvName"
+        }
+      }
+    },
+    "runtimeIdentityEnvName": {
+      "type": "string",
+      "pattern": "^(?!(?:HOME|USER|LOGNAME|SHELL|PATH|TERM|HOSTNAME|NODE_ENV|TMPDIR|TMP|TEMP|LANG|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|GIT_SSL_CAINFO|GIT_SSL_CAPATH|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE|DOCKER_HOST|KUBECONFIG|SSH_AUTH_SOCK|RUST_LOG|RUST_BACKTRACE|LC_[A-Z0-9_]*|XDG_[A-Z0-9_]*|OPENSHELL_[A-Z0-9_]*|GRPC_[A-Z0-9_]*)$)[A-Z][A-Z0-9_]{0,255}$"
+    },
+    "runtimeIdentityClientIdEnvName": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeIdentityEnvName" },
+        {
+          "pattern": "^(?:CLIENT_ID|[A-Z][A-Z0-9_]*_CLIENT_ID)$",
+          "description": "Non-secret OAuth client ID environment name. The reviewed provider policy enforces its exact supported name during apply."
+        }
+      ]
+    },
+    "runtimeIdentitySecretEnvName": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeIdentityEnvName" },
+        {
+          "pattern": "^(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|[A-Z][A-Z0-9_]*_(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL))$"
+        }
+      ]
     },
     "endpoint": {
       "type": "object",
