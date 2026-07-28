@@ -164,203 +164,118 @@ jobs:
     env:
       WSL_DISTRO: Ubuntu
       WSL_TEST_USER: nemoclaw-ci
+      TRUSTED_WSL_HELPER: ${{ github.workspace }}\trusted-wsl-ci\tools\wsl\ci-helper.ps1
     steps:
       - name: Force LF line endings for checkout
         shell: powershell
         run: git config --global core.autocrlf false
 
-      - name: Checkout
+      - name: Check out the trusted WSL helper
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted-wsl-ci
+          persist-credentials: false
+          sparse-checkout: |
+            tools/wsl/ci-helper.ps1
+          sparse-checkout-cone-mode: false
+
+      - name: Check out candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
           fetch-depth: 0
           persist-credentials: false
 
       - name: Resolve workspace paths for WSL
         shell: powershell
         run: |
-          $winPath = "${{ github.workspace }}"
-          $drive = $winPath.Substring(0,1).ToLower()
-          $rest = $winPath.Substring(2).Replace('\','/')
-          $wslCheckoutPath = "/mnt/$drive$rest"
-          $wslWorkdir = "/tmp/nemoclaw-wsl-vitest/${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}"
-          "WSL_CHECKOUT_DIR=$wslCheckoutPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "WSL_WORKDIR=$wslWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "WSL_CHECKOUT_DIR=$wslCheckoutPath"
-          Write-Host "WSL_WORKDIR=$wslWorkdir"
+          . "$env:TRUSTED_WSL_HELPER"
+          $null = Set-WslWorkflowPaths `
+            -Workspace "$env:GITHUB_WORKSPACE\source" `
+            -WorkdirPrefix '/tmp/nemoclaw-wsl-vitest' `
+            -RunId $env:GITHUB_RUN_ID `
+            -RunAttempt $env:GITHUB_RUN_ATTEMPT `
+            -EnvironmentFile $env:GITHUB_ENV
 
       - name: Ensure Ubuntu WSL exists
         shell: powershell
         run: |
-          wsl --list --verbose 2>&1 | Out-Default
-          $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            $maxAttempts = 3
-            $installed = $false
-            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-              Write-Host "Ubuntu not found - installing via wsl --install (attempt $attempt/$maxAttempts)"
-              wsl --install -d $env:WSL_DISTRO --no-launch --web-download
-              $installExitCode = $LASTEXITCODE
-              if ($installExitCode -eq 0) {
-                wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
-                if ($LASTEXITCODE -eq 0) {
-                  $installed = $true
-                  break
-                }
-              }
-
-              $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
-              if ($LASTEXITCODE -eq 0) {
-                $installed = $true
-                break
-              }
-
-              if ($attempt -lt $maxAttempts) {
-                $null = wsl --unregister $env:WSL_DISTRO 2>&1
-                Start-Sleep -Seconds ([Math]::Min(60, 20 * $attempt))
-              }
-            }
-
-            if (-not $installed) {
-              throw ("failed to install and initialize $env:WSL_DISTRO after $maxAttempts attempts")
-            }
-          }
-          wsl --set-default $env:WSL_DISTRO
-          if ($LASTEXITCODE -ne 0) {
-            throw ('wsl --set-default failed with exit code ' + $LASTEXITCODE)
-          }
+          . "$env:TRUSTED_WSL_HELPER"
+          Ensure-WslDistro -Distro $env:WSL_DISTRO
 
       - name: Install Ubuntu dependencies
         shell: powershell
         run: |
-          $script = @'
-          set -euo pipefail
-          test_user="${1:?missing WSL test user}"
-          export DEBIAN_FRONTEND=noninteractive
-          printf '%s\n' \
-            'Acquire::ForceIPv4 "true";' \
-            'Acquire::Retries "5";' \
-            >/etc/apt/apt.conf.d/99github-actions-network
-          apt-get update
-          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip python3-venv ripgrep rsync tar unzip xz-utils
-          if ! id -u "$test_user" >/dev/null 2>&1; then
-            useradd --create-home --shell /bin/bash "$test_user"
-          fi
-          '@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO --user root -- bash -l $wslTmp $env:WSL_TEST_USER
+          . "$env:TRUSTED_WSL_HELPER"
+          $packages = @(
+            'bash', 'ca-certificates', 'curl', 'git', 'jq', 'lsb-release', 'make',
+            'python3', 'python3-pip', 'python3-venv', 'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils'
+          )
+          Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages -TestUser $env:WSL_TEST_USER
 
       - name: Install Node.js 22 in WSL
         shell: powershell
         run: |
-          $script = @'
-          set -euo pipefail
-          node_version="22.23.1"
-          case "$(uname -m)" in
-            x86_64)
-              node_arch="x64"
-              node_sha256="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"
-              ;;
-            aarch64 | arm64)
-              node_arch="arm64"
-              node_sha256="0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1"
-              ;;
-            *)
-              echo "Unsupported Node.js architecture: $(uname -m)" >&2
-              exit 1
-              ;;
-          esac
-          node_url="https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz"
-          temp_dir="$(mktemp -d)"
-          trap 'rm -rf "$temp_dir"' EXIT
-          archive="$temp_dir/node.tar.xz"
-          curl --fail --show-error --silent --location \
-            --proto '=https' --tlsv1.2 \
-            --connect-timeout 15 --max-time 180 \
-            --retry 3 --retry-delay 2 --retry-max-time 240 --retry-all-errors \
-            --output "$archive" "$node_url"
-          printf '%s  %s\n' "$node_sha256" "$archive" | sha256sum --check --status || {
-            echo "Node.js archive checksum verification failed" >&2
-            exit 1
-          }
-          tar --extract --xz --file "$archive" --directory /usr/local --strip-components=1
-          test "$(node --version)" = "v${node_version}"
-          node --version
-          npm --version
-          '@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO --user root -- bash -l $wslTmp
+          . "$env:TRUSTED_WSL_HELPER"
+          Install-WslNode -Distro $env:WSL_DISTRO
 
       - name: Copy checkout into WSL ext4 workspace
         shell: powershell
         run: |
-          $checkout = $env:WSL_CHECKOUT_DIR
-          $workdir = $env:WSL_WORKDIR
-          $workdirParent = $workdir.Substring(0, $workdir.LastIndexOf('/'))
-          $script = @"
-          set -euo pipefail
-          rm -rf '$workdir'
-          mkdir -p '$workdirParent'
-          rsync -a --no-owner --no-group --delete \
-            --exclude '/node_modules/' \
-            --exclude '/nemoclaw/node_modules/' \
-            --exclude '/nemoclaw-blueprint/.venv/' \
-            '$checkout'/ '$workdir'/
-          git config --global --add safe.directory '$workdir'
-          git -C '$workdir' reset --hard HEAD
-          git -C '$workdir' clean -ffdx
-          chown -R '$($env:WSL_TEST_USER):$($env:WSL_TEST_USER)' '$workdir'
-          "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO --user root -- bash -l $wslTmp
+          . "$env:TRUSTED_WSL_HELPER"
+          Sync-WslCheckout `
+            -Distro $env:WSL_DISTRO `
+            -Checkout $env:WSL_CHECKOUT_DIR `
+            -Workdir $env:WSL_WORKDIR `
+            -Owner $env:WSL_TEST_USER
 
       - name: Install dependencies and build in WSL
         shell: powershell
         run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
           $script = @"
           set -euo pipefail
-          id -un | grep -Fxq '$env:WSL_TEST_USER'
-          cd '$env:WSL_WORKDIR'
+          id -un | grep -Fxq $testUser
+          cd $workdir
           npm ci --ignore-scripts
           npm run build:cli
           cd nemoclaw
           npm ci --ignore-scripts
           npm run build
           "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO --user $env:WSL_TEST_USER -- bash -l $wslTmp
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 
       - name: Run full Vitest suite in WSL
         shell: powershell
         run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
           $script = @"
           set -euo pipefail
-          id -un | grep -Fxq '$env:WSL_TEST_USER'
-          cd '$env:WSL_WORKDIR'
+          id -un | grep -Fxq $testUser
+          cd $workdir
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
           npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
           "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO --user $env:WSL_TEST_USER -- bash -l $wslTmp
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 
+      # Keep the root-only test selection and identity checks inline. Only the
+      # trusted helper constructs WSL commands and transfers scripts.
       - name: Run root-required Vitest contracts in WSL
         if: ${{ matrix.shard == 1 }}
         shell: powershell
         run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
           $script = @"
           set -euo pipefail
           id -u | grep -Fxq '0'
-          cd '$env:WSL_WORKDIR'
+          cd $workdir
           if ! getent group sandbox >/dev/null; then
             groupadd --system sandbox
           fi
@@ -378,7 +293,4 @@ jobs:
             test/nemoclaw-start-perms.test.ts \
             -t 'requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched'
           "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO --user root -- bash -l $wslTmp
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
