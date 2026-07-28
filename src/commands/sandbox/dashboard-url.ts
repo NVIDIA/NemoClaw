@@ -13,7 +13,7 @@ type DashboardUrlRuntimeBridge = {
   getAccessUrl?: (port: number) => string | null;
 };
 
-let runtimeBridgeFactory = (): DashboardUrlRuntimeBridge => {
+const defaultDashboardUrlRuntimeBridgeFactory = (): DashboardUrlRuntimeBridge => {
   const onboard = require("../../lib/onboard") as Pick<
     DashboardUrlRuntimeBridge,
     "fetchGatewayAuthTokenFromSandbox"
@@ -43,10 +43,16 @@ let runtimeBridgeFactory = (): DashboardUrlRuntimeBridge => {
   };
 };
 
+let runtimeBridgeFactory = defaultDashboardUrlRuntimeBridgeFactory;
+
 export function setDashboardUrlRuntimeBridgeFactoryForTest(
   factory: () => DashboardUrlRuntimeBridge,
 ): void {
   runtimeBridgeFactory = factory;
+}
+
+export function resetDashboardUrlRuntimeBridgeFactoryForTest(): void {
+  runtimeBridgeFactory = defaultDashboardUrlRuntimeBridgeFactory;
 }
 
 function getRuntimeBridge(): DashboardUrlRuntimeBridge {

@@ -156,6 +156,7 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toContain("    nemoclaw hermes connect");
     expect(sinks.out).toContain("  Manage later");
     expect(sinks.out.join("\n")).not.toContain("openclaw tui");
+    expect(sinks.out.join("\n")).not.toContain("#token=");
   });
 
   it("omits the SSH port-forward hint outside an SSH session", () => {

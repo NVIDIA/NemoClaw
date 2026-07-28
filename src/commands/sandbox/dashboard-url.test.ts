@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DashboardUrlCliCommand, {
+  resetDashboardUrlRuntimeBridgeFactoryForTest,
   setDashboardUrlRuntimeBridgeFactoryForTest,
 } from "./dashboard-url";
 
@@ -18,6 +19,7 @@ describe("dashboard-url CLI output", () => {
   });
 
   afterEach(() => {
+    resetDashboardUrlRuntimeBridgeFactoryForTest();
     vi.restoreAllMocks();
   });
 
