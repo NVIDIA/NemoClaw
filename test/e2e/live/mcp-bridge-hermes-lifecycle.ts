@@ -161,7 +161,8 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
     },
   );
   expectExitZero(effectiveConfig, "Hermes effective MCP config after add gateway restart");
-  expect(effectiveConfig.stdout).toContain('"state": "matched"');
+  const effectiveConfigJson = JSON.parse(effectiveConfig.stdout) as { state: string };
+  expect(effectiveConfigJson.state).toBe("matched");
 
   const shieldsDown = await host.nemoclaw(
     [
