@@ -15,13 +15,14 @@ import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
+  createSandboxRecreateRuntime,
   fingerprintSandboxLiveIdentity,
   fingerprintSandboxRecreateValue,
   fingerprintSandboxRegistryEntry,
   matchingSandboxRecreateTransaction,
   planSandboxRecreateRecovery,
-  selectedGatewayForSandboxRecreate,
   type SandboxRecreateObservation,
+  selectedGatewayForSandboxRecreate,
 } from "./sandbox-recreate-transaction";
 
 const ISO = "2026-07-27T20:00:00.000Z";
@@ -186,6 +187,51 @@ describe("sandbox recreate journal", () => {
         targetGeneration: TARGET_GENERATION,
       }),
     ).toThrow(/does not match the requested replacement/i);
+  });
+
+  it("persists deletion and creation phases through the lower runtime boundary", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    let observation: SandboxRecreateObservation = {
+      state: "ready",
+      liveIdentityFingerprint: SOURCE_ID,
+    };
+    const runtime = createSandboxRecreateRuntime(
+      {
+        loadSession: () => session,
+        updateSession: (mutator) => {
+          mutator(session);
+          return session;
+        },
+      },
+      {
+        id: TX_ID,
+        targetGeneration: TARGET_GENERATION,
+        targetIntentFingerprint: TARGET_INTENT,
+      },
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      () => observation,
+      () => undefined,
+    );
+
+    runtime.advance("deleting");
+    observation = { state: "missing", liveIdentityFingerprint: null };
+    runtime.confirmDeleted();
+    runtime.advance("creating");
+
+    expect(runtime).toMatchObject({
+      acceptedTarget: false,
+      targetGeneration: TARGET_GENERATION,
+    });
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "creating",
+      revision: 3,
+    });
   });
 
   it("selects only the checkpoint-authorized non-default gateway", () => {

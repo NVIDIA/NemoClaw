@@ -12,6 +12,7 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import type { SandboxCreateIntent } from "./types";
 
 const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
   "planned",
@@ -272,4 +273,70 @@ export function matchingSandboxRecreateTransaction(
     );
   }
   return transaction;
+}
+
+interface SandboxRecreateSessionStore {
+  loadSession(): Session | null;
+  updateSession(mutator: (session: Session) => Session | void): Session;
+}
+
+export interface SandboxRecreateRuntime {
+  readonly acceptedTarget: boolean;
+  readonly targetGeneration: string | undefined;
+  advance(phase: CheckpointSandboxRecreatePhase): void;
+  confirmDeleted(): void;
+}
+
+const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
+  acceptedTarget: false,
+  targetGeneration: undefined,
+  advance: () => undefined,
+  confirmDeleted: () => undefined,
+};
+
+export function createSandboxRecreateRuntime(
+  sessionStore: SandboxRecreateSessionStore,
+  request: SandboxCreateIntent["recreateTransaction"] | undefined,
+  sandboxName: string,
+  gatewayName: string,
+  registryEntry: SandboxEntry | null,
+  observe: (sandboxName: string) => SandboxRecreateObservation,
+  note: (message: string) => void,
+): SandboxRecreateRuntime {
+  if (!request) return NO_SANDBOX_RECREATE;
+  const transaction = matchingSandboxRecreateTransaction(sessionStore.loadSession(), {
+    sandboxName,
+    gatewayName,
+    targetIntentFingerprint: request.targetIntentFingerprint,
+    transactionId: request.id,
+    targetGeneration: request.targetGeneration,
+  });
+  const advance = (phase: CheckpointSandboxRecreatePhase): void => {
+    sessionStore.updateSession((current) => {
+      advanceSandboxRecreateTransaction(current, transaction.id, phase);
+      return current;
+    });
+  };
+  const recovery = planSandboxRecreateRecovery(transaction, observe(sandboxName), registryEntry);
+  if (recovery.action === "reject") {
+    throw new Error(`Cannot resume sandbox '${sandboxName}' recreation: ${recovery.reason}.`);
+  }
+  if (recovery.action === "accept_target") {
+    note(`  [resume] Recovering journaled replacement sandbox '${sandboxName}'.`);
+  } else if (recovery.action === "continue_create") {
+    advance("deleted");
+  }
+  return {
+    acceptedTarget: recovery.action === "accept_target",
+    targetGeneration: transaction.targetGeneration,
+    advance,
+    confirmDeleted: () => {
+      if (observe(sandboxName).state !== "missing") {
+        throw new Error(
+          `Cannot continue sandbox '${sandboxName}' recreation: OpenShell still reports the journaled source after delete.`,
+        );
+      }
+      advance("deleted");
+    },
+  };
 }

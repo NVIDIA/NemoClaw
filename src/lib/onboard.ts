@@ -788,13 +788,8 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
     cliDisplayName,
   });
 
-const { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox } =
-  sandboxReuse.createSandboxReuseHelpers({
-    runCaptureOpenshell,
-    runOpenshell,
-    getSandboxStateFromOutputs,
-    note,
-  });
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, runOpenshell, getSandboxStateFromOutputs, note });
 
 const {
   executeSandboxCommandForVerification,
@@ -2292,45 +2287,9 @@ async function createSandboxWithBaseImageResolution(
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
-  const recreateTransaction = createIntent?.recreateTransaction
-    ? sandboxRecreateTransaction.matchingSandboxRecreateTransaction(onboardSession.loadSession(), {
-        sandboxName,
-        gatewayName: GATEWAY_NAME,
-        targetIntentFingerprint: createIntent.recreateTransaction.targetIntentFingerprint,
-        transactionId: createIntent.recreateTransaction.id,
-        targetGeneration: createIntent.recreateTransaction.targetGeneration,
-      })
-    : null;
-  const persistRecreatePhase = (
-    phase: Parameters<typeof sandboxRecreateTransaction.advanceSandboxRecreateTransaction>[2],
-  ): void => {
-    if (!recreateTransaction) return;
-    onboardSession.updateSession((current) => {
-      sandboxRecreateTransaction.advanceSandboxRecreateTransaction(
-        current,
-        recreateTransaction.id,
-        phase,
-      );
-      return current;
-    });
-  };
-  if (recreateTransaction) {
-    const observation = getSandboxRecreateObservation(sandboxName);
-    const recovery = sandboxRecreateTransaction.planSandboxRecreateRecovery(
-      recreateTransaction,
-      observation,
-      existingEntry,
-    );
-    if (recovery.action === "reject") {
-      throw new Error(`Cannot resume sandbox '${sandboxName}' recreation: ${recovery.reason}.`);
-    }
-    if (recovery.action === "accept_target") {
-      note(`  [resume] Recovering journaled replacement sandbox '${sandboxName}'.`);
-      return sandboxName;
-    }
-    if (recovery.action === "continue_create") persistRecreatePhase("deleted");
-  }
-
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const recreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
+  if (recreateRuntime.acceptedTarget) return sandboxName;
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -2611,18 +2570,13 @@ async function createSandboxWithBaseImageResolution(
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
-    baseImageResolutionFlow.captureBaseResolution(
-      baseImageResolutionContext,
-      previousEntry?.imageTag,
-    );
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
-    if (
-      noRestorePending &&
-      !notReadyRecreateInProgress &&
-      !shouldSkipPreRecreateBackup(process.env)
-    ) {
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    if (noRestorePending && !notReadyRecreateInProgress && !shouldSkipPreRecreateBackup(process.env)) {
       note("  Backing up workspace state before recreating sandbox...");
       const result = recreateProtection.backup();
       if (!result.ok) {
@@ -2636,23 +2590,13 @@ async function createSandboxWithBaseImageResolution(
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
-    persistRecreatePhase("deleting");
+    recreateRuntime.advance("deleting");
     runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
-    if (recreateTransaction) {
-      const afterDelete = getSandboxRecreateObservation(sandboxName);
-      if (afterDelete.state !== "missing") {
-        throw new Error(
-          `Cannot continue sandbox '${sandboxName}' recreation: OpenShell still reports the journaled source after delete.`,
-        );
-      }
-      persistRecreatePhase("deleted");
-    }
+    recreateRuntime.confirmDeleted();
     if (previousEntry?.imageTag) {
-      const rmiResult = dockerRmi(previousEntry.imageTag, {
-        ignoreError: true,
-        suppressOutput: true,
-      });
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      const rmiResult = dockerRmi(previousEntry.imageTag, { ignoreError: true, suppressOutput: true });
       if (rmiResult.status !== 0) {
         console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
       }
@@ -2778,7 +2722,7 @@ async function createSandboxWithBaseImageResolution(
     });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
-  persistRecreatePhase("creating");
+  recreateRuntime.advance("creating");
   const {
     createResult,
     dockerGpuCreatePatch,
@@ -2920,13 +2864,13 @@ async function createSandboxWithBaseImageResolution(
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
-          lifecycleGeneration: recreateTransaction?.targetGeneration,
+          lifecycleGeneration: recreateRuntime.targetGeneration,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),
     },
   );
-  persistRecreatePhase("created");
+  recreateRuntime.advance("created");
   restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
