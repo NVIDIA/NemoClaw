@@ -65,6 +65,7 @@ export interface CreatedSandboxRegistryEntryInput {
   dashboardPort: number;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
+  lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
 }
@@ -198,6 +199,7 @@ export function buildCreatedSandboxRegistryEntry(
     dashboardPort: input.dashboardPort,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   };

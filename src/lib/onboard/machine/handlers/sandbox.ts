@@ -84,6 +84,7 @@ import {
   beginSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
+  type SandboxRecreateObservation,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
 import {
@@ -188,9 +189,7 @@ export interface SandboxStateOptions<
       right: MessagingChannelConfig | null,
     ): boolean;
     getSandboxReuseState(sandboxName: string | null): string;
-    getSandboxRecreateObservation?(
-      sandboxName: string | null,
-    ): import("../../sandbox-recreate-transaction").SandboxRecreateObservation;
+    getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
     getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
@@ -1213,17 +1212,12 @@ class SandboxStateFlow<
     if (!gateway) return null;
     const sourceEntry = this.deps.getSandboxRegistryEntry(sandboxName);
     if (!existing && !sourceEntry) return null;
-    if (!this.deps.getSandboxRecreateObservation) {
-      if (existing) throw new Error("Sandbox recreate observation dependency is unavailable.");
-      return null;
-    }
     const observation = this.deps.getSandboxRecreateObservation(sandboxName);
     const targetIntentFingerprint = fingerprintSandboxRecreateValue(
       this.currentSandboxCreateFingerprint(sandboxName, createIntent.resolved),
     );
-    let transaction: CheckpointSandboxRecreateTransaction | null = null;
-    this.deps.updateSession((current) => {
-      transaction = beginSandboxRecreateTransaction(current, {
+    const updated = this.deps.updateSession((current) => {
+      beginSandboxRecreateTransaction(current, {
         sandboxName,
         gatewayName: gateway.gatewayName,
         gatewayPort: gateway.gatewayPort,
@@ -1233,7 +1227,7 @@ class SandboxStateFlow<
       });
       return current;
     });
-    return transaction;
+    return updated.checkpoint?.sandboxRecreate ?? null;
   }
 
   private recordSandboxRecreatePhase(

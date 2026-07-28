@@ -57,6 +57,7 @@ function recreateTransaction(): CheckpointSandboxRecreateTransaction {
     sourceLiveIdentityFingerprint: "b".repeat(64),
     targetIntentFingerprint: "c".repeat(64),
     targetGeneration: "22222222-2222-4222-8222-222222222222",
+    targetLiveIdentityFingerprint: null,
     phase: "creating",
     startedAt: ISO,
     updatedAt: ISO,
@@ -241,6 +242,16 @@ describe("checkpoint schema inspection", () => {
   it("rejects malformed recreate journal fingerprints", () => {
     const serialized = serializedRecreateCheckpoint();
     (serialized.sandboxRecreate as Record<string, unknown>).targetIntentFingerprint = "bad";
+
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+  });
+
+  it.each([
+    "sourceLiveIdentityFingerprint",
+    "targetLiveIdentityFingerprint",
+  ])("rejects a malformed nullable recreate journal field: %s", (field) => {
+    const serialized = serializedRecreateCheckpoint();
+    (serialized.sandboxRecreate as Record<string, unknown>)[field] = 42;
 
     expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
   });

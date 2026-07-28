@@ -151,6 +151,10 @@ function parseGatewaySupervisor(value: unknown): CheckpointGatewaySupervisor | n
   return { kind, serviceName, execPath };
 }
 
+function canonicalGatewayName(gatewayPort: number): string {
+  return gatewayPort === DEFAULT_GATEWAY_PORT ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`;
+}
+
 function parseGatewayAuthorityValue(value: unknown): CheckpointGatewayAuthority | null {
   if (!isObjectRecord(value)) return null;
   const gatewayName = readString(value.gatewayName);
@@ -168,8 +172,7 @@ function parseGatewayAuthorityValue(value: unknown): CheckpointGatewayAuthority 
   ) {
     return null;
   }
-  const canonicalName =
-    gatewayPort === DEFAULT_GATEWAY_PORT ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`;
+  const canonicalName = canonicalGatewayName(Number(gatewayPort));
   if (gatewayName !== canonicalName) return null;
   if (mode !== "nemoclaw-managed" && mode !== "externally-supervised") return null;
   if (source !== "declared" && source !== "packaged-service" && source !== "standalone")
@@ -245,6 +248,12 @@ function parseBindings(value: unknown): CheckpointBindings | null {
   if (credentialEnvs === null || registeredProviders === null) return null;
   return { credentialEnvs, registeredProviders };
 }
+
+function readNullableSha256(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === "string" && SHA256_PATTERN.test(value) ? value : undefined;
+}
+
 function parseSandboxRecreateTransaction(
   value: unknown,
 ): CheckpointSandboxRecreateTransaction | null {
@@ -254,12 +263,10 @@ function parseSandboxRecreateTransaction(
   const gatewayName = readString(value.gatewayName);
   const gatewayPort = value.gatewayPort;
   const sourceRegistryFingerprint = readString(value.sourceRegistryFingerprint);
-  const sourceLiveIdentityFingerprint =
-    value.sourceLiveIdentityFingerprint === null
-      ? null
-      : readString(value.sourceLiveIdentityFingerprint);
+  const sourceLiveIdentityFingerprint = readNullableSha256(value.sourceLiveIdentityFingerprint);
   const targetIntentFingerprint = readString(value.targetIntentFingerprint);
   const targetGeneration = readString(value.targetGeneration);
+  const targetLiveIdentityFingerprint = readNullableSha256(value.targetLiveIdentityFingerprint);
   const phase = value.phase;
   const startedAt = readCanonicalIsoTimestamp(value.startedAt);
   const updatedAt = readCanonicalIsoTimestamp(value.updatedAt);
@@ -275,16 +282,15 @@ function parseSandboxRecreateTransaction(
     !Number.isInteger(gatewayPort) ||
     Number(gatewayPort) < 1 ||
     Number(gatewayPort) > 65535 ||
-    gatewayName !==
-      (gatewayPort === DEFAULT_GATEWAY_PORT ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`) ||
+    gatewayName !== canonicalGatewayName(Number(gatewayPort)) ||
     !sourceRegistryFingerprint ||
     !SHA256_PATTERN.test(sourceRegistryFingerprint) ||
-    (sourceLiveIdentityFingerprint !== null &&
-      (!sourceLiveIdentityFingerprint || !SHA256_PATTERN.test(sourceLiveIdentityFingerprint))) ||
+    sourceLiveIdentityFingerprint === undefined ||
     !targetIntentFingerprint ||
     !SHA256_PATTERN.test(targetIntentFingerprint) ||
     !targetGeneration ||
     !UUID_PATTERN.test(targetGeneration) ||
+    targetLiveIdentityFingerprint === undefined ||
     typeof phase !== "string" ||
     !SANDBOX_RECREATE_PHASES.has(phase as CheckpointSandboxRecreatePhase) ||
     !Number.isSafeInteger(revision) ||
@@ -305,6 +311,7 @@ function parseSandboxRecreateTransaction(
     sourceLiveIdentityFingerprint,
     targetIntentFingerprint,
     targetGeneration,
+    targetLiveIdentityFingerprint,
     phase: phase as CheckpointSandboxRecreatePhase,
     startedAt,
     updatedAt,

@@ -84,8 +84,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     },
   });
   expect(getSandboxRecreateObservation).toHaveBeenCalledWith("saved");
-  expect(phases).toEqual(
-    expect.arrayContaining(["planned", "registry_committing", "completed", null]),
-  );
+  const orderedPhases = phases.filter((phase, index) => index === 0 || phase !== phases[index - 1]);
+  expect(orderedPhases).toEqual([null, "planned", "registry_committing", "completed", null]);
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });

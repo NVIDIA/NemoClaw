@@ -2289,7 +2289,28 @@ async function createSandboxWithBaseImageResolution(
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const recreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
-  if (recreateRuntime.acceptedTarget) return sandboxName;
+  const restoreReusedSandboxDashboard = (selectionVerified: boolean): void => {
+    ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
+      sandboxName,
+      chatUiUrl,
+      env: process.env,
+      agent,
+      model,
+      provider,
+      selectionVerified,
+      sandboxGpuConfig: effectiveSandboxGpuConfig,
+      gatewayName: GATEWAY_NAME,
+      gatewayPort: GATEWAY_PORT,
+      manageDashboard,
+      ensureDashboardForward,
+      hermesDashboardForwarding,
+      updateReusedSandboxMetadata,
+    }));
+  };
+  if (recreateRuntime.acceptedTarget) {
+    restoreReusedSandboxDashboard(true);
+    return sandboxName;
+  }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -2436,22 +2457,7 @@ async function createSandboxWithBaseImageResolution(
                 "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
               );
             }
-            ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
-              sandboxName,
-              chatUiUrl,
-              env: process.env,
-              agent,
-              model,
-              provider,
-              selectionVerified: !selectionDrift.unknown,
-              sandboxGpuConfig: effectiveSandboxGpuConfig,
-              gatewayName: GATEWAY_NAME,
-              gatewayPort: GATEWAY_PORT,
-              manageDashboard,
-              ensureDashboardForward,
-              hermesDashboardForwarding,
-              updateReusedSandboxMetadata,
-            }));
+            restoreReusedSandboxDashboard(!selectionDrift.unknown);
             return sandboxName;
           }
         } else {
@@ -2481,22 +2487,7 @@ async function createSandboxWithBaseImageResolution(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
             upsertMessagingProviders(messagingTokenDefs);
-            ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
-              sandboxName,
-              chatUiUrl,
-              env: process.env,
-              agent,
-              model,
-              provider,
-              selectionVerified: !selectionDrift.unknown,
-              sandboxGpuConfig: effectiveSandboxGpuConfig,
-              gatewayName: GATEWAY_NAME,
-              gatewayPort: GATEWAY_PORT,
-              manageDashboard,
-              ensureDashboardForward,
-              hermesDashboardForwarding,
-              updateReusedSandboxMetadata,
-            }));
+            restoreReusedSandboxDashboard(!selectionDrift.unknown);
             return sandboxName;
           }
         }
@@ -2818,6 +2809,7 @@ async function createSandboxWithBaseImageResolution(
     buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`) ??
     resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId);
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
+  recreateRuntime.recordCreated();
   finalizeCreatedSandbox(
     {
       sandboxName,
@@ -2864,13 +2856,12 @@ async function createSandboxWithBaseImageResolution(
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
-          lifecycleGeneration: recreateRuntime.targetGeneration,
+          ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),
     },
   );
-  recreateRuntime.advance("created");
   restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated

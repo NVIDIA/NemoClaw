@@ -112,13 +112,18 @@ export function applyReusedSandboxDashboardState(
 }
 
 export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseHelpers {
-  function getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation {
-    if (!sandboxName) return { state: "missing", liveIdentityFingerprint: null };
+  function readSandboxState(sandboxName: string | null): { state: string; getOutput: string } {
+    if (!sandboxName) return { state: "missing", getOutput: "" };
     const getOutput = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], {
       ignoreError: true,
     });
     const listOutput = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
     const state = deps.getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
+    return { state, getOutput };
+  }
+
+  function getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation {
+    const { state, getOutput } = readSandboxState(sandboxName);
     if (state !== "missing" && state !== "not_ready" && state !== "ready") {
       throw new Error(
         `Cannot observe sandbox '${sandboxName}' for recreate recovery: OpenShell returned state '${state}'.`,
@@ -132,7 +137,7 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
   }
 
   function getSandboxReuseState(sandboxName: string | null): string {
-    return getSandboxRecreateObservation(sandboxName).state;
+    return readSandboxState(sandboxName).state;
   }
 
   function repairRecordedSandbox(sandboxName: string | null): void {

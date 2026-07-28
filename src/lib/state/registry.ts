@@ -187,12 +187,14 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   dashboardPort?: number | null;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;
+  /** Generation proving which durable same-name recreate registered this row. */
+  lifecycleGeneration?: string;
+  /** Hashed OpenShell identity paired with lifecycleGeneration for exact recovery. */
+  lifecycleLiveIdentityFingerprint?: string;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
   // instead of the process-global `nemoclaw` singleton — a second sandbox on a
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
-  /** Generation proving which durable same-name recreate registered this row. */
-  lifecycleGeneration?: string;
   gatewayName?: string | null;
   gatewayPort?: number | null;
 }

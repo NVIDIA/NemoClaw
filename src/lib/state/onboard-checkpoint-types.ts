@@ -93,6 +93,7 @@ export interface CheckpointSandboxRecreateTransaction {
   readonly sourceLiveIdentityFingerprint: string | null;
   readonly targetIntentFingerprint: string;
   readonly targetGeneration: string;
+  readonly targetLiveIdentityFingerprint: string | null;
   readonly phase: CheckpointSandboxRecreatePhase;
   readonly startedAt: string;
   readonly updatedAt: string;

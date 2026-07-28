@@ -3,8 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
-import { applyReusedSandboxDashboardState, createSandboxReuseHelpers } from "./sandbox-reuse";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
+import { applyReusedSandboxDashboardState, createSandboxReuseHelpers } from "./sandbox-reuse";
 
 describe("applyReusedSandboxDashboardState", () => {
   afterEach(() => {
@@ -225,7 +225,7 @@ describe("createSandboxReuseHelpers", () => {
     );
   });
 
-  it("rejects an OpenShell state outside the recovery model", () => {
+  it("preserves an unknown reuse state but rejects it for recreate recovery", () => {
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell: vi.fn(() => ""),
       runOpenshell: vi.fn(),
@@ -233,6 +233,7 @@ describe("createSandboxReuseHelpers", () => {
       note: vi.fn(),
     });
 
+    expect(helpers.getSandboxReuseState("alpha")).toBe("unknown");
     expect(() => helpers.getSandboxRecreateObservation("alpha")).toThrow(/state 'unknown'/);
   });
 });

@@ -29,6 +29,7 @@ const ISO = "2026-07-27T20:00:00.000Z";
 const TX_ID = "11111111-1111-4111-8111-111111111111";
 const TARGET_GENERATION = "22222222-2222-4222-8222-222222222222";
 const SOURCE_ID = fingerprintSandboxRecreateValue("openshell-source-id");
+const TARGET_ID = fingerprintSandboxRecreateValue("target-id");
 const TARGET_INTENT = fingerprintSandboxRecreateValue({
   agent: "openclaw",
   provider: "nvidia",
@@ -71,6 +72,7 @@ function transactionAt(
     sourceLiveIdentityFingerprint: SOURCE_ID,
     targetIntentFingerprint: TARGET_INTENT,
     targetGeneration: TARGET_GENERATION,
+    targetLiveIdentityFingerprint: TARGET_ID,
     phase,
     startedAt: ISO,
     updatedAt: ISO,
@@ -223,15 +225,89 @@ describe("sandbox recreate journal", () => {
     observation = { state: "missing", liveIdentityFingerprint: null };
     runtime.confirmDeleted();
     runtime.advance("creating");
+    observation = { state: "ready", liveIdentityFingerprint: TARGET_ID };
+    runtime.recordCreated();
 
     expect(runtime).toMatchObject({
       acceptedTarget: false,
       targetGeneration: TARGET_GENERATION,
     });
-    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
-      phase: "creating",
-      revision: 3,
+    expect(runtime.registrationFields).toEqual({
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: TARGET_ID,
     });
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "created",
+      revision: 4,
+      targetLiveIdentityFingerprint: TARGET_ID,
+    });
+  });
+
+  it("recovers or rejects at every resumed-onboard mutation boundary (#6492)", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    let observation: SandboxRecreateObservation = {
+      state: "ready",
+      liveIdentityFingerprint: SOURCE_ID,
+    };
+    let registryEntry: SandboxEntry = SOURCE_ENTRY;
+    const sessionStore = {
+      loadSession: () => session,
+      updateSession: (mutator: (current: ReturnType<typeof createSession>) => void) => {
+        mutator(session);
+        return session;
+      },
+    };
+    const request = {
+      id: TX_ID,
+      targetGeneration: TARGET_GENERATION,
+      targetIntentFingerprint: TARGET_INTENT,
+    };
+    const restart = () =>
+      createSandboxRecreateRuntime(
+        sessionStore,
+        request,
+        "alpha",
+        "nemoclaw-31818",
+        registryEntry,
+        () => observation,
+        () => undefined,
+      );
+
+    let runtime = restart();
+    expect(runtime.acceptedTarget).toBe(false);
+
+    runtime.advance("deleting");
+    expect(restart().acceptedTarget).toBe(false);
+
+    observation = { state: "missing", liveIdentityFingerprint: null };
+    runtime.confirmDeleted();
+    runtime = restart();
+    expect(runtime.acceptedTarget).toBe(false);
+
+    runtime.advance("creating");
+    expect(restart().acceptedTarget).toBe(false);
+
+    observation = { state: "ready", liveIdentityFingerprint: TARGET_ID };
+    runtime.recordCreated();
+    expect(() => restart()).toThrow(/registration did not commit/i);
+
+    registryEntry = {
+      ...SOURCE_ENTRY,
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: TARGET_ID,
+    };
+    expect(restart().acceptedTarget).toBe(true);
+
+    advanceSandboxRecreateTransaction(session, TX_ID, "registry_committing", ISO);
+    expect(restart().acceptedTarget).toBe(true);
+    advanceSandboxRecreateTransaction(session, TX_ID, "completed", ISO);
+    expect(restart().acceptedTarget).toBe(true);
+    clearCompletedSandboxRecreateTransaction(session, TX_ID);
+    expect(session.checkpoint?.sandboxRecreate).toBeNull();
   });
 
   it("selects only the checkpoint-authorized non-default gateway", () => {
@@ -300,8 +376,12 @@ describe("sandbox recreate recovery", () => {
     expect(
       planSandboxRecreateRecovery(
         transactionAt(phase),
-        { state: "ready", liveIdentityFingerprint: fingerprintSandboxRecreateValue("target-id") },
-        { ...SOURCE_ENTRY, lifecycleGeneration: TARGET_GENERATION },
+        { state: "ready", liveIdentityFingerprint: TARGET_ID },
+        {
+          ...SOURCE_ENTRY,
+          lifecycleGeneration: TARGET_GENERATION,
+          lifecycleLiveIdentityFingerprint: TARGET_ID,
+        },
       ),
     ).toEqual({ action: "accept_target" });
   });
@@ -343,10 +423,41 @@ describe("sandbox recreate recovery", () => {
     expect(
       planSandboxRecreateRecovery(
         transactionAt("registry_committing"),
-        { state: "not_ready", liveIdentityFingerprint: fingerprintSandboxRecreateValue("target") },
-        { ...SOURCE_ENTRY, lifecycleGeneration: TARGET_GENERATION },
+        { state: "not_ready", liveIdentityFingerprint: TARGET_ID },
+        {
+          ...SOURCE_ENTRY,
+          lifecycleGeneration: TARGET_GENERATION,
+          lifecycleLiveIdentityFingerprint: TARGET_ID,
+        },
       ),
     ).toMatchObject({ action: "reject", reason: expect.stringMatching(/not ready/) });
+  });
+
+  it("rejects a ready same-name sandbox whose identity differs from the registered target", () => {
+    expect(
+      planSandboxRecreateRecovery(
+        transactionAt("registry_committing"),
+        { state: "ready", liveIdentityFingerprint: fingerprintSandboxRecreateValue("other-id") },
+        {
+          ...SOURCE_ENTRY,
+          lifecycleGeneration: TARGET_GENERATION,
+          lifecycleLiveIdentityFingerprint: TARGET_ID,
+        },
+      ),
+    ).toMatchObject({ action: "reject", reason: expect.stringMatching(/not the journaled/) });
+  });
+
+  it("rejects a created target whose registry row never committed the generation", () => {
+    expect(
+      planSandboxRecreateRecovery(
+        transactionAt("created"),
+        { state: "ready", liveIdentityFingerprint: TARGET_ID },
+        SOURCE_ENTRY,
+      ),
+    ).toMatchObject({
+      action: "reject",
+      reason: expect.stringMatching(/did not commit the journaled generation/),
+    });
   });
 });
 
