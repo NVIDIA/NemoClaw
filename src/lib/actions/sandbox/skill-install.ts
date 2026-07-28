@@ -72,6 +72,43 @@ export type SkillRemoveRequest = {
   extraArgs?: string[];
 };
 
+function lstatOrNull(candidatePath: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(candidatePath);
+  } catch {
+    return null;
+  }
+}
+
+type RegularFileRead =
+  | { content: string; success: true }
+  | { reason: "invalid" | "missing"; success: false };
+
+function readRegularFileNoFollow(candidatePath: string): RegularFileRead {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  const nonblock = fs.constants.O_NONBLOCK;
+  if (typeof noFollow !== "number" || typeof nonblock !== "number") {
+    return { reason: "invalid", success: false };
+  }
+
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(candidatePath, fs.constants.O_RDONLY | noFollow | nonblock);
+    if (!fs.fstatSync(descriptor).isFile()) return { reason: "invalid", success: false };
+    return { content: fs.readFileSync(descriptor, "utf8"), success: true };
+  } catch (error) {
+    return {
+      reason:
+        error instanceof Error && "code" in error && error.code === "ENOENT"
+          ? "missing"
+          : "invalid",
+      success: false,
+    };
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 export function printPluginInstallHint(): void {
   console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
   console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
@@ -231,7 +268,8 @@ export async function installSandboxSkill(
   }
 
   const resolvedPath = path.resolve(skillPath);
-  if (fs.existsSync(resolvedPath) && fs.lstatSync(resolvedPath).isSymbolicLink()) {
+  const resolvedStat = lstatOrNull(resolvedPath);
+  if (resolvedStat?.isSymbolicLink()) {
     console.error(`  Skill path '${resolvedPath}' must not be a symbolic link.`);
     process.exit(1);
   }
@@ -239,10 +277,10 @@ export async function installSandboxSkill(
   // Accept a directory containing SKILL.md, or a direct path to SKILL.md.
   let skillDir: string;
   let skillMdPath: string;
-  if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
+  if (resolvedStat?.isDirectory()) {
     skillDir = resolvedPath;
     skillMdPath = path.join(resolvedPath, "SKILL.md");
-  } else if (fs.existsSync(resolvedPath) && resolvedPath.endsWith("SKILL.md")) {
+  } else if (resolvedStat?.isFile() && resolvedPath.endsWith("SKILL.md")) {
     skillDir = path.dirname(resolvedPath);
     skillMdPath = resolvedPath;
   } else {
@@ -254,7 +292,8 @@ export async function installSandboxSkill(
     process.exit(1);
   }
 
-  if (!fs.existsSync(skillMdPath)) {
+  const skillMdRead = readRegularFileNoFollow(skillMdPath);
+  if (!skillMdRead.success && skillMdRead.reason === "missing") {
     console.error(`  No SKILL.md found in '${skillDir}'.`);
     console.error("  The skill directory must contain a SKILL.md file.");
     if (looksLikeOpenClawPlugin(skillDir)) {
@@ -262,8 +301,7 @@ export async function installSandboxSkill(
     }
     process.exit(1);
   }
-  const skillMdStat = fs.lstatSync(skillMdPath);
-  if (!skillMdStat.isFile() || skillMdStat.isSymbolicLink()) {
+  if (!skillMdRead.success) {
     console.error(`  SKILL.md at '${skillMdPath}' must be a regular file, not a symbolic link.`);
     process.exit(1);
   }
@@ -271,8 +309,7 @@ export async function installSandboxSkill(
   // 1. Validate frontmatter
   let frontmatter;
   try {
-    const content = fs.readFileSync(skillMdPath, "utf-8");
-    frontmatter = skillInstall.parseFrontmatter(content);
+    frontmatter = skillInstall.parseFrontmatter(skillMdRead.content);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     console.error(`  ${errorMessage}`);
