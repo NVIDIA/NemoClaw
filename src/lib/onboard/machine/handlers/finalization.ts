@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Session } from "../../../state/onboard-session";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import {
+  advanceTo,
   completeOnboardMachine,
   type OnboardStateCompleteResult,
   type OnboardStatePauseResult,
+  type OnboardStateTransitionResult,
   pauseOnboardMachine,
 } from "../result";
 
@@ -29,7 +30,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      * registered as default (#4614).
      */
     setDefaultSandbox(sandboxName: string): void;
-    recordPostVerifyStarted(): Promise<Session>;
     toSessionUpdates(
       updates: Record<string, unknown>,
     ): NonNullable<OnboardStateCompleteResult["updates"]>;
@@ -83,8 +83,12 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
 }
 
 export interface FinalizationStateResult {
-  stateResult: OnboardStateCompleteResult | OnboardStatePauseResult;
+  stateResult: OnboardStateTransitionResult;
   unmigratedLegacyKeys: string[];
+}
+
+export interface PostVerifyStateResult {
+  stateResult: OnboardStateCompleteResult | OnboardStatePauseResult;
   verificationDiagnostics: string[];
   deploymentHealthy: boolean;
 }
@@ -122,12 +126,7 @@ function logTerminalReadyBlock(
 
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
   sandboxName,
-  model,
-  provider,
-  nimContainer,
   agent,
-  hermesAuthMethod,
-  hermesToolGateways,
   stagedLegacyKeys,
   migratedLegacyKeys,
   webSearchEnabled,
@@ -189,7 +188,27 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.ensureAgentDashboardForward(sandboxName, agent);
   }
 
-  await deps.recordPostVerifyStarted();
+  return {
+    stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+    unmigratedLegacyKeys,
+  };
+}
+
+export async function handlePostVerifyState<Agent, VerifyChain, VerificationResult>({
+  sandboxName,
+  model,
+  provider,
+  nimContainer,
+  agent,
+  hermesAuthMethod,
+  hermesToolGateways,
+  deps,
+}: FinalizationStateOptions<
+  Agent,
+  VerifyChain,
+  VerificationResult
+>): Promise<PostVerifyStateResult> {
+  const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
 
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
@@ -214,11 +233,11 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     hermesToolGateways,
   });
   const stateResult = deploymentHealthy
-    ? completeOnboardMachine(sessionUpdates, { state: "finalizing" })
+    ? completeOnboardMachine(sessionUpdates, { state: "post_verify" })
     : pauseOnboardMachine(sessionUpdates, {
-        state: "finalizing",
+        state: "post_verify",
         reason: "deployment_not_ready",
       });
 
-  return { stateResult, unmigratedLegacyKeys, verificationDiagnostics, deploymentHealthy };
+  return { stateResult, verificationDiagnostics, deploymentHealthy };
 }

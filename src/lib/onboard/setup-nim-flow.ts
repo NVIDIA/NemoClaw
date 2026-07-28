@@ -568,7 +568,7 @@ export function createSetupNim(
           }
           if (vllmRunning) {
             const message =
-              `vLLM is already running on localhost:${String(deps.vllmPort)}. ` +
+              "vLLM is already running on this host. " +
               "Select Local vLLM, or stop the existing server before selecting the managed install path.";
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
