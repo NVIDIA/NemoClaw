@@ -1250,6 +1250,13 @@ mcpBridgeShardTest("hermes")(
       HERMES_SANDBOX_NAME,
       mcpUrl,
     );
+    await assertSecretAbsentFromSandbox(
+      sandbox,
+      HERMES_SANDBOX_NAME,
+      ["/sandbox/.hermes", "/tmp/nemoclaw-start.log"],
+      [HOST_SECRET],
+      "hermes-assert-secret-absent-after-add-gateway-restart",
+    );
     progress.phase("exercise lifecycle and confirm Hermes bridge removal");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",

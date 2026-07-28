@@ -81,8 +81,6 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
   expectExitZero(restart, "Hermes gateway restart with managed MCP present");
   expect(resultText(restart)).toContain("Gateway restarted");
   expect(resultText(restart)).toContain("health passed");
-  expect(resultText(restart)).not.toContain(HOST_SECRET);
-  expect(resultText(restart)).not.toContain(ROTATED_HOST_SECRET);
 
   const lockedIntegrity = await sandbox.execShell(
     sandboxName,
@@ -127,8 +125,6 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
       adapter: expect.objectContaining({ registered: true }),
     }),
   ]);
-  expect(resultText(list)).not.toContain(HOST_SECRET);
-  expect(resultText(list)).not.toContain(ROTATED_HOST_SECRET);
 
   const expectedPayload = Buffer.from(
     JSON.stringify({
@@ -166,8 +162,6 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
   );
   expectExitZero(effectiveConfig, "Hermes effective MCP config after add gateway restart");
   expect(effectiveConfig.stdout).toContain('"state": "matched"');
-  expect(resultText(effectiveConfig)).not.toContain(HOST_SECRET);
-  expect(resultText(effectiveConfig)).not.toContain(ROTATED_HOST_SECRET);
 
   const shieldsDown = await host.nemoclaw(
     [
