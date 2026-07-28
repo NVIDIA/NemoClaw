@@ -366,6 +366,8 @@ function Get-WslCheckoutSyncScript {
 
     $normalizedCheckout = $Checkout.TrimEnd('/')
     $normalizedWorkdir = $Workdir.TrimEnd('/')
+    $dedicatedWorkdirPattern = '^/tmp/nemoclaw-wsl-(?:workdir|vitest)/[1-9][0-9]*-[1-9][0-9]*$'
+    $workdirUsesDedicatedRoot = $normalizedWorkdir -cmatch $dedicatedWorkdirPattern
     $unsafePathSegment = '(^|/)\.{1,2}(/|$)'
     $workdirOverlapsCheckout = $normalizedCheckout -eq $normalizedWorkdir -or
         $normalizedCheckout.StartsWith(
@@ -376,17 +378,18 @@ function Get-WslCheckoutSyncScript {
         [string]::IsNullOrWhiteSpace($normalizedWorkdir) -or
         -not $normalizedWorkdir.StartsWith('/') -or
         $normalizedWorkdir -eq '/' -or
+        -not $workdirUsesDedicatedRoot -or
         $normalizedWorkdir -match $unsafePathSegment -or
         $workdirOverlapsCheckout
     ) {
-        throw "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '$Workdir'."
+        throw "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not be the checkout, its ancestor, or contain traversal: '$Workdir'."
     }
 
-    $workdirParent = $Workdir.Substring(0, $Workdir.LastIndexOf('/'))
+    $workdirRoot = $normalizedWorkdir.Substring(0, $normalizedWorkdir.LastIndexOf('/'))
     $checkoutLiteral = ConvertTo-BashLiteral -Value $Checkout
     $checkoutGitLiteral = ConvertTo-BashLiteral -Value "$Checkout/.git"
     $workdirLiteral = ConvertTo-BashLiteral -Value $Workdir
-    $workdirParentLiteral = ConvertTo-BashLiteral -Value $workdirParent
+    $workdirRootLiteral = ConvertTo-BashLiteral -Value $workdirRoot
     $ownerCommand = if ($Owner) {
         $ownerGroupLiteral = ConvertTo-BashLiteral -Value "${Owner}:${Owner}"
         "chown -R $ownerGroupLiteral $workdirLiteral"
@@ -402,8 +405,12 @@ function Get-WslCheckoutSyncScript {
         '  exit 1'
         'fi'
         "# Keep npm and test I/O on WSL's ext4 VHD instead of DrvFS."
+        "mkdir -p $workdirRootLiteral"
+        "if [ -L $workdirRootLiteral ]; then"
+        "  echo 'Refusing a symlinked WSL CI workdir root' >&2"
+        '  exit 1'
+        'fi'
         "rm -rf $workdirLiteral"
-        "mkdir -p $workdirParentLiteral"
         'rsync -a --no-owner --no-group --delete \'
         "  --exclude '/node_modules/' \"
         "  --exclude '/nemoclaw/node_modules/' \"
