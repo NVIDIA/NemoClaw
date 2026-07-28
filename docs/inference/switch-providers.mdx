@@ -3,14 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Switch Inference Providers"
 sidebar-title: "Switch Providers"
-description: "Move a NemoClaw-managed sandbox to another registered inference provider."
+description: "Move a NemoClaw-managed sandbox to another inference provider."
 description-agent: "Switches inference provider families. Use when moving a sandbox between hosted, local, or compatible provider routes."
 keywords: ["switch nemoclaw provider", "change inference provider", "nemoclaw inference set provider"]
 content:
   type: "how_to"
 ---
 Move a sandbox to another provider family while keeping the OpenShell route, agent configuration, and host registry aligned.
-Use onboarding first when the target provider is not registered.
+Use onboarding first when the target is neither `compatible-endpoint` nor `compatible-anthropic-endpoint` and is not registered.
+The compatible endpoint workflow below can register an absent custom provider from complete route metadata.
 
 ## Find a Registered Provider
 
@@ -25,8 +26,9 @@ $$nemoclaw credentials list
 `inference set` also accepts installer-facing provider names such as `anthropicCompatible`, `build`, and `custom`.
 NemoClaw normalizes an accepted alias to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
 
-If OpenShell cannot find the requested provider, NemoClaw leaves the route and sandbox state unchanged.
+If OpenShell cannot find a requested provider other than `compatible-endpoint` or `compatible-anthropic-endpoint`, NemoClaw leaves the route and sandbox state unchanged.
 Run `$$nemoclaw onboard` to register the provider, then retry the switch.
+For a compatible custom endpoint, pass the complete route metadata described below so NemoClaw can register the provider.
 
 </AgentOnly>
 
@@ -80,16 +82,25 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 <AgentOnly variant="openclaw,hermes">
 
 When moving from another provider family to `compatible-endpoint` or `compatible-anthropic-endpoint`, provide the trusted endpoint URL and enough API metadata to record the complete route identity.
+Export the canonical credential environment variable for the target provider.
 Run this command within the shields-down window shown in the runtime switching workflow.
 
 ```bash
+export COMPATIBLE_API_KEY="<api-key>"
 $$nemoclaw inference set \
   --provider compatible-endpoint \
   --model <model-name> \
   --endpoint-url <trusted-url> \
+  --credential-env COMPATIBLE_API_KEY \
   --inference-api openai-completions \
   --sandbox <name>
 ```
+
+NemoClaw validates the endpoint before it changes the route.
+For an HTTPS IP-literal or DNS-pinned HTTP endpoint, NemoClaw registers and verifies an absent provider before selecting the route.
+If OpenShell still reports the provider as absent, NemoClaw retries the switch once.
+If route selection fails, NemoClaw removes a newly created provider and leaves the inference selection unchanged.
+For a DNS-backed HTTPS endpoint, NemoClaw registers the HTTPS Pin Runtime provider before the first route attempt.
 
 Supported API-family values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 For a Hermes `compatible-anthropic-endpoint` target, omit `--inference-api` because NemoClaw selects `openai-completions`.
