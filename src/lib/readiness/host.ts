@@ -167,6 +167,7 @@ export function collectHostObservations(
 function observation(id: string, value: EvidenceScalar | undefined): ReadinessObservation {
   if (value === undefined || value === null || value === "unknown") return { id, state: "unknown" };
   if (typeof value === "boolean") return { id, state: value ? "present" : "absent", value };
+  if (typeof value === "string") return { id, state: "present", value: safeEvidence(value) };
   return { id, state: "present", value };
 }
 
@@ -284,7 +285,10 @@ export function projectHostReadiness(
       host.hostGpuPlatform !== "jetson" &&
       !(host.isWsl && host.runtime === "docker-desktop");
     const cdiHealthy =
-      !cdiApplies || (!host.cdiNvidiaGpuSpecMissing && !host.cdiNvidiaGpuSpecNeedsRepair);
+      !cdiApplies ||
+      (!host.cdiNvidiaGpuSpecMissing &&
+        !host.cdiNvidiaGpuSpecStale &&
+        !host.cdiNvidiaGpuSpecNeedsRepair);
     observations = [
       observation("host.os.platform", host.platform),
       observation("host.os.architecture", host.architecture),
@@ -393,6 +397,15 @@ export function projectHostReadiness(
           "warning",
           "The detected container runtime is unsupported.",
           ["host.docker.runtime_supported"],
+        ),
+      );
+    if (host.hasNestedOverlayConflict)
+      findings.push(
+        finding(
+          "host.docker.storage_incompatible",
+          "blocking",
+          "The Docker storage configuration cannot support nested overlay mounts.",
+          ["host.docker.storage_compatible"],
         ),
       );
     if (host.hasNvidiaGpu && !host.nvidiaContainerToolkitInstalled)

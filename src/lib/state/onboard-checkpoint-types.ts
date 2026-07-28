@@ -4,7 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import type { OnboardMachineState } from "../onboard/machine/types";
 
-export const CHECKPOINT_SCHEMA_VERSION = 2 as const;
+export const CHECKPOINT_SCHEMA_VERSION = 3 as const;
 
 export type CheckpointSchemaVersion = typeof CHECKPOINT_SCHEMA_VERSION;
 
@@ -68,6 +68,37 @@ export interface CheckpointBindings {
   readonly registeredProviders: readonly CheckpointProviderBinding[];
 }
 
+export type CheckpointSandboxRecreatePhase =
+  | "planned"
+  | "deleting"
+  | "deleted"
+  | "creating"
+  | "created"
+  | "registry_committing"
+  | "completed";
+
+/**
+ * Secret-free journal for one same-name sandbox replacement. The containing
+ * checkpoint supplies the session identity; the generation stamped into the
+ * replacement registry row proves which same-name sandbox this run created.
+ */
+export interface CheckpointSandboxRecreateTransaction {
+  readonly version: 1;
+  readonly id: string;
+  readonly revision: number;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly sourceRegistryFingerprint: string;
+  readonly sourceLiveIdentityFingerprint: string | null;
+  readonly targetIntentFingerprint: string;
+  readonly targetGeneration: string;
+  readonly targetLiveIdentityFingerprint: string | null;
+  readonly phase: CheckpointSandboxRecreatePhase;
+  readonly startedAt: string;
+  readonly updatedAt: string;
+}
+
 export interface OnboardCheckpoint {
   readonly schemaVersion: CheckpointSchemaVersion;
   readonly sessionId: string;
@@ -82,6 +113,7 @@ export interface OnboardCheckpoint {
     Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>>
   >;
   readonly bindings: CheckpointBindings;
+  readonly sandboxRecreate: CheckpointSandboxRecreateTransaction | null;
 }
 
 export type CheckpointLoadResult =

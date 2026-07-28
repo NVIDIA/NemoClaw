@@ -60,6 +60,28 @@ describe("rebuild-openclaw old-base build context", () => {
     ]);
   });
 
+  it("returns every source from a multiline direct COPY instruction", () => {
+    const dockerfilePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
+      "Dockerfile.base",
+    );
+    testFiles.push(path.dirname(dockerfilePath));
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "COPY agents/openclaw/openclaw-runtime/package.json \\",
+        "    agents/openclaw/openclaw-runtime/package-lock.json \\",
+        "    /usr/local/lib/nemoclaw/openclaw-runtime/",
+      ].join("\n"),
+      "utf8",
+    );
+
+    expect(directDockerfileBaseCopySources(dockerfilePath)).toEqual([
+      "agents/openclaw/openclaw-runtime/package.json",
+      "agents/openclaw/openclaw-runtime/package-lock.json",
+    ]);
+  });
+
   it("rejects out-of-context direct Dockerfile.base COPY sources before staging", () => {
     const parentRelativeDockerfilePath = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
