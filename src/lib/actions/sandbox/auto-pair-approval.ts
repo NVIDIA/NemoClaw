@@ -162,6 +162,14 @@ def exit_with_receipt(receipt):
   const failedApproveAction = options.emitReceipt
     ? "exit_with_receipt('approve-failed')"
     : "continue";
+  const cloneStateApprovalGuard = options.localDeviceOnly
+    ? `if (
+        not clone_directory_is_current('devices', clone_devices_dir_fd)
+        or not clone_directory_is_current('identity', clone_identity_dir_fd)
+    ):
+        ${failedApproveAction}
+    `
+    : "";
   const maxApprovals = options.localDeviceOnly
     ? 1
     : (options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS);
@@ -253,30 +261,115 @@ def exit_with_receipt(receipt):
 import stat
 
 state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
-state_dir_real = os.path.realpath(state_dir)
+if not os.path.isabs(state_dir):
+    ${exitWithReceipt("list-failed")}
+for required_flag in ('O_DIRECTORY', 'O_NOFOLLOW'):
+    if not hasattr(os, required_flag):
+        ${exitWithReceipt("list-failed")}
+clone_directory_flags = (
+    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
+)
+clone_file_flags = (
+    os.O_RDONLY
+    | os.O_NOFOLLOW
+    | getattr(os, 'O_CLOEXEC', 0)
+    | getattr(os, 'O_NONBLOCK', 0)
+)
 
-def clone_state_path(*parts):
-    candidate = os.path.join(state_dir, *parts)
-    parent_real = os.path.realpath(os.path.dirname(candidate))
-    if os.path.commonpath((state_dir_real, parent_real)) != state_dir_real:
-        raise OSError('clone state path escaped its root')
-    return candidate
-
-def read_clone_json(path):
-    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
-    fd = os.open(path, flags)
+def open_clone_state_root():
+    root_fd = os.open(os.sep, clone_directory_flags)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError('clone state entry is not a regular file')
+        for component in (part for part in state_dir.split(os.sep) if part):
+            if component in ('.', '..'):
+                raise OSError('unsafe clone state root')
+            next_fd = os.open(
+                component,
+                clone_directory_flags,
+                dir_fd=root_fd,
+            )
+            os.close(root_fd)
+            root_fd = next_fd
+        return root_fd
+    except Exception:
+        os.close(root_fd)
+        raise
+
+try:
+    clone_state_dir_fd = open_clone_state_root()
+except OSError:
+    ${exitWithReceipt("list-failed")}
+
+def clone_state_root_is_current():
+    try:
+        current = os.stat(state_dir, follow_symlinks=False)
+        pinned = os.fstat(clone_state_dir_fd)
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(current.st_mode)
+        and (current.st_dev, current.st_ino) == (pinned.st_dev, pinned.st_ino)
+    )
+
+def clone_directory_is_current(directory_name, directory_fd):
+    if directory_name not in ('devices', 'identity') or not clone_state_root_is_current():
+        return False
+    try:
+        current = os.stat(
+            directory_name,
+            dir_fd=clone_state_dir_fd,
+            follow_symlinks=False,
+        )
+        pinned = os.fstat(directory_fd)
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(current.st_mode)
+        and stat.S_ISDIR(pinned.st_mode)
+        and (current.st_dev, current.st_ino) == (pinned.st_dev, pinned.st_ino)
+    )
+
+def open_clone_directory(directory_name):
+    if directory_name not in ('devices', 'identity'):
+        raise OSError('unsupported clone state directory')
+    directory_fd = os.open(
+        directory_name,
+        clone_directory_flags,
+        dir_fd=clone_state_dir_fd,
+    )
+    if not clone_directory_is_current(directory_name, directory_fd):
+        os.close(directory_fd)
+        raise OSError('clone state directory changed')
+    return directory_fd
+
+def read_clone_json(directory_fd, directory_name, entry_name):
+    if (
+        not clone_directory_is_current(directory_name, directory_fd)
+        or entry_name in ('', '.', '..')
+        or os.sep in entry_name
+    ):
+        raise OSError('unsafe clone state entry')
+    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise OSError('clone state entry is not a single regular file')
         with os.fdopen(fd, encoding='utf-8') as handle:
             fd = -1
-            return json.load(handle)
+            parsed = json.load(handle)
     finally:
         if fd >= 0:
             os.close(fd)
+    if not clone_directory_is_current(directory_name, directory_fd):
+        raise OSError('clone state directory changed')
+    return parsed
 
 try:
-    local_pending_by_id = read_clone_json(clone_state_path('devices', 'pending.json'))
+    clone_devices_dir_fd = open_clone_directory('devices')
+    local_pending_by_id = read_clone_json(
+        clone_devices_dir_fd,
+        'devices',
+        'pending.json',
+    )
 except (OSError, ValueError):
     ${exitWithReceipt("list-failed")}
 if not isinstance(local_pending_by_id, dict):
@@ -412,27 +505,15 @@ def paired_has_exact_pairing_baseline(device, token_scopes):
 
 def client_auth_matches_paired(token, scopes):
     try:
-        auth_path = clone_state_path('identity', 'device-auth.json')
-    except OSError:
-        return None
-    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
-    try:
-        fd = os.open(auth_path, flags)
+        auth_store = read_clone_json(
+            clone_identity_dir_fd,
+            'identity',
+            'device-auth.json',
+        )
     except FileNotFoundError:
         return False
-    except OSError:
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return None
-        with os.fdopen(fd, encoding='utf-8') as handle:
-            fd = -1
-            auth_store = json.load(handle)
     except (OSError, ValueError):
         return None
-    finally:
-        if fd >= 0:
-            os.close(fd)
     if (
         not isinstance(auth_store, dict)
         or auth_store.get('version') != 1
@@ -453,7 +534,12 @@ def client_auth_matches_paired(token, scopes):
     )
 
 try:
-    local_identity = read_clone_json(clone_state_path('identity', 'device.json'))
+    clone_identity_dir_fd = open_clone_directory('identity')
+    local_identity = read_clone_json(
+        clone_identity_dir_fd,
+        'identity',
+        'device.json',
+    )
 except (OSError, ValueError):
     ${exitWithReceipt("request-rejected")}
 if not isinstance(local_identity, dict):
@@ -480,9 +566,12 @@ if (
 # baseline uses the clone's paired token for its bounded write upgrade, whether
 # OpenClaw marks the request as repair or pre-convergence. The restored source
 # config is never a credential.
-paired_path = clone_state_path('devices', 'paired.json')
 try:
-    local_paired_by_id = read_clone_json(paired_path)
+    local_paired_by_id = read_clone_json(
+        clone_devices_dir_fd,
+        'devices',
+        'paired.json',
+    )
 except FileNotFoundError:
     local_paired_by_id = {}
 except (OSError, ValueError):
@@ -563,8 +652,16 @@ def local_pairing_transition_auth_mode(device):
 
 def sync_approved_clone_device_auth(request, previous_token):
     try:
-        pending_after = read_clone_json(clone_state_path('devices', 'pending.json'))
-        paired_after = read_clone_json(clone_state_path('devices', 'paired.json'))
+        pending_after = read_clone_json(
+            clone_devices_dir_fd,
+            'devices',
+            'pending.json',
+        )
+        paired_after = read_clone_json(
+            clone_devices_dir_fd,
+            'devices',
+            'paired.json',
+        )
     except (OSError, ValueError):
         return False
     if not isinstance(pending_after, dict) or not isinstance(paired_after, dict):
@@ -625,20 +722,22 @@ def sync_approved_clone_device_auth(request, previous_token):
         or 'operator.write' not in approved_scope_view
     ):
         return False
-    dir_fd = -1
     temp_name = ''
     try:
-        auth_path = clone_state_path('identity', 'device-auth.json')
-        auth_dir = os.path.dirname(auth_path)
-        dir_flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0) | getattr(os, 'O_NOFOLLOW', 0)
-        dir_fd = os.open(auth_dir, dir_flags)
-        if not stat.S_ISDIR(os.fstat(dir_fd).st_mode):
+        if not clone_directory_is_current('identity', clone_identity_dir_fd):
             return False
         try:
-            auth_stat = os.stat('device-auth.json', dir_fd=dir_fd, follow_symlinks=False)
+            auth_stat = os.stat(
+                'device-auth.json',
+                dir_fd=clone_identity_dir_fd,
+                follow_symlinks=False,
+            )
         except FileNotFoundError:
             auth_stat = None
-        if auth_stat is not None and not stat.S_ISREG(auth_stat.st_mode):
+        if (
+            auth_stat is not None
+            and (not stat.S_ISREG(auth_stat.st_mode) or auth_stat.st_nlink != 1)
+        ):
             return False
         auth_store = {
             'version': 1,
@@ -657,9 +756,10 @@ def sync_approved_clone_device_auth(request, previous_token):
             os.O_WRONLY
             | os.O_CREAT
             | os.O_EXCL
-            | getattr(os, 'O_NOFOLLOW', 0)
+            | os.O_NOFOLLOW
+            | getattr(os, 'O_CLOEXEC', 0)
         )
-        fd = os.open(temp_name, temp_flags, 0o600, dir_fd=dir_fd)
+        fd = os.open(temp_name, temp_flags, 0o600, dir_fd=clone_identity_dir_fd)
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, 'w', encoding='utf-8') as handle:
@@ -671,24 +771,24 @@ def sync_approved_clone_device_auth(request, previous_token):
             os.replace(
                 temp_name,
                 'device-auth.json',
-                src_dir_fd=dir_fd,
-                dst_dir_fd=dir_fd,
+                src_dir_fd=clone_identity_dir_fd,
+                dst_dir_fd=clone_identity_dir_fd,
             )
             temp_name = ''
-            os.fsync(dir_fd)
+            os.fsync(clone_identity_dir_fd)
+            if not clone_directory_is_current('identity', clone_identity_dir_fd):
+                return False
         finally:
             if fd >= 0:
                 os.close(fd)
     except (OSError, ValueError):
         return False
     finally:
-        if temp_name and dir_fd >= 0:
+        if temp_name:
             try:
-                os.unlink(temp_name, dir_fd=dir_fd)
+                os.unlink(temp_name, dir_fd=clone_identity_dir_fd)
             except FileNotFoundError:
                 pass
-        if dir_fd >= 0:
-            os.close(dir_fd)
     return True
 
 related_pending = [
@@ -762,7 +862,7 @@ for device in pending:
     seen_request_ids.add(request_id)
     ${approveEnv}
     attempted_count += 1
-    try:
+    ${cloneStateApprovalGuard}try:
         approve_proc = subprocess.run(
             [OPENCLAW, 'devices', 'approve', request_id, '--json'],
             capture_output=True, text=True, timeout=${approveTimeoutS}, env=approve_env,
