@@ -167,6 +167,7 @@ function validateControllerAuthorization(
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     CONTROLLER_CHECK_ID: "${{ inputs.controller_check_id }}",
+    CONTROLLER_RUN_ID: "${{ inputs.controller_run_id }}",
     CORRELATION_ID: "${{ inputs.correlation_id }}",
     JOBS: "${{ inputs.jobs }}",
     PLAN_HASH: "${{ inputs.plan_hash }}",
@@ -185,6 +186,7 @@ function validateControllerAuthorization(
     '"$ACTOR" == "github-actions[bot]"',
     '"$RUN_ATTEMPT" == "1"',
     '"$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$',
+    '"$CONTROLLER_RUN_ID" =~ ^[1-9][0-9]*$',
     "nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}",
     "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}",
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${CONTROLLER_CHECK_ID}",
@@ -236,6 +238,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     "checkout_sha",
     "checkout_repository",
     "controller_check_id",
+    "controller_run_id",
     "base_sha",
     "workflow_sha",
     "plan_hash",
@@ -258,7 +261,12 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     }
   }
   const runName = String(workflow["run-name"] ?? "");
-  for (const fragment of ["inputs.checkout_sha", "inputs.pr_number", "inputs.correlation_id"]) {
+  for (const fragment of [
+    "inputs.checkout_sha",
+    "inputs.pr_number",
+    "inputs.correlation_id",
+    "inputs.controller_run_id",
+  ]) {
     if (!runName.includes(fragment)) errors.push(`PR E2E run name must include ${fragment}`);
   }
   const concurrencyGroup = String(workflow.concurrency?.group ?? "");

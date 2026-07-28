@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: E2E
-run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
+run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1}) [controller {2}]', inputs.pr_number, inputs.correlation_id, inputs.controller_run_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
   schedule:
@@ -60,6 +60,11 @@ on:
         type: string
       controller_check_id:
         description: Controller-owned check run that authorizes this exact E2E run.
+        required: false
+        default: ""
+        type: string
+      controller_run_id:
+        description: Controller workflow run that dispatched this exact E2E run.
         required: false
         default: ""
         type: string
@@ -213,6 +218,7 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           CONTROLLER_CHECK_ID: ${{ inputs.controller_check_id }}
+          CONTROLLER_RUN_ID: ${{ inputs.controller_run_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
           GITHUB_TOKEN: ${{ github.token }}
           JOBS: ${{ inputs.jobs }}
@@ -227,6 +233,7 @@ jobs:
           [[ "$ACTOR" == "github-actions[bot]" ]] || { echo "::error::PR E2E must be dispatched by the trusted controller"; exit 1; }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::controller-authorized PR E2E cannot be rerun"; exit 1; }
           [[ "$CONTROLLER_CHECK_ID" =~ ^[1-9][0-9]*$ ]] || { echo "::error::controller_check_id must be a positive integer"; exit 1; }
+          [[ "$CONTROLLER_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "::error::controller_run_id must be a positive integer"; exit 1; }
           expected_external_id="nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}"
           expected_run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
           jobs_summary="${JOBS//,/, }"

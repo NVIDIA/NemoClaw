@@ -36,6 +36,7 @@ export type DispatchFailureKind = "http" | "decode" | "transport" | "validation"
 
 export type DispatchNotObservedReceipt = {
   correlationId: string;
+  controllerRunId?: number;
   workflowSha: string;
   sentAtMs: number;
   deadlineAtMs: number;
@@ -54,6 +55,7 @@ type RetryableCheck = {
 function canonicalReceipt(receipt: DispatchNotObservedReceipt): DispatchNotObservedReceipt {
   return {
     correlationId: receipt.correlationId,
+    ...(receipt.controllerRunId === undefined ? {} : { controllerRunId: receipt.controllerRunId }),
     workflowSha: receipt.workflowSha,
     sentAtMs: receipt.sentAtMs,
     deadlineAtMs: receipt.deadlineAtMs,
@@ -75,6 +77,7 @@ function validateDispatchReceipt(value: unknown): DispatchNotObservedReceipt {
   const receipt = value as Record<string, unknown>;
   const allowedKeys = new Set([
     "correlationId",
+    "controllerRunId",
     "workflowSha",
     "sentAtMs",
     "deadlineAtMs",
@@ -89,6 +92,7 @@ function validateDispatchReceipt(value: unknown): DispatchNotObservedReceipt {
   if (
     typeof receipt.correlationId !== "string" ||
     !CORRELATION_PATTERN.test(receipt.correlationId) ||
+    (receipt.controllerRunId !== undefined && !isPositiveSafeInteger(receipt.controllerRunId)) ||
     typeof receipt.workflowSha !== "string" ||
     !SHA_PATTERN.test(receipt.workflowSha) ||
     !isPositiveSafeInteger(receipt.sentAtMs) ||

@@ -45,10 +45,11 @@ function githubResponse(value?: unknown, status = 200): Response {
 
 function state(): PrGateState {
   return {
-    version: 4,
+    version: 5,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
     checkoutRepository: "NVIDIA/NemoClaw",
+    controllerRunId: 77,
     workflowSha: WORKFLOW_SHA,
     planHash: "c".repeat(64),
     correlationId: ORIGINAL_CORRELATION_ID,
@@ -95,7 +96,7 @@ function originalWorkflowRun() {
     run_attempt: 1,
     status: "completed",
     conclusion: "failure",
-    display_title: `E2E PR #42 (${ORIGINAL_CORRELATION_ID})`,
+    display_title: `E2E PR #42 (${ORIGINAL_CORRELATION_ID}) [controller 77]`,
     html_url: ORIGINAL_RUN_URL,
   };
 }
@@ -188,7 +189,7 @@ function pullRequest() {
 function reconciledRun(runId: number, correlationId: string) {
   return {
     id: runId,
-    name: `E2E PR #42 (${correlationId})`,
+    name: `E2E PR #42 (${correlationId}) [controller 77]`,
     path: ".github/workflows/e2e.yaml",
     workflow_id: 304_268_429,
     created_at: new Date(START_TIME.getTime() + 1_000).toISOString(),
@@ -198,7 +199,7 @@ function reconciledRun(runId: number, correlationId: string) {
     run_attempt: 1,
     status: "queued",
     conclusion: null,
-    display_title: `E2E PR #42 (${correlationId})`,
+    display_title: `E2E PR #42 (${correlationId}) [controller 77]`,
     url: `https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/${runId}`,
     html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
     repository: { full_name: "NVIDIA/NemoClaw" },

@@ -107,6 +107,26 @@ describe("PR E2E controller commands", () => {
     });
   });
 
+  it("parses a close quiescer command", () => {
+    expect(
+      parseControllerCommand([
+        "--mode",
+        "quiesce-close",
+        "--pr",
+        "42",
+        "--head",
+        HEAD_SHA,
+        "--base",
+        BASE_SHA,
+      ]),
+    ).toEqual({
+      mode: "quiesce-close",
+      prNumber: 42,
+      headSha: HEAD_SHA,
+      baseSha: BASE_SHA,
+    });
+  });
+
   it("requires current head, superseded head, and base SHAs together", () => {
     expect(() =>
       parseControllerCommand(["--mode", "cancel", "--pr", "42", "--head", HEAD_SHA]),

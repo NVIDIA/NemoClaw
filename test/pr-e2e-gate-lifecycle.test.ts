@@ -175,10 +175,11 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
-    version: 4,
+    version: 5,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
     checkoutRepository: "NVIDIA/NemoClaw",
+    controllerRunId: GATE_RUN_ID,
     workflowSha: WORKFLOW_SHA,
     planHash: plan.planHash,
     correlationId: CORRELATION_ID,
@@ -303,7 +304,7 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
     head_sha: gate.workflowSha,
     status: "completed",
     conclusion: "success",
-    display_title: `E2E PR #${gate.prNumber} (${gate.correlationId})`,
+    display_title: `E2E PR #${gate.prNumber} (${gate.correlationId}) [controller ${gate.controllerRunId}]`,
     html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
     ...overrides,
   };
@@ -1338,9 +1339,15 @@ describe("PR E2E controller lifecycle", () => {
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const gate = state();
     const requests: RecordedGitHubRequest[] = [];
-    const fullActivePage = Array.from({ length: 100 }, (_, index) =>
-      workflowRun(gate, { id: 3_000 + index, status: "in_progress", conclusion: null }),
-    );
+    const fullActivePage = Array.from({ length: 100 }, (_, index) => {
+      const runId = 3_000 + index;
+      return workflowRun(gate, {
+        id: runId,
+        status: "in_progress",
+        conclusion: null,
+        html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
+      });
+    });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [

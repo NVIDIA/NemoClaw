@@ -60,10 +60,11 @@ function sha256(value: string): string {
 
 function state(): PrGateState {
   return {
-    version: 4,
+    version: 5,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
     checkoutRepository: "NVIDIA/NemoClaw",
+    controllerRunId: 77,
     workflowSha: WORKFLOW_SHA,
     planHash: "c".repeat(64),
     correlationId: ORIGINAL_CORRELATION_ID,
@@ -76,7 +77,6 @@ function state(): PrGateState {
     },
   };
 }
-
 function checkRun(id: number, overrides: Record<string, unknown> = {}) {
   return {
     id,
@@ -126,7 +126,7 @@ function workflowRun(overrides: Record<string, unknown> = {}) {
     run_attempt: 1,
     status: "completed",
     conclusion: "failure",
-    display_title: `E2E PR #42 (${ORIGINAL_CORRELATION_ID})`,
+    display_title: `E2E PR #42 (${ORIGINAL_CORRELATION_ID}) [controller 77]`,
     html_url: ORIGINAL_RUN_URL,
     ...overrides,
   };
@@ -1348,7 +1348,7 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
                 workflowRun({
                   id: 24,
                   conclusion,
-                  display_title: `E2E PR #42 (${retryCorrelationId})`,
+                  display_title: `E2E PR #42 (${retryCorrelationId}) [controller 77]`,
                   html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/24",
                 }),
               ),

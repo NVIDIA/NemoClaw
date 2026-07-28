@@ -318,9 +318,10 @@ function successfulApprovedForkRoutes(approvals: unknown, requests: RecordedGitH
         const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
         const inputs = (dispatch?.body as { inputs?: Record<string, string> } | undefined)?.inputs;
         const correlationId = inputs?.correlation_id ?? "missing";
+        const controllerRunId = inputs?.controller_run_id ?? "missing";
         return githubResponse({
           id: 23,
-          name: `E2E PR #42 (${correlationId})`,
+          name: `E2E PR #42 (${correlationId}) [controller ${controllerRunId}]`,
           path: ".github/workflows/e2e.yaml",
           workflow_id: 7,
           run_attempt: 1,
@@ -328,7 +329,7 @@ function successfulApprovedForkRoutes(approvals: unknown, requests: RecordedGitH
           head_sha: WORKFLOW_SHA,
           status: "queued",
           conclusion: null,
-          display_title: `E2E PR #42 (${correlationId})`,
+          display_title: `E2E PR #42 (${correlationId}) [controller ${controllerRunId}]`,
           html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
         });
       },
@@ -336,10 +337,14 @@ function successfulApprovedForkRoutes(approvals: unknown, requests: RecordedGitH
   ];
 }
 
-function reconciledForkRun(runId: number, correlationId: string) {
+function reconciledForkRun(
+  runId: number,
+  correlationId: string,
+  controllerRunId = APPROVAL_RUN_ID,
+) {
   return {
     id: runId,
-    name: `E2E PR #42 (${correlationId})`,
+    name: `E2E PR #42 (${correlationId}) [controller ${controllerRunId}]`,
     path: ".github/workflows/e2e.yaml",
     workflow_id: 7,
     created_at: "2026-07-26T18:00:01.000Z",
@@ -349,7 +354,7 @@ function reconciledForkRun(runId: number, correlationId: string) {
     run_attempt: 1,
     status: "queued",
     conclusion: null,
-    display_title: `E2E PR #42 (${correlationId})`,
+    display_title: `E2E PR #42 (${correlationId}) [controller ${controllerRunId}]`,
     url: `https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/${runId}`,
     html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
     repository: { full_name: "NVIDIA/NemoClaw" },
@@ -988,9 +993,10 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
               const inputs = (dispatch?.body as { inputs?: Record<string, string> } | undefined)
                 ?.inputs;
               const correlationId = inputs?.correlation_id ?? "missing";
+              const controllerRunId = inputs?.controller_run_id ?? "missing";
               return githubResponse({
                 id: 23,
-                name: `E2E PR #42 (${correlationId})`,
+                name: `E2E PR #42 (${correlationId}) [controller ${controllerRunId}]`,
                 path: ".github/workflows/e2e.yaml",
                 workflow_id: 7,
                 run_attempt: 1,
@@ -998,7 +1004,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
                 head_sha: WORKFLOW_SHA,
                 status: "queued",
                 conclusion: null,
-                display_title: `E2E PR #42 (${correlationId})`,
+                display_title: `E2E PR #42 (${correlationId}) [controller ${controllerRunId}]`,
                 html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
               });
             },

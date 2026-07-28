@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { cancelPrGate } from "../tools/e2e/pr-e2e-gate.mts";
+import { cancelPrGate, quiesceClosedPrGate } from "../tools/e2e/pr-e2e-gate.mts";
 import {
   createGitHubFetchRouter,
   githubFetchRoute,
@@ -31,6 +31,184 @@ afterEach(() => {
 });
 
 describe("PR E2E close cancellation reconciliation", () => {
+  it.each([
+    "workflow_run",
+    "workflow_dispatch",
+  ] as const)("quiesces the old $controllerEvent controller without mutating its check (#7140)", async (controllerEvent) => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", REPOSITORY);
+    const requests: RecordedGitHubRequest[] = [];
+    const check = pendingApprovalCheck();
+    let controllerReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          emptyActiveRunsRoute(),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest("closed")),
+          ),
+          checkListingRoute(check),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => {
+              controllerReads += 1;
+              const name = `E2E Gate ${controllerEvent} 23`;
+              return githubResponse(
+                approvalControllerRun(23, {
+                  ...(controllerReads === 1
+                    ? {}
+                    : controllerReads === 2
+                      ? { status: "in_progress", conclusion: null }
+                      : { status: "completed", conclusion: "cancelled" }),
+                  display_title: name,
+                  event: controllerEvent,
+                  name,
+                }),
+              );
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/runs/23/pending_deployments") && method === "GET",
+            () => githubResponse(pendingDeployments()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(quiesceClosedPrGate(42, HEAD_SHA, BASE_SHA, deterministicPolling())).resolves.toBe(
+      1,
+    );
+    expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(true);
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+  });
+
+  it.each([
+    {
+      exactCheckCompleted: false,
+      kind: "current running-check",
+      legacyChild: false,
+      stalePendingListing: false,
+    },
+    {
+      exactCheckCompleted: false,
+      kind: "stale pending-check legacy",
+      legacyChild: true,
+      stalePendingListing: true,
+    },
+    {
+      exactCheckCompleted: true,
+      kind: "naturally completed-check",
+      legacyChild: false,
+      stalePendingListing: false,
+    },
+  ])("recovers a $kind child missed by the initial close inventory (#7140)", async ({
+    exactCheckCompleted,
+    stalePendingListing,
+    legacyChild,
+  }) => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", REPOSITORY);
+    const requests: RecordedGitHubRequest[] = [];
+    const child = prE2eChildRun(
+      legacyChild ? { display_title: "E2E PR #42 (11111111-1111-4111-8111-111111111111)" } : {},
+    );
+    const childUrl = child.html_url;
+    const runningCheck = {
+      ...pendingApprovalCheck(),
+      details_url: childUrl,
+      output: {
+        title: "Running 1 E2E check",
+        summary: `Risk plan ${"c".repeat(64)} selected jobs: rebuild-hermes; targets: none. Child run: ${childUrl}.`,
+      },
+    };
+    let childReads = 0;
+    let controllerReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          emptyActiveRunsRoute(),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest("closed")),
+          ),
+          checkListingRoute(stalePendingListing ? pendingApprovalCheck() : runningCheck),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () =>
+              githubResponse(
+                exactCheckCompleted
+                  ? { ...runningCheck, status: "completed", conclusion: "success" }
+                  : runningCheck,
+              ),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/99") && method === "GET",
+            () => {
+              childReads += 1;
+              return githubResponse(
+                childReads === 1
+                  ? child
+                  : prE2eChildRun({
+                      ...(legacyChild ? { display_title: child.display_title } : {}),
+                      status: "completed",
+                      conclusion: "cancelled",
+                    }),
+              );
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => {
+              controllerReads += 1;
+              return githubResponse(
+                approvalControllerRun(
+                  23,
+                  controllerReads < 3
+                    ? { status: "in_progress", conclusion: null }
+                    : { status: "completed", conclusion: "cancelled" },
+                ),
+              );
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              /\/actions\/runs\/(?:23|99)\/cancel$/u.test(url) && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) =>
+              githubResponse({
+                ...runningCheck,
+                ...(request.body as Record<string, unknown> | undefined),
+              }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(
+      cancelPrGate(42, HEAD_SHA, HEAD_SHA, BASE_SHA, deterministicPolling()),
+    ).resolves.toBe(2);
+    expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(true);
+    expect(requests.some((request) => request.url.endsWith("/actions/runs/99/cancel"))).toBe(true);
+    expect(requests.filter((request) => request.method === "PATCH")).toHaveLength(
+      exactCheckCompleted ? 0 : 1,
+    );
+  });
+
   it("cancels a child dispatched after the first inventory before closing the check (#7140)", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", REPOSITORY);
@@ -120,7 +298,7 @@ describe("PR E2E close cancellation reconciliation", () => {
     await expect(
       cancelPrGate(42, HEAD_SHA, HEAD_SHA, BASE_SHA, deterministicPolling()),
     ).resolves.toBe(2);
-    expect(inventoryScans).toBe(6);
+    expect(inventoryScans).toBe(5);
     expect(childReads).toBe(2);
     const childCancellation = requests.findIndex((request) =>
       request.url.endsWith("/actions/runs/99/cancel"),
@@ -212,7 +390,7 @@ describe("PR E2E close cancellation reconciliation", () => {
     });
     expect(
       requests.filter((request) => request.url.includes("/actions/workflows/e2e.yaml/runs?")),
-    ).toHaveLength(5);
+    ).toHaveLength(15);
   });
 
   it("leaves a check newly claimed after reopen unchanged (#7140)", async () => {
@@ -237,7 +415,7 @@ describe("PR E2E close cancellation reconciliation", () => {
             ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
             () => {
               pullReads += 1;
-              return githubResponse(pullRequest(pullReads < 5 ? "closed" : "open"));
+              return githubResponse(pullRequest(pullReads < 3 ? "closed" : "open"));
             },
           ),
           checkListingRoute(pendingCheck),
@@ -285,7 +463,93 @@ describe("PR E2E close cancellation reconciliation", () => {
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
     expect(
       requests.filter((request) => request.url.includes("/actions/workflows/e2e.yaml/runs?")),
-    ).toHaveLength(10);
+    ).toHaveLength(15);
+  });
+
+  it("cancels a child dispatched from a validated descendant of its controller revision (#7140)", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", REPOSITORY);
+    const requests: RecordedGitHubRequest[] = [];
+    const check = pendingApprovalCheck();
+    const child = prE2eChildRun({ head_sha: "e".repeat(40) });
+    let controllerReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/workflows/e2e.yaml/runs?") && method === "GET",
+            ({ url }) =>
+              githubResponse({
+                workflow_runs:
+                  new URL(url).searchParams.get("status") === "in_progress" ? [child] : [],
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest("closed")),
+          ),
+          checkListingRoute(check),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => {
+              controllerReads += 1;
+              return githubResponse(
+                approvalControllerRun(
+                  23,
+                  controllerReads === 1
+                    ? {}
+                    : controllerReads === 2
+                      ? { status: "in_progress", conclusion: null }
+                      : { status: "completed", conclusion: "cancelled" },
+                ),
+              );
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/runs/23/pending_deployments") && method === "GET",
+            () => githubResponse(pendingDeployments()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "GET",
+            () => githubResponse(check),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              /\/actions\/runs\/(?:23|99)\/cancel$/u.test(url) && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/99") && method === "GET",
+            () =>
+              githubResponse(
+                prE2eChildRun({
+                  head_sha: "e".repeat(40),
+                  status: "completed",
+                  conclusion: "cancelled",
+                }),
+              ),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) =>
+              githubResponse({
+                ...check,
+                ...(request.body as Record<string, unknown> | undefined),
+              }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(
+      cancelPrGate(42, HEAD_SHA, HEAD_SHA, BASE_SHA, deterministicPolling()),
+    ).resolves.toBe(2);
+    expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(true);
+    expect(requests.some((request) => request.url.endsWith("/actions/runs/99/cancel"))).toBe(true);
+    expect(requests.filter((request) => request.method === "PATCH")).toHaveLength(1);
   });
 
   it("reconciles every controller lineage before closing any check (#7140)", async () => {

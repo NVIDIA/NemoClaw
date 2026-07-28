@@ -47,6 +47,26 @@ describe("PR E2E dispatch retry receipts", () => {
     expect(retryableFailureReason(completedFailure(summary))).toBe("dispatch-not-observed");
   });
 
+  it("binds new receipts to the dispatching controller while accepting legacy receipts (#7140)", () => {
+    const receipt = { ...RECEIPT, controllerRunId: 77 };
+    const summary = [
+      "GitHub did not expose a correlated child run.",
+      dispatchNotObservedReceiptMarker(receipt),
+      retryableFailureMarker("dispatch-not-observed"),
+    ].join("\n\n");
+
+    expect(dispatchNotObservedReceiptFromSummary(summary)).toEqual(receipt);
+    expect(
+      dispatchNotObservedReceiptFromSummary(
+        [
+          "GitHub did not expose a correlated child run.",
+          dispatchNotObservedReceiptMarker(RECEIPT),
+          retryableFailureMarker("dispatch-not-observed"),
+        ].join("\n\n"),
+      ),
+    ).toEqual(RECEIPT);
+  });
+
   it.each([
     {
       label: "missing its structured receipt",

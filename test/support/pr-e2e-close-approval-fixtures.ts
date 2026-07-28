@@ -96,7 +96,7 @@ export function prE2eChildRun(overrides: Record<string, unknown> = {}) {
   return {
     id: runId,
     name: "E2E",
-    display_title: `E2E PR #42 (${CORRELATION_ID})`,
+    display_title: `E2E PR #42 (${CORRELATION_ID}) [controller 23]`,
     path: ".github/workflows/e2e.yaml",
     workflow_id: 789,
     event: "workflow_dispatch",

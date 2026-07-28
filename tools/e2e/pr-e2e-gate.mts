@@ -82,6 +82,7 @@ const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
 const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
 const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
 const CHILD_CANCELLATION_TIMEOUT_MS = 5_000;
+const CANCELLATION_STATUS_READ_TIMEOUT_MS = 5_000;
 const CANCELLATION_RECONCILIATION_POLL_INTERVAL_MS = 1_000;
 const CANCELLATION_RECONCILIATION_TIMEOUT_MS = 2 * 60_000;
 const CANCELLATION_CHILD_VISIBILITY_WINDOW_MS = 45_000;
@@ -225,6 +226,12 @@ export type ControllerCommand =
       supersededHeadSha?: string;
       baseSha?: string;
     }
+  | {
+      mode: "quiesce-close";
+      prNumber: number;
+      headSha: string;
+      baseSha: string;
+    }
   | { mode: "wait"; childRunId: number }
   | ({ mode: "download"; childRunId: number } & ControllerPaths)
   | {
@@ -295,6 +302,7 @@ type CollaboratorPermission = {
 
 type WorkflowRunIdentity = {
   childRunId: number;
+  controllerRunId: number;
   correlationId: string;
   prNumber: number;
   repository: string;
@@ -302,10 +310,11 @@ type WorkflowRunIdentity = {
 };
 
 export type PrGateState = {
-  version: 4;
+  version: 5;
   commitSha: string;
   baseSha: string;
   checkoutRepository: string;
+  controllerRunId: number;
   workflowSha: string;
   planHash: string;
   correlationId: string;
@@ -561,6 +570,18 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       baseSha: args.base,
     };
   }
+  if (args.mode === "quiesce-close") {
+    const headSha = requiredArgument(args.head, "head");
+    const baseSha = requiredArgument(args.base, "base");
+    if (!SHA_PATTERN.test(headSha)) throw new Error("--head is invalid");
+    if (!SHA_PATTERN.test(baseSha)) throw new Error("--base is invalid");
+    return {
+      mode: "quiesce-close",
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha,
+      baseSha,
+    };
+  }
   if (args.mode === "wait") {
     return {
       mode: "wait",
@@ -676,7 +697,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, start-approved-control-plane, start-approved-fork, finish, abandon, abandon-runner-loss-retry, cancel, wait, download, or retry-runner-loss",
+    "--mode must be seed, start, start-control-plane, start-approved-control-plane, start-approved-fork, finish, abandon, abandon-runner-loss-retry, cancel, quiesce-close, wait, download, or retry-runner-loss",
   );
 }
 
@@ -685,7 +706,7 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
 }
 
 export function validatePrGateState(value: unknown): PrGateState {
-  if (!isObjectRecord(value) || value.version !== 4) {
+  if (!isObjectRecord(value) || value.version !== 5) {
     throw new Error("State version is invalid");
   }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
@@ -698,6 +719,9 @@ export function validatePrGateState(value: unknown): PrGateState {
     throw new Error("State checkout repository is invalid");
   }
   assertRepository(value.checkoutRepository, "state checkout repository");
+  if (!Number.isSafeInteger(value.controllerRunId) || (value.controllerRunId as number) < 1) {
+    throw new Error("State controller run ID is invalid");
+  }
   if (typeof value.workflowSha !== "string" || !SHA_PATTERN.test(value.workflowSha)) {
     throw new Error("State workflow SHA is invalid");
   }
@@ -1378,6 +1402,7 @@ async function markCheckInProgress(
   token: string,
   title: string,
   summary: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const check = await githubApi<unknown>(
     `repos/${context.repository}/check-runs/${context.checkRunId}`,
@@ -1386,6 +1411,7 @@ async function markCheckInProgress(
       method: "PATCH",
       body: { status: "in_progress", output: { title, summary } },
       userAgent: USER_AGENT,
+      signal,
     },
   );
   validatePrGateMutationResponse(check, {
@@ -1432,6 +1458,7 @@ async function completeCheck(
   token: string,
   verdict: PrGateVerdict,
   detailsUrl?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const summary = verdict.retryableFailureReason
     ? `${verdict.summary}\n\n${retryableFailureMarker(verdict.retryableFailureReason)}`
@@ -1452,6 +1479,7 @@ async function completeCheck(
         },
       },
       userAgent: USER_AGENT,
+      signal,
     },
   );
   validatePrGateMutationResponse(check, {
@@ -1595,6 +1623,13 @@ function controllerErrorMessage(error: unknown): string {
     : singleLine;
 }
 
+class ControllerOperationTimeoutError extends Error {
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = "ControllerOperationTimeoutError";
+  }
+}
+
 async function boundedControllerOperation<T>(
   label: string,
   timeoutMs: number,
@@ -1605,7 +1640,7 @@ async function boundedControllerOperation<T>(
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(() => {
       controller.abort();
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      reject(new ControllerOperationTimeoutError(label, timeoutMs));
     }, timeoutMs);
   });
   try {
@@ -2248,7 +2283,7 @@ export function assertCorrelatedWorkflowRun(
   requireEqual("html_url", childRunUrl, child.html_url);
   requireEqual(
     "display_title",
-    `E2E PR #${identity.prNumber} (${identity.correlationId})`,
+    `E2E PR #${identity.prNumber} (${identity.correlationId}) [controller ${identity.controllerRunId}]`,
     child.display_title,
   );
   requireEqual("head_sha", identity.workflowSha, child.head_sha);
@@ -2424,6 +2459,7 @@ export async function dispatchPrGate(options: {
   checkoutRepository: string;
   token: string;
   controllerCheckId: number;
+  controllerRunId: number;
   jobs: readonly string[];
   targets?: readonly string[];
   prNumber: number;
@@ -2447,6 +2483,8 @@ export async function dispatchPrGate(options: {
     options.jobs.some((job) => targets.includes(job)) ||
     !Number.isSafeInteger(options.controllerCheckId) ||
     options.controllerCheckId < 1 ||
+    !Number.isSafeInteger(options.controllerRunId) ||
+    options.controllerRunId < 1 ||
     !Number.isSafeInteger(options.prNumber) ||
     options.prNumber < 1 ||
     !SHA_PATTERN.test(options.commitSha) ||
@@ -2470,6 +2508,7 @@ export async function dispatchPrGate(options: {
     workflowSha,
     correlationId: options.correlationId,
     prNumber: options.prNumber,
+    controllerRunId: options.controllerRunId,
     dispatch: (signal) =>
       githubApiWithResponse<unknown>(
         `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`,
@@ -2482,6 +2521,7 @@ export async function dispatchPrGate(options: {
               jobs: options.jobs.join(","),
               targets: targets.join(","),
               controller_check_id: String(options.controllerCheckId),
+              controller_run_id: String(options.controllerRunId),
               pr_number: String(options.prNumber),
               checkout_sha: options.commitSha,
               checkout_repository: options.checkoutRepository,
@@ -2740,6 +2780,7 @@ async function dispatchSelectedPrGate(options: {
   workflowSha: string;
   plan: RiskPlan;
   checkRunId: number;
+  controllerRunId: number;
   expectedCheckTitle: string;
   paths: ControllerPaths;
 }): Promise<void> {
@@ -2759,6 +2800,7 @@ async function dispatchSelectedPrGate(options: {
     checkoutRepository,
     token: options.token,
     controllerCheckId: options.checkRunId,
+    controllerRunId: options.controllerRunId,
     jobs,
     targets,
     prNumber: options.pull.number,
@@ -2773,10 +2815,11 @@ async function dispatchSelectedPrGate(options: {
   try {
     appendOutput("run_id", String(childRunId));
     const state: PrGateState = {
-      version: 4,
+      version: 5,
       commitSha: options.pull.head.sha,
       baseSha: options.baseSha,
       checkoutRepository,
+      controllerRunId: options.controllerRunId,
       workflowSha: dispatch.workflowSha,
       planHash: options.plan.planHash,
       correlationId,
@@ -2840,6 +2883,7 @@ async function dispatchRunnerLossRetry(options: {
     checkoutRepository: options.state.checkoutRepository,
     token: options.token,
     controllerCheckId: options.checkRunId,
+    controllerRunId: options.state.controllerRunId,
     jobs: options.state.expectedJobs,
     targets: options.state.expectedTargets,
     prNumber: options.state.prNumber,
@@ -2966,6 +3010,7 @@ export async function retryRunnerLossPrGate(
     );
     assertCorrelatedWorkflowRun(child, {
       childRunId: command.childRunId,
+      controllerRunId: state.controllerRunId,
       correlationId: state.correlationId,
       prNumber: state.prNumber,
       repository,
@@ -2984,6 +3029,7 @@ export async function retryRunnerLossPrGate(
     });
     await requireUnchangedCompletedWorkflowRun(repository, token, child, {
       childRunId: command.childRunId,
+      controllerRunId: state.controllerRunId,
       correlationId: state.correlationId,
       prNumber: state.prNumber,
       repository,
@@ -3033,6 +3079,7 @@ export async function retryRunnerLossPrGate(
     );
     await requireUnchangedCompletedWorkflowRun(repository, token, child, {
       childRunId: command.childRunId,
+      controllerRunId: state.controllerRunId,
       correlationId: state.correlationId,
       prNumber: state.prNumber,
       repository,
@@ -3397,6 +3444,7 @@ export async function startPrGate(
       workflowSha: command.workflowSha,
       plan,
       checkRunId,
+      controllerRunId: command.gateRunId,
       expectedCheckTitle: EVALUATING_PR_COMMIT_TITLE,
       paths: command,
     });
@@ -3533,6 +3581,7 @@ async function startAuthorizedPrGate(
       workflowSha: command.workflowSha,
       plan,
       checkRunId,
+      controllerRunId: command.gateRunId,
       expectedCheckTitle: executionTitle,
       paths: command,
     });
@@ -3777,6 +3826,7 @@ export async function finishPrGate(options: {
     );
     assertCorrelatedWorkflowRun(child, {
       childRunId: options.childRunId,
+      controllerRunId: state.controllerRunId,
       correlationId: state.correlationId,
       prNumber: state.prNumber,
       repository,
@@ -3885,6 +3935,7 @@ export async function finishPrGate(options: {
         });
         await requireUnchangedCompletedWorkflowRun(repository, token, child, {
           childRunId: options.childRunId,
+          controllerRunId: state.controllerRunId,
           correlationId: state.correlationId,
           prNumber: state.prNumber,
           repository,
@@ -4243,11 +4294,14 @@ function pendingApprovalController(
 
 type ApprovalControllerRunState = {
   status: string;
-  conclusion: null | "cancelled";
+  conclusion: string | null;
+  runAttempt: number;
+  terminal: boolean;
   identity: ApprovalControllerRunIdentity;
 };
 
 type ApprovalControllerRunIdentity = {
+  event: "workflow_dispatch" | "workflow_run";
   workflowId: number;
   workflowSha: string;
 };
@@ -4259,16 +4313,32 @@ function validateApprovalControllerRun(
     runId: number;
     runUrl: string;
     expected?: ApprovalControllerRunIdentity;
+    minimumRunAttempt?: number;
   },
 ): ApprovalControllerRunState {
-  const expectedName = `E2E Gate workflow_run ${options.runId}`;
+  const controllerEvent: ApprovalControllerRunIdentity["event"] | null =
+    isObjectRecord(value) && value.event === "workflow_run"
+      ? "workflow_run"
+      : isObjectRecord(value) && value.event === "workflow_dispatch"
+        ? "workflow_dispatch"
+        : null;
+  const expectedName = controllerEvent ? `E2E Gate ${controllerEvent} ${options.runId}` : "";
   const active =
     isObjectRecord(value) &&
     typeof value.status === "string" &&
     ACTIVE_WORKFLOW_RUN_STATUS_SET.has(value.status) &&
     value.conclusion === null;
-  const cancelled =
-    isObjectRecord(value) && value.status === "completed" && value.conclusion === "cancelled";
+  const terminal =
+    isObjectRecord(value) &&
+    value.status === "completed" &&
+    typeof value.conclusion === "string" &&
+    TERMINAL_WORKFLOW_RUN_CONCLUSION_SET.has(value.conclusion);
+  const runAttempt =
+    isObjectRecord(value) &&
+    Number.isSafeInteger(value.run_attempt) &&
+    (value.run_attempt as number) > 0
+      ? (value.run_attempt as number)
+      : 0;
   if (
     !isObjectRecord(value) ||
     value.id !== options.runId ||
@@ -4277,12 +4347,13 @@ function validateApprovalControllerRun(
     value.path !== PR_GATE_WORKFLOW_PATH ||
     !Number.isSafeInteger(value.workflow_id) ||
     (value.workflow_id as number) < 1 ||
-    value.event !== "workflow_run" ||
+    controllerEvent === null ||
     value.head_branch !== "main" ||
     typeof value.head_sha !== "string" ||
     !SHA_PATTERN.test(value.head_sha) ||
-    value.run_attempt !== 1 ||
-    (!active && !cancelled) ||
+    runAttempt < 1 ||
+    (options.minimumRunAttempt !== undefined && runAttempt < options.minimumRunAttempt) ||
+    (!active && !terminal) ||
     value.html_url !== options.runUrl ||
     !isObjectRecord(value.repository) ||
     value.repository.full_name !== options.repository
@@ -4290,12 +4361,14 @@ function validateApprovalControllerRun(
     throw new Error("linked E2E approval controller is not the expected workflow run");
   }
   const identity = {
+    event: controllerEvent,
     workflowId: value.workflow_id as number,
     workflowSha: value.head_sha as string,
   };
   if (
     options.expected &&
-    (identity.workflowId !== options.expected.workflowId ||
+    (identity.event !== options.expected.event ||
+      identity.workflowId !== options.expected.workflowId ||
       identity.workflowSha !== options.expected.workflowSha)
   ) {
     throw new Error("linked E2E approval controller identity changed during cancellation");
@@ -4303,6 +4376,8 @@ function validateApprovalControllerRun(
   return {
     status: value.status as ApprovalControllerRunState["status"],
     conclusion: value.conclusion as ApprovalControllerRunState["conclusion"],
+    runAttempt,
+    terminal,
     identity,
   };
 }
@@ -4342,12 +4417,14 @@ async function activePrGateChecksForHead(options: {
   token: string;
   prNumber: number;
   headSha: string;
+  signal?: AbortSignal;
 }): Promise<ActivePrGateCheck[]> {
   const lineage = (
     await listPrGateChecks({
       repository: options.repository,
       token: options.token,
       headSha: options.headSha,
+      signal: options.signal,
     })
   ).filter((check) => isPrGateLineage(check, options.prNumber, options.headSha));
   if (lineage.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
@@ -4390,12 +4467,13 @@ async function readCloseEventPull(options: {
   prNumber: number;
   headSha: string;
   baseSha: string;
+  signal?: AbortSignal;
 }): Promise<PullRequestListItem> {
   const pull = validatePullRequestIdentity(
     await githubApi<unknown>(
       `repos/${options.repository}/pulls/${options.prNumber}`,
       options.token,
-      { userAgent: USER_AGENT },
+      { userAgent: USER_AGENT, signal: options.signal },
     ),
     { allowClosed: true },
   );
@@ -4410,16 +4488,37 @@ async function readCloseEventPull(options: {
   return pull;
 }
 
+async function readCloseReconciliationPull(options: {
+  repository: string;
+  token: string;
+  prNumber: number;
+  signal?: AbortSignal;
+}): Promise<PullRequestListItem> {
+  const pull = validatePullRequestIdentity(
+    await githubApi<unknown>(
+      `repos/${options.repository}/pulls/${options.prNumber}`,
+      options.token,
+      { userAgent: USER_AGENT, signal: options.signal },
+    ),
+    { allowClosed: true },
+  );
+  if (pull.number !== options.prNumber || pull.base.repo.full_name !== options.repository) {
+    throw new Error("pull request identity changed during close reconciliation");
+  }
+  return pull;
+}
+
 async function readExactPrGateCheck(options: {
   repository: string;
   token: string;
   checkRunId: number;
   identity: PrGateExternalIdentity;
+  signal?: AbortSignal;
 }): Promise<CheckRun> {
   const value = await githubApi<unknown>(
     `repos/${options.repository}/check-runs/${options.checkRunId}`,
     options.token,
-    { userAgent: USER_AGENT },
+    { userAgent: USER_AGENT, signal: options.signal },
   );
   if (!isObjectRecord(value)) {
     throw new Error("GitHub returned an invalid PR gate check during close cancellation");
@@ -4465,6 +4564,7 @@ type CancellationReconciliationDeps = {
   now?: () => number;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  requestTimeoutMs?: number;
   childVisibilityWindowMs?: number;
   childPollIntervalMs?: number;
 };
@@ -4474,6 +4574,7 @@ type CancellationPollConfig = {
   now: () => number;
   pollIntervalMs: number;
   timeoutMs: number;
+  requestTimeoutMs: number;
   childVisibilityWindowMs: number;
   childPollIntervalMs: number;
 };
@@ -4481,6 +4582,8 @@ type CancellationPollConfig = {
 function cancellationPollConfig(deps: CancellationReconciliationDeps): CancellationPollConfig {
   const pollIntervalMs = deps.pollIntervalMs ?? CANCELLATION_RECONCILIATION_POLL_INTERVAL_MS;
   const timeoutMs = deps.timeoutMs ?? CANCELLATION_RECONCILIATION_TIMEOUT_MS;
+  const requestTimeoutMs =
+    deps.requestTimeoutMs ?? Math.min(CANCELLATION_STATUS_READ_TIMEOUT_MS, timeoutMs);
   const childVisibilityWindowMs =
     deps.childVisibilityWindowMs ?? CANCELLATION_CHILD_VISIBILITY_WINDOW_MS;
   const childPollIntervalMs = deps.childPollIntervalMs ?? CANCELLATION_CHILD_POLL_INTERVAL_MS;
@@ -4489,6 +4592,9 @@ function cancellationPollConfig(deps: CancellationReconciliationDeps): Cancellat
     pollIntervalMs < 1 ||
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs < pollIntervalMs ||
+    !Number.isSafeInteger(requestTimeoutMs) ||
+    requestTimeoutMs < 1 ||
+    requestTimeoutMs > timeoutMs ||
     !Number.isSafeInteger(childVisibilityWindowMs) ||
     childVisibilityWindowMs < 1 ||
     childVisibilityWindowMs > MAX_DISPATCH_RECONCILIATION_WINDOW_MS ||
@@ -4503,9 +4609,23 @@ function cancellationPollConfig(deps: CancellationReconciliationDeps): Cancellat
     now: deps.now ?? Date.now,
     pollIntervalMs,
     timeoutMs,
+    requestTimeoutMs,
     childVisibilityWindowMs,
     childPollIntervalMs,
   };
+}
+
+async function boundedCancellationRead<T>(
+  label: string,
+  config: CancellationPollConfig,
+  deadlineMs: number,
+  read: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const remaining = deadlineMs - config.now();
+  if (remaining <= 0) {
+    throw new ControllerOperationTimeoutError(label, config.timeoutMs);
+  }
+  return boundedControllerOperation(label, Math.min(config.requestTimeoutMs, remaining), read);
 }
 
 async function pollForTerminalState<T>(
@@ -4513,6 +4633,7 @@ async function pollForTerminalState<T>(
   read: (signal: AbortSignal) => Promise<T>,
   terminal: (value: T) => boolean,
   config: CancellationPollConfig,
+  onNonterminal?: (value: T) => Promise<void>,
 ): Promise<T> {
   const deadline = config.now() + config.timeoutMs;
   while (true) {
@@ -4520,8 +4641,20 @@ async function pollForTerminalState<T>(
     if (remaining <= 0) {
       throw new Error(`${label} did not become terminal within ${config.timeoutMs}ms`);
     }
-    const value = await read(AbortSignal.timeout(remaining));
+    let value: T;
+    try {
+      value = await boundedCancellationRead(`${label} status read`, config, deadline, read);
+    } catch (error) {
+      if (!(error instanceof ControllerOperationTimeoutError)) throw error;
+      const waitMs = Math.min(config.pollIntervalMs, deadline - config.now());
+      if (waitMs <= 0) {
+        throw new Error(`${label} did not become terminal within ${config.timeoutMs}ms`);
+      }
+      await config.sleep(waitMs);
+      continue;
+    }
     if (terminal(value)) return value;
+    await onNonterminal?.(value);
     const waitMs = Math.min(config.pollIntervalMs, deadline - config.now());
     if (waitMs <= 0) {
       throw new Error(`${label} did not become terminal within ${config.timeoutMs}ms`);
@@ -4530,37 +4663,52 @@ async function pollForTerminalState<T>(
   }
 }
 
-async function waitForCancelledApprovalController(
+async function waitForTerminalApprovalController(
   repository: string,
   token: string,
-  approval: PendingApprovalController,
+  controller: Pick<PreparedControllerCancellation, "runId" | "runUrl">,
   expected: ApprovalControllerRunIdentity,
+  minimumRunAttempt: number,
+  cancelledRunAttempt: number,
   config: CancellationPollConfig,
 ): Promise<void> {
+  let observedRunAttempt = minimumRunAttempt;
+  let lastCancelledRunAttempt = cancelledRunAttempt;
   await pollForTerminalState(
-    `Approval controller ${approval.runId}`,
-    async (signal) =>
-      validateApprovalControllerRun(
-        await githubApi<unknown>(`repos/${repository}/actions/runs/${approval.runId}`, token, {
+    `Approval controller ${controller.runId}`,
+    async (signal) => {
+      const run = validateApprovalControllerRun(
+        await githubApi<unknown>(`repos/${repository}/actions/runs/${controller.runId}`, token, {
           userAgent: USER_AGENT,
           signal,
         }),
         {
           repository,
-          runId: approval.runId,
-          runUrl: approval.runUrl,
+          runId: controller.runId,
+          runUrl: controller.runUrl,
           expected,
+          minimumRunAttempt: observedRunAttempt,
         },
-      ),
-    (run) => run.status === "completed" && run.conclusion === "cancelled",
+      );
+      observedRunAttempt = run.runAttempt;
+      return run;
+    },
+    (run) => run.terminal,
     config,
+    async (run) => {
+      if (run.runAttempt <= lastCancelledRunAttempt) return;
+      await cancelChildRun(repository, token, controller.runId);
+      lastCancelledRunAttempt = run.runAttempt;
+    },
   );
 }
 
 type PrE2eChildRunIdentity = {
   runId: number;
+  runAttempt: number;
   runUrl: string;
   displayTitle: string;
+  controllerRunId: number | null;
   workflowId: number;
   workflowSha: string;
 };
@@ -4576,6 +4724,7 @@ function validatePrE2eChildRun(
     repository: string;
     prNumber: number;
     expected?: PrE2eChildRunIdentity;
+    minimumRunAttempt?: number;
     requireActive?: boolean;
   },
 ): PrE2eChildRunState {
@@ -4588,20 +4737,32 @@ function validatePrE2eChildRun(
     value.status === "completed" &&
     typeof value.conclusion === "string" &&
     TERMINAL_WORKFLOW_RUN_CONCLUSION_SET.has(value.conclusion);
-  const titlePrefix = `E2E PR #${options.prNumber} (`;
-  const correlationId =
-    typeof value.display_title === "string" &&
-    value.display_title.startsWith(titlePrefix) &&
-    value.display_title.endsWith(")")
-      ? value.display_title.slice(titlePrefix.length, -1)
-      : "";
+  const titleMatch =
+    typeof value.display_title === "string"
+      ? /^E2E PR #([1-9][0-9]*) \(([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\)(?: \[controller ([1-9][0-9]*)\])?$/u.exec(
+          value.display_title,
+        )
+      : null;
+  const titlePrNumber = titleMatch ? Number(titleMatch[1]) : 0;
+  const correlationId = titleMatch?.[2] ?? "";
+  const parsedControllerRunId = titleMatch?.[3] ? Number(titleMatch[3]) : null;
+  const controllerRunId =
+    parsedControllerRunId === null || Number.isSafeInteger(parsedControllerRunId)
+      ? parsedControllerRunId
+      : 0;
   const runId =
     Number.isSafeInteger(value.id) && (value.id as number) > 0 ? (value.id as number) : 0;
+  const runAttempt =
+    Number.isSafeInteger(value.run_attempt) && (value.run_attempt as number) > 0
+      ? (value.run_attempt as number)
+      : 0;
   const runUrl = `https://github.com/${options.repository}/actions/runs/${runId}`;
   const identity: PrE2eChildRunIdentity = {
     runId,
+    runAttempt,
     runUrl,
     displayTitle: typeof value.display_title === "string" ? value.display_title : "",
+    controllerRunId,
     workflowId:
       Number.isSafeInteger(value.workflow_id) && (value.workflow_id as number) > 0
         ? (value.workflow_id as number)
@@ -4610,11 +4771,14 @@ function validatePrE2eChildRun(
   };
   if (
     runId < 1 ||
+    titlePrNumber !== options.prNumber ||
+    controllerRunId === 0 ||
     identity.workflowId < 1 ||
     !CORRELATION_PATTERN.test(correlationId) ||
     value.path !== E2E_WORKFLOW_PATH ||
     value.event !== "workflow_dispatch" ||
-    value.run_attempt !== 1 ||
+    runAttempt < 1 ||
+    (options.minimumRunAttempt !== undefined && runAttempt < options.minimumRunAttempt) ||
     !SHA_PATTERN.test(identity.workflowSha) ||
     value.html_url !== runUrl ||
     (!active && !terminal) ||
@@ -4623,6 +4787,7 @@ function validatePrE2eChildRun(
       (identity.runId !== options.expected.runId ||
         identity.runUrl !== options.expected.runUrl ||
         identity.displayTitle !== options.expected.displayTitle ||
+        identity.controllerRunId !== options.expected.controllerRunId ||
         identity.workflowId !== options.expected.workflowId ||
         identity.workflowSha !== options.expected.workflowSha))
   ) {
@@ -4631,20 +4796,54 @@ function validatePrE2eChildRun(
   return { identity, terminal };
 }
 
-async function listActivePrE2eRuns(options: {
-  repository: string;
-  token: string;
-  prNumber: number;
-}): Promise<Map<number, PrE2eChildRunIdentity>> {
+function samePrE2eChildRunLineage(
+  left: PrE2eChildRunIdentity,
+  right: PrE2eChildRunIdentity,
+): boolean {
+  return (
+    left.runId === right.runId &&
+    left.runUrl === right.runUrl &&
+    left.displayTitle === right.displayTitle &&
+    left.controllerRunId === right.controllerRunId &&
+    left.workflowId === right.workflowId &&
+    left.workflowSha === right.workflowSha
+  );
+}
+
+function prE2eChildRunAttemptKey(identity: PrE2eChildRunIdentity): string {
+  return `${identity.runId}:${identity.runAttempt}`;
+}
+
+async function listActivePrE2eRuns(
+  options: {
+    repository: string;
+    token: string;
+    prNumber: number;
+    controllerRunIds?: ReadonlySet<number>;
+    knownRuns?: ReadonlyMap<number, PrE2eChildRunIdentity>;
+  },
+  readBudget?: {
+    config: CancellationPollConfig;
+    deadlineMs: number;
+  },
+): Promise<Map<number, PrE2eChildRunIdentity>> {
   const titlePrefix = `E2E PR #${options.prNumber} (`;
   const active = new Map<number, PrE2eChildRunIdentity>();
   for (const status of ACTIVE_WORKFLOW_RUN_STATUSES) {
     for (let page = 1; page <= MAX_ACTIVE_RUN_PAGES_PER_STATUS; page += 1) {
-      const response = await githubApi<unknown>(
-        `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/runs?event=workflow_dispatch&status=${status}&per_page=100&page=${page}`,
-        options.token,
-        { userAgent: USER_AGENT },
-      );
+      const apiPath = `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/runs?event=workflow_dispatch&status=${status}&per_page=100&page=${page}`;
+      const response = readBudget
+        ? await boundedCancellationRead(
+            `PR E2E ${status} inventory page ${page}`,
+            readBudget.config,
+            readBudget.deadlineMs,
+            (signal) =>
+              githubApi<unknown>(apiPath, options.token, {
+                userAgent: USER_AGENT,
+                signal,
+              }),
+          )
+        : await githubApi<unknown>(apiPath, options.token, { userAgent: USER_AGENT });
       if (!isObjectRecord(response) || !Array.isArray(response.workflow_runs)) {
         throw new Error("GitHub returned an invalid workflow run list");
       }
@@ -4667,7 +4866,24 @@ async function listActivePrE2eRuns(options: {
           prNumber: options.prNumber,
           requireActive: true,
         });
-        active.set(run.identity.runId, run.identity);
+        if (options.controllerRunIds) {
+          const knownRun = options.knownRuns?.get(run.identity.runId);
+          if (knownRun && !samePrE2eChildRunLineage(knownRun, run.identity)) {
+            throw new Error("GitHub returned conflicting PR E2E run identities");
+          }
+          if (run.identity.controllerRunId === null) {
+            if (knownRun === undefined) continue;
+          } else if (!options.controllerRunIds.has(run.identity.controllerRunId)) {
+            continue;
+          }
+        }
+        const existing = active.get(run.identity.runId);
+        if (existing && !samePrE2eChildRunLineage(existing, run.identity)) {
+          throw new Error("GitHub returned conflicting PR E2E run identities");
+        }
+        if (!existing || run.identity.runAttempt > existing.runAttempt) {
+          active.set(run.identity.runId, run.identity);
+        }
       }
       if (response.workflow_runs.length < 100) break;
       if (page === MAX_ACTIVE_RUN_PAGES_PER_STATUS) {
@@ -4686,11 +4902,14 @@ async function waitForTerminalPrE2eChildRun(
     identity: PrE2eChildRunIdentity;
   },
   config: CancellationPollConfig,
-): Promise<void> {
-  await pollForTerminalState(
+  cancelledRunAttempt: number,
+): Promise<PrE2eChildRunIdentity> {
+  let observedRunAttempt = options.identity.runAttempt;
+  let lastCancelledRunAttempt = cancelledRunAttempt;
+  const run = await pollForTerminalState(
     `PR E2E child ${options.identity.runId}`,
-    async (signal) =>
-      validatePrE2eChildRun(
+    async (signal) => {
+      const child = validatePrE2eChildRun(
         await githubApi<unknown>(
           `repos/${options.repository}/actions/runs/${options.identity.runId}`,
           options.token,
@@ -4700,11 +4919,21 @@ async function waitForTerminalPrE2eChildRun(
           repository: options.repository,
           prNumber: options.prNumber,
           expected: options.identity,
+          minimumRunAttempt: observedRunAttempt,
         },
-      ),
+      );
+      observedRunAttempt = child.identity.runAttempt;
+      return child;
+    },
     (run) => run.terminal,
     config,
+    async (child) => {
+      if (child.identity.runAttempt <= lastCancelledRunAttempt) return;
+      await cancelChildRun(options.repository, options.token, child.identity.runId);
+      lastCancelledRunAttempt = child.identity.runAttempt;
+    },
   );
+  return run.identity;
 }
 
 async function reconcilePrE2eChildrenAfterController(options: {
@@ -4712,12 +4941,16 @@ async function reconcilePrE2eChildrenAfterController(options: {
   token: string;
   prNumber: number;
   initialRuns: readonly PrE2eChildRunIdentity[];
+  controllerRunIds: ReadonlySet<number>;
   config: CancellationPollConfig;
-  rescanWhileClosed?: () => Promise<boolean>;
-}): Promise<number> {
-  const confirmed = new Set<number>();
+}): Promise<{ lateCancellations: number; reconciledRunIds: ReadonlySet<number> }> {
+  const confirmed = new Set<string>();
+  const reconciledRunIds = new Set<number>();
+  const knownRuns = new Map(
+    options.initialRuns.map((identity) => [identity.runId, identity] as const),
+  );
   for (const identity of options.initialRuns) {
-    await waitForTerminalPrE2eChildRun(
+    const terminalIdentity = await waitForTerminalPrE2eChildRun(
       {
         repository: options.repository,
         token: options.token,
@@ -4725,31 +4958,43 @@ async function reconcilePrE2eChildrenAfterController(options: {
         identity,
       },
       options.config,
+      identity.runAttempt,
     );
-    confirmed.add(identity.runId);
+    confirmed.add(prE2eChildRunAttemptKey(identity));
+    confirmed.add(prE2eChildRunAttemptKey(terminalIdentity));
+    reconciledRunIds.add(identity.runId);
   }
 
   let lateCancellations = 0;
   let lateRescans = 0;
   let visibilityDeadline = options.config.now() + options.config.childVisibilityWindowMs;
-  while (options.rescanWhileClosed) {
-    if (!(await options.rescanWhileClosed())) return lateCancellations;
-    const active = await listActivePrE2eRuns(options);
-    const unconfirmed = [...active.values()].filter((run) => !confirmed.has(run.runId));
+  while (true) {
+    if (visibilityDeadline - options.config.now() <= 0) {
+      return { lateCancellations, reconciledRunIds };
+    }
+    const active = await listActivePrE2eRuns(
+      { ...options, knownRuns },
+      {
+        config: options.config,
+        deadlineMs: visibilityDeadline,
+      },
+    );
+    const unconfirmed = [...active.values()].filter(
+      (run) => !confirmed.has(prE2eChildRunAttemptKey(run)),
+    );
     if (unconfirmed.length === 0) {
       const remaining = visibilityDeadline - options.config.now();
-      if (remaining <= 0) return lateCancellations;
+      if (remaining <= 0) return { lateCancellations, reconciledRunIds };
       await options.config.sleep(Math.min(options.config.childPollIntervalMs, remaining));
       continue;
     }
-    if (!(await options.rescanWhileClosed())) return lateCancellations;
     if (lateRescans >= MAX_CANCELLATION_CHILD_RESCANS) {
       throw new Error("PR E2E child cancellation exceeded its late-run limit");
     }
     lateRescans += 1;
     for (const identity of unconfirmed) {
       await cancelChildRun(options.repository, options.token, identity.runId);
-      await waitForTerminalPrE2eChildRun(
+      const terminalIdentity = await waitForTerminalPrE2eChildRun(
         {
           repository: options.repository,
           token: options.token,
@@ -4757,13 +5002,16 @@ async function reconcilePrE2eChildrenAfterController(options: {
           identity,
         },
         options.config,
+        identity.runAttempt,
       );
-      confirmed.add(identity.runId);
+      confirmed.add(prE2eChildRunAttemptKey(identity));
+      confirmed.add(prE2eChildRunAttemptKey(terminalIdentity));
+      reconciledRunIds.add(identity.runId);
+      knownRuns.set(identity.runId, terminalIdentity);
       lateCancellations += 1;
     }
     visibilityDeadline = options.config.now() + options.config.childVisibilityWindowMs;
   }
-  return lateCancellations;
 }
 
 type ApprovalCheckReconciliationState = "pending" | "advanced" | "completed";
@@ -4780,12 +5028,26 @@ function approvalCheckReconciliationState(
   return samePendingApprovalController(repository, check, approval) ? "pending" : "advanced";
 }
 
+type PreparedControllerCancellation = {
+  runId: number;
+  runUrl: string;
+  identity: ApprovalControllerRunIdentity;
+  runAttempt: number;
+  cancelledRunAttempt: number;
+};
+
 type PreparedApprovalCancellation = {
   candidate: ActivePrGateCheck;
   approval: PendingApprovalController;
-  controllerIdentity: ApprovalControllerRunIdentity;
+  controller: PreparedControllerCancellation;
   priorCheck: ApprovalCheckSnapshot;
   priorState: ApprovalCheckReconciliationState;
+};
+
+type PreparedRunningCheckCancellation = {
+  candidate: ActivePrGateCheck;
+  child: PrE2eChildRunIdentity;
+  priorCheck: ApprovalCheckSnapshot;
 };
 
 type ApprovalCheckSnapshot = {
@@ -4817,6 +5079,36 @@ function sameApprovalCheckSnapshot(check: CheckRun, expected: ApprovalCheckSnaps
   );
 }
 
+function runningCheckChildRunId(repository: string, check: CheckRun): number | null {
+  const summary = check.output?.summary;
+  if (
+    typeof summary !== "string" ||
+    !summary.startsWith("Risk plan ") ||
+    !/^Running [1-9][0-9]* E2E checks?$/u.test(check.output?.title ?? "")
+  ) {
+    return null;
+  }
+  const marker = ". Child run: ";
+  const markerIndex = summary.indexOf(marker);
+  if (markerIndex < 0 || summary.indexOf(marker, markerIndex + marker.length) >= 0) return null;
+  const selection = summary.slice(0, markerIndex);
+  const runUrl = summary.slice(markerIndex + marker.length, -1);
+  if (
+    !summary.endsWith(".") ||
+    !/^Risk plan [a-f0-9]{64} selected jobs: .*; targets: .*$/u.test(selection)
+  ) {
+    return null;
+  }
+  const prefix = `https://github.com/${repository}/actions/runs/`;
+  if (!runUrl.startsWith(prefix) || !/^[1-9][0-9]*$/u.test(runUrl.slice(prefix.length))) {
+    return null;
+  }
+  const runId = Number(runUrl.slice(prefix.length));
+  if (!Number.isSafeInteger(runId)) return null;
+  const canonicalCheckUrl = `https://github.com/${repository}/runs/${check.id}`;
+  return check.details_url === runUrl || check.details_url === canonicalCheckUrl ? runId : null;
+}
+
 async function cancelClosedPendingApprovalPrGate(options: {
   repository: string;
   token: string;
@@ -4825,7 +5117,8 @@ async function cancelClosedPendingApprovalPrGate(options: {
   supersededHeadSha?: string;
   baseSha?: string;
   initialChildRuns: readonly PrE2eChildRunIdentity[];
-  deps: CancellationReconciliationDeps;
+  config: CancellationPollConfig;
+  finalizeChecks: boolean;
 }): Promise<number> {
   if (
     !options.headSha ||
@@ -4843,138 +5136,374 @@ async function cancelClosedPendingApprovalPrGate(options: {
     headSha: options.headSha,
     baseSha: options.baseSha,
   };
-  const pull = await readCloseEventPull(closeEvent);
+  const preflightDeadline = options.config.now() + options.config.timeoutMs;
+  const pull = await boundedCancellationRead(
+    "Closed PR identity read",
+    options.config,
+    preflightDeadline,
+    (signal) => readCloseEventPull({ ...closeEvent, signal }),
+  );
   if (pull.state !== "closed") return 0;
 
-  const candidates = await activePrGateChecksForHead({
-    repository: options.repository,
-    token: options.token,
-    prNumber: options.prNumber,
-    headSha: options.headSha,
-  });
-  const config = cancellationPollConfig(options.deps);
-  const prepared: PreparedApprovalCancellation[] = [];
-  const controllerRunIds = new Set<number>();
+  const candidates = await boundedCancellationRead(
+    "Closed PR gate check inventory",
+    options.config,
+    preflightDeadline,
+    (signal) =>
+      activePrGateChecksForHead({
+        repository: options.repository,
+        token: options.token,
+        prNumber: options.prNumber,
+        headSha: options.headSha!,
+        signal,
+      }),
+  );
+  const preparedApprovals: PreparedApprovalCancellation[] = [];
+  const preparedRunningChecks: PreparedRunningCheckCancellation[] = [];
+  const controllers = new Map<number, PreparedControllerCancellation>();
+  const approvalControllerRunIds = new Set<number>();
+  const runningCheckChildRunIds = new Set<number>();
+  const initialChildRuns = new Map<number, PrE2eChildRunIdentity>();
+  const retainInitialChildRun = (identity: PrE2eChildRunIdentity): void => {
+    const existing = initialChildRuns.get(identity.runId);
+    if (existing && !samePrE2eChildRunLineage(existing, identity)) {
+      throw new Error("GitHub returned conflicting PR E2E run identities");
+    }
+    if (!existing || identity.runAttempt > existing.runAttempt) {
+      initialChildRuns.set(identity.runId, identity);
+    }
+  };
+  for (const child of options.initialChildRuns) retainInitialChildRun(child);
 
   // Validate every lineage before mutating any controller. A malformed second
   // lineage must not leave the first one only partially reconciled.
   for (const candidate of candidates) {
     const approval = pendingApprovalController(options.repository, candidate.check);
-    if (!approval) continue;
-    if (controllerRunIds.has(approval.runId)) {
-      throw new Error("multiple PR gate checks identify the same approval controller");
-    }
-    controllerRunIds.add(approval.runId);
-    const runOptions = {
-      repository: options.repository,
-      runId: approval.runId,
-      runUrl: approval.runUrl,
-    };
-    const initialRun = validateApprovalControllerRun(
-      await githubApi<unknown>(
-        `repos/${options.repository}/actions/runs/${approval.runId}`,
-        options.token,
-        { userAgent: USER_AGENT },
-      ),
-      runOptions,
-    );
-    if (initialRun.status === "waiting") {
-      validatePendingApprovalDeployment(
-        await githubApi<unknown>(
-          `repos/${options.repository}/actions/runs/${approval.runId}/pending_deployments`,
-          options.token,
-          { userAgent: USER_AGENT },
+    if (approval) {
+      if (approvalControllerRunIds.has(approval.runId)) {
+        throw new Error("multiple PR gate checks identify the same approval controller");
+      }
+      approvalControllerRunIds.add(approval.runId);
+      const runOptions = {
+        repository: options.repository,
+        runId: approval.runId,
+        runUrl: approval.runUrl,
+      };
+      const initialRun = validateApprovalControllerRun(
+        await boundedCancellationRead(
+          `Approval controller ${approval.runId} preflight read`,
+          options.config,
+          preflightDeadline,
+          (signal) =>
+            githubApi<unknown>(
+              `repos/${options.repository}/actions/runs/${approval.runId}`,
+              options.token,
+              { userAgent: USER_AGENT, signal },
+            ),
         ),
-        {
-          repository: options.repository,
-          environment: approval.environment,
-        },
+        runOptions,
       );
+      if (initialRun.status === "waiting") {
+        validatePendingApprovalDeployment(
+          await boundedCancellationRead(
+            `Approval controller ${approval.runId} deployment read`,
+            options.config,
+            preflightDeadline,
+            (signal) =>
+              githubApi<unknown>(
+                `repos/${options.repository}/actions/runs/${approval.runId}/pending_deployments`,
+                options.token,
+                { userAgent: USER_AGENT, signal },
+              ),
+          ),
+          {
+            repository: options.repository,
+            environment: approval.environment,
+          },
+        );
+      }
+
+      const before = await boundedCancellationRead(
+        `PR gate check ${candidate.check.id} preflight read`,
+        options.config,
+        preflightDeadline,
+        (signal) =>
+          readExactPrGateCheck({
+            repository: options.repository,
+            token: options.token,
+            checkRunId: candidate.check.id,
+            identity: candidate.identity,
+            signal,
+          }),
+      );
+      const advancedChildRunId = runningCheckChildRunId(options.repository, before);
+      if (advancedChildRunId !== null) {
+        if (runningCheckChildRunIds.has(advancedChildRunId)) {
+          throw new Error("multiple PR gate checks identify the same running E2E child");
+        }
+        runningCheckChildRunIds.add(advancedChildRunId);
+        const child = validatePrE2eChildRun(
+          await boundedCancellationRead(
+            `PR E2E child ${advancedChildRunId} preflight read`,
+            options.config,
+            preflightDeadline,
+            (signal) =>
+              githubApi<unknown>(
+                `repos/${options.repository}/actions/runs/${advancedChildRunId}`,
+                options.token,
+                { userAgent: USER_AGENT, signal },
+              ),
+          ),
+          {
+            repository: options.repository,
+            prNumber: options.prNumber,
+          },
+        );
+        if (child.identity.runId !== advancedChildRunId) {
+          throw new Error("running PR E2E gate check identified a mismatched child run");
+        }
+        if (
+          child.identity.controllerRunId !== null &&
+          child.identity.controllerRunId !== approval.runId
+        ) {
+          throw new Error("running PR E2E child identifies a different approval controller");
+        }
+        retainInitialChildRun(child.identity);
+      }
+      const controller: PreparedControllerCancellation = {
+        runId: approval.runId,
+        runUrl: approval.runUrl,
+        identity: initialRun.identity,
+        runAttempt: initialRun.runAttempt,
+        cancelledRunAttempt: 0,
+      };
+      controllers.set(controller.runId, controller);
+      preparedApprovals.push({
+        candidate,
+        approval,
+        controller,
+        priorCheck: approvalCheckSnapshot(before),
+        priorState: approvalCheckReconciliationState(options.repository, before, approval),
+      });
+      continue;
     }
 
-    const before = await readExactPrGateCheck({
-      repository: options.repository,
-      token: options.token,
-      checkRunId: candidate.check.id,
-      identity: candidate.identity,
-    });
-    prepared.push({
+    const listedChildRunId = runningCheckChildRunId(options.repository, candidate.check);
+    if (listedChildRunId === null) continue;
+    if (runningCheckChildRunIds.has(listedChildRunId)) {
+      throw new Error("multiple PR gate checks identify the same running E2E child");
+    }
+    runningCheckChildRunIds.add(listedChildRunId);
+    const before = await boundedCancellationRead(
+      `PR gate check ${candidate.check.id} preflight read`,
+      options.config,
+      preflightDeadline,
+      (signal) =>
+        readExactPrGateCheck({
+          repository: options.repository,
+          token: options.token,
+          checkRunId: candidate.check.id,
+          identity: candidate.identity,
+          signal,
+        }),
+    );
+    const exactChildRunId = runningCheckChildRunId(options.repository, before);
+    const naturallyCompleted =
+      before.status === "completed" && typeof before.conclusion === "string";
+    if (exactChildRunId !== listedChildRunId && !naturallyCompleted) {
+      throw new Error("running PR E2E gate check changed during cancellation preflight");
+    }
+    const child = validatePrE2eChildRun(
+      await boundedCancellationRead(
+        `PR E2E child ${listedChildRunId} preflight read`,
+        options.config,
+        preflightDeadline,
+        (signal) =>
+          githubApi<unknown>(
+            `repos/${options.repository}/actions/runs/${listedChildRunId}`,
+            options.token,
+            { userAgent: USER_AGENT, signal },
+          ),
+      ),
+      {
+        repository: options.repository,
+        prNumber: options.prNumber,
+      },
+    );
+    if (child.identity.runId !== listedChildRunId) {
+      throw new Error("running PR E2E gate check identified a mismatched child run");
+    }
+    retainInitialChildRun(child.identity);
+    preparedRunningChecks.push({
       candidate,
-      approval,
-      controllerIdentity: initialRun.identity,
+      child: child.identity,
       priorCheck: approvalCheckSnapshot(before),
-      priorState: approvalCheckReconciliationState(options.repository, before, approval),
     });
   }
-  if (prepared.length === 0) return 0;
+
+  for (const child of initialChildRuns.values()) {
+    if (child.controllerRunId === null || controllers.has(child.controllerRunId)) continue;
+    const runId = child.controllerRunId;
+    const runUrl = `https://github.com/${options.repository}/actions/runs/${runId}`;
+    const run = validateApprovalControllerRun(
+      await boundedCancellationRead(
+        `Approval controller ${runId} child-lineage read`,
+        options.config,
+        preflightDeadline,
+        (signal) =>
+          githubApi<unknown>(`repos/${options.repository}/actions/runs/${runId}`, options.token, {
+            userAgent: USER_AGENT,
+            signal,
+          }),
+      ),
+      { repository: options.repository, runId, runUrl },
+    );
+    controllers.set(runId, {
+      runId,
+      runUrl,
+      identity: run.identity,
+      runAttempt: run.runAttempt,
+      cancelledRunAttempt: 0,
+    });
+  }
+  if (
+    preparedApprovals.length === 0 &&
+    preparedRunningChecks.length === 0 &&
+    initialChildRuns.size === 0
+  ) {
+    return 0;
+  }
+
+  const controllerRunIds = new Set(controllers.keys());
+  for (const child of initialChildRuns.values()) {
+    if (child.controllerRunId !== null && !controllerRunIds.has(child.controllerRunId)) {
+      throw new Error("PR E2E child controller provenance was not validated");
+    }
+  }
 
   // A stale close event must not cancel controllers made live again by a reopen.
-  if ((await readCloseEventPull(closeEvent)).state !== "closed") return 0;
+  const currentPull = await boundedCancellationRead(
+    "Closed PR mutation guard read",
+    options.config,
+    preflightDeadline,
+    (signal) => readCloseEventPull({ ...closeEvent, signal }),
+  );
+  if (currentPull.state !== "closed") return 0;
+
+  for (const child of initialChildRuns.values()) {
+    await cancelChildRun(options.repository, options.token, child.runId);
+    console.log(
+      `Cancelled closed PR E2E run: pr=${options.prNumber} run=${child.runId} url=${child.runUrl}`,
+    );
+  }
 
   // Submit every cancellation before polling. This keeps simultaneous lineages
   // progressing even if one controller takes the full bounded poll interval.
-  for (const item of prepared) {
+  for (const controller of controllers.values()) {
     const runOptions = {
       repository: options.repository,
-      runId: item.approval.runId,
-      runUrl: item.approval.runUrl,
-      expected: item.controllerIdentity,
+      runId: controller.runId,
+      runUrl: controller.runUrl,
+      expected: controller.identity,
+      minimumRunAttempt: controller.runAttempt,
     };
     const currentRun = validateApprovalControllerRun(
-      await githubApi<unknown>(
-        `repos/${options.repository}/actions/runs/${item.approval.runId}`,
-        options.token,
-        { userAgent: USER_AGENT },
+      await boundedCancellationRead(
+        `Approval controller ${controller.runId} cancellation read`,
+        options.config,
+        preflightDeadline,
+        (signal) =>
+          githubApi<unknown>(
+            `repos/${options.repository}/actions/runs/${controller.runId}`,
+            options.token,
+            { userAgent: USER_AGENT, signal },
+          ),
       ),
       runOptions,
     );
-    if (currentRun.status !== "completed") {
-      await cancelChildRun(options.repository, options.token, item.approval.runId);
+    controller.runAttempt = currentRun.runAttempt;
+    if (!currentRun.terminal) {
+      await cancelChildRun(options.repository, options.token, controller.runId);
+      controller.cancelledRunAttempt = currentRun.runAttempt;
     }
   }
 
-  for (const item of prepared) {
-    await waitForCancelledApprovalController(
+  for (const controller of controllers.values()) {
+    await waitForTerminalApprovalController(
       options.repository,
       options.token,
-      item.approval,
-      item.controllerIdentity,
-      config,
+      controller,
+      controller.identity,
+      controller.runAttempt,
+      controller.cancelledRunAttempt,
+      options.config,
     );
-    console.log(
-      `Approval controller terminal: pr=${options.prNumber} run=${item.approval.runId} check=${item.candidate.check.id} prior_state=${item.priorState}`,
-    );
+    console.log(`Approval controller terminal: pr=${options.prNumber} run=${controller.runId}`);
   }
 
-  const postControllerPull = await readCloseEventPull(closeEvent);
-  const lateChildCancellations = await reconcilePrE2eChildrenAfterController({
+  const childReconciliation = await reconcilePrE2eChildrenAfterController({
     repository: options.repository,
     token: options.token,
     prNumber: options.prNumber,
-    initialRuns: options.initialChildRuns,
-    config,
-    rescanWhileClosed:
-      postControllerPull.state === "closed"
-        ? async () => (await readCloseEventPull(closeEvent)).state === "closed"
-        : undefined,
+    initialRuns: [...initialChildRuns.values()],
+    controllerRunIds,
+    config: options.config,
   });
+  const reconciledCount =
+    initialChildRuns.size + controllers.size + childReconciliation.lateCancellations;
+  if (!options.finalizeChecks) return reconciledCount;
 
-  for (const { candidate, approval, priorCheck, priorState } of prepared) {
-    const finalPull = await readCloseEventPull(closeEvent);
-    const finalCheck = await readExactPrGateCheck({
-      repository: options.repository,
-      token: options.token,
-      checkRunId: candidate.check.id,
-      identity: candidate.identity,
-    });
+  const finalDeadline = options.config.now() + options.config.timeoutMs;
+  const preparedChecks = [
+    ...preparedApprovals.map((item) => ({ kind: "approval" as const, ...item })),
+    ...preparedRunningChecks.map((item) => ({ kind: "running" as const, ...item })),
+  ];
+  for (const item of preparedChecks) {
+    const { candidate, priorCheck } = item;
+    const priorState = item.kind === "approval" ? item.priorState : "advanced";
+    const detailsUrl = item.kind === "approval" ? item.approval.runUrl : item.child.runUrl;
+    const finalPull = await boundedCancellationRead(
+      "Final PR reconciliation read",
+      options.config,
+      finalDeadline,
+      (signal) => readCloseReconciliationPull({ ...closeEvent, signal }),
+    );
+    const finalCheck = await boundedCancellationRead(
+      `PR gate check ${candidate.check.id} final read`,
+      options.config,
+      finalDeadline,
+      (signal) =>
+        readExactPrGateCheck({
+          repository: options.repository,
+          token: options.token,
+          checkRunId: candidate.check.id,
+          identity: candidate.identity,
+          signal,
+        }),
+    );
     if (finalCheck.status === "completed") continue;
-    const finalState = approvalCheckReconciliationState(options.repository, finalCheck, approval);
+    let finalState: ApprovalCheckReconciliationState;
+    if (item.kind === "approval") {
+      finalState = approvalCheckReconciliationState(options.repository, finalCheck, item.approval);
+    } else {
+      if (finalCheck.status !== "in_progress" || finalCheck.conclusion !== null) {
+        throw new Error("running PR gate check has an invalid reconciliation state");
+      }
+      finalState = "advanced";
+    }
     if (finalPull.state === "closed") {
-      await completeCheck(
-        { repository: options.repository, checkRunId: candidate.check.id },
-        options.token,
-        closedPrGateVerdict(options.repository, candidate.identity),
-        approval.runUrl,
+      await boundedCancellationRead(
+        `PR gate check ${candidate.check.id} close mutation`,
+        options.config,
+        finalDeadline,
+        (signal) =>
+          completeCheck(
+            { repository: options.repository, checkRunId: candidate.check.id },
+            options.token,
+            closedPrGateVerdict(options.repository, candidate.identity),
+            detailsUrl,
+            signal,
+          ),
       );
       console.log(
         `Closed reconciled PR gate check: pr=${options.prNumber} check=${candidate.check.id} prior_state=${finalState}`,
@@ -4982,21 +5511,33 @@ async function cancelClosedPendingApprovalPrGate(options: {
       continue;
     }
 
+    const runningChildRunId = runningCheckChildRunId(options.repository, finalCheck);
     const provablyOldReopenedState =
       finalState === "pending" ||
-      (priorState === "advanced" && sameApprovalCheckSnapshot(finalCheck, priorCheck));
-    if (candidate.identity.baseSha === finalPull.base.sha && provablyOldReopenedState) {
-      await markCheckInProgress(
-        {
-          repository: options.repository,
-          checkRunId: candidate.check.id,
-          prNumber: candidate.identity.prNumber,
-          headSha: candidate.identity.headSha,
-          baseSha: candidate.identity.baseSha,
-        },
-        options.token,
-        RESERVED_CHECK_TITLE,
-        RESERVED_CHECK_SUMMARY,
+      (priorState === "advanced" && sameApprovalCheckSnapshot(finalCheck, priorCheck)) ||
+      (runningChildRunId !== null && childReconciliation.reconciledRunIds.has(runningChildRunId));
+    const sameReopenedRevision =
+      candidate.identity.headSha === finalPull.head.sha &&
+      candidate.identity.baseSha === finalPull.base.sha;
+    if (sameReopenedRevision && provablyOldReopenedState) {
+      await boundedCancellationRead(
+        `PR gate check ${candidate.check.id} reopen mutation`,
+        options.config,
+        finalDeadline,
+        (signal) =>
+          markCheckInProgress(
+            {
+              repository: options.repository,
+              checkRunId: candidate.check.id,
+              prNumber: candidate.identity.prNumber,
+              headSha: candidate.identity.headSha,
+              baseSha: candidate.identity.baseSha,
+            },
+            options.token,
+            RESERVED_CHECK_TITLE,
+            RESERVED_CHECK_SUMMARY,
+            signal,
+          ),
       );
       console.log(
         `Reset reopened PR gate check: pr=${options.prNumber} check=${candidate.check.id}`,
@@ -5004,24 +5545,63 @@ async function cancelClosedPendingApprovalPrGate(options: {
       continue;
     }
 
-    if (candidate.identity.baseSha === finalPull.base.sha) {
+    if (sameReopenedRevision) {
       console.log(
         `Left newly claimed reopened PR gate check unchanged: pr=${options.prNumber} check=${candidate.check.id}`,
       );
       continue;
     }
 
-    await completeCheck(
-      { repository: options.repository, checkRunId: candidate.check.id },
-      options.token,
-      {
-        conclusion: "cancelled",
-        title: "Superseded by PR update",
-        summary: `[PR #${options.prNumber}](https://github.com/${options.repository}/pull/${options.prNumber}) reopened on base \`${finalPull.base.sha.slice(0, 7)}\`. This check for earlier base \`${candidate.identity.baseSha.slice(0, 7)}\` no longer applies.`,
-      },
+    await boundedCancellationRead(
+      `PR gate check ${candidate.check.id} supersede mutation`,
+      options.config,
+      finalDeadline,
+      (signal) =>
+        completeCheck(
+          { repository: options.repository, checkRunId: candidate.check.id },
+          options.token,
+          {
+            conclusion: "cancelled",
+            title: "Superseded by PR update",
+            summary: `[PR #${options.prNumber}](https://github.com/${options.repository}/pull/${options.prNumber}) reopened at head \`${finalPull.head.sha.slice(0, 7)}\` on base \`${finalPull.base.sha.slice(0, 7)}\`. This check for head \`${candidate.identity.headSha.slice(0, 7)}\` on base \`${candidate.identity.baseSha.slice(0, 7)}\` no longer applies.`,
+          },
+          undefined,
+          signal,
+        ),
     );
   }
-  return prepared.length + lateChildCancellations;
+  return reconciledCount;
+}
+
+export async function quiesceClosedPrGate(
+  prNumber: number,
+  headSha: string,
+  baseSha: string,
+  deps: CancellationReconciliationDeps = {},
+): Promise<number> {
+  const { token, repository } = tokenAndRepository();
+  if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("PR number is invalid");
+  if (!SHA_PATTERN.test(headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(baseSha)) throw new Error("PR base SHA is invalid");
+  const config = cancellationPollConfig(deps);
+  const active = await listActivePrE2eRuns(
+    { repository, token, prNumber },
+    {
+      config,
+      deadlineMs: config.now() + config.timeoutMs,
+    },
+  );
+  return cancelClosedPendingApprovalPrGate({
+    repository,
+    token,
+    prNumber,
+    headSha,
+    supersededHeadSha: headSha,
+    baseSha,
+    initialChildRuns: [...active.values()],
+    config,
+    finalizeChecks: false,
+  });
 }
 
 async function activeSupersededPrGateChecks(options: {
@@ -5083,6 +5663,11 @@ export async function cancelPrGate(
   if (baseSha !== undefined && !SHA_PATTERN.test(baseSha)) {
     throw new Error("PR base SHA is invalid");
   }
+  const exactHeadClose =
+    headSha !== undefined &&
+    supersededHeadSha !== undefined &&
+    baseSha !== undefined &&
+    headSha === supersededHeadSha;
   const supersededChecks = await activeSupersededPrGateChecks({
     repository,
     token,
@@ -5090,10 +5675,21 @@ export async function cancelPrGate(
     headSha,
     supersededHeadSha,
   });
-  const active = await listActivePrE2eRuns({ repository, token, prNumber });
-  for (const run of active.values()) {
-    await cancelChildRun(repository, token, run.runId);
-    console.log(`Cancelled superseded run: pr=${prNumber} run=${run.runId} url=${run.runUrl}`);
+  const cancellationConfig = exactHeadClose ? cancellationPollConfig(deps) : undefined;
+  const active = await listActivePrE2eRuns(
+    { repository, token, prNumber },
+    cancellationConfig
+      ? {
+          config: cancellationConfig,
+          deadlineMs: cancellationConfig.now() + cancellationConfig.timeoutMs,
+        }
+      : undefined,
+  );
+  if (!exactHeadClose) {
+    for (const run of active.values()) {
+      await cancelChildRun(repository, token, run.runId);
+      console.log(`Cancelled superseded run: pr=${prNumber} run=${run.runId} url=${run.runUrl}`);
+    }
   }
   for (const check of supersededChecks) {
     await completeCheck({ repository, checkRunId: check.id }, token, {
@@ -5103,20 +5699,23 @@ export async function cancelPrGate(
     });
     console.log(`Closed superseded PR gate check: pr=${prNumber} check=${check.id}`);
   }
-  const closedApprovalControllers = await cancelClosedPendingApprovalPrGate({
-    repository,
-    token,
-    prNumber,
-    headSha,
-    supersededHeadSha,
-    baseSha,
-    initialChildRuns: [...active.values()],
-    deps,
-  });
+  const closedApprovalControllers = cancellationConfig
+    ? await cancelClosedPendingApprovalPrGate({
+        repository,
+        token,
+        prNumber,
+        headSha,
+        supersededHeadSha,
+        baseSha,
+        initialChildRuns: [...active.values()],
+        config: cancellationConfig,
+        finalizeChecks: true,
+      })
+    : 0;
   if (active.size === 0 && closedApprovalControllers === 0) {
     console.log(`No active E2E runs found for PR #${prNumber}`);
   }
-  return active.size + closedApprovalControllers;
+  return exactHeadClose ? closedApprovalControllers : active.size + closedApprovalControllers;
 }
 
 function reportControllerError(error: unknown): void {
@@ -5183,6 +5782,10 @@ async function main(): Promise<void> {
   }
   if (command.mode === "download") {
     await downloadChildRunEvidence(command.childRunId, command.evidencePath);
+    return;
+  }
+  if (command.mode === "quiesce-close") {
+    await quiesceClosedPrGate(command.prNumber, command.headSha, command.baseSha);
     return;
   }
   await cancelPrGate(command.prNumber, command.headSha, command.supersededHeadSha, command.baseSha);

@@ -165,12 +165,14 @@ function assertDispatchIdentity(options: {
   workflowSha: string;
   correlationId: string;
   prNumber: number;
+  controllerRunId?: number;
 }): void {
   if (
     !REPOSITORY_PATTERN.test(options.repository) ||
     !SHA_PATTERN.test(options.workflowSha) ||
     !CORRELATION_PATTERN.test(options.correlationId) ||
-    !positiveSafeInteger(options.prNumber)
+    !positiveSafeInteger(options.prNumber) ||
+    (options.controllerRunId !== undefined && !positiveSafeInteger(options.controllerRunId))
   ) {
     throw new Error("Workflow dispatch reconciliation identity is invalid");
   }
@@ -374,8 +376,17 @@ async function readInventory(
   );
 }
 
-function expectedRunTitle(prNumber: number, correlationId: string): string {
-  return `E2E PR #${prNumber} (${correlationId})`;
+function controllerRunIdFromTitle(
+  value: string,
+  prNumber: number,
+  correlationId: string,
+): number | null {
+  const prefix = `E2E PR #${prNumber} (${correlationId}) [controller `;
+  if (!value.startsWith(prefix) || !value.endsWith("]")) return null;
+  const runId = value.slice(prefix.length, -1);
+  if (!/^[1-9][0-9]*$/u.test(runId)) return null;
+  const parsed = Number(runId);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function workflowRunIdentity(run: WorkflowRun): string {
@@ -406,6 +417,7 @@ function candidateMismatch(
     workflowSha: string;
     correlationId: string;
     prNumber: number;
+    controllerRunId?: number;
     lowerBoundMs: number;
     upperBoundMs: number;
   },
@@ -413,15 +425,37 @@ function candidateMismatch(
   const expectedApiUrl = `https://api.github.com/repos/${options.repository}/actions/runs/${run.id}`;
   const expectedHtmlUrl = `https://github.com/${options.repository}/actions/runs/${run.id}`;
   const createdAtMs = Date.parse(run.createdAt);
-  const title = expectedRunTitle(options.prNumber, options.correlationId);
+  const nameControllerRunId = controllerRunIdFromTitle(
+    run.name,
+    options.prNumber,
+    options.correlationId,
+  );
+  const displayControllerRunId = controllerRunIdFromTitle(
+    run.displayTitle,
+    options.prNumber,
+    options.correlationId,
+  );
+  const legacyTitle = `E2E PR #${options.prNumber} (${options.correlationId})`;
+  const legacyName = options.controllerRunId === undefined && run.name === legacyTitle;
   const checks: Array<[string, boolean]> = [
-    ["name", run.name === title],
+    [
+      "name",
+      legacyName ||
+        (nameControllerRunId !== null &&
+          (options.controllerRunId === undefined ||
+            nameControllerRunId === options.controllerRunId)),
+    ],
     ["path", run.path === E2E_WORKFLOW_PATH],
     ["event", run.event === "workflow_dispatch"],
     ["head_branch", run.headBranch === "main"],
     ["head_sha", run.headSha === options.workflowSha],
     ["run_attempt", run.runAttempt === 1],
-    ["display_title", run.displayTitle === title],
+    [
+      "display_title",
+      legacyName
+        ? run.displayTitle === legacyTitle
+        : displayControllerRunId === nameControllerRunId,
+    ],
     ["url", run.apiUrl === expectedApiUrl],
     ["html_url", run.htmlUrl === expectedHtmlUrl],
     ["repository", run.repository === options.repository],
@@ -440,6 +474,7 @@ function scanInventory(
     workflowSha: string;
     correlationId: string;
     prNumber: number;
+    controllerRunId?: number;
     lowerBoundMs: number;
     upperBoundMs: number;
   },
@@ -498,6 +533,7 @@ async function reconcileWorkflowDispatch(
     workflowSha: string;
     correlationId: string;
     prNumber: number;
+    controllerRunId: number;
     sentAtMs: number;
     diagnostics: DispatchDiagnostics;
   },
@@ -566,6 +602,7 @@ async function reconcileWorkflowDispatch(
         workflowSha: options.workflowSha,
         correlationId: options.correlationId,
         prNumber: options.prNumber,
+        controllerRunId: options.controllerRunId,
         lowerBoundMs,
         upperBoundMs,
       },
@@ -588,6 +625,7 @@ async function reconcileWorkflowDispatch(
   if (candidateRunIds.length === 0) {
     const receipt: DispatchNotObservedReceipt = {
       correlationId: options.correlationId,
+      controllerRunId: options.controllerRunId,
       workflowSha: options.workflowSha,
       sentAtMs: options.sentAtMs,
       deadlineAtMs,
@@ -627,6 +665,7 @@ async function reconcileWorkflowDispatch(
     workflowSha: options.workflowSha,
     correlationId: options.correlationId,
     prNumber: options.prNumber,
+    controllerRunId: options.controllerRunId,
     lowerBoundMs,
     upperBoundMs,
   });
@@ -649,6 +688,7 @@ export async function dispatchWorkflowWithReconciliation(
     workflowSha: string;
     correlationId: string;
     prNumber: number;
+    controllerRunId: number;
     dispatch: (signal: AbortSignal) => Promise<GitHubApiResponse<unknown>>;
   },
   deps: DispatchReconciliationDeps = {},
@@ -736,6 +776,7 @@ export async function assertDispatchStillNotObserved(
     workflowSha: options.receipt.workflowSha,
     correlationId: options.receipt.correlationId,
     prNumber: options.prNumber,
+    controllerRunId: options.receipt.controllerRunId,
   });
   if (!options.token) throw new Error("GitHub token is required");
   const clockSkewMs = deps.clockSkewMs ?? DEFAULT_CLOCK_SKEW_MS;
@@ -785,6 +826,7 @@ export async function assertDispatchStillNotObserved(
       workflowSha: options.receipt.workflowSha,
       correlationId: options.receipt.correlationId,
       prNumber: options.prNumber,
+      controllerRunId: options.receipt.controllerRunId,
       lowerBoundMs: options.receipt.sentAtMs - clockSkewMs,
       upperBoundMs: recheckUpperBoundMs,
     },

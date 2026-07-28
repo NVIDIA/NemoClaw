@@ -200,9 +200,10 @@ describe("PR E2E protected internal approval", () => {
               const inputs = (dispatch?.body as { inputs?: Record<string, string> } | undefined)
                 ?.inputs;
               const correlationId = inputs?.correlation_id ?? "missing";
+              const controllerRunId = inputs?.controller_run_id ?? "missing";
               return githubResponse({
                 id: 23,
-                name: `E2E PR #42 (${correlationId})`,
+                name: `E2E PR #42 (${correlationId}) [controller ${controllerRunId}]`,
                 path: ".github/workflows/e2e.yaml",
                 workflow_id: 7,
                 run_attempt: 1,
@@ -210,7 +211,7 @@ describe("PR E2E protected internal approval", () => {
                 head_sha: WORKFLOW_SHA,
                 status: "queued",
                 conclusion: null,
-                display_title: `E2E PR #42 (${correlationId})`,
+                display_title: `E2E PR #42 (${correlationId}) [controller ${controllerRunId}]`,
                 html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
               });
             },

@@ -15,6 +15,7 @@ import type { DispatchNotObservedReceipt } from "../tools/e2e/pr-e2e-retry-recei
 const REPOSITORY = "NVIDIA/NemoClaw";
 const WORKFLOW_SHA = "d".repeat(40);
 const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
+const CONTROLLER_RUN_ID = 17;
 const SENT_AT_MS = 1_785_050_400_000;
 const WINDOW_MS = 100;
 const POLL_MS = 25;
@@ -42,7 +43,7 @@ function dispatchResponse(
 function workflowRun(runId = 23, overrides: Record<string, unknown> = {}) {
   return {
     id: runId,
-    name: `E2E PR #42 (${CORRELATION_ID})`,
+    name: `E2E PR #42 (${CORRELATION_ID}) [controller ${CONTROLLER_RUN_ID}]`,
     path: ".github/workflows/e2e.yaml",
     workflow_id: 901,
     created_at: new Date(SENT_AT_MS + 10).toISOString(),
@@ -52,7 +53,7 @@ function workflowRun(runId = 23, overrides: Record<string, unknown> = {}) {
     run_attempt: 1,
     status: "queued",
     conclusion: null,
-    display_title: `E2E PR #42 (${CORRELATION_ID})`,
+    display_title: `E2E PR #42 (${CORRELATION_ID}) [controller ${CONTROLLER_RUN_ID}]`,
     url: `https://api.github.com/repos/${REPOSITORY}/actions/runs/${runId}`,
     html_url: `https://github.com/${REPOSITORY}/actions/runs/${runId}`,
     repository: { full_name: REPOSITORY },
@@ -138,6 +139,7 @@ function dispatchOptions(dispatch: (signal: AbortSignal) => Promise<GitHubApiRes
     workflowSha: WORKFLOW_SHA,
     correlationId: CORRELATION_ID,
     prNumber: 42,
+    controllerRunId: CONTROLLER_RUN_ID,
     dispatch,
   };
 }
@@ -275,6 +277,7 @@ describe("PR E2E workflow dispatch reconciliation", () => {
     expect(error).toMatchObject({
       receipt: {
         correlationId: CORRELATION_ID,
+        controllerRunId: CONTROLLER_RUN_ID,
         workflowSha: WORKFLOW_SHA,
         sentAtMs: SENT_AT_MS,
         deadlineAtMs: SENT_AT_MS + WINDOW_MS,
@@ -353,6 +356,13 @@ describe("PR E2E workflow dispatch reconciliation", () => {
   it.each([
     ["run name", { name: "E2E" }],
     ["display title", { display_title: "E2E unrelated" }],
+    [
+      "controller provenance",
+      {
+        name: `E2E PR #42 (${CORRELATION_ID}) [controller 999]`,
+        display_title: `E2E PR #42 (${CORRELATION_ID}) [controller 999]`,
+      },
+    ],
     ["workflow path", { path: ".github/workflows/other.yaml" }],
     ["main branch", { head_branch: "release" }],
     ["workflow SHA", { head_sha: "e".repeat(40) }],
@@ -540,5 +550,23 @@ describe("PR E2E workflow dispatch reconciliation", () => {
     expect(inventoryUrl.searchParams.get("created")).toBe(
       `${new Date(SENT_AT_MS - 10).toISOString()}..${new Date(recheckTime + 10).toISOString()}`,
     );
+  });
+
+  it("blocks replacement when a legacy receipt finds its untagged child (#7140)", async () => {
+    const recheckTime = SENT_AT_MS + WINDOW_MS + 2_000;
+    const legacyTitle = `E2E PR #42 (${CORRELATION_ID})`;
+    const lateRun = workflowRun(23, {
+      name: legacyTitle,
+      display_title: legacyTitle,
+      created_at: new Date(SENT_AT_MS + WINDOW_MS + 1_000).toISOString(),
+    });
+    const { deps } = reconciliationDeps(() => inventory([lateRun]));
+
+    await expect(
+      assertDispatchStillNotObserved(oldReceiptOptions(), { ...deps, now: () => recheckTime }),
+    ).rejects.toMatchObject({
+      name: "DispatchReconciliationError",
+      candidateRunIds: [23],
+    });
   });
 });

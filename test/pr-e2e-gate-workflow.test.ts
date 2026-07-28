@@ -308,6 +308,7 @@ describe("PR E2E gate workflow", () => {
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const initialize = workflow.jobs.initialize;
     const required = workflow.jobs.required;
+    const quiesce = workflow.jobs["quiesce-closed"];
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
     const approveE2e = workflow.jobs["approve-e2e"];
@@ -430,6 +431,20 @@ describe("PR E2E gate workflow", () => {
     expect(observer.run).toContain('--head "$HEAD_SHA"');
     expect(observer.run).toContain('--base "$BASE_SHA"');
     expect(observer.run).toContain("--timeout-seconds 21480");
+    expect(quiesce.if).toContain("github.event.action == 'closed'");
+    expect(quiesce.if).toContain("github.run_attempt == 1");
+    expect(quiesce.needs).toBeUndefined();
+    expect(quiesce.concurrency).toBeUndefined();
+    expect(quiesce.permissions).toEqual({
+      actions: "write",
+      checks: "read",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    const quiesceStep = step(quiesce, "Quiesce closed PR E2E controllers");
+    expect(quiesceStep.run).toContain("--mode quiesce-close");
+    expect(quiesceStep.run).toContain('--head "$HEAD_SHA"');
+    expect(quiesceStep.run).toContain('--base "$BASE_SHA"');
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
     expect(cancel.if).toContain("github.run_attempt == 1");
     expect(cancel.if).not.toContain(
@@ -443,6 +458,14 @@ describe("PR E2E gate workflow", () => {
       contents: "read",
       "pull-requests": "read",
     });
+    expect(cancel.needs).toBeUndefined();
+    expect(cancel.concurrency?.group).toContain("github.event.action == 'closed'");
+    expect(cancel.concurrency?.group).toContain(
+      "format('pr-e2e-gate-{0}-{1}-{2}-{3}', github.repository",
+    );
+    expect(cancel.concurrency?.group).toContain("format('pr-e2e-cancel-{0}', github.run_id)");
+    expect(cancel.concurrency?.queue).toBe("max");
+    expect(cancel.concurrency?.["cancel-in-progress"]).toBe(false);
     expect(coordinate.if).toContain("github.event_name == 'workflow_run'");
     expect(coordinate.if).toContain("github.event.workflow_run.event == 'pull_request'");
     expect(coordinate.if).toContain(
@@ -588,7 +611,7 @@ describe("PR E2E gate workflow", () => {
       (candidate) => candidate.name === "Install controller dependencies",
     );
 
-    expect(checkouts).toHaveLength(5);
+    expect(checkouts).toHaveLength(6);
     expect(
       checkouts.every(
         (checkout) =>
@@ -596,11 +619,11 @@ describe("PR E2E gate workflow", () => {
           checkout.with?.["persist-credentials"] === false,
       ),
     ).toBe(true);
-    expect(nodeSetups).toHaveLength(5);
+    expect(nodeSetups).toHaveLength(6);
     expect(nodeSetups.every((setup) => setup.uses === TRUSTED_SETUP_NODE_ACTION)).toBe(true);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
-    expect(installs).toHaveLength(4);
+    expect(installs).toHaveLength(5);
     expect(
       installs.every((install) => install.run === "npm ci --ignore-scripts --no-audit --no-fund"),
     ).toBe(true);

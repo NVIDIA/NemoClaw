@@ -169,10 +169,11 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
-    version: 4,
+    version: 5,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
     checkoutRepository: "NVIDIA/NemoClaw",
+    controllerRunId: GATE_RUN_ID,
     workflowSha: WORKFLOW_SHA,
     planHash: plan.planHash,
     correlationId: CORRELATION_ID,
@@ -252,7 +253,7 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
     head_sha: gate.workflowSha,
     status: "completed",
     conclusion: "success",
-    display_title: `E2E PR #${gate.prNumber} (${gate.correlationId})`,
+    display_title: `E2E PR #${gate.prNumber} (${gate.correlationId}) [controller ${gate.controllerRunId}]`,
     html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
     ...overrides,
   };
@@ -431,6 +432,7 @@ describe("PR E2E controller", () => {
         checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
         controllerCheckId: 101,
+        controllerRunId: GATE_RUN_ID,
         jobs,
         targets: [DCODE_TARGET],
         prNumber: 42,
@@ -453,6 +455,7 @@ describe("PR E2E controller", () => {
         jobs: jobs.join(","),
         targets: DCODE_TARGET,
         controller_check_id: "101",
+        controller_run_id: String(GATE_RUN_ID),
         pr_number: "42",
         checkout_sha: HEAD_SHA,
         checkout_repository: "NVIDIA/NemoClaw",
@@ -536,6 +539,7 @@ describe("PR E2E controller", () => {
         checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
         controllerCheckId: 101,
+        controllerRunId: GATE_RUN_ID,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -606,6 +610,7 @@ describe("PR E2E controller", () => {
         checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
         controllerCheckId: 101,
+        controllerRunId: GATE_RUN_ID,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -676,6 +681,7 @@ describe("PR E2E controller", () => {
         checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
         controllerCheckId: 101,
+        controllerRunId: GATE_RUN_ID,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -733,6 +739,7 @@ describe("PR E2E controller", () => {
         checkoutRepository: "NVIDIA/NemoClaw",
         token: "token",
         controllerCheckId: 101,
+        controllerRunId: GATE_RUN_ID,
         jobs: ["onboard-repair"],
         prNumber: 42,
         commitSha: HEAD_SHA,
@@ -751,6 +758,7 @@ describe("PR E2E controller", () => {
     const child = workflowRun(gate);
     const identity = {
       childRunId: 23,
+      controllerRunId: gate.controllerRunId,
       correlationId: gate.correlationId,
       prNumber: gate.prNumber,
       repository: "NVIDIA/NemoClaw",
