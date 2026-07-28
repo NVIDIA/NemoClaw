@@ -11,7 +11,7 @@
       "src/lib/adapters/openshell/timeouts.ts": 36,
       "src/lib/agent/defs.ts": 32,
       "src/lib/cli/branding.ts": 85,
-      "src/lib/cli/nemoclaw-oclif-command.ts": 102,
+      "src/lib/cli/nemoclaw-oclif-command.ts": 103,
       "src/lib/cli/terminal-style.ts": 45,
       "src/lib/core/json-types.ts": 37,
       "src/lib/core/ports.ts": 86,
@@ -24,7 +24,7 @@
       "src/lib/messaging/channels/index.ts": 25,
       "src/lib/onboard/gateway-binding.ts": 47,
       "src/lib/runner.ts": 89,
-      "src/lib/security/redact.ts": 50,
+      "src/lib/security/redact.ts": 51,
       "src/lib/state/onboard-session.ts": 34,
       "src/lib/state/registry.ts": 102,
       "src/lib/state/state-root.ts": 23,
@@ -53,10 +53,6 @@
     }
   },
   "allowedCycles": [
-    [
-      "nemoclaw/src/commands/slash.ts",
-      "nemoclaw/src/index.ts"
-    ],
     [
       "src/lib/actions/global.ts",
       "src/lib/actions/maintenance.ts",
@@ -137,25 +133,12 @@
       "src/lib/onboard/policy-context-seed.ts",
       "src/lib/onboard/policy-resume-selection.ts",
       "src/lib/onboard/policy-selection.ts",
-      "src/lib/onboard/resume-provider-shim.ts",
       "src/lib/onboard/setup-inference.ts",
       "src/lib/openshell-sandbox-list.ts",
       "src/lib/sandbox/config.ts",
       "src/lib/shields/index.ts",
       "src/lib/tunnel/allowed-origins.ts",
       "src/lib/tunnel/services.ts"
-    ],
-    [
-      "src/lib/messaging/channels/teams/hooks/host-forward-port-conflict.ts",
-      "src/lib/messaging/channels/teams/hooks/index.ts",
-      "src/lib/messaging/hooks/builtins.ts",
-      "src/lib/messaging/hooks/index.ts",
-      "src/lib/messaging/persistence.ts",
-      "src/lib/messaging/plan-validation.ts"
-    ],
-    [
-      "src/lib/policy/context.ts",
-      "src/lib/policy/failure-classifier.ts"
     ]
   ],
   "maxRootFiles": {
