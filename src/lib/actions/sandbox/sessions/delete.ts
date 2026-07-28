@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
-import { callOpenclawGateway } from "./gateway-rpc";
+import { callOpenclawGateway, sandboxUsesHermesAgent } from "./gateway-rpc";
 import {
   buildCanonicalSessionKey,
   DEFAULT_AGENT_ID,
@@ -45,11 +44,11 @@ export async function deleteSandboxSession(
   // OpenClaw gateway admin RPC nor accepts OpenClaw canonical `agent:<id>:<rest>`
   // session keys.
   //
-  // Trust boundary: `registry.getSandbox()` reads the host-side, user-owned
-  // sandbox registry; a sandbox process cannot change this agent selection. A
-  // sandbox with no registry entry, or with an `agent` other than `hermes`,
-  // keeps the OpenClaw path below.
-  if (registry.getSandbox(sandboxName)?.agent === "hermes") {
+  // Trust boundary: the routing helper reads the host-side, user-owned sandbox
+  // registry; a sandbox process cannot change this agent selection. A sandbox
+  // with no registry entry, or with an `agent` other than `hermes`, keeps the
+  // OpenClaw path below.
+  if (sandboxUsesHermesAgent(sandboxName)) {
     return deleteHermesSession(sandboxName, opts);
   }
 

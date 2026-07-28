@@ -9,25 +9,21 @@ vi.mock("../gateway-state", () => ({
 
 vi.mock("./gateway-rpc", () => ({
   callOpenclawGateway: vi.fn(),
-}));
-
-vi.mock("../../../state/registry", () => ({
-  getSandbox: vi.fn(() => null),
+  sandboxUsesHermesAgent: vi.fn(() => false),
 }));
 
 vi.mock("../exec", () => ({
   execSandbox: vi.fn(async () => undefined),
 }));
 
-import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { deleteSandboxSession } from "./delete";
-import { callOpenclawGateway } from "./gateway-rpc";
+import { callOpenclawGateway, sandboxUsesHermesAgent } from "./gateway-rpc";
 
 const ensureMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
 const gatewayMock = callOpenclawGateway as unknown as ReturnType<typeof vi.fn>;
-const getSandboxMock = registry.getSandbox as unknown as ReturnType<typeof vi.fn>;
+const hermesAgentMock = sandboxUsesHermesAgent as unknown as ReturnType<typeof vi.fn>;
 const execSandboxMock = execSandbox as unknown as ReturnType<typeof vi.fn>;
 
 function successResult(key: string, extra: { removedTranscript?: boolean; entry?: unknown } = {}) {
@@ -47,8 +43,8 @@ let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   ensureMock.mockClear();
   gatewayMock.mockReset();
-  getSandboxMock.mockReset();
-  getSandboxMock.mockReturnValue(null);
+  hermesAgentMock.mockReset();
+  hermesAgentMock.mockReturnValue(false);
   execSandboxMock.mockReset();
   execSandboxMock.mockResolvedValue(undefined);
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
@@ -182,7 +178,7 @@ describe("deleteSandboxSession", () => {
 
 describe("deleteSandboxSession (hermes sandbox)", () => {
   beforeEach(() => {
-    getSandboxMock.mockReturnValue({ name: "sb-h", agent: "hermes" });
+    hermesAgentMock.mockReturnValue(true);
     // execSandbox streams the native output and exits the process with its
     // code; model that terminal behavior so the routing never returns a value.
     execSandboxMock.mockImplementation(async () => {

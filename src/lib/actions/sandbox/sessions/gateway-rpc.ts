@@ -32,6 +32,17 @@ const OPENCLAW_AGENT_ID = "openclaw";
 
 const RETRYABLE_PAIRING_FAILURE = /scope upgrade pending|pairing required|device is not approved/i;
 
+/**
+ * Return whether the host registry assigns the sandbox to Hermes.
+ *
+ * A missing entry or agent keeps the historical OpenClaw command path. The
+ * gateway call validates that default more strictly before using OpenClaw
+ * credentials.
+ */
+export function sandboxUsesHermesAgent(sandboxName: string): boolean {
+  return registry.getSandbox(sandboxName)?.agent === "hermes";
+}
+
 // Source-boundary note for this SDK-backed admin RPC wrapper:
 // - Invalid state: `openclaw gateway call` currently acts like a sandbox-origin
 //   CLI client and can create/pending a new device pairing request while
