@@ -10,6 +10,7 @@ import {
   isStationGb300PciDevice,
   isStationGb300ProductName,
   isTrustedStationReleaseMarker,
+  STATION_RELEASE_MARKER_MAX_BYTES,
   type StationProfile,
 } from "./station-qualification.js";
 import type {
@@ -20,8 +21,6 @@ import type {
   ReadinessQualification,
   ReadinessState,
 } from "./types.js";
-
-const IDENTITY_FILE_MAX_BYTES = 4096;
 
 export type { StationProfile } from "./station-qualification.js";
 
@@ -78,7 +77,7 @@ function readOptional(
 ): string | undefined {
   try {
     const contents = readFile(filePath);
-    if (Buffer.byteLength(contents) > IDENTITY_FILE_MAX_BYTES) return undefined;
+    if (Buffer.byteLength(contents) > STATION_RELEASE_MARKER_MAX_BYTES) return undefined;
     return contents.replace(/\0/g, "").trim() || undefined;
   } catch {
     return undefined;
@@ -197,8 +196,9 @@ function stationHasGb300PciGpu(
   pciDevicesPath: string,
 ): boolean | undefined {
   try {
-    let incompleteEvidence = false;
-    for (const entry of readdir(pciDevicesPath).slice(0, 256)) {
+    const entries = readdir(pciDevicesPath);
+    let incompleteEvidence = entries.length > 256;
+    for (const entry of entries.slice(0, 256)) {
       const devicePath = path.join(pciDevicesPath, entry);
       const vendor = readOptional(readFile, path.join(devicePath, "vendor"));
       const device = readOptional(readFile, path.join(devicePath, "device"));
@@ -254,7 +254,7 @@ export function collectPlatformIdentity(
         stationProfile = "unsupported-dgx-os";
       } else {
         stationProfile = parseStationRelease(
-          readFileDescriptor(fileDescriptor, IDENTITY_FILE_MAX_BYTES),
+          readFileDescriptor(fileDescriptor, STATION_RELEASE_MARKER_MAX_BYTES),
         );
       }
     } finally {

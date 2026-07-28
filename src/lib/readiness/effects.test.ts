@@ -106,7 +106,11 @@ describe("readiness process effects (#7412)", () => {
       "reboot",
       "shutdown",
     ];
-    expect(commands.every(([command]) => !mutatingExecutables.includes(command))).toBe(true);
+    expect(
+      commands.every(
+        ([command]) => !mutatingExecutables.includes(String(command).split("/").at(-1) ?? ""),
+      ),
+    ).toBe(true);
     expect(
       commands.some(([command, operation]) => command === "nvidia-ctk" && operation === "cdi"),
     ).toBe(false);

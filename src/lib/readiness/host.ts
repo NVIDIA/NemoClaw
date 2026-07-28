@@ -136,7 +136,10 @@ export function collectHostObservations(
     const assessment = (options.assess ?? assessHost)();
     const wslDockerDesktopGpuProofPassed =
       options.wslDockerDesktopGpuProofPassed ??
-      (assessment.isWsl && assessment.runtime === "docker-desktop" && assessment.hasNvidiaGpu
+      (assessment.isWsl &&
+      assessment.runtime === "docker-desktop" &&
+      assessment.dockerReachable &&
+      assessment.hasNvidiaGpu
         ? (options.detectGpu ?? detectGpu)()?.wslDockerDesktopGpuProofPassed
         : undefined);
     return {

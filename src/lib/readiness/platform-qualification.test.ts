@@ -339,6 +339,39 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_station_inconclusive");
   });
 
+  it("keeps a truncated PCI scan inconclusive when a matching device may be outside the bound", () => {
+    const entries = [
+      ...Array.from({ length: 256 }, (_, index) => `device-${index}`),
+      "gb300-device",
+    ];
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      osReleasePath: "/fixtures/os-release",
+      stationReleasePath: "/fixtures/dgx-release",
+      pciDevicesPath: "/fixtures/pci",
+      readFile: (filePath) =>
+        filePath.includes("gb300-device")
+          ? stationFixtureReadFile(filePath)
+          : nonGb300StationFixtureReadFile(filePath),
+      readdir: () => entries,
+      openFile: () => 17,
+      statFileDescriptor: () => trustedMarkerStat(),
+      readFileDescriptor: () => noOtaStationRelease(),
+      closeFileDescriptor: () => undefined,
+    });
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        ...identity,
+      }),
+    );
+
+    expect(identity.stationGb300PciGpu).toBeUndefined();
+    expect(qualification(result, "host.platform.dgx_station")).toBe("unknown");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_station_inconclusive");
+  });
+
   it.each([
     "7.6.0",
     "7.6.1",

@@ -221,6 +221,30 @@ describe("host readiness projection (#7408)", () => {
     expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("present");
   });
 
+  it("skips the WSL Docker Desktop GPU proof when Docker is unreachable", () => {
+    const detectGpuProbe = vi.fn(() => ({
+      wslDockerDesktopGpuProofPassed: true,
+    }));
+
+    createHostReadinessReport(
+      { nemoclawVersion: "0.1.0", now: () => NOW },
+      {
+        assess: () =>
+          host({
+            isWsl: true,
+            runtime: "docker-desktop",
+            dockerReachable: false,
+            hasNvidiaGpu: true,
+          }),
+        architecture: "arm64",
+        collectPlatformIdentity: emptyPlatformIdentity,
+        detectGpu: detectGpuProbe,
+      },
+    );
+
+    expect(detectGpuProbe).not.toHaveBeenCalled();
+  });
+
   it("supports CPU-only hosts without requiring GPU tooling", () => {
     const result = report({
       hasNvidiaGpu: false,

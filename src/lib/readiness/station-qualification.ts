@@ -5,6 +5,7 @@ const STATION_GB300_PRODUCT_PATTERN = /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$
 const NVIDIA_PCI_VENDOR = "0x10de";
 const STATION_GB300_PCI_DEVICES = new Set(["0x31c2", "0x31c3"]);
 const DISPLAY_PCI_CLASS_PATTERN = /^0x03[0-9a-f]{4}$/iu;
+export const STATION_RELEASE_MARKER_MAX_BYTES = 4096;
 
 export type StationProfile =
   | "generic-ubuntu"
@@ -67,7 +68,7 @@ export function isTrustedStationReleaseMarker(metadata: {
     metadata.isFile() &&
     !metadata.isSymbolicLink() &&
     metadata.size > 0 &&
-    metadata.size <= 4096 &&
+    metadata.size <= STATION_RELEASE_MARKER_MAX_BYTES &&
     metadata.uid === 0 &&
     metadata.gid === 0 &&
     (metadata.mode & 0o022) === 0
