@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Config as OclifConfig } from "@oclif/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DashboardUrlCliCommand, {
@@ -39,6 +40,39 @@ describe("dashboard-url CLI output", () => {
       expect(output).toContain("    Status:      nemoclaw alpha status");
       expect(output).toContain("    Logs:        nemoclaw alpha logs --follow");
       expect(errors.join("\n")).toContain("Treat this URL like a password");
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("uses the invoked CLI binary in every follow-up command (#7473)", async () => {
+    const output: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((message: string) => output.push(message));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const baseConfig = await OclifConfig.load(process.cwd());
+    const config = await OclifConfig.load({
+      root: process.cwd(),
+      pjson: {
+        ...baseConfig.pjson,
+        oclif: { ...baseConfig.pjson.oclif, bin: "nemohermes" },
+      },
+    });
+
+    const previousExitCode = process.exitCode;
+    try {
+      await DashboardUrlCliCommand.run(["alpha"], config);
+
+      expect(output).toContain("    nemohermes alpha connect");
+      expect(output).toContain("    Status:      nemohermes alpha status");
+      expect(output).toContain("    Logs:        nemohermes alpha logs --follow");
+      expect(output).toContain(
+        "    Model:       nemohermes inference set --model <model> --provider <provider> --sandbox alpha",
+      );
+      expect(output).toContain("    Policies:    nemohermes alpha policy add");
+      expect(output).toContain(
+        "    Credentials: nemohermes credentials reset <KEY> && nemohermes onboard",
+      );
     } finally {
       process.exitCode = previousExitCode;
     }
