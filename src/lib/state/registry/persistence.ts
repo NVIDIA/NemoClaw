@@ -18,8 +18,8 @@ import {
   retainedDefaultSandbox,
 } from "../registry-normalization";
 import * as reversibleRemoval from "../registry-reversible-removal";
-import type { SandboxEntry, SandboxRegistry } from "../registry";
 import { nemoclawStateRoot } from "../state-root";
+import type { SandboxEntry, SandboxRegistry } from "./types";
 
 export const REGISTRY_FILE = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),

@@ -98,6 +98,25 @@ describe("showSandboxStatus flow", () => {
     expect(output).not.toContain("differs from the recorded route");
   });
 
+  it.each([
+    ["high", "high"],
+    [null, "endpoint-default"],
+  ] as const)("reports the effective compatible-endpoint reasoning effort (%s) (#7659)", async (stored, expected) => {
+    const harness = createStatusFlowHarness({
+      currentProvider: "compatible-endpoint",
+      sandboxEntry: {
+        provider: "compatible-endpoint",
+        preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoningEffort: stored,
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain(`Reasoning effort: ${expected}`);
+  });
+
   it("prints the live sandbox, inference, runtime, session, version, and recovery signals", async () => {
     const harness = createStatusFlowHarness();
 
