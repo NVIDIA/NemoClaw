@@ -94,6 +94,8 @@ describe("ShellCheck SARIF workflow boundary", () => {
 
     const install = requiredStep("Install ShellCheck");
     expect(install.if).toBe("steps.converter.outputs.present == 'true'");
+    expect(install.run).toContain("command -v shellcheck");
+    expect(install.run).toContain("sudo apt-get update && sudo apt-get install -y shellcheck");
 
     const collect = requiredStep("Collect shell files");
     expect(collect.if).toBe("steps.converter.outputs.present == 'true'");
