@@ -303,12 +303,9 @@ describe("runInferenceSet compatible providers", () => {
     const captureOpenshell = vi.fn((args: string[]) => {
       switch (`${args[0]}:${args[1]}`) {
         case "provider:get": {
-          if (!providerPresent) {
-            const output =
-              "Error: code: 'Some requested entity was not found', message: \"provider not found\"";
-            return { status: 1, output, stdout: "", stderr: output };
-          }
-          const output = [
+          const missingOutput =
+            "Error: code: 'Some requested entity was not found', message: \"provider not found\"";
+          const presentOutput = [
             "Name: compatible-endpoint",
             "Id: 11111111-2222-4333-8444-555555555555",
             "Type: openai",
@@ -316,7 +313,9 @@ describe("runInferenceSet compatible providers", () => {
             "Credential keys: COMPATIBLE_API_KEY",
             "Config keys: OPENAI_BASE_URL",
           ].join("\n");
-          return { status: 0, output, stdout: output, stderr: "" };
+          return providerPresent
+            ? { status: 0, output: presentOutput, stdout: presentOutput, stderr: "" }
+            : { status: 1, output: missingOutput, stdout: "", stderr: missingOutput };
         }
         case "provider:create":
           providerPresent = true;
