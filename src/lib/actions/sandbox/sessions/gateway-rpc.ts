@@ -186,6 +186,7 @@ function refuseUnsupportedSandboxAgent(
     console.error(
       `  Export a Hermes session with: ${cliName} ${sandboxName} sessions export <keys...>`,
     );
+    console.error(`  Delete a Hermes session with: ${cliName} ${sandboxName} sessions delete <id>`);
   }
   process.exit(1);
 }

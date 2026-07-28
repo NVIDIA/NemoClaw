@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as registry from "../../../state/registry";
+import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { callOpenclawGateway } from "./gateway-rpc";
 import {
@@ -37,6 +39,20 @@ export async function deleteSandboxSession(
   sandboxName: string,
   opts: SessionsDeleteOptions,
 ): Promise<SessionsDeleteResult> {
+  // Route by the sandbox's registered agent before OpenClaw key validation,
+  // the same dispatch `sessions export` uses (#5526). Hermes ships a native
+  // `hermes sessions delete` over its own SQLite store and neither exposes the
+  // OpenClaw gateway admin RPC nor accepts OpenClaw canonical `agent:<id>:<rest>`
+  // session keys.
+  //
+  // Trust boundary: `registry.getSandbox()` reads the host-side, user-owned
+  // sandbox registry; a sandbox process cannot change this agent selection. A
+  // sandbox with no registry entry, or with an `agent` other than `hermes`,
+  // keeps the OpenClaw path below.
+  if (registry.getSandbox(sandboxName)?.agent === "hermes") {
+    return deleteHermesSession(sandboxName, opts);
+  }
+
   const requestedAgent = opts.agent ? validateAgentId(opts.agent) : null;
   const rawKey = validateSessionKey(opts.key);
   const keyAgent = parseAgentIdFromSessionKey(rawKey);
@@ -96,4 +112,54 @@ export async function deleteSandboxSession(
   }
 
   return { key: payload.key, removedTranscript, entry: payload.entry };
+}
+
+// The `--agent hermes` no-op alias mirrors `sessions export`; every other
+// OpenClaw-only flag is refused rather than silently ignored.
+function rejectOpenClawOnlyDeleteOptions(opts: SessionsDeleteOptions): void {
+  if (opts.agent && opts.agent !== "hermes") {
+    console.error(
+      `  Refusing to delete: --agent ${opts.agent} is OpenClaw-only and is not supported on a Hermes sandbox. Pass --agent hermes or omit the flag.`,
+    );
+    process.exit(1);
+  }
+  if (opts.keepTranscript === true) {
+    console.error(
+      "  Refusing to delete: --keep-transcript is OpenClaw-only and is not supported on a Hermes sandbox. Hermes removes the session entry directly; omit the flag.",
+    );
+    process.exit(1);
+  }
+  if (opts.json || opts.verbose) {
+    console.error(
+      "  Refusing to delete: --json and --verbose print the OpenClaw gateway result and are OpenClaw-only; a Hermes sandbox streams the native command output. Omit the flags.",
+    );
+    process.exit(1);
+  }
+}
+
+// Accept the native Hermes id as-is but refuse a value that could be parsed as
+// a flag by the in-sandbox command; the id is passed as its own argv element,
+// so a leading dash or embedded whitespace is the only injection surface.
+function validateHermesSessionId(rawKey: string): string {
+  const sessionId = rawKey.trim();
+  if (sessionId === "" || sessionId.startsWith("-") || /\s/.test(sessionId)) {
+    console.error(
+      `  Refusing to delete: '${rawKey}' is not a valid Hermes session id. Pass a native id from \`sessions list\` (for example 20260727_130357_cb2b61).`,
+    );
+    process.exit(1);
+  }
+  return sessionId;
+}
+
+async function deleteHermesSession(
+  sandboxName: string,
+  opts: SessionsDeleteOptions,
+): Promise<SessionsDeleteResult> {
+  rejectOpenClawOnlyDeleteOptions(opts);
+  const sessionId = validateHermesSessionId(opts.key);
+
+  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  await execSandbox(sandboxName, ["hermes", "sessions", "delete", sessionId, "--yes"]);
+
+  return { key: sessionId, removedTranscript: false };
 }

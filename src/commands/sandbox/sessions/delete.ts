@@ -26,6 +26,11 @@ export default class SandboxSessionsDeleteCommand extends NemoClawCommand {
     "",
     "Pass --keep-transcript to retain the on-disk `<sessionId>.jsonl` after the",
     "session entry is removed.",
+    "",
+    "On a Hermes sandbox this routes to the native `hermes sessions delete <id>",
+    "--yes` and takes a native Hermes session id from `sessions list`. It accepts",
+    "--agent hermes as a no-op alias and refuses every other --agent value plus",
+    "--keep-transcript, --json, and --verbose.",
   ].join("\n");
   static usage = ["<name> <key> [--agent <id>] [--keep-transcript] [--json] [--verbose]"];
   static examples = [
