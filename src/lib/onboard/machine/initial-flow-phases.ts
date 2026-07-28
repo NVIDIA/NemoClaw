@@ -194,8 +194,9 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
   recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
+  // The strict runner owns both exact entry states (`init` and `preflight`).
   // Recompute plan for live resume repair when durable machine snapshots
-  // are already downstream of this slice even though preflight/gateway host
+  // are already downstream of those entries even though preflight/gateway host
   // backstops must still re-run. Those ahead-state snapshots can come from
   // legacy/test step mutation that explicitly opts into `updateMachine === true`
   // or from repaired-resume replay of persisted sessions. Recomputed transition
@@ -217,8 +218,6 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
     runWhenState: ["init", "preflight"],
     compatibilityWhenState: options.resume
       ? [
-          "init",
-          "preflight",
           "gateway",
           "provider_selection",
           "inference",
