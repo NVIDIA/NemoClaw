@@ -11,6 +11,10 @@ import {
   type HermesDashboardOnboardState,
 } from "./hermes-dashboard";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import {
+  fingerprintSandboxLiveIdentity,
+  type SandboxRecreateObservation,
+} from "./sandbox-recreate-transaction";
 
 export interface SandboxReuseDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
@@ -21,6 +25,7 @@ export interface SandboxReuseDeps {
 
 export interface SandboxReuseHelpers {
   getSandboxReuseState(sandboxName: string | null): string;
+  getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation;
   repairRecordedSandbox(sandboxName: string | null): void;
 }
 
@@ -107,13 +112,27 @@ export function applyReusedSandboxDashboardState(
 }
 
 export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseHelpers {
-  function getSandboxReuseState(sandboxName: string | null): string {
-    if (!sandboxName) return "missing";
+  function getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation {
+    if (!sandboxName) return { state: "missing", liveIdentityFingerprint: null };
     const getOutput = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], {
       ignoreError: true,
     });
     const listOutput = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-    return deps.getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
+    const state = deps.getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
+    if (state !== "missing" && state !== "not_ready" && state !== "ready") {
+      throw new Error(
+        `Cannot observe sandbox '${sandboxName}' for recreate recovery: OpenShell returned state '${state}'.`,
+      );
+    }
+    return {
+      state,
+      liveIdentityFingerprint:
+        state === "missing" ? null : fingerprintSandboxLiveIdentity(getOutput),
+    };
+  }
+
+  function getSandboxReuseState(sandboxName: string | null): string {
+    return getSandboxRecreateObservation(sandboxName).state;
   }
 
   function repairRecordedSandbox(sandboxName: string | null): void {
@@ -124,5 +143,5 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
     registry.removeSandbox(sandboxName);
   }
 
-  return { getSandboxReuseState, repairRecordedSandbox };
+  return { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox };
 }

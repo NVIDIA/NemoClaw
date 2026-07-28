@@ -8,7 +8,7 @@ import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { isOnboardMachineState } from "../onboard/machine/transitions";
-import { parseCheckpointDecision } from "./onboard-checkpoint-decision";
+import { isDecisionSelected, parseCheckpointDecision } from "./onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
   type CheckpointBindings,
@@ -22,6 +22,8 @@ import {
   type CheckpointProviderBinding,
   type CheckpointResourceProfile,
   type CheckpointSandboxIdentity,
+  type CheckpointSandboxRecreatePhase,
+  type CheckpointSandboxRecreateTransaction,
   type OnboardCheckpoint,
 } from "./onboard-checkpoint-types";
 
@@ -31,6 +33,17 @@ const EFFECT_GROUP_NAMES: readonly CheckpointEffectGroupName[] = [
   "sandbox_create",
   "sandbox_register",
 ];
+const SANDBOX_RECREATE_PHASES = new Set<CheckpointSandboxRecreatePhase>([
+  "planned",
+  "deleting",
+  "deleted",
+  "creating",
+  "created",
+  "registry_committing",
+  "completed",
+]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
@@ -232,6 +245,71 @@ function parseBindings(value: unknown): CheckpointBindings | null {
   if (credentialEnvs === null || registeredProviders === null) return null;
   return { credentialEnvs, registeredProviders };
 }
+function parseSandboxRecreateTransaction(
+  value: unknown,
+): CheckpointSandboxRecreateTransaction | null {
+  if (!isObjectRecord(value)) return null;
+  const id = readString(value.id);
+  const sandboxName = readString(value.sandboxName);
+  const gatewayName = readString(value.gatewayName);
+  const gatewayPort = value.gatewayPort;
+  const sourceRegistryFingerprint = readString(value.sourceRegistryFingerprint);
+  const sourceLiveIdentityFingerprint =
+    value.sourceLiveIdentityFingerprint === null
+      ? null
+      : readString(value.sourceLiveIdentityFingerprint);
+  const targetIntentFingerprint = readString(value.targetIntentFingerprint);
+  const targetGeneration = readString(value.targetGeneration);
+  const phase = value.phase;
+  const startedAt = readCanonicalIsoTimestamp(value.startedAt);
+  const updatedAt = readCanonicalIsoTimestamp(value.updatedAt);
+  const revision = value.revision;
+  if (
+    value.version !== 1 ||
+    !id ||
+    !UUID_PATTERN.test(id) ||
+    !sandboxName ||
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    !gatewayName ||
+    !Number.isInteger(gatewayPort) ||
+    Number(gatewayPort) < 1 ||
+    Number(gatewayPort) > 65535 ||
+    gatewayName !==
+      (gatewayPort === DEFAULT_GATEWAY_PORT ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`) ||
+    !sourceRegistryFingerprint ||
+    !SHA256_PATTERN.test(sourceRegistryFingerprint) ||
+    (sourceLiveIdentityFingerprint !== null &&
+      (!sourceLiveIdentityFingerprint || !SHA256_PATTERN.test(sourceLiveIdentityFingerprint))) ||
+    !targetIntentFingerprint ||
+    !SHA256_PATTERN.test(targetIntentFingerprint) ||
+    !targetGeneration ||
+    !UUID_PATTERN.test(targetGeneration) ||
+    typeof phase !== "string" ||
+    !SANDBOX_RECREATE_PHASES.has(phase as CheckpointSandboxRecreatePhase) ||
+    !Number.isSafeInteger(revision) ||
+    Number(revision) < 0 ||
+    startedAt === null ||
+    updatedAt === null
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    id,
+    revision: Number(revision),
+    sandboxName,
+    gatewayName,
+    gatewayPort: Number(gatewayPort),
+    sourceRegistryFingerprint,
+    sourceLiveIdentityFingerprint,
+    targetIntentFingerprint,
+    targetGeneration,
+    phase: phase as CheckpointSandboxRecreatePhase,
+    startedAt,
+    updatedAt,
+  };
+}
 
 function requireDecision<T>(
   raw: unknown,
@@ -243,6 +321,7 @@ function requireDecision<T>(
 function parseSchema(
   value: Record<string, unknown>,
   gatewayAuthorityRaw: unknown,
+  sandboxRecreateRaw: unknown,
 ): OnboardCheckpoint | null {
   const sessionId = readString(value.sessionId);
   const machineState = value.machineState;
@@ -257,10 +336,23 @@ function parseSchema(
   const gatewayAuthority = requireDecision(gatewayAuthorityRaw, parseGatewayAuthorityValue);
   const effectGroups = parseEffectGroups(value.effectGroups);
   const bindings = parseBindings(value.bindings);
+  const sandboxRecreate =
+    sandboxRecreateRaw === null ? null : parseSandboxRecreateTransaction(sandboxRecreateRaw);
   if (!sandboxIdentity || !webSearch || !messaging || !resourceProfile || !gatewayAuthority) {
     return null;
   }
-  if (!effectGroups || !bindings) return null;
+  if (!effectGroups || !bindings || (sandboxRecreateRaw !== null && !sandboxRecreate)) return null;
+  if (sandboxRecreate) {
+    if (
+      !isDecisionSelected(sandboxIdentity) ||
+      sandboxIdentity.value.name !== sandboxRecreate.sandboxName ||
+      !isDecisionSelected(gatewayAuthority) ||
+      gatewayAuthority.value.gatewayName !== sandboxRecreate.gatewayName ||
+      gatewayAuthority.value.gatewayPort !== sandboxRecreate.gatewayPort
+    ) {
+      return null;
+    }
+  }
 
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
@@ -274,6 +366,7 @@ function parseSchema(
     gatewayAuthority,
     effectGroups,
     bindings,
+    sandboxRecreate,
   };
 }
 
@@ -289,11 +382,15 @@ export function inspectCheckpoint(raw: unknown): CheckpointLoadResult {
     return { status: "unsupported_future", foundVersion: version };
   }
   if (version === CHECKPOINT_SCHEMA_VERSION) {
-    const checkpoint = parseSchema(raw, raw.gatewayAuthority);
+    const checkpoint = parseSchema(raw, raw.gatewayAuthority, raw.sandboxRecreate);
     return checkpoint ? { status: "loaded", checkpoint } : { status: "corrupt" };
   }
+  if (version === 2) {
+    const checkpoint = parseSchema(raw, raw.gatewayAuthority, null);
+    return checkpoint ? { status: "migrated", checkpoint, fromVersion: 2 } : { status: "corrupt" };
+  }
   if (version === 1) {
-    const checkpoint = parseSchema(raw, { kind: "unset" });
+    const checkpoint = parseSchema(raw, { kind: "unset" }, null);
     return checkpoint ? { status: "migrated", checkpoint, fromVersion: 1 } : { status: "corrupt" };
   }
   return { status: "corrupt" };
@@ -312,5 +409,6 @@ export function serializeCheckpoint(checkpoint: OnboardCheckpoint): Record<strin
     gatewayAuthority: checkpoint.gatewayAuthority,
     effectGroups: checkpoint.effectGroups,
     bindings: checkpoint.bindings,
+    sandboxRecreate: checkpoint.sandboxRecreate,
   };
 }
