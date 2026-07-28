@@ -8,9 +8,10 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 
 ## DORI-First Documentation Workflow
 
-Use DORI as the primary path for documentation work when the current agent
-exposes `dori_handle` or `dori_route`. Complete the documentation before the
-developer opens the pull or merge request.
+Follow [NVIDIA DORI Routing](../AGENTS.md#nvidia-dori-routing) before checking for DORI.
+Only an `authorized` value can select the DORI path.
+When root routing selects that path, use DORI as the primary path for documentation work.
+Complete the documentation before the developer opens the pull or merge request.
 
 1. Route the documentation task through DORI. Include the changed source files,
    the user-visible impact, the documentation that might need updates, and the
@@ -23,8 +24,8 @@ developer opens the pull or merge request.
 4. When the host does not support subagents, complete the same documentation
    work in the primary task.
 
-If DORI is unavailable, inaccessible, declined, or fails, do not block the
-change. Continue with the standalone documentation fallback below.
+If root routing selects standalone guidance, or if DORI is unavailable, inaccessible, declined, or fails, do not block the change.
+Continue with the standalone documentation fallback below.
 
 ## Standalone Documentation Fallback
 
