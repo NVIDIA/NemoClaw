@@ -18,12 +18,22 @@ export function oldBaseContextSources(): string[] {
 export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE): string[] {
   const text = fs.readFileSync(dockerfilePath, "utf8");
   const sources: string[] = [];
+  let logicalLine = "";
+  let instructionStartLine = 0;
 
   for (const [lineIndex, rawLine] of text.split(/\r?\n/).entries()) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
 
-    const instructionMatch = /^(\S+)\b([\s\S]*)$/.exec(line);
+    if (!logicalLine) instructionStartLine = lineIndex + 1;
+    const continues = line.endsWith("\\");
+    const segment = continues ? line.slice(0, -1).trimEnd() : line;
+    logicalLine = `${logicalLine} ${segment}`.trim();
+    if (continues) continue;
+
+    const instructionMatch = /^(\S+)\b([\s\S]*)$/.exec(logicalLine);
+    const rawInstruction = logicalLine;
+    logicalLine = "";
     if (!instructionMatch || instructionMatch[1].toUpperCase() !== "COPY") continue;
 
     const tokens = instructionMatch[2].trim().split(/\s+/).filter(Boolean);
@@ -34,14 +44,22 @@ export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE
     );
     if (hasStageSource) continue;
 
-    if (nonFlagTokens.length !== 2 || nonFlagTokens[0]?.startsWith("[")) {
+    if (nonFlagTokens.length < 2 || nonFlagTokens[0]?.startsWith("[")) {
       throw new Error(
-        `Unsupported direct Dockerfile.base COPY form at line ${lineIndex + 1}: ${rawLine}`,
+        `Unsupported direct Dockerfile.base COPY form at line ${instructionStartLine}: ${rawInstruction}`,
       );
     }
 
-    validateOldBaseContextSource(nonFlagTokens[0]);
-    sources.push(nonFlagTokens[0]);
+    for (const source of nonFlagTokens.slice(0, -1)) {
+      validateOldBaseContextSource(source);
+      sources.push(source);
+    }
+  }
+
+  if (logicalLine) {
+    throw new Error(
+      `Unsupported unterminated Dockerfile.base instruction at line ${instructionStartLine}: ${logicalLine}`,
+    );
   }
 
   return sources;

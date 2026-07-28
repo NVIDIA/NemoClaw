@@ -46,7 +46,8 @@
       "src/lib/actions/uninstall/run-plan.ts": 25,
       "src/lib/inference/onboard-probes.ts": 21,
       "src/lib/inference/vllm.ts": 23,
-      "src/lib/onboard.ts": 223,
+      "src/lib/onboard.ts": 224,
+      "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/sandbox/config.ts": 23,
       "src/lib/shields/index.ts": 23
     }
@@ -141,7 +142,7 @@
     ]
   ],
   "maxRootFiles": {
-    "src/lib/onboard": 306,
+    "src/lib/onboard": 307,
     "src/lib/actions": 19,
     "src/lib/actions/sandbox": 182,
     "src/lib/state": 38,
