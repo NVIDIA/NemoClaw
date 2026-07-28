@@ -15,6 +15,7 @@ import {
   isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
+import { getManagedDualStationVllmProviderBinding } from "../inference/local";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
@@ -117,6 +118,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
+  getManagedVllmProviderBinding?: () => { baseUrl: string; apiKey: string } | null;
   ollamaProxyCredentialEnv: string;
   isRoutedInferenceProvider: (provider: string) => boolean;
   applyLocalInferenceRoute?: VllmDeps["applyLocalInferenceRoute"];
@@ -439,6 +441,8 @@ export function createSetupInference(
               ),
               run: deps.run,
               VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
+              getManagedVllmProviderBinding:
+                deps.getManagedVllmProviderBinding ?? getManagedDualStationVllmProviderBinding,
             },
           );
           if (outcome.done) return outcome.result;

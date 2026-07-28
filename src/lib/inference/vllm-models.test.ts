@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertGatedModelAccess,
+  buildNemotronUltraDistributedServeCommand,
   buildVllmServeCommand,
   DEFAULT_VLLM_MODEL,
   modelsForPlatform,
@@ -121,6 +122,78 @@ describe("vllm model registry", () => {
     );
   });
 
+  it("builds the pinned two-Station Nemotron Ultra vLLM v0.25.1 Ray head command", () => {
+    const cmd = buildNemotronUltraDistributedServeCommand({
+      nodeRank: 0,
+      masterAddr: "192.168.240.1",
+      masterPort: 6379,
+    });
+
+    expect(cmd).toContain('python3 -m pip install --user --no-cache-dir "ray==2.56.0"');
+    expect(cmd).toContain(
+      "ray start --head --node-ip-address=192.168.240.1 --port=6379 --num-gpus=1",
+    );
+    expect(cmd).toContain("vllm serve nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4");
+    expect(cmd).toContain("--tensor-parallel-size 1");
+    expect(cmd).toContain("--pipeline-parallel-size 2");
+    expect(cmd).toContain("--distributed-executor-backend ray");
+    expect(cmd).toContain("--kv-cache-dtype fp8");
+    expect(cmd).toContain("--max-model-len 262144");
+    expect(cmd).toContain("--distributed-timeout-seconds 7200");
+    expect(cmd).toContain("--served-model-name nemotron-ultra");
+    expect(cmd).toContain("--host 192.168.240.1");
+    expect(cmd).toContain("--max-num-seqs 256");
+    expect(cmd).toContain("--gpu-memory-utilization 0.9");
+    expect(cmd).not.toContain("--kernel_config");
+    expect(cmd).not.toContain("--speculative-config");
+    expect(cmd).not.toContain("--cpu-offload");
+  });
+
+  it("builds a Ray worker command without starting a second API server", () => {
+    const head = buildNemotronUltraDistributedServeCommand({
+      nodeRank: 0,
+      masterAddr: "192.168.240.1",
+      masterPort: 6379,
+    });
+    const worker = buildNemotronUltraDistributedServeCommand({
+      nodeRank: 1,
+      masterAddr: "192.168.240.1",
+      masterPort: 6379,
+      nodeAddr: "192.168.240.2",
+    });
+
+    expect(worker).toContain(
+      "ray start --address=192.168.240.1:6379 --node-ip-address=192.168.240.2 --num-gpus=1 --block",
+    );
+    expect(worker).not.toContain("vllm serve");
+    expect(head).toContain("vllm serve");
+  });
+
+  it("rejects invalid two-Station Nemotron Ultra rendezvous options", () => {
+    expect(() =>
+      buildNemotronUltraDistributedServeCommand({
+        nodeRank: 0,
+        masterAddr: "station a",
+        masterPort: 6379,
+      }),
+    ).toThrow(/masterAddr/);
+    expect(() =>
+      buildNemotronUltraDistributedServeCommand({
+        nodeRank: 1,
+        masterAddr: "192.168.240.1",
+        masterPort: 70000,
+      }),
+    ).toThrow(/masterPort/);
+    expect(() =>
+      buildNemotronUltraDistributedServeCommand({
+        nodeRank: 1,
+        masterAddr: "192.168.240.1",
+        masterPort: 6379,
+        nodeAddr: "worker.example.com",
+      }),
+    ).toThrow(/nodeAddr/);
+  });
+
   it("rejects an unknown NEMOCLAW_VLLM_MODEL with a helpful message", () => {
     expect(() =>
       selectVllmModelFromEnv({ NEMOCLAW_VLLM_MODEL: "made-up-model" } as NodeJS.ProcessEnv),
@@ -150,6 +223,12 @@ describe("vllm model registry", () => {
     expect(() => assertGatedModelAccess(deepseek!, {} as NodeJS.ProcessEnv)).toThrow(
       /gated on Hugging Face/,
     );
+  });
+
+  it("keeps the public Nemotron Ultra recipe usable without a Hugging Face token", () => {
+    const ultra = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-ultra-550b-a55b");
+    expect(ultra?.gated).toBe(false);
+    expect(() => assertGatedModelAccess(ultra!, {} as NodeJS.ProcessEnv)).not.toThrow();
   });
 
   it("never rejects a non-gated model regardless of token state", () => {
