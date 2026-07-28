@@ -279,6 +279,33 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
     expect(deps.runOpenshell).toHaveBeenCalled();
   });
 
+  it("accepts the exact OpenShell host bridge endpoint without DNS lookup (#7453)", async () => {
+    const lookup = vi.fn(async () => {
+      throw new Error("lookup should not run for the OpenShell host bridge");
+    });
+    const deps = makeDeps({ lookup });
+
+    await expect(
+      setupHermesProviderInference(
+        makeArgs("http://host.openshell.internal:11434/v1"),
+        deps as never,
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(lookup).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["inference", "set", "--no-verify", "--provider", "p", "--model", "m"],
+      { ignoreError: true },
+    );
+    expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "p",
+        model: "m",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+      }),
+    );
+  });
+
   it("rejects a public HTTPS hostname that resolves to a public IP until runtime-aware pinning exists (#4684)", async () => {
     const deps = makeDeps({
       lookup: vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),

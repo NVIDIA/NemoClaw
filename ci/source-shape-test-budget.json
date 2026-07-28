@@ -453,7 +453,12 @@
     },
     {
       "file": "test/platform-vitest-main-workflow.test.ts",
-      "test": "pins and verifies the Node.js archive in both WSL workflows",
+      "test": "pins and verifies the Node.js archive in the trusted WSL helper",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "loads the WSL helper from trusted revisions before candidate execution (#6958)",
       "category": "security"
     },
     {

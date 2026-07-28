@@ -12,6 +12,7 @@ on:
       - "scripts/**"
       - "test/**"
       - ".github/workflows/wsl-e2e.yaml"
+      - "tools/wsl/**"
       - "package.json"
       - "vitest.config.ts"
   push:
@@ -31,6 +32,7 @@ jobs:
     timeout-minutes: 90
     env:
       WSL_DISTRO: Ubuntu
+      TRUSTED_WSL_HELPER: ${{ github.workspace }}\trusted-wsl-ci\tools\wsl\ci-helper.ps1
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
@@ -40,198 +42,91 @@ jobs:
         shell: powershell
         run: git config --global core.autocrlf false
 
-      - name: Checkout
+      - name: Check out the trusted WSL helper
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.workflow_sha }}
+          path: trusted-wsl-ci
+          persist-credentials: false
+          sparse-checkout: |
+            tools/wsl/ci-helper.ps1
+          sparse-checkout-cone-mode: false
+
+      - name: Check out candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          persist-credentials: false
 
       - name: Resolve workspace paths for WSL
         shell: powershell
         run: |
-          $winPath = "${{ github.workspace }}"
-          $drive = $winPath.Substring(0,1).ToLower()
-          $rest = $winPath.Substring(2).Replace('\','/')
-          $wslCheckoutPath = "/mnt/$drive$rest"
-          $wslWorkdir = "/tmp/nemoclaw-wsl-workdir/${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}"
-          "WSL_CHECKOUT_DIR=$wslCheckoutPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "WSL_WORKDIR=$wslWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "WSL_CHECKOUT_DIR=$wslCheckoutPath"
-          Write-Host "WSL_WORKDIR=$wslWorkdir"
+          . "$env:TRUSTED_WSL_HELPER"
+          $null = Set-WslWorkflowPaths `
+            -Workspace "$env:GITHUB_WORKSPACE\source" `
+            -WorkdirPrefix '/tmp/nemoclaw-wsl-workdir' `
+            -RunId $env:GITHUB_RUN_ID `
+            -RunAttempt $env:GITHUB_RUN_ATTEMPT `
+            -EnvironmentFile $env:GITHUB_ENV
 
       - name: Ensure Ubuntu WSL exists
         shell: powershell
         run: |
-          wsl --list --verbose 2>&1 | Out-Default
-          # Native commands do not throw in PowerShell; check LASTEXITCODE.
-          $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            $maxAttempts = 3
-            $installed = $false
-            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-              Write-Host "Ubuntu not found - installing via wsl --install (attempt $attempt/$maxAttempts)"
-              wsl --install -d $env:WSL_DISTRO --no-launch --web-download
-              $installExitCode = $LASTEXITCODE
-              if ($installExitCode -eq 0) {
-                # The first launch initialises the distro with the default root user.
-                wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
-                $launchExitCode = $LASTEXITCODE
-                if ($launchExitCode -eq 0) {
-                  $installed = $true
-                  break
-                }
-                Write-Warning "distro first-launch failed with exit code $launchExitCode"
-              } else {
-                Write-Warning "wsl --install failed with exit code $installExitCode"
-              }
-
-              # Some WSL installs return a non-zero code after registering a usable distro.
-              $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
-              if ($LASTEXITCODE -eq 0) {
-                Write-Host 'Ubuntu became available after the install command returned non-zero'
-                $installed = $true
-                break
-              }
-
-              if ($attempt -lt $maxAttempts) {
-                Write-Host 'Cleaning up any partial WSL registration before retrying'
-                $null = wsl --unregister $env:WSL_DISTRO 2>&1
-                $delaySeconds = [Math]::Min(60, 20 * $attempt)
-                Write-Host "Retrying WSL install in $delaySeconds seconds..."
-                Start-Sleep -Seconds $delaySeconds
-              }
-            }
-
-            if (-not $installed) {
-              throw ("failed to install and initialize $env:WSL_DISTRO after $maxAttempts attempts")
-            }
-          } else {
-            Write-Host 'Ubuntu already available'
-          }
-          wsl --set-default $env:WSL_DISTRO
-          if ($LASTEXITCODE -ne 0) {
-            throw ('wsl --set-default failed with exit code ' + $LASTEXITCODE)
-          }
+          . "$env:TRUSTED_WSL_HELPER"
+          Ensure-WslDistro -Distro $env:WSL_DISTRO
 
       - name: Verify WSL
         shell: powershell
         run: |
-          wsl -d $env:WSL_DISTRO -- bash -lc "uname -a"
-          wsl -d $env:WSL_DISTRO -- bash -lc "cat /etc/os-release"
+          . "$env:TRUSTED_WSL_HELPER"
+          Invoke-WslScript -Distro $env:WSL_DISTRO -Script "uname -a`ncat /etc/os-release"
 
       - name: Install Ubuntu dependencies
         shell: powershell
         run: |
-          $script = @'
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          printf '%s\n' \
-            'Acquire::ForceIPv4 "true";' \
-            'Acquire::Retries "5";' \
-            >/etc/apt/apt.conf.d/99github-actions-network
-          apt-get update
-          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip rsync tar unzip xz-utils
-          '@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          . "$env:TRUSTED_WSL_HELPER"
+          $packages = @(
+            'bash', 'ca-certificates', 'curl', 'git', 'jq', 'lsb-release', 'make',
+            'python3', 'python3-pip', 'rsync', 'tar', 'unzip', 'xz-utils'
+          )
+          Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages
 
       - name: Install Node.js 22 in WSL
         shell: powershell
         run: |
-          $script = @'
-          set -euo pipefail
-          node_version="22.23.1"
-          case "$(uname -m)" in
-            x86_64)
-              node_arch="x64"
-              node_sha256="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"
-              ;;
-            aarch64 | arm64)
-              node_arch="arm64"
-              node_sha256="0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1"
-              ;;
-            *)
-              echo "Unsupported Node.js architecture: $(uname -m)" >&2
-              exit 1
-              ;;
-          esac
-          node_url="https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz"
-          temp_dir="$(mktemp -d)"
-          trap 'rm -rf "$temp_dir"' EXIT
-          archive="$temp_dir/node.tar.xz"
-          curl --fail --show-error --silent --location \
-            --proto '=https' --tlsv1.2 \
-            --connect-timeout 15 --max-time 180 \
-            --retry 3 --retry-delay 2 --retry-max-time 240 --retry-all-errors \
-            --output "$archive" "$node_url"
-          printf '%s  %s\n' "$node_sha256" "$archive" | sha256sum --check --status || {
-            echo "Node.js archive checksum verification failed" >&2
-            exit 1
-          }
-          tar --extract --xz --file "$archive" --directory /usr/local --strip-components=1
-          test "$(node --version)" = "v${node_version}"
-          node --version
-          npm --version
-          '@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          . "$env:TRUSTED_WSL_HELPER"
+          Install-WslNode -Distro $env:WSL_DISTRO
 
       - name: Copy checkout into WSL ext4 workspace
         shell: powershell
         run: |
-          $checkout = $env:WSL_CHECKOUT_DIR
-          $workdir = $env:WSL_WORKDIR
-          $workdirParent = $workdir.Substring(0, $workdir.LastIndexOf('/'))
-          $script = @"
-          set -euo pipefail
-          echo 'Syncing checkout from $checkout to $workdir'
-          if [ ! -d '$checkout/.git' ]; then
-            echo 'Expected a Git checkout at $checkout' >&2
-            exit 1
-          fi
-          # Keep npm and test I/O on WSL's ext4 VHD. Running directly from
-          # /mnt/<drive> (DrvFS) is slower and has Windows-style permission
-          # semantics that hide Linux permission regressions.
-          rm -rf '$workdir'
-          mkdir -p '$workdirParent'
-          rsync -a --no-owner --no-group --delete \
-            --exclude '/node_modules/' \
-            --exclude '/nemoclaw/node_modules/' \
-            --exclude '/nemoclaw-blueprint/.venv/' \
-            '$checkout'/ '$workdir'/
-          git config --global --add safe.directory '$workdir'
-          git -C '$workdir' reset --hard HEAD
-          git -C '$workdir' clean -ffdx
-          git -C '$workdir' status --short
-          echo 'WSL ext4 workspace ready at $workdir'
-          "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          . "$env:TRUSTED_WSL_HELPER"
+          Sync-WslCheckout `
+            -Distro $env:WSL_DISTRO `
+            -Checkout $env:WSL_CHECKOUT_DIR `
+            -Workdir $env:WSL_WORKDIR
 
       - name: Install project dependencies and build plugin
         shell: powershell
         run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
           $script = @"
           set -euo pipefail
-          cd '$env:WSL_WORKDIR'
+          cd $workdir
           npm install --ignore-scripts
           npm run build:cli
           cd nemoclaw
           npm install --ignore-scripts
           npm run build
           "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script
 
       - name: Detect Docker availability in WSL
         id: docker
         shell: powershell
         run: |
+          . "$env:TRUSTED_WSL_HELPER"
           $script = @'
           if docker info >/dev/null 2>&1; then
             echo DOCKER_OK=1
@@ -239,10 +134,7 @@ jobs:
             echo DOCKER_OK=0
           fi
           '@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          $result = wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          $result = Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script -CaptureOutput
           if ($result -match 'DOCKER_OK=1') {
             'docker_ok=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             Write-Host 'Docker is available in WSL'
@@ -258,22 +150,24 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $exports = @(
+            'export NVIDIA_INFERENCE_API_KEY=' + (ConvertTo-BashLiteral -Value ([string]$env:NVIDIA_INFERENCE_API_KEY))
+            'export GITHUB_TOKEN=' + (ConvertTo-BashLiteral -Value ([string]$env:GITHUB_TOKEN))
+            'export NEMOCLAW_NON_INTERACTIVE=' + (ConvertTo-BashLiteral -Value $env:NEMOCLAW_NON_INTERACTIVE)
+            'export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=' + (ConvertTo-BashLiteral -Value $env:NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE)
+            'export NEMOCLAW_RECREATE_SANDBOX=' + (ConvertTo-BashLiteral -Value $env:NEMOCLAW_RECREATE_SANDBOX)
+            'export NEMOCLAW_SANDBOX_NAME=' + (ConvertTo-BashLiteral -Value $env:NEMOCLAW_SANDBOX_NAME)
+          ) -join "`n"
           $script = @"
           set -euo pipefail
-          cd '$env:WSL_WORKDIR'
-          export NVIDIA_INFERENCE_API_KEY='$env:NVIDIA_INFERENCE_API_KEY'
-          export GITHUB_TOKEN='$env:GITHUB_TOKEN'
-          export NEMOCLAW_NON_INTERACTIVE='$env:NEMOCLAW_NON_INTERACTIVE'
-          export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE='$env:NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE'
-          export NEMOCLAW_RECREATE_SANDBOX='$env:NEMOCLAW_RECREATE_SANDBOX'
-          export NEMOCLAW_SANDBOX_NAME='$env:NEMOCLAW_SANDBOX_NAME'
+          cd $workdir
+          $exports
           export NEMOCLAW_RUN_LIVE_E2E=1
           npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
           "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script
 
       - name: Explain skipped full E2E
         if: steps.docker.outputs.docker_ok != 'true'
