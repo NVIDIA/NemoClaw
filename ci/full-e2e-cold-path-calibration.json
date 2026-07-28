@@ -345,6 +345,12 @@
         "runId": 29871968836,
         "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29871968836",
         "headSha": "188d9a75b3e5efdafeb38e885138bb196197574f",
+        "triggerEvidence": {
+          "artifact": "e2e-full-e2e",
+          "path": "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stderr.txt",
+          "output": "Building OpenClaw sandbox base image locally because no compatible published base image was found."
+        },
+        "nativeSecurityInputPaths": [],
         "rootStartToFirstTurnCompletionMs": 277769,
         "sandboxPhaseMs": 225927
       },
@@ -352,6 +358,12 @@
         "runId": 29872724335,
         "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29872724335",
         "headSha": "188d9a75b3e5efdafeb38e885138bb196197574f",
+        "triggerEvidence": {
+          "artifact": "e2e-full-e2e",
+          "path": "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stderr.txt",
+          "output": "Building OpenClaw sandbox base image locally because no compatible published base image was found."
+        },
+        "nativeSecurityInputPaths": [],
         "rootStartToFirstTurnCompletionMs": 281762,
         "sandboxPhaseMs": 233584
       },
@@ -359,10 +371,28 @@
         "runId": 30375843683,
         "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/30375843683",
         "headSha": "5f190e4948a11f8b05655e085c11803ce0a9a0a8",
+        "triggerEvidence": {
+          "artifact": "e2e-full-e2e",
+          "path": "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stderr.txt",
+          "output": "Building OpenClaw sandbox base image locally because no compatible published base image was found."
+        },
+        "nativeSecurityInputPaths": [
+          "Dockerfile.base",
+          "scripts/security/build-native-security-packages.sh",
+          "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
+          "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch"
+        ],
         "rootStartToFirstTurnCompletionMs": 778744,
         "sandboxPhaseMs": 725351
       }
     ],
+    "retirement": {
+      "trigger": "successful-single-sha-calibration",
+      "minimumSampleCount": 5,
+      "allSamplesSameHead": true,
+      "nativeSecurityInputsMustBeUnchanged": true,
+      "action": "replace-baseline-and-remove-adjustment"
+    },
     "derivedAllowanceMs": 610000
   },
   "derivedBudgetsMs": {

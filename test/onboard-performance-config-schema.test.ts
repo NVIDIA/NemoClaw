@@ -99,9 +99,22 @@ interface Calibration {
       runId: number;
       runUrl: string;
       headSha: string;
+      triggerEvidence: {
+        artifact: string;
+        path: string;
+        output: string;
+      };
+      nativeSecurityInputPaths: string[];
       rootStartToFirstTurnCompletionMs: number;
       sandboxPhaseMs: number;
     }>;
+    retirement: {
+      trigger: string;
+      minimumSampleCount: number;
+      allSamplesSameHead: boolean;
+      nativeSecurityInputsMustBeUnchanged: boolean;
+      action: string;
+    };
     derivedAllowanceMs: number;
   };
   derivedBudgetsMs: CalibratedColdPathBudget;
@@ -507,7 +520,44 @@ describe("full-E2E cold-path calibration", () => {
     for (const run of adjustment.runs) {
       expect(run.runUrl).toBe(`https://github.com/NVIDIA/NemoClaw/actions/runs/${run.runId}`);
       expect(run.headSha).toMatch(/^[0-9a-f]{40}$/u);
+      expect(run.triggerEvidence).toEqual({
+        artifact: "e2e-full-e2e",
+        path: "full-e2e-install-onboard-inference-cli-operations-and-cleanup/shell/phase-1-install-sh.stderr.txt",
+        output: adjustment.triggerOutput,
+      });
+      expect(new Set(run.nativeSecurityInputPaths).size).toBe(run.nativeSecurityInputPaths.length);
     }
+    expect(
+      adjustment.runs.map((run) => ({
+        headSha: run.headSha,
+        nativeSecurityInputPaths: run.nativeSecurityInputPaths,
+      })),
+    ).toEqual([
+      {
+        headSha: "188d9a75b3e5efdafeb38e885138bb196197574f",
+        nativeSecurityInputPaths: [],
+      },
+      {
+        headSha: "188d9a75b3e5efdafeb38e885138bb196197574f",
+        nativeSecurityInputPaths: [],
+      },
+      {
+        headSha: "5f190e4948a11f8b05655e085c11803ce0a9a0a8",
+        nativeSecurityInputPaths: [
+          "Dockerfile.base",
+          "scripts/security/build-native-security-packages.sh",
+          "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
+          "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
+        ],
+      },
+    ]);
+    expect(adjustment.retirement).toEqual({
+      trigger: "successful-single-sha-calibration",
+      minimumSampleCount: 5,
+      allSamplesSameHead: true,
+      nativeSecurityInputsMustBeUnchanged: true,
+      action: "replace-baseline-and-remove-adjustment",
+    });
     const maximumExcessMs = Math.max(
       ...adjustment.runs.flatMap((run) => [
         run.rootStartToFirstTurnCompletionMs -
