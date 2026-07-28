@@ -403,12 +403,8 @@ process.exit(2);
         const pairedOperator = clonePaired?.tokens?.operator;
         const clientAuthMode = options.clientAuth ?? (pairedOperator ? "matching" : "missing");
         fs.rmSync(cloneAuthFile, { force: true });
-        if (clientAuthMode === "primary-symlink") {
-          fs.symlinkSync(primaryAuthFile, cloneAuthFile);
-        } else if (clientAuthMode !== "missing" && pairedOperator) {
-          fs.writeFileSync(
-            cloneAuthFile,
-            JSON.stringify({
+        const serializedClientAuth = pairedOperator
+          ? JSON.stringify({
               version: 1,
               deviceId,
               tokens: {
@@ -421,9 +417,19 @@ process.exit(2);
                   scopes: pairedOperator.scopes,
                 },
               },
-            }),
-          );
-        }
+            })
+          : undefined;
+        const writeClientAuth = () =>
+          serializedClientAuth === undefined
+            ? undefined
+            : fs.writeFileSync(cloneAuthFile, serializedClientAuth);
+        const setClientAuth = {
+          matching: writeClientAuth,
+          missing: () => undefined,
+          "primary-symlink": () => fs.symlinkSync(primaryAuthFile, cloneAuthFile),
+          stale: writeClientAuth,
+        } satisfies Record<typeof clientAuthMode, () => void | undefined>;
+        setClientAuth[clientAuthMode]();
         return execute(
           options.failApproval,
           options.gatewayToken === undefined ? "secret-token" : options.gatewayToken,
