@@ -289,6 +289,29 @@ describe("inference setup navigation", () => {
     expect(markdown).toContain("only from the OpenShell Docker subnet to its gateway address");
   });
 
+  it("documents the dual-Station host-network trust boundary", () => {
+    const markdown = fs.readFileSync(vllmSetupPath, "utf8");
+
+    expect(markdown).toContain(
+      "Existing-server and single-host managed-vLLM paths need port `8000`",
+    );
+    expect(markdown).toContain(
+      "qualified dual-Station runtime intentionally uses Docker host networking",
+    );
+    expect(markdown).toContain("Neither dual-Station container publishes a Docker port");
+    expect(markdown).toContain("all Linux capabilities dropped");
+    expect(markdown).toContain("only the selected GPU UUID and exact `uverbs` devices");
+    expect(markdown).toContain("worker does not receive the serving key");
+    expect(markdown).toContain("`/health` remains unauthenticated for readiness");
+    expect(markdown).toContain("deny it on management and LAN interfaces");
+    expect(markdown).not.toContain(
+      "keeps its existing bridge-networked managed-inference topology instead of importing the playbook's host-network setting",
+    );
+    expect(markdown).not.toContain(
+      "NemoClaw needs port `8000` on host loopback for validation and on the OpenShell Docker bridge",
+    );
+  });
+
   it("keeps managed image tags, digests, and compressed sizes in sync with source", () => {
     const markdown = fs.readFileSync(vllmSetupPath, "utf8");
     const entries = [

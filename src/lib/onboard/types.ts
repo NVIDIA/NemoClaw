@@ -72,6 +72,12 @@ export interface SandboxCreateIntent {
   readonly extraProviders?: readonly string[];
   /** Internal OpenClaw resume authority for exact registered provider reuse. */
   readonly reuseRegisteredCredentials?: true;
+  /** Internal durable handoff for one journaled same-name replacement. */
+  readonly recreateTransaction?: {
+    readonly id: string;
+    readonly targetGeneration: string;
+    readonly targetIntentFingerprint: string;
+  };
 }
 
 export type OnboardOptions = {
