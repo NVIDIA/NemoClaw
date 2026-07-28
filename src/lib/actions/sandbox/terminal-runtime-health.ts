@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerSpawnSync } from "../../adapters/docker";
+import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
-import * as registry from "../../state/registry";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 
 /**
@@ -86,7 +86,7 @@ export interface TerminalRuntimeOomProbeDeps {
  * unavailable instead of silently concluding the sandbox has no counter. */
 function readSandboxDriver(name: string): string | null | undefined {
   try {
-    return registry.getSandbox(name)?.openshellDriver;
+    return loadRegistry().sandboxes[name]?.openshellDriver;
   } catch {
     return undefined;
   }
@@ -94,7 +94,7 @@ function readSandboxDriver(name: string): string | null | undefined {
 
 function readSandboxNames(): string[] | undefined {
   try {
-    return registry.listSandboxes().sandboxes.map((entry) => entry.name);
+    return Object.values(loadRegistry().sandboxes).map((entry) => entry.name);
   } catch {
     return undefined;
   }
