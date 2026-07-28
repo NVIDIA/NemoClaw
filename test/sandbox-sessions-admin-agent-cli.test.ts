@@ -105,6 +105,7 @@ describe("sandbox sessions admin RPCs on a non-OpenClaw agent (#7587)", () => {
 
       expect(result.code).toBe(3);
       expect(result.out).not.toContain("Refusing to invoke");
+      expect(result.out).not.toContain("OPENCLAW_GATEWAY_TOKEN");
       expect(gatewayRpcCalls(openshellLog)).toEqual([]);
       const nativeDeleteCalls = fs
         .readFileSync(openshellLog, "utf8")
