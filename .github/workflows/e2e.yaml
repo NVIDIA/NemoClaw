@@ -5863,6 +5863,7 @@ jobs:
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
         with:
           script: |
             const path = require('node:path');
@@ -5870,7 +5871,7 @@ jobs:
             const { resolveReportPr, loadReportJobs, renderE2eReport } = await import(
               pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'tools/e2e/report-e2e-results.mts')).href
             );
-            const needs = ${{ toJSON(needs) }};
+            const needs = JSON.parse(process.env.NEEDS_JSON || '{}');
             const prNumber = await resolveReportPr({ github, context, core, env: process.env });
             if (prNumber === undefined) return;
             const { apiJobs, loaded } = await loadReportJobs({ github, context, core });
@@ -5931,6 +5932,7 @@ jobs:
           RUNTIME_ARTIFACTS: ${{ runner.temp }}/e2e-runtime-audit
           RUNTIME_SUMMARY_FILE: ${{ runner.temp }}/e2e-runtime-summary.json
           TARGETS: ${{ inputs.targets }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
         with:
           script: |
             const path = require('path');
@@ -5949,7 +5951,7 @@ jobs:
             const runtimeHistory = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-runtime-history.mts'),
             );
-            const needs = ${{ toJSON(needs) }};
+            const needs = JSON.parse(process.env.NEEDS_JSON || '{}');
 
             // GitHub's jobs API is the canonical source because `needs.live`
             // collapses every matrix target into one result and has no job URL.

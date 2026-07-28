@@ -541,6 +541,15 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       requireNode24GithubScript(errors, report, "report-to-pr");
       const reportScript = String(report.with?.script ?? "");
+      if (
+        report.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
+        reportScript.includes("${{ toJSON(needs) }}") ||
+        !reportScript.includes("JSON.parse(process.env.NEEDS_JSON")
+      ) {
+        errors.push(
+          "report-to-pr must pass needs as environment data without script interpolation",
+        );
+      }
       const commentCalls = jobSource.match(/github\.rest\.issues\.createComment\s*\(/gu);
       const issueNamespaceReferences = reportScript.match(/github\.rest\.issues\b/gu);
       const prScopedComment =
@@ -653,6 +662,15 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   const generate = findStep(job, "Generate E2E scorecard");
   requireNode24GithubScript(errors, generate, "scorecard generator");
   const generateScript = String(generate.with?.script ?? "");
+  if (
+    generate.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
+    generateScript.includes("${{ toJSON(needs) }}") ||
+    !generateScript.includes("JSON.parse(process.env.NEEDS_JSON")
+  ) {
+    errors.push(
+      "scorecard generator must pass needs as environment data without script interpolation",
+    );
+  }
   for (const fragment of [
     "scripts/scorecard/coordinate-scorecard.mts",
     "buildScorecard",

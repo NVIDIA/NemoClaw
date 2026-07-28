@@ -67,6 +67,7 @@ const OPAQUE_INPUTS = [
   ".github/workflows/wsl-e2e.yaml",
   ".github/workflows/macos-e2e.yaml",
   ".github/workflows/platform-vitest-main.yaml",
+  "tools/wsl/ci-helper.ps1",
   "ci/platform-vitest-macos-requirements.lock",
 ] as const;
 
@@ -132,6 +133,8 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/wsl-e2e.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
+      "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/macos-e2e.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
@@ -139,6 +142,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
       "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
+    ]);
+    expect(triggeredBy("tools/wsl/ci-helper.ps1")).toEqual([
+      "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
     ]);
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",
