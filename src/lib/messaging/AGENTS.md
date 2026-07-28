@@ -29,7 +29,8 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 | `compiler/` | Manifest-to-plan compilation. It may resolve env/config inputs and run enrollment/reachability/build hooks, but should not mutate OpenShell or registry state directly. |
 | `hooks/` | Hook contracts, registries, runner validation, common prompt/static-output helpers, and conflict error types. |
 | `applier/` | Host/OpenShell side effects: plan env serialization, provider upsert/reuse, policy apply, agent config writes, hook phase execution, conflict detection, registry persistence, and build-time applier. |
-| `persistence.ts` | Compact persisted plan shape and hydration from current manifests. |
+| `persistence.ts` | Compact persisted plan shape and normalization shared by hydration. |
+| `hydration.ts` | Rebuild derived plan fields from current manifests and hooks. |
 | `plan-validation.ts` | Defensive parsing for persisted or env-provided plans. |
 | `diagnostics.ts` | Manifest-derived channel diagnostics used by status/doctor paths. |
 | `utils.ts` | Agent/channel availability and selection helpers. |
