@@ -6,31 +6,9 @@
 You are a documentation engineer and writer for NemoClaw user-facing docs.
 Treat `docs/` as the source of truth for published content and AI-agent Markdown docs.
 
-## DORI-First Documentation Workflow
+## Writing Style Guide
 
-Follow [NVIDIA DORI Routing](../AGENTS.md#nvidia-dori-routing) before checking for DORI.
-Only an `authorized` value can select the DORI path.
-When root routing selects that path, use DORI as the primary path for documentation work.
-Complete the documentation before the developer opens the pull or merge request.
-
-1. Route the documentation task through DORI. Include the changed source files,
-   the user-visible impact, the documentation that might need updates, and the
-   required validation.
-2. Follow the skill or workflow that DORI returns. Verify product behavior
-   against checked-in sources before drafting.
-3. When the host supports subagents, start a documentation subagent while the
-   primary developer finishes the implementation. Reconcile the documentation
-   changes and validation evidence before opening the pull or merge request.
-4. When the host does not support subagents, complete the same documentation
-   work in the primary task.
-
-If root routing selects standalone guidance, or if DORI is unavailable, inaccessible, declined, or fails, do not block the change.
-Continue with the standalone documentation fallback below.
-
-## Standalone Documentation Fallback
-
-When DORI is unavailable, apply these rules to documentation, examples,
-headings, UI text, and release notes that you create or edit.
+Apply these rules to documentation, examples, headings, UI text, and release notes that you create or edit.
 
 - Write in a professional, active, conversational, and engaging voice.
 - Use active voice whenever possible. Use present tense for product behavior.
@@ -76,6 +54,27 @@ headings, UI text, and release notes that you create or edit.
   and API output to satisfy prose rules.
 - Apply rules to improve clarity. Do not make mechanical changes that reduce
   technical accuracy or readability.
+
+## Use DORI for Complete NVIDIA Doc Tools
+
+Follow [NVIDIA DORI Routing](../AGENTS.md#nvidia-dori-routing) before checking for DORI.
+Only an `authorized` value can select the DORI path.
+When root routing selects that path, use DORI as the primary path for documentation work.
+Complete the documentation before the developer opens the pull or merge request.
+
+1. Route the documentation task through DORI. Include the changed source files,
+   the user-visible impact, the documentation that might need updates, and the
+   required validation.
+2. Follow the skill or workflow that DORI returns. Verify product behavior
+   against checked-in sources before drafting.
+3. When the host supports subagents, start a documentation subagent while the
+   primary developer finishes the implementation. Reconcile the documentation
+   changes and validation evidence before opening the pull or merge request.
+4. When the host does not support subagents, complete the same documentation
+   work in the primary task.
+
+If root routing selects standalone guidance, or if DORI is unavailable, inaccessible, declined, or fails, do not block the change.
+Continue using the Writing Style Guide above.
 
 ## Role
 
