@@ -1237,7 +1237,7 @@ mcpBridgeShardTest("hermes")(
     await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
     await assertHermesInspectionRejectsUnmanagedFields(sandbox, HERMES_SANDBOX_NAME);
     await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
-    progress.phase("restore Hermes shields and restart the gateway");
+    progress.phase("restore Hermes shields, restart, and prove rollback");
     await assertHermesManagedAddSurvivesLockedGatewayRestart(
       host,
       sandbox,

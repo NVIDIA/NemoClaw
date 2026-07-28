@@ -183,6 +183,105 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
     },
   );
   expectExitZero(shieldsDown, "unlock Hermes config for remaining managed MCP lifecycle");
+  await assertHermesReloadRollback(sandbox, sandboxName, mcpUrl);
+}
+
+/**
+ * Inject a first-reload failure around the packaged transaction helper, then
+ * require its real rollback reload to restore the prior config, both integrity
+ * anchors, and a healthy managed gateway in the live sandbox.
+ */
+async function assertHermesReloadRollback(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  mcpUrl: string,
+): Promise<void> {
+  const payload = JSON.stringify({
+    server: "rollback_probe",
+    url: mcpUrl,
+    headers: {
+      Authorization: "Bearer openshell:resolve:env:FAKE_MCP_SECRET",
+    },
+    replace_existing: false,
+  });
+  const script = [
+    "set -eu",
+    "/opt/hermes/.venv/bin/python - <<'PY'",
+    "import importlib.util, json, os, pathlib, sys",
+    "module_path = '/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py'",
+    "spec = importlib.util.spec_from_file_location('nemoclaw_mcp_tx_rollback_e2e', module_path)",
+    "assert spec is not None and spec.loader is not None",
+    "module = importlib.util.module_from_spec(spec)",
+    "sys.modules[spec.name] = module",
+    "spec.loader.exec_module(module)",
+    `payload = json.loads(${JSON.stringify(payload)})`,
+    "paths = (",
+    "    pathlib.Path('/sandbox/.hermes/config.yaml'),",
+    "    pathlib.Path('/etc/nemoclaw/hermes.config-hash'),",
+    "    pathlib.Path('/sandbox/.hermes/.config-hash'),",
+    ")",
+    "before = {path: path.read_bytes() for path in paths}",
+    "if os.geteuid() == 0:",
+    "    raise RuntimeError('rollback regression must run as the sandbox identity')",
+    "real_reload = module.reload_gateway",
+    "reload_calls = 0",
+    "def fail_then_reload():",
+    "    global reload_calls",
+    "    reload_calls += 1",
+    "    if reload_calls == 1:",
+    "        raise RuntimeError('injected first managed reload failure')",
+    "    return real_reload()",
+    "module.reload_gateway = fail_then_reload",
+    "try:",
+    "    module.execute('add', payload)",
+    "except RuntimeError as error:",
+    "    failure = str(error)",
+    "else:",
+    "    raise RuntimeError('injected managed reload failure unexpectedly succeeded')",
+    "if reload_calls != 2:",
+    "    raise RuntimeError(f'rollback performed {reload_calls} reload attempts instead of 2')",
+    "if 'injected first managed reload failure' not in failure:",
+    "    raise RuntimeError('transaction did not report the injected reload failure')",
+    "if 'config and hashes were restored' not in failure:",
+    "    raise RuntimeError('transaction did not report a complete rollback')",
+    "after = {path: path.read_bytes() for path in paths}",
+    "if after != before:",
+    "    raise RuntimeError('rollback did not restore config and both hash anchors exactly')",
+    "module._assert_non_root_lifecycle_identity()",
+    "if not module._gateway_healthy():",
+    "    raise RuntimeError('gateway is unhealthy after the real rollback reload')",
+    "guard = module._load_guard()",
+    "snapshot = guard.inspect_mcp_integrity_snapshot(",
+    "    module.HERMES_DIR,",
+    "    module.STRICT_HASH_PATH,",
+    "    os.path.join(module.HERMES_DIR, '.config-hash'),",
+    ")",
+    "guard.assert_mcp_integrity_snapshot_current(snapshot)",
+    "print(json.dumps({",
+    "    'gateway': 'healthy',",
+    "    'reloads': reload_calls,",
+    "    'rollback': 'restored',",
+    "    'state': snapshot.state,",
+    "}, sort_keys=True))",
+    "PY",
+  ].join("\n");
+  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
+    artifactName: "hermes-mcp-failed-reload-rollback",
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [
+      HOST_SECRET,
+      ROTATED_HOST_SECRET,
+      Buffer.from(script, "utf8").toString("base64"),
+    ],
+    timeoutMs: 7 * 60_000,
+  });
+  expectExitZero(result, "Hermes failed MCP reload restores config, hashes, and gateway");
+  expect(JSON.parse(result.stdout)).toEqual({
+    gateway: "healthy",
+    reloads: 2,
+    rollback: "restored",
+    state: "current",
+  });
 }
 
 // No host `nemoclaw mcp inspect` command exists; exercise the packaged CLI
