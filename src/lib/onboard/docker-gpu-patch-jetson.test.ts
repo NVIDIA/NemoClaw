@@ -19,7 +19,7 @@ function dockerCaptureFixture() {
   return vi.fn((args: readonly string[]) => responses[args[0]] ?? "");
 }
 
-describe("Jetson /dev/nvmap group propagation (#4231)", () => {
+describe("Jetson device-node group propagation (#4231, #7610)", () => {
   it("emits --group-add for extraGroupGids and dedupes against existing GroupAdd", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.GroupAdd = ["44"];
@@ -41,11 +41,20 @@ describe("Jetson /dev/nvmap group propagation (#4231)", () => {
     expect(args).not.toEqual(expect.arrayContaining(["--group-add"]));
   });
 
-  it("plumbs detected Tegra device GIDs into the Jetson recreate as --group-add", () => {
-    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+  it("passes all detected Tegra device GIDs into the Jetson recreate as --group-add", () => {
+    const dockerRunDetached = vi.fn(() => ({
+      status: 0,
+      stdout: "new-container-id\n",
+    }));
     const detectTegraDeviceGroupGidsStub = vi.fn(() =>
       detectTegraDeviceGroupGids({
-        statDeviceGid: (path) => (path === "/dev/nvmap" ? 44 : null),
+        statDeviceAccess: (path) =>
+          ({
+            "/dev/nvmap": { gid: 44, mode: 0o660 },
+            "/dev/nvhost-gpu": { gid: 995, mode: 0o660 },
+            "/dev/dri/renderD128": { gid: 104, mode: 0o660 },
+          })[path] ?? null,
+        listDevicePaths: () => ["/dev/nvmap", "/dev/nvhost-gpu", "/dev/dri/renderD128"],
       }),
     );
 
@@ -68,13 +77,16 @@ describe("Jetson /dev/nvmap group propagation (#4231)", () => {
 
     expect(detectTegraDeviceGroupGidsStub).toHaveBeenCalled();
     expect(dockerRunDetached).toHaveBeenCalledWith(
-      expect.arrayContaining(["--group-add", "44"]),
+      expect.arrayContaining(["--group-add", "44", "--group-add", "104", "--group-add", "995"]),
       expect.objectContaining({ ignoreError: true }),
     );
   });
 
   it("does not add Tegra device GIDs for the generic (non-Jetson) backend", () => {
-    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const dockerRunDetached = vi.fn(() => ({
+      status: 0,
+      stdout: "new-container-id\n",
+    }));
     const detectTegraDeviceGroupGidsStub = vi.fn(() => ["44"]);
 
     recreateOpenShellDockerSandboxWithGpu(
