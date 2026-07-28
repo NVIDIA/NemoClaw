@@ -281,31 +281,13 @@ process.exit(2);
 `,
         { mode: 0o755 },
       );
-      const run = (
-        pending: unknown[],
-        options: {
-          failApproval?: boolean;
-          pendingById?: Record<string, unknown>;
-          preservePendingState?: boolean;
-        } = {},
-      ) => {
-        if (!options.preservePendingState) {
-          const pendingById =
-            options.pendingById ??
-            Object.fromEntries(
-              pending.map((device, index) => {
-                const requestId = (device as { requestId?: unknown } | null)?.requestId;
-                return [typeof requestId === "string" ? requestId : `entry-${index}`, device];
-              }),
-            );
-          fs.writeFileSync(path.join(devicesDir, "pending.json"), JSON.stringify(pendingById));
-        }
-        return spawnSync("sh", ["-c", script], {
+      const execute = (failApproval = false) =>
+        spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
             ...process.env,
             PATH: `${tmpDir}:/usr/bin:/bin`,
-            NEMOCLAW_APPROVE_FAIL: options.failApproval ? "1" : "0",
+            NEMOCLAW_APPROVE_FAIL: failApproval ? "1" : "0",
             NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
@@ -314,6 +296,23 @@ process.exit(2);
           },
           timeout: 10_000,
         });
+      const run = (
+        pending: unknown[],
+        options: {
+          failApproval?: boolean;
+          pendingById?: Record<string, unknown>;
+        } = {},
+      ) => {
+        const pendingById =
+          options.pendingById ??
+          Object.fromEntries(
+            pending.map((device, index) => {
+              const requestId = (device as { requestId?: unknown } | null)?.requestId;
+              return [typeof requestId === "string" ? requestId : `entry-${index}`, device];
+            }),
+          );
+        fs.writeFileSync(path.join(devicesDir, "pending.json"), JSON.stringify(pendingById));
+        return execute(options.failApproval);
       };
       const readApprovals = () =>
         fs.existsSync(approvalsFile)
@@ -473,7 +472,7 @@ process.exit(2);
       ]) {
         resetLogs();
         preparePendingState();
-        const failed = run([], { preservePendingState: true });
+        const failed = execute();
         expect(failed.status).toBe(0);
         expect(parseAutoPairApprovalReceipt(failed.stdout)).toBe("list-failed");
         expect(readApprovals()).toEqual([]);
