@@ -8,7 +8,10 @@
 // OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
 // generic refresh contract is defined in the manifest schema.
 
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 // yaml is a production dependency (used by policies.ts, onboard.ts)
@@ -94,16 +97,18 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 // ── Path resolution ──────────────────────────────────────────────
 
 export interface SkillPaths {
+  /** Agent state root that contains the resolved skill paths. */
+  stateDir: string;
   /** Upload target directory for the skill */
   uploadDir: string;
   /** Directory the agent actually loads skills from, or null when it equals uploadDir */
   mirrorDir: string | null;
   /**
-   * Whether the agent's own tooling also writes into mirrorDir. When true the
-   * mirror is NOT proof that NemoClaw installed a skill, so it must not be used
-   * as the existence gate for `skill remove`.
+   * Whether the agent's own tooling also writes into uploadDir. Shared
+   * destinations support only atomic fresh installs because their existing
+   * content is not proof that NemoClaw owns it.
    */
-  mirrorSharedWithAgent: boolean;
+  uploadDirSharedWithAgent: boolean;
   /** OpenClaw-only: session index to clear, or null */
   sessionFile: string | null;
   /** Whether the agent is OpenClaw (drives refresh behavior) */
@@ -119,25 +124,21 @@ export interface SkillPaths {
  * unregistered — absent from the agent's skill list (#4819 for OpenClaw, #7634
  * for Deep Agents Code, whose user skill dir is `~/.deepagents/{agent}/skills`).
  *
- * `sharedWithAgent` marks a mirror the agent's own tooling also writes into:
- * Deep Agents Code's skill-creator authors user skills straight into
- * `agent/skills` (#5753), so a directory there is not proof NemoClaw installed
- * it. `checkExisting()` depends on that distinction.
- *
  * Remove an entry when its agent starts loading skills from `uploadDir`.
  */
-const AGENT_SKILL_MIRRORS: Record<
-  string,
-  { dir: (dir: string, skillName: string) => string; sharedWithAgent: boolean }
-> = {
-  openclaw: {
-    dir: (_dir, skillName) => `$HOME/.openclaw/skills/${skillName}`,
-    sharedWithAgent: false,
-  },
-  "langchain-deepagents-code": {
-    dir: (dir, skillName) => `${dir}/agent/skills/${skillName}`,
-    sharedWithAgent: true,
-  },
+const AGENT_SKILL_MIRRORS: Record<string, (dir: string, skillName: string) => string> = {
+  openclaw: (_dir, skillName) => `$HOME/.openclaw/skills/${skillName}`,
+};
+
+/**
+ * Agent-owned skill directories that are also the loader's canonical source.
+ *
+ * Deep Agents Code's built-in skill creator writes directly to
+ * `agent/skills` (#5753). NemoClaw therefore installs there only when the
+ * destination is absent and never treats an existing directory as managed.
+ */
+const AGENT_SHARED_SKILL_DIRS: Record<string, (dir: string, skillName: string) => string> = {
+  "langchain-deepagents-code": (dir, skillName) => `${dir}/agent/skills/${skillName}`,
 };
 
 /**
@@ -153,14 +154,15 @@ export function resolveSkillPaths(
   const isOpenClaw = !agent || agent.name === "openclaw";
 
   const dir = agent ? agent.configPaths.dir : "/sandbox/.openclaw";
-
-  const uploadDir = `${dir}/skills/${skillName}`;
-  const mirror = AGENT_SKILL_MIRRORS[agent ? agent.name : "openclaw"];
+  const agentName = agent ? agent.name : "openclaw";
+  const sharedDir = AGENT_SHARED_SKILL_DIRS[agentName];
+  const mirror = AGENT_SKILL_MIRRORS[agentName];
 
   return {
-    uploadDir,
-    mirrorDir: mirror ? mirror.dir(dir, skillName) : null,
-    mirrorSharedWithAgent: mirror ? mirror.sharedWithAgent : false,
+    stateDir: dir,
+    uploadDir: sharedDir ? sharedDir(dir, skillName) : `${dir}/skills/${skillName}`,
+    mirrorDir: mirror ? mirror(dir, skillName) : null,
+    uploadDirSharedWithAgent: Boolean(sharedDir),
     sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
     isOpenClaw,
   };
@@ -203,6 +205,7 @@ export interface CollectedFiles {
   files: string[];
   skippedDotfiles: string[];
   unsafePaths: string[];
+  unsupportedPaths: string[];
 }
 
 /**
@@ -215,6 +218,7 @@ export function collectFiles(dir: string): CollectedFiles {
   const files: string[] = [];
   const skippedDotfiles: string[] = [];
   const unsafePaths: string[] = [];
+  const unsupportedPaths: string[] = [];
 
   function walk(current: string, prefix: string) {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
@@ -231,11 +235,19 @@ export function collectFiles(dir: string): CollectedFiles {
         } else {
           files.push(rel);
         }
+      } else {
+        // Never follow symlinks or copy sockets, FIFOs, or device nodes across
+        // the host-to-sandbox trust boundary.
+        unsupportedPaths.push(rel);
       }
     }
   }
   walk(dir, "");
-  return { files, skippedDotfiles, unsafePaths };
+  files.sort();
+  skippedDotfiles.sort();
+  unsafePaths.sort();
+  unsupportedPaths.sort();
+  return { files, skippedDotfiles, unsafePaths, unsupportedPaths };
 }
 
 /**
@@ -247,9 +259,10 @@ export function uploadDirectory(
   localDir: string,
   remoteDir: string,
 ): { uploaded: number; failed: string[]; skippedDotfiles: string[]; unsafePaths: string[] } {
-  const { files, skippedDotfiles, unsafePaths } = collectFiles(localDir);
-  if (unsafePaths.length > 0) {
-    return { uploaded: 0, failed: unsafePaths, skippedDotfiles, unsafePaths };
+  const { files, skippedDotfiles, unsafePaths, unsupportedPaths } = collectFiles(localDir);
+  const rejected = [...unsafePaths, ...unsupportedPaths];
+  if (rejected.length > 0) {
+    return { uploaded: 0, failed: rejected, skippedDotfiles, unsafePaths };
   }
   const failed: string[] = [];
   for (const rel of files) {
@@ -261,6 +274,205 @@ export function uploadDirectory(
     }
   }
   return { uploaded: files.length - failed.length, failed, skippedDotfiles, unsafePaths };
+}
+
+const SHA256_RE = /^[a-f0-9]{64}$/;
+const SKILL_SNAPSHOT_TIMEOUT_MS = 30_000;
+
+function fileSha256(filePath: string): string {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+/** Hash the sorted regular-file path and byte set used by a skill archive. */
+export function computeSkillContentDigest(localDir: string, files?: string[]): string {
+  const selected = files ?? collectFiles(localDir).files;
+  const manifest = selected
+    .slice()
+    .sort()
+    .map((rel) => `${fileSha256(path.join(localDir, rel))}  ${rel}\n`)
+    .join("");
+  return createHash("sha256").update(manifest).digest("hex");
+}
+
+interface SkillArchiveSnapshot {
+  archive: Buffer;
+  contentDigest: string;
+  files: string[];
+  skillName: string;
+}
+
+/**
+ * Create one immutable archive, then derive the expected manifest from that
+ * archive rather than re-reading the mutable source tree.
+ */
+function createSkillArchiveSnapshot(
+  localDir: string,
+  files: string[],
+): SkillArchiveSnapshot | null {
+  const archiveResult = spawnSync("tar", ["-cf", "-", "-C", localDir, "--", ...files], {
+    encoding: null,
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+    maxBuffer: 256 * 1024 * 1024,
+    timeout: SKILL_SNAPSHOT_TIMEOUT_MS,
+  });
+  if (archiveResult.status !== 0 || !Buffer.isBuffer(archiveResult.stdout)) return null;
+
+  const snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-snapshot-"));
+  try {
+    const extractResult = spawnSync("tar", ["-xf", "-", "-C", snapshotDir], {
+      encoding: null,
+      input: archiveResult.stdout,
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: SKILL_SNAPSHOT_TIMEOUT_MS,
+    });
+    if (extractResult.status !== 0) return null;
+    const snapshot = collectFiles(snapshotDir);
+    if (
+      snapshot.unsafePaths.length > 0 ||
+      snapshot.unsupportedPaths.length > 0 ||
+      !snapshot.files.includes("SKILL.md") ||
+      snapshot.files.join("\n") !== files.slice().sort().join("\n")
+    ) {
+      return null;
+    }
+    let skillName: string;
+    try {
+      skillName = parseFrontmatter(
+        fs.readFileSync(path.join(snapshotDir, "SKILL.md"), "utf8"),
+      ).name;
+    } catch {
+      return null;
+    }
+    return {
+      archive: archiveResult.stdout,
+      contentDigest: computeSkillContentDigest(snapshotDir, snapshot.files),
+      files: snapshot.files,
+      skillName,
+    };
+  } finally {
+    fs.rmSync(snapshotDir, { recursive: true, force: true });
+  }
+}
+
+function buildFreshSharedInstallScript(paths: SkillPaths, expectedDigest: string): string {
+  const relativeUpload = path.posix.relative(paths.stateDir, paths.uploadDir);
+  const parentParts = path.posix.dirname(relativeUpload).split("/");
+  const leaf = path.posix.basename(relativeUpload);
+  if (
+    !validateRelativePath(relativeUpload) ||
+    parentParts.some((part) => !validateRelativePath(part)) ||
+    !validateRelativePath(leaf)
+  ) {
+    throw new Error("Shared agent skill path is not a safe relative destination");
+  }
+
+  const lines = [
+    "set -eu",
+    `root=${shellQuote(paths.stateDir)}`,
+    `leaf=${shellQuote(leaf)}`,
+    `expected=${shellQuote(expectedDigest)}`,
+    'exists() { [ -e "$1" ] || [ -L "$1" ]; }',
+    'safe_rel() { case "$1" in ""|/*|*//*|*[!A-Za-z0-9._/-]*) return 1 ;; esac; case "/$1/" in *"/./"*|*"/../"*) return 1 ;; esac; }',
+    '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
+    'cd -P -- "$root"',
+    '[ "$(pwd -P)" = "$root" ]',
+  ];
+
+  let expectedParent = paths.stateDir;
+  for (const part of parentParts) {
+    expectedParent = `${expectedParent}/${part}`;
+    lines.push(
+      `part=${shellQuote(part)}`,
+      '[ ! -L "$part" ]',
+      'if [ ! -e "$part" ]; then mkdir -- "$part"; fi',
+      '[ -d "$part" ] && [ ! -L "$part" ]',
+      'cd -P -- "$part"',
+      `[ "$(pwd -P)" = ${shellQuote(expectedParent)} ]`,
+    );
+  }
+
+  lines.push(
+    'if exists "$leaf"; then echo EXISTS; exit 2; fi',
+    'workspace="$(mktemp -d .nemoclaw-skill.XXXXXX)"',
+    'chmod 700 "$workspace"',
+    'payload="$workspace/payload"',
+    'cleanup() { if exists "$workspace"; then rm -rf -- "$workspace"; fi; }',
+    "trap cleanup EXIT HUP INT TERM",
+    'mkdir -- "$payload"',
+    'tar --no-same-owner --no-same-permissions -xf - -C "$payload"',
+    '[ -z "$(find "$payload" -mindepth 1 ! -type d ! -type f -print -quit)" ]',
+    'find "$payload" -type f -printf "%P\\n" | LC_ALL=C sort > "$workspace/files"',
+    ': > "$workspace/manifest"',
+    'while IFS= read -r rel; do safe_rel "$rel"; hash="$(sha256sum "$payload/$rel" | cut -d " " -f 1)"; printf "%s  %s\\n" "$hash" "$rel" >> "$workspace/manifest"; done < "$workspace/files"',
+    'staged="$(sha256sum "$workspace/manifest" | cut -d " " -f 1)"',
+    '[ "$staged" = "$expected" ]',
+    'if exists "$leaf"; then echo EXISTS; exit 2; fi',
+    'if ! mv -nT -- "$payload" "$leaf"; then if exists "$leaf"; then echo EXISTS; exit 2; fi; echo MOVE_FAILED; exit 3; fi',
+    'if exists "$payload"; then echo EXISTS; exit 2; fi',
+    'printf "INSTALLED %s\\n" "$expected"',
+  );
+  return lines.join("; ");
+}
+
+export interface FreshSharedSkillInstallResult {
+  success: boolean;
+  uploaded: number;
+  contentDigest?: string;
+  reason?: "destination_exists" | "snapshot_failed" | "remote_state_unknown";
+}
+
+/**
+ * Install into an agent-owned loader directory only when the destination is
+ * absent. Existing content is never renamed, deleted, or replaced.
+ */
+export function installFreshSharedSkill(
+  ctx: SshContext,
+  localDir: string,
+  paths: SkillPaths,
+  opts: { sshExecImpl?: typeof sshExec } = {},
+): FreshSharedSkillInstallResult {
+  if (!paths.uploadDirSharedWithAgent || paths.mirrorDir) {
+    return { success: false, uploaded: 0, reason: "remote_state_unknown" };
+  }
+  const collected = collectFiles(localDir);
+  if (
+    collected.files.length === 0 ||
+    collected.unsafePaths.length > 0 ||
+    collected.unsupportedPaths.length > 0
+  ) {
+    return { success: false, uploaded: 0, reason: "snapshot_failed" };
+  }
+  const snapshot = createSkillArchiveSnapshot(localDir, collected.files);
+  if (
+    !snapshot ||
+    !SHA256_RE.test(snapshot.contentDigest) ||
+    snapshot.skillName !== path.posix.basename(paths.uploadDir)
+  ) {
+    return { success: false, uploaded: 0, reason: "snapshot_failed" };
+  }
+  const runSsh = opts.sshExecImpl ?? sshExec;
+  const result = runSsh(ctx, buildFreshSharedInstallScript(paths, snapshot.contentDigest), {
+    input: snapshot.archive,
+  });
+  if (
+    result !== null &&
+    result.status === 0 &&
+    result.stdout === `INSTALLED ${snapshot.contentDigest}`
+  ) {
+    return {
+      success: true,
+      uploaded: snapshot.files.length,
+      contentDigest: snapshot.contentDigest,
+    };
+  }
+  return {
+    success: false,
+    uploaded: 0,
+    reason:
+      result?.status === 2 && result.stdout === "EXISTS"
+        ? "destination_exists"
+        : "remote_state_unknown",
+  };
 }
 
 /**
