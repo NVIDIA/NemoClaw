@@ -100,29 +100,6 @@ export function acquireLock(): void {
   for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
     try {
       fs.mkdirSync(LOCK_DIR);
-      const ownerTmp = `${LOCK_OWNER}.tmp.${process.pid}`;
-      try {
-        fs.writeFileSync(ownerTmp, String(process.pid), { mode: 0o600 });
-        fs.renameSync(ownerTmp, LOCK_OWNER);
-      } catch (ownerErr) {
-        try {
-          fs.unlinkSync(ownerTmp);
-        } catch {
-          /* best effort */
-        }
-        try {
-          fs.unlinkSync(LOCK_OWNER);
-        } catch {
-          /* best effort */
-        }
-        try {
-          fs.rmdirSync(LOCK_DIR);
-        } catch {
-          /* best effort */
-        }
-        throw ownerErr;
-      }
-      return;
     } catch (error) {
       if (!isErrnoException(error) || error.code !== "EEXIST") {
         throw error;
@@ -178,7 +155,32 @@ export function acquireLock(): void {
         }
       }
       Atomics.wait(sleepBuf, 0, 0, LOCK_RETRY_MS);
+      continue;
     }
+
+    const ownerTmp = `${LOCK_OWNER}.tmp.${process.pid}`;
+    try {
+      fs.writeFileSync(ownerTmp, String(process.pid), { mode: 0o600 });
+      fs.renameSync(ownerTmp, LOCK_OWNER);
+    } catch (ownerError) {
+      try {
+        fs.unlinkSync(ownerTmp);
+      } catch {
+        /* best effort */
+      }
+      try {
+        fs.unlinkSync(LOCK_OWNER);
+      } catch {
+        /* best effort */
+      }
+      try {
+        fs.rmdirSync(LOCK_DIR);
+      } catch {
+        /* best effort */
+      }
+      throw ownerError;
+    }
+    return;
   }
   throw new Error(`Failed to acquire lock on ${REGISTRY_FILE} after ${LOCK_MAX_RETRIES} retries`);
 }

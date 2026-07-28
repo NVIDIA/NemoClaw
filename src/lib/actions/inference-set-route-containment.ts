@@ -12,6 +12,7 @@ import {
   isHttpsPinRuntimeEligible,
 } from "../inference/https-pin-runtime";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { isAllowedOpenShellSandboxBridgeUrl } from "../private-networks";
 import { ConfigUrlValidationError } from "../sandbox/config";
 import type { ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
@@ -47,8 +48,8 @@ type RewriteConfigUrlsWithDnsPinning = (value: ConfigValue) => Promise<ConfigVal
  * Resolves a DNS-backed HTTPS custom endpoint to a pinned, locally-terminated
  * route base URL instead of the raw operator-supplied URL. OpenShell never
  * sees the real hostname; the returned URL always targets the trusted
- * `host.openshell.internal` bridge, matching the shape already exempted by
- * {@link ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS}.
+ * `host.openshell.internal` bridge, matching the shape already exempted by the
+ * shared OpenShell sandbox bridge URL predicate.
  */
 export interface EnsureHttpsPinRuntimeAdapterOptions {
   gatewayName: string;
@@ -102,14 +103,6 @@ function hasExplicitCustomMetadata(options: ExplicitCustomRouteOptions): boolean
   return Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
 }
 
-// TRUST BOUNDARY: host.openshell.internal is the single sandbox-to-host bridge
-// hostname provisioned by OpenShell. It resolves to the Docker host gateway
-// only inside the sandbox network namespace. This exemption is intentionally
-// limited below to HTTP, an explicit unprivileged port, and the exact hostname;
-// do not extend it to HTTPS, wildcard subdomains, localhost, RFC1918 literals,
-// or other internal DNS names.
-const ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS = new Set(["host.openshell.internal"]);
-
 function normalizeEndpointUrlShape(value: string): { url: URL; normalized: string } {
   const url = new URL(value);
   if (
@@ -150,14 +143,7 @@ export async function normalizeCustomEndpointUrl(
 ): Promise<string> {
   const normalized = normalizeCustomEndpointUrlWithoutDns(value);
   const shaped = normalizeEndpointUrlShape(normalized);
-  const hostname = shaped.url.hostname.replace(/\.$/, "").toLowerCase();
-  const port = Number(shaped.url.port);
-  if (
-    ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS.has(hostname) &&
-    shaped.url.protocol === "http:" &&
-    Number.isInteger(port) &&
-    port >= 1024
-  ) {
+  if (isAllowedOpenShellSandboxBridgeUrl(shaped.url)) {
     // This is the single sandbox-to-host bridge name that NemoClaw itself
     // provisions for local inference. Its supported routes are explicit
     // unprivileged HTTP listeners; do not generalize this exemption to HTTPS,
