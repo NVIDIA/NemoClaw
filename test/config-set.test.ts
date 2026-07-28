@@ -474,6 +474,12 @@ describe("config set helpers", () => {
       expect(() =>
         validateUrlValue("http://host.openshell.internal:11434/v1?token=secret", options),
       ).toThrow(/private/i);
+      expect(() =>
+        validateUrlValue("http://user:pass@host.openshell.internal:11434/v1", options),
+      ).toThrow(/private/i);
+      expect(() => validateUrlValue("http://host.openshell.internal/v1", options)).toThrow(
+        /private/i,
+      );
     });
 
     it("rejects additional reserved special-use ranges from the shared blocklist", () => {

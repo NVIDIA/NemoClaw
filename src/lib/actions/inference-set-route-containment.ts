@@ -12,8 +12,8 @@ import {
   isHttpsPinRuntimeEligible,
 } from "../inference/https-pin-runtime";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { isAllowedOpenShellSandboxBridgeUrl } from "../private-networks";
 import { ConfigUrlValidationError } from "../sandbox/config";
-import { isAllowedOpenShellSandboxBridgeUrl } from "../sandbox/openshell-bridge-url";
 import type { ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";

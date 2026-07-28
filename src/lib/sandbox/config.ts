@@ -35,7 +35,11 @@ const {
   runOpenClawConfigGuard,
   validateOpenClawConfigCandidate,
 }: typeof import("../shields/openclaw-config-lock") = require("../shields/openclaw-config-lock");
-const { isPrivateHostname, isPrivateIp } = require("../private-networks");
+const {
+  isAllowedOpenShellSandboxBridgeUrl,
+  isPrivateHostname,
+  isPrivateIp,
+}: typeof import("../private-networks") = require("../private-networks");
 const {
   privilegedSandboxExecArgv,
   resolveDirectSandboxContainer,
@@ -47,9 +51,6 @@ const {
   parseConfig,
   serializeConfig,
 }: typeof import("./config-format") = require("./config-format");
-const {
-  isAllowedOpenShellSandboxBridgeUrl,
-}: typeof import("./openshell-bridge-url") = require("./openshell-bridge-url");
 const {
   OPENSHELL_OPERATION_TIMEOUT_MS,
 }: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
