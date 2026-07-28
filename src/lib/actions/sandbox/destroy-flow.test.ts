@@ -200,7 +200,7 @@ describe("destroySandbox flow", () => {
     expectActiveTimerDestroyOrder(harness);
   });
 
-  it("deletes when active-window hardening fails after the wipe", async () => {
+  it("deletes when active-window hardening fails after the wipe (#7727)", async () => {
     const harness = createDestroyHarness({
       activeTimer: true,
       shieldsUpError: new Error("injected hardening failure"),
@@ -211,7 +211,7 @@ describe("destroySandbox flow", () => {
     expectFailedHardeningAllowsDelete(harness);
   });
 
-  it("restores MCP runtime state when sandbox delete fails after hardening fails", async () => {
+  it("restores MCP runtime state when sandbox delete fails after hardening fails (#7727)", async () => {
     const harness = createDestroyHarness({
       activeTimer: true,
       deleteStatus: 7,
