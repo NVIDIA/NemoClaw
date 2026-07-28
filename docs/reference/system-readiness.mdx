@@ -1,0 +1,64 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "System Readiness"
+sidebar-title: "System Readiness"
+description: "Check host readiness before NemoClaw onboarding without changing system state."
+description-agent: "Documents the read-only host readiness command, JSON contract, exit codes, redaction boundary, and mutation guarantees. Use when checking a host before onboarding or consuming readiness JSON."
+keywords: ["nemoclaw host probe", "system readiness", "readiness json", "pre-onboarding check"]
+content:
+  type: "reference"
+---
+
+Use the system readiness report to inspect a host before you run onboarding.
+The command works without a registered gateway or sandbox.
+
+## Run the readiness check
+
+Run the human-readable check from the host:
+
+```bash
+$$nemoclaw host probe
+```
+
+Use JSON when another tool consumes the result:
+
+```bash
+$$nemoclaw host probe --json
+```
+
+Both presentations use the same structured report.
+The JSON report includes its `schemaVersion`, `status`, `exitCode`, `observations`, `capabilities`, `qualifications`, `findings`, `evidence`, and `provenance`.
+It also includes `mutated: false`.
+
+## Interpret exit codes
+
+The command uses deterministic exit codes:
+
+| Exit code | Status | Meaning |
+| --- | --- | --- |
+| `0` | `supported` | Required readiness checks passed. |
+| `2` | `incompatible` | A blocking or fatal finding prevents onboarding. |
+| `3` | `inconclusive` | NemoClaw could not determine a required capability. |
+
+The command writes a schema-valid JSON report for all three results.
+Read the report before you handle a nonzero exit.
+
+## Use the compatibility contract
+
+The `schemaVersion` field uses `major.minor.patch` format.
+Consumers must reject an unknown major version.
+Consumers can ignore fields that they do not recognize within major version 1.
+Use stable capability and finding IDs instead of parsing human summaries.
+Treat bounded evidence as diagnostic context unless an observation, capability, or finding references that evidence ID.
+
+## Understand the read-only boundary
+
+`host probe` observes the host and does not run remediation.
+Repeated runs do not change filesystem, service, Docker image or container, gateway, provider, credential, policy, or sandbox state.
+A future command that changes the host must use a separate mutating mode.
+That mode cannot run with `--json` probing.
+
+The public report removes process environments and unrecognized fields from internal probe results.
+It redacts token-shaped values and credential-bearing URLs.
+It also limits finding summaries and command evidence before either presentation receives the report.
