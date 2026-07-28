@@ -40,6 +40,30 @@ function pathsFor(stateDir: string) {
   return resolveSkillPaths({ name: AGENT_NAME, configPaths: { dir: stateDir } }, "note-summarizer");
 }
 
+const COLLISION_CASES = [
+  {
+    kind: "file",
+    prepare: (destination: string, _outside: string) => writeFileSync(destination, "agent file\n"),
+    assertUnchanged: (destination: string) =>
+      expect(readFileSync(destination, "utf8")).toBe("agent file\n"),
+  },
+  {
+    kind: "directory",
+    prepare: (destination: string, _outside: string) => {
+      mkdirSync(destination);
+      writeFileSync(join(destination, "agent.txt"), "agent directory\n");
+    },
+    assertUnchanged: (destination: string) =>
+      expect(readFileSync(join(destination, "agent.txt"), "utf8")).toBe("agent directory\n"),
+  },
+  {
+    kind: "symlink",
+    prepare: (destination: string, outside: string) => symlinkSync(outside, destination),
+    assertUnchanged: (destination: string) =>
+      expect(readFileSync(destination, "utf8")).toBe("outside\n"),
+  },
+] as const;
+
 function executeShell(
   command: string,
   input: string | Buffer | undefined,
@@ -168,49 +192,32 @@ describe("fresh shared-agent skill install", () => {
     },
   );
 
-  it.runIf(process.platform === "linux")(
-    "refuses existing files, directories, and symlinks without changing them",
-    () => {
-      for (const kind of ["file", "directory", "symlink"] as const) {
-        const skillDir = makeSkill();
-        const stateDir = mkdtempSync(join(tmpdir(), `nemoclaw-shared-${kind}-`));
-        const paths = pathsFor(stateDir);
-        mkdirSync(join(stateDir, "agent", "skills"), { recursive: true });
-        const outside = join(stateDir, "outside");
-        writeFileSync(outside, "outside\n");
-        if (kind === "file") {
-          writeFileSync(paths.uploadDir, "agent file\n");
-        } else if (kind === "directory") {
-          mkdirSync(paths.uploadDir);
-          writeFileSync(join(paths.uploadDir, "agent.txt"), "agent directory\n");
-        } else {
-          symlinkSync(outside, paths.uploadDir);
-        }
-        const before = lstatSync(paths.uploadDir);
-        try {
-          const result = installFreshSharedSkill(CTX, skillDir, paths, {
-            sshExecImpl: (_ctx, command, opts) => executeShell(command, opts?.input),
-          });
+  it.runIf(process.platform === "linux").each(COLLISION_CASES)(
+    "refuses an existing $kind without changing it (#7634)",
+    ({ kind, prepare, assertUnchanged }) => {
+      const skillDir = makeSkill();
+      const stateDir = mkdtempSync(join(tmpdir(), `nemoclaw-shared-${kind}-`));
+      const paths = pathsFor(stateDir);
+      mkdirSync(join(stateDir, "agent", "skills"), { recursive: true });
+      const outside = join(stateDir, "outside");
+      writeFileSync(outside, "outside\n");
+      prepare(paths.uploadDir, outside);
+      const before = lstatSync(paths.uploadDir);
+      try {
+        const result = installFreshSharedSkill(CTX, skillDir, paths, {
+          sshExecImpl: (_ctx, command, opts) => executeShell(command, opts?.input),
+        });
 
-          expect(result).toEqual({
-            success: false,
-            uploaded: 0,
-            reason: "destination_exists",
-          });
-          expect(lstatSync(paths.uploadDir).isSymbolicLink()).toBe(before.isSymbolicLink());
-          if (kind === "file") {
-            expect(readFileSync(paths.uploadDir, "utf8")).toBe("agent file\n");
-          } else if (kind === "directory") {
-            expect(readFileSync(join(paths.uploadDir, "agent.txt"), "utf8")).toBe(
-              "agent directory\n",
-            );
-          } else {
-            expect(readFileSync(paths.uploadDir, "utf8")).toBe("outside\n");
-          }
-        } finally {
-          rmSync(skillDir, { recursive: true, force: true });
-          rmSync(stateDir, { recursive: true, force: true });
-        }
+        expect(result).toEqual({
+          success: false,
+          uploaded: 0,
+          reason: "destination_exists",
+        });
+        expect(lstatSync(paths.uploadDir).isSymbolicLink()).toBe(before.isSymbolicLink());
+        assertUnchanged(paths.uploadDir);
+      } finally {
+        rmSync(skillDir, { recursive: true, force: true });
+        rmSync(stateDir, { recursive: true, force: true });
       }
     },
   );
