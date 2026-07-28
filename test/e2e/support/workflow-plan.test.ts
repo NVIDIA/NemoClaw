@@ -146,7 +146,7 @@ describe("E2E workflow plan", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
-    const activeJobs = "cloud-onboard,credential-sanitization,security-posture";
+    const activeJobs = "cloud-onboard,security-posture";
     const plan = buildE2eWorkflowPlan({ jobs: activeJobs });
     try {
       const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {

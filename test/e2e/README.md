@@ -554,7 +554,7 @@ The closed-PR outcome also applies when a fork repository was deleted and
 GitHub consequently returns no head-repository object.
 Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 `security-posture`. E2E control-plane changes select `cloud-onboard`,
-`credential-sanitization`, and `security-posture`. The `e2e-control-plane`
+`cloud-inference`, and `security-posture`. The `e2e-control-plane`
 family is a conservative path boundary that includes non-documentation files
 under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
 policy, dependency and test configuration, and preparation and upload actions.

@@ -32,16 +32,33 @@ List the presets available to the sandbox:
 $$nemoclaw <name> policy list
 ```
 
+<AgentOnly variant="openclaw,hermes">
 For the maintained preset catalog and guided service workflows, refer to [Common Integration Policy Examples](../integration-policy-examples).
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For Deep Agents baseline, tier, Tavily, and observability preset behavior, refer to [Network Policies](../../reference/network-policies#policy-tiers).
+</AgentOnly>
 
 ## Preview and Apply a Preset
 
 Use `--dry-run` to review the endpoints, rules, and binaries before applying the preset:
 
+<AgentOnly variant="openclaw,hermes">
+
 ```bash
 $$nemoclaw my-assistant policy add pypi --dry-run
 $$nemoclaw my-assistant policy add pypi --yes
 ```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+$$nemoclaw my-assistant policy add weather --dry-run
+$$nemoclaw my-assistant policy add weather --yes
+```
+
+</AgentOnly>
 
 Omit the preset name to use the interactive picker:
 
@@ -73,9 +90,20 @@ $$nemoclaw <name> policy list
 
 Remove a preset when the sandbox no longer needs its access:
 
+<AgentOnly variant="openclaw,hermes">
+
 ```bash
 $$nemoclaw my-assistant policy remove pypi --yes
 ```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+$$nemoclaw my-assistant policy remove weather --yes
+```
+
+</AgentOnly>
 
 `policy remove` accepts maintained and custom preset names.
 
@@ -103,5 +131,7 @@ For the complete approval workflow, refer to [Approve or Deny Network Requests](
 ## Related Topics
 
 - [Create Custom Policy Presets](create-custom-policy-presets) adds an endpoint that no maintained preset covers.
+<AgentOnly variant="openclaw,hermes">
 - [Explain Network Policy to Agents](../explain-network-policy-to-agents) summarizes active and missing presets.
+</AgentOnly>
 - [Commands](../../reference/commands#$$nemoclaw-name-policy-add) lists every policy command flag.

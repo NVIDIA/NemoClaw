@@ -1062,7 +1062,6 @@ jobs:
           "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
           "workflow missing hermes-e2e job",
           "workflow missing skill-agent job",
-          "workflow missing diagnostics job",
           "workflow missing model-router-provider-routed-inference job",
           "workflow missing snapshot-commands job",
           "report-to-pr job must wait for live",
@@ -1394,69 +1393,6 @@ jobs:
           "messaging-compatible-endpoint step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
           "messaging-compatible-endpoint step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
           "messaging-compatible-endpoint step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  // source-shape-contract: security -- Mutates the shipped diagnostics job to reject secret and Docker auth leakage
-  it("rejects diagnostics workflow-boundary drift for secret and Docker auth handling", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        { env?: Record<string, unknown>; steps: Array<Record<string, unknown>> }
-      >;
-    };
-    const job = workflow.jobs["diagnostics"];
-    expect(job).toBeDefined();
-    expect(job.steps).toEqual(expect.any(Array));
-    job.env = {
-      ...job.env,
-      DOCKER_CONFIG: "${{ github.workspace }}/.docker-config-diagnostics",
-      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-      GITHUB_TOKEN: "${{ github.token }}",
-    };
-    const prepareIndex = job.steps.findIndex((step) => step.name === "Prepare E2E workspace");
-    expect(prepareIndex).toBeGreaterThan(0);
-    job.steps.splice(prepareIndex, 0, {
-      name: "Authenticate to Docker Hub",
-      env: {
-        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
-        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
-      },
-      run: 'docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin',
-    });
-    const runStep = job.steps.find((step) => step.name === "Run diagnostics live test");
-    expect(runStep).toBeDefined();
-    runStep!.run = `${runStep!.run}\necho "\${{ inputs.jobs }}"`;
-    const uploadStep = job.steps.find((step) => step.name === "Upload diagnostics artifacts");
-    expect(uploadStep).toBeDefined();
-    uploadStep!.with = {
-      ...((uploadStep!.with as Record<string, unknown>) ?? {}),
-      "include-hidden-files": true,
-      "retention-days": 1,
-    };
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "diagnostics job must not expose Docker auth to branch-controlled steps",
-          "diagnostics job env must not include DOCKER_CONFIG",
-          "diagnostics job env must not include NVIDIA_INFERENCE_API_KEY",
-          "diagnostics job env must not include GITHUB_TOKEN",
-          "diagnostics image-consuming job must have exactly one Docker Hub auth step",
-          "diagnostics step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
-          "diagnostics step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-          "diagnostics step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
-          "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
-          "diagnostics upload-e2e-artifacts invocation must not override its contract",
-          "diagnostics upload-e2e-artifacts must use the action defaults",
         ]),
       );
     } finally {

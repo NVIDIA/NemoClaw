@@ -235,7 +235,9 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     e2ePhases: [
       "confirm Docker and start hermetic inference",
       "onboard the snapshot sandbox",
-      "create, list, and restore the first snapshot into a paired clone",
+      "create and list the first snapshot",
+      "restore the first snapshot into a clone",
+      "verify the restored clone state and gateway pairing",
       "create a second snapshot from changed workspace",
       "restore latest and timestamped snapshots",
       "audit snapshot credentials and command help",
@@ -430,7 +432,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     "phase-2-read-marker",
   );
 
-  progress.phase("create, list, and restore the first snapshot into a paired clone");
+  progress.phase("create and list the first snapshot");
   const firstCreate = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "create"], {
     artifactName: "phase-3-snapshot-create-first",
     env: commandEnv(),
@@ -450,6 +452,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   const timestamp = firstSnapshotTimestamp(resultText(list));
   await artifacts.writeJson("phase-4-first-snapshot.json", { timestamp });
 
+  progress.phase("restore the first snapshot into a clone");
   const cloneRestore = await host.command(
     "nemoclaw",
     [SANDBOX_NAME, "snapshot", "restore", timestamp, "--to", CLONE_SANDBOX_NAME, "--yes"],
@@ -459,7 +462,10 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       timeoutMs: 5 * 60_000,
     },
   );
-  expect(classifySnapshotRestoreResult(cloneRestore)).toBe("restored");
+  const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);
+  expect(["restored", "restored-pairing-unverified"]).toContain(cloneRestoreResult);
+  progress.phase("verify the restored clone state and gateway pairing");
+  expect(cloneRestoreResult).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     CLONE_SANDBOX_NAME,
