@@ -548,7 +548,8 @@ describe("handleSandboxState", () => {
     );
   });
 
-  it("reuses a completed ready sandbox on resume", async () => {
+  it("reuses a ready sandbox with registry messaging authority on resume", async () => {
+    const registryPlan = makeMinimalPlan("saved", "openclaw", ["telegram"]);
     const session = createSession({
       sandboxName: "saved",
       messagingPlan: makeMinimalPlan("saved", "openclaw", ["slack"]),
@@ -569,6 +570,7 @@ describe("handleSandboxState", () => {
         fromDockerfile: null,
         hermesAuthMethod: null,
       }),
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
       recordStateSkipped,
     });
 
@@ -587,7 +589,7 @@ describe("handleSandboxState", () => {
       reason: "resume",
       sandboxName: "saved",
     });
-    expect(result.selectedMessagingChannels).toEqual(["slack"]);
+    expect(result.selectedMessagingChannels).toEqual(["telegram"]);
     expect(result.webSearchConfigChanged).toBe(false);
     expect(result.session).toBe(skippedSession);
   });
