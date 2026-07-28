@@ -14,6 +14,12 @@ import {
 
 const copiedContexts: string[] = [];
 const testFiles: string[] = [];
+const MULTILINE_COPY_SOURCES = [
+  "agents/openclaw/openclaw-runtime/package-lock.json",
+  "agents/openclaw/mcporter-runtime/package-lock.json",
+  "scripts/lib/reviewed-npm-audit.mts",
+  "scripts/lib/openclaw-npm-remediation.mts",
+];
 
 describe("rebuild-openclaw old-base build context", () => {
   afterEach(() => {
@@ -34,6 +40,9 @@ describe("rebuild-openclaw old-base build context", () => {
     );
 
     expect(stagedSources).not.toHaveLength(0);
+    expect(directDockerfileBaseCopySources()).toEqual(
+      expect.arrayContaining(MULTILINE_COPY_SOURCES),
+    );
     expect(stagedSources.every((source) => fs.existsSync(source))).toBe(true);
   });
 
@@ -49,15 +58,55 @@ describe("rebuild-openclaw old-base build context", () => {
         "FROM base AS build",
         "copy scripts/lib/sandbox-rlimits.sh /tmp/lowercase",
         "COPY\tnemoclaw-blueprint/blueprint.yaml /tmp/tabbed",
-        "COPY --from=build /tmp/ignored /tmp/ignored",
-      ].join("\n"),
+        "COPY --chown=sandbox:sandbox \\",
+        "  agents/openclaw/openclaw-runtime/package.json \\",
+        "  agents/openclaw/openclaw-runtime/package-lock.json \\",
+        "  /tmp/openclaw/",
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts /tmp/lib/",
+        "COPY --from=build \\",
+        "  /tmp/ignored-one \\",
+        "  /tmp/ignored-two \\",
+        "  /tmp/ignored/",
+      ].join("\r\n"),
       "utf8",
     );
 
     expect(directDockerfileBaseCopySources(dockerfilePath)).toEqual([
       "scripts/lib/sandbox-rlimits.sh",
       "nemoclaw-blueprint/blueprint.yaml",
+      "agents/openclaw/openclaw-runtime/package.json",
+      "agents/openclaw/openclaw-runtime/package-lock.json",
+      "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/lib/reviewed-npm-audit.mts",
     ]);
+  });
+
+  it("rejects malformed direct Dockerfile.base COPY forms instead of omitting sources", () => {
+    const unsupportedForms = [
+      'COPY ["scripts/lib/sandbox-rlimits.sh", "/tmp/"]',
+      "COPY <<EOF /tmp/generated",
+      "COPY scripts/lib/sandbox-rlimits.sh",
+      "COPY --from build /tmp/source /tmp/destination",
+      "COPY --exclude=*.md scripts/lib/sandbox-rlimits.sh /tmp/",
+      "COPY scripts/lib/sandbox-rlimits.sh --chmod=755 /tmp/",
+      "COPY scripts/lib/sandbox-rlimits.sh \\",
+      ["RUN <<EOF", "COPY scripts/lib/sandbox-rlimits.sh /tmp/not-an-instruction", "EOF"].join(
+        "\n",
+      ),
+    ];
+
+    for (const copyForm of unsupportedForms) {
+      const dockerfilePath = path.join(
+        fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
+        "Dockerfile.base",
+      );
+      testFiles.push(path.dirname(dockerfilePath));
+      fs.writeFileSync(dockerfilePath, copyForm, "utf8");
+
+      expect(() => directDockerfileBaseCopySources(dockerfilePath)).toThrow(
+        /Unsupported direct Dockerfile\.base COPY form|Dangling Dockerfile\.base continuation|Unsupported Dockerfile\.base heredoc instruction/,
+      );
+    }
   });
 
   it("rejects out-of-context direct Dockerfile.base COPY sources before staging", () => {
@@ -74,7 +123,11 @@ describe("rebuild-openclaw old-base build context", () => {
       path.dirname(absoluteDockerfilePath),
     );
     fs.writeFileSync(parentRelativeDockerfilePath, "COPY ../outside /tmp/outside\n", "utf8");
-    fs.writeFileSync(absoluteDockerfilePath, "COPY /etc/passwd /tmp/passwd\n", "utf8");
+    fs.writeFileSync(
+      absoluteDockerfilePath,
+      "COPY scripts/lib/sandbox-rlimits.sh /etc/passwd /tmp/passwd\n",
+      "utf8",
+    );
 
     expect(() => directDockerfileBaseCopySources(parentRelativeDockerfilePath)).toThrow(
       "Unsupported direct Dockerfile.base COPY source",
