@@ -155,7 +155,7 @@ describe("docker-driver-gateway-service", () => {
       platform: "darwin" as NodeJS.Platform,
       spawnSyncImpl: vi.fn((command: string, args: string[]) =>
         command === "launchctl"
-          ? spawnResult(1, "Could not find service")
+          ? spawnResult(113, 'Could not find service "homebrew.mxcl.openshell" in domain for port')
           : args[0] === "info"
             ? spawnResult(1, refusal)
             : spawnResult(),
@@ -186,9 +186,31 @@ describe("docker-driver-gateway-service", () => {
     ).toThrow("its launchd service homebrew.mxcl.openshell is loaded");
   });
 
+  it("falls back when launchctl names the missing unit without the missing-unit status (#7707)", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const refusal =
+      "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
+
+    expect(
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        platform: "darwin",
+        spawnSyncImpl: vi.fn((command: string, args: string[]) =>
+          command === "launchctl"
+            ? spawnResult(1, 'Could not find service "homebrew.mxcl.openshell"')
+            : args[0] === "info"
+              ? spawnResult(1, refusal)
+              : spawnResult(),
+        ),
+      }),
+    ).toBe(false);
+  });
+
   it.each([
     ["cannot run", { error: new Error("spawn launchctl ENOENT"), status: null }],
     ["reports no exit status", { status: null }],
+    ["fails for an unrecognized reason", spawnResult(1, "Bootstrap failed: 5: Input/output error")],
+    ["is denied", spawnResult(1, "Operation not permitted")],
   ])("aborts instead of falling back when the launchd probe %s (#7707)", (_case, launchdResult) => {
     const refusal =
       "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";

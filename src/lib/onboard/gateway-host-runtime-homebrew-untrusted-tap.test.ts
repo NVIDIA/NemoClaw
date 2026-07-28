@@ -23,7 +23,11 @@ vi.mock("node:child_process", async (importOriginal) => {
             stdout: "",
           }
         : command === "launchctl"
-          ? { status: 1, stderr: "Could not find service", stdout: "" }
+          ? {
+              status: 113,
+              stderr: 'Could not find service "homebrew.mxcl.openshell" in domain for port',
+              stdout: "",
+            }
           : { status: 0, stderr: "", stdout: "" },
     ),
   };

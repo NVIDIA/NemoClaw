@@ -265,12 +265,19 @@ function isPinnedTapLoadRefusal(reason: string): boolean {
   );
 }
 
+// launchctl reports a missing service as exit 113 with "Could not find
+// service". Either signal alone establishes the unit is absent; a failure that
+// carries neither says nothing about the unit, so it stays unknown.
+const LAUNCHCTL_SERVICE_MISSING_STATUS = 113;
+const LAUNCHCTL_SERVICE_MISSING_PATTERN = /Could not find service/;
+
 // A loaded launchd unit means launchd still owns the service lifecycle even
 // when Homebrew refuses to load the formula: the standalone cutover path could
 // adopt that process or kill one launchd would restart. launchctl answers
 // without loading the formula, so probe it before degrading. Only a launchctl
 // run that completed and reported the unit missing proves it is safe to fall
-// back; a probe that could not run proves nothing and must not degrade.
+// back; a probe that could not run, or that failed for any other reason,
+// proves nothing and must not degrade.
 function readHomebrewGatewayLaunchdUnitState(
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
 ): "loaded" | "not-loaded" | "unknown" {
@@ -284,7 +291,11 @@ function readHomebrewGatewayLaunchdUnitState(
     } satisfies SpawnSyncOptions,
   );
   if (result.error || typeof result.status !== "number") return "unknown";
-  return result.status === 0 ? "loaded" : "not-loaded";
+  if (result.status === 0) return "loaded";
+  return result.status === LAUNCHCTL_SERVICE_MISSING_STATUS ||
+    LAUNCHCTL_SERVICE_MISSING_PATTERN.test(text(result.stderr))
+    ? "not-loaded"
+    : "unknown";
 }
 
 function warnHomebrewIdentityCheckUnavailable(reason: string): void {
