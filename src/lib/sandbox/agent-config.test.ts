@@ -19,8 +19,16 @@ function dependencies(overrides: Partial<AgentConfigDependencies> = {}): AgentCo
 }
 
 describe("agent config resolution", () => {
-  it("uses the legacy OpenClaw target only when the registry entry is absent", () => {
+  it("uses the legacy OpenClaw target when no agent is registered", () => {
     expect(resolveAgentConfig("alpha", dependencies())).toEqual(DEFAULT_AGENT_CONFIG);
+    expect(
+      resolveAgentConfig(
+        "alpha",
+        dependencies({
+          getSandbox: vi.fn(() => ({})),
+        }),
+      ),
+    ).toEqual(DEFAULT_AGENT_CONFIG);
   });
 
   it("propagates a registered agent load failure", () => {
