@@ -46,6 +46,13 @@ const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
+const PRIMARY_PAIRING_POISON_MODEL = "snapshot-commands-primary-pairing-poison";
+const PRIMARY_PAIRING_NEGATIVE_CONTROL = "/tmp/nemoclaw-snapshot-primary-pairing-negative-control";
+const PRIMARY_PAIRING_POISON_REQUEST = JSON.stringify({
+  model: PRIMARY_PAIRING_POISON_MODEL,
+  messages: [{ role: "user", content: "primary pairing negative control" }],
+  max_tokens: 1,
+});
 const PROTECTED_CREDENTIALS_DIR = "/sandbox/.openclaw/credentials";
 const PROTECTED_CREDENTIAL_FILE = `${PROTECTED_CREDENTIALS_DIR}/backup-all-fixture.json`;
 const PROTECTED_CREDENTIAL_MARKER = "snapshot-backup-non-secret-marker";
@@ -133,12 +140,19 @@ async function expectAuthenticatedGatewayPairing(
 set -eu
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+if [ -e ${JSON.stringify(PRIMARY_PAIRING_NEGATIVE_CONTROL)} ]; then
+  curl -fsS https://inference.local/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    --data ${JSON.stringify(PRIMARY_PAIRING_POISON_REQUEST)} >/dev/null
+  exit 97
+fi
 openclaw agent --agent main --json -m "ping" \
   --session-id "snapshot-restore-verify-$$-$(date +%s)"
 `),
     {
       artifactName,
       env: commandEnv(inference, sandboxName),
+      redactionValues: [inference.apiKey],
       timeoutMs: 60_000,
     },
   );
@@ -260,6 +274,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "baseline exclusions remain active in registry and live policy across rebuild",
       "snapshot restore --to carries baseline exclusions into clone registry and live policy",
       "snapshot restore --to returns only after restored gateway pairing is authenticated",
+      "post-restore clone verification sends one clone-fixture request and no poisoned primary-fixture request",
       "latest snapshot restore recovers latest workspace state",
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
@@ -479,20 +494,68 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     CLONE_SANDBOX_NAME,
     "phase-4-clone-baseline-exclusion",
   );
-  const clonePairingRequestOffset = inference.requests().length;
-  await expectAuthenticatedGatewayPairing(
-    sandbox,
-    CLONE_SANDBOX_NAME,
-    inferenceConfig,
-    "phase-4-verify-clone-gateway-pairing",
-  );
-  expect(inference.requests().slice(clonePairingRequestOffset)).toContainEqual(
-    expect.objectContaining({
-      auth: "ok",
-      model: INFERENCE_MODEL,
-      path: "/v1/chat/completions",
-    }),
-  );
+  try {
+    const installPrimaryPairingNegativeControl = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sh", "-lc", `set -eu; umask 077; : > ${JSON.stringify(PRIMARY_PAIRING_NEGATIVE_CONTROL)}`],
+      {
+        artifactName: "phase-4-install-primary-pairing-negative-control",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      installPrimaryPairingNegativeControl.exitCode,
+      "primary-pairing-negative-control-setup-failed",
+    ).toBe(0);
+    const clonePairingRequestOffset = inference.requests().length;
+    await expectAuthenticatedGatewayPairing(
+      sandbox,
+      CLONE_SANDBOX_NAME,
+      inferenceConfig,
+      "phase-4-verify-clone-gateway-pairing",
+    );
+    const clonePairingRequests = inference
+      .requests()
+      .slice(clonePairingRequestOffset)
+      .filter(
+        (request) => request.path === "/v1/chat/completions" && request.model === INFERENCE_MODEL,
+      );
+    const primaryPairingRequests = inference
+      .requests()
+      .slice(clonePairingRequestOffset)
+      .filter(
+        (request) =>
+          request.path === "/v1/chat/completions" && request.model === PRIMARY_PAIRING_POISON_MODEL,
+      );
+    await artifacts.writeJson("phase-4-pairing-inference-request-deltas.json", {
+      cloneAuthenticatedCount: clonePairingRequests.filter((request) => request.auth === "ok")
+        .length,
+      primaryPoisonCount: primaryPairingRequests.length,
+    });
+    expect(clonePairingRequests.length, "clone-pairing-inference-request-count").toBe(1);
+    expect(
+      clonePairingRequests[0]?.auth === "ok" &&
+        clonePairingRequests[0]?.model === INFERENCE_MODEL &&
+        clonePairingRequests[0]?.path === "/v1/chat/completions",
+      "clone-pairing-inference-request-classification",
+    ).toBe(true);
+    expect(primaryPairingRequests.length, "primary-pairing-inference-request-count").toBe(0);
+  } finally {
+    const removePrimaryPairingNegativeControl = await sandbox.exec(
+      SANDBOX_NAME,
+      ["rm", "-f", PRIMARY_PAIRING_NEGATIVE_CONTROL],
+      {
+        artifactName: "phase-4-remove-primary-pairing-negative-control",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      removePrimaryPairingNegativeControl.exitCode,
+      "primary-pairing-negative-control-cleanup-failed",
+    ).toBe(0);
+  }
   const destroyClone = await host.command("nemoclaw", [CLONE_SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "phase-4-destroy-clone",
     env: commandEnv(),

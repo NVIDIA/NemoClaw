@@ -212,10 +212,28 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
     "stored device-auth credential selection",
   );
   requireOrderedMarkers(
+    gatewayCall.source,
+    [
+      "deviceIdentity,",
+      "opts.nemoclawDisableStoredDeviceAuth === true",
+      "hostDeps:",
+      "loadDeviceAuthToken: () => null",
+      "storeDeviceAuthToken: () => {}",
+      "clearDeviceAuthToken: () => {}",
+      "minProtocol:",
+    ],
+    "forced paired-token pathname auth bypass",
+  );
+  requireOrderedMarkers(
     cliSource.source,
     [
       `from "./${path.basename(gatewayCall.file)}"`,
       "const callGatewayCli = async",
+      "callOpts?.usePairedToken === true",
+      "url: callOpts.pinnedGatewayUrl",
+      "token: callOpts.pairedToken",
+      "password: void 0",
+      "nemoclawDisableStoredDeviceAuth: true",
       "callOpts?.useStoredDeviceAuth === true",
       "nemoclaw: forward stored device auth for bounded same-device scope approval",
       "requiredStoredDeviceAuthScopes: callOpts.requiredStoredDeviceAuthScopes",
@@ -228,7 +246,7 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
       "async function listPairingWithFallback(opts, callOpts)",
       "nemoclaw: preflight bounded stored device auth before live pairing list",
       'callGatewayCli("device.pair.list", opts, {}, callOpts)',
-      "const nemoclawLocalList = await listDevicePairing();",
+      "const nemoclawLocalList = nemoclawPairedTokenRequested ? readNemoClawPinnedPairingSnapshot() : await listDevicePairing();",
       "nemoclawLocalStoredAuthCandidate = !nemoclawPairedTokenRequested && nemoclawLocalContext.useStoredDeviceAuth;",
       "const nemoclawListCallOpts = nemoclawLocalStoredAuthCandidate ?",
       ": await listPairingWithFallback(opts, nemoclawListCallOpts);",
@@ -242,7 +260,9 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
       "async function resolveApprovePairingGatewayContext(opts, requestId)",
       "nemoclawPairedTokenRequested",
       "nemoclawLocalPairedTokenContext",
-      "nemoclawExplicitEnvToken === nemoclawLocalContext.pairedDeviceToken",
+      "nemoclawHasTransportOrCredentialOverride",
+      "nemoclawLocalContext.pairedDeviceToken",
+      "nemoclawLocalPairedToken = nemoclawLocalContext.pairedDeviceToken",
       "nemoclaw: preflight bounded paired token before live pairing list",
       "nemoclawUsePairedToken",
       "nemoclawRefuseUnsafeApproval",
@@ -255,7 +275,7 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
       "async function approvePairingWithFallback(opts, requestId)",
       "nemoclawUseStoredDeviceAuth",
       "nemoclawUsePairedToken",
-      "nemoclawUsePairedToken ? { scopes: [PAIRING_SCOPE] }",
+      "nemoclawUsePairedToken ? { scopes: [PAIRING_SCOPE], usePairedToken: true",
       "nemoclaw: select stored device auth for bounded same-device scope approval",
       "requiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
       "if (nemoclawUseStoredDeviceAuth || nemoclawUsePairedToken) throw error;",
@@ -967,18 +987,75 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
   const homeDir = path.join(liveRoot, "home");
   const proofBin = path.join(liveRoot, "bin");
   const proofCallLog = path.join(liveRoot, "approval-calls.log");
+  const proofCloneAuthReadMarker = path.join(liveRoot, "clone-auth-read.marker");
+  const proofDefaultStateRaceMarker = path.join(liveRoot, "default-state-race.marker");
+  const proofPrimaryAuthReadMarker = path.join(liveRoot, "primary-auth-read.marker");
+  const proofStoredAuthGuard = path.join(proofBin, "deny-primary-device-auth.cjs");
   const configPath = path.join(liveRoot, "openclaw.json");
   const gatewayLog = path.join(liveRoot, "gateway.log");
   fs.mkdirSync(stateDir, { recursive: true });
   fs.mkdirSync(homeDir, { recursive: true });
   fs.mkdirSync(proofBin, { recursive: true });
   fs.writeFileSync(
+    proofStoredAuthGuard,
+    `const fs = require("node:fs");
+const guardedAuthPaths = new Map([
+  [process.env.NEMOCLAW_PROOF_CLONE_DEVICE_AUTH, process.env.NEMOCLAW_PROOF_CLONE_AUTH_READ_MARKER],
+  [process.env.NEMOCLAW_PROOF_PRIMARY_DEVICE_AUTH, process.env.NEMOCLAW_PROOF_PRIMARY_AUTH_READ_MARKER],
+]);
+const originalRealpathSync = fs.realpathSync.bind(fs);
+const originalStatSync = fs.statSync.bind(fs);
+const originalWriteFileSync = fs.writeFileSync.bind(fs);
+fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
+  let resolved = null;
+  try {
+    resolved = originalRealpathSync(candidate);
+  } catch {}
+  const marker = guardedAuthPaths.get(resolved);
+  if (marker) {
+    originalWriteFileSync(marker, "pathname-device-auth-read\\n");
+    const error = new Error("pathname device auth is unavailable to the forced clone proof");
+    error.code = "EACCES";
+    throw error;
+  }
+  return originalStatSync(candidate, ...args);
+};
+`,
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(
     path.join(proofBin, "openclaw"),
     [
       "#!/bin/sh",
       'printf "%s:%s\\n" "${1:-missing}" "${2:-missing}" >> "$NEMOCLAW_PROOF_CALL_LOG"',
-      '"$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"',
+      '[ "$NODE_DISABLE_COMPILE_CACHE" = "1" ] || exit 97',
+      '[ "$OPENCLAW_NO_RESPAWN" = "1" ] || exit 97',
+      '[ -z "${OPENCLAW_CONFIG_PATH:-}" ] || exit 97',
+      '[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ] || exit 97',
+      '[ -z "${OPENCLAW_GATEWAY_PASSWORD:-}" ] || exit 97',
+      '[ -z "${OPENCLAW_GATEWAY_PORT:-}" ] || exit 97',
+      '[ "$OPENCLAW_GATEWAY_URL" = "ws://127.0.0.1:$NEMOCLAW_PROOF_GATEWAY_PORT" ] || exit 97',
+      'case "${OPENCLAW_STATE_DIR:-}" in /proc/self/fd/*) state_descriptor=${OPENCLAW_STATE_DIR##*/} ;; *) exit 97 ;; esac',
+      'case "$state_descriptor" in ""|*[!0-9]*) exit 97 ;; esac',
+      '[ "$state_descriptor" -ge 3 ] 2>/dev/null || exit 97',
+      '[ -d "$OPENCLAW_STATE_DIR" ] || exit 97',
+      "for descriptor_name in NEMOCLAW_OPENCLAW_PENDING_FD NEMOCLAW_OPENCLAW_PAIRED_FD NEMOCLAW_OPENCLAW_IDENTITY_FD; do",
+      '  eval "descriptor_value=\\${$descriptor_name:-}"',
+      '  case "$descriptor_value" in ""|*[!0-9]*) exit 97 ;; esac',
+      '  [ "$descriptor_value" -ge 3 ] 2>/dev/null || exit 97',
+      '  [ -r "/proc/self/fd/$descriptor_value" ] || exit 97',
+      "done",
+      'default_state="$HOME/.openclaw"',
+      'restore_default_state() { if [ -L "$default_state" ]; then rm -f "$default_state"; fi; }',
+      "trap restore_default_state EXIT HUP INT TERM",
+      'test ! -e "$default_state"',
+      'test -d "$NEMOCLAW_PRIMARY_STATE_DIR"',
+      'ln -s "$NEMOCLAW_PRIMARY_STATE_DIR" "$default_state"',
+      'printf "%s\\n" "default-state-swapped" > "$NEMOCLAW_PROOF_DEFAULT_STATE_RACE_MARKER"',
+      'NODE_OPTIONS="--require=$NEMOCLAW_PROOF_STORED_AUTH_GUARD${NODE_OPTIONS:+ $NODE_OPTIONS}" "$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"',
       "status=$?",
+      "restore_default_state",
+      "trap - EXIT HUP INT TERM",
       'if [ "$status" -eq 0 ] && [ "${NEMOCLAW_PROOF_APPROVAL_EXIT_NONZERO:-0}" = "1" ]; then',
       '  printf "%s\\n" "raw concurrent approval output must stay private" >&2',
       "  exit 1",
@@ -1021,6 +1098,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     OPENCLAW_GATEWAY_PORT: _gatewayPort,
     OPENCLAW_GATEWAY_TOKEN: _gatewayToken,
     OPENCLAW_GATEWAY_URL: _gatewayUrl,
+    NODE_DISABLE_COMPILE_CACHE: _nodeDisableCompileCache,
     OPENCLAW_PROFILE: _profile,
     ...inheritedEnv
   } = process.env;
@@ -1028,8 +1106,15 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     ...inheritedEnv,
     HOME: homeDir,
     NEMOCLAW_PROOF_CALL_LOG: proofCallLog,
+    NEMOCLAW_PROOF_CLONE_AUTH_READ_MARKER: proofCloneAuthReadMarker,
+    NEMOCLAW_PROOF_CLONE_STATE_DIR: stateDir,
+    NEMOCLAW_PROOF_CLONE_DEVICE_AUTH: path.join(stateDir, "identity", "device-auth.json"),
     NEMOCLAW_PROOF_NODE: options.nodeExecutable,
     NEMOCLAW_PROOF_OPENCLAW: openclawEntry,
+    NEMOCLAW_PROOF_PRIMARY_AUTH_READ_MARKER: proofPrimaryAuthReadMarker,
+    NEMOCLAW_PROOF_PRIMARY_DEVICE_AUTH: path.join(primaryStateDir, "identity", "device-auth.json"),
+    NEMOCLAW_PROOF_DEFAULT_STATE_RACE_MARKER: proofDefaultStateRaceMarker,
+    NEMOCLAW_PROOF_STORED_AUTH_GUARD: proofStoredAuthGuard,
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
     OPENCLAW_NO_AUTO_UPDATE: "1",
@@ -1208,6 +1293,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     requireLiveProof(primaryPairedDevice, "primary paired sentinel device missing");
     requireOperatorToken(primaryPairedDevice, "primary paired sentinel").token = primaryToken;
     const primaryFiles = [
+      [path.join(primaryStateDir, ".env"), `OPENCLAW_GATEWAY_TOKEN=${primaryToken}\n`],
       [path.join(primaryIdentityDir, "device.json"), cloneIdentityBefore],
       [path.join(primaryIdentityDir, "device-auth.json"), JSON.stringify(primaryAuth)],
       [path.join(primaryDevicesDir, "pending.json"), JSON.stringify(pendingBeforeApproval)],
@@ -1221,30 +1307,51 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
         fs.readFileSync(pairedPath, "utf8") === clonePairedBefore,
       "restored-clone matching credential setup changed another clone state file",
     );
-    proofPhase = "paired-token-repair-approval";
+    proofPhase = "paired-token-repair-approval-process";
     const approval = spawnSync("sh", ["-c", pairedTokenApprovalScript], {
       cwd: packageDir,
       encoding: "utf8",
       env: {
         ...env,
         NEMOCLAW_PROOF_APPROVAL_EXIT_NONZERO: "1",
+        NEMOCLAW_PROOF_GATEWAY_PORT: String(port),
         NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
+        OPENCLAW_GATEWAY_PORT: String(port),
         OPENCLAW_GATEWAY_TOKEN: gatewayToken,
       },
       timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
     });
     requireLiveProof(approval.status === 0, "restored-clone paired-token approval process failed");
+    proofPhase = "paired-token-repair-default-state-race";
     requireLiveProof(
-      parseAutoPairApprovalReceipt(approval.stdout) === "approved-one" &&
-        approval.stdout.trim() === "__NEMOCLAW_AUTO_PAIR_RECEIPT__=approved-one" &&
-        approval.stderr.trim() === "",
+      fs.existsSync(proofDefaultStateRaceMarker) &&
+        !fs.existsSync(proofCloneAuthReadMarker) &&
+        !fs.existsSync(proofPrimaryAuthReadMarker),
+      "forced clone approval used a pathname-backed default or stored-auth credential",
+    );
+    const approvalReceipt = parseAutoPairApprovalReceipt(approval.stdout);
+    proofPhase = `paired-token-repair-approval-receipt-${approvalReceipt ?? "invalid"}`;
+    requireLiveProof(
+      approvalReceipt === "approved-one",
       "restored-clone paired-token approval returned a fixed non-success classification",
     );
+    proofPhase = "paired-token-repair-approval-stdout-shape";
+    requireLiveProof(
+      approval.stdout.trim() === "__NEMOCLAW_AUTO_PAIR_RECEIPT__=approved-one",
+      "restored-clone paired-token approval emitted an invalid output shape",
+    );
+    proofPhase = "paired-token-repair-approval-stderr-present";
+    requireLiveProof(
+      approval.stderr.trim() === "",
+      "restored-clone paired-token approval emitted private diagnostics",
+    );
+    proofPhase = "paired-token-repair-approval-call-count";
     requireLiveProof(
       fs.readFileSync(proofCallLog, "utf8").trim() === "devices:approve",
       "restored-clone approval did not make exactly one canonical approve call",
     );
 
+    proofPhase = "paired-token-repair-approval-post-state";
     const pendingAfter = readJsonObject(pendingPath, "real pending state after approval");
     requireLiveProof(
       !(requestId in pendingAfter),
@@ -1388,7 +1495,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "device-token scope-upgrade gateway auth runtime:",
     "device pairing gateway handler:",
     "canonical device pairing state runtime:",
-    "Summary: 5 OK · 0 missing",
+    "Summary: 6 OK · 0 missing",
   ]) {
     requireIncludes(audit.stdout, marker, "device self-approval audit");
   }

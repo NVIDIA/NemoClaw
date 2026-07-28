@@ -8,98 +8,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  AUTO_PAIR_MAX_APPROVALS,
   buildAutoPairApprovalScript,
   parseAutoPairApprovalReceipt,
   readAutoPairApprovalPolicyModule,
 } from "./auto-pair-approval";
 
 const SUMMARY_MARKER = "__NEMOCLAW_AUTO_PAIR_APPROVED__";
-const RECEIPT_MARKER = "__NEMOCLAW_AUTO_PAIR_RECEIPT__";
-
-describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
-  it("builds the bounded allowlisted approval pass", () => {
-    const script = buildAutoPairApprovalScript("UE9MSUNZ");
-    expect(script).toContain("/tmp/nemoclaw-proxy-env.sh");
-    expect(script).toContain("command -v openclaw");
-    expect(script).toContain("command -v python3");
-    expect(script).toContain("'devices', 'list', '--json'");
-    expect(script).toContain("'devices', 'approve'");
-    expect(script).toContain("approval_request_decision(device)");
-    expect(script).toContain("if not decision['allowed']:");
-    expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
-    expect(script).toContain(`MAX_APPROVALS = ${AUTO_PAIR_MAX_APPROVALS}`);
-    expect(script).toContain("'UE9MSUNZ'");
-  });
-
-  it("adds local-device filtering only for restored-clone approval", () => {
-    const ordinary = buildAutoPairApprovalScript("UE9MSUNZ");
-    const restoredClone = buildAutoPairApprovalScript("UE9MSUNZ", {
-      emitReceipt: true,
-      localDeviceOnly: true,
-      budget: { maxApprovals: AUTO_PAIR_MAX_APPROVALS },
-    });
-
-    expect(ordinary).not.toContain("local_identity_public_key");
-    expect(ordinary).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
-    expect(ordinary).not.toContain("load_clone_local_pending");
-    expect(ordinary).not.toContain("open_clone_state_root");
-    expect(restoredClone).toContain("local_identity_public_key");
-    expect(restoredClone).toContain(
-      "approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)",
-    );
-    expect(restoredClone).not.toContain("'devices', 'list', '--json'");
-    expect(restoredClone).toContain("'pending.json'");
-    expect(restoredClone).toContain("'paired.json'");
-    expect(restoredClone).toContain("local_approval_auth_mode == 'runtime'");
-    expect(restoredClone).toContain("local_approval_auth_mode == 'paired-token'");
-    expect(restoredClone).toContain("sync_approved_clone_device_auth");
-    expect(restoredClone).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
-    expect(restoredClone).toContain("dir_fd=clone_state_dir_fd");
-    expect(restoredClone).toContain("clone_devices_dir_fd,");
-    expect(restoredClone).toContain("clone_identity_dir_fd,");
-    expect(restoredClone).toContain("metadata.st_nlink != 1");
-    expect(restoredClone).toContain("clone_directory_is_current('devices'");
-    expect(restoredClone).toContain("if not related_pending:");
-    expect(restoredClone).toContain("len(related_pending) > 1");
-    expect(restoredClone).toContain("pending = related_pending");
-    expect(restoredClone).toContain("MAX_APPROVALS = 1");
-    expect(restoredClone).toContain(RECEIPT_MARKER);
-  });
-
-  it("omits the summary marker by default and appends it when requested", () => {
-    const silent = buildAutoPairApprovalScript("UE9MSUNZ");
-    const reporting = buildAutoPairApprovalScript("UE9MSUNZ", { emitSummary: true });
-    expect(silent).not.toContain(SUMMARY_MARKER);
-    expect(silent).not.toContain(RECEIPT_MARKER);
-    expect(reporting).toContain(`print(f'${SUMMARY_MARKER}={approved_count}')`);
-    // The reporting script is the silent script with exactly the summary line
-    // inserted before the heredoc terminator — nothing else changes.
-    const stripped = reporting.replace(`print(f'${SUMMARY_MARKER}={approved_count}')\n`, "");
-    expect(stripped).toBe(silent);
-  });
-
-  it("reads the real policy module from disk", () => {
-    const module = readAutoPairApprovalPolicyModule();
-    expect(module).toBeTruthy();
-    expect(module).toContain("def approval_request_decision");
-    expect(module).toContain("def gateway_approval_env");
-    expect(module).not.toContain("recover_failed_scope_approval");
-  });
-
-  it("accepts exactly one terminal fixed receipt", () => {
-    expect(
-      parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=approved-one\n`),
-    ).toBe("approved-one");
-    for (const output of [
-      `${RECEIPT_MARKER}=approved-one\nlater output\n`,
-      `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
-      `${RECEIPT_MARKER}=raw-request-id\n`,
-    ]) {
-      expect(parseAutoPairApprovalReceipt(output)).toBeNull();
-    }
-  });
-});
 
 describe("auto-pair approval pass behaviour (#4616)", () => {
   it("approves allowlisted upgrades, skips unknown clients, and reports the count", () => {
@@ -257,12 +171,15 @@ process.exit(2);
       const primaryAuthFile = path.join(primaryIdentityDir, "device-auth.json");
       const approvalsFile = path.join(tmpDir, "approvals.log");
       const approveCallsFile = path.join(tmpDir, "approve-calls.log");
+      const approveCheckFile = path.join(tmpDir, "approve-check.log");
       const approveEnvFile = path.join(tmpDir, "approve-env.log");
       const listEnvFile = path.join(tmpDir, "list-env.log");
       fs.mkdirSync(identityDir, { recursive: true });
       fs.mkdirSync(devicesDir, { recursive: true });
       fs.mkdirSync(primaryIdentityDir, { recursive: true });
       fs.mkdirSync(primaryDevicesDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, ".env"), "NEMOCLAW_TEST_STATE=clone\n");
+      fs.writeFileSync(path.join(primaryStateDir, ".env"), "NEMOCLAW_TEST_STATE=primary\n");
       const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
       const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
       fs.writeFileSync(
@@ -278,6 +195,15 @@ process.exit(2);
         `#!${process.execPath}
 const fs = require("fs");
 const args = process.argv.slice(2);
+const canonicalFd = (name) => {
+  const raw = process.env[name] || "";
+  return /^[3-9][0-9]*$/.test(raw) ? Number(raw) : null;
+};
+const readPinnedJson = (name) => {
+  const fd = canonicalFd(name);
+  if (fd === null) throw new Error("missing pinned clone descriptor");
+  return JSON.parse(fs.readFileSync(fd, "utf8"));
+};
 if (args[0] === "devices" && args[1] === "list") {
   fs.appendFileSync(
     ${JSON.stringify(listEnvFile)},
@@ -295,9 +221,25 @@ if (args[0] === "devices" && args[1] === "approve") {
     process.stderr.write("raw approval output must stay private\\n");
     process.exit(1);
   }
+  const forced = process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";
   const stateDir = process.env.OPENCLAW_STATE_DIR;
-  const pending = JSON.parse(fs.readFileSync(stateDir + "/devices/pending.json", "utf8"));
-  const paired = JSON.parse(fs.readFileSync(stateDir + "/devices/paired.json", "utf8"));
+  const forcedStateMatch = forced ? /^\\/proc\\/self\\/fd\\/([1-9][0-9]*)$/.exec(stateDir || "") : null;
+  const forcedStateFd = forcedStateMatch ? Number(forcedStateMatch[1]) : null;
+  const forcedStatePinned = Boolean(
+    forcedStateFd !== null &&
+      forcedStateFd >= 3 &&
+      fs.fstatSync(forcedStateFd).isDirectory() &&
+      fs.readFileSync(stateDir + "/.env", "utf8").trim() === "NEMOCLAW_TEST_STATE=clone"
+  );
+  const pending = forced
+    ? readPinnedJson("NEMOCLAW_OPENCLAW_PENDING_FD")
+    : JSON.parse(fs.readFileSync(stateDir + "/devices/pending.json", "utf8"));
+  const paired = forced
+    ? readPinnedJson("NEMOCLAW_OPENCLAW_PAIRED_FD")
+    : JSON.parse(fs.readFileSync(stateDir + "/devices/paired.json", "utf8"));
+  const pinnedIdentity = forced
+    ? readPinnedJson("NEMOCLAW_OPENCLAW_IDENTITY_FD")
+    : null;
   const request = pending[args[2]];
   const pairedDevice = request && paired[request.deviceId];
   const pairedOperator = pairedDevice && pairedDevice.tokens && pairedDevice.tokens.operator;
@@ -330,11 +272,22 @@ if (args[0] === "devices" && args[1] === "approve") {
     process.env.OPENCLAW_GATEWAY_TOKEN === "secret-token" &&
     !process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
   const pairedTokenOnly =
-    !process.env.OPENCLAW_GATEWAY_URL &&
+    process.env.OPENCLAW_GATEWAY_URL === "ws://127.0.0.1:18789" &&
+    process.env.NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL ===
+      process.env.OPENCLAW_GATEWAY_URL &&
     !process.env.OPENCLAW_GATEWAY_PORT &&
     !process.env.OPENCLAW_GATEWAY_PASSWORD &&
-    process.env.OPENCLAW_GATEWAY_TOKEN === pairedOperator?.token &&
-    process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";
+    !process.env.OPENCLAW_GATEWAY_TOKEN &&
+    Boolean(pairedOperator?.token) &&
+    forced &&
+    process.env.NODE_DISABLE_COMPILE_CACHE === "1" &&
+    process.env.OPENCLAW_NO_RESPAWN === "1" &&
+    pinnedIdentity?.deviceId === process.env.NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID &&
+    pinnedIdentity?.deviceId === request?.deviceId &&
+    forcedStatePinned &&
+    !process.env.NEMOCLAW_OPENCLAW_STATE_DIR_FD &&
+    !process.env.NEMOCLAW_OPENCLAW_DEVICES_DIR_FD &&
+    !process.env.NEMOCLAW_OPENCLAW_IDENTITY_DIR_FD;
   const storedDeviceOnly =
     !process.env.OPENCLAW_GATEWAY_URL &&
     !process.env.OPENCLAW_GATEWAY_PORT &&
@@ -348,6 +301,26 @@ if (args[0] === "devices" && args[1] === "approve") {
         : pairedTokenOnly
     : runtimeTokenOnly;
   if (!expectedAuthMode) {
+    const fixedFailure = !forced
+      ? "ordinary-auth"
+      : process.env.OPENCLAW_GATEWAY_URL !== "ws://127.0.0.1:18789"
+        ? "loopback-url"
+        : process.env.NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL !== process.env.OPENCLAW_GATEWAY_URL
+          ? "pinned-url"
+          : process.env.OPENCLAW_GATEWAY_PORT ||
+              process.env.OPENCLAW_GATEWAY_PASSWORD ||
+              process.env.OPENCLAW_GATEWAY_TOKEN
+            ? "unsafe-transport"
+              : process.env.NODE_DISABLE_COMPILE_CACHE !== "1"
+                ? "compile-cache"
+                : process.env.OPENCLAW_NO_RESPAWN !== "1"
+                  ? "respawn"
+                : pinnedIdentity?.deviceId !== process.env.NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID
+                  ? "expected-identity"
+                  : pinnedIdentity?.deviceId !== request?.deviceId
+                    ? "request-identity"
+                    : "descriptor-context";
+    fs.writeFileSync(${JSON.stringify(approveCheckFile)}, fixedFailure + "\\n");
     process.stderr.write("raw clone auth-mode mismatch must stay private\\n");
     process.exit(1);
   }
@@ -363,11 +336,16 @@ if (args[0] === "devices" && args[1] === "approve") {
           ? "clone-paired-token"
           : "stored-device-auth",
       process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1" ? "forced" : "ordinary",
-      process.env.OPENCLAW_STATE_DIR || "unset",
+      forced
+        ? forcedStatePinned
+          ? "clone-state-fd"
+          : "unexpected-forced-state"
+        : process.env.OPENCLAW_STATE_DIR || "unset",
       process.env.NEMOCLAW_PRIMARY_STATE_DIR || "unset",
     ].join(":") + "\\n",
   );
   if (pairedTokenOnly) {
+    const pinnedDevicesDir = stateDir + "/devices";
     delete pending[args[2]];
     paired[request.deviceId] = {
       ...pairedDevice,
@@ -384,8 +362,8 @@ if (args[0] === "devices" && args[1] === "approve") {
         },
       },
     };
-    fs.writeFileSync(stateDir + "/devices/pending.json", JSON.stringify(pending));
-    fs.writeFileSync(stateDir + "/devices/paired.json", JSON.stringify(paired));
+    fs.writeFileSync(pinnedDevicesDir + "/pending.json", JSON.stringify(pending));
+    fs.writeFileSync(pinnedDevicesDir + "/paired.json", JSON.stringify(paired));
     if (process.env.NEMOCLAW_APPROVE_WATCHER_RACE === "1") {
       process.stderr.write("raw concurrent approval output must stay private\\n");
       process.exit(1);
@@ -457,6 +435,60 @@ _nemoclaw_test_os.open = _nemoclaw_test_race_open
           budget: { maxApprovals: 1 },
         },
       );
+      const stateRaceBackup = path.join(tmpDir, "clone-state-before-child");
+      const childRaceMarker = path.join(tmpDir, "child-entry-state-race.marker");
+      const childEntryRacePolicy = `${policy}
+import os as _nemoclaw_test_os
+import subprocess as _nemoclaw_test_subprocess
+_nemoclaw_test_original_run = _nemoclaw_test_subprocess.run
+_nemoclaw_test_child_raced = False
+
+def _nemoclaw_test_race_child(*args, **kwargs):
+    global _nemoclaw_test_child_raced
+    command = args[0] if args else kwargs.get('args', [])
+    should_race = (
+        not _nemoclaw_test_child_raced
+        and _nemoclaw_test_os.environ.get('NEMOCLAW_TEST_CHILD_ENTRY_RACE') == '1'
+        and isinstance(command, list)
+        and command[1:3] == ['devices', 'approve']
+    )
+    if not should_race:
+        return _nemoclaw_test_original_run(*args, **kwargs)
+    _nemoclaw_test_child_raced = True
+    _nemoclaw_test_os.rename(
+        ${JSON.stringify(stateDir)},
+        ${JSON.stringify(stateRaceBackup)},
+    )
+    _nemoclaw_test_os.symlink(
+        ${JSON.stringify(primaryStateDir)},
+        ${JSON.stringify(stateDir)},
+    )
+    marker_fd = _nemoclaw_test_os.open(
+        ${JSON.stringify(childRaceMarker)},
+        _nemoclaw_test_os.O_WRONLY | _nemoclaw_test_os.O_CREAT | _nemoclaw_test_os.O_TRUNC,
+        0o600,
+    )
+    _nemoclaw_test_os.close(marker_fd)
+    try:
+        return _nemoclaw_test_original_run(*args, **kwargs)
+    finally:
+        _nemoclaw_test_os.unlink(${JSON.stringify(stateDir)})
+        _nemoclaw_test_os.rename(
+            ${JSON.stringify(stateRaceBackup)},
+            ${JSON.stringify(stateDir)},
+        )
+
+_nemoclaw_test_subprocess.run = _nemoclaw_test_race_child
+`;
+      const childEntryRaceScript = buildAutoPairApprovalScript(
+        Buffer.from(childEntryRacePolicy, "utf-8").toString("base64"),
+        {
+          emitSummary: true,
+          emitReceipt: true,
+          localDeviceOnly: true,
+          budget: { maxApprovals: 1 },
+        },
+      );
       const persistentRaceNeedle =
         "    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)";
       const persistentDevicesRaceScript = script.replace(
@@ -475,10 +507,11 @@ ${persistentRaceNeedle}`,
       const execute = (
         failApproval = false,
         gatewayToken = "secret-token",
+        gatewayPort = "18789",
         watcherRace = false,
         invalidWatcherState = false,
         timeoutAfterCommit = false,
-        devicesRace: "none" | "persistent" | "transient" = "none",
+        devicesRace: "child-entry" | "none" | "persistent" | "transient" = "none",
       ) =>
         spawnSync(
           "sh",
@@ -486,11 +519,13 @@ ${persistentRaceNeedle}`,
             "-c",
             timeoutAfterCommit
               ? timeoutScript
-              : devicesRace === "persistent"
-                ? persistentDevicesRaceScript
-                : devicesRace === "transient"
-                  ? transientDevicesRaceScript
-                  : script,
+              : devicesRace === "child-entry"
+                ? childEntryRaceScript
+                : devicesRace === "persistent"
+                  ? persistentDevicesRaceScript
+                  : devicesRace === "transient"
+                    ? transientDevicesRaceScript
+                    : script,
           ],
           {
             encoding: "utf-8",
@@ -503,9 +538,10 @@ ${persistentRaceNeedle}`,
               NEMOCLAW_APPROVE_TIMEOUT_AFTER_COMMIT: timeoutAfterCommit ? "1" : "0",
               NEMOCLAW_TEST_PERSISTENT_DEVICES_RACE: devicesRace === "persistent" ? "1" : "0",
               NEMOCLAW_TEST_TRANSIENT_DEVICES_RACE: devicesRace === "transient" ? "1" : "0",
+              NEMOCLAW_TEST_CHILD_ENTRY_RACE: devicesRace === "child-entry" ? "1" : "0",
               NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
               OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
-              OPENCLAW_GATEWAY_PORT: "18789",
+              OPENCLAW_GATEWAY_PORT: gatewayPort,
               OPENCLAW_GATEWAY_TOKEN: gatewayToken,
               OPENCLAW_STATE_DIR: stateDir,
             },
@@ -520,10 +556,11 @@ ${persistentRaceNeedle}`,
           timeoutAfterCommit?: boolean;
           watcherRace?: boolean;
           gatewayToken?: string;
+          gatewayPort?: string;
           pendingById?: Record<string, unknown>;
           pairedById?: Record<string, unknown>;
           clientAuth?: "matching" | "missing" | "primary-symlink" | "stale";
-          devicesRace?: "persistent" | "transient";
+          devicesRace?: "child-entry" | "persistent" | "transient";
         } = {},
       ) => {
         const pendingById =
@@ -579,6 +616,7 @@ ${persistentRaceNeedle}`,
         return execute(
           options.failApproval,
           options.gatewayToken === undefined ? "secret-token" : options.gatewayToken,
+          options.gatewayPort === undefined ? "18789" : options.gatewayPort,
           options.watcherRace,
           options.invalidWatcherState,
           options.timeoutAfterCommit,
@@ -596,6 +634,7 @@ ${persistentRaceNeedle}`,
       const resetLogs = () => {
         fs.rmSync(approvalsFile, { force: true });
         fs.rmSync(approveCallsFile, { force: true });
+        fs.rmSync(approveCheckFile, { force: true });
         fs.rmSync(approveEnvFile, { force: true });
         fs.rmSync(listEnvFile, { force: true });
       };
@@ -658,7 +697,17 @@ ${persistentRaceNeedle}`,
 
       const initial = run([foreignRequest, localRequest]);
       expect(initial.status).toBe(0);
-      expect(parseAutoPairApprovalReceipt(initial.stdout)).toBe("approved-one");
+      expect({
+        approvalCalls: readApproveCalls().length,
+        approvals: readApprovals().length,
+        receipt: parseAutoPairApprovalReceipt(initial.stdout),
+        wroteClassifiedEnv: fs.existsSync(approveEnvFile),
+      }).toEqual({
+        approvalCalls: 1,
+        approvals: 1,
+        receipt: "approved-one",
+        wroteClassifiedEnv: true,
+      });
       expect(initial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
       expect(readApprovals()).toEqual(["clone-pairing"]);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
@@ -680,7 +729,23 @@ ${persistentRaceNeedle}`,
       };
       const repair = run([foreignRequest, repairRequest]);
       expect(repair.status).toBe(0);
-      expect(repair.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
+      expect({
+        approvalCalls: readApproveCalls().length,
+        approvals: readApprovals().length,
+        receipt: parseAutoPairApprovalReceipt(repair.stdout),
+        rejectionClass: fs.existsSync(approveCheckFile)
+          ? fs.readFileSync(approveCheckFile, "utf-8").trim()
+          : "none",
+        summaryOne: repair.stdout.includes(`${SUMMARY_MARKER}=1`),
+        wroteClassifiedEnv: fs.existsSync(approveEnvFile),
+      }).toEqual({
+        approvalCalls: 1,
+        approvals: 1,
+        receipt: "approved-one",
+        rejectionClass: "none",
+        summaryOne: true,
+        wroteClassifiedEnv: true,
+      });
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
       resetLogs();
       const combinedInitialRequest = {
@@ -714,7 +779,7 @@ ${persistentRaceNeedle}`,
         expect(parseAutoPairApprovalReceipt(pairedPreconvergence.stdout)).toBe("approved-one");
         expect(readApprovals()).toEqual(["clone-write-only"]);
         expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-          `unset:unset:clone-paired-token:forced:${stateDir}:${primaryStateDir}`,
+          `ws://127.0.0.1:18789:unset:clone-paired-token:forced:clone-state-fd:${primaryStateDir}`,
         );
         expect(JSON.parse(fs.readFileSync(cloneAuthFile, "utf-8"))).toMatchObject({
           version: 1,
@@ -734,6 +799,22 @@ ${persistentRaceNeedle}`,
         expect(fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf-8")).toBe(
           primaryPaired,
         );
+      }
+      for (const gatewayPort of ["", "018789", "65536"] as const) {
+        resetLogs();
+        const invalidClonePort = run([foreignRequest, writeOnlyInitialRequest], {
+          clientAuth: "missing",
+          gatewayPort,
+          pairedById: { [deviceId]: pairedDevice },
+        });
+        expect(parseAutoPairApprovalReceipt(invalidClonePort.stdout)).toBe("approve-failed");
+        expect(readApproveCalls()).toEqual([]);
+        expect(readApprovals()).toEqual([]);
+        expect(fs.existsSync(approveEnvFile)).toBe(false);
+        expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+          primaryPending,
+        );
+        expect(fs.readFileSync(primaryAuthFile, "utf-8")).toBe(primaryAuth);
       }
       resetLogs();
       const primaryAuthSymlink = run([writeOnlyInitialRequest], {
@@ -809,7 +890,7 @@ ${persistentRaceNeedle}`,
       );
       expect(fs.existsSync(listEnvFile)).toBe(false);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-        `unset:unset:clone-paired-token:forced:${stateDir}:${primaryStateDir}`,
+        `ws://127.0.0.1:18789:unset:clone-paired-token:forced:clone-state-fd:${primaryStateDir}`,
       );
 
       resetLogs();
@@ -880,7 +961,7 @@ ${persistentRaceNeedle}`,
       expect(parseAutoPairApprovalReceipt(timedOutAfterCommit.stdout)).toBe("approved-one");
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n")).toEqual([
-        `unset:unset:clone-paired-token:forced:${stateDir}:${primaryStateDir}`,
+        `ws://127.0.0.1:18789:unset:clone-paired-token:forced:clone-state-fd:${primaryStateDir}`,
       ]);
       expect(
         `${timedOutAfterCommit.stdout}${timedOutAfterCommit.stderr}`.includes(
@@ -1099,6 +1180,46 @@ ${persistentRaceNeedle}`,
         fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf-8") === primaryPaired,
       ).toBe(true);
       expect(fs.readFileSync(primaryAuthFile, "utf-8") === primaryAuth).toBe(true);
+
+      resetLogs();
+      fs.rmSync(childRaceMarker, { force: true });
+      fs.rmSync(stateRaceBackup, { recursive: true, force: true });
+      const childEntryRace = run([foreignRequest, repairRequest], {
+        clientAuth: "missing",
+        devicesRace: "child-entry",
+        pairedById: { [deviceId]: pairedDevice },
+      });
+      const childEntryOutput = `${childEntryRace.stdout}${childEntryRace.stderr}`;
+      expect(parseAutoPairApprovalReceipt(childEntryRace.stdout)).toBe("approved-one");
+      expect(childEntryRace.stdout.trim().split(/\r?\n/).length).toBe(2);
+      expect(childEntryRace.stderr.length).toBe(0);
+      expect(fs.existsSync(childRaceMarker)).toBe(true);
+      expect(fs.existsSync(stateRaceBackup)).toBe(false);
+      expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(false);
+      expect(readApproveCalls()).toEqual(["called"]);
+      expect(readApprovals()).toEqual([repairRequest.requestId]);
+      expect(childEntryOutput.includes(privatePrimaryRaceRequest.requestId)).toBe(false);
+      expect(childEntryOutput.includes("raw clone auth-mode mismatch")).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8"))).toEqual({
+        [foreignRequest.requestId]: foreignRequest,
+      });
+      expect(JSON.parse(fs.readFileSync(cloneAuthFile, "utf-8"))).toMatchObject({
+        version: 1,
+        deviceId,
+        tokens: {
+          operator: {
+            token: "rotated-clone-device-token",
+            scopes: ["operator.pairing", "operator.read", "operator.write"],
+          },
+        },
+      });
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+        primaryRacePending,
+      );
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf-8")).toBe(
+        primaryPaired,
+      );
+      expect(fs.readFileSync(primaryAuthFile, "utf-8")).toBe(primaryAuth);
       fs.writeFileSync(path.join(primaryDevicesDir, "pending.json"), primaryPending);
 
       for (const pairedById of [

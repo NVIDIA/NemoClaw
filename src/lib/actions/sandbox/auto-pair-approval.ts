@@ -27,13 +27,14 @@
  * `devices approve` for a scope-upgrade can request the upgraded scopes for
  * its own connection and return the pending-scope failure it is trying to
  * resolve. The sourced runtime environment makes the list call inspect the
- * same live gateway through local loopback, while the approval call also
- * strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env. The reviewed dist
- * patch then forces OpenClaw's existing local-only stored-device-auth path for
- * the exact bounded self-repair shape so a shared token reloaded from config
- * cannot take precedence. Remove this compatibility path when OpenClaw can
- * complete scope upgrades natively through device-token auth using
- * operator.pairing.
+ * same live gateway through local loopback. For a restored pairing-only clone,
+ * the approval child drops config/shared-auth overrides, pins the clone's
+ * loopback URL, and accepts only its descriptor-backed identity and pairing
+ * snapshots. The reviewed dist patch then forces OpenClaw's existing local-only
+ * stored-device-auth path for that exact bounded self-repair shape so a shared
+ * token reloaded from config cannot take precedence. Remove this compatibility
+ * path when OpenClaw can complete scope upgrades natively through device-token
+ * auth using operator.pairing.
  */
 
 import { spawnSync } from "node:child_process";
@@ -177,6 +178,7 @@ def exit_with_receipt(receipt):
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
   const approveEnv = options.localDeviceOnly
     ? `approve_env = gateway_approval_env(os.environ)
+    approval_pass_fds = ()
     # A cold clone has no stored device credential yet. Keep only its trusted
     # runtime token. A restored pre-convergence clone instead uses only the
     # pairing-scoped token from its own paired state for one canonical approval.
@@ -186,9 +188,42 @@ def exit_with_receipt(receipt):
             ${exitWithReceipt("approve-failed")}
         approve_env['OPENCLAW_GATEWAY_TOKEN'] = runtime_gateway_token
     elif local_approval_auth_mode == 'paired-token':
-        approve_env['OPENCLAW_GATEWAY_TOKEN'] = local_paired_operator_token
+        raw_gateway_port = str(os.environ.get('OPENCLAW_GATEWAY_PORT', '') or '').strip()
+        if (
+            not raw_gateway_port.isascii()
+            or not raw_gateway_port.isdecimal()
+            or raw_gateway_port != str(int(raw_gateway_port))
+            or not 1 <= int(raw_gateway_port) <= 65535
+            or min(
+                clone_state_dir_fd,
+                clone_devices_dir_fd,
+                clone_identity_dir_fd,
+                clone_pending_snapshot_fd,
+                clone_paired_snapshot_fd,
+                clone_identity_snapshot_fd,
+            ) < 3
+        ):
+            ${exitWithReceipt("approve-failed")}
+        pinned_gateway_url = f'ws://127.0.0.1:{raw_gateway_port}'
+        approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
         approve_env.pop('OPENCLAW_GATEWAY_PASSWORD', None)
+        approve_env.pop('OPENCLAW_CONFIG_PATH', None)
+        approve_env['OPENCLAW_STATE_DIR'] = f'/proc/self/fd/{clone_state_dir_fd}'
+        approve_env['OPENCLAW_GATEWAY_URL'] = pinned_gateway_url
+        approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'
+        approve_env['OPENCLAW_NO_RESPAWN'] = '1'
         approve_env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
+        approve_env['NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL'] = pinned_gateway_url
+        approve_env['NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID'] = local_device_id
+        approve_env['NEMOCLAW_OPENCLAW_PENDING_FD'] = str(clone_pending_snapshot_fd)
+        approve_env['NEMOCLAW_OPENCLAW_PAIRED_FD'] = str(clone_paired_snapshot_fd)
+        approve_env['NEMOCLAW_OPENCLAW_IDENTITY_FD'] = str(clone_identity_snapshot_fd)
+        approval_pass_fds = (
+            clone_state_dir_fd,
+            clone_pending_snapshot_fd,
+            clone_paired_snapshot_fd,
+            clone_identity_snapshot_fd,
+        )
     else:
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)`
     : "approve_env = gateway_approval_env(os.environ)";
@@ -238,6 +273,9 @@ def exit_with_receipt(receipt):
     : `    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         ${failedApproveAction}
 `;
+  const approvalPassFdsArgument = options.localDeviceOnly
+    ? "\n            pass_fds=approval_pass_fds,"
+    : "";
   const pendingRead = options.localDeviceOnly
     ? `
 # SOURCE_OF_TRUTH_REVIEW (restored-clone local pending selection):
@@ -341,7 +379,7 @@ def open_clone_directory(directory_name):
         raise OSError('clone state directory changed')
     return directory_fd
 
-def read_clone_json(directory_fd, directory_name, entry_name):
+def open_clone_json_descriptor(directory_fd, directory_name, entry_name):
     if (
         not clone_directory_is_current(directory_name, directory_fd)
         or entry_name in ('', '.', '..')
@@ -353,19 +391,24 @@ def read_clone_json(directory_fd, directory_name, entry_name):
         metadata = os.fstat(fd)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             raise OSError('clone state entry is not a single regular file')
-        with os.fdopen(fd, encoding='utf-8') as handle:
-            fd = -1
+        with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
             parsed = json.load(handle)
-    finally:
-        if fd >= 0:
-            os.close(fd)
-    if not clone_directory_is_current(directory_name, directory_fd):
-        raise OSError('clone state directory changed')
+        os.lseek(fd, 0, os.SEEK_SET)
+        if not clone_directory_is_current(directory_name, directory_fd):
+            raise OSError('clone state directory changed')
+        return parsed, fd
+    except Exception:
+        os.close(fd)
+        raise
+
+def read_clone_json(directory_fd, directory_name, entry_name):
+    parsed, fd = open_clone_json_descriptor(directory_fd, directory_name, entry_name)
+    os.close(fd)
     return parsed
 
 try:
     clone_devices_dir_fd = open_clone_directory('devices')
-    local_pending_by_id = read_clone_json(
+    local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
         clone_devices_dir_fd,
         'devices',
         'pending.json',
@@ -535,7 +578,7 @@ def client_auth_matches_paired(token, scopes):
 
 try:
     clone_identity_dir_fd = open_clone_directory('identity')
-    local_identity = read_clone_json(
+    local_identity, clone_identity_snapshot_fd = open_clone_json_descriptor(
         clone_identity_dir_fd,
         'identity',
         'device.json',
@@ -567,13 +610,14 @@ if (
 # OpenClaw marks the request as repair or pre-convergence. The restored source
 # config is never a credential.
 try:
-    local_paired_by_id = read_clone_json(
+    local_paired_by_id, clone_paired_snapshot_fd = open_clone_json_descriptor(
         clone_devices_dir_fd,
         'devices',
         'paired.json',
     )
 except FileNotFoundError:
     local_paired_by_id = {}
+    clone_paired_snapshot_fd = -1
 except (OSError, ValueError):
     ${exitWithReceipt("request-rejected")}
 if not isinstance(local_paired_by_id, dict):
@@ -865,7 +909,7 @@ for device in pending:
     ${cloneStateApprovalGuard}try:
         approve_proc = subprocess.run(
             [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=${approveTimeoutS}, env=approve_env,
+            capture_output=True, text=True, timeout=${approveTimeoutS}, env=approve_env,${approvalPassFdsArgument}
         )
         if approve_proc.returncode == 0:
 ${pairedTokenSuccess}
