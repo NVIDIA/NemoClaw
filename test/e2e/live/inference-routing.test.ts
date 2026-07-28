@@ -299,7 +299,10 @@ const RUNTIME_IDENTITY_E2E_SCENARIOS = [
   ],
 ] as const satisfies readonly (readonly [string, string, RuntimeIdentityE2EScenario])[];
 
-type RuntimeIdentityE2EContext = E2ETargetFixtures & {
+type RuntimeIdentityE2EContext = Pick<
+  E2ETargetFixtures,
+  "artifacts" | "cleanup" | "host" | "progress" | "sandbox"
+> & {
   skip: (note?: string) => never;
 };
 
@@ -968,8 +971,18 @@ async function runRuntimeIdentityE2EScenario(
 test.for(RUNTIME_IDENTITY_E2E_SCENARIOS)(
   "TC-INF-%s %sruntime identity refreshes and injects a delegated bearer through real OpenShell",
   RUNTIME_IDENTITY_E2E_OPTIONS,
-  async ([testNumber, providerLabel, scenario], context) => {
-    await runRuntimeIdentityE2EScenario(testNumber, providerLabel, scenario, context);
+  async (
+    [testNumber, providerLabel, scenario],
+    { artifacts, cleanup, host, progress, sandbox, skip },
+  ) => {
+    await runRuntimeIdentityE2EScenario(testNumber, providerLabel, scenario, {
+      artifacts,
+      cleanup,
+      host,
+      progress,
+      sandbox,
+      skip,
+    });
   },
 );
 
