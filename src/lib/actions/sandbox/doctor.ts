@@ -16,6 +16,7 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
+import { getEffectiveReasoningEffort } from "../../inference/selection";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
@@ -297,6 +298,7 @@ function resolveInferenceRoute(
   return {
     model: live?.model || sb?.model || "unknown",
     provider: live?.provider || sb?.provider || "unknown",
+    effectiveReasoningEffort: getEffectiveReasoningEffort(sb),
   };
 }
 

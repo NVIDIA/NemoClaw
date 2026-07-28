@@ -233,6 +233,8 @@ Each line is one JSON object with the version 1 envelope:
 
 In this mode, human progress remains available on stderr so stdout stays valid JSONL.
 Payloads contain only the existing bounded, redacted machine-event context: credential environment variable names may appear, but credential values and secret-bearing URL components are redacted.
+For a `compatible-endpoint` route that uses `openai-completions`, the context includes `reasoningEffort` as `low`, `medium`, `high`, or `endpoint-default`.
+Other provider and API-family routes omit this field.
 Treat new event `type` values and new payload fields as additive changes.
 A breaking envelope or field-semantics change increments `schemaVersion`.
 
@@ -1270,6 +1272,9 @@ Do not pass a sandbox name to `$$nemoclaw status`; that command is the global al
 NemoClaw resolves the sandbox's recorded owning OpenShell gateway before querying live state.
 If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
 
+For a `compatible-endpoint` route that uses `openai-completions`, the text output prints `Reasoning effort` as `low`, `medium`, `high`, or `endpoint-default`.
+The line is omitted for another provider or API family.
+
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
 `baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
@@ -1470,6 +1475,9 @@ A live policy that contains the excluded key fails the check and requires policy
 Warnings do not make the command fail.
 Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
+For a `compatible-endpoint` route that uses `openai-completions`, the JSON report includes an informational `Inference` check labeled `Reasoning effort`.
+The check reports `low`, `medium`, `high`, or `endpoint-default` and never includes credentials.
+Because the check has `info` status, it does not change the command's exit status.
 
 <AgentOnly variant="openclaw">
 

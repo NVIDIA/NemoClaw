@@ -51,6 +51,15 @@ NemoClaw does not add the field for another API family.
 Reasoning effort is independent of `NEMOCLAW_REASONING`.
 `NEMOCLAW_REASONING` declares that the model reasons, and `NEMOCLAW_REASONING_EFFORT` declares how much.
 
+## Verify Reasoning Effort
+
+NemoClaw reports the effective non-secret setting for a `compatible-endpoint` route that uses `openai-completions`.
+During onboarding, `nemoclaw onboard --events=jsonl` includes `reasoningEffort` in each applicable event context.
+The sandbox status output prints `Reasoning effort`, and `nemoclaw <sandbox-name> doctor --json` includes an informational `Inference` check labeled `Reasoning effort`.
+An explicit override appears as `low`, `medium`, or `high`.
+When the route uses the endpoint's own setting, these diagnostics report `endpoint-default`.
+They omit the field or check for another provider or API family and never include endpoint credentials.
+
 ## Configure Image Input
 
 Set `NEMOCLAW_INFERENCE_INPUTS=text,image` only when the model accepts image input through the selected provider.

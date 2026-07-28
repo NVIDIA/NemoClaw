@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
+import type { EffectiveReasoningEffort } from "../../inference/selection";
 import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
 import type { DoctorCheck } from "./doctor-report";
 import { probeSandboxInferenceGatewayHealth } from "./inference-route-health";
@@ -10,6 +11,7 @@ import { probeSandboxInferenceGatewayHealth } from "./inference-route-health";
 export type DoctorInferenceRoute = {
   model: string;
   provider: string;
+  effectiveReasoningEffort?: EffectiveReasoningEffort | null;
 };
 
 type DoctorInferenceDeps = {
@@ -49,6 +51,17 @@ function inferenceRouteCheck(sandboxName: string, route: DoctorInferenceRoute): 
     hint: known
       ? undefined
       : `run \`${CLI_NAME} ${sandboxName} status\` after the gateway is healthy`,
+  };
+}
+
+function reasoningEffortCheck(route: DoctorInferenceRoute): DoctorCheck | null {
+  const effort = route.effectiveReasoningEffort;
+  if (!effort) return null;
+  return {
+    group: "Inference",
+    label: "Reasoning effort",
+    status: "info",
+    detail: effort,
   };
 }
 
@@ -145,6 +158,8 @@ export async function collectInferenceChecks(
   deps: DoctorInferenceDeps = {},
 ): Promise<DoctorCheck[]> {
   const checks = [inferenceRouteCheck(sandboxName, route)];
+  const effortCheck = reasoningEffortCheck(route);
+  if (effortCheck) checks.push(effortCheck);
   const gatewayProbe = await collectInferenceRouteProbe(
     sandboxName,
     sandboxReachable,

@@ -17,6 +17,8 @@ export interface InferenceSelection {
   nimContainer: string | null;
 }
 
+export type EffectiveReasoningEffort = ReasoningEffort | "endpoint-default";
+
 export type InferenceSelectionInput =
   | (Partial<
       Omit<InferenceSelection, "compatibleEndpointReasoning" | "compatibleEndpointReasoningEffort">
@@ -85,6 +87,32 @@ export function normalizeInferenceSelection(input: InferenceSelectionInput): Inf
     ),
     nimContainer: nullableString(input?.nimContainer),
   };
+}
+
+/**
+ * Return the non-secret reasoning-effort setting that actually applies to a
+ * compatible OpenAI Completions route. An absent override delegates to the
+ * endpoint instead of silently looking like an unknown value.
+ */
+export function getEffectiveReasoningEffort(
+  input:
+    | Partial<
+        Pick<
+          InferenceSelection,
+          "provider" | "preferredInferenceApi" | "compatibleEndpointReasoningEffort"
+        >
+      >
+    | null
+    | undefined,
+): EffectiveReasoningEffort | null {
+  const selection = normalizeInferenceSelection(input);
+  if (
+    selection.provider !== "compatible-endpoint" ||
+    selection.preferredInferenceApi !== "openai-completions"
+  ) {
+    return null;
+  }
+  return selection.compatibleEndpointReasoningEffort ?? "endpoint-default";
 }
 
 export function inferenceSelectionRegistryFields(
