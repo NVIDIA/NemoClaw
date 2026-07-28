@@ -6,6 +6,7 @@ import { envInt, SANDBOX_READY_TIMEOUT_SECS } from "./env";
 export type SandboxGpuCreateConfig = {
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice?: string | null;
+  hostGpuDetected?: boolean;
 };
 
 export function buildSandboxGpuCreateArgs(

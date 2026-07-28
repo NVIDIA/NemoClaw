@@ -34,6 +34,7 @@ function baseContext(): OnboardFlowContext<null, { type: string }, { mode: strin
     hermesToolGateways: [],
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -80,6 +81,7 @@ describe("onboard flow context helpers", () => {
       hermesToolGateways: [],
       preferredInferenceApi: "openai-responses",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
       webSearchConfig: null,
     });
@@ -136,6 +138,7 @@ describe("onboard flow context helpers", () => {
       hermesToolGateways: [],
       preferredInferenceApi: null,
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
       webSearchConfig: null,
     });

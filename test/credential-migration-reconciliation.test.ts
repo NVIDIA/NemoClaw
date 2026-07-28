@@ -68,7 +68,6 @@ async function finalizeMigration(
     deps: {
       ensureAgentDashboardForward: () => 0,
       setDefaultSandbox: () => undefined,
-      recordPostVerifyStarted: async () => ({}) as Session,
       toSessionUpdates: (updates) => updates,
       removeLegacyCredentialsFile,
       cleanupStaleHostFiles: () => undefined,

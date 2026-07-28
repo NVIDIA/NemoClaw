@@ -19,6 +19,7 @@ export type SnapshotGatewayProbeClassification =
   | "device-pairing-required";
 export type SnapshotRestoreResultClassification =
   | "restored"
+  | "restored-pairing-unverified"
   | "command-failure"
   | "missing-restored-marker";
 
@@ -61,10 +62,17 @@ export function classifySnapshotRestoreResult(result: {
   stdout: string;
   stderr: string;
 }): SnapshotRestoreResultClassification {
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (
+    result.exitCode !== null &&
+    result.exitCode !== 0 &&
+    /\bState restored into\b/.test(output) &&
+    /gateway pairing could not be verified/i.test(output)
+  ) {
+    return "restored-pairing-unverified";
+  }
   if (result.exitCode !== 0) return "command-failure";
-  return /\bRestored\b/.test(`${result.stdout}\n${result.stderr}`)
-    ? "restored"
-    : "missing-restored-marker";
+  return /\bRestored\b/.test(output) ? "restored" : "missing-restored-marker";
 }
 
 /**
