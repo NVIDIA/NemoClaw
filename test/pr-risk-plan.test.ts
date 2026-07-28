@@ -28,7 +28,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(5);
+    expect(first.version).toBe(7);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -52,8 +52,8 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(canonical)).toContain("cloud-onboard");
     expect(ordinaryLiveTest.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
     expect(riskPlanRequiredJobIds(ordinaryLiveTest)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
     ]);
   });
@@ -87,6 +87,61 @@ describe("deterministic PR risk plan", () => {
     expect(result.planHash).not.toBe(withoutFocusedSelection.planHash);
   });
 
+  it("runs snapshot commands for restored-gateway pairing runtime changes (#7431)", () => {
+    const runtimeFiles = [
+      "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+      "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+    ];
+    const changedFiles = [
+      ...runtimeFiles,
+      "src/lib/actions/sandbox/restore-gateway-pairing.test.ts",
+    ];
+    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
+
+    expect(focusedE2eJobs).toEqual([
+      {
+        id: "snapshot-commands",
+        matchedFiles: runtimeFiles,
+      },
+    ]);
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: runtimeFiles,
+        requiredJobs: ["snapshot-commands"],
+      }),
+    );
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "snapshot-commands",
+        families: ["focused-e2e"],
+        matchedFiles: runtimeFiles,
+      }),
+    );
+  });
+
+  it("runs snapshot commands for restored-clone pairing approval changes (#7608)", () => {
+    const runtimeFile = "src/lib/actions/sandbox/auto-pair-approval.ts";
+    const changedFiles = [runtimeFile, "src/lib/actions/sandbox/auto-pair-approval.test.ts"];
+    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
+
+    expect(focusedE2eJobs).toEqual([
+      {
+        id: "snapshot-commands",
+        matchedFiles: [runtimeFile],
+      },
+    ]);
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "snapshot-commands",
+        families: ["focused-e2e"],
+        matchedFiles: [runtimeFile],
+      }),
+    );
+  });
+
   it("hashes the Deep Agents headless check into its exact typed target", () => {
     const changedFile =
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
@@ -113,6 +168,33 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentCheck.planHash);
     expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
+  });
+
+  it("selects the Deep Agents Code target for its managed runtime changes (#7463)", () => {
+    const changedFiles = [
+      "agents/langchain-deepagents-code/dependency-review.md",
+      "agents/langchain-deepagents-code/patch-managed-deepagents-code.py",
+      "test/langchain-deepagents-code-managed-model-params.test.ts",
+      "test/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+    ];
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles });
+    const docsAndTestsOnly = plan(
+      "agents/langchain-deepagents-code/dependency-review.md",
+      "agents/langchain-deepagents-code/runtime-notes.mdx",
+      "agents/langchain-deepagents-code/resolver.test.ts",
+      "test/langchain-deepagents-code-managed-model-params.test.ts",
+    );
+
+    expect(riskPlanRequiredTargetIds(result)).toEqual(PR_E2E_TYPED_TARGET_IDS);
+    expect(result.requiredTargets).toEqual([
+      expect.objectContaining({
+        id: PR_E2E_TYPED_TARGET_IDS[0],
+        families: ["focused-e2e"],
+        matchedFiles: ["agents/langchain-deepagents-code/patch-managed-deepagents-code.py"],
+      }),
+    ]);
+    expect(result.tier).toBe(2);
+    expect(riskPlanRequiredTargetIds(docsAndTestsOnly)).toEqual([]);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
@@ -181,7 +263,7 @@ describe("deterministic PR risk plan", () => {
     {
       file: "src/lib/credentials/provider-list.ts",
       family: "credentials-security",
-      jobs: ["credential-sanitization", "security-posture"],
+      jobs: ["cloud-inference", "security-posture"],
     },
   ])("maps $family changes to a reviewed E2E floor", ({ file, family, jobs }) => {
     const result = plan(file);
@@ -207,22 +289,22 @@ describe("deterministic PR risk plan", () => {
     {
       file: "nemoclaw-blueprint/private-networks.yaml",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
     },
     {
       file: "nemoclaw/src/blueprint/private-networks.ts",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
     },
     {
       file: "src/lib/policy/managed-policy-binding.ts",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "credential-sanitization", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
     },
     {
       file: "src/lib/shields/verify-lock.ts",
       families: ["credentials-security"],
-      jobs: ["credential-sanitization", "security-posture"],
+      jobs: ["cloud-inference", "security-posture"],
     },
   ])("keeps the $file security boundary in the deterministic floor", ({ file, families, jobs }) => {
     const result = plan(file);
@@ -266,7 +348,7 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["cloud-onboard", "credential-sanitization", "security-posture"]),
+      expect.arrayContaining(["cloud-onboard", "cloud-inference", "security-posture"]),
     );
   });
 
@@ -328,8 +410,8 @@ describe("deterministic PR risk plan", () => {
     );
 
     expect(riskPlanRequiredJobIds(result)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",

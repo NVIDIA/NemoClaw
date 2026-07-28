@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { discoverCredentialFreeTests } from "../../../tools/e2e/credential-free-tests.mts";
+import { RETIRED_CONTROLLER_SELECTOR_IDS } from "../../../tools/e2e/retired-selector-compatibility.mts";
 import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import {
   buildE2eWorkflowPlan,
@@ -50,6 +51,35 @@ describe("E2E workflow plan", () => {
     expect(plan.hermesSelected).toBe(true);
   });
 
+  it.each([
+    "jobs",
+    "targets",
+  ] as const)("maps the retired Hermes dashboard %s selector to the canonical lane", (kind) => {
+    const legacyPlan = buildE2eWorkflowPlan({ [kind]: "hermes-dashboard" });
+    const canonicalPlan = buildE2eWorkflowPlan({ [kind]: "hermes-e2e" });
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-alias-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        { [kind]: "hermes-dashboard" },
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+        },
+      );
+
+      expect(legacyPlan).toEqual(canonicalPlan);
+      expect(legacyPlan.hermesSelected).toBe(true);
+      expect(readFileSync(output, "utf8")).toContain("hermes_selected=true\n");
+      expect(readFreeStandingJobsInventory().allowedJobs).not.toContain("hermes-dashboard");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("routes a registry target into the live matrix", () => {
     const registryId = firstId(buildLiveTargetMatrix(), "supported registry target");
     const plan = buildE2eWorkflowPlan({ targets: registryId });
@@ -68,10 +98,11 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix.map((row) => row.id)).toEqual([testId]);
   });
 
-  it("rejects an unknown job", () => {
-    expect(() => buildE2eWorkflowPlan({ jobs: "definitely-unknown-e2e-job" })).toThrow(
-      "Unknown E2E test ID: definitely-unknown-e2e-job",
-    );
+  it.each([
+    "definitely-unknown-e2e-job",
+    "constructor",
+  ])("rejects unknown job %s without consulting inherited alias properties", (job) => {
+    expect(() => buildE2eWorkflowPlan({ jobs: job })).toThrow(`Unknown E2E test ID: ${job}`);
   });
 
   it("maps the trusted-main bootstrap job during a PR controller checkout", () => {
@@ -106,6 +137,71 @@ describe("E2E workflow plan", () => {
         ].join("\n"),
       );
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("plans active jobs while the candidate verifies retired controller selectors (#7616)", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    const activeJobs = "cloud-onboard,security-posture";
+    const plan = buildE2eWorkflowPlan({ jobs: activeJobs });
+    try {
+      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          JOBS: [activeJobs, ...RETIRED_CONTROLLER_SELECTOR_IDS].join(","),
+          TARGETS: "",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+        timeout: 30_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(
+        [
+          `matrix=${JSON.stringify(plan.matrix)}`,
+          `test_matrix=${JSON.stringify(plan.testMatrix)}`,
+          `hermes_selected=${plan.hermesSelected}`,
+          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          "",
+        ].join("\n"),
+      );
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a controller plan made only of retired selectors (#7616)", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
+    try {
+      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: path.join(directory, "github-output"),
+          GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
+          INFERENCE_MODE: "mock",
+          JOBS: RETIRED_CONTROLLER_SELECTOR_IDS.join(","),
+          TARGETS: "",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+        timeout: 30_000,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "::error::retired selector compatibility requires another controller-selected job",
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

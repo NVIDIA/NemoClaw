@@ -69,7 +69,7 @@ const trustedPrActionPaths = {
   installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
 } as const;
 
-const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
+const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const installerHashBootstrapCommit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
 const installerHashBootstrapTree = "1fdf59efe40b78c407e222fd42043b23a61e199a";
@@ -1021,6 +1021,8 @@ describe("pull request and main workflow contracts", () => {
     expect(parityStep.run).toContain("base=HEAD^1");
     expect(parityStep.run).toContain("head=HEAD^2");
     expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
+    expect(parityStep.run).toContain("npx tsx scripts/checks/e2e-mock-parity.mts");
+    expect(parityStep.run).not.toContain("scripts/checks/e2e-mock-parity.ts");
     const trustedCapabilityProbe = requiredWorkflowStep(
       prWorkflow.jobs["cli-test-shards"],
       "Detect trusted E2E support sharding",
@@ -1167,7 +1169,7 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
-  it("keeps trusted coverage actions compatible across the .ts to .mts migration (#6935)", () => {
+  it("requires migrated .mts coverage entrypoints (#6918)", () => {
     const cases = [
       {
         action: sharedActions.cliCoverageShard,
@@ -1197,13 +1199,8 @@ describe("pull request and main workflow contracts", () => {
         expectedStatus: 0,
       },
       {
-        fixtureExtension: "ts",
-        expectedEntrypointExtension: "ts",
-        expectedStatus: 0,
-      },
-      {
         fixtureExtension: "missing",
-        expectedEntrypointExtension: "ts",
+        expectedEntrypointExtension: "mts",
         expectedStatus: 1,
       },
     ] as const;

@@ -35,6 +35,12 @@ network_policies:
       - { path: /usr/bin/claude }
       - { path: /tmp/npm-global/bin/claude }
       - { path: /home/linuxbrew/.linuxbrew/bin/claude }
+      # OpenShell enforces on the kernel-trusted /proc/<pid>/exe, which for a
+      # global npm install resolves to the package's own launcher rather than
+      # the `bin/claude` shim above. The bundled Claude Code skill installs with
+      # `npm install -g --prefix /tmp/npm-global`, so allow that resolved path
+      # too or egress to api.anthropic.com is denied despite the shim (#7579).
+      - { path: /tmp/npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe }
       # Claude Code is distributed as an npm CLI, so OpenShell may observe
       # the Node runtime instead of the shim that launched it.
       - { path: /usr/local/bin/node }

@@ -211,6 +211,13 @@ nemoclaw-blueprint/
 │   └── presets/                    Shared policy presets
 ```
 
+The blueprint schema and runner enforce these name constraints before the runner invokes OpenShell:
+
+| Field | Constraint |
+|---|---|
+| `components.sandbox.name` | Use 1–63 lowercase letters, numbers, or internal hyphens, starting with a letter and ending with a letter or number. |
+| `components.inference.profiles.<profile>.provider_name` | Use 1–128 letters, numbers, dots, underscores, or hyphens, starting with a letter. |
+
 <AgentOnly variant="openclaw">
 The default OpenClaw policy starts from `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
 </AgentOnly>

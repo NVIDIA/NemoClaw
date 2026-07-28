@@ -102,6 +102,9 @@ The retry must apply to the PR SHA and base SHA.
 - `child-cancelled` — Rerun CI when the child workflow was cancelled.
   You can also rerun it when every listed non-passing job was cancelled.
 - `evidence-download` — Rerun CI when a successful child's evidence download failed, was cancelled, or was skipped.
+- `dispatch-not-observed` — Rerun CI only after the controller completed its bounded zero-match window and recorded a validated dispatch receipt on a trusted GitHub Actions check.
+  Never resubmit the child workflow manually.
+  The controller must recheck the old correlation before it creates a replacement check and fresh correlation.
 
 The controller keeps each completed coordination check as audit history.
 For a retry, it creates an `in_progress` check for the same PR SHA and base SHA.
@@ -113,9 +116,13 @@ Do not retry these terminal failures on the same SHA:
 - Selected-job or typed-target product failures.
 - Assertion failures.
 - Evidence policy or integrity failures.
-- Reconciliation or controller errors.
+- Ambiguous, incomplete, or identity-invalid reconciliation.
+- Controller errors.
 - Unknown states.
 - Failures recorded before retry reasons existed.
+
+A validated `dispatch-not-observed` receipt on a trusted GitHub Actions check is the only retryable reconciliation result.
+If a late child, incomplete inventory, or contradiction appears while the old correlation is rechecked, stop and investigate rather than dispatching again.
 
 Push a change to create another SHA, and then run CI again.
 A passing controller does not override a failing required job.
@@ -155,6 +162,8 @@ The controller reads the approval history and requires one approval for that env
 The environment's required reviewers are the authorization allowlist.
 The controller also checks the PR number, head repository, PR SHA, base SHA, plan, pending coordination check, compatible `main`, and PR state.
 Immediately before dispatch, it confirms that the PR is open and that the PR SHA, base SHA, and coordination identity still match.
+It also performs a bounded direct check read and requires the coordination check to remain in the exact expected phase, regardless of a matching, stale, or missing list result.
+If the run-specific authorization response is lost, the controller accepts only an exact persisted child binding and otherwise attempts to revoke coordination before requesting child cancellation.
 
 Approval returns coordination to `Running <count> E2E check(s)`.
 The gate passes only after the selected jobs and targets return verified passing evidence.

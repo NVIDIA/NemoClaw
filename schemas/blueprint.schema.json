@@ -57,7 +57,9 @@
             },
             "name": {
               "type": "string",
-              "description": "Default sandbox name."
+              "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?$",
+              "maxLength": 63,
+              "description": "Default sandbox name. RFC 1035 label: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with a letter or number, max 63 characters. Flows into 'openshell sandbox create --name' and Kubernetes pod names."
             },
             "forward_ports": {
               "type": "array",
@@ -140,7 +142,12 @@
       "additionalProperties": false,
       "properties": {
         "provider_type": { "type": "string" },
-        "provider_name": { "type": "string" },
+        "provider_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$",
+          "maxLength": 128,
+          "description": "Provider identifier. Starts with a letter and contains only letters, numbers, dots, underscores, or hyphens, max 128 characters. Flows into 'openshell provider create --name'."
+        },
         "endpoint": { "type": "string" },
         "model": { "type": "string" },
         "credential_env": { "type": "string" },
