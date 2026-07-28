@@ -9,7 +9,7 @@ import { HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN } from "../../../src/lib/inferenc
 import { REGISTRY_FILE, type SandboxEntry } from "../../../src/lib/state/registry.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
-import { expect, test } from "../fixtures/e2e-test.ts";
+import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
@@ -245,7 +245,65 @@ await main(["apply"]);
   expect(openshellLog).toBe("");
 });
 
-test("TC-INF-12 runtime identity refreshes and injects a delegated bearer through real OpenShell", {
+interface RuntimeIdentityE2EScenario {
+  readonly testId: "TC-INF-12" | "TC-INF-13";
+  readonly providerType: string;
+  readonly credentialKey: string;
+  readonly clientIdEnvironmentName: string;
+  readonly refreshTokenEnvironmentName: string;
+  readonly clientSecretEnvironmentName: string;
+  readonly tokenPath: string;
+  readonly resourcePath: string;
+  readonly reviewedResourcePath: string;
+  readonly deniedMethod: "GET" | "POST";
+  readonly deniedPath: string;
+  readonly targetId: string;
+}
+
+const RUNTIME_IDENTITY_E2E_SCENARIOS = [
+  [
+    "12",
+    "",
+    {
+      testId: "TC-INF-12",
+      providerType: "oauth2-runtime-conformance-v1",
+      credentialKey: "E2E_ACCESS_TOKEN",
+      clientIdEnvironmentName: "E2E_CLIENT_ID",
+      refreshTokenEnvironmentName: "E2E_REFRESH_TOKEN",
+      clientSecretEnvironmentName: "E2E_CLIENT_SECRET",
+      tokenPath: "/oauth/token",
+      resourcePath: "/resource",
+      reviewedResourcePath: "/**",
+      deniedMethod: "POST",
+      deniedPath: "/resource",
+      targetId: "runtime-identity-reference-real-oauth-lifecycle",
+    },
+  ],
+  [
+    "13",
+    "Entra Graph ",
+    {
+      testId: "TC-INF-13",
+      providerType: "entra-runtime-v1",
+      credentialKey: "ENTRA_ACCESS_TOKEN",
+      clientIdEnvironmentName: "ENTRA_CLIENT_ID",
+      refreshTokenEnvironmentName: "ENTRA_REFRESH_TOKEN",
+      clientSecretEnvironmentName: "ENTRA_CLIENT_SECRET",
+      tokenPath: "/organizations/oauth2/v2.0/token",
+      resourcePath: "/v1.0/me",
+      reviewedResourcePath: "/v1.0/me",
+      deniedMethod: "GET",
+      deniedPath: "/v1.0/users",
+      targetId: "entra-runtime-identity-real-oauth-lifecycle",
+    },
+  ],
+] as const satisfies readonly (readonly [string, string, RuntimeIdentityE2EScenario])[];
+
+type RuntimeIdentityE2EContext = E2ETargetFixtures & {
+  skip: (note?: string) => never;
+};
+
+const RUNTIME_IDENTITY_E2E_OPTIONS = {
   timeout: 20 * 60_000,
   meta: {
     e2ePhases: [
@@ -256,11 +314,21 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "apply and attach the runtime identity through OpenShell",
       "prove inference remains live after identity attachment",
       "call the protected resource with the injected bearer",
+      "reject unreviewed credential delivery before bearer substitution",
       "rotate the credential and relaunch with its new placeholder",
       "verify secret-safe status and deterministic rollback",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+} as const;
+
+async function runRuntimeIdentityE2EScenario(
+  _testNumber: string,
+  _providerLabel: string,
+  scenario: RuntimeIdentityE2EScenario,
+  context: RuntimeIdentityE2EContext,
+): Promise<void> {
+  const { artifacts, cleanup, host, progress, sandbox, skip } = context;
+  const artifactPrefix = scenario.testId.toLowerCase();
   progress.phase("confirm live runtime identity prerequisites");
   await requireLivePrerequisites(host, skip);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-identity-e2e-"));
@@ -273,10 +341,10 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
 
   const model = "nemoclaw-e2e-runtime-identity";
   const inferenceKey = "sk-runtime-identity-TEST-NOT-A-REAL-VALUE";
-  const sandboxName = inferenceSandboxName("e2e-runtime-id");
-  const providerType = "oauth2-runtime-conformance-v1";
-  const providerName = `e2e-oauth-runtime-${String(process.pid)}`;
-  const credentialKey = "E2E_ACCESS_TOKEN";
+  const sandboxName = inferenceSandboxName(`e2e-${scenario.testId.toLowerCase()}`);
+  const providerType = scenario.providerType;
+  const providerName = `e2e-${scenario.providerType}-${String(process.pid)}`;
+  const credentialKey = scenario.credentialKey;
   const clientId = "e2e-runtime-identity-client-id";
   const refreshToken = "e2e-runtime-identity-refresh-token-v1";
   const clientSecret = "e2e-runtime-identity-client-secret";
@@ -388,6 +456,8 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     clientId,
     clientSecret,
     initialRefreshToken: refreshToken,
+    resourcePath: scenario.resourcePath,
+    tokenPath: scenario.tokenPath,
   });
   cleanup.add("close runtime identity OAuth fixture", async () => {
     try {
@@ -406,17 +476,25 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     cleanup,
     label: "runtime identity OAuth",
     progress,
-    readinessPath: "/resource",
+    readinessPath: scenario.resourcePath,
     readinessStatus: 401,
     server: oauth,
   });
   const endpoint = new URL(tunnel.origin);
   const runtimeIdentityProfilePolicy = {
     providerType,
-    clientIdEnvironmentName: "E2E_CLIENT_ID",
+    clientIdEnvironmentName: scenario.clientIdEnvironmentName,
     dnsResolution: "identity-platform-controlled",
-    trustedHostnames: [endpoint.hostname],
-    trustedHostSuffixes: [],
+    tokenIssuer: {
+      trustedHostnames: [endpoint.hostname],
+      trustedHostSuffixes: [],
+    },
+    credentialDelivery: {
+      method: "GET",
+      path: scenario.reviewedResourcePath,
+      trustedHostnames: [endpoint.hostname],
+      trustedHostSuffixes: [],
+    },
     trustedBinaries: [
       "/usr/local/bin/node",
       "/usr/bin/node",
@@ -424,13 +502,14 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "/usr/bin/curl",
     ],
   };
-  const profilePath = path.join(profileDir, "oauth2-runtime-conformance-v1.yaml");
+  const profileFilename = `${providerType}.yaml`;
+  const profilePath = path.join(profileDir, profileFilename);
   fs.writeFileSync(
     profilePath,
     [
       `id: ${providerType}`,
-      "display_name: OAuth2 Runtime Identity Conformance v1",
-      "description: Deterministic OAuth refresh and bearer-injection conformance profile",
+      `display_name: ${scenario.testId} Runtime Identity Conformance`,
+      `description: Deterministic ${scenario.testId} OAuth refresh and bearer-injection conformance profile`,
       "category: agent",
       "credentials:",
       `  - name: ${credentialKey}`,
@@ -442,7 +521,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "    header_name: authorization",
       "    refresh:",
       "      strategy: oauth2_refresh_token",
-      `      token_url: ${tunnel.origin}/oauth/token`,
+      `      token_url: ${tunnel.origin}${scenario.tokenPath}`,
       "      refresh_before_seconds: 300",
       "      max_lifetime_seconds: 3600",
       "      material:",
@@ -460,7 +539,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "    protocol: rest",
       "    enforcement: enforce",
       "    rules:",
-      '      - allow: { method: GET, path: "/**" }',
+      `      - allow: { method: GET, path: "${scenario.reviewedResourcePath}" }`,
       "binaries:",
       "  - /usr/local/bin/node",
       "  - /usr/bin/node",
@@ -486,13 +565,13 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "        provider_name: compatible-endpoint",
       `        model: ${model}`,
       "  identity:",
-      "    profile_path: provider-profiles/oauth2-runtime-conformance-v1.yaml",
+      `    profile_path: provider-profiles/${profileFilename}`,
       `    provider_type: ${providerType}`,
       `    provider_name: ${providerName}`,
       `    credential_key: ${credentialKey}`,
-      "    client_id_env: E2E_CLIENT_ID",
-      "    refresh_token_env: E2E_REFRESH_TOKEN",
-      "    client_secret_env: E2E_CLIENT_SECRET",
+      `    client_id_env: ${scenario.clientIdEnvironmentName}`,
+      `    refresh_token_env: ${scenario.refreshTokenEnvironmentName}`,
+      `    client_secret_env: ${scenario.clientSecretEnvironmentName}`,
       "",
     ].join("\n"),
     { mode: 0o600 },
@@ -503,19 +582,20 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   const tsxPath = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
   const runnerEnv = {
     ...openshellEnv,
-    E2E_CLIENT_ID: clientId,
-    E2E_REFRESH_TOKEN: refreshToken,
-    E2E_CLIENT_SECRET: clientSecret,
+    [scenario.clientIdEnvironmentName]: clientId,
+    [scenario.refreshTokenEnvironmentName]: refreshToken,
+    [scenario.clientSecretEnvironmentName]: clientSecret,
   };
 
   await artifacts.target.declare({
-    id: "runtime-identity-reference-real-oauth-lifecycle",
+    id: scenario.targetId,
     issue: 6871,
     contract: [
       "plan exposes only the provider-neutral, non-secret identity binding",
       "the blueprint runner imports the profile, creates and attaches the provider through real OpenShell",
       "apply preserves the already-active provider and model route before attaching identity",
       "OpenShell exchanges the refresh token at a public HTTPS OAuth endpoint",
+      `credential delivery is restricted to GET ${scenario.reviewedResourcePath}`,
       "a sandbox request carries only an opaque placeholder and the protected resource receives the minted bearer",
       "a second refresh uses the rotated refresh token, and a later child launch receives a new placeholder whose request carries the new bearer",
       "status, persisted state, command artifacts, and request ledgers contain no OAuth secret material",
@@ -550,9 +630,9 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   expect(planText).toContain(`"provider_name": "${providerName}"`);
   expect(planText).toContain(`"credential_key": "${credentialKey}"`);
   for (const forbidden of [
-    "E2E_CLIENT_ID",
-    "E2E_REFRESH_TOKEN",
-    "E2E_CLIENT_SECRET",
+    scenario.clientIdEnvironmentName,
+    scenario.refreshTokenEnvironmentName,
+    scenario.clientSecretEnvironmentName,
     ...redactionValues,
   ]) {
     expect(planText).not.toContain(forbidden);
@@ -588,7 +668,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   expect(oauth.tokenRequests()).toEqual([
     {
       method: "POST",
-      path: "/oauth/token",
+      path: scenario.tokenPath,
       grantTypeOk: true,
       clientIdOk: true,
       refreshTokenOk: true,
@@ -617,9 +697,9 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     inference_provider_created_by_apply: false,
   });
   for (const forbidden of [
-    "E2E_CLIENT_ID",
-    "E2E_REFRESH_TOKEN",
-    "E2E_CLIENT_SECRET",
+    scenario.clientIdEnvironmentName,
+    scenario.refreshTokenEnvironmentName,
+    scenario.clientSecretEnvironmentName,
     ...redactionValues,
   ]) {
     expect(persistedPlan).not.toContain(forbidden);
@@ -693,7 +773,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
               "-fsS",
               "-H",
               `Authorization: Bearer ${projectedPlaceholder}`,
-              `${tunnel.origin}/resource`,
+              `${tunnel.origin}${scenario.resourcePath}`,
             ],
             {
               artifactName: `${artifactPrefix}-${attempt}`,
@@ -724,11 +804,33 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   expect(oauth.resourceRequests()).toEqual([
     {
       method: "GET",
-      path: "/resource",
+      path: scenario.resourcePath,
       auth: "ok",
       accessTokenVersion: 1,
     },
   ]);
+
+  progress.phase("reject unreviewed credential delivery before bearer substitution");
+  const admittedRequestCount = oauth.resourceRequests().length;
+  const deniedResource = await sandbox.exec(
+    sandboxName,
+    [
+      "/usr/bin/curl",
+      "-fsS",
+      "-X",
+      scenario.deniedMethod,
+      "-H",
+      `Authorization: Bearer ${placeholder}`,
+      `${tunnel.origin}${scenario.deniedPath}`,
+    ],
+    {
+      artifactName: `${artifactPrefix}-unreviewed-resource-policy`,
+      env: openshellEnv,
+      timeoutMs: 60_000,
+    },
+  );
+  expect(deniedResource.exitCode, resultText(deniedResource)).not.toBe(0);
+  expect(oauth.resourceRequests()).toHaveLength(admittedRequestCount);
 
   progress.phase("rotate the credential and relaunch with its new placeholder");
   const rotate = await sandbox.openshell(
@@ -743,7 +845,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   expect(oauth.tokenRequests()).toHaveLength(2);
   expect(oauth.tokenRequests()[1]).toEqual({
     method: "POST",
-    path: "/oauth/token",
+    path: scenario.tokenPath,
     grantTypeOk: true,
     clientIdOk: true,
     refreshTokenOk: true,
@@ -784,13 +886,13 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   expect(oauth.resourceRequests()).toEqual([
     {
       method: "GET",
-      path: "/resource",
+      path: scenario.resourcePath,
       auth: "ok",
       accessTokenVersion: 1,
     },
     {
       method: "GET",
-      path: "/resource",
+      path: scenario.resourcePath,
       auth: "ok",
       accessTokenVersion: 2,
     },
@@ -861,7 +963,15 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     timeoutMs: 30_000,
   });
   expect(deleteProfile.exitCode, resultText(deleteProfile)).toBe(0);
-});
+}
+
+test.for(RUNTIME_IDENTITY_E2E_SCENARIOS)(
+  "TC-INF-%s %sruntime identity refreshes and injects a delegated bearer through real OpenShell",
+  RUNTIME_IDENTITY_E2E_OPTIONS,
+  async ([testNumber, providerLabel, scenario], context) => {
+    await runRuntimeIdentityE2EScenario(testNumber, providerLabel, scenario, context);
+  },
+);
 
 test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)", {
   timeout: 20 * 60_000,
