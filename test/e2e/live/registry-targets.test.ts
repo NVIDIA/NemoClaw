@@ -103,6 +103,18 @@ for (const target of listTargets()) {
 
       progress.phase("confirm the target environment is ready");
       const ready = await environment.assertReady(target.environment);
+      const profile = target.environment.lifecycle;
+      const lifecycleProfile = isLifecycleProfile(profile) ? profile : undefined;
+      if (profile && !lifecycleProfile) {
+        throw new Error(
+          `target '${target.id}' declares lifecycle '${profile}' which is not ` +
+            `dispatched by LifecyclePhaseFixture; update the fixture and the ` +
+            `SUPPORTED_LIFECYCLES whitelist together.`,
+        );
+      }
+      if (lifecycleProfile === "post-reboot-recovery") {
+        await lifecycle.preparePostReboot();
+      }
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, { sandboxName: `e2e-${target.id}` });
 
@@ -112,29 +124,21 @@ for (const target of listTargets()) {
       // runtime-support.ts). Profiles dispatch through
       // LifecyclePhaseFixture before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
-      const profile = target.environment.lifecycle;
       // Every registry target crosses the optional lifecycle boundary before
       // state validation.
       progress.phase("execute the target lifecycle boundary");
-      if (profile) {
-        if (!isLifecycleProfile(profile)) {
-          throw new Error(
-            `target '${target.id}' declares lifecycle '${profile}' which is not ` +
-              `dispatched by LifecyclePhaseFixture; update the fixture and the ` +
-              `SUPPORTED_LIFECYCLES whitelist together.`,
-          );
-        }
+      if (lifecycleProfile) {
         lifecycleResult =
-          profile === "dcode-rebuild-invalid-credential"
+          lifecycleProfile === "dcode-rebuild-invalid-credential"
             ? await lifecycle.simulate(
-                profile,
+                lifecycleProfile,
                 instance,
                 dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
                   readRegistrySandboxEntry(instance.sandboxName),
                   secrets.required(HOSTED_INFERENCE_SECRET),
                 ),
               )
-            : await lifecycle.simulate(profile, instance);
+            : await lifecycle.simulate(lifecycleProfile, instance);
       }
 
       progress.phase("verify the expected sandbox state");
