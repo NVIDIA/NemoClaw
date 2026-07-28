@@ -290,6 +290,18 @@ if (args[0] === "devices" && args[1] === "approve") {
       storedOperator.token === pairedOperator?.token &&
       JSON.stringify(storedOperator.scopes) === JSON.stringify(pairedOperator.scopes),
   );
+  const exactPairingBaseline = Boolean(
+    pairedOperator &&
+      JSON.stringify(pairedOperator.scopes) === JSON.stringify(["operator.pairing"]) &&
+      JSON.stringify(pairedDevice.scopes) === JSON.stringify(["operator.pairing"]) &&
+      JSON.stringify(pairedDevice.approvedScopes) === JSON.stringify(["operator.pairing"]),
+  );
+  const boundedWriteUpgrade = Boolean(
+    request &&
+      (request.isRepair === true || request.isRepair === false) &&
+      Array.isArray(request.scopes) &&
+      request.scopes.includes("operator.write"),
+  );
   const runtimeTokenOnly =
     !process.env.OPENCLAW_GATEWAY_URL &&
     !process.env.OPENCLAW_GATEWAY_PORT &&
@@ -307,9 +319,11 @@ if (args[0] === "devices" && args[1] === "approve") {
     !process.env.OPENCLAW_GATEWAY_TOKEN &&
     !process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
   const expectedAuthMode = hasPairedBaseline
-    ? clientAuthMatches
-      ? storedDeviceOnly
-      : pairedTokenOnly
+    ? exactPairingBaseline && boundedWriteUpgrade
+      ? pairedTokenOnly
+      : clientAuthMatches
+        ? storedDeviceOnly
+        : pairedTokenOnly
     : runtimeTokenOnly;
   if (!expectedAuthMode) {
     process.stderr.write("raw clone auth-mode mismatch must stay private\\n");
@@ -633,9 +647,20 @@ process.exit(2);
       expect(
         `${cloneScopeUpgrade.stdout}${cloneScopeUpgrade.stderr}`.includes("clone-write-upgrade"),
       ).toBe(false);
-      expect(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8")).toBe(
-        cloneScopePending,
-      );
+      expect(JSON.parse(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8"))).toEqual({
+        [foreignRequest.requestId]: foreignRequest,
+      });
+      expect(JSON.parse(fs.readFileSync(cloneAuthFile, "utf-8"))).toMatchObject({
+        version: 1,
+        deviceId,
+        tokens: {
+          operator: {
+            token: "rotated-clone-device-token",
+            role: "operator",
+            scopes: ["operator.pairing", "operator.read", "operator.write"],
+          },
+        },
+      });
       expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
         primaryPending,
       );
@@ -644,7 +669,7 @@ process.exit(2);
       );
       expect(fs.existsSync(listEnvFile)).toBe(false);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-        `unset:unset:stored-device-auth:ordinary:${stateDir}:${primaryStateDir}`,
+        `unset:unset:clone-paired-token:forced:${stateDir}:${primaryStateDir}`,
       );
 
       for (const [pendingById, receipt] of [

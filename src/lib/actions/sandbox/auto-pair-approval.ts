@@ -430,8 +430,9 @@ if (
 # Snapshot restore preserves this clone-owned runtime auth state instead of
 # copying the source sandbox's identity/devices directory. Use the clone's
 # paired record and client auth store to choose auth. An exact pairing-only
-# pre-convergence transition can use the clone's paired token when that store
-# is missing or stale. The restored source config is never a credential.
+# baseline uses the clone's paired token for its bounded write upgrade, whether
+# OpenClaw marks the request as repair or pre-convergence. The restored source
+# config is never a credential.
 paired_path = clone_state_path('devices', 'paired.json')
 try:
     local_paired_by_id = read_clone_json(paired_path)
@@ -507,10 +508,10 @@ def local_pairing_transition_auth_mode(device):
             return 'runtime'
         return None
     if is_repair in (True, False) and 'operator.write' in scopes:
+        if local_paired_exact_pairing_baseline:
+            return 'paired-token'
         if local_client_auth_matches:
             return 'stored'
-        if is_repair is False and local_paired_exact_pairing_baseline:
-            return 'paired-token'
     return None
 
 def sync_approved_clone_device_auth(request, previous_token):

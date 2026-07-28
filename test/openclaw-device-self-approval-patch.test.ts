@@ -459,11 +459,14 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("uses the exact clone paired token for one matching pre-convergence approval", async () => {
+  it.each([
+    true,
+    false,
+  ])("uses the exact clone paired token for one matching bounded scope upgrade (repair=%s)", async (isRepair) => {
     const { runtime, tmp } = openPatchedCliFixture();
     try {
       const token = "clone-paired-token";
-      const pending = validPending({ isRepair: false });
+      const pending = validPending({ isRepair });
       runtime.setPairingLists(
         { pending: [pending], paired: [clonePairedTokenRecord(token)] },
         { pending: [pending], paired: [validPaired({ approvedScopes: undefined })] },
@@ -514,7 +517,6 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       {},
       { json: true },
     ],
-    ["a repair request", "clone-paired-token", undefined, validPending(), {}, { json: true }],
     [
       "a non-pairing-only paired baseline",
       "clone-paired-token",

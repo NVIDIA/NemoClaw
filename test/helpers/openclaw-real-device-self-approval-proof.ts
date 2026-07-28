@@ -1162,29 +1162,17 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
       "real same-device repair request id missing",
     );
     const requestId = String(repair.requestId);
-    const preconvergenceRequest = { ...repair, isRepair: false };
-    fs.writeFileSync(
-      pendingPath,
-      JSON.stringify({ ...pending, [requestId]: preconvergenceRequest }),
-    );
-    const pendingBeforeApproval = readJsonObject(
-      pendingPath,
-      "real restored-clone pre-convergence state",
-    );
-    const exactPreconvergence = asRecord(pendingBeforeApproval[requestId]);
+    const pendingBeforeApproval = pending;
+    const exactRepair = asRecord(pendingBeforeApproval[requestId]);
     requireLiveProof(
-      exactPreconvergence?.deviceId === identity.deviceId &&
-        exactPreconvergence.publicKey === pairedDeviceBefore.publicKey &&
-        exactPreconvergence.clientId === "cli" &&
-        exactPreconvergence.clientMode === "cli" &&
-        exactPreconvergence.isRepair === false,
-      "restored clone did not retain one exact pre-convergence identity",
+      exactRepair?.deviceId === identity.deviceId &&
+        exactRepair.publicKey === pairedDeviceBefore.publicKey &&
+        exactRepair.clientId === "cli" &&
+        exactRepair.clientMode === "cli" &&
+        exactRepair.isRepair === true,
+      "restored clone did not retain one exact repair identity",
     );
-    requireExactScopes(
-      exactPreconvergence.scopes,
-      ["operator.write"],
-      "restored-clone pre-convergence scopes",
-    );
+    requireExactScopes(exactRepair.scopes, ["operator.write"], "restored-clone repair scopes");
     const configuredBeforeApproval = readJsonObject(configPath, "real gateway config");
     const configuredGateway = asRecord(configuredBeforeApproval.gateway);
     const configuredAuth = asRecord(configuredGateway?.auth);
@@ -1194,6 +1182,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     );
 
     const cloneIdentityBefore = fs.readFileSync(identityPath, "utf8");
+    const cloneAuthBefore = fs.readFileSync(deviceAuthPath, "utf8");
     const clonePairedBefore = fs.readFileSync(pairedPath, "utf8");
     const primaryIdentityDir = path.join(primaryStateDir, "identity");
     const primaryDevicesDir = path.join(primaryStateDir, "devices");
@@ -1220,14 +1209,13 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     ] as const;
     for (const [file, contents] of primaryFiles) fs.writeFileSync(file, contents);
 
-    fs.rmSync(deviceAuthPath, { force: true });
     requireLiveProof(
-      !fs.existsSync(deviceAuthPath) &&
+      fs.readFileSync(deviceAuthPath, "utf8") === cloneAuthBefore &&
         fs.readFileSync(identityPath, "utf8") === cloneIdentityBefore &&
         fs.readFileSync(pairedPath, "utf8") === clonePairedBefore,
-      "restored-clone credential removal changed another clone state file",
+      "restored-clone matching credential setup changed another clone state file",
     );
-    proofPhase = "paired-token-approval";
+    proofPhase = "paired-token-repair-approval";
     const approval = spawnSync("sh", ["-c", pairedTokenApprovalScript], {
       cwd: packageDir,
       encoding: "utf8",
