@@ -36,6 +36,7 @@ import {
   writeDeterministicContextArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -319,7 +320,7 @@ describe("PR review advisor", () => {
     expect([required.coverage.optionalTests, required.targets.optional]).toEqual([[], []]);
   });
 
-  it("renders each E2E recommendation once", () => {
+  it("renders each E2E recommendation once", testTimeoutOptions(30_000), () => {
     const result = normalizeReviewResult(
       validResult({
         e2e: {
@@ -359,7 +360,7 @@ describe("PR review advisor", () => {
     });
     expect(noE2eComment).toContain("**Recommended E2E:** _None_");
     expect(noE2eComment).not.toContain("Why no");
-  }, 30_000);
+  });
 
   it("sanitizes malformed enum values and preserves deterministic fallback gates", () => {
     const result = normalizeReviewResult(
