@@ -28,7 +28,9 @@ Agent requests still use the streaming path, so confirm the endpoint's runtime b
 
 ## Configure Reasoning Effort
 
-Set `NEMOCLAW_REASONING_EFFORT` to `low`, `medium`, `high`, or `default` for a compatible OpenAI endpoint that accepts an explicit reasoning budget.
+Set `NEMOCLAW_REASONING_EFFORT` only when the provider is `compatible-endpoint` and the selected API is `openai-completions`.
+The endpoint must accept an explicit reasoning budget.
+The variable accepts `low`, `medium`, `high`, or `default`.
 The default is unset, which leaves the endpoint's own default in place.
 
 ```bash
@@ -43,8 +45,9 @@ Another provider clears the variable without reading it, so an invalid value nei
 
 `default` names the unset state, which is useful to clear an effort that a sandbox already records.
 
-NemoClaw writes `params.extra_body.reasoning_effort` on the model entry in the built OpenClaw config, and OpenClaw merges it into the request body.
-A model on another API family gets no such entry, and NemoClaw omits the value from the built configuration.
+NemoClaw writes `params.extra_body.reasoning_effort` on the model entry in the built OpenClaw config.
+OpenClaw merges that field into the request body.
+NemoClaw does not add the field for another API family.
 Reasoning effort is independent of `NEMOCLAW_REASONING`.
 `NEMOCLAW_REASONING` declares that the model reasons, and `NEMOCLAW_REASONING_EFFORT` declares how much.
 
@@ -83,6 +86,7 @@ nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <mo
 Pass `--reasoning-effort default` to clear a recorded effort and return the endpoint to its own default.
 `--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.
 When you omit the flag, `inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`.
-When neither is set, the sandbox keeps the effort it already records.
+When neither is set, the sandbox keeps the recorded effort only while the resulting route still uses `compatible-endpoint` and `openai-completions`.
+Switching to another provider or API family clears the recorded effort.
 
 For context-window and output-token settings, refer to [Configure Model Limits](configure-model-limits).

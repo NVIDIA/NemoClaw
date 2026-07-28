@@ -123,9 +123,17 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
-| `NEMOCLAW_REASONING_EFFORT` | OpenClaw only. Writes `params.extra_body.reasoning_effort` for the model in the built OpenClaw config when the route uses `openai-completions`. Accepts `low`, `medium`, `high`, or `default`; unset leaves the endpoint's own default in place. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private inference endpoints. Wildcards are not supported. |
 | `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
+
+<AgentOnly variant="openclaw">
+
+For OpenClaw, `NEMOCLAW_REASONING_EFFORT` accepts `low`, `medium`, `high`, or `default`.
+A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort` when the selected API is `openai-completions`.
+Another API family omits the field.
+An unset value or `default` leaves the endpoint's own default in place.
+
+</AgentOnly>
 
 Private and reserved addresses are blocked by default.
 To use an inference gateway on a trusted corporate network, list only its exact host and keep the endpoint URL on that host:
