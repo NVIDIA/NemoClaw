@@ -1117,7 +1117,7 @@ ensure_station_express_host
     expect(fs.readFileSync(stateFile, "utf-8")).toBe(
       `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n` +
         "agent=openclaw\nsandbox=my-assistant\npolicy_tier=balanced\n" +
-        "gateway_port=18081\ndashboard_port=18790\nvllm_port=18000\n",
+        "gateway_port=18081\ndashboard_port=18790\nvllm_port=18000\nmode=express\n",
     );
     expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
     expect(output).toContain(

@@ -251,7 +251,7 @@ const {
   switchToWindowsOllamaHost,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
-const { installVllm, isNemoClawManagedVllmRunning } = require("./inference/vllm");
+const vllmInference = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
@@ -478,10 +478,8 @@ const {
   wasSandboxDefault,
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
-const {
-  createCoreOnboardFlowPhases,
-  runCoreOnboardFlowSlice,
-}: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { createProviderInferenceOnboardFlowPhase, createSandboxOnboardFlowPhase, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
 const {
   createFinalOnboardFlowPhases,
   runFinalOnboardFlowSlice,
@@ -1087,8 +1085,8 @@ const {
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const handleVllmSelection = createSetupNimVllmHandler({
   VLLM_PORT, runCapture, getLocalProviderBaseUrl, getLocalProviderValidationBaseUrl,
-  isSafeModelId, requireValue, validateOpenAiLikeSelection,
-  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning,
+  getManagedVllmProviderBinding: localInference.getManagedDualStationVllmProviderBinding, queryVllmModels: (baseUrl, apiKey) => { const result = localInference.probeVllmModels(baseUrl, apiKey); return result.ok ? result.body : ""; }, isSafeModelId, requireValue, validateOpenAiLikeSelection,
+  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning, persistConfiguredDualStationVllmRuntimeReceipt: vllmInference.persistConfiguredDualStationVllmRuntimeReceipt,
   exitProcess: (code) => process.exit(code),
 });
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
@@ -3581,7 +3579,7 @@ function getSetupNimDeps(): SetupNimDeps {
     handleRunningOllamaSelection,
     handleWindowsHostOllamaSelection,
     handleInstallOllamaSelection,
-    installVllm,
+    installVllm: vllmInference.installVllm,
     handleVllmSelection,
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
@@ -3881,10 +3879,6 @@ const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
 const recordInvalidatedStateResult =
   onboardRuntimeBoundary.recordInvalidatedStateResult.bind(onboardRuntimeBoundary);
-const recordInitialPreflightTransition =
-  onboardRuntimeBoundary.recordInitialPreflightTransition.bind(onboardRuntimeBoundary);
-const recordPostVerifyStarted =
-  onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 /** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
@@ -4111,7 +4105,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await recordInitialPreflightTransition(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
     // safe name in that state.
@@ -4319,22 +4312,21 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
-    const [providerInferencePhase, sandboxPhase] = createCoreOnboardFlowPhases<
-      InitialOnboardFlowContext,
-      unknown,
-      MessagingChannelConfig,
-      import("./resources-cmd").ResourceProfile
-    >({
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const providerInferencePhase = createProviderInferenceOnboardFlowPhase<InitialOnboardFlowContext, unknown>({
       gatewayName: GATEWAY_NAME,
       forceProviderSelection: forceProviderSelectionForAgentChange,
       ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
+      endpointProvenance,
       env: process.env,
       constants: {
         hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
         hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
         hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
       },
-      providerDeps: {
+      deps: {
         checkGatewayRouteCompatibility,
         preflightGatewayRouteDiscovery,
         getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
@@ -4390,20 +4382,22 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           delete process.env[name];
         },
       },
-      sandbox: {
-        resumeAgentChanged,
-        requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
-        requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-        authoritativePolicyTier:
-          opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
-        endpointSource: opts.endpointSource,
-        endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null,
-        endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null,
-        recreateSandbox: isRecreateSandbox,
-        controlUiPort: _preflightDashboardPort,
-        rootDir: ROOT,
-      },
-      sandboxDeps: {
+    });
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const sandboxPhase = createSandboxOnboardFlowPhase<InitialOnboardFlowContext, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
+      gatewayName: GATEWAY_NAME,
+      authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+      authoritativePolicyTier:
+        opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+      resumeAgentChanged,
+      requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+      requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
+      endpointProvenance,
+      recreateSandbox: isRecreateSandbox,
+      controlUiPort: _preflightDashboardPort,
+      rootDir: ROOT,
+      env: process.env,
+      deps: {
         checkGatewayRouteCompatibility,
         withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
         resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
@@ -4467,7 +4461,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
-      phases: [providerInferencePhase, sandboxPhase],
+      phases: { providerInference: providerInferencePhase, sandbox: sandboxPhase },
       resume,
       recordStateResult,
       recordInvalidatedStateResult,
@@ -4506,7 +4500,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
     let liveFinalFlowContext = finalFlowContext;
 
-    const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
+    const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
       import("./verify-deployment").VerifyDeploymentResult
@@ -4571,7 +4565,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
-        recordPostVerifyStarted,
         toSessionUpdates: (updates) =>
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
@@ -4623,11 +4616,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const finalFlowResult = await runFinalOnboardFlowSlice({
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
-      phases: [branchSetupPhase, policiesPhase, finalizationPhase],
-      resume,
-      recordStateResult,
-      recordInvalidatedStateResult,
-      afterPoliciesResultApplied: () => {
+      phases: finalFlowPhases,
+      recordRepairEvent,
+      afterPoliciesReady: () => {
         sandboxCancelRollback.disarm();
       },
       onContextUpdated: (context) => {

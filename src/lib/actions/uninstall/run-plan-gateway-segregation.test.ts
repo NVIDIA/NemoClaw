@@ -1059,6 +1059,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      const runtimeReceipt = path.join(stateDir, "dual-station-vllm-runtime.json");
+      const runtimeBinding = `${runtimeReceipt}.ssh-binding`;
+      fs.writeFileSync(runtimeReceipt, "{}\n", { mode: 0o600 });
+      fs.mkdirSync(runtimeBinding, { mode: 0o700 });
+      fs.writeFileSync(path.join(runtimeBinding, "known_hosts"), "host-key\n", { mode: 0o600 });
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1082,6 +1087,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).toContainEqual(["gateway", "select", "nemoclaw"]);
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(logs.join("\n")).toContain("Sibling gateways remain");
+      expect(fs.existsSync(runtimeReceipt)).toBe(true);
+      expect(fs.existsSync(runtimeBinding)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -1101,6 +1108,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      const runtimeReceipt = path.join(stateDir, "dual-station-vllm-runtime.json");
+      const runtimeBinding = `${runtimeReceipt}.ssh-binding`;
+      fs.writeFileSync(runtimeReceipt, "{}\n", { mode: 0o600 });
+      fs.mkdirSync(runtimeBinding, { mode: 0o700 });
+      fs.writeFileSync(path.join(runtimeBinding, "known_hosts"), "host-key\n", { mode: 0o600 });
       const openshellCalls: string[][] = [];
       const warnings: string[] = [];
       let gatewayListCalls = 0;
@@ -1136,6 +1148,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).toContainEqual(["gateway", "select", "nemoclaw"]);
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(warnings.join("\n")).toContain("switching to gateway-scoped cleanup");
+      expect(fs.existsSync(runtimeReceipt)).toBe(true);
+      expect(fs.existsSync(runtimeBinding)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
