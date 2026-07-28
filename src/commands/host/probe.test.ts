@@ -103,7 +103,7 @@ describe("host probe command (#7412)", () => {
     }
   });
 
-  it("runs before gateway or sandbox registration and uses one report for human output", async () => {
+  it("uses one readiness report for human output (#7412)", async () => {
     const publicReport = report(READINESS_OUTCOMES[0]);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     mocks.createPublicReadinessReport.mockReturnValueOnce(publicReport);

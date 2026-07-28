@@ -28,7 +28,7 @@ $$nemoclaw host probe --json
 ```
 
 Both presentations use the same structured report.
-The JSON report includes its schema version, result, exit code, observations, capabilities, findings, evidence, and provenance.
+The JSON report includes its `schemaVersion`, `status`, `exitCode`, `observations`, `capabilities`, `qualifications`, `findings`, `evidence`, and `provenance`.
 It also includes `mutated: false`.
 
 ## Interpret exit codes
@@ -50,7 +50,7 @@ The `schemaVersion` field uses `major.minor.patch` format.
 Consumers must reject an unknown major version.
 Consumers can ignore fields that they do not recognize within major version 1.
 Use stable capability and finding IDs instead of parsing human summaries.
-Treat bounded evidence as diagnostic context unless a capability or finding references its evidence ID.
+Treat bounded evidence as diagnostic context unless an observation, capability, or finding references that evidence ID.
 
 ## Understand the read-only boundary
 
