@@ -407,11 +407,38 @@ describe("validateEndpointUrl – URL parsing edge cases", () => {
   });
 
   it("rejects URL with userinfo/basic auth credentials", async () => {
-    await expect(validateEndpointUrl("https://user:pass@api.example.com/v1")).rejects.toThrow(
-      /must not contain credentials/,
-    );
-    await expect(validateEndpointUrl("http://user:pass@api.example.com/v1")).rejects.toThrow(
-      /must not contain credentials/,
-    );
+    const cases = [
+      {
+        url: "https://alice:s3cret-token@api.example.com/v1",
+        secrets: ["alice", "s3cret-token", "alice:s3cret-token"],
+      },
+      {
+        url: "http://alice:s3cret-token@api.example.com/v1",
+        secrets: ["alice", "s3cret-token", "alice:s3cret-token"],
+      },
+      {
+        url: "https://only-alice@api.example.com/v1",
+        secrets: ["only-alice"],
+      },
+      {
+        url: "https://:only-s3cret@api.example.com/v1",
+        secrets: ["only-s3cret"],
+      },
+    ] as const;
+
+    for (const { url, secrets } of cases) {
+      let thrown: unknown;
+      try {
+        await validateEndpointUrl(url);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      expect(message).toMatch(/must not contain credentials/);
+      for (const secret of secrets) {
+        expect(message).not.toContain(secret);
+      }
+    }
   });
 });
