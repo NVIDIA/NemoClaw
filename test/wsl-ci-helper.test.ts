@@ -175,9 +175,29 @@ $messages | ConvertTo-Json -Compress
         "   ",
       ];
       const message =
-        "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not be the checkout, its ancestor, or contain traversal";
+        "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal";
       expect(JSON.parse(result.stdout.trim())).toEqual(
         unsafeWorkdirs.map((workdir) => `${message}: '${workdir}'.`),
+      );
+    },
+  );
+
+  itPowerShell(
+    "rejects a checkout that contains the generated WSL workdir (#6958)",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+try {
+  Get-WslCheckoutSyncScript -Checkout '/tmp/nemoclaw-wsl-workdir' -Workdir '/tmp/nemoclaw-wsl-workdir/123-1'
+  'unexpected success'
+} catch {
+  $_.Exception.Message
+}
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe(
+        "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal: '/tmp/nemoclaw-wsl-workdir/123-1'.",
       );
     },
   );
