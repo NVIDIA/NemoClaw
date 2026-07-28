@@ -406,12 +406,12 @@ describe("validateEndpointUrl – URL parsing edge cases", () => {
     expect(() => safeEndpointUrlForDownstream(result)).toThrow(/DNS-backed HTTPS endpoint/);
   });
 
-  it("parses URL with userinfo/basic auth but does not mark DNS-backed HTTPS downstream-safe", async () => {
-    mockPublicDns();
-    // URL parser extracts hostname correctly even with userinfo.
-    const url = "https://user:pass@api.example.com/v1";
-    const result = await validateEndpointUrl(url);
-    expect(result.url).toBe(url);
-    expect(() => safeEndpointUrlForDownstream(result)).toThrow(/DNS-backed HTTPS endpoint/);
+  it("rejects URL with userinfo/basic auth credentials", async () => {
+    await expect(validateEndpointUrl("https://user:pass@api.example.com/v1")).rejects.toThrow(
+      /must not contain credentials/,
+    );
+    await expect(validateEndpointUrl("http://user:pass@api.example.com/v1")).rejects.toThrow(
+      /must not contain credentials/,
+    );
   });
 });
