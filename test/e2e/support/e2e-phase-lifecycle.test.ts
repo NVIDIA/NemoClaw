@@ -151,7 +151,7 @@ describe("LifecyclePhaseFixture.preparePostReboot", () => {
   it("rejects post-reboot simulation that was not prepared before onboarding", async () => {
     await expect(
       fixture(new FakeRunner(), new FakeCleanup()).simulate("post-reboot-recovery", instance()),
-    ).rejects.toThrow(/must be prepared before onboarding/);
+    ).rejects.toThrow(/must be prepared before post-reboot onboarding/);
   });
 });
 
