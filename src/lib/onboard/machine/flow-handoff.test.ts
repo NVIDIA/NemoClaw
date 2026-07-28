@@ -121,7 +121,7 @@ describe("onboard flow handoffs", () => {
     ).toThrow("Preflight did not produce a sandbox GPU configuration.");
   });
 
-  it("constructs final context only after sandbox identity and inference are complete", () => {
+  it("constructs final context after sandbox identity and inference are complete", () => {
     const persisted = createSession();
     const coreContext = {
       ...context(),
@@ -136,10 +136,25 @@ describe("onboard flow handoffs", () => {
         session: persisted,
       }),
     ).toMatchObject({ sandboxName: "ready", model: "model", provider: "provider" });
+  });
+
+  it.each([
+    "sandboxName",
+    "model",
+    "provider",
+  ] as const)("rejects final context when $field is missing", (field) => {
+    const coreContext = {
+      ...context(),
+      sandboxName: "ready",
+      model: "model",
+      provider: "provider",
+      [field]: null,
+    };
+
     expect(() =>
       prepareFinalOnboardFlowContext({
-        context: { ...coreContext, model: null },
-        session: persisted,
+        context: coreContext,
+        session: createSession(),
       }),
     ).toThrow("Onboarding state is incomplete after sandbox setup.");
   });
