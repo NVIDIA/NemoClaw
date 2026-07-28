@@ -16,7 +16,10 @@ import {
 } from "../adapters/docker";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
 import { ROOT } from "../runner";
-import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import {
+  normalizeReadModesForDockerCopy,
+  SANDBOX_BUILD_CONTEXT_PREFIX,
+} from "../sandbox/build-context";
 import {
   buildLocalBaseTag,
   createSandboxBaseImageBuildProvenance,
@@ -668,6 +671,9 @@ export function createAgentSandbox(
       stagedDockerfile,
       dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
     );
+  }
+  for (const entry of fs.readdirSync(buildCtx)) {
+    normalizeReadModesForDockerCopy(path.join(buildCtx, entry));
   }
   console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
 

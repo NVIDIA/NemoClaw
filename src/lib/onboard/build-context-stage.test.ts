@@ -176,6 +176,42 @@ describe("stageCreateSandboxBuildContext", () => {
     expect(stagedBytes).not.toContain("forbidden-dockerignore-canary");
   });
 
+  it("strips group-write from managed agent build context files (#7708)", () => {
+    const repoRoot = makeTmpDir("nemoclaw-managed-context-modes-");
+    const agentDockerfile = path.join(repoRoot, "agents", "hermes", "Dockerfile");
+    const wrapper = path.join(repoRoot, "agents", "hermes", "hermes-wrapper.py");
+    const scanner = path.join(repoRoot, "scripts", "checks", "node-tar-image-scan.mts");
+    writeFixtureFile(repoRoot, "agents/hermes/Dockerfile", "FROM scratch\n");
+    writeFixtureFile(repoRoot, "agents/hermes/hermes-wrapper.py", "#!/usr/bin/env python3\n");
+    writeFixtureFile(repoRoot, "scripts/checks/node-tar-image-scan.mts", "#!/usr/bin/env node\n");
+    fs.chmodSync(wrapper, 0o775);
+    fs.chmodSync(scanner, 0o775);
+
+    const result = stageCreateSandboxBuildContext({
+      root: repoRoot,
+      fromDockerfile: agentDockerfile,
+      agent: {
+        name: "hermes",
+        displayName: "Hermes",
+        dockerfileBasePath: null,
+        dockerfilePath: agentDockerfile,
+      } as any,
+      createAgentSandbox: (agent) => createManagedAgentSandbox(agent, { rootDir: repoRoot }),
+      log: vi.fn(),
+      exit: throwingExit,
+    });
+    tmpDirs.push(result.buildCtx);
+
+    expect(fs.statSync(result.buildCtx).mode & 0o777).toBe(0o700);
+    expect(
+      fs.statSync(path.join(result.buildCtx, "agents", "hermes", "hermes-wrapper.py")).mode & 0o777,
+    ).toBe(0o755);
+    expect(
+      fs.statSync(path.join(result.buildCtx, "scripts", "checks", "node-tar-image-scan.mts")).mode &
+        0o777,
+    ).toBe(0o755);
+  });
+
   it("stages the managed agent build context when --from reaches the agent Dockerfile through a symlink", () => {
     const repoRoot = makeTmpDir("nemoclaw-repo-symlink-");
     const agentDir = path.join(repoRoot, "agents", "hermes");
