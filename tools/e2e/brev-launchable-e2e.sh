@@ -167,7 +167,7 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
 
-# qualification-identity: return only the baked SHA and clean-checkout verdict.
+# launchable-e2e-identity: return only the baked SHA and clean-checkout verdict.
 # The remote shell expands the single-quoted command.
 # shellcheck disable=SC2016
 identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
@@ -190,7 +190,7 @@ jq -e --arg sha "$CANDIDATE_SHA" '
 jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
   --argjson boot "$identity" --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
   '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:$boot,workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
-  >"$WORK_DIR/qualification.json"
+  >"$WORK_DIR/launchable-e2e.json"
 
 # Run the existing suite from the baked checkout; no source copy, install, or rebuild.
 raw_log="${RUNNER_TEMP:-/tmp}/brev-launchable-e2e-${GITHUB_RUN_ID}.raw"
@@ -222,6 +222,6 @@ PY
 if [ "$e2e_status" -ne 0 ] || ! grep -q '^NEMOCLAW_FULL_E2E_PASSED$' "$WORK_DIR/full-e2e.log"; then
   die "full E2E failed"
 fi
-jq '.fullE2e = "passed"' "$WORK_DIR/qualification.json" >"$WORK_DIR/qualification.tmp"
-mv "$WORK_DIR/qualification.tmp" "$WORK_DIR/qualification.json"
+jq '.fullE2e = "passed"' "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
+mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
 log "Full E2E passed"
