@@ -18,10 +18,14 @@
  * signed identity keeps the paired-device scope check authoritative and lets
  * OpenClaw create a canonical pending scope-upgrade request. Keep the entire
  * approval in OpenClaw instead: for the exact bounded CLI mismatch, continue
- * only into OpenClaw's pairing gate; for the resulting same-device repair,
- * explicitly use OpenClaw's stored device credential with operator.pairing,
- * then let the gateway's canonical approveDevicePairing path reload, lock,
- * rotate the token, persist, broadcast, and respond.
+ * only into OpenClaw's pairing gate. For the resulting same-device scope
+ * transition, including an operator.write request created before paired-state
+ * convergence, explicitly use OpenClaw's stored device credential with
+ * operator.pairing. Then let the gateway's canonical approveDevicePairing path
+ * reload, lock, rotate the token, persist, broadcast, and respond.
+ * The ordinary patch tests and pinned real-dist proof cover this paired
+ * pre-convergence transition separately from a cold clone, which has no paired
+ * record and must not select stored device authentication.
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
@@ -180,13 +184,17 @@ const CLI_HELPER = [
   "\tconst nemoclawPairedScopes = resolvePairedOperatorScopes(nemoclawPairedView);",
   "\tconst nemoclawPairingBaselineVisible = nemoclawPairedScopes.length > 0;",
   '\tconst nemoclawNormalizedRawScopes = Array.isArray(nemoclawRawScopes) ? nemoclawRawScopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
+  "\tconst nemoclawNonRepairWriteTransition =",
+  "\t\trequest.isRepair === false &&",
+  '\t\tnemoclawNormalizedRawScopes.includes("operator.write") &&',
+  "\t\tnemoclawPairedScopes.includes(PAIRING_SCOPE);",
   "\tconst nemoclawUsePairingTransport =",
   "\t\tArray.isArray(nemoclawRawScopes) &&",
   "\t\tnemoclawRawScopes.length > 0 &&",
   '\t\tnemoclawRawScopes.every((scope) => typeof scope === "string" && scope.trim() && isKnownNonAdminOperatorScope(scope.trim())) &&',
   "\t\trequest.clientId === GATEWAY_CLIENT_NAMES.CLI &&",
   "\t\trequest.clientMode === GATEWAY_CLIENT_MODES.CLI &&",
-  "\t\trequest.isRepair === true &&",
+  "\t\t(request.isRepair === true || nemoclawNonRepairWriteTransition) &&",
   "\t\tnemoclawRoles.length === 1 &&",
   "\t\tnemoclawRoles[0] === OPERATOR_ROLE &&",
   "\t\t(!nemoclawPairingBaselineVisible || nemoclawPairedScopes.includes(PAIRING_SCOPE));",
@@ -373,7 +381,7 @@ const AUTH_DEVICE_TOKEN_REPLACEMENT = [
 
 const HANDLER_HELPER = [
   "function resolveNemoClawSelfApprovalIdentity(pending, authz, client) {",
-  "\tif (authz.isAdminCaller || client?.isDeviceTokenAuth !== true || pending?.isRepair !== true) return null;",
+  "\tif (authz.isAdminCaller || client?.isDeviceTokenAuth !== true) return null;",
   '\tconst callerDeviceId = typeof authz.callerDeviceId === "string" ? authz.callerDeviceId.trim() : "";',
   '\tconst clientDeviceId = typeof client?.connect?.device?.id === "string" ? client.connect.device.id.trim() : "";',
   '\tconst pendingDeviceId = typeof pending?.deviceId === "string" ? pending.deviceId.trim() : "";',
@@ -413,6 +421,14 @@ const HANDLER_HELPER = [
   "\t}",
   '\tif (roles.size !== 1 || !roles.has("operator")) return null;',
   "\tif (!Array.isArray(pending.scopes) || pending.scopes.length === 0) return null;",
+  "\tconst nemoclawPendingScopes = new Set();",
+  "\tfor (const scope of pending.scopes) {",
+  '\t\tif (typeof scope !== "string") return null;',
+  "\t\tconst normalized = scope.trim();",
+  '\t\tif (!normalized || !["operator.pairing", "operator.read", "operator.write"].includes(normalized) || nemoclawPendingScopes.has(normalized)) return null;',
+  "\t\tnemoclawPendingScopes.add(normalized);",
+  "\t}",
+  '\tif (pending.isRepair !== true && (pending.isRepair !== false || !nemoclawPendingScopes.has("operator.write"))) return null;',
   "\treturn { deviceId: callerDeviceId, publicKey: clientPublicKey, role: clientRole, clientId, clientMode };",
   "} // nemoclaw: bounded same-device scope approval (#4462)",
   "",
@@ -593,7 +609,7 @@ const STATE_HELPER = [
   'const NEMOCLAW_SELF_APPROVAL_SCOPE_ORDER = ["operator.pairing", "operator.read", "operator.write"];',
   "const NEMOCLAW_SELF_APPROVAL_ALLOWED_SCOPES = new Set(NEMOCLAW_SELF_APPROVAL_SCOPE_ORDER);",
   "function resolveNemoClawSelfApprovalScopes(pending, callerScopes, identity) {",
-  '\tif (!identity || !Array.isArray(callerScopes) || !callerScopes.includes("operator.pairing") || pending?.isRepair !== true) return null;',
+  '\tif (!identity || !Array.isArray(callerScopes) || !callerScopes.includes("operator.pairing")) return null;',
   '\tconst expectedDeviceId = typeof identity.deviceId === "string" ? identity.deviceId.trim() : "";',
   '\tconst expectedPublicKey = typeof identity.publicKey === "string" ? identity.publicKey.trim() : "";',
   '\tconst expectedRole = typeof identity.role === "string" ? identity.role.trim() : "";',
@@ -637,6 +653,7 @@ const STATE_HELPER = [
   "\t\tscopes.add(normalized);",
   "\t}",
   '\tif (scopes.has("operator.write")) scopes.add("operator.read");',
+  '\tif (pending.isRepair !== true && (pending.isRepair !== false || !scopes.has("operator.write"))) return null;',
   '\tif (scopes.has("operator.read") || scopes.has("operator.write")) scopes.add("operator.pairing");',
   "\treturn NEMOCLAW_SELF_APPROVAL_SCOPE_ORDER.filter((scope) => scopes.has(scope));",
   "} // nemoclaw: validate bounded self-approval inside pairing lock (#4462)",

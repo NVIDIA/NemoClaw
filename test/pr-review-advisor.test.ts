@@ -291,7 +291,7 @@ describe("PR review advisor", () => {
           e2e: {
             coverage: {
               requiredTests: [],
-              optionalTests: [{ id: "docs-validation", reason: "Documentation changed." }],
+              optionalTests: [{ id: "vllm-docker-storage", reason: "Documentation changed." }],
               confidence: "low",
             },
             targets: { required, optional: [], confidence: "low" },
@@ -300,21 +300,21 @@ describe("PR review advisor", () => {
         metadata({ changedFiles: [] }),
       ).e2e;
     const optional = normalize();
-    expect(optional.coverage.optionalTests.map(({ id }) => id)).toEqual(["docs-validation"]);
+    expect(optional.coverage.optionalTests.map(({ id }) => id)).toEqual(["vllm-docker-storage"]);
     expect(optional.targets.optional).toEqual([
-      expect.objectContaining({ id: "docs-validation", selectorType: "job", required: false }),
+      expect.objectContaining({ id: "vllm-docker-storage", selectorType: "job", required: false }),
     ]);
     const required = normalize([
       {
-        id: "docs-validation",
+        id: "vllm-docker-storage",
         workflow: "e2e.yaml",
         selectorType: "job",
         reason: "The live documentation check is required.",
       },
     ]);
-    expect(required.coverage.requiredTests.map(({ id }) => id)).toEqual(["docs-validation"]);
+    expect(required.coverage.requiredTests.map(({ id }) => id)).toEqual(["vllm-docker-storage"]);
     expect(required.targets.required).toEqual([
-      expect.objectContaining({ id: "docs-validation", selectorType: "job", required: true }),
+      expect.objectContaining({ id: "vllm-docker-storage", selectorType: "job", required: true }),
     ]);
     expect([required.coverage.optionalTests, required.targets.optional]).toEqual([[], []]);
   });

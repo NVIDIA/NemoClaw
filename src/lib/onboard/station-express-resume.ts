@@ -99,6 +99,8 @@ const BOUND_RECEIPT_INTENT_KEYS =
 const SPARK_INTENT_KEYS = "kind,sandboxName,version";
 const SPARK_INTENT_KEYS_WITH_MODEL = "kind,model,sandboxName,version";
 const SPARK_EXPRESS_PROVIDER = "install-vllm";
+const STATION_ULTRA_ENV_VALUE = "nemotron-3-ultra-550b-a55b";
+const STATION_ULTRA_DUAL_SERVED_MODEL = "nemotron-ultra";
 const STATION_EXPRESS_INSTALLER_RESUME_FILE = "station-express-resume";
 const STATION_EXPRESS_RETIREMENT_CLAIM_PREFIX = `${STATION_EXPRESS_INSTALLER_RESUME_FILE}.retiring-`;
 const STATION_EXPRESS_RETIREMENT_CLAIM_RECEIPT = "receipt";
@@ -142,6 +144,21 @@ function canonicalStationModelValue(value: string): string | null {
 
 function servedModel(model: VllmModelDef): string {
   return model.servedModelId ?? model.id;
+}
+
+function qualifiedDualStationServedModel(
+  env: NodeJS.ProcessEnv,
+  model: VllmModelDef,
+): string | null {
+  if (
+    model.envValue !== STATION_ULTRA_ENV_VALUE ||
+    String(env.NEMOCLAW_DGX_STATION_PEER ?? "").trim().length === 0 ||
+    String(env.NEMOCLAW_DGX_STATION_SSH_BINDING ?? "").trim().length === 0
+  ) {
+    return null;
+  }
+  const selected = String(env.NEMOCLAW_MODEL ?? "").trim();
+  return selected === STATION_ULTRA_DUAL_SERVED_MODEL ? selected : null;
 }
 
 function identifiesCheckpoint(model: VllmModelDef, value: string): boolean {
@@ -812,7 +829,7 @@ function expectedEnvironment(
   if (includeProviderSelection) {
     expected.NEMOCLAW_PROVIDER = "install-vllm";
     expected.NEMOCLAW_VLLM_MODEL = model.envValue;
-    expected.NEMOCLAW_MODEL = servedModel(model);
+    expected.NEMOCLAW_MODEL = intent.servedModel ?? servedModel(model);
   }
   return expected;
 }
@@ -895,10 +912,12 @@ export function getStationExpressResumeIntent(
       message: "DGX Station Express requires a registered Station vLLM model and sandbox name.",
     };
   }
-  const intent: StationExpressResumeIntent = {
+  const dualServedModel = qualifiedDualStationServedModel(env, model);
+  const intent: StationResumeIntent = {
     version: STATION_EXPRESS_INTENT_VERSION,
     model: model.envValue,
     sandboxName,
+    ...(dualServedModel ? { servedModel: dualServedModel, checkpointModel: model.id } : {}),
     ...(isValidStationExpressReceiptGeneration(env[STATION_EXPRESS_RECEIPT_GENERATION_ENV])
       ? { receiptGeneration: env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] }
       : {}),

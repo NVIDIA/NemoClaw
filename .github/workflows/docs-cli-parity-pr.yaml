@@ -4,10 +4,8 @@
 name: Docs / CLI Parity
 
 # Catches drift between the actual `nemoclaw --help` command list and the
-# command headings in `docs/reference/commands.mdx`. The same check runs in
-# nightly E2E (`docs-validation-e2e`); this workflow runs it on every PR
-# that touches CLI source so drift is caught before merge instead of next
-# morning. Ref: NVIDIA/NemoClaw#3224.
+# command headings in `docs/reference/commands.mdx`. This workflow runs on every
+# PR that touches CLI source. Ref: NVIDIA/NemoClaw#3224.
 
 on:
   pull_request:

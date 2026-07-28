@@ -21,6 +21,7 @@ vi.mock("../policy", () => ({
 import {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
+  discoverHostStationGb300SysfsReadOnlyPaths,
   discoverStationGb300SysfsReadOnlyPaths,
   getNetworkPolicyNames,
   isStationGb300ProductName,
@@ -90,8 +91,15 @@ function writeSysfsFile(root: string, relativePath: string, content: string): vo
   fs.writeFileSync(file, content, "utf-8");
 }
 
-function addPciDevice(root: string, bdf: string, vendor: string, pciClass: string): void {
+function addPciDevice(
+  root: string,
+  bdf: string,
+  vendor: string,
+  pciClass: string,
+  device = "0x31c2\n",
+): void {
   writeSysfsFile(root, path.join("bus", "pci", "devices", bdf, "vendor"), vendor);
+  writeSysfsFile(root, path.join("bus", "pci", "devices", bdf, "device"), device);
   writeSysfsFile(root, path.join("bus", "pci", "devices", bdf, "class"), pciClass);
 }
 
@@ -124,13 +132,14 @@ describe("initial sandbox policy helpers", () => {
     expect(isStationGb300ProductName(productName)).toBe(expected);
   });
 
-  it("discovers exact NVIDIA display-class PCI BDFs and fails closed without one (#7103)", () => {
+  it("discovers exact NVIDIA GB300 PCI BDFs and fails closed without one (#7103)", () => {
     const sysfsRoot = tmpSysfsRoot();
     addPciDevice(sysfsRoot, "0009:06:00.0", "0x10de\n", "0x030200\n");
     addPciDevice(sysfsRoot, "0008:05:00.0", "0X10DE\n", "0x030000\n");
     addPciDevice(sysfsRoot, "0000:01:00.0", "0x10de\n", "0x020000\n");
     addPciDevice(sysfsRoot, "0000:02:00.0", "0x1002\n", "0x030000\n");
     addPciDevice(sysfsRoot, "0000:03:00.8", "0x10de\n", "0x030000\n");
+    addPciDevice(sysfsRoot, "0000:04:00.0", "0x10de\n", "0x030000\n", "0xffff\n");
     for (const relativePath of [
       "devices/system/cpu",
       "devices/system/memory",
@@ -152,7 +161,42 @@ describe("initial sandbox policy helpers", () => {
     addPciDevice(noGpuSysfsRoot, "0000:01:00.0", "0x10de\n", "0x020000\n");
     expect(() =>
       discoverStationGb300SysfsReadOnlyPaths("NVIDIA DGX Station GB300", noGpuSysfsRoot),
-    ).toThrow("no NVIDIA display-class PCI device was found");
+    ).toThrow("no exact NVIDIA GB300 PCI device was found");
+  });
+
+  it("rejects a Station-classified non-GB300 product before GPU policy creation", () => {
+    expect(() =>
+      discoverHostStationGb300SysfsReadOnlyPaths({
+        platform: "linux",
+        architecture: "arm64",
+        identity: {
+          nvidiaPlatform: "station",
+          productName: "NVIDIA DGX Station A100",
+          stationProfile: "supported-dgx-os",
+          stationGb300PciGpu: true,
+          osId: "ubuntu",
+          osVersionId: "24.04",
+        },
+      }),
+    ).toThrow("the detected Station product is not a qualified GB300 system");
+  });
+
+  it("rejects Station GPU policy when host GPU availability fails", () => {
+    expect(() =>
+      discoverHostStationGb300SysfsReadOnlyPaths({
+        platform: "linux",
+        architecture: "arm64",
+        hasNvidiaGpu: false,
+        identity: {
+          nvidiaPlatform: "station",
+          productName: "NVIDIA DGX Station GB300",
+          stationProfile: "supported-dgx-os",
+          stationGb300PciGpu: true,
+          osId: "ubuntu",
+          osVersionId: "24.04",
+        },
+      }),
+    ).toThrow("an available GB300 GPU");
   });
 
   it("scopes sysfs read access and lets OpenShell own /proc GPU enrichment (#7103)", () => {

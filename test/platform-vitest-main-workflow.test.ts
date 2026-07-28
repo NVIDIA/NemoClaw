@@ -12,8 +12,10 @@ import {
 } from "./helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
+const WSL_E2E_WORKFLOW_PATH = ".github/workflows/wsl-e2e.yaml";
 const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
+const wslE2eWorkflow = readYaml<Workflow>(WSL_E2E_WORKFLOW_PATH);
 
 function job(name: string): WorkflowJob {
   const candidate = workflow.jobs[name];
@@ -28,6 +30,44 @@ function step(jobName: string, name: string): WorkflowStep {
 }
 
 describe("platform Vitest main workflow", () => {
+  // source-shape-contract: security -- WSL jobs install only checksum-verified official Node.js archives
+  it("pins and verifies the Node.js archive in both WSL workflows", () => {
+    const installSteps = [
+      step("wsl-vitest", "Install Node.js 22 in WSL"),
+      wslE2eWorkflow.jobs["wsl-e2e"]?.steps?.find(
+        (entry) => entry.name === "Install Node.js 22 in WSL",
+      ),
+    ];
+
+    for (const installStep of installSteps) {
+      expect(installStep, "missing WSL Node.js install step").toBeDefined();
+      const run = installStep?.run ?? "";
+      expect(run).toContain('node_version="22.23.1"');
+      expect(run).toMatch(
+        /x86_64\)[\s\S]*?node_arch="x64"[\s\S]*?node_sha256="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"[\s\S]*?;;/u,
+      );
+      expect(run).toMatch(
+        /aarch64 \| arm64\)[\s\S]*?node_arch="arm64"[\s\S]*?node_sha256="0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1"[\s\S]*?;;/u,
+      );
+      expect(run).toContain(
+        'node_url="https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz"',
+      );
+      expect(run).toContain('temp_dir="$(mktemp -d)"');
+      expect(run).toContain(`trap 'rm -rf "$temp_dir"' EXIT`);
+      expect(run).toContain("--proto '=https'");
+      expect(run).toContain("--connect-timeout 15");
+      expect(run).toContain("--max-time 180");
+      expect(run).toContain("--retry 3");
+      expect(run).toContain("--retry-max-time 240");
+      expect(run).toContain("sha256sum --check --status");
+      expect(run.indexOf("sha256sum --check --status")).toBeLessThan(run.indexOf("tar --extract"));
+      expect(run).toContain('test "$(node --version)" = "v${node_version}"');
+      expect(run).toContain("Unsupported Node.js architecture");
+      expect(run).not.toContain("deb.nodesource.com");
+      expect(run).not.toMatch(/\bcurl\b[^\n]*\|\s*bash\b/u);
+    }
+  });
+
   // source-shape-contract: compatibility -- macOS must use the same modern shell/tool semantics as the Linux sandbox fixtures
   it("provisions the pinned macOS test runtime before running the full suite", () => {
     const stepNames = job("macos-vitest").steps?.map((entry) => entry.name) ?? [];
