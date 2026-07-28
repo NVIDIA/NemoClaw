@@ -17,6 +17,11 @@
       "category": "security"
     },
     {
+      "file": "src/lib/readiness/host.test.ts",
+      "test": "bounds and redacts successful probe text before schema validation",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
       "test": "matches the bundled local-inference host-gateway ports (#5744)",
       "category": "compatibility"
@@ -248,11 +253,6 @@
     },
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects diagnostics workflow-boundary drift for secret and Docker auth handling",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
       "category": "security"
     },
@@ -358,7 +358,7 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "keeps the authoritative local-build allowance tied to same-head PR evidence",
+      "test": "keeps the authoritative local-build allowance tied to exact PR evidence",
       "category": "compatibility"
     },
     {
@@ -449,6 +449,16 @@
     {
       "file": "test/perl-critical-cve-remediation.test.ts",
       "test": "builds the fixed upstream release from a checksum-pinned source archive (#7338)",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "pins and verifies the Node.js archive in the trusted WSL helper",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "loads the WSL helper from trusted revisions before candidate execution (#6958)",
       "category": "security"
     },
     {

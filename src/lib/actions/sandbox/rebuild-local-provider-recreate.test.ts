@@ -115,6 +115,7 @@ const localProviderScenarios = [
           applyLocalInferenceRoute,
           run: () => ({ status: 0 }),
           VLLM_LOCAL_CREDENTIAL_ENV: "NEMOCLAW_VLLM_LOCAL_TOKEN",
+          getManagedVllmProviderBinding: () => null,
           ...unusedCommonInferenceDeps,
         },
       ),

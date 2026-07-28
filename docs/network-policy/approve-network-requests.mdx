@@ -84,6 +84,8 @@ They are not persisted to the baseline policy file.
 To keep an endpoint allowed for future sandbox instances, update the policy YAML or apply a preset as described in [Customize the Sandbox Network Policy](customize-network-policy).
 Rejected rules stay blocked unless you later approve the same rule or add a matching endpoint to the policy.
 
+<AgentOnly variant="openclaw,hermes">
+
 ## Run the Walkthrough Script
 
 The walkthrough script is available in the NemoClaw repository at [`scripts/walkthrough.sh`](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/walkthrough.sh).
@@ -118,10 +120,14 @@ The script opens a split tmux session with the TUI on the left and the agent on 
 The walkthrough requires `tmux`, the `NVIDIA_INFERENCE_API_KEY` environment variable, and at least one onboarded sandbox attached to the active gateway.
 It attaches to an existing sandbox.
 
+</AgentOnly>
+
 </Steps>
 
 ## Related Topics
 
 - [Customize the Sandbox Network Policy](customize-network-policy) to add endpoints permanently.
 - [Network Policies](../reference/network-policies) for the full baseline policy reference.
+<AgentOnly variant="openclaw,hermes">
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) for general sandbox monitoring.
+</AgentOnly>

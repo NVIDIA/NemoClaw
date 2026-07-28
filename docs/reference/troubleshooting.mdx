@@ -72,6 +72,16 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 
 ### Docker is not running
 
+Check the host before onboarding:
+
+```bash
+$$nemoclaw host probe
+```
+
+The command does not start Docker or apply a repair.
+A `host.docker.daemon_unreachable` finding means Docker is installed but NemoClaw cannot reach the daemon.
+For JSON output and exit-code details, refer to [System Readiness](system-readiness).
+
 The installer and onboard wizard require Docker to be running.
 If you see a Docker connection error, start the Docker daemon:
 
@@ -1373,7 +1383,7 @@ $$nemoclaw <name> logs --tail 50
 If the host should be reachable, allow it with a preset or a [custom preset](../network-policy/customize-network-policy#custom-preset-files):
 </AgentOnly>
 <AgentOnly variant="deepagents">
-If the host should be reachable, allow it with a built-in preset or apply a reviewed custom preset file from the host:
+If the host should be reachable, allow it with a built-in preset or apply a [reviewed custom preset file](../network-policy/configure-policies/create-custom-policy-presets) from the host:
 </AgentOnly>
 
 ```bash
@@ -2123,7 +2133,7 @@ To permanently allow an endpoint, add it to the network policy.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for details.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-For Deep Agents, use `nemo-deepagents <name> policy add <preset>` for built-in presets or `nemo-deepagents <name> policy add --from-file <preset.yaml>` for reviewed custom presets.
+For Deep Agents, follow [Customize the Network Policy](../network-policy/customize-network-policy) to choose between built-in presets, reviewed custom presets, baseline edits, and live-policy replacement.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">

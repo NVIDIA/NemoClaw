@@ -8,11 +8,11 @@ import path from "node:path";
 import { dockerSpawn, dockerSpawnSync } from "../adapters/docker/exec";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
 import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
-import { ROOT } from "../runner";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
+import { ROOT } from "../state/paths";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
@@ -187,6 +187,8 @@ export async function prebuildSandboxImageIfEligible(
     );
     return { createArgs, imageRef: null, imageId: null };
   }
+  const fromIndex = createArgs.indexOf("--from");
+  const fromDockerfile = createArgs[fromIndex + 1];
   if (
     fromIndex < 0 ||
     !fromDockerfile ||

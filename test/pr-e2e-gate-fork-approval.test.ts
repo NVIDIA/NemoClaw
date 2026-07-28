@@ -1017,7 +1017,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(dispatch?.body).toMatchObject({
         ref: "main",
         inputs: {
-          jobs: "cloud-onboard,credential-sanitization,security-posture,inference-routing,network-policy",
+          jobs: "cloud-inference,cloud-onboard,security-posture,inference-routing,network-policy",
           targets: "ubuntu-repo-cloud-langchain-deepagents-code",
           pr_number: "42",
           checkout_sha: HEAD_SHA,
