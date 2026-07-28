@@ -151,6 +151,7 @@ export function createCoreOnboardFlowPhases<
         hermesToolGateways: context.hermesToolGateways,
         preferredInferenceApi: context.preferredInferenceApi,
         compatibleEndpointReasoning: context.compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort: context.compatibleEndpointReasoningEffort,
         nimContainer: context.nimContainer,
         webSearchConfig: context.webSearchConfig,
       },
@@ -174,6 +175,8 @@ export function createCoreOnboardFlowPhases<
         hermesToolGateways: providerInferenceResult.hermesToolGateways,
         preferredInferenceApi: providerInferenceResult.preferredInferenceApi,
         compatibleEndpointReasoning: providerInferenceResult.compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort:
+          providerInferenceResult.compatibleEndpointReasoningEffort,
         nimContainer: providerInferenceResult.nimContainer,
         webSearchConfig: providerInferenceResult.webSearchConfig,
       }),

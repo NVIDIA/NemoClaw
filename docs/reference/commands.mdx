@@ -3137,7 +3137,7 @@ Onboarding and `connect` can time-share compatible provider and model routes wit
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for the onboarding warnings, compatibility fields, and status drift report.
 
 ```bash
-$$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
+$$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>] [--reasoning-effort <effort>]
 ```
 
 You can also name the sandbox in sandbox-first position instead of passing `--sandbox`.
@@ -3166,6 +3166,9 @@ For a DNS-backed HTTPS URL, NemoClaw routes the endpoint through a local HTTPS P
 HTTPS IP-literal URLs remain supported and do not need the adapter.
 NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
 `--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
+`--reasoning-effort` accepts `low`, `medium`, `high`, or `default`, and sends the value as `reasoning_effort` in the request body of a model routed through `openai-completions`.
+Omit the flag to keep the recorded effort, or pass `default` to clear it and return the endpoint to its own default.
+NemoClaw rejects any other value before it changes the OpenShell route, the agent config, or the host registry.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -3585,6 +3588,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
+| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Sends `reasoning_effort` in the request body of a model routed through `openai-completions`. Unset, or `default`, leaves the endpoint's own default in place. Any other value fails before NemoClaw touches the provider, policies, the sandbox, or the registry. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 

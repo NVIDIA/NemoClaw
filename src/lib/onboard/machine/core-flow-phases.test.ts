@@ -42,6 +42,7 @@ function context(
     hermesToolGateways: [],
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -108,6 +109,7 @@ function createPhases(
         hermesToolGateways: ["local"],
         preferredInferenceApi: "chat",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: "nim-test",
       })),
       setupInference: vi.fn(async () => ({ ok: true as const })),
@@ -133,6 +135,8 @@ function createPhases(
       hydrateCredentialEnv: vi.fn(),
       configureCompatibleEndpointReasoning: vi.fn(async () => "false" as const),
       clearCompatibleEndpointReasoning: vi.fn(() => null),
+      configureCompatibleEndpointReasoningEffort: vi.fn(async () => null),
+      clearCompatibleEndpointReasoningEffort: vi.fn(() => null),
       repairLocalInferenceSystemdOverrideOrExit: vi.fn(),
       isNonInteractive: () => true,
       getOpenshellBinary: () => "openshell",
@@ -340,6 +344,7 @@ describe("core onboard flow phases", () => {
       hermesToolGateways: [],
       preferredInferenceApi: "chat",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
     }));
     const [providerPhase] = createPhases({ providerDeps: { setupNim } });

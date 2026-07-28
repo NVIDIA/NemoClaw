@@ -25,6 +25,8 @@
 #   NEMOCLAW_CONTEXT_WINDOW        Override the model's context window size (e.g., "32768").
 #   NEMOCLAW_MAX_TOKENS            Override the model's max output tokens (e.g., "8192").
 #   NEMOCLAW_REASONING             Set to "true" to enable reasoning mode for the model.
+#   NEMOCLAW_REASONING_EFFORT     Reasoning effort ("low", "medium", or "high") sent to a
+#                                 compatible OpenAI endpoint in the request body.
 #                                 Required for reasoning models (o1, Claude with thinking).
 #   NEMOCLAW_CORS_ORIGIN           Add a browser origin to allowedOrigins at startup without
 #                                 rebuilding. Useful for custom domains/ports (e.g.,
@@ -1125,6 +1127,7 @@ apply_model_override() {
   local context_window="${NEMOCLAW_CONTEXT_WINDOW:-}"
   local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
   local reasoning="${NEMOCLAW_REASONING:-}"
+  local reasoning_effort="${NEMOCLAW_REASONING_EFFORT:-}"
 
   # Validate supplemental override values before relaxing or writing config.
   if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[1-9][0-9]*$'; then
@@ -1144,12 +1147,22 @@ apply_model_override() {
         ;;
     esac
   fi
+  if [ -n "$reasoning_effort" ]; then
+    case "$reasoning_effort" in
+      low | medium | high) ;;
+      *)
+        printf '[SECURITY] NEMOCLAW_REASONING_EFFORT must be "low", "medium", or "high", got "%s" — skipping override\n' "$reasoning_effort" >&2
+        return 0
+        ;;
+    esac
+  fi
 
   [ -n "$model_override" ] && printf '[config] Applying model override: %s\n' "$model_override" >&2
   [ -n "$api_override" ] && printf '[config] Applying inference API override: %s\n' "$api_override" >&2
   [ -n "$context_window" ] && printf '[config] Applying context window override: %s\n' "$context_window" >&2
   [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
   [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
+  [ -n "$reasoning_effort" ] && printf '[config] Applying reasoning effort override: %s\n' "$reasoning_effort" >&2
 
   # Shields-up configs are root-owned and re-locked after writing; mutable
   # default configs are briefly root-owned so writes still work after
@@ -1160,6 +1173,7 @@ apply_model_override() {
   NEMOCLAW_CONTEXT_WINDOW="$context_window" \
     NEMOCLAW_MAX_TOKENS="$max_tokens" \
     NEMOCLAW_REASONING="$reasoning" \
+    NEMOCLAW_REASONING_EFFORT="$reasoning_effort" \
     python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE' || _write_rc=$?
 import json, os, sys
 
@@ -1167,6 +1181,7 @@ config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3
 context_window = os.environ.get("NEMOCLAW_CONTEXT_WINDOW", "")
 max_tokens = os.environ.get("NEMOCLAW_MAX_TOKENS", "")
 reasoning = os.environ.get("NEMOCLAW_REASONING", "")
+reasoning_effort = os.environ.get("NEMOCLAW_REASONING_EFFORT", "")
 
 with open(config_file) as f:
     cfg = json.load(f)
@@ -1187,6 +1202,10 @@ for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
             m["maxTokens"] = int(max_tokens)
         if reasoning:
             m["reasoning"] = reasoning == "true"
+        if reasoning_effort and pval.get("api") == "openai-completions":
+            params = m.setdefault("params", {})
+            extra_body = params.setdefault("extra_body", {})
+            extra_body["reasoning_effort"] = reasoning_effort
 
     # Patch inference API type if overridden (cross-provider switch)
     if api_override:

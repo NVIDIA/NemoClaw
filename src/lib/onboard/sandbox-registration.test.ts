@@ -102,6 +102,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -181,6 +182,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: "",
         preferredInferenceApi: "",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: "",
       },
       runtimeFields,
@@ -249,6 +251,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         compatibleEndpointReasoning: "true",
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -293,6 +296,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -327,6 +331,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "chat",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -355,6 +360,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -388,6 +394,7 @@ describe("selection", () => {
       endpointUrl: "https://wrong.test/v1",
       credentialEnv: "WRONG_KEY",
       compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: null,
       nimContainer: "wrong",
     });
 
@@ -401,6 +408,7 @@ describe("selection", () => {
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
     });
   });
@@ -413,6 +421,7 @@ describe("selection", () => {
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: null,
       nimContainer: "nim-right",
     });
 
@@ -426,6 +435,7 @@ describe("selection", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: null,
       nimContainer: "nim-right",
     });
   });
@@ -444,6 +454,7 @@ describe("registerCreatedSandbox", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
       },
       runtimeFields,

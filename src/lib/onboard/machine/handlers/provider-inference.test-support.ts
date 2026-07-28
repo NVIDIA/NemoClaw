@@ -18,6 +18,7 @@ import {
   mintProviderRecoveryReceipt,
   type ProviderRecoveryReceipt,
 } from "../../rebuild-route-handoff";
+import { normalizeReasoningEffort, resolveReasoningEffortRequest } from "../../reasoning-mode";
 import type { ProviderInferenceStateOptions, ProviderSelectionResult } from "./provider-inference";
 
 export type Gpu = { type: string } | null;
@@ -33,6 +34,7 @@ export const baseSelection: ProviderSelectionResult = {
   hermesToolGateways: [],
   preferredInferenceApi: "openai-responses",
   compatibleEndpointReasoning: null,
+  compatibleEndpointReasoningEffort: null,
   nimContainer: null,
 };
 
@@ -161,6 +163,9 @@ export function createDeps(
       configureCompatibleEndpointReasoning: async (value?: string | null) =>
         value === "true" ? "true" : "false",
       clearCompatibleEndpointReasoning: () => null,
+      configureCompatibleEndpointReasoningEffort: async (value?: unknown) =>
+        normalizeReasoningEffort(value) ?? resolveReasoningEffortRequest(null).effort,
+      clearCompatibleEndpointReasoningEffort: () => null,
       repairLocalInferenceSystemdOverrideOrExit: calls.repair,
       isNonInteractive: () => true,
       getOpenshellBinary: () => "/usr/bin/openshell",
@@ -211,6 +216,7 @@ export function baseOptions(
       hermesToolGateways: session?.hermesToolGateways ?? [],
       preferredInferenceApi: session?.preferredInferenceApi ?? null,
       compatibleEndpointReasoning: session?.compatibleEndpointReasoning ?? null,
+      compatibleEndpointReasoningEffort: session?.compatibleEndpointReasoningEffort ?? null,
       nimContainer: session?.nimContainer ?? null,
       webSearchConfig: session?.webSearchConfig ?? null,
     },

@@ -294,6 +294,7 @@ describe("createSetupNim", () => {
       hermesToolGateways: [],
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
       allowToolsIncompatible: false,
       skipHostInferenceSmoke: false,
@@ -688,6 +689,7 @@ describe("createSetupNim", () => {
       endpointSource: "inference-set",
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       skipHostInferenceSmoke: true,
       reuseGatewayCredentialWithoutLocalKey: true,
     });

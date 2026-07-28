@@ -16,7 +16,11 @@ import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
-import { describeIgnoredReasoningEnv } from "../../reasoning-mode";
+import {
+  describeIgnoredReasoningEffortEnv,
+  describeIgnoredReasoningEnv,
+  type ReasoningEffort,
+} from "../../reasoning-mode";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -70,6 +74,7 @@ export interface ProviderSelectionResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
@@ -110,6 +115,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hermesToolGateways: string[];
     preferredInferenceApi: string | null;
     compatibleEndpointReasoning: string | null;
+    compatibleEndpointReasoningEffort: string | null;
     nimContainer: string | null;
     webSearchConfig: WebSearchConfig | null;
   };
@@ -188,6 +194,10 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hydrateCredentialEnv(credentialEnv: string | null): string | null | undefined;
     configureCompatibleEndpointReasoning(storedValue?: string | null): Promise<"true" | "false">;
     clearCompatibleEndpointReasoning(): null;
+    configureCompatibleEndpointReasoningEffort(
+      storedValue?: unknown,
+    ): Promise<ReasoningEffort | null>;
+    clearCompatibleEndpointReasoningEffort(): null;
     repairLocalInferenceSystemdOverrideOrExit(
       options: RepairLocalInferenceSystemdOverrideOptions,
     ): void;
@@ -256,6 +266,7 @@ export interface ProviderInferenceStateResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   session: Session | null;
@@ -367,6 +378,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     initial.preferredInferenceApi,
   );
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
+  let compatibleEndpointReasoningEffort = initial.compatibleEndpointReasoningEffort;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
@@ -499,11 +511,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           deps.cliName(),
         );
         if (ignoredReasoning) deps.log(ignoredReasoning);
+        const ignoredReasoningEffort = describeIgnoredReasoningEffortEnv(
+          compatibleEndpointReasoningEffort,
+          deps.cliName(),
+        );
+        if (ignoredReasoningEffort) deps.log(ignoredReasoningEffort);
         compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
           compatibleEndpointReasoning,
         );
+        compatibleEndpointReasoningEffort = await deps.configureCompatibleEndpointReasoningEffort(
+          compatibleEndpointReasoningEffort,
+        );
       } else {
         compatibleEndpointReasoning = deps.clearCompatibleEndpointReasoning();
+        compatibleEndpointReasoningEffort = deps.clearCompatibleEndpointReasoningEffort();
       }
       const localInferenceRepairOptions = {
         provider,
@@ -577,6 +598,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       hermesToolGateways = selection.hermesToolGateways;
       preferredInferenceApi = selection.preferredInferenceApi;
       compatibleEndpointReasoning = selection.compatibleEndpointReasoning;
+      compatibleEndpointReasoningEffort = selection.compatibleEndpointReasoningEffort;
       nimContainer = selection.nimContainer;
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
@@ -638,6 +660,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ? initial.preferredInferenceApi
             : preferredInferenceApi,
           compatibleEndpointReasoning,
+          compatibleEndpointReasoningEffort,
           nimContainer,
           stationExpressModelIdentity: vllmModelIdentity,
         }),
@@ -716,6 +739,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             model,
             hermesAuthMethod,
             compatibleEndpointReasoning,
+            compatibleEndpointReasoningEffort,
             nimContainer,
             hermesToolGateways,
           }),
@@ -829,6 +853,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           model,
           hermesAuthMethod,
           compatibleEndpointReasoning,
+          compatibleEndpointReasoningEffort,
           nimContainer,
           hermesToolGateways,
         }),
@@ -922,6 +947,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         model,
         hermesAuthMethod,
         compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
         nimContainer,
         hermesToolGateways,
         // The forced #6294/#6289 heal succeeded: the gateway registration now
@@ -949,6 +975,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     hermesToolGateways,
     preferredInferenceApi,
     compatibleEndpointReasoning,
+    compatibleEndpointReasoningEffort,
     nimContainer,
     webSearchConfig,
     session,

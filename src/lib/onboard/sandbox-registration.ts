@@ -150,6 +150,9 @@ export function selection(
     compatibleEndpointReasoning: sessionMatches
       ? (session.compatibleEndpointReasoning ?? null)
       : null,
+    compatibleEndpointReasoningEffort: sessionMatches
+      ? (session.compatibleEndpointReasoningEffort ?? null)
+      : null,
     nimContainer: sessionMatches ? (session.nimContainer ?? null) : null,
   });
 }

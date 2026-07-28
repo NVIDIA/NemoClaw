@@ -29,6 +29,10 @@ import {
 } from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
+  type ReasoningEffortRequest,
+  resolveReasoningEffortRequest,
+} from "../onboard/reasoning-mode";
+import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,
 } from "../openshell-gateway-endpoint-guard";
@@ -89,6 +93,7 @@ export interface InferenceSetOptions {
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   inferenceApi?: string | null;
+  reasoningEffort?: string | null;
 }
 
 export interface InferenceSetResult {
@@ -417,6 +422,31 @@ function updatePrimaryAgentListModel(agents: ConfigObject, primaryModelRef: stri
   }
 }
 
+function applyReasoningEffortParams(
+  modelEntry: ConfigObject,
+  route: SandboxInferenceConfig,
+  request: ReasoningEffortRequest,
+): void {
+  if (!request.explicit) return;
+  const params = isConfigObject(modelEntry.params) ? { ...modelEntry.params } : {};
+  const extraBody = isConfigObject(params.extra_body) ? { ...params.extra_body } : {};
+  if (request.effort && route.inferenceApi === "openai-completions") {
+    extraBody.reasoning_effort = request.effort;
+  } else {
+    delete extraBody.reasoning_effort;
+  }
+  if (Object.keys(extraBody).length > 0) {
+    params.extra_body = extraBody;
+  } else {
+    delete params.extra_body;
+  }
+  if (Object.keys(params).length > 0) {
+    modelEntry.params = params;
+  } else {
+    delete modelEntry.params;
+  }
+}
+
 function buildProviderConfig(
   existing: ConfigObject,
   model: string,
@@ -424,6 +454,7 @@ function buildProviderConfig(
   contextWindow?: number,
   inheritedMaxTokens?: number,
   upstreamProviderMarker?: string,
+  reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
 ): ConfigObject {
   const firstExistingModel = Array.isArray(existing.models)
     ? cloneConfigObject(existing.models[0])
@@ -442,6 +473,7 @@ function buildProviderConfig(
   if (route.inferenceCompat) {
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
   }
+  applyReasoningEffortParams(firstExistingModel, route, reasoningEffort);
 
   const providerConfig: ConfigObject = {
     ...existing,
@@ -462,6 +494,7 @@ export function patchOpenClawInferenceConfig(
   preferredInferenceApi: string | null = null,
   contextWindow?: number,
   upstreamProviderMarker?: string,
+  reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -480,6 +513,7 @@ export function patchOpenClawInferenceConfig(
     contextWindow,
     inheritedMaxTokens,
     upstreamProviderMarker,
+    reasoningEffort,
   );
 
   return { changed: before !== JSON.stringify(config), route };
@@ -518,6 +552,7 @@ function updateMatchingOnboardSession(
   route: SandboxInferenceConfig,
   registryMetadata: RegistryInferenceMetadata,
   deps: Pick<InferenceSetDeps, "loadSession" | "updateSession">,
+  reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
 ): boolean {
   const session = deps.loadSession();
   if (!session || session.sandboxName !== sandboxName) return false;
@@ -534,6 +569,9 @@ function updateMatchingOnboardSession(
       getProviderSelectionConfig(provider, model)?.credentialEnv ??
       current.credentialEnv;
     current.preferredInferenceApi = registryMetadata.preferredInferenceApi ?? route.inferenceApi;
+    if (reasoningEffort.explicit) {
+      current.compatibleEndpointReasoningEffort = reasoningEffort.effort;
+    }
     current.nimContainer = registryMetadata.nimContainer ?? null;
     return current;
   });
@@ -653,6 +691,7 @@ async function runInferenceSetWithoutHostLock(
   // normalizing to the OpenShell name before validation and all downstream use.
   const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
+  const reasoningEffortRequest = resolveReasoningEffortRequest(options.reasoningEffort);
   assertSupportedProvider(provider, model);
   if (!isSafeModelId(model)) {
     throw new InferenceSetError(
@@ -935,6 +974,9 @@ async function runInferenceSetWithoutHostLock(
         endpointSource: registryMetadata.endpointSource ?? null,
         credentialEnv: registryMetadata.credentialEnv ?? null,
         preferredInferenceApi,
+        compatibleEndpointReasoningEffort: reasoningEffortRequest.explicit
+          ? reasoningEffortRequest.effort
+          : (entry.compatibleEndpointReasoningEffort ?? null),
         nimContainer: registryMetadata.nimContainer ?? null,
       });
     if (
@@ -1024,6 +1066,7 @@ async function runInferenceSetWithoutHostLock(
         preferredInferenceApi || getPreferredInferenceApi(config),
         contextWindow ?? undefined,
         provider,
+        reasoningEffortRequest,
       );
     }
 
@@ -1089,6 +1132,7 @@ async function runInferenceSetWithoutHostLock(
       patched.route,
       effectiveRegistryMetadata,
       deps,
+      reasoningEffortRequest,
     );
 
     return finalizeInferenceMutation(
@@ -1144,6 +1188,11 @@ export async function runInferenceSet(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
 ): Promise<InferenceSetResult> {
+  try {
+    resolveReasoningEffortRequest(options.reasoningEffort);
+  } catch (error) {
+    throw new InferenceSetError(error instanceof Error ? error.message : String(error), 2);
+  }
   try {
     assertNoOpenShellGatewayEndpointOverride();
   } catch (error) {

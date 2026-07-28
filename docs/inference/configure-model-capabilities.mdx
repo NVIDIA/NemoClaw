@@ -3,9 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure OpenClaw Model Capabilities"
 sidebar-title: "Configure Model Capabilities"
-description: "Declare reasoning mode and input modalities for an OpenClaw model in a NemoClaw sandbox."
-description-agent: "Configures OpenClaw reasoning mode and text or image input support. Use when onboarding a reasoning or vision-capable model."
-keywords: ["nemoclaw reasoning model", "nemoclaw vision model", "NEMOCLAW_INFERENCE_INPUTS"]
+description: "Declare reasoning mode, reasoning effort, and input modalities for an OpenClaw model in a NemoClaw sandbox."
+description-agent: "Configures OpenClaw reasoning mode, reasoning effort, and text or image input support. Use when onboarding a reasoning or vision-capable model."
+keywords:
+  [
+    "nemoclaw reasoning model",
+    "nemoclaw reasoning effort",
+    "nemoclaw vision model",
+    "NEMOCLAW_INFERENCE_INPUTS",
+  ]
 content:
   type: "how_to"
 ---
@@ -25,6 +31,22 @@ nemoclaw onboard
 
 For a compatible Anthropic endpoint, reasoning mode also skips the onboarding streaming check intended for models that emit normal response content.
 Agent requests still use the streaming path, so confirm the endpoint's runtime behavior separately.
+
+## Configure Reasoning Effort
+
+Set `NEMOCLAW_REASONING_EFFORT` to `low`, `medium`, or `high` for a compatible OpenAI endpoint that accepts an explicit reasoning budget.
+The default is unset, which leaves the endpoint's own default in place.
+
+```bash
+export NEMOCLAW_REASONING_EFFORT=high
+nemoclaw onboard
+```
+
+NemoClaw sends the value as `reasoning_effort` in the request body of a model routed through `openai-completions`.
+An endpoint on another API family ignores the setting, and NemoClaw omits it from the built configuration.
+Reasoning effort is independent of `NEMOCLAW_REASONING`: the flag declares that the model reasons, and the effort declares how much.
+
+Any other value fails before NemoClaw touches the provider, policies, the sandbox, or the registry.
 
 ## Configure Image Input
 
@@ -48,8 +70,17 @@ Recreate an existing sandbox after changing either value.
 nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
-Onboarding records the reasoning flag in the sandbox's session and registry entry.
-A resumed onboard and `nemoclaw <sandbox-name> rebuild` both replay that recorded value, so exporting `NEMOCLAW_REASONING` before either command does not change the flag.
-When a resumed onboard sees an explicit `NEMOCLAW_REASONING` that disagrees with the recorded value, it reports the recorded value and the recreate command instead of applying the variable.
+Onboarding records the reasoning flag and the reasoning effort in the sandbox's session and registry entry.
+A resumed onboard and `nemoclaw <sandbox-name> rebuild` both replay those recorded values, so exporting `NEMOCLAW_REASONING` or `NEMOCLAW_REASONING_EFFORT` before either command does not change them.
+When a resumed onboard sees an explicit value that disagrees with what is recorded, it reports the recorded value and the recreate command instead of applying the variable.
+
+To change the reasoning effort on a running sandbox without a recreate, pass `--reasoning-effort` to `inference set`.
+
+```bash
+nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <model> --reasoning-effort high
+```
+
+Pass `--reasoning-effort default` to clear a recorded effort and return the endpoint to its own default.
+An `inference set` that omits the flag keeps whatever effort the sandbox already records.
 
 For context-window and output-token settings, refer to [Configure Model Limits](configure-model-limits).

@@ -173,6 +173,7 @@ export interface Session {
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   routerPid: number | null;
   routerCredentialHash: string | null;
@@ -256,6 +257,7 @@ export interface SessionUpdates {
   hermesAuthMethod?: HermesAuthMethod | null;
   preferredInferenceApi?: string | null;
   compatibleEndpointReasoning?: string | null;
+  compatibleEndpointReasoningEffort?: string | null;
   nimContainer?: string | null;
   routerPid?: number;
   routerCredentialHash?: string;
@@ -290,6 +292,7 @@ export interface DebugSessionSummary {
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
@@ -666,6 +669,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
     compatibleEndpointReasoning: overrides.compatibleEndpointReasoning ?? null,
+    compatibleEndpointReasoningEffort: overrides.compatibleEndpointReasoningEffort ?? null,
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
@@ -740,6 +744,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
     preferredInferenceApi: readString(data.preferredInferenceApi),
     compatibleEndpointReasoning: readString(data.compatibleEndpointReasoning),
+    compatibleEndpointReasoningEffort: readString(data.compatibleEndpointReasoningEffort),
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
@@ -1265,6 +1270,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
   assignNullableString(safe, "compatibleEndpointReasoning", updates.compatibleEndpointReasoning);
+  assignNullableString(
+    safe,
+    "compatibleEndpointReasoningEffort",
+    updates.compatibleEndpointReasoningEffort,
+  );
   assignNullableString(safe, "nimContainer", updates.nimContainer);
   if (
     typeof updates.routerPid === "number" &&
@@ -1721,6 +1731,7 @@ export function summarizeForDebug(
     hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
     compatibleEndpointReasoning: session.compatibleEndpointReasoning,
+    compatibleEndpointReasoningEffort: session.compatibleEndpointReasoningEffort,
     nimContainer: session.nimContainer,
     toolDisclosure: session.toolDisclosure,
     observabilityEnabled: session.observabilityEnabled,
