@@ -197,16 +197,6 @@ describe("runInferenceSet compatible providers", () => {
                 stderr: "Error: provider 'compatible-endpoint' not found",
               };
         case "provider:get": {
-          if (!providerCreated) {
-            return {
-              status: 1,
-              output:
-                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
-              stdout: "",
-              stderr:
-                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
-            };
-          }
           const output = [
             "Name: compatible-endpoint",
             "Id: 11111111-2222-4333-8444-555555555555",
@@ -215,7 +205,16 @@ describe("runInferenceSet compatible providers", () => {
             "Credential keys: COMPATIBLE_API_KEY",
             "Config keys: OPENAI_BASE_URL",
           ].join("\n");
-          return { status: 0, output, stdout: output, stderr: "" };
+          return providerCreated
+            ? { status: 0, output, stdout: output, stderr: "" }
+            : {
+                status: 1,
+                output:
+                  "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+                stdout: "",
+                stderr:
+                  "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+              };
         }
         case "provider:create":
           providerCreated = true;
