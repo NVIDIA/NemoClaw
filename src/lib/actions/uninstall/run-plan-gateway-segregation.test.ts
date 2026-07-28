@@ -12,9 +12,9 @@ import { readGatewayRegistryFile } from "../../state/gateway-registry";
 import { migrateLegacyPortState } from "../../state/legacy-port-migration";
 import {
   type RunResult,
+  runUninstallPlan as runUninstallPlanBase,
   type UninstallRunDeps,
   type UninstallRunOptions,
-  runUninstallPlan as runUninstallPlanBase,
 } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
@@ -980,19 +980,32 @@ describe("uninstall gateway-port segregation (#3053)", () => {
   it("refuses host-wide cleanup when OpenShell is unavailable and no sibling files exist (#7315)", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-no-openshell-"));
     try {
+      const servicePath = path.join(
+        tmpHome,
+        ".config",
+        "systemd",
+        "user",
+        "nemoclaw-openshell-gateway.service",
+      );
+      fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+      fs.writeFileSync(servicePath, `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}\n`);
       const calls: Array<{ args: string[]; command: string }> = [];
+      const kill = vi.fn();
       const logs: string[] = [];
+      const rmSync = vi.fn();
       const warnings: string[] = [];
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "npm",
+          commandExists: (command) => command === "npm" || command === "systemctl",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           error: (line) => warnings.push(line),
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
+          kill,
           log: (line) => logs.push(line),
-          rmSync: fs.rmSync,
+          platform: "linux",
+          rmSync,
           run: (command, args) => {
             calls.push({ args, command });
             return ok();
@@ -1004,9 +1017,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(result.exitCode).toBe(1);
       expect(logs.join("\n")).toContain("resources owned by gateway 'nemoclaw'");
       expect(warnings.join("\n")).toContain(
-        "openshell not found; skipping gateway/provider/sandbox cleanup",
+        "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.",
       );
-      expect(calls.some(({ command }) => command === "npm")).toBe(false);
+      expect(calls).toEqual([]);
+      expect(kill).not.toHaveBeenCalled();
+      expect(rmSync).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
