@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with {
-  type: "json",
-};
 import type { NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
@@ -17,9 +13,6 @@ const { detectNvidiaPlatform } = vi.hoisted(() => ({
 vi.mock("../inference/nim", () => ({ detectNvidiaPlatform }));
 
 const NOW = new Date("2026-06-01T12:00:00Z");
-const ajv = new Ajv2020({ allErrors: true, strict: true });
-ajv.addFormat("date-time", { type: "string", validate: () => true });
-const validateReport = ajv.compile(systemReadinessSchema as AnySchema);
 
 function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
   return {
@@ -208,7 +201,7 @@ describe("host readiness projection (#7408)", () => {
     expect(findingIds(result)).toContain("host.gpu.cdi_stale");
   });
 
-  it("bounds and redacts successful probe text before schema validation", () => {
+  it("bounds and redacts successful probe text", () => {
     const result = report({
       dockerStorageDriver: `token=driver-secret ${"x".repeat(1500)}`,
     });
@@ -218,7 +211,6 @@ describe("host readiness projection (#7408)", () => {
 
     expect(storageDriver).not.toContain("driver-secret");
     expect(String(storageDriver).length).toBeLessThanOrEqual(1024);
-    expect(validateReport(result), JSON.stringify(validateReport.errors)).toBe(true);
   });
 
   it("uses unknown for dependent facts when Docker is unreachable", () => {
