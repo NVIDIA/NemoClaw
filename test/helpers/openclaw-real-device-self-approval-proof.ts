@@ -977,7 +977,13 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     [
       "#!/bin/sh",
       'printf "%s:%s\\n" "${1:-missing}" "${2:-missing}" >> "$NEMOCLAW_PROOF_CALL_LOG"',
-      'exec "$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"',
+      '"$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"',
+      "status=$?",
+      'if [ "$status" -eq 0 ] && [ "${NEMOCLAW_PROOF_APPROVAL_EXIT_NONZERO:-0}" = "1" ]; then',
+      '  printf "%s\\n" "raw concurrent approval output must stay private" >&2',
+      "  exit 1",
+      "fi",
+      'exit "$status"',
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -1221,6 +1227,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
       encoding: "utf8",
       env: {
         ...env,
+        NEMOCLAW_PROOF_APPROVAL_EXIT_NONZERO: "1",
         NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
         OPENCLAW_GATEWAY_TOKEN: gatewayToken,
       },
