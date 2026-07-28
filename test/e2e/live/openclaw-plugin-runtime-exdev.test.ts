@@ -1149,7 +1149,8 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     e2ePhases: [
       "confirm Docker CLI and clear the current plugin sandbox",
       "clone and prepare the current plugin fixture",
-      "install current OpenShell and onboard plugin v1",
+      "install and validate current OpenShell",
+      "build and onboard plugin v1",
       "restart the gateway and confirm plugin v1",
       "recreate the sandbox with plugin v2",
       "rebuild the sandbox with plugin v3",
@@ -1234,7 +1235,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     progress,
     CURRENT_LIFECYCLE_TEST_SELECTOR,
   );
-  progress.phase("install current OpenShell and onboard plugin v1");
+  progress.phase("install and validate current OpenShell");
   await stopOpenShellGatewayBeforeVersionSwitch(host, "existing");
   const pinnedOpenshell = await installAndResolvePinnedOpenShell(
     host,
@@ -1264,6 +1265,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
   ).toBe(true);
   const sandboxEnv = withOpenShellWrapperEnv(deploymentEnv, openshellWrapper, pinnedOpenshell);
 
+  progress.phase("build and onboard plugin v1");
   const onboard = await host.command(
     "node",
     [
