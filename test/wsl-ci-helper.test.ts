@@ -110,6 +110,42 @@ Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/ne
   );
 
   itPowerShell(
+    "rejects sync workdirs that are blank, relative, root, traversal paths, the checkout, or its ancestor",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+$unsafeWorkdirs = @(
+  '/',
+  '/mnt/d/agent',
+  '/mnt/d/agent/repo/',
+  '/tmp/nemoclaw/../shared',
+  'relative/workdir',
+  '   '
+)
+$messages = foreach ($workdir in $unsafeWorkdirs) {
+  try {
+    Get-WslCheckoutSyncScript -Checkout '/mnt/d/agent/repo' -Workdir $workdir
+    'unexpected success'
+  } catch {
+    $_.Exception.Message
+  }
+}
+$messages | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout.trim())).toEqual([
+        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '/'.",
+        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '/mnt/d/agent'.",
+        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '/mnt/d/agent/repo/'.",
+        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '/tmp/nemoclaw/../shared'.",
+        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: 'relative/workdir'.",
+        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '   '.",
+      ]);
+    },
+  );
+
+  itPowerShell(
     "omits the optional test-user argument instead of forwarding an empty value",
     `
 . ${JSON.stringify(WSL_CI_HELPER)}
