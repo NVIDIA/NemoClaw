@@ -162,13 +162,13 @@ describe("focused staging Brev Launchable lane", () => {
       "cleanup.json",
       "full-e2e.log",
       "lane.log",
-      "qualification.json",
+      "launchable-e2e.json",
     ]);
     expect(fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8")).not.toContain(
       "nvapi-test-value",
     );
     expect(
-      JSON.parse(fs.readFileSync(path.join(workDir, "qualification.json"), "utf8")),
+      JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8")),
     ).toMatchObject({
       candidateSha,
       fullE2e: "passed",

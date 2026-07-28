@@ -122,6 +122,24 @@ runtime mutation
 | **Credential rotation** — `configRotateToken` in `src/lib/sandbox/config.ts` | A session with `credentialEnv` selects the provider and binding. A non-null different `sandboxName` is rejected, but a legacy/null session name is accepted for the requested sandbox. The new value comes from a named environment variable, stdin, or a secret prompt; it is trimmed, then rejected when empty or still containing internal whitespace. | `saveCredential` first stages the value in the current process. OpenShell provider update is the first external mutation, with provider create as a fallback; audit follows. No sandbox deletion. | The logical binding is unchanged, so session and registry are not rewritten. The raw value exists only in process memory/environment and the gateway provider; audit records action/sandbox/reason without the value. | No rollback after a successful provider update; an audit failure can report failure after the credential is already active. Covered by the rotate-token cases in `test/config-set-nested-ssrf.test.ts`. Gap: a null-name legacy session is not strongly bound to the requested sandbox. |
 | **Config, policy, resource, port-forward, and runtime setup contributions** — `configSet`; `prepareInitialSandboxCreatePolicy`; `selectResourceProfileForSandbox`; manifest compiler/runtime appliers; dashboard and channel forward helpers | Config uses validated dotpaths and SSRF-safe URL rewriting. Create/rebuild contributions are assembled by `sandbox-create-plan.ts` and `MessagingWorkflowPlanner`: policy presets/keys, resource flags, package/build steps, `hostForward`, runtime node preloads, env aliases, and secret scans. | Config’s first effect is a compare-and-swap sandbox write. Build-time contributions inherit the enclosing create/recreate boundary. Forward helpers can stop an existing forward and start its replacement in place after readiness, without recreating the sandbox. | Durable owners are compact registry messaging/policy/inference metadata, current manifests used for plan rehydration, onboard session, sandbox config/hash, gateway provider state, and shields audit. An interrupted onboarding session records the selected resource values or an explicit OpenShell-default choice; the resolved create intent remains process-local. Logical bindings are serializable; raw provider values are not. | CAS rejects stale config writes; OpenClaw/Hermes commit config and integrity hashes together, while other agents may refresh a path hash afterward. Audit and optional restart are post-commit and forward-only. Forward recovery can re-establish declared forwards. Gaps: no cross-contribution effect transaction/checkpoint. |
 
+## Durable resumed recreate journal
+
+A resumed same-name replacement writes a secret-free journal before the lower create path can delete the source sandbox.
+The journal binds the session, sandbox, selected gateway, source registry row, source OpenShell ID fingerprint, target intent, target generation, and the replacement OpenShell ID fingerprint after creation.
+
+Recovery accepts only these states:
+
+- The source row and live ID match, so deletion can continue.
+- The source row remains and OpenShell reports no sandbox, so creation can continue.
+- The journaled replacement ID matches both the registry row and the ready live sandbox, and the registry row has the target generation, so the replacement can be accepted.
+
+All other combinations stop before the current run reuses, deletes, or creates a sandbox.
+The lower create path stamps the target generation and hashed OpenShell ID into the replacement row.
+The handler clears the journal after it records both create and registration receipts.
+
+This slice covers resumed onboard replacement, including not-ready repair and non-default gateways.
+Rebuild and non-resumed re-onboard remain under #6492.
+
 ## Agent-specific differences
 
 | Agent | Lifecycle difference |

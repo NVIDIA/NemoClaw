@@ -20,7 +20,7 @@ on:
         default: ""
         type: string
       include_staging_brev_launchable:
-        description: "Include Exact staging Brev Launchable qualification when jobs and targets are empty. Requires the persistent repository readiness gate."
+        description: "Include Exact staging Brev Launchable in a full E2E run when jobs and targets are empty."
         required: false
         default: false
         type: boolean
@@ -420,7 +420,7 @@ jobs:
   staging-brev-launchable:
     name: Exact staging Brev Launchable
     needs: generate-matrix
-    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')))) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment:
@@ -450,10 +450,10 @@ jobs:
       - id: workspace
         name: Prepare the trusted lane
         env:
-          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.BREV_API_KEY || '' }}
+          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.BREV_API_KEY || '' }}
           BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
           BREV_CLI_VERSION: 0.6.330
-          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.BREV_ORG_ID || '' }}
+          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.BREV_ORG_ID || '' }}
         run: |
           set -euo pipefail
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-e2e.XXXXXX")"
@@ -499,8 +499,8 @@ jobs:
       - name: Build, deploy, verify, test, and clean up
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
-          GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-e2e.sh
 
@@ -512,22 +512,9 @@ jobs:
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
             ${{ steps.workspace.outputs.work_dir }}/dispatch.json
-            ${{ steps.workspace.outputs.work_dir }}/qualification.json
+            ${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json
             ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
-
-  staging-brev-launchable-readiness:
-    name: Require staging Brev Launchable readiness
-    needs: generate-matrix
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && (github.repository != 'NVIDIA/NemoClaw' || github.ref != 'refs/heads/main' || vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED != 'true') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Fail when staging Brev Launchable is not ready
-        run: |
-          echo "::error::Full E2E must run from NVIDIA/NemoClaw main and requires NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED=true. A release administrator must enable it after the protected environment, secrets, staging Launchable ID, and ownership are configured."
-          exit 1
 
   live:
     needs: generate-matrix
@@ -5768,7 +5755,6 @@ jobs:
         generate-matrix,
         retired-selector-compatibility,
         staging-brev-launchable,
-        staging-brev-launchable-readiness,
         live,
         shared-e2e,
         openshell-gateway-auth-contract,
