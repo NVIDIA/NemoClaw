@@ -38,10 +38,10 @@ export NEMOCLAW_REASONING_EFFORT=high
 nemoclaw onboard
 ```
 
-NemoClaw applies the variable only to the `compatible-endpoint` provider.
-Another provider clears it, even when that provider's route uses `openai-completions`.
+During onboarding, NemoClaw applies the variable only to the `compatible-endpoint` provider.
+Onboarding with another provider clears it, even when that provider's route uses `openai-completions`.
 On the `compatible-endpoint` provider, a value outside `low`, `medium`, `high`, and `default` fails before NemoClaw touches the provider, policies, the sandbox, or the registry.
-Another provider clears the variable without reading it, so an invalid value neither applies nor fails.
+Onboarding with another provider clears the variable without reading it, so an invalid value neither applies nor fails.
 
 `default` names the unset state, which is useful to clear an effort that a sandbox already records.
 
@@ -92,10 +92,12 @@ To change the reasoning effort on a running sandbox without a recreate, pass `--
 nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <model> --endpoint-url <recorded-url> --reasoning-effort high
 ```
 
-Pass `--reasoning-effort default` to clear a recorded effort and return the endpoint to its own default.
+Pass `--reasoning-effort default` on a `compatible-endpoint` route that uses `openai-completions` to clear a recorded effort.
 `--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.
 When you omit the flag, `inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`.
+For either explicit input, `inference set` parses the value and resolves the provider and API before any mutation.
+It rejects every explicit value, including `default`, unless the resulting route uses `compatible-endpoint` and `openai-completions`.
 When neither is set, the sandbox keeps the recorded effort only while the resulting route still uses `compatible-endpoint` and `openai-completions`.
-Switching to another provider or API family clears the recorded effort.
+Without an explicit effort input, switching to another provider or API family clears the recorded effort.
 
 For context-window and output-token settings, refer to [Configure Model Limits](configure-model-limits).

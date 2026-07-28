@@ -65,7 +65,7 @@ describe("normalizeInferenceSelection", () => {
   it.each([
     ["high", "high"],
     [null, "endpoint-default"],
-  ] as const)("describes the effective OpenAI Completions effort (%s)", (stored, expected) => {
+  ] as const)("describes the effective OpenAI Completions effort (%s) (#7659)", (stored, expected) => {
     expect(
       getEffectiveReasoningEffort({
         provider: "compatible-endpoint",

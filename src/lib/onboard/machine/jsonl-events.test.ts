@@ -231,7 +231,7 @@ describe("onboard JSONL events", () => {
   it.each([
     ["high", "high"],
     [null, "endpoint-default"],
-  ] as const)("reports the effective non-secret reasoning effort (%s)", (stored, expected) => {
+  ] as const)("reports the effective non-secret reasoning effort (%s) (#7659)", (stored, expected) => {
     const context = buildOnboardMachineContext(
       createSession({
         provider: "compatible-endpoint",

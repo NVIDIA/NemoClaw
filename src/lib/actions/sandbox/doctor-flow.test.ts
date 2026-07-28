@@ -297,7 +297,7 @@ describe("runSandboxDoctor flow", () => {
   it.each([
     ["high", "high"],
     [null, "endpoint-default"],
-  ] as const)("reports effective reasoning effort in doctor JSON (%s)", async (stored, expected) => {
+  ] as const)("reports effective reasoning effort in doctor JSON (%s) (#7659)", async (stored, expected) => {
     const harness = createDoctorHarness("compatible-endpoint");
     harness.getSandboxSpy.mockReturnValue({
       name: "alpha",

@@ -587,13 +587,31 @@ function updateMatchingOnboardSession(
   return true;
 }
 
-function resolveScopedReasoningEffortRequest(
-  value: unknown,
+function resolveScopedReasoningEffortRequest(value: unknown): ReasoningEffortRequest {
+  return resolveReasoningEffortRequest(value);
+}
+
+function assertReasoningEffortProvider(request: ReasoningEffortRequest, provider: string): void {
+  if (!request.explicit || provider === "compatible-endpoint") return;
+  throw new InferenceSetError(
+    "--reasoning-effort applies only to the compatible-endpoint provider.",
+    2,
+  );
+}
+
+function assertReasoningEffortRoute(
+  request: ReasoningEffortRequest,
   provider: string,
-): ReasoningEffortRequest {
-  const cliRequest = resolveReasoningEffortRequest(value, {});
-  if (cliRequest.explicit || provider !== "compatible-endpoint") return cliRequest;
-  return resolveReasoningEffortRequest(null);
+  inferenceApi: string | null,
+): void {
+  assertReasoningEffortProvider(request, provider);
+  if (!request.explicit) return;
+  if (inferenceApi !== "openai-completions") {
+    throw new InferenceSetError(
+      "--reasoning-effort applies only to compatible-endpoint routes using openai-completions.",
+      2,
+    );
+  }
 }
 
 function openshellInferenceSetArgs(options: {
@@ -709,17 +727,9 @@ async function runInferenceSetWithoutHostLock(
   // normalizing to the OpenShell name before validation and all downstream use.
   const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
-  const reasoningEffortRequest = resolveScopedReasoningEffortRequest(
-    options.reasoningEffort,
-    provider,
-  );
+  const reasoningEffortRequest = resolveScopedReasoningEffortRequest(options.reasoningEffort);
   assertSupportedProvider(provider, model);
-  if (reasoningEffortRequest.effort && provider !== "compatible-endpoint") {
-    throw new InferenceSetError(
-      "--reasoning-effort applies only to the compatible-endpoint provider.",
-      2,
-    );
-  }
+  assertReasoningEffortProvider(reasoningEffortRequest, provider);
   if (!isSafeModelId(model)) {
     throw new InferenceSetError(
       "Invalid model id. Model values may only contain letters, numbers, '.', '_', ':', '/', and '-'.",
@@ -831,6 +841,15 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
+  // Explicit custom routes may start an HTTPS-pin adapter during finalization,
+  // so reject an unsupported API family before that first possible mutation.
+  if (preparedRoute.preliminaryExplicitMetadata) {
+    assertReasoningEffortRoute(
+      reasoningEffortRequest,
+      provider,
+      preparedRoute.preliminaryExplicitMetadata.preferredInferenceApi ?? null,
+    );
+  }
   const { registryMetadata, explicitPreferredInferenceApi, httpsPinProviderBinding } =
     await finalizeInferenceSetRoute({
       prepared: preparedRoute,
@@ -905,10 +924,22 @@ async function runInferenceSetWithoutHostLock(
   // committed the gateway route and registry first (only the in-sandbox layer is
   // `rebuild`-recoverable), so gate on the read here to abort cleanly instead of
   // leaving a half-applied switch across the three config layers (#6997).
+  // Route finalization has no side effect when metadata is reused; explicit
+  // custom routes were capability-checked before finalization above.
   const config = readInSandboxConfigOrFail(deps, sandboxName, target);
+  const preMutationInferenceApi =
+    explicitPreferredInferenceApi ??
+    resolveRuntimeInferenceApi({
+      agentName,
+      config,
+      currentProvider: entry.provider,
+      provider,
+      sandboxName,
+      session,
+    });
+  assertReasoningEffortRoute(reasoningEffortRequest, provider, preMutationInferenceApi);
   const previousProvider = typeof entry.provider === "string" ? entry.provider.trim() : "";
   const previousModel = typeof entry.model === "string" ? entry.model.trim() : "";
-
   let appliedHttpsPinProvider = false;
   let appliedInferenceSelection = false;
   let restoredSelectionAfterProviderFailure = false;
@@ -1220,7 +1251,10 @@ export async function runInferenceSet(
 ): Promise<InferenceSetResult> {
   try {
     const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
-    resolveScopedReasoningEffortRequest(options.reasoningEffort, provider);
+    assertReasoningEffortProvider(
+      resolveScopedReasoningEffortRequest(options.reasoningEffort),
+      provider,
+    );
   } catch (error) {
     throw new InferenceSetError(error instanceof Error ? error.message : String(error), 2);
   }

@@ -3197,15 +3197,15 @@ $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>
 ```
 
 `--reasoning-effort` accepts `low`, `medium`, `high`, or `default`.
-The `low`, `medium`, and `high` values apply only to the `compatible-endpoint` provider.
-NemoClaw rejects any other value before it changes the OpenShell route, the agent config, or the host registry.
+An explicit flag or `NEMOCLAW_REASONING_EFFORT` value applies only to a `compatible-endpoint` route that resolves to `openai-completions`.
+NemoClaw validates the explicit value, provider, and API before it changes the OpenShell route, the agent config, or the host registry.
+It rejects an unsupported route for every explicit value, including `default`.
 For a `low`, `medium`, or `high` value on an `openai-completions` route, NemoClaw writes `params.extra_body.reasoning_effort` on the model entry, and OpenClaw merges it into the request body.
-On another API family, NemoClaw removes an inherited `reasoning_effort` field and records the endpoint-default state.
 `--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.
 When you omit the flag, `$$nemoclaw inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`.
 When neither is set, the sandbox keeps the recorded effort only while the resulting route uses `compatible-endpoint` and `openai-completions`.
-Switching to another provider or API family clears the recorded effort.
-Pass `default` to clear a recorded effort and return the endpoint to its own default.
+Without an explicit effort input, switching to another provider or API family removes an inherited `reasoning_effort` field and records the endpoint-default state.
+Pass `default` on a `compatible-endpoint` route that uses `openai-completions` to clear a recorded effort and return the endpoint to its own default.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -3630,7 +3630,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
-| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort` when the selected API is `openai-completions`. Another API family omits the field. Unset leaves the endpoint's own default in place, and `default` clears a recorded effort. On `compatible-endpoint`, any other value fails before NemoClaw changes the provider, policies, sandbox, or registry. Another provider clears the variable without reading it. |
+| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort` when the selected API is `openai-completions`. Unset leaves the endpoint's own default in place. During `inference set`, NemoClaw rejects every explicit value, including `default`, before mutation unless the resulting route uses `compatible-endpoint` and `openai-completions`. Without an explicit effort input, switching to another provider or API family clears a recorded effort. During onboarding, another provider clears the variable without reading it. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 

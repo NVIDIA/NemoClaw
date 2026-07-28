@@ -101,7 +101,7 @@ describe("showSandboxStatus flow", () => {
   it.each([
     ["high", "high"],
     [null, "endpoint-default"],
-  ] as const)("reports the effective compatible-endpoint reasoning effort (%s)", async (stored, expected) => {
+  ] as const)("reports the effective compatible-endpoint reasoning effort (%s) (#7659)", async (stored, expected) => {
     const harness = createStatusFlowHarness({
       currentProvider: "compatible-endpoint",
       sandboxEntry: {
