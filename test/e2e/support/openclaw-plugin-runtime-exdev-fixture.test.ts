@@ -18,14 +18,16 @@ describe("OpenClaw plugin runtime EXDEV fixture selection", () => {
       baseImageEnv: {
         NEMOCLAW_SANDBOX_BASE_IMAGE_REF: RELEASE_SANDBOX_BASE_IMAGE_REF,
       },
+      openClawModulePath: "/usr/local/lib/node_modules/openclaw",
     });
   });
 
-  it("uses checkout source with CLI-selected base-image resolution", () => {
+  it("uses checkout source with CLI-selected base-image resolution and the managed OpenClaw module path", () => {
     expect(resolveOpenClawPluginRuntimeExdevFixture(CURRENT_LIFECYCLE_TEST_SELECTOR)).toEqual({
       selector: CURRENT_LIFECYCLE_TEST_SELECTOR,
       source: "current",
       baseImageEnv: {},
+      openClawModulePath: "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
     });
   });
 });

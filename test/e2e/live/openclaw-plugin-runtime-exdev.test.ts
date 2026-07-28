@@ -546,7 +546,7 @@ USER sandbox
 RUN test ! -e /opt/weather-plugin/node_modules/openclaw \
     && HOME=/sandbox openclaw plugins install /opt/weather-plugin \
     && test -L /sandbox/.openclaw/extensions/weather/node_modules/openclaw \
-    && test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = /usr/local/lib/node_modules/openclaw \
+    && test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = "${fixture.openClawModulePath}" \
     && HOME=/sandbox openclaw plugins enable weather \
     && HOME=/sandbox openclaw plugins inspect weather --json > /dev/null
 
@@ -666,6 +666,7 @@ async function assertWeatherPluginRuntime(
   phase: string,
   expectedFixtureVersion: WeatherFixtureVersion,
   expectedOpenClawVersion: string,
+  expectedOpenClawModulePath: OpenClawPluginRuntimeExdevFixture["openClawModulePath"],
 ): Promise<WeatherRuntimeProof> {
   const imageProbe = await sandbox.execShell(
     SANDBOX_NAME,
@@ -674,7 +675,7 @@ test -s /tmp/gateway.log
 test -s /usr/local/share/nemoclaw/e2e-weather-plugin.sha256
 test "$(openclaw --version 2>/dev/null | awk '{print $2}')" = "${expectedOpenClawVersion}"
 test -L /sandbox/.openclaw/extensions/weather/node_modules/openclaw
-test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = /usr/local/lib/node_modules/openclaw
+test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = "${expectedOpenClawModulePath}"
 expected=$(cat /usr/local/share/nemoclaw/e2e-weather-plugin.sha256)
 actual=$(cd /sandbox/.openclaw/extensions/weather && sha256sum dist/index.js dist/version.js | sha256sum | cut -d ' ' -f 1)
 [ "$expected" = "$actual" ]
@@ -1304,6 +1305,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     "after-onboard",
     "v1",
     customPluginContext.runtimeOpenClawVersion,
+    fixture.openClawModulePath,
   );
 
   progress.phase("restart the gateway and confirm plugin v1");
@@ -1318,6 +1320,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     "after-restart",
     "v1",
     customPluginContext.runtimeOpenClawVersion,
+    fixture.openClawModulePath,
   );
   expect(weatherAfterRestart.imageMarker).toBe(weatherAfterOnboard.imageMarker);
 
@@ -1360,6 +1363,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     "after-recreate",
     "v2",
     customPluginContext.runtimeOpenClawVersion,
+    fixture.openClawModulePath,
   );
   expect(weatherAfterRecreate.imageMarker).not.toBe(weatherAfterOnboard.imageMarker);
   await assertWorkspaceMarker(sandbox, "after-recreate", workspaceMarker);
@@ -1381,6 +1385,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     "after-rebuild",
     "v3",
     customPluginContext.runtimeOpenClawVersion,
+    fixture.openClawModulePath,
   );
   expect(weatherAfterRebuild.imageMarker).not.toBe(weatherAfterRecreate.imageMarker);
   await assertWorkspaceMarker(sandbox, "after-rebuild", workspaceMarker);
