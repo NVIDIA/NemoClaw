@@ -204,6 +204,24 @@ async function assertHermesReloadRollback(
     },
     replace_existing: false,
   });
+  const inspectionPayload = Buffer.from(
+    JSON.stringify({
+      present: {
+        [SERVER_NAME]: {
+          url: mcpUrl,
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:FAKE_MCP_SECRET",
+          },
+          timeout: 120,
+          connect_timeout: 60,
+          tools: { prompts: true, resources: true },
+          enabled: true,
+        },
+      },
+      absent: ["rollback_probe"],
+    }),
+    "utf8",
+  ).toString("base64");
   const script = [
     "set -eu",
     "/opt/hermes/.venv/bin/python - <<'PY'",
@@ -225,12 +243,14 @@ async function assertHermesReloadRollback(
     "    raise RuntimeError('rollback regression must run as the sandbox identity')",
     "real_reload = module.reload_gateway",
     "reload_calls = 0",
+    "rollback_reloaded = None",
     "def fail_then_reload():",
-    "    global reload_calls",
+    "    global reload_calls, rollback_reloaded",
     "    reload_calls += 1",
     "    if reload_calls == 1:",
     "        raise RuntimeError('injected first managed reload failure')",
-    "    return real_reload()",
+    "    rollback_reloaded = real_reload()",
+    "    return rollback_reloaded",
     "module.reload_gateway = fail_then_reload",
     "try:",
     "    module.execute('add', payload)",
@@ -242,28 +262,14 @@ async function assertHermesReloadRollback(
     "    raise RuntimeError(f'rollback performed {reload_calls} reload attempts instead of 2')",
     "if 'injected first managed reload failure' not in failure:",
     "    raise RuntimeError('transaction did not report the injected reload failure')",
-    "if 'config and hashes were restored' not in failure:",
-    "    raise RuntimeError('transaction did not report a complete rollback')",
+    "if rollback_reloaded is not True:",
+    "    raise RuntimeError('rollback did not restore a healthy managed gateway')",
     "after = {path: path.read_bytes() for path in paths}",
     "if after != before:",
     "    raise RuntimeError('rollback did not restore config and both hash anchors exactly')",
-    "module._assert_non_root_lifecycle_identity()",
-    "if not module._gateway_healthy():",
-    "    raise RuntimeError('gateway is unhealthy after the real rollback reload')",
-    "guard = module._load_guard()",
-    "snapshot = guard.inspect_mcp_integrity_snapshot(",
-    "    module.HERMES_DIR,",
-    "    module.STRICT_HASH_PATH,",
-    "    os.path.join(module.HERMES_DIR, '.config-hash'),",
-    ")",
-    "guard.assert_mcp_integrity_snapshot_current(snapshot)",
-    "print(json.dumps({",
-    "    'gateway': 'healthy',",
-    "    'reloads': reload_calls,",
-    "    'rollback': 'restored',",
-    "    'state': snapshot.state,",
-    "}, sort_keys=True))",
     "PY",
+    `inspection_payload="$(printf '%s' '${inspectionPayload}' | base64 -d)"`,
+    '/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py inspect --payload "$inspection_payload"',
   ].join("\n");
   const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
     artifactName: "hermes-mcp-failed-reload-rollback",
@@ -271,15 +277,14 @@ async function assertHermesReloadRollback(
     redactionValues: [
       HOST_SECRET,
       ROTATED_HOST_SECRET,
+      inspectionPayload,
       Buffer.from(script, "utf8").toString("base64"),
     ],
     timeoutMs: 7 * 60_000,
   });
   expectExitZero(result, "Hermes failed MCP reload restores config, hashes, and gateway");
   expect(JSON.parse(result.stdout)).toEqual({
-    gateway: "healthy",
-    reloads: 2,
-    rollback: "restored",
+    ok: true,
     state: "current",
   });
 }
