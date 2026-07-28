@@ -26,39 +26,38 @@ const onboardProviders = require("./providers") as {
   getProviderLabel: ResumeProviderRecoveryDeps["getProviderLabel"];
 };
 
-// Lazy require breaks the circular module load — by the time
-// `ensureResumeProviderReady` is called, onboard.ts has finished loading
-// and its `module.exports.resumeProviderShimDeps` is populated.
-type OnboardLazy = {
+export type ResumeProviderShimDeps = {
   isNonInteractive: ResumeProviderRecoveryDeps["isNonInteractive"];
   providerExistsInGateway(name: string, gatewayName: string): boolean;
-  resumeProviderShimDeps: {
-    isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
-    replaceNamedCredential: ResumeProviderRecoveryDeps["replaceNamedCredential"];
-  };
+  isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
+  replaceNamedCredential: ResumeProviderRecoveryDeps["replaceNamedCredential"];
 };
 
-export async function ensureResumeProviderReady(
-  gatewayName: string,
-  provider: string | null | undefined,
-  credentialEnv: string | null | undefined,
-): Promise<ResumeProviderRecoveryResult> {
-  const o = require("../onboard") as OnboardLazy;
-  return ensureResumeProviderReadyImpl(provider, credentialEnv, {
-    remoteProviderConfig: onboardProviders.REMOTE_PROVIDER_CONFIG,
-    defaultRouteCredentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
-    isRoutedInferenceProvider: o.resumeProviderShimDeps.isRoutedInferenceProvider,
-    providerExistsInGateway: (name) => o.providerExistsInGateway(name, gatewayName),
-    hydrateCredentialEnv,
-    getProviderLabel: onboardProviders.getProviderLabel,
-    isNonInteractive: o.isNonInteractive,
-    note: (m) => console.log(`${D}${m}${R}`),
-    replaceNamedCredential: o.resumeProviderShimDeps.replaceNamedCredential,
-    validateNvidiaApiKeyValue,
-    log: (m) => console.log(m),
-    warn: (m) => console.error(m),
-    exit: (c) => process.exit(c),
-  });
+export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
+  return {
+    async ensureResumeProviderReady(
+      gatewayName: string,
+      provider: string | null | undefined,
+      credentialEnv: string | null | undefined,
+    ): Promise<ResumeProviderRecoveryResult> {
+      return ensureResumeProviderReadyImpl(provider, credentialEnv, {
+        remoteProviderConfig: onboardProviders.REMOTE_PROVIDER_CONFIG,
+        defaultRouteCredentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+        isRoutedInferenceProvider: deps.isRoutedInferenceProvider,
+        providerExistsInGateway: (name) => deps.providerExistsInGateway(name, gatewayName),
+        hydrateCredentialEnv,
+        getProviderLabel: onboardProviders.getProviderLabel,
+        isNonInteractive: deps.isNonInteractive,
+        note: (message) => console.log(`${D}${message}${R}`),
+        replaceNamedCredential: deps.replaceNamedCredential,
+        validateNvidiaApiKeyValue,
+        log: (message) => console.log(message),
+        warn: (message) => console.error(message),
+        exit: (code) => process.exit(code),
+      });
+    },
+    isResumeProviderSurfaceReady,
+  };
 }
 
 export function isResumeProviderSurfaceReady(

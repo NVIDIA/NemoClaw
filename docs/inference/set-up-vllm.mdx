@@ -19,10 +19,11 @@ The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, 
 
 <Warning>
 Local vLLM does not require authentication by default.
-NemoClaw needs port `8000` on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
+Existing-server and single-host managed-vLLM paths need port `8000` on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
 Use a host firewall with default-deny inbound rules.
 Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
+The qualified dual-DGX Station path instead binds its bearer-protected `/v1` API to one selected private rail address and uses host networking on both runtime containers; follow the additional isolation guidance in the DGX Station section below.
 </Warning>
 
 ## Use an Existing Server
@@ -87,6 +88,7 @@ Managed profiles and model-specific recipes use immutable image digests:
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
 - The DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
+- A qualified two-Station Ultra pair instead uses the ARM64 manifest digest `sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37` under `vllm/vllm-openai:v0.25.1-aarch64`, with `10.24 GB` of compressed layers.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 - Generic Linux `amd64` hosts use `sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773` with a compressed layer size of `8.93 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 
@@ -181,7 +183,15 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
-On DGX Station, accepting the installer express prompt sets `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b` and overrides the profile default.
+On DGX Station, accepting the installer express prompt selects `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b` and checks for a trusted reciprocal pair.
+The installer prepares the local host with the pinned Station helper, derives exactly one counterpart from each of two configured private `/30` CX-8 rails, and consults existing SSH trust only for those two addresses.
+At least one derived address must already be trusted; if both are trusted, their host keys must identify one coherent SSH host.
+After the Stations pass reciprocal GPU, rail, MAC, route, neighbor, and jumbo-frame checks across both rails, the installer prepares the peer with the same reviewed helper and exports the qualified peer.
+No managed-vLLM runtime image or model download starts before the pair-qualification or single-Station fallback decision completes.
+If no trusted pair qualifies, Express retains the existing single-Station Ultra recipe.
+Setting `NEMOCLAW_VLLM_MODEL` remains authoritative; setting `NEMOCLAW_DGX_STATION_PEER` requests that exact already-trusted peer and fails closed if it does not qualify.
+When Express finds a complete running NemoClaw-managed dual-Station head, it defers the workload-rejecting host-preparation probe only while it revalidates the reciprocal pair and managed lifecycle contract; incomplete or mismatched workloads remain blocked.
+If the installer also recovers existing sandboxes, it still reconciles the newly accepted Station Express runtime state before completing.
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 
 ```bash
@@ -200,9 +210,27 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 
 The flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
 Without terminal access, the installer stops before it installs Docker or build dependencies instead of silently continuing with another configuration.
-The registered Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
-NemoClaw intentionally keeps its existing bridge-networked managed-inference topology instead of importing the playbook's host-network setting.
-The container publishes port `8000` through Docker, so apply the firewall guidance at the top of this page.
+The registered single-Station Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
+Configure the physical rails and SSH host-key and authentication trust before installation.
+NemoClaw does not modify rail configuration, enroll SSH trust, or reboot either host automatically.
+If the local host requires a reboot during initial preparation, the installer stops with status `10`; its owner-only receipt preserves the printed exact revision and Express selections.
+After reciprocal peer qualification begins, the pair state additionally binds SSH, GPU, and rail identity and names either host that must be rebooted manually.
+After the managed pair passes readiness and container validation, NemoClaw writes an owner-only cleanup receipt and a copied SSH binding under the selected gateway state root.
+A later onboarding run that reuses the same validated managed pair recreates this cleanup ownership before accepting the endpoint.
+The receipt contains no serving API key.
+It records the exact peer, cluster, and GPU identities needed to revalidate and remove both managed containers during full uninstall.
+If NemoClaw cannot write this receipt, setup stops and rolls back a newly started pair instead of leaving a runtime that full uninstall cannot safely reach.
+The registered two-Station Ultra recipe tracks the [latest NVIDIA dual-Station playbook](https://build.nvidia.com/station/nemoclaw/dual-nodes).
+It pins vLLM `0.25.1` and Ray `2.56.0`, uses one tensor-parallel rank per Station with pipeline parallelism across the pair, serves the `nemotron-ultra` alias with a `262144`-token model limit, and retains the Nemotron reasoning and tool-call parsers.
+The single-Station fallback keeps NemoClaw's bridge-networked managed-inference topology and publishes port `8000` through Docker.
+The qualified dual-Station runtime intentionally uses Docker host networking on both containers so NCCL and RDMA can bind the validated direct-attach rails.
+The head binds only the selected rank-0 address on a qualified private `/30` rail and requires the generated bearer key for `/v1`; `/health` remains unauthenticated for readiness.
+The worker joins the Ray cluster and exposes no vLLM API.
+Neither dual-Station container publishes a Docker port, so Docker bridge isolation and port-mapping rules do not protect this path.
+As compensating controls, both containers run as the probed non-root UID and GID with a read-only root filesystem, all Linux capabilities dropped, `no-new-privileges`, only the selected GPU UUID and exact `uverbs` devices, and a read-only model cache; the worker does not receive the serving key.
+Treat both Stations and their direct rails as one trusted runtime boundary.
+Allow port `8000` from the OpenShell Docker subnet only to the selected rank-0 rail address, deny it on management and LAN interfaces, and restrict distributed-serving traffic to the reciprocal addresses on the two qualified private rails.
+That distributed traffic includes the Ray head on TCP `6379` and Ray worker ports; do not expose either rail to an untrusted or routed network.
 
 <Warning>
 Before managed vLLM setup on DGX Station, follow [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation).
@@ -234,7 +262,9 @@ NEMOCLAW_PROVIDER=install-vllm \
 On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is sufficient for a non-interactive run.
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
-On DGX Station, a direct provider-only run therefore selects `deepseek-v4-flash`; the installer express flow sets the Nemotron 3 Ultra override for you.
+The commands above invoke `$$nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the `deepseek-v4-flash` profile default.
+Supplying `NEMOCLAW_PROVIDER=install-vllm` to the shell installer enters the Station host-preparation boundary while retaining that profile default.
+To request a non-interactive pair through this path, also set `NEMOCLAW_DGX_STATION_PEER`; the exact peer must qualify, and the installer selects the distributed Nemotron 3 Ultra recipe.
 
 For a headless DGX Station setup that selects DeepSeek V4 Flash explicitly, use the environment-variable path instead of `--station-deepseek`.
 

@@ -3,7 +3,7 @@
 
 /** Runs local repository checks that are not first-class Biome rules. */
 
-import { spawnSync, type SpawnSyncOptions } from "node:child_process";
+import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,6 +67,11 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "layer-import-boundaries",
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.mts"],
+  },
+  {
+    name: "source-architecture",
+    command: TSX,
+    args: ["scripts/checks/source-architecture.mts"],
   },
   {
     name: "no-test-dist-imports",

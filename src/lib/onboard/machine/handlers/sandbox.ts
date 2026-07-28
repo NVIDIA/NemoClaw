@@ -28,6 +28,7 @@ import type {
   CheckpointProviderBinding,
   CheckpointResourceProfile,
   CheckpointSandboxIdentity,
+  CheckpointSandboxRecreateTransaction,
   OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
 import type {
@@ -79,9 +80,18 @@ import {
 } from "../../observability-policy-presets";
 import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../sandbox-create-intent-types";
 import {
+  advanceSandboxRecreateTransaction,
+  beginSandboxRecreateTransaction,
+  clearCompletedSandboxRecreateTransaction,
+  fingerprintSandboxRecreateValue,
+  type SandboxRecreateObservation,
+  selectedGatewayForSandboxRecreate,
+} from "../../sandbox-recreate-transaction";
+import {
   assertBaselineExclusionsMatchCreateIntent,
   baselineExclusionsForCreate,
 } from "../../sandbox-registration";
+
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -179,6 +189,7 @@ export interface SandboxStateOptions<
       right: MessagingChannelConfig | null,
     ): boolean;
     getSandboxReuseState(sandboxName: string | null): string;
+    getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
     getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
@@ -368,6 +379,17 @@ function endpointSourceForCreateIntent(
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 type CompleteSandboxCreateIntent = SandboxCreateIntent & {
   readonly resolved: ResolvedSandboxCreateIntent;
+};
+
+type SandboxRecreateRepairMetadata = {
+  readonly repair: "recorded-sandbox-cleanup";
+  readonly sandboxName: string | null;
+};
+type SandboxRecreatePreparation = {
+  readonly transaction: CheckpointSandboxRecreateTransaction | null;
+  readonly effectiveCreateIntent: CompleteSandboxCreateIntent;
+  readonly repairMetadata: SandboxRecreateRepairMetadata | null;
+  readonly removalReceipt: SandboxRemovalReceipt | null;
 };
 
 function observabilityRequestValidationError(
@@ -1176,6 +1198,158 @@ class SandboxStateFlow<
     };
   }
 
+  private beginSandboxRecreateJournal(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+    createIntent: CompleteSandboxCreateIntent,
+  ): CheckpointSandboxRecreateTransaction | null {
+    const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
+    if (!this.options.resume && !existing) return null;
+    const gateway = selectedGatewayForSandboxRecreate(
+      state.session?.checkpoint,
+      this.options.gatewayName,
+    );
+    if (
+      existing &&
+      (!gateway ||
+        existing.gatewayName !== gateway.gatewayName ||
+        existing.gatewayPort !== gateway.gatewayPort)
+    ) {
+      throw new Error(
+        `Cannot resume sandbox '${existing.sandboxName}' recreation: journaled gateway '${existing.gatewayName}:${String(existing.gatewayPort)}' does not match the selected gateway authority.`,
+      );
+    }
+    if (!gateway) return null;
+    const sourceEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (!existing && !sourceEntry) return null;
+    const observation = this.deps.getSandboxRecreateObservation(sandboxName);
+    const targetIntentFingerprint = fingerprintSandboxRecreateValue(
+      this.currentSandboxCreateFingerprint(sandboxName, createIntent.resolved),
+    );
+    const updated = this.deps.updateSession((current) => {
+      beginSandboxRecreateTransaction(current, {
+        sandboxName,
+        gatewayName: gateway.gatewayName,
+        gatewayPort: gateway.gatewayPort,
+        sourceEntry,
+        observation,
+        targetIntentFingerprint,
+      });
+      return current;
+    });
+    return updated.checkpoint?.sandboxRecreate ?? null;
+  }
+
+  private recordSandboxRecreatePhase(
+    transaction: CheckpointSandboxRecreateTransaction,
+    phase: Parameters<typeof advanceSandboxRecreateTransaction>[2],
+  ): void {
+    this.deps.updateSession((current) => {
+      advanceSandboxRecreateTransaction(current, transaction.id, phase);
+      return current;
+    });
+  }
+
+  private clearSandboxRecreateJournal(transaction: CheckpointSandboxRecreateTransaction): Session {
+    return this.deps.updateSession((current) => {
+      clearCompletedSandboxRecreateTransaction(current, transaction.id);
+      return current;
+    });
+  }
+
+  private async prepareSandboxRecreate(
+    state: SandboxStepState<WebSearchConfig>,
+    requestedSandboxName: string,
+    createIntent: CompleteSandboxCreateIntent,
+    decision: SandboxCreationDecision,
+  ): Promise<SandboxRecreatePreparation> {
+    const transaction = this.beginSandboxRecreateJournal(state, requestedSandboxName, createIntent);
+    const repairMetadata: SandboxRecreateRepairMetadata | null =
+      decision.kind === "repair-and-recreate"
+        ? { repair: "recorded-sandbox-cleanup", sandboxName: state.sandboxName }
+        : null;
+    if (!transaction) {
+      return {
+        transaction,
+        effectiveCreateIntent: createIntent,
+        repairMetadata,
+        removalReceipt: await applySandboxResumeDecision(decision, state.sandboxName, this.deps),
+      };
+    }
+    const effectiveCreateIntent: CompleteSandboxCreateIntent = {
+      ...createIntent,
+      recreate: true,
+      recreateTransaction: {
+        id: transaction.id,
+        targetGeneration: transaction.targetGeneration,
+        targetIntentFingerprint: transaction.targetIntentFingerprint,
+      },
+    };
+    if (repairMetadata) {
+      this.deps.note(
+        `  [resume] Recorded sandbox '${state.sandboxName}' exists but is not ready; recreating it.`,
+      );
+      await this.deps.recordRepairEvent("state.repair.started", {
+        state: "sandbox",
+        metadata: repairMetadata,
+      });
+    } else if (decision.kind === "recreate") {
+      this.deps.note(decision.note);
+    }
+    return { transaction, effectiveCreateIntent, repairMetadata, removalReceipt: null };
+  }
+
+  private async recordSandboxRecreateRepairFailure(
+    transaction: CheckpointSandboxRecreateTransaction | null,
+    repairMetadata: SandboxRecreateRepairMetadata | null,
+    error: unknown,
+  ): Promise<void> {
+    if (!repairMetadata || !transaction) return;
+    await this.deps.recordRepairEvent("state.repair.failed", {
+      state: "sandbox",
+      error: error instanceof Error ? error.message : String(error),
+      metadata: repairMetadata,
+    });
+  }
+
+  private async recordSandboxRecreateRepairSuccess(
+    transaction: CheckpointSandboxRecreateTransaction | null,
+    repairMetadata: SandboxRecreateRepairMetadata | null,
+  ): Promise<void> {
+    if (!repairMetadata || !transaction) return;
+    await this.deps.recordRepairEvent("state.repair.completed", {
+      state: "sandbox",
+      metadata: repairMetadata,
+    });
+  }
+
+  private recordSandboxRecreateRegistryCommit(
+    transaction: CheckpointSandboxRecreateTransaction | null,
+  ): void {
+    if (!transaction || transaction.phase === "completed") return;
+    this.recordSandboxRecreatePhase(transaction, "registry_committing");
+  }
+
+  private recordSandboxCreateEffects(
+    transaction: CheckpointSandboxRecreateTransaction | null,
+    sandboxName: string,
+    createIntent: CompleteSandboxCreateIntent,
+  ): Session {
+    const recordedSession = this.deps.updateSession((current) => {
+      recordCheckpointEffectGroup(
+        current,
+        "sandbox_create",
+        this.currentSandboxCreateFingerprint(sandboxName, createIntent.resolved),
+      );
+      recordCheckpointEffectGroup(current, "sandbox_register", sandboxName);
+      if (transaction) {
+        advanceSandboxRecreateTransaction(current, transaction.id, "completed");
+      }
+      return current;
+    });
+    return transaction ? this.clearSandboxRecreateJournal(transaction) : recordedSession;
+  }
+
   private async createAndRecordSandbox(
     initialState: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
@@ -1227,11 +1401,8 @@ class SandboxStateFlow<
         requestedSandboxName,
         createIntent.resolved.policy.options.baselineExclusions,
       );
-      const removalReceipt = await applySandboxResumeDecision(
-        decision,
-        state.sandboxName,
-        this.deps,
-      );
+      const { transaction, effectiveCreateIntent, repairMetadata, removalReceipt } =
+        await this.prepareSandboxRecreate(state, requestedSandboxName, createIntent, decision);
       let rollbackArmed = removalReceipt !== null;
       const restoreRemovedRegistryEntry = () => {
         if (!rollbackArmed || !removalReceipt) return;
@@ -1269,7 +1440,7 @@ class SandboxStateFlow<
               resourceProfile,
               effectiveHermesToolGateways,
               this.options.hermesAuthMethod,
-              createIntent,
+              effectiveCreateIntent,
             ),
         );
         // createSandbox returns only after the replacement row is registered.
@@ -1279,8 +1450,11 @@ class SandboxStateFlow<
       } catch (error) {
         restoreRemovedRegistryEntry();
         process.removeListener("exit", restoreRemovedRegistryEntry);
+        await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
+      await this.recordSandboxRecreateRepairSuccess(transaction, repairMetadata);
+      this.recordSandboxRecreateRegistryCommit(transaction);
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
       const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
@@ -1310,15 +1484,11 @@ class SandboxStateFlow<
           hermesToolGateways: effectiveHermesToolGateways,
         }),
       );
-      const recordedSession = this.deps.updateSession((current) => {
-        recordCheckpointEffectGroup(
-          current,
-          "sandbox_create",
-          this.currentSandboxCreateFingerprint(sandboxName, createIntent.resolved),
-        );
-        recordCheckpointEffectGroup(current, "sandbox_register", sandboxName);
-        return current;
-      });
+      const recordedSession = this.recordSandboxCreateEffects(
+        transaction,
+        sandboxName,
+        createIntent,
+      );
       return { ...state, sandboxName, session: recordedSession };
     };
     const withGatewayLock = () =>
