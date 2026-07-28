@@ -196,12 +196,22 @@ const sdk = vi.hoisted(() => {
   };
 });
 
+const transport = vi.hoisted(() => ({
+  configure: vi.fn(),
+}));
+
 vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   ...(await importOriginal()),
   createAgentSession: sdk.createAgentSession,
 }));
 
+vi.mock("../tools/advisors/http-dispatcher.mts", () => ({
+  configureAdvisorHttpDispatcher: transport.configure,
+}));
+
 import {
+  ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+  ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   type AdvisorPromptTurn,
   advisorRetrySettings,
   READ_ONLY_TOOLS,
@@ -276,6 +286,8 @@ async function run(promptTurns: AdvisorPromptTurn[]) {
 
 afterEach(() => {
   delete process.env.TEST_ADVISOR_KEY;
+  vi.unstubAllEnvs();
+  vi.clearAllMocks();
   sdk.reset();
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -292,6 +304,27 @@ describe("advisor session runner", () => {
       },
     });
     expect(advisorRetrySettings("nvidia/nvidia/nemotron-3-ultra").baseDelayMs).toBe(9_000);
+  });
+
+  it("configures Pi's proxy transport before an OpenShell SDK session", async () => {
+    vi.stubEnv("PR_REVIEW_ADVISOR_BASE_URL", ADVISOR_OPENSHELL_INFERENCE_BASE_URL);
+
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(transport.configure).toHaveBeenCalledOnce();
+    expect(transport.configure.mock.invocationCallOrder[0]).toBeLessThan(
+      sdk.createAgentSession.mock.invocationCallOrder[0] as number,
+    );
+  });
+
+  it("leaves the global transport unchanged for hosted advisor inference", async () => {
+    vi.stubEnv("PR_REVIEW_ADVISOR_BASE_URL", ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
+
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(transport.configure).not.toHaveBeenCalled();
   });
 
   it("clears a transient provider error after the same-session retry succeeds", async () => {

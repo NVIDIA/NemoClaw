@@ -242,6 +242,7 @@ describe("rebuild resume session normalization", () => {
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         pinEndpoint: true,
         endpointUrl: "https://new-provider.example/v1",
         registryInferenceRoute: null,

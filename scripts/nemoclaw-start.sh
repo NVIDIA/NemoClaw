@@ -25,7 +25,9 @@
 #   NEMOCLAW_CONTEXT_WINDOW        Override the model's context window size (e.g., "32768").
 #   NEMOCLAW_MAX_TOKENS            Override the model's max output tokens (e.g., "8192").
 #   NEMOCLAW_REASONING             Set to "true" to enable reasoning mode for the model.
-#                                 Required for reasoning models (o1, Claude with thinking).
+#   NEMOCLAW_REASONING_EFFORT     Build-time reasoning effort ("low", "medium", or "high")
+#                                 for a compatible OpenAI endpoint. Startup preserves the
+#                                 persisted value so `inference set` changes survive restarts.
 #   NEMOCLAW_CORS_ORIGIN           Add a browser origin to allowedOrigins at startup without
 #                                 rebuilding. Useful for custom domains/ports (e.g.,
 #                                 "https://my-server.example.com:8443").
@@ -1065,10 +1067,11 @@ ensure_mutable_openclaw_config_hash() {
 
 apply_model_override() {
   # Only explicit override env vars trigger a config patch. NEMOCLAW_CONTEXT_WINDOW,
-  # NEMOCLAW_MAX_TOKENS, and NEMOCLAW_REASONING are promoted from Dockerfile build
-  # ARGs to ENV and are always set — they should only take effect when accompanied
-  # by an explicit model or API override. Without this guard the function runs on
-  # every container start even with no override requested. Ref: #2653
+  # NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING, and NEMOCLAW_REASONING_EFFORT are
+  # promoted from Dockerfile build ARGs to ENV and are always set. They should only
+  # take effect when accompanied by an explicit model or API override. Reasoning
+  # effort is deliberately not replayed here: `inference set` owns the persisted
+  # runtime value, which must survive an ordinary container restart. Ref: #2653
   [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
     || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
     || return 0
@@ -1144,7 +1147,6 @@ apply_model_override() {
         ;;
     esac
   fi
-
   [ -n "$model_override" ] && printf '[config] Applying model override: %s\n' "$model_override" >&2
   [ -n "$api_override" ] && printf '[config] Applying inference API override: %s\n' "$api_override" >&2
   [ -n "$context_window" ] && printf '[config] Applying context window override: %s\n' "$context_window" >&2
@@ -1177,6 +1179,11 @@ if model_override:
 
 # Patch model properties in provider config
 for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
+    # Apply the route override before deciding whether reasoning effort is
+    # valid for the resulting provider API.
+    if api_override:
+        pval["api"] = api_override
+    effective_api = pval.get("api")
     for m in pval.get("models", []):
         if model_override:
             m["id"] = model_override
@@ -1187,10 +1194,21 @@ for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
             m["maxTokens"] = int(max_tokens)
         if reasoning:
             m["reasoning"] = reasoning == "true"
-
-    # Patch inference API type if overridden (cross-provider switch)
-    if api_override:
-        pval["api"] = api_override
+        # The image-baked NEMOCLAW_REASONING_EFFORT is an onboarding input, not
+        # a startup override. Preserve the persisted model value so a runtime
+        # `inference set --reasoning-effort` mutation survives restart. An
+        # explicit API switch still clears an effort that the resulting API
+        # cannot carry.
+        if api_override and effective_api != "openai-completions":
+            params = m.get("params")
+            if isinstance(params, dict):
+                extra_body = params.get("extra_body")
+                if isinstance(extra_body, dict):
+                    extra_body.pop("reasoning_effort", None)
+                    if not extra_body:
+                        params.pop("extra_body", None)
+                if not params:
+                    m.pop("params", None)
 
 with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)

@@ -101,10 +101,7 @@ function openAiLikeFailureFromError(error) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set([
-  "qwen/qwen3.5-397b-a17b",
-  "deepseek-ai/deepseek-v4-flash",
-]);
+const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set(["deepseek-ai/deepseek-v4-flash"]);
 
 // Hostnames that are normally meant for the sandbox/container host boundary.
 // host.openshell.internal only resolves inside the OpenShell sandbox network,

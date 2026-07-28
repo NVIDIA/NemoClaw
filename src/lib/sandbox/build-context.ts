@@ -63,6 +63,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     "install-reviewed-runtime.sh",
     "build-runtime.ts",
     "mcp-tool-discovery.ts",
+    "streamable-http-client.test.ts",
     "tool-discovery-core.ts",
   ]) {
     fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
@@ -284,9 +285,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
   );
+  fs.mkdirSync(path.join(stagedScriptsDir, "openclaw"), { recursive: true });
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "patch-openclaw-gateway-daemon-dialback.mts"),
-    path.join(stagedScriptsDir, "patch-openclaw-gateway-daemon-dialback.mts"),
+    path.join(rootDir, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
+    path.join(stagedScriptsDir, "openclaw", "patch-gateway-daemon-dialback.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "extract-semver.sh"),

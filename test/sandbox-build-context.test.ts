@@ -54,6 +54,7 @@ describe("sandbox build context staging", () => {
       "install-reviewed-runtime.sh",
       "build-runtime.ts",
       "mcp-tool-discovery.ts",
+      "streamable-http-client.test.ts",
       "tool-discovery-core.ts",
     ]) {
       writeFixture(
@@ -132,7 +133,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
-    writeFixture(path.join("scripts", "patch-openclaw-gateway-daemon-dialback.mts"));
+    writeFixture(path.join("scripts", "openclaw", "patch-gateway-daemon-dialback.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
@@ -234,6 +235,7 @@ describe("sandbox build context staging", () => {
       "mcp-tool-discovery.ts",
       "package-lock.json",
       "package.json",
+      "streamable-http-client.test.ts",
       "tool-discovery-core.ts",
       "tsconfig.json",
     ]);
@@ -563,7 +565,9 @@ describe("sandbox build context staging", () => {
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.mts")),
       ).toBe(true);
       expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-gateway-daemon-dialback.mts")),
+        fs.existsSync(
+          path.join(buildCtx, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
+        ),
       ).toBe(true);
       expect(
         fs.existsSync(

@@ -210,12 +210,16 @@ graph as the live targets:
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
 
+A manual run with `jobs=staging-brev-launchable` runs only the exact staging
+Launchable E2E job. Scheduled runs do not select this job.
+
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
-`targets` selectors is a full dispatch. Each full dispatch uses `github.run_id`
-in its workflow concurrency identity, so another full dispatch cannot supersede
-it while it waits. The protected `staging-brev-launchable` job uses the
-non-cancelling `staging-brev-launchable-cpu` group with `queue: max`, so pending
-qualifications remain queued instead of replacing one another.
+`targets` selectors runs the default suite and the Launchable E2E job.
+This is the full run required for pre-tag evidence. Each full dispatch uses
+`github.run_id` in its workflow concurrency identity, so another full dispatch
+cannot supersede it while it waits. The protected `staging-brev-launchable` job
+uses the non-cancelling `staging-brev-launchable-cpu` group with `queue: max`,
+so pending Launchable E2E runs remain queued instead of replacing one another.
 
 ### Hosted-runner recovery
 
@@ -554,7 +558,7 @@ The closed-PR outcome also applies when a fork repository was deleted and
 GitHub consequently returns no head-repository object.
 Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 `security-posture`. E2E control-plane changes select `cloud-onboard`,
-`credential-sanitization`, and `security-posture`. The `e2e-control-plane`
+`cloud-inference`, and `security-posture`. The `e2e-control-plane`
 family is a conservative path boundary that includes non-documentation files
 under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
 policy, dependency and test configuration, and preparation and upload actions.

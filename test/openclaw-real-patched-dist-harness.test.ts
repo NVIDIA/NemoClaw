@@ -27,7 +27,8 @@ const PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS = path.join(
 const PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK = path.join(
   REPO_ROOT,
   "scripts",
-  "patch-openclaw-gateway-daemon-dialback.mts",
+  "openclaw",
+  "patch-gateway-daemon-dialback.mts",
 );
 const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REAL_OPENCLAW_NODE_ENV = "NEMOCLAW_REAL_OPENCLAW_NODE";

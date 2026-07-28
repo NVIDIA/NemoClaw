@@ -3,7 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
-import { applyReusedSandboxDashboardState } from "./sandbox-reuse";
+import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
+import { applyReusedSandboxDashboardState, createSandboxReuseHelpers } from "./sandbox-reuse";
 
 describe("applyReusedSandboxDashboardState", () => {
   afterEach(() => {
@@ -192,5 +193,47 @@ describe("applyReusedSandboxDashboardState", () => {
       dashboardPort: 0,
       hermesDashboardState: { enabled: false, config: null },
     });
+  });
+});
+
+describe("createSandboxReuseHelpers", () => {
+  it("observes state and a stable OpenShell identity together for recreate recovery", () => {
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      args[1] === "get"
+        ? "Name: alpha\n\u001b[32mId: openshell-source-id\u001b[0m\nState: Ready\n"
+        : "alpha Ready\n",
+    );
+    const getSandboxStateFromOutputs = vi.fn(() => "ready");
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell,
+      runOpenshell: vi.fn(),
+      getSandboxStateFromOutputs,
+      note: vi.fn(),
+    });
+
+    expect(helpers.getSandboxRecreateObservation("alpha")).toEqual({
+      state: "ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
+    });
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(1, ["sandbox", "get", "alpha"], {
+      ignoreError: true,
+    });
+    expect(getSandboxStateFromOutputs).toHaveBeenCalledWith(
+      "alpha",
+      expect.stringContaining("Id: openshell-source-id"),
+      "alpha Ready\n",
+    );
+  });
+
+  it("preserves an unknown reuse state but rejects it for recreate recovery", () => {
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(() => ""),
+      runOpenshell: vi.fn(),
+      getSandboxStateFromOutputs: vi.fn(() => "unknown"),
+      note: vi.fn(),
+    });
+
+    expect(helpers.getSandboxReuseState("alpha")).toBe("unknown");
+    expect(() => helpers.getSandboxRecreateObservation("alpha")).toThrow(/state 'unknown'/);
   });
 });

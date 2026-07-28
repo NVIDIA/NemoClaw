@@ -16,14 +16,15 @@ import {
   patchGatewayToolTargetText,
   patchOpenClawGatewayDaemonDialback,
   TOOL_TARGET_MARKER,
-} from "../scripts/patch-openclaw-gateway-daemon-dialback.mts";
+} from "../scripts/openclaw/patch-gateway-daemon-dialback.mts";
 import { restoreEnv } from "./helpers/env-test-helpers";
 
 const PATCH_SCRIPT = path.join(
   import.meta.dirname,
   "..",
   "scripts",
-  "patch-openclaw-gateway-daemon-dialback.mts",
+  "openclaw",
+  "patch-gateway-daemon-dialback.mts",
 );
 const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
 
