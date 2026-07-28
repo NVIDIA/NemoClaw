@@ -91,7 +91,7 @@ New-WslScriptArguments -Distro 'Ubuntu Test' -User 'ci user' -ScriptPath '/mnt/c
     "builds the ext4 sync script with quoted paths and explicit ownership",
     `
 . ${JSON.stringify(WSL_CI_HELPER)}
-Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/nemoclaw work/run's" -Owner nemoclaw-ci
+Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/nemoclaw-wsl-workdir/123-1" -Owner nemoclaw-ci
 `,
     (result) => {
       expect(result.status).toBe(0);
@@ -99,25 +99,54 @@ Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/ne
       expect(result.stdout).toContain("if [ ! -d '/mnt/d/agent work/repo'\"'\"'s/.git' ]; then");
       expect(result.stdout).toContain("rsync -a --no-owner --no-group --delete");
       expect(result.stdout).toContain(
-        "git config --global --add safe.directory '/tmp/nemoclaw work/run'\"'\"'s'",
+        "git config --global --add safe.directory '/tmp/nemoclaw-wsl-workdir/123-1'",
       );
-      expect(result.stdout).toContain("git -C '/tmp/nemoclaw work/run'\"'\"'s' reset --hard HEAD");
-      expect(result.stdout).toContain("git -C '/tmp/nemoclaw work/run'\"'\"'s' clean -ffdx");
+      expect(result.stdout).toContain("if [ -L '/tmp/nemoclaw-wsl-workdir' ]; then");
+      expect(result.stdout).toContain("git -C '/tmp/nemoclaw-wsl-workdir/123-1' reset --hard HEAD");
+      expect(result.stdout).toContain("git -C '/tmp/nemoclaw-wsl-workdir/123-1' clean -ffdx");
       expect(result.stdout).toContain(
-        "chown -R 'nemoclaw-ci:nemoclaw-ci' '/tmp/nemoclaw work/run'\"'\"'s'",
+        "chown -R 'nemoclaw-ci:nemoclaw-ci' '/tmp/nemoclaw-wsl-workdir/123-1'",
       );
     },
   );
 
   itPowerShell(
-    "rejects sync workdirs that are blank, relative, root, traversal paths, the checkout, or its ancestor",
+    "accepts <positive-run-id>-<positive-run-attempt> paths under both dedicated WSL roots (#6958)",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+$workdirs = @(
+  '/tmp/nemoclaw-wsl-workdir/123-1',
+  '/tmp/nemoclaw-wsl-vitest/123-1'
+)
+@(
+  foreach ($workdir in $workdirs) {
+    $null = Get-WslCheckoutSyncScript -Checkout '/mnt/d/agent/repo' -Workdir $workdir
+    $workdir
+  }
+) | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout.trim())).toEqual([
+        "/tmp/nemoclaw-wsl-workdir/123-1",
+        "/tmp/nemoclaw-wsl-vitest/123-1",
+      ]);
+    },
+  );
+
+  itPowerShell(
+    "rejects workdirs that do not match the dedicated run path contract (#6958)",
     `
 . ${JSON.stringify(WSL_CI_HELPER)}
 $unsafeWorkdirs = @(
   '/',
   '/mnt/d/agent',
   '/mnt/d/agent/repo/',
-  '/tmp/nemoclaw/../shared',
+  '/tmp/nemoclaw-wsl-workdir/../shared',
+  '/tmp/nemoclaw-wsl-workdir/not-a-run',
+  '/etc',
+  '/tmp/nemoclaw-other/run',
   'relative/workdir',
   '   '
 )
@@ -134,14 +163,22 @@ $messages | ConvertTo-Json -Compress
     (result) => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
-      expect(JSON.parse(result.stdout.trim())).toEqual([
-        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '/'.",
-        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '/mnt/d/agent'.",
-        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '/mnt/d/agent/repo/'.",
-        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '/tmp/nemoclaw/../shared'.",
-        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: 'relative/workdir'.",
-        "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '   '.",
-      ]);
+      const unsafeWorkdirs = [
+        "/",
+        "/mnt/d/agent",
+        "/mnt/d/agent/repo/",
+        "/tmp/nemoclaw-wsl-workdir/../shared",
+        "/tmp/nemoclaw-wsl-workdir/not-a-run",
+        "/etc",
+        "/tmp/nemoclaw-other/run",
+        "relative/workdir",
+        "   ",
+      ];
+      const message =
+        "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not be the checkout, its ancestor, or contain traversal";
+      expect(JSON.parse(result.stdout.trim())).toEqual(
+        unsafeWorkdirs.map((workdir) => `${message}: '${workdir}'.`),
+      );
     },
   );
 
