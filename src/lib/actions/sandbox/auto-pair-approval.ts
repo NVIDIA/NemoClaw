@@ -169,78 +169,22 @@ def exit_with_receipt(receipt):
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
   const pendingRead = options.localDeviceOnly
     ? `
-# SOURCE_OF_TRUTH_REVIEW (restored-clone gated-list fallback):
-# Invalid state: the clone's first authenticated devices list can be denied by
-# the same pending pairing/scope transition that this one-shot pass must
-# approve. Source boundary: on that denial, read only the clone-local pending
-# map, validate one exact request below, and delegate the write to OpenClaw's
-# canonical devices approve command. Remove this fallback when the pinned
-# OpenClaw release exposes a bootstrap/list API for an unpaired clone.
-local_pending_by_id = None
-gated_request_id = None
-import re
-
-GATED_REQUEST_ID_RE = re.compile(r'\\(requestId:\\s*([A-Za-z0-9._:-]{1,128})\\)')
-
-def gated_pairing_request_id(out, err):
-    message = f'{out}\\n{err}'
-    lowered = message.lower()
-    initial_pairing = (
-        'pairing required' in lowered and 'device is not approved yet' in lowered
-    )
-    scope_upgrade = (
-        'scope upgrade pending approval' in lowered
-        or 'pairing required: device is asking for more scopes' in lowered
-    )
-    if not initial_pairing and not scope_upgrade:
-        return None
-    # OpenClaw's JSON transport envelope repeats the same close reason in its
-    # message and reason fields. Accept only those two identical canonical IDs.
-    matches = GATED_REQUEST_ID_RE.findall(message)
-    request_id_tokens = re.findall(r'\\brequestId\\b', message)
-    if len(matches) not in (1, 2):
-        return None
-    if len(request_id_tokens) != len(matches) or len(set(matches)) != 1:
-        return None
-    return matches[0]
-
-def load_clone_local_pending():
-    state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
-    try:
-        with open(os.path.join(state_dir, 'devices', 'pending.json'), encoding='utf-8') as handle:
-            value = json.load(handle)
-    except (OSError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None
-
-clone_list_env = dict(os.environ)
-# OpenClaw otherwise omits a cold clone's identity on a loopback shared-token
-# call, so the gateway cannot bind its denial to the clone's pending request.
-clone_list_env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
+# SOURCE_OF_TRUTH_REVIEW (restored-clone local pending selection):
+# Invalid state: a restored clone's first devices list can block on the same
+# pending pairing/scope transition that this one-shot pass must approve.
+# Source boundary: read only the clone-local pending map, validate one exact
+# request below, and delegate the write to OpenClaw's canonical devices approve
+# command. Remove this path when the pinned OpenClaw release exposes a
+# bootstrap/list API for an unpaired clone.
+state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 try:
-    proc = subprocess.run(
-        [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS}, env=clone_list_env,
-    )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    proc = None
-data = None
-if proc is not None and proc.returncode == 0 and proc.stdout.strip():
-    try:
-        data = json.loads(proc.stdout)
-    except ValueError:
-        data = None
-elif proc is not None and proc.returncode != 0:
-    gated_request_id = gated_pairing_request_id(proc.stdout, proc.stderr)
-if isinstance(data, dict) and isinstance(data.get('pending'), list):
-    pending = data.get('pending')
-elif gated_request_id is not None:
-    local_pending_by_id = load_clone_local_pending()
-    if local_pending_by_id is None:
-        ${exitWithReceipt("list-failed")}
-    pending = list(local_pending_by_id.values())
-else:
+    with open(os.path.join(state_dir, 'devices', 'pending.json'), encoding='utf-8') as handle:
+        local_pending_by_id = json.load(handle)
+except (OSError, ValueError):
     ${exitWithReceipt("list-failed")}
+if not isinstance(local_pending_by_id, dict):
+    ${exitWithReceipt("list-failed")}
+pending = list(local_pending_by_id.values())
 `
     : `
 try:
@@ -330,7 +274,6 @@ def consistent_scope_view(device):
         return None
     return views[0]
 
-state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 try:
     with open(os.path.join(state_dir, 'identity', 'device.json'), encoding='utf-8') as handle:
         local_identity = json.load(handle)
@@ -398,11 +341,7 @@ if sum(
 ) != 1:
     ${exitWithReceipt("clone-ambiguous")}
 if (
-    local_pending_by_id is not None
-    and (
-        local_request_id != gated_request_id
-        or local_pending_by_id.get(local_request_id) is not related_pending[0]
-    )
+    local_pending_by_id.get(local_request_id) is not related_pending[0]
 ):
     ${exitWithReceipt("request-rejected")}
 pending = related_pending
