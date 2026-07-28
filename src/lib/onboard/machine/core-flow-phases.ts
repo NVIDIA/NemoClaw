@@ -23,7 +23,7 @@ import {
   type ProviderInferenceStateOptions,
 } from "./handlers/provider-inference";
 import { handleSandboxState, type SandboxStateOptions } from "./handlers/sandbox";
-import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import {
   type OnboardPrerequisiteRepairEventRecorder,
   runOnboardPrerequisiteRepair,
@@ -274,7 +274,7 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
       ]
     : ["provider_selection", "inference", "sandbox", "openclaw", "agent_setup"];
   if (!allowedStates.includes(state)) {
-    throw new UnexpectedLiveOnboardFlowSliceStateError(
+    throw new UnexpectedOnboardFlowSliceStateError(
       state,
       ["provider_selection", "inference", "sandbox"],
       allowedStates.filter(

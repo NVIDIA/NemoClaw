@@ -89,7 +89,6 @@ function createBoundaryHarness(initial: Session) {
     toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
     maybeForceE2eStepFailure: () => undefined,
     createRuntime: () => new OnboardRuntime(deps),
-    stepMutationOptions: { updateMachine: false },
   });
   return { boundary, getSession: () => cloneSession(session) };
 }

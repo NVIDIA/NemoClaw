@@ -11,7 +11,6 @@ import {
   type SessionUpdates,
   sanitizeFailure,
 } from "../../state/onboard-session";
-import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
 import {
   advanceTo,
@@ -31,7 +30,7 @@ function cloneSession(session: Session): Session {
 function createHarness(initialSession: Session | null = createSession()) {
   let session = initialSession ? cloneSession(initialSession) : null;
   const events: OnboardMachineEvent[] = [];
-  const stepOptionCalls: Array<{ method: string; options: StepMutationOptions | undefined }> = [];
+  const stepCalls: string[] = [];
   let tick = 0;
   const updateSession = (mutator: (value: Session) => Session | void): Session => {
     const current = session ? cloneSession(session) : createSession();
@@ -47,8 +46,8 @@ function createHarness(initialSession: Session | null = createSession()) {
       return cloneSession(session);
     },
     updateSession,
-    markStepStarted: (stepName, options) => {
-      stepOptionCalls.push({ method: "markStepStarted", options });
+    markStepStarted: (stepName) => {
+      stepCalls.push("markStepStarted");
       return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
@@ -58,8 +57,8 @@ function createHarness(initialSession: Session | null = createSession()) {
         return current;
       });
     },
-    markStepComplete: (stepName, updates: SessionUpdates = {}, options) => {
-      stepOptionCalls.push({ method: "markStepComplete", options });
+    markStepComplete: (stepName, updates: SessionUpdates = {}) => {
+      stepCalls.push("markStepComplete");
       return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
@@ -85,8 +84,8 @@ function createHarness(initialSession: Session | null = createSession()) {
         step.status = "skipped";
         return current;
       }),
-    markStepFailed: (stepName, message, options) => {
-      stepOptionCalls.push({ method: "markStepFailed", options });
+    markStepFailed: (stepName, message) => {
+      stepCalls.push("markStepFailed");
       return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
@@ -118,7 +117,7 @@ function createHarness(initialSession: Session | null = createSession()) {
   return {
     runtime: new OnboardRuntime(deps),
     events,
-    stepOptionCalls,
+    stepCalls,
     getSession: () => {
       if (!session) throw new Error("Expected runtime session");
       return cloneSession(session);
@@ -150,36 +149,18 @@ describe("OnboardRuntime", () => {
     expect(events[1]).toMatchObject({ type: "onboard.resumed", state: "init" });
   });
 
-  it("defaults step recording dependencies to record-only machine mutations", async () => {
-    const { runtime, stepOptionCalls } = createHarness();
+  it("uses status-only step dependencies", async () => {
+    const { runtime, getSession, stepCalls } = createHarness();
 
     await runtime.markStepStarted("preflight");
     await runtime.markStepComplete("preflight", { sandboxName: "my-assistant" });
     await runtime.markStepFailed("gateway", "boom");
 
-    expect(stepOptionCalls).toEqual([
-      { method: "markStepStarted", options: { updateMachine: false } },
-      { method: "markStepComplete", options: { updateMachine: false } },
-      { method: "markStepFailed", options: { updateMachine: false } },
-    ]);
-  });
-
-  it("forwards step mutation options to step recording dependencies", async () => {
-    const { runtime, getSession, stepOptionCalls } = createHarness();
-    const recordOnlyOptions = { updateMachine: false };
-
-    await runtime.markStepStarted("preflight", recordOnlyOptions);
-    await runtime.markStepComplete("preflight", { sandboxName: "my-assistant" }, recordOnlyOptions);
-    await runtime.markStepFailed("gateway", "boom", recordOnlyOptions);
-
-    expect(stepOptionCalls).toEqual([
-      { method: "markStepStarted", options: recordOnlyOptions },
-      { method: "markStepComplete", options: recordOnlyOptions },
-      { method: "markStepFailed", options: recordOnlyOptions },
-    ]);
+    expect(stepCalls).toEqual(["markStepStarted", "markStepComplete", "markStepFailed"]);
     expect(getSession()).toMatchObject({
       sandboxName: "my-assistant",
       status: "failed",
+      machine: { state: "init", revision: 0 },
       steps: {
         preflight: { status: "complete" },
         gateway: { status: "failed" },
@@ -206,6 +187,17 @@ describe("OnboardRuntime", () => {
       InvalidOnboardMachineTransitionError,
     );
     expect(getSession().machine.state).toBe("preflight");
+  });
+
+  it("rejects a stale result source before changing the machine", async () => {
+    const { runtime, events, getSession } = createHarness();
+
+    await expect(
+      runtime.applyResult(advanceTo("preflight", { metadata: { state: "gateway" } })),
+    ).rejects.toThrow("Onboarding state result source mismatch: gateway != init");
+
+    expect(getSession().machine).toMatchObject({ state: "init", revision: 0 });
+    expect(events).toHaveLength(0);
   });
 
   it("applies only safe context updates and emits redacted context events", async () => {

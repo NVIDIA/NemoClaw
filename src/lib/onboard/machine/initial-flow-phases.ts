@@ -13,7 +13,7 @@ import {
   type PreflightSandboxGpuFlag,
   type PreflightStateOptions,
 } from "./handlers/preflight";
-import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import {
   type OnboardPrerequisiteRepairEventRecorder,
   runOnboardPrerequisiteRepair,
@@ -211,7 +211,7 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
     ? ["init", "preflight", ...resumeAheadStates]
     : ["init", "preflight", "gateway", "provider_selection"];
   if (!allowedStates.includes(state)) {
-    throw new UnexpectedLiveOnboardFlowSliceStateError(
+    throw new UnexpectedOnboardFlowSliceStateError(
       state,
       ["init", "preflight"],
       allowedStates.filter((candidate) => candidate !== "init" && candidate !== "preflight"),

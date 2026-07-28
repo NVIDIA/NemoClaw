@@ -792,7 +792,7 @@ describe("core onboard flow phases", () => {
         resume: true,
         recordRepairEvent: repairRecorder(),
       }),
-    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    ).rejects.toThrow("Unexpected onboarding flow state before slice entry");
     expect(providerInference.run).not.toHaveBeenCalled();
     expect(sandbox.run).not.toHaveBeenCalled();
   });

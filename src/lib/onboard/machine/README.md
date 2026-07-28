@@ -87,15 +87,15 @@ without a state transition so a later process can resume the same non-terminal s
 
 ## Runtime responsibilities
 
-`OnboardRuntime` is the intended authority for:
+`OnboardRuntime` is the authority for:
 
-- validating transitions against `transitions.ts`;
+- validating result source, target, kind, and graph transitions;
 - applying safe session context updates;
 - marking terminal states;
 - emitting redacted lifecycle, state, repair, resume-conflict, and hook events;
 - normalizing older sessions before strict execution.
 
-The runtime should reject invalid transitions before they can be persisted.
+Step helpers record step status and safe step updates. They cannot change the machine snapshot or emit machine events. Explicit session recovery and the process-exit failure backstop are separate recovery boundaries. They validate their snapshot changes and run before or outside handler execution.
 
 ## Event semantics
 

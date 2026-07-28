@@ -11,7 +11,7 @@ import {
 import { createSession } from "../../state/onboard-session";
 import type { VerifyDeploymentResult } from "../../verify-deployment";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
-import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 
 function deploymentResult(healthy: boolean): VerifyDeploymentResult {
   return {
@@ -186,7 +186,7 @@ describe("final onboard flow runtime boundary", () => {
         phases: createPhases(branchState, order),
         recordRepairEvent,
       }),
-    ).rejects.toBeInstanceOf(UnexpectedLiveOnboardFlowSliceStateError);
+    ).rejects.toBeInstanceOf(UnexpectedOnboardFlowSliceStateError);
 
     expect(order).toEqual([]);
     expect(recordRepairEvent).not.toHaveBeenCalled();
