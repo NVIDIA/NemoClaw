@@ -205,12 +205,13 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   // This slice cannot
   // eliminate that source locally because the host backstop checks are still
   // modeled as imperative resume work rather than strict FSM recovery states.
-  // The tolerated downstream family is every nonterminal state after the initial
-  // slice: inference, sandbox, openclaw/agent_setup, policies, finalizing, and
-  // post_verify. Phase tests cover ahead-state resume and terminal-state
-  // rejection; remove this fallback once those repair/backstop checks are
-  // modeled as strict FSM recovery states and legacy machine step mutation is
-  // gone.
+  // The tolerated family is every nonterminal state after the exact
+  // `init`/`preflight` entries: gateway, provider_selection, inference, sandbox,
+  // openclaw/agent_setup, policies, finalizing, and post_verify. Non-resume
+  // compatibility is limited to gateway and provider_selection. Phase tests
+  // cover ahead-state resume and terminal-state rejection; remove this fallback
+  // once those repair/backstop checks are modeled as strict FSM recovery states
+  // and legacy machine step mutation is gone.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: options.runtime,
