@@ -388,7 +388,7 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_PORT, "11434");
   });
 
-  it("keeps a newly started Ollama backend instead of restoring a compatible backend (#7424)", () => {
+  it("keeps the committed token when switching from a compatible backend to Ollama (#7424)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-switch-"));
     const scriptPath = path.join(tmpDir, "provider-switch-check.js");
@@ -484,7 +484,7 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns[0].token, payload.runningToken);
     assert.equal(payload.proxySpawns[1].backendUrl, "http://127.0.0.1:11434");
     assert.equal(payload.proxySpawns[1].token, payload.runningToken);
-    assert.notEqual(payload.runningToken, "compatible-token");
+    assert.equal(payload.runningToken, "compatible-token");
     assert.deepEqual(payload.runCommands, [["kill", "4242"]]);
     assert.equal(payload.persistedBackend, "http://127.0.0.1:11434");
   });

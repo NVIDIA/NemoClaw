@@ -17,6 +17,11 @@
       "category": "security"
     },
     {
+      "file": "src/lib/readiness/host.test.ts",
+      "test": "bounds and redacts successful probe text before schema validation",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
       "test": "matches the bundled local-inference host-gateway ports (#5744)",
       "category": "compatibility"
@@ -248,11 +253,6 @@
     },
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects diagnostics workflow-boundary drift for secret and Docker auth handling",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
       "category": "security"
     },
@@ -288,7 +288,7 @@
     },
     {
       "file": "test/hermes-final-image-layout.test.ts",
-      "test": "keeps repository payload layers at their cache boundaries (#7144)",
+      "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
       "category": "compatibility"
     },
     {
@@ -298,7 +298,7 @@
     },
     {
       "file": "test/openclaw-final-image-layout.test.ts",
-      "test": "keeps repository payload layers at their cache boundaries (#6660)",
+      "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
       "category": "compatibility"
     },
     {
@@ -453,6 +453,11 @@
     },
     {
       "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "pins and verifies the Node.js archive in both WSL workflows",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
       "category": "security"
     },
@@ -490,6 +495,31 @@
       "file": "test/pr-e2e-gate-shards.test.ts",
       "test": "rejects malformed configured matrix shard selectors",
       "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "binds host-prepared GitHub context to the selected repository and pull request",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "fails closed around the credential-free OpenShell filesystem and network boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "keeps GitHub and upstream model credentials in separate host-only steps",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "pins trusted helper and bind sources to their checkout directories",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "preserves credential-free unavailable artifacts for manual dry runs",
+      "category": "compatibility"
     },
     {
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
@@ -574,11 +604,6 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "scopes pre-push typechecks to project and transitive inputs",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/regression-e2e-workflow.test.ts",
-      "test": "collects the gateway drift regression from its integration project (#6692)",
       "category": "compatibility"
     },
     {

@@ -203,6 +203,8 @@ export function createDeps(
       hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) => config,
       messagingChannelConfigsEqual: () => true,
       getSandboxReuseState: () => "missing",
+      getSandboxRecreateObservation: () =>
+        ({ state: "missing", liveIdentityFingerprint: null }) as const,
       getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],

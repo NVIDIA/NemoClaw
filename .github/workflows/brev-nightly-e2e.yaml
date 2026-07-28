@@ -7,7 +7,7 @@ name: E2E / Brev Nightly
 # main E2E workflow remains isolated from Brev platform flakiness.
 #
 # Suites:
-#   all                 credential-sanitization + telegram-injection
+#   telegram-injection  Telegram command-injection regression coverage
 #   messaging-providers Telegram + Discord provider/L7 proxy validation
 #   messaging-compatible-endpoint local compatible-endpoint Telegram validation
 #   full                install/onboard/inference/CLI path
@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test_suite: [all, messaging-providers, messaging-compatible-endpoint, full]
+        test_suite: [telegram-injection, messaging-providers, messaging-compatible-endpoint, full]
     uses: ./.github/workflows/e2e-branch-validation.yaml
     with:
       # Bind tested code to the ref that supplied this reviewed workflow. Do

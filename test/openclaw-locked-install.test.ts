@@ -312,6 +312,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
     "Dockerfile.base",
   ])("invokes the locked installer before exposing OpenClaw in %s", (dockerfileName) => {
     const contents = fs.readFileSync(path.join(REPO_ROOT, dockerfileName), "utf-8");
+    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const verifyIndex = contents.indexOf(
       "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock",
     );
@@ -335,8 +336,12 @@ describe("locked OpenClaw production installation (#5896)", () => {
     const branchEnd = contents.indexOf("else \\", installIndex);
     const currentInstallBranch = contents.slice(verifyIndex, branchEnd);
 
-    expect(contents).toContain(
-      "COPY agents/openclaw/openclaw-runtime/package-lock.json /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json",
+    const groupedRuntimeCopy =
+      "COPY agents/openclaw/openclaw-runtime/package.json agents/openclaw/openclaw-runtime/package-lock.json /usr/local/lib/nemoclaw/openclaw-runtime/";
+    const splitLockCopy =
+      "COPY agents/openclaw/openclaw-runtime/package-lock.json /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json";
+    expect(flattenedContents.includes(groupedRuntimeCopy) || contents.includes(splitLockCopy)).toBe(
+      true,
     );
     expect(verifyIndex).toBeGreaterThanOrEqual(0);
     expect(installIndex).toBeGreaterThan(verifyIndex);

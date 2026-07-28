@@ -4,7 +4,7 @@
 title: "Customize the Sandbox Network Policy"
 sidebar-title: "Customize the Network Policy"
 description: "Choose the supported workflow for changing sandbox network access."
-description-agent: "Routes network policy changes to their canonical workflow. Use when choosing between baseline edits, policy presets, custom presets, raw TLS, live replacement, and agent policy context."
+description-agent: "Routes network policy changes to their canonical workflow. Use when choosing between baseline edits, policy presets, custom presets, live replacement, and operator approval."
 keywords: ["customize nemoclaw network policy", "sandbox egress policy configuration"]
 content:
   type: "how_to"
@@ -19,9 +19,13 @@ NemoClaw declares sandbox policy in YAML, and [NVIDIA OpenShell](https://github.
 | Change every future sandbox for an agent | [Change the Baseline Network Policy](configure-policies/change-baseline-network-policy) |
 | Add or remove a maintained preset for one sandbox | [Apply Policy Presets](configure-policies/apply-policy-presets) |
 | Add a reviewed endpoint that no maintained preset covers | [Create Custom Policy Presets](configure-policies/create-custom-policy-presets) |
+<AgentOnly variant="openclaw,hermes">
 | Allow direct TLS negotiation for an exact endpoint | [Configure Raw TLS Passthrough](configure-policies/configure-raw-tls-passthrough) |
+</AgentOnly>
 | Replace the complete live policy | [Replace the Live Network Policy](configure-policies/replace-live-network-policy) |
+<AgentOnly variant="openclaw,hermes">
 | Give the sandbox agent a redacted policy summary | [Explain Network Policy to Agents](explain-network-policy-to-agents) |
+</AgentOnly>
 | Approve or deny one blocked request | [Approve or Deny Network Requests](approve-network-requests) |
 
 <Note>
@@ -41,13 +45,25 @@ Use [`$$nemoclaw onboard --from`](../reference/commands#--from-dockerfile) inste
 
 ## Static Changes
 
+<a id="prerequisites"></a>
+<a id="edit-the-policy-file"></a>
+<a id="re-run-onboard"></a>
+<a id="verify-the-policy"></a>
+<AgentOnly variant="openclaw,hermes">
+<a id="add-blueprint-policy-additions"></a>
+</AgentOnly>
+
 Static changes modify the policy source that NemoClaw reads during sandbox creation.
-Follow [Change the Baseline Network Policy](configure-policies/change-baseline-network-policy) to edit agent policy files, add blueprint policy additions, rerun onboarding, and verify the result.
+Follow [Change the Baseline Network Policy](configure-policies/change-baseline-network-policy) to edit the agent policy file, rerun onboarding, and verify the result.
 
 ## Dynamic Changes
 
+<a id="scope-of-dynamic-changes"></a>
+<a id="add-a-preset-file-with-policy-add-recommended"></a>
+
 Dynamic changes update a running sandbox.
 Use [Apply Policy Presets](configure-policies/apply-policy-presets) for reviewed additions that NemoClaw records and replays.
+<a id="approve-requests-interactively"></a>
 Use [Approve or Deny Network Requests](approve-network-requests) for one-off access.
 Use [Replace the Live Network Policy](configure-policies/replace-live-network-policy) only when a preset cannot express the complete change.
 
@@ -55,32 +71,61 @@ Use [Replace the Live Network Policy](configure-policies/replace-live-network-po
 
 Maintained policy presets cover common integrations and package services.
 Follow [Apply Policy Presets](configure-policies/apply-policy-presets) to preview, apply, reapply, list, or remove them.
+<AgentOnly variant="openclaw,hermes">
 For guided service workflows, refer to [Common Integration Policy Examples](integration-policy-examples).
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Review [Network Policies](../reference/network-policies#policy-tiers) for the maintained presets available to Deep Agents.
+</AgentOnly>
 
 ## Custom Preset Files
 
+<a id="authoring"></a>
+<a id="apply-a-single-file"></a>
+<a id="apply-every-file-in-a-directory"></a>
+<a id="remove-a-custom-preset"></a>
+<AgentOnly variant="openclaw,hermes">
+<a id="custom-recipe-url-based-mcp-server"></a>
+</AgentOnly>
+
 Custom preset files add reviewed endpoint access without changing the baseline.
 Follow [Create Custom Policy Presets](configure-policies/create-custom-policy-presets) to author, validate, apply, and remove a custom preset.
+<AgentOnly variant="openclaw,hermes">
 That page also contains the URL-based MCP server recipe formerly located in this guide.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 ## Raw TLS Passthrough
+
+<a id="custom-recipe-for-raw-tls-passthrough-with-tls-skip"></a>
 
 Some endpoints require direct TLS negotiation and fail through inspected L7 proxying.
 Follow [Configure Raw TLS Passthrough](configure-policies/configure-raw-tls-passthrough) for the bounded `access: full` and `tls: skip` recipe.
 
+</AgentOnly>
+
 ## Live Policy Replacement
+
+<a id="export-edit-and-set-the-base-policy"></a>
 
 OpenShell `policy set` replaces the complete live policy.
 Follow [Replace the Live Network Policy](configure-policies/replace-live-network-policy) to export the round-trippable base, preserve existing entries, and apply a validated replacement.
+
+<AgentOnly variant="openclaw,hermes">
 
 ## Agent Policy Context
 
 Agents need a redacted view of active presets and policy verification state.
 Follow [Explain Network Policy to Agents](explain-network-policy-to-agents) to print or refresh that context and interpret failure classifications.
 
+</AgentOnly>
+
 ## Related Topics
 
+<AgentOnly variant="openclaw,hermes">
 - [Common Integration Policy Examples](integration-policy-examples) provides maintained service workflows.
+</AgentOnly>
 - [Network Policies](../reference/network-policies) is the canonical policy reference.
 - [OpenShell Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) provides the complete YAML schema.
 - [OpenShell Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) explains OpenShell-layer policy iteration.

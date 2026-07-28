@@ -25,6 +25,8 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   buildSnapshotCommandEnv,
+  classifySnapshotGatewayProbe,
+  classifySnapshotRestoreResult,
   type SnapshotInferenceFixture,
 } from "./snapshot-commands-helpers.ts";
 import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
@@ -44,9 +46,25 @@ const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
+const PROTECTED_CREDENTIALS_DIR = "/sandbox/.openclaw/credentials";
+const PROTECTED_CREDENTIAL_FILE = `${PROTECTED_CREDENTIALS_DIR}/backup-all-fixture.json`;
+const PROTECTED_CREDENTIAL_MARKER = "snapshot-backup-non-secret-marker";
+const PROTECTED_CREDENTIAL_FIXTURE = JSON.stringify({
+  apiKey: INFERENCE_API_KEY,
+  marker: PROTECTED_CREDENTIAL_MARKER,
+});
+const SHIELDS_TIMER_FILE = path.join(
+  os.homedir(),
+  ".nemoclaw",
+  "state",
+  `shields-timer-${SANDBOX_NAME}.json`,
+);
 
-function commandEnv(inference?: SnapshotInferenceFixture): NodeJS.ProcessEnv {
-  return buildSnapshotCommandEnv(SANDBOX_NAME, inference);
+function commandEnv(
+  inference?: SnapshotInferenceFixture,
+  sandboxName = SANDBOX_NAME,
+): NodeJS.ProcessEnv {
+  return buildSnapshotCommandEnv(sandboxName, inference);
 }
 
 async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
@@ -101,6 +119,60 @@ async function expectSandboxFileContent(
   });
   expect(result.exitCode, resultText(result)).toBe(0);
   expect(result.stdout.trim()).toBe(expected);
+}
+
+async function expectAuthenticatedGatewayPairing(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  inference: SnapshotInferenceFixture,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(`
+set -eu
+PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
+[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+openclaw agent --agent main --json -m "ping" \
+  --session-id "snapshot-restore-verify-$$-$(date +%s)"
+`),
+    {
+      artifactName,
+      env: commandEnv(inference, sandboxName),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(classifySnapshotGatewayProbe(result)).toBe("authenticated");
+}
+
+async function expectShieldsUp(host: HostCliClient, artifactName: string): Promise<void> {
+  const result = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "status"], {
+    artifactName,
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(result.stdout).toContain("Shields: UP");
+}
+
+async function rootSandboxPathMetadata(
+  host: HostCliClient,
+  containerId: string,
+  targetPath: string,
+  artifactName: string,
+): Promise<{ mode: string; owner: string }> {
+  const result = await host.command(
+    "docker",
+    ["exec", "-u", "0", containerId, "stat", "-c", "%a %U:%G", targetPath],
+    {
+      artifactName,
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  const [mode = "", owner = ""] = result.stdout.trim().split(/\s+/, 2);
+  return { mode, owner };
 }
 
 async function expectBaselineExclusionAgreement(
@@ -164,10 +236,13 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "confirm Docker and start hermetic inference",
       "onboard the snapshot sandbox",
       "create and list the first snapshot",
+      "restore the first snapshot into a clone",
+      "verify the restored clone state and gateway pairing",
       "create a second snapshot from changed workspace",
       "restore latest and timestamped snapshots",
       "audit snapshot credentials and command help",
       "back up a stopped sandbox and restore its snapshot",
+      "back up protected credentials and restore Shields",
       "record snapshot lifecycle evidence",
     ],
   },
@@ -184,11 +259,13 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "snapshot list shows versioned snapshots and parseable timestamps",
       "baseline exclusions remain active in registry and live policy across rebuild",
       "snapshot restore --to carries baseline exclusions into clone registry and live policy",
+      "snapshot restore --to returns only after restored gateway pairing is authenticated",
       "latest snapshot restore recovers latest workspace state",
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
       "snapshot help advertises create/list/restore",
       "strict backup-all starts a stopped Docker sandbox, creates a snapshot, and returns it to exited state",
+      "backup-all stores a sanitized copy of root-owned credentials, restores Shields UP, and does not store the API key",
     ],
   });
 
@@ -375,6 +452,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   const timestamp = firstSnapshotTimestamp(resultText(list));
   await artifacts.writeJson("phase-4-first-snapshot.json", { timestamp });
 
+  progress.phase("restore the first snapshot into a clone");
   const cloneRestore = await host.command(
     "nemoclaw",
     [SANDBOX_NAME, "snapshot", "restore", timestamp, "--to", CLONE_SANDBOX_NAME, "--yes"],
@@ -384,8 +462,10 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       timeoutMs: 5 * 60_000,
     },
   );
-  expect(cloneRestore.exitCode, resultText(cloneRestore)).toBe(0);
-  expect(resultText(cloneRestore)).toContain("Restored");
+  const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);
+  expect(["restored", "restored-pairing-unverified"]).toContain(cloneRestoreResult);
+  progress.phase("verify the restored clone state and gateway pairing");
+  expect(cloneRestoreResult).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     CLONE_SANDBOX_NAME,
@@ -398,6 +478,20 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     sandbox,
     CLONE_SANDBOX_NAME,
     "phase-4-clone-baseline-exclusion",
+  );
+  const clonePairingRequestOffset = inference.requests().length;
+  await expectAuthenticatedGatewayPairing(
+    sandbox,
+    CLONE_SANDBOX_NAME,
+    inferenceConfig,
+    "phase-4-verify-clone-gateway-pairing",
+  );
+  expect(inference.requests().slice(clonePairingRequestOffset)).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      model: INFERENCE_MODEL,
+      path: "/v1/chat/completions",
+    }),
   );
   const destroyClone = await host.command("nemoclaw", [CLONE_SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "phase-4-destroy-clone",
@@ -450,8 +544,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     env: commandEnv(),
     timeoutMs: 120_000,
   });
-  expect(latestRestore.exitCode, resultText(latestRestore)).toBe(0);
-  expect(resultText(latestRestore)).toContain("Restored");
+  expect(classifySnapshotRestoreResult(latestRestore)).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     SANDBOX_NAME,
@@ -479,8 +572,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       timeoutMs: 120_000,
     },
   );
-  expect(targetedRestore.exitCode, resultText(targetedRestore)).toBe(0);
-  expect(resultText(targetedRestore)).toContain("Restored");
+  expect(classifySnapshotRestoreResult(targetedRestore)).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     SANDBOX_NAME,
@@ -617,8 +709,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       timeoutMs: 120_000,
     },
   );
-  expect(restoreStoppedBackup.exitCode, resultText(restoreStoppedBackup)).toBe(0);
-  expect(resultText(restoreStoppedBackup)).toContain("Restored");
+  expect(classifySnapshotRestoreResult(restoreStoppedBackup)).toBe("restored");
   await expectSandboxFileContent(
     sandbox,
     SANDBOX_NAME,
@@ -633,6 +724,157 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     stoppedBackupTimestamp,
   });
 
+  progress.phase("back up protected credentials and restore Shields");
+  const writeProtectedCredential = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "sh",
+      "-lc",
+      'mkdir -p "$1" && printf %s "$2" >"$3"',
+      "write-protected-credential",
+      PROTECTED_CREDENTIALS_DIR,
+      PROTECTED_CREDENTIAL_FIXTURE,
+      PROTECTED_CREDENTIAL_FILE,
+    ],
+    {
+      artifactName: "phase-11-write-protected-credential",
+      env: commandEnv(),
+      redactionValues: [INFERENCE_API_KEY],
+      timeoutMs: 30_000,
+    },
+  );
+  expect(writeProtectedCredential.exitCode, resultText(writeProtectedCredential)).toBe(0);
+
+  const lockForProtectedBackup = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-11-shields-up-before-protected-backup",
+    env: commandEnv(),
+    redactionValues: [INFERENCE_API_KEY],
+    timeoutMs: 120_000,
+  });
+  expect(lockForProtectedBackup.exitCode, resultText(lockForProtectedBackup)).toBe(0);
+  expect(resultText(lockForProtectedBackup)).toContain("Lockdown active");
+  cleanup.trackDisposable(`restore Shields UP for ${SANDBOX_NAME} before destroy`, async () => {
+    const restore = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "up"], {
+      artifactName: "cleanup-shields-up-after-protected-backup",
+      env: commandEnv(),
+      redactionValues: [INFERENCE_API_KEY],
+      timeoutMs: 120_000,
+    });
+    expect(restore.exitCode, resultText(restore)).toBe(0);
+    expect(resultText(restore)).toMatch(/Lockdown (?:is already )?active/);
+  });
+  await expectShieldsUp(host, "phase-11-shields-status-before-protected-backup");
+
+  const protectedDirBeforeBackup = await rootSandboxPathMetadata(
+    host,
+    containerId,
+    PROTECTED_CREDENTIALS_DIR,
+    "phase-11-protected-credentials-dir-before-backup",
+  );
+  expect(protectedDirBeforeBackup).toEqual({ mode: "700", owner: "root:root" });
+  const protectedFileBeforeBackup = await rootSandboxPathMetadata(
+    host,
+    containerId,
+    PROTECTED_CREDENTIAL_FILE,
+    "phase-11-protected-credential-file-before-backup",
+  );
+  expect(protectedFileBeforeBackup).toEqual({ mode: "600", owner: "root:root" });
+
+  const unreadableBeforeBackup = await sandbox.exec(
+    SANDBOX_NAME,
+    ["cat", PROTECTED_CREDENTIAL_FILE],
+    {
+      artifactName: "phase-11-protected-credential-unreadable-before-backup",
+      env: commandEnv(),
+      redactionValues: [INFERENCE_API_KEY],
+      timeoutMs: 30_000,
+    },
+  );
+  expect(unreadableBeforeBackup.exitCode, resultText(unreadableBeforeBackup)).not.toBe(0);
+  expect(resultText(unreadableBeforeBackup)).not.toContain(INFERENCE_API_KEY);
+
+  const snapshotsBeforeProtectedBackup = snapshotManifestDirectories();
+  const protectedBackup = await host.command("nemoclaw", ["backup-all"], {
+    artifactName: "phase-11-backup-all-protected-credentials",
+    env: { ...commandEnv(), NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS: "1" },
+    redactionValues: [INFERENCE_API_KEY],
+    timeoutMs: 180_000,
+  });
+  expect(protectedBackup.exitCode, resultText(protectedBackup)).toBe(0);
+  expect(resultText(protectedBackup)).toContain("Shields are UP");
+  expect(resultText(protectedBackup)).toContain("temporarily unlocking for backup-all");
+  expect(resultText(protectedBackup)).toContain("Re-applying shields lockdown");
+  expect(resultText(protectedBackup)).toContain("Shields restored to UP");
+  expect(resultText(protectedBackup)).toContain("1 backed up, 0 failed, 0 skipped");
+
+  const snapshotsAfterProtectedBackup = snapshotManifestDirectories();
+  const protectedBackupSnapshots = snapshotsAfterProtectedBackup.filter(
+    (entry) => !snapshotsBeforeProtectedBackup.includes(entry),
+  );
+  expect(protectedBackupSnapshots).toHaveLength(1);
+  const protectedBackupTimestamp = protectedBackupSnapshots[0] as string;
+  const protectedBackupPath = path.join(BACKUP_DIR, protectedBackupTimestamp);
+  const protectedBackupManifest = JSON.parse(
+    fs.readFileSync(path.join(protectedBackupPath, "rebuild-manifest.json"), "utf8"),
+  ) as { sandboxName?: unknown; backedUpDirs?: unknown };
+  expect(protectedBackupManifest.sandboxName).toBe(SANDBOX_NAME);
+  expect(protectedBackupManifest.backedUpDirs).toEqual(
+    expect.arrayContaining(["credentials", "workspace"]),
+  );
+  expect(fs.existsSync(path.join(protectedBackupPath, "openclaw.json"))).toBe(true);
+  expect(
+    fs.readFileSync(
+      path.join(protectedBackupPath, "workspace", path.basename(MARKER_FILE)),
+      "utf8",
+    ),
+  ).toBe(markerContent);
+
+  const backedUpCredentialPath = path.join(
+    protectedBackupPath,
+    "credentials",
+    path.basename(PROTECTED_CREDENTIAL_FILE),
+  );
+  const backedUpCredentialText = fs.readFileSync(backedUpCredentialPath, "utf8");
+  const backedUpCredential = JSON.parse(backedUpCredentialText) as {
+    apiKey?: unknown;
+    marker?: unknown;
+  };
+  expect(backedUpCredential.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
+  expect(backedUpCredential.marker).toBe(PROTECTED_CREDENTIAL_MARKER);
+  expect(backedUpCredentialText).not.toContain(INFERENCE_API_KEY);
+  expect(scanSnapshotCredentialLeaks(protectedBackupPath)).toEqual([]);
+
+  await expectShieldsUp(host, "phase-11-shields-status-after-protected-backup");
+  expect(
+    await rootSandboxPathMetadata(
+      host,
+      containerId,
+      PROTECTED_CREDENTIALS_DIR,
+      "phase-11-protected-credentials-dir-after-backup",
+    ),
+  ).toEqual({ mode: "700", owner: "root:root" });
+  expect(
+    await rootSandboxPathMetadata(
+      host,
+      containerId,
+      PROTECTED_CREDENTIAL_FILE,
+      "phase-11-protected-credential-file-after-backup",
+    ),
+  ).toEqual({ mode: "600", owner: "root:root" });
+  const unreadableAfterBackup = await sandbox.exec(
+    SANDBOX_NAME,
+    ["cat", PROTECTED_CREDENTIAL_FILE],
+    {
+      artifactName: "phase-11-protected-credential-unreadable-after-backup",
+      env: commandEnv(),
+      redactionValues: [INFERENCE_API_KEY],
+      timeoutMs: 30_000,
+    },
+  );
+  expect(unreadableAfterBackup.exitCode, resultText(unreadableAfterBackup)).not.toBe(0);
+  expect(resultText(unreadableAfterBackup)).not.toContain(INFERENCE_API_KEY);
+  expect(fs.existsSync(SHIELDS_TIMER_FILE)).toBe(false);
+
   progress.phase("record snapshot lifecycle evidence");
   await artifacts.target.complete({
     id: "snapshot-commands",
@@ -641,6 +883,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     baselineExclusionKey: BASELINE_EXCLUSION_KEY,
     cloneSandboxName: CLONE_SANDBOX_NAME,
     stoppedBackupTimestamp,
+    protectedBackupTimestamp,
     backupDir: BACKUP_DIR,
   });
 });

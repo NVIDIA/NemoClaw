@@ -53,8 +53,8 @@ COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runt
 RUN ./install-reviewed-runtime.sh \
     && rm -f ./install-reviewed-runtime.sh
 
-# Group repository-owned files outside the final image so BuildKit can collapse
-# related payloads without invalidating earlier final-image work.
+# Group repository-owned files outside the final image so both Docker builders
+# can collapse related payloads without invalidating earlier final-image work.
 FROM scratch AS openclaw-dependency-payload
 
 COPY agents/openclaw/openclaw-runtime/package.json /usr/local/lib/nemoclaw/openclaw-runtime/package.json
@@ -149,15 +149,9 @@ ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
 
-RUN --mount=type=bind,from=openclaw-dependency-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib)"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib)"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: dependency payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+# A cross-stage root copy is accepted by Docker's legacy builder and creates one
+# final-image layer while preserving metadata on existing parent directories.
+COPY --from=openclaw-dependency-payload / /
 
 # The final image owns the shipped dependency boundary independently of base
 # freshness. Reassert the npm-private node-tar fix here; the helper is
@@ -260,16 +254,9 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 RUN npm ci --omit=dev
 
-# Materialize the built plugin and blueprint as one repository payload layer.
-RUN --mount=type=bind,from=openclaw-plugin-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$(stat -c "%u:%g:%a:%n" / /opt /opt/nemoclaw)"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$(stat -c "%u:%g:%a:%n" / /opt /opt/nemoclaw)"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: plugin payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+# Copy the grouped plugin and blueprint payload after runtime dependency
+# installation so source-only changes do not invalidate that cache boundary.
+COPY --from=openclaw-plugin-payload / /
 
 # Copy built plugin and blueprint into the sandbox
 RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
@@ -313,19 +300,7 @@ RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime \
         /usr/local/share/nemoclaw/wechat-npm-cache \
     && chmod -R a+rX,go-w /usr/local/lib/nemoclaw/wechat-runtime \
         /usr/local/share/nemoclaw/wechat-npm-cache
-RUN --mount=type=bind,from=openclaw-patch-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
-        )"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/lib /usr/local/lib/nemoclaw \
-        )"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: patch payload changed parent directory ownership or mode" >&2; exit 1; } \
-    '
+COPY --from=openclaw-patch-payload / /
 
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
@@ -977,29 +952,19 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-share
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Materialize the startup scripts and shared sandbox runtime files together.
+# Copy the startup scripts and shared sandbox runtime files after setting up the
+# blueprint so repository changes retain the intended cache boundary.
 # NODE_OPTIONS preload modules use a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
 # needs to read these files to install Node runtime preloads under /tmp.
 # Channel runtime preloads are authored as TypeScript and compiled in the
 # runtime-preload-builder stage before being flattened by filename for --require.
-RUN --mount=type=bind,from=openclaw-runtime-payload,source=/,target=/run/nemoclaw-payload \
-    /bin/bash -euo pipefail -c ' \
-        payload_metadata_before="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts \
-        )"; \
-        tar --numeric-owner -C /run/nemoclaw-payload -cpf - . \
-            | tar --no-overwrite-dir --same-owner --numeric-owner --preserve-permissions -C / -xpf -; \
-        payload_metadata_after="$( \
-            stat -c "%u:%g:%a:%n" / /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/nemoclaw /usr/local/share /usr/local/share/nemoclaw /scripts \
-        )"; \
-        [[ "$payload_metadata_before" == "$payload_metadata_after" ]] \
-            || { echo "ERROR: runtime payload changed parent directory ownership or mode" >&2; exit 1; }; \
-        discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
-        && node -e "const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== \"tool discovery received invalid runtime arguments\") process.exit(1);" "$discovery_contract" \
-        && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-        && test -z "$discovery_unsafe" \
-    '
+COPY --from=openclaw-runtime-payload / /
+
+RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
+    && node -e "const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== \"tool discovery received invalid runtime arguments\") process.exit(1);" "$discovery_contract" \
+    && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$discovery_unsafe"
 
 # Copy startup script and shared sandbox initialisation library
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \

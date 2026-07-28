@@ -123,6 +123,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         config: { enabled: true, port: 18790, internalPort: 19123, tuiEnabled: true },
       },
       dashboardPort: 18789,
+      lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
     });
@@ -150,6 +152,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       hermesDashboardInternalPort: 19123,
       hermesDashboardTui: true,
       dashboardPort: 18789,
+      lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
       gpuEnabled: true,
