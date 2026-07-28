@@ -303,6 +303,41 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(result.stdout).toContain(`final-selection=${path.join(realDir, "openshell")}\n`);
   });
 
+  it("rejects an absolute directory fallback selection during service staging (#7140)", () => {
+    const { realDir, root, wrapper } = createWrapperFixture(
+      "hermes-gpu-fallback-directory-selection-",
+    );
+    const directoryBin = path.join(root, "openshell-directory");
+    fs.mkdirSync(directoryBin, { mode: 0o700 });
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          'source "$INSTALLER_PAYLOAD" 2>/dev/null',
+          "install_nemoclaw_openshell_gateway_user_service() { :; }",
+          "maybe_install_openshell_during_install if-missing",
+          'printf "final-selection=%s\\n" "$NEMOCLAW_OPENSHELL_BIN"',
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...wrapper.componentEnv,
+          HOME: root,
+          INSTALLER_PAYLOAD,
+          NEMOCLAW_OPENSHELL_BIN: directoryBin,
+          PATH: `${realDir}:/usr/bin:/bin`,
+          XDG_BIN_HOME: realDir,
+        },
+      },
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(`final-selection=${path.join(realDir, "openshell")}\n`);
+  });
+
   it("rejects exactly one native nvidia-smi proof when wrapper calls race", async () => {
     const { wrapper } = createWrapperFixture("hermes-gpu-fallback-race-test-");
     const env = { ...process.env, ...wrapper.componentEnv };

@@ -1537,7 +1537,7 @@ maybe_install_openshell_during_install() {
       prefer_user_local_openshell
       # Service discovery still uses the user-local PATH, but a source-checkout
       # caller's executable selection remains authoritative for onboarding.
-      if [[ "$explicit_openshell_bin" == /* && -x "$explicit_openshell_bin" ]]; then
+      if [[ "$explicit_openshell_bin" == /* && -f "$explicit_openshell_bin" && -x "$explicit_openshell_bin" ]]; then
         export NEMOCLAW_OPENSHELL_BIN="$explicit_openshell_bin"
       fi
       install_nemoclaw_openshell_gateway_user_service
