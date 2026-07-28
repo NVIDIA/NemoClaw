@@ -145,9 +145,24 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
     expect(policy).toContain("itemized maintainer exception");
     expect(policy).toContain("If the candidate SHA changes");
+    expect(policy).toContain("This does not freeze `main` or prevent merges");
+    expect(policy).toContain(
+      "Dispatch independent default-suite and unconditional explicit-only work concurrently",
+    );
+    expect(policy).toContain("Do not serialize unrelated evidence behind that blocker");
     expect(policy).toContain("discard the ledger and its exceptions");
+    expect(policy).toContain("actual selector inputs");
+    expect(release).toContain('"dispatchJson"');
     expect(release).toContain("the number of tests with green evidence");
     expect(release).toContain("successful run or job URL and attempt");
+    expect(release).toContain("npm run release:e2e-evidence");
+    expect(release).toContain("Do not wait for either run to finish before dispatching the other");
+    expect(release).toContain("filter=all");
+    expect(release).toContain("actions/runs/$RUN_ID/artifacts");
+    expect(release).toContain("sort_by(.created_at)");
+    expect(release).not.toContain("RECEIPT_ATTEMPT");
+    expect(release).toContain("rerun preflight and every required default");
+    expect(release).toContain("Immediately before asking, refresh `origin/main` once");
     const evidenceSummary = release.indexOf("Before showing the confirmation prompt");
     const confirmationPrompt = release.indexOf(
       "Ask the maintainer to paste this phrase",
@@ -161,7 +176,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain("Missing or invalid qualification requires a separate");
     expect(evening).toContain("Tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
-    expect(dailyFlow).toContain("freeze the candidate SHA and review every E2E test");
+    expect(dailyFlow).toContain("capture the candidate SHA and review every E2E test");
     expect(priorities).toContain("Record the release SHA and required E2E evidence");
   });
 
@@ -178,6 +193,12 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(e2e).toContain("cleanup.json");
     expect(e2e).toContain("dispatch.json");
     expect(e2e).toContain("If the release candidate SHA changes");
+    expect(e2e).toContain("### Release Coverage Dispatch Group");
+    expect(e2e).toContain("parallelExplicit.jobs");
+    expect(e2e).toContain("do not serialize independent runs");
+    expect(e2e).toContain("jobs?filter=all&per_page=100");
+    expect(e2e).toContain("Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json`");
+    expect(release).toContain("reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json`");
     expect(release).toContain("load `nemoclaw-maintainer-e2e` and dispatch full mode");
     expect(release).toContain("Treat a skipped job as missing evidence");
     expect(release).toContain("include_staging_brev_launchable=true");
@@ -186,14 +207,21 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain(
       "a separate itemized maintainer exception for missing or invalid exact Brev Launchable qualification",
     );
+    expect(release).toContain("when accepted full-mode exact Brev evidence exists");
     expect(release.indexOf("load `nemoclaw-maintainer-e2e` and dispatch full mode")).toBeLessThan(
       release.indexOf("Ask the maintainer to paste this phrase"),
     );
     expect(evening).toContain("load `nemoclaw-maintainer-e2e`");
-    expect(evening).toContain("Run full mode");
-    expect(policy).toContain(
-      "Require one workflow run for the candidate SHA that includes the default-enabled suite",
+    expect(evening).toContain(
+      "When the protected qualification readiness variable is `true`, run full mode",
     );
+    expect(evening).toContain(
+      "When readiness is disabled, run the ordinary default and unconditional explicit-only groups",
+    );
+    expect(policy).toContain(
+      "For full-mode exact Brev evidence, require one workflow run for the candidate SHA",
+    );
+    expect(policy).toContain("if no applicable exact Brev Launchable evidence exists");
     expect(policy).toContain("successful `Exact staging Brev Launchable` job");
     expect(policy).toContain("cleanup receipt");
     expect(policy).toContain("trusted dispatch receipt");

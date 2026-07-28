@@ -350,7 +350,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         resolveScopes(validPending({ isRepair: false }), {
           tokens: [{ role: "operator", scopes: ["operator.pairing"] }],
         }),
-      ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
+      ).toEqual(["operator.pairing"]);
       expect(resolveScopes(validPending({ scopes: ["operator.admin"] }), {})).toEqual([
         "operator.admin",
       ]);
@@ -362,7 +362,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("preflights the exact repair before both live list and approval use stored pairing auth", async () => {
+  it("preflights exact bounded transitions before live list and approval use stored pairing auth", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-preflight-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -398,17 +398,20 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       }
 
       runtime.gatewayCalls.length = 0;
-      const ordinaryList = {
+      const preconvergenceList = {
         pending: [validPending({ isRepair: false })],
         paired: [validPaired()],
       };
-      runtime.setPairingLists(ordinaryList);
+      runtime.setPairingLists(preconvergenceList);
       await runtime.approvePairingWithFallback({ json: true }, "request-1");
-      expect(runtime.gatewayCalls[0]).toMatchObject({
-        method: "device.pair.list",
-        scopes: undefined,
-      });
-      expect(runtime.gatewayCalls[0]).not.toHaveProperty("useStoredDeviceAuth");
+      expect(runtime.gatewayCalls).toHaveLength(2);
+      for (const call of runtime.gatewayCalls) {
+        expect(call).toMatchObject({
+          scopes: ["operator.pairing"],
+          useStoredDeviceAuth: true,
+          requiredStoredDeviceAuthScopes: ["operator.pairing"],
+        });
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -453,7 +456,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("passes authenticated identity to the canonical approver and never publishes state itself", async () => {
+  it("passes authenticated identity for a pre-convergence write request to the canonical approver", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-handler-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -466,7 +469,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         deviceHandlers: Record<string, (input: Record<string, unknown>) => Promise<void>>;
         captured: () => { requestId: string; options: Record<string, unknown> };
       }>(source, `({ pendingById, deviceHandlers, captured: () => capturedApproval })`);
-      runtime.pendingById.set("request-1", validPending());
+      runtime.pendingById.set("request-1", validPending({ isRepair: false }));
       const responses: unknown[] = [];
       const broadcasts: unknown[] = [];
       await runtime.deviceHandlers["device.pair.approve"]({
@@ -650,6 +653,9 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         "operator.read",
         "operator.write",
       ]);
+      expect(
+        resolveScopes(validPending({ isRepair: false }), ["operator.pairing"], identity),
+      ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
       for (const pending of [
         validPending({ deviceId: "device-2" }),
         validPending({ publicKey: "public-key-2" }),
@@ -661,7 +667,8 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         validPending({ scopes: ["operator.write", "operator.write"] }),
         validPending({ scopes: ["operator.admin"] }),
         validPending({ scopes: ["operator.unknown"] }),
-        validPending({ isRepair: false }),
+        validPending({ isRepair: false, scopes: ["operator.read"] }),
+        validPending({ isRepair: undefined }),
       ]) {
         expect(resolveScopes(pending, ["operator.pairing"], identity)).toBeNull();
       }

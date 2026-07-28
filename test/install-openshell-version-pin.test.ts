@@ -1,39 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// @module-tag e2e/credential-free
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { type ArtifactSink } from "../fixtures/artifacts.ts";
-import { expect, test } from "../fixtures/e2e-test.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
+import { expect, test } from "vitest";
 
-// #3474). The former bash script is a self-contained installer-script behavioral
-// test: it runs scripts/install-openshell.sh under a stubbed PATH where the
-// already-installed openshell reports a too-new version (0.0.86) and the
-// downloaded archives produce a binary that reports the pinned 0.0.85.
-//
-// This credential-free E2E test does not exercise
-// the registry-driven steady-state probe model. There is no OpenClaw instance,
-// no environment phase, no lifecycle. The test consumes only the `artifacts`
-// fixture from e2e-test.ts so failures attach the per-target artifact root.
-
+const REPO_ROOT = path.join(import.meta.dirname, "..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
-const LIVE_TIMEOUT_MS = 2 * 60_000;
+const TEST_TIMEOUT_MS = 2 * 60_000;
 
-test("openshell-version-pin: selects shipping 0.0.85 between older and too-new releases", {
-  timeout: LIVE_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "prepare a mixed OpenShell release catalog",
-      "resolve the pin and replacement environment",
-      "confirm the shipping version wins range selection",
-    ],
-  },
-}, ({ progress }) => {
+test("selects the supported OpenShell version when newer releases exist (#3474)", {
+  timeout: TEST_TIMEOUT_MS,
+}, () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-resolver-"));
   const binDir = path.join(tmpDir, "bin");
   fs.mkdirSync(binDir);
@@ -48,7 +29,6 @@ printf '%s\\n' '${JSON.stringify([
   );
 
   try {
-    progress.phase("resolve the pin and replacement environment");
     const result = spawnSync(
       process.execPath,
       [
@@ -82,7 +62,6 @@ process.stdout.write(JSON.stringify({
         timeout: 60_000,
       },
     );
-    progress.phase("confirm the shipping version wins range selection");
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       installed: "0.0.81",
@@ -137,8 +116,7 @@ write_checksum() {
   printf '%s  %s\\n' "$(pinned_sha256 "$asset_name")" "$asset_name" >"$checksum_file"
 }`;
 
-// Force Linux/x86_64 asset selection regardless of host arch (former shell test
-// is dispatched on ubuntu-latest via regression-e2e.yaml).
+// Force Linux/x86_64 asset selection because the fake release data covers only that platform.
 function createFakeUname(binDir: string): void {
   writeExecutable(
     path.join(binDir, "uname"),
@@ -341,18 +319,7 @@ exec /usr/bin/sha256sum "$@"`,
   );
 }
 
-async function runVersionPinTarget(
-  artifacts: ArtifactSink,
-  options: { ghDownloadMode: GhDownloadMode },
-  enterInspectionPhase: () => void,
-): Promise<void> {
-  await artifacts.target.declare({
-    id: "openshell-version-pin",
-    boundary: "installer-script-unit",
-    regressionTarget: "#3474",
-    ghDownloadMode: options.ghDownloadMode,
-  });
-
+function runVersionPinTarget(options: { ghDownloadMode: GhDownloadMode }): void {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-pin-"));
   try {
     const fakeBin = path.join(tmp, "bin");
@@ -380,16 +347,9 @@ async function runVersionPinTarget(
       timeout: 60_000,
     });
 
-    // Persist the install transcript so failures can be diagnosed without
-    // re-running the test.
-    await artifacts.writeText("install-openshell.stdout", result.stdout ?? "");
-    await artifacts.writeText("install-openshell.stderr", result.stderr ?? "");
-    await artifacts.writeText("downloads.log", fs.readFileSync(downloadLog, "utf-8"));
-
     // Assertion 1: installer-exits-zero — the happy path completes (no
     // "above the maximum" hard-fail before download).
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    enterInspectionPhase();
 
     // Assertion 2: download-log-contains-v0.0.85 — pinned release tag was
     // requested from the release host.
@@ -426,34 +386,14 @@ async function runVersionPinTarget(
   }
 }
 
-test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.85 via gh download", {
-  timeout: LIVE_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "stage a too-new OpenShell installation",
-      "run the pinned installer through GitHub releases",
-      "inspect release selection and the replacement binary",
-    ],
-  },
-}, async ({ artifacts, progress }) => {
-  progress.phase("run the pinned installer through GitHub releases");
-  await runVersionPinTarget(artifacts, { ghDownloadMode: "success" }, () => {
-    progress.phase("inspect release selection and the replacement binary");
-  });
+test("replaces an installed OpenShell version above the supported maximum (#3474)", {
+  timeout: TEST_TIMEOUT_MS,
+}, () => {
+  runVersionPinTarget({ ghDownloadMode: "success" });
 });
 
-test("openshell-version-pin: falls back to curl when gh cannot fetch the pinned release", {
-  timeout: LIVE_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "stage a too-new OpenShell installation",
-      "run the pinned installer through curl fallback",
-      "inspect release selection and the replacement binary",
-    ],
-  },
-}, async ({ artifacts, progress }) => {
-  progress.phase("run the pinned installer through curl fallback");
-  await runVersionPinTarget(artifacts, { ghDownloadMode: "fail" }, () => {
-    progress.phase("inspect release selection and the replacement binary");
-  });
+test("falls back to curl when GitHub release download fails (#3474)", {
+  timeout: TEST_TIMEOUT_MS,
+}, () => {
+  runVersionPinTarget({ ghDownloadMode: "fail" });
 });

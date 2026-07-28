@@ -139,8 +139,36 @@ jobs:
         run: |
           $script = @'
           set -euo pipefail
-          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-          apt-get install -y nodejs
+          node_version="22.23.1"
+          case "$(uname -m)" in
+            x86_64)
+              node_arch="x64"
+              node_sha256="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"
+              ;;
+            aarch64 | arm64)
+              node_arch="arm64"
+              node_sha256="0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1"
+              ;;
+            *)
+              echo "Unsupported Node.js architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          node_url="https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz"
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          archive="$temp_dir/node.tar.xz"
+          curl --fail --show-error --silent --location \
+            --proto '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 180 \
+            --retry 3 --retry-delay 2 --retry-max-time 240 --retry-all-errors \
+            --output "$archive" "$node_url"
+          printf '%s  %s\n' "$node_sha256" "$archive" | sha256sum --check --status || {
+            echo "Node.js archive checksum verification failed" >&2
+            exit 1
+          }
+          tar --extract --xz --file "$archive" --directory /usr/local --strip-components=1
+          test "$(node --version)" = "v${node_version}"
           node --version
           npm --version
           '@

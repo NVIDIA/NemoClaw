@@ -173,7 +173,7 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("keeps network-policy scenarios isolated with cleanup reserve", () => {
+  it("keeps the retained network-policy live probes isolated with cleanup reserve (#7617)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
@@ -207,7 +207,7 @@ describe("e2e workflow boundary", () => {
       expect.arrayContaining([
         "network-policy scenario jobs must keep the 90 minute timeout",
         "network-policy scenario matrix must disable fail-fast",
-        "network-policy job must keep the two isolated scenario shards",
+        "network-policy job must keep only the isolated live-probes scenario",
         "network-policy job must isolate artifacts by matrix.scenario",
         "network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
         "network-policy job must bind its sandbox name to matrix.sandbox",
@@ -662,7 +662,7 @@ describe("e2e workflow boundary", () => {
   }, () => {
     const inventory = readFreeStandingJobsInventory();
     const workflow = readWorkflow() as {
-      jobs: Record<string, { env?: Record<string, string> }>;
+      jobs: Record<string, { env?: Record<string, string>; if?: string }>;
     };
     const workflowJobs = new Set(Object.keys(workflow.jobs));
 
@@ -679,6 +679,15 @@ describe("e2e workflow boundary", () => {
     );
     expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
+    const driftedWorkflow = structuredClone(workflow);
+    const compatibilityJob = driftedWorkflow.jobs["retired-selector-compatibility"] ?? {};
+    compatibilityJob.if = compatibilityJob.if?.replace(
+      ",docs-validation,",
+      ",future-retired-selector,",
+    );
+    expect(validateE2eWorkflow(driftedWorkflow)).toContain(
+      "retired-selector-compatibility job selector gate must match retired selector contract",
+    );
     expect(
       focusedE2eJobsForChangedFiles(
         [
@@ -703,31 +712,31 @@ describe("e2e workflow boundary", () => {
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
       E2E_JOB: "yes"
-      E2E_TARGET_ID: openshell-version-pin
+      E2E_TARGET_ID: fixture-version-check
 `,
-        error: 'openshell-version-pin job E2E_JOB must be "1"',
+        error: 'fixture-version-check job E2E_JOB must be "1"',
       },
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
-      E2E_TARGET_ID: openshell-version-pin
+      E2E_TARGET_ID: fixture-version-check
 `,
-        error: "openshell-version-pin job E2E_TARGET_ID requires E2E_JOB",
+        error: "fixture-version-check job E2E_TARGET_ID requires E2E_JOB",
       },
       {
         body: `
 jobs:
-  openshell-version-pin:
+  fixture-version-check:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bad:target"
 `,
-        error: "openshell-version-pin job E2E_TARGET_ID must be a selector id",
+        error: "fixture-version-check job E2E_TARGET_ID must be a selector id",
       },
       {
         body: `
@@ -882,12 +891,12 @@ jobs:
           path: .e2e/live/
           include-hidden-files: true
           if-no-files-found: ignore
-  openshell-version-pin:
+  fixture-version-check:
     runs-on: ubuntu-latest
     needs: generate-matrix
     if: \${{ inputs.targets != '' }}
     env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/openshell-version-pin
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/fixture-version-check
       NEMOCLAW_RUN_LIVE_E2E: "0"
       NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
@@ -900,23 +909,23 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
-      - name: Run OpenShell version-pin live test
+      - name: Run fixture version-check live test
         env:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload OpenShell version-pin artifacts
+      - name: Upload fixture version-check artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openshell-version-pin
-          path: .e2e/openshell-version-pin/
+          name: fixture-version-check
+          path: .e2e/fixture-version-check/
           include-hidden-files: true
           if-no-files-found: error
-  onboard-negative-paths:
+  fixture-negative-path:
     runs-on: ubuntu-latest
     needs: generate-matrix
     if: \${{ inputs.targets != '' }}
     env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/onboard-negative-paths
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/fixture-negative-path
       NEMOCLAW_RUN_LIVE_E2E: "0"
       NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
     steps:
@@ -929,15 +938,15 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
       - name: Install root dependencies
         run: npm install
-      - name: Run onboard negative-paths live test
+      - name: Run fixture negative-path live test
         env:
           NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload onboard negative-paths artifacts
+      - name: Upload fixture negative-path artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: onboard-negative-paths
-          path: .e2e/onboard-negative-paths/
+          name: fixture-negative-path
+          path: .e2e/fixture-negative-path/
           include-hidden-files: true
           if-no-files-found: error
   network-policy:
@@ -1053,7 +1062,6 @@ jobs:
           "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
           "workflow missing hermes-e2e job",
           "workflow missing skill-agent job",
-          "workflow missing diagnostics job",
           "workflow missing model-router-provider-routed-inference job",
           "workflow missing snapshot-commands job",
           "report-to-pr job must wait for live",
@@ -1385,69 +1393,6 @@ jobs:
           "messaging-compatible-endpoint step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
           "messaging-compatible-endpoint step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
           "messaging-compatible-endpoint step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  // source-shape-contract: security -- Mutates the shipped diagnostics job to reject secret and Docker auth leakage
-  it("rejects diagnostics workflow-boundary drift for secret and Docker auth handling", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        { env?: Record<string, unknown>; steps: Array<Record<string, unknown>> }
-      >;
-    };
-    const job = workflow.jobs["diagnostics"];
-    expect(job).toBeDefined();
-    expect(job.steps).toEqual(expect.any(Array));
-    job.env = {
-      ...job.env,
-      DOCKER_CONFIG: "${{ github.workspace }}/.docker-config-diagnostics",
-      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-      GITHUB_TOKEN: "${{ github.token }}",
-    };
-    const prepareIndex = job.steps.findIndex((step) => step.name === "Prepare E2E workspace");
-    expect(prepareIndex).toBeGreaterThan(0);
-    job.steps.splice(prepareIndex, 0, {
-      name: "Authenticate to Docker Hub",
-      env: {
-        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
-        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
-      },
-      run: 'docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin',
-    });
-    const runStep = job.steps.find((step) => step.name === "Run diagnostics live test");
-    expect(runStep).toBeDefined();
-    runStep!.run = `${runStep!.run}\necho "\${{ inputs.jobs }}"`;
-    const uploadStep = job.steps.find((step) => step.name === "Upload diagnostics artifacts");
-    expect(uploadStep).toBeDefined();
-    uploadStep!.with = {
-      ...((uploadStep!.with as Record<string, unknown>) ?? {}),
-      "include-hidden-files": true,
-      "retention-days": 1,
-    };
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "diagnostics job must not expose Docker auth to branch-controlled steps",
-          "diagnostics job env must not include DOCKER_CONFIG",
-          "diagnostics job env must not include NVIDIA_INFERENCE_API_KEY",
-          "diagnostics job env must not include GITHUB_TOKEN",
-          "diagnostics image-consuming job must have exactly one Docker Hub auth step",
-          "diagnostics step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
-          "diagnostics step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-          "diagnostics step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
-          "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
-          "diagnostics upload-e2e-artifacts invocation must not override its contract",
-          "diagnostics upload-e2e-artifacts must use the action defaults",
         ]),
       );
     } finally {
