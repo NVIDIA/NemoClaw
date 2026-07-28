@@ -21,9 +21,8 @@ export type VoiceClawStatusHealthHookOptions = ChannelStatusHealthHookOptions;
 type VoiceClawProbe = {
   readonly configReadable: boolean;
   readonly pluginEnabled: boolean;
-  readonly twilioConfigured: boolean;
+  readonly telnyxConfigured: boolean;
   readonly webhookConfigured: boolean;
-  readonly nvidiaAsrConfigured: boolean;
   readonly nvidiaTtsConfigured: boolean;
 };
 
@@ -87,9 +86,8 @@ const fs = require("fs");
 const result = {
   configReadable: false,
   pluginEnabled: false,
-  twilioConfigured: false,
+  telnyxConfigured: false,
   webhookConfigured: false,
-  nvidiaAsrConfigured: false,
   nvidiaTtsConfigured: false,
 };
 try {
@@ -97,12 +95,14 @@ try {
   result.configReadable = true;
   const plugin = config?.plugins?.entries?.["voice-call"];
   result.pluginEnabled = plugin?.enabled === true && plugin?.config?.enabled === true;
-  result.twilioConfigured =
-    plugin?.config?.provider === "twilio" &&
-    typeof plugin?.config?.twilio?.accountSid === "string" &&
-    plugin.config.twilio.accountSid.startsWith("AC") &&
-    typeof plugin?.config?.twilio?.authToken === "string" &&
-    plugin.config.twilio.authToken.length > 0 &&
+  result.telnyxConfigured =
+    plugin?.config?.provider === "telnyx" &&
+    typeof plugin?.config?.telnyx?.apiKey === "string" &&
+    plugin.config.telnyx.apiKey.length > 0 &&
+    typeof plugin?.config?.telnyx?.connectionId === "string" &&
+    plugin.config.telnyx.connectionId.length > 0 &&
+    typeof plugin?.config?.telnyx?.publicKey === "string" &&
+    plugin.config.telnyx.publicKey.length > 0 &&
     typeof plugin?.config?.fromNumber === "string" &&
     plugin.config.fromNumber.startsWith("+");
   result.webhookConfigured =
@@ -115,10 +115,6 @@ try {
   result.nvidiaTtsConfigured =
     plugin?.config?.tts?.provider === "nvidia" &&
     config?.messages?.tts?.provider === "nvidia";
-  result.nvidiaAsrConfigured =
-    config?.tools?.media?.audio?.enabled === true &&
-    Array.isArray(config?.tools?.media?.audio?.models) &&
-    config.tools.media.audio.models.some((model) => model?.provider === "nvidia");
 } catch {}
 process.stdout.write(JSON.stringify(result) + "\n");
 `;
@@ -129,7 +125,7 @@ function buildVoiceClawProbeScript(): string {
   return [
     "set +e",
     `node --input-type=commonjs -e ${shellQuote(nodeScript)}`,
-    `if openclaw plugins inspect voice-call --json >/dev/null 2>&1; then printf '%s\\n' ${shellQuote(PLUGIN_PRESENT_MARKER)}; else printf '%s\\n' ${shellQuote(PLUGIN_MISSING_MARKER)}; fi`,
+    `if env HOME=/sandbox openclaw plugins inspect voice-call --json >/dev/null 2>&1; then printf '%s\\n' ${shellQuote(PLUGIN_PRESENT_MARKER)}; else printf '%s\\n' ${shellQuote(PLUGIN_MISSING_MARKER)}; fi`,
     "exit 0",
   ].join("\n");
 }
@@ -142,9 +138,8 @@ function parseProbe(stdout: string): VoiceClawProbe | null {
     if (
       typeof value.configReadable !== "boolean" ||
       typeof value.pluginEnabled !== "boolean" ||
-      typeof value.twilioConfigured !== "boolean" ||
+      typeof value.telnyxConfigured !== "boolean" ||
       typeof value.webhookConfigured !== "boolean" ||
-      typeof value.nvidiaAsrConfigured !== "boolean" ||
       typeof value.nvidiaTtsConfigured !== "boolean"
     ) {
       return null;
@@ -168,8 +163,8 @@ function evaluateVoiceClawHealth(input: {
     configSignal(input),
     pluginSignal(input.pluginPresent),
     policySignal(input),
-    twilioSignal(input.probe),
-    nvidiaSpeechSignal(input.probe),
+    telnyxSignal(input.probe),
+    nvidiaTtsSignal(input.probe),
   ];
   const verdict = !input.probe
     ? "probe_failed"
@@ -179,10 +174,10 @@ function evaluateVoiceClawHealth(input: {
         ? "plugin_missing"
         : !input.presetInRegistry || input.presetOnGateway === false
           ? "policy_gap"
-          : !input.probe.twilioConfigured || !input.probe.webhookConfigured
-            ? "twilio_config_gap"
-            : !input.probe.nvidiaAsrConfigured || !input.probe.nvidiaTtsConfigured
-              ? "nvidia_speech_config_gap"
+          : !input.probe.telnyxConfigured || !input.probe.webhookConfigured
+            ? "telnyx_config_gap"
+            : !input.probe.nvidiaTtsConfigured
+              ? "nvidia_tts_config_gap"
               : "ready";
   return {
     schemaVersion: 1,
@@ -259,39 +254,40 @@ function policySignal(input: {
     detail:
       input.presetOnGateway === null
         ? "voiceclaw preset recorded; gateway cross-check unavailable"
-        : "Twilio and NVIDIA HTTP policy is loaded on the gateway",
+        : "Telnyx and NVIDIA HTTP policy is loaded on the gateway",
   };
 }
 
-function twilioSignal(probe: VoiceClawProbe | null): DiagnosticSignal {
-  if (probe?.twilioConfigured && probe.webhookConfigured) {
+function telnyxSignal(probe: VoiceClawProbe | null): DiagnosticSignal {
+  if (probe?.telnyxConfigured && probe.webhookConfigured) {
     return {
-      label: "Twilio setup",
+      label: "Telnyx setup",
       severity: "ok",
-      detail: "Twilio credentials, caller number, and HTTPS webhook are configured",
+      detail:
+        "Telnyx API key, connection ID, public key, caller number, and HTTPS webhook are configured",
     };
   }
   return {
-    label: "Twilio setup",
+    label: "Telnyx setup",
     severity: "fail",
-    detail: "Twilio credentials, caller number, or HTTPS webhook configuration is incomplete",
-    hint: "re-add VoiceClaw with the Twilio account, number, and public webhook URL",
+    detail: "Telnyx credentials, caller number, or HTTPS webhook configuration is incomplete",
+    hint: "re-add VoiceClaw with the Telnyx application, number, and public webhook URL",
   };
 }
 
-function nvidiaSpeechSignal(probe: VoiceClawProbe | null): DiagnosticSignal {
-  if (probe?.nvidiaAsrConfigured && probe.nvidiaTtsConfigured) {
+function nvidiaTtsSignal(probe: VoiceClawProbe | null): DiagnosticSignal {
+  if (probe?.nvidiaTtsConfigured) {
     return {
-      label: "NVIDIA speech",
+      label: "NVIDIA TTS",
       severity: "ok",
-      detail: "NVIDIA batch ASR and TTS are configured in OpenClaw",
+      detail: "NVIDIA TTS is configured in OpenClaw",
     };
   }
   return {
-    label: "NVIDIA speech",
+    label: "NVIDIA TTS",
     severity: "fail",
-    detail: "NVIDIA batch ASR or TTS configuration is missing",
-    hint: "rebuild the sandbox so the VoiceClaw speech preload and config are applied",
+    detail: "NVIDIA TTS configuration is missing",
+    hint: "rebuild the sandbox so the VoiceClaw TTS preload and config are applied",
   };
 }
 

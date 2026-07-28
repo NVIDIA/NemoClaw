@@ -11,8 +11,6 @@ import { type ChannelManifest, createChannelManifestRegistry } from "../manifest
 import { compactSandboxMessagingPlanForPersistence } from "../persistence";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
-const TEST_TWILIO_ACCOUNT_SID = `AC${"0123456789abcdef".repeat(2)}`;
-
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
   DISCORD_BOT_TOKEN: "test-discord-token",
@@ -20,7 +18,7 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   SLACK_BOT_TOKEN: "xoxb-test-slack-token",
   SLACK_APP_TOKEN: "xapp-test-slack-token",
   MSTEAMS_APP_PASSWORD: "test-teams-client-secret",
-  VOICECLAW_TWILIO_AUTH_TOKEN: "test-twilio-auth-token",
+  TELNYX_API_KEY: "test-telnyx-api-key",
   NVIDIA_API_KEY: "nvapi-test-speech-key",
 };
 const TEST_WECHAT_LOGIN = {
@@ -896,12 +894,12 @@ describe("MessagingWorkflowPlanner", () => {
   it("preserves VoiceClaw settings across add and rebuild, then removes its plan entries (#6387)", async () => {
     const added = await withEnv(
       {
-        VOICECLAW_ENABLED: "1",
-        VOICECLAW_TWILIO_ACCOUNT_SID: TEST_TWILIO_ACCOUNT_SID,
-        VOICECLAW_TWILIO_AUTH_TOKEN: "test-token",
+        TELNYX_API_KEY: "test-telnyx-api-key",
+        VOICECLAW_TELNYX_CONNECTION_ID: "1234567890123456789",
+        VOICECLAW_TELNYX_PUBLIC_KEY: `${"A".repeat(43)}=`,
         NVIDIA_API_KEY: "nvapi-test-speech-key",
-        VOICECLAW_TWILIO_FROM_NUMBER: "+15550001234",
-        VOICECLAW_TWILIO_TO_NUMBER: "+15550005678",
+        VOICECLAW_TELNYX_FROM_NUMBER: "+15550001234",
+        VOICECLAW_TELNYX_TO_NUMBER: "+15550005678",
         VOICECLAW_PUBLIC_URL: "https://voice.example.test/voice/webhook",
       },
       () =>
@@ -914,13 +912,24 @@ describe("MessagingWorkflowPlanner", () => {
           disabledChannels: [],
         }),
     );
+    const compacted = compactSandboxMessagingPlanForPersistence(added);
+    const persistedWithoutDefaults = {
+      ...compacted,
+      channels: compacted.channels.map((channel) => ({
+        ...channel,
+        inputs: channel.inputs?.filter((input) => input.inputId !== "webhookPort"),
+      })),
+    };
 
     const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
       sandboxName: "demo",
       agent: "openclaw",
       sandboxEntry: {
         name: "demo",
-        messaging: { schemaVersion: 1, plan: added },
+        messaging: {
+          schemaVersion: 1,
+          plan: persistedWithoutDefaults as unknown as typeof added,
+        },
       },
     });
 
@@ -932,17 +941,19 @@ describe("MessagingWorkflowPlanner", () => {
         hostForward: {
           channelId: "voiceclaw",
           port: 3334,
-          label: "VoiceClaw Twilio webhook",
+          label: "VoiceClaw Telnyx webhook",
         },
         inputs: expect.arrayContaining([
-          expect.objectContaining({ inputId: "enabled", value: "1" }),
           expect.objectContaining({
-            inputId: "twilioAccountSid",
-            value: TEST_TWILIO_ACCOUNT_SID,
+            inputId: "telnyxConnectionId",
+            value: "1234567890123456789",
           }),
-          expect.objectContaining({ inputId: "twilioAuthToken", value: "test-token" }),
-          expect.objectContaining({ inputId: "twilioFromNumber", value: "+15550001234" }),
-          expect.objectContaining({ inputId: "twilioToNumber", value: "+15550005678" }),
+          expect.objectContaining({
+            inputId: "telnyxPublicKey",
+            value: `${"A".repeat(43)}=`,
+          }),
+          expect.objectContaining({ inputId: "telnyxFromNumber", value: "+15550001234" }),
+          expect.objectContaining({ inputId: "telnyxToNumber", value: "+15550005678" }),
           expect.objectContaining({
             inputId: "publicUrl",
             value: "https://voice.example.test/voice/webhook",
@@ -958,7 +969,10 @@ describe("MessagingWorkflowPlanner", () => {
           path: "plugins.entries.voice-call",
           value: expect.objectContaining({
             config: expect.objectContaining({
-              twilio: expect.objectContaining({ authToken: "test-token" }),
+              telnyx: expect.objectContaining({
+                apiKey: "openshell:resolve:env:TELNYX_API_KEY",
+                connectionId: "1234567890123456789",
+              }),
             }),
           }),
         }),
@@ -967,6 +981,14 @@ describe("MessagingWorkflowPlanner", () => {
     expect(rebuilt?.networkPolicy.entries).toMatchObject([
       { channelId: "voiceclaw", presetName: "voiceclaw" },
     ]);
+    expect(rebuilt?.credentialBindings).toContainEqual(
+      expect.objectContaining({
+        channelId: "voiceclaw",
+        providerName: "demo-voiceclaw-telnyx",
+        providerEnvKey: "TELNYX_API_KEY",
+        placeholder: "openshell:resolve:env:TELNYX_API_KEY",
+      }),
+    );
     expect(rebuilt?.credentialBindings).toContainEqual(
       expect.objectContaining({
         channelId: "voiceclaw",
@@ -994,7 +1016,7 @@ describe("MessagingWorkflowPlanner", () => {
         }),
         expect.objectContaining({
           channelId: "voiceclaw",
-          module: "openclaw-voicecall-gather-tts",
+          module: "openclaw-voicecall-telnyx-tts",
         }),
       ]),
     );

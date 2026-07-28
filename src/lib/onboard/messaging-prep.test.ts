@@ -223,6 +223,7 @@ describe("prepareCreateSandboxMessaging", () => {
       "SLACK_APP_TOKEN",
       "SLACK_BOT_TOKEN",
       "TELEGRAM_BOT_TOKEN",
+      "TELNYX_API_KEY",
       "WECHAT_BOT_TOKEN",
     ]);
     expect(result.reusableMessagingProviders).toEqual([]);

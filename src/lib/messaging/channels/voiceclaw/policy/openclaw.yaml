@@ -3,31 +3,24 @@
 
 preset:
   name: voiceclaw
-  description: "Twilio calls and NVIDIA batch speech over HTTPS"
+  description: "Telnyx calls, speech-to-text, and NVIDIA TTS over HTTPS"
 
 network_policies:
   voiceclaw:
     name: voiceclaw
     endpoints:
-      - host: api.twilio.com
+      - host: api.telnyx.com
         port: 443
         protocol: rest
         enforcement: enforce
         rules:
-          - allow: { method: POST, path: "/2010-04-01/Accounts/*/Calls.json" }
-          - allow: { method: POST, path: "/2010-04-01/Accounts/*/Calls/*" }
-      - host: d3fe9151-442b-4204-a70d-5fcc597fd610.invocation.api.nvcf.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: POST, path: "/v1/audio/transcriptions" }
-      - host: 1598d209-5e27-4d3c-8079-4751568b1081.invocation.api.nvcf.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: POST, path: "/v1/audio/transcriptions" }
+          - allow: { method: POST, path: "/v2/calls" }
+          - allow: { method: GET, path: "/v2/calls/*" }
+          - allow: { method: POST, path: "/v2/calls/*/actions/answer" }
+          - allow: { method: POST, path: "/v2/calls/*/actions/hangup" }
+          - allow: { method: POST, path: "/v2/calls/*/actions/playback_start" }
+          - allow: { method: POST, path: "/v2/calls/*/actions/transcription_start" }
+          - allow: { method: POST, path: "/v2/calls/*/actions/transcription_stop" }
       - host: 877104f7-e885-42b9-8de8-f6e4c6303969.invocation.api.nvcf.nvidia.com
         port: 443
         protocol: rest

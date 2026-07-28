@@ -70,6 +70,51 @@ function hookOutputsFromBuildSteps(
   return { outputs };
 }
 
+function hasActiveOpenClawPluginInstall(plan: SandboxMessagingPlan): boolean {
+  const activeChannels = new Set(
+    plan.channels
+      .filter((channel) => channel.active && !channel.disabled)
+      .map((channel) => channel.channelId),
+  );
+  return plan.buildSteps.some(
+    (step) =>
+      activeChannels.has(step.channelId) &&
+      step.kind === "package-install" &&
+      typeof step.value === "object" &&
+      step.value !== null &&
+      "manager" in step.value &&
+      step.value.manager === "openclaw-plugin",
+  );
+}
+
+export function refreshOpenClawMessagingPluginRegistryAfterRestore(
+  sandboxName: string,
+  plan: SandboxMessagingPlan,
+  run: MessagingOpenShellRunner = runMessagingOpenshell,
+): void {
+  if (!hasActiveOpenClawPluginInstall(plan)) return;
+
+  const result = run(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--",
+      "openclaw",
+      "plugins",
+      "registry",
+      "--refresh",
+    ],
+    { ignoreError: true },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `OpenClaw plugin registry refresh exited with status ${String(result.status ?? "unknown")}`,
+    );
+  }
+}
+
 /** Reapply OpenClaw messaging files that doctor may have rewritten. */
 export async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
@@ -87,6 +132,7 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
       runOpenshell: runMessagingOpenshell,
       runHook: (request) => hookOutputsFromBuildSteps(plan, request),
     });
+    refreshOpenClawMessagingPluginRegistryAfterRestore(sandboxName, plan);
     log(
       `messaging manifest reapply: targets=${result.appliedTargets.join(",")}, hooks=${result.appliedHooks.join(",")}`,
     );

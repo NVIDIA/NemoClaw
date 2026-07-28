@@ -53,7 +53,7 @@ describe("built-in messaging channel metadata", () => {
       slack: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
       whatsapp: [],
       teams: ["MSTEAMS_APP_PASSWORD"],
-      voiceclaw: ["NVIDIA_API_KEY"],
+      voiceclaw: ["TELNYX_API_KEY", "NVIDIA_API_KEY"],
     });
     expect(getMessagingChannelForCredentialEnvKey("SLACK_APP_TOKEN")).toBe("slack");
     expect(getMessagingChannelForCredentialEnvKey("WHATSAPP_ALLOWED_IDS")).toBeNull();
@@ -63,7 +63,7 @@ describe("built-in messaging channel metadata", () => {
       wechat: ["-wechat-bridge"],
       slack: ["-slack-bridge", "-slack-app"],
       teams: ["-teams-bridge"],
-      voiceclaw: ["-voiceclaw-nvidia-speech"],
+      voiceclaw: ["-voiceclaw-telnyx", "-voiceclaw-nvidia-speech"],
     });
     expect(listMessagingProviderNamesForChannel("demo", "slack")).toEqual([
       "demo-slack-bridge",
@@ -93,10 +93,10 @@ describe("built-in messaging channel metadata", () => {
       "MSTEAMS_PORT",
       "TEAMS_REQUIRE_MENTION",
       "VOICECLAW_ENABLED",
-      "VOICECLAW_TWILIO_ACCOUNT_SID",
-      "VOICECLAW_TWILIO_AUTH_TOKEN",
-      "VOICECLAW_TWILIO_FROM_NUMBER",
-      "VOICECLAW_TWILIO_TO_NUMBER",
+      "VOICECLAW_TELNYX_CONNECTION_ID",
+      "VOICECLAW_TELNYX_PUBLIC_KEY",
+      "VOICECLAW_TELNYX_FROM_NUMBER",
+      "VOICECLAW_TELNYX_TO_NUMBER",
       "VOICECLAW_PUBLIC_URL",
       "VOICECLAW_WEBHOOK_PORT",
     ]);

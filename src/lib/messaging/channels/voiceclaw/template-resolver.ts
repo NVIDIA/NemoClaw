@@ -13,10 +13,10 @@ export const resolveVoiceClawTemplateReference: BuiltInRenderTemplateResolver = 
   context,
 ) => {
   const pathByReference: Readonly<Record<string, string>> = {
-    "voiceclaw.twilioAccountSid": "voiceclaw.twilioAccountSid",
-    "voiceclaw.twilioAuthToken": "voiceclaw.twilioAuthToken",
-    "voiceclaw.twilioFromNumber": "voiceclaw.twilioFromNumber",
-    "voiceclaw.twilioToNumber": "voiceclaw.twilioToNumber",
+    "voiceclaw.telnyxConnectionId": "voiceclaw.telnyxConnectionId",
+    "voiceclaw.telnyxPublicKey": "voiceclaw.telnyxPublicKey",
+    "voiceclaw.telnyxFromNumber": "voiceclaw.telnyxFromNumber",
+    "voiceclaw.telnyxToNumber": "voiceclaw.telnyxToNumber",
     "voiceclaw.publicUrl": "voiceclaw.publicUrl",
     "voiceclaw.webhookPort": "voiceclaw.webhookPort",
   };

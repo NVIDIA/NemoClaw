@@ -10,12 +10,12 @@ export const voiceclawManifest = {
   schemaVersion: 1,
   id: "voiceclaw",
   displayName: "VoiceClaw",
-  description: "Twilio voice calls through the OpenClaw voice-call plugin",
+  description: "Telnyx voice calls through the OpenClaw voice-call plugin",
   enrollmentNotes: [
-    "This POC supports Twilio and OpenClaw only.",
-    "POC risk: the Twilio Auth Token is stored as text in NemoClaw state and OpenClaw configuration because OpenShell does not inject credentials into inbound webhook handling.",
+    "This MVP supports Telnyx and OpenClaw only.",
+    "Copy the Telnyx webhook public key from the Telnyx Mission Control Portal.",
     "Route a public HTTPS URL to the forwarded VoiceClaw webhook port before placing a conversation call.",
-    "NVIDIA batch ASR is available to OpenClaw, but it is not a realtime Twilio transcription provider.",
+    "Telnyx provides speech-to-text while NVIDIA Magpie provides non-streaming text-to-speech.",
   ],
   supportedAgents: ["openclaw"],
   auth: {
@@ -36,27 +36,37 @@ export const voiceclawManifest = {
       },
     },
     {
-      id: "twilioAccountSid",
-      kind: "config",
+      id: "telnyxApiKey",
+      kind: "secret",
       required: true,
-      envKey: "VOICECLAW_TWILIO_ACCOUNT_SID",
-      statePath: "voiceclaw.twilioAccountSid",
-      formatPattern: "^AC[0-9a-fA-F]{32}$",
-      formatHint: "Twilio Account SID in AC... format.",
+      envKey: "TELNYX_API_KEY",
       prompt: {
-        label: "Twilio Account SID",
-        help: "Enter the Account SID for the Twilio project that owns the caller number.",
+        label: "Telnyx API key",
+        help: "Enter the API key for the Telnyx Call Control application.",
       },
     },
     {
-      id: "twilioAuthToken",
+      id: "telnyxConnectionId",
       kind: "config",
       required: true,
-      envKey: "VOICECLAW_TWILIO_AUTH_TOKEN",
-      statePath: "voiceclaw.twilioAuthToken",
+      envKey: "VOICECLAW_TELNYX_CONNECTION_ID",
+      statePath: "voiceclaw.telnyxConnectionId",
+      formatPattern: "^[0-9]+$",
+      formatHint: "Numeric Telnyx Call Control connection ID.",
       prompt: {
-        label: "Twilio Auth Token",
-        help: "POC only: stored as text so the inbound Twilio webhook can use it.",
+        label: "Telnyx connection ID",
+        help: "Enter the connection ID for the Telnyx Call Control application.",
+      },
+    },
+    {
+      id: "telnyxPublicKey",
+      kind: "config",
+      required: true,
+      envKey: "VOICECLAW_TELNYX_PUBLIC_KEY",
+      statePath: "voiceclaw.telnyxPublicKey",
+      prompt: {
+        label: "Telnyx public key",
+        help: "Enter the Ed25519 public key used to verify Telnyx webhook signatures.",
       },
     },
     {
@@ -66,33 +76,33 @@ export const voiceclawManifest = {
       envKey: "NVIDIA_API_KEY",
       prompt: {
         label: "NVIDIA API key",
-        help: "Enter the NVIDIA API key used for VoiceClaw batch ASR and TTS.",
+        help: "Enter the NVIDIA API key used for VoiceClaw TTS.",
       },
     },
     {
-      id: "twilioFromNumber",
+      id: "telnyxFromNumber",
       kind: "config",
       required: true,
-      envKey: "VOICECLAW_TWILIO_FROM_NUMBER",
-      statePath: "voiceclaw.twilioFromNumber",
+      envKey: "VOICECLAW_TELNYX_FROM_NUMBER",
+      statePath: "voiceclaw.telnyxFromNumber",
       formatPattern: "^\\+[1-9][0-9]{1,14}$",
       formatHint: "E.164 number such as +15550001234.",
       prompt: {
-        label: "Twilio caller number",
-        help: "Enter the Twilio-owned E.164 number used for outbound calls.",
+        label: "Telnyx caller number",
+        help: "Enter the Telnyx-owned E.164 number used for outbound calls.",
       },
     },
     {
-      id: "twilioToNumber",
+      id: "telnyxToNumber",
       kind: "config",
-      required: false,
-      envKey: "VOICECLAW_TWILIO_TO_NUMBER",
-      statePath: "voiceclaw.twilioToNumber",
+      required: true,
+      envKey: "VOICECLAW_TELNYX_TO_NUMBER",
+      statePath: "voiceclaw.telnyxToNumber",
       formatPattern: "^\\+[1-9][0-9]{1,14}$",
       formatHint: "E.164 number such as +15550005678.",
       prompt: {
         label: "Default destination number",
-        help: "Optional E.164 destination used when a call command omits --to.",
+        help: "Enter the E.164 number used as the default outbound destination and the only allowed inbound caller.",
       },
     },
     {
@@ -104,7 +114,7 @@ export const voiceclawManifest = {
       formatPattern: "^https://[^\\s]+/voice/webhook$",
       formatHint: "Public HTTPS URL ending in /voice/webhook.",
       prompt: {
-        label: "Twilio webhook URL",
+        label: "Telnyx webhook URL",
         help: "Enter the public HTTPS URL that forwards to the VoiceClaw webhook port.",
       },
     },
@@ -124,18 +134,25 @@ export const voiceclawManifest = {
   ],
   credentials: [
     {
+      id: "telnyxApiKey",
+      sourceInput: "telnyxApiKey",
+      providerName: "{sandboxName}-voiceclaw-telnyx",
+      providerEnvKey: "TELNYX_API_KEY",
+      placeholder: "openshell:resolve:env:TELNYX_API_KEY",
+      primary: true,
+    },
+    {
       id: "nvidiaApiKey",
       sourceInput: "nvidiaApiKey",
       providerName: "{sandboxName}-voiceclaw-nvidia-speech",
       providerEnvKey: "NVIDIA_API_KEY",
       placeholder: "openshell:resolve:env:NVIDIA_API_KEY",
-      primary: true,
     },
   ],
   policyPresets: [{ name: "voiceclaw", policyKeys: ["voiceclaw"] }],
   hostForward: {
     port: "{{voiceclaw.webhookPort}}",
-    label: "VoiceClaw Twilio webhook",
+    label: "VoiceClaw Telnyx webhook",
   },
   render: [
     {
@@ -149,12 +166,13 @@ export const voiceclawManifest = {
           enabled: true,
           config: {
             enabled: true,
-            provider: "twilio",
-            fromNumber: "{{voiceclaw.twilioFromNumber}}",
-            toNumber: "{{voiceclaw.twilioToNumber}}",
-            twilio: {
-              accountSid: "{{voiceclaw.twilioAccountSid}}",
-              authToken: "{{voiceclaw.twilioAuthToken}}",
+            provider: "telnyx",
+            fromNumber: "{{voiceclaw.telnyxFromNumber}}",
+            toNumber: "{{voiceclaw.telnyxToNumber}}",
+            telnyx: {
+              apiKey: "{{credential.telnyxApiKey.placeholder}}",
+              connectionId: "{{voiceclaw.telnyxConnectionId}}",
+              publicKey: "{{voiceclaw.telnyxPublicKey}}",
             },
             serve: {
               bind: "0.0.0.0",
@@ -162,12 +180,15 @@ export const voiceclawManifest = {
               path: VOICECLAW_WEBHOOK_PATH,
             },
             publicUrl: "{{voiceclaw.publicUrl}}",
+            inboundPolicy: "allowlist",
+            allowFrom: ["{{voiceclaw.telnyxToNumber}}"],
+            ringTimeoutMs: 120_000,
             outbound: {
               defaultMode: "conversation",
             },
             tts: {
               provider: "nvidia",
-              timeoutMs: 30_000,
+              timeoutMs: 120_000,
               providers: {
                 nvidia: {
                   apiKey: "{{credential.nvidiaApiKey.placeholder}}",
@@ -203,34 +224,6 @@ export const voiceclawManifest = {
         },
       },
     },
-    {
-      id: "voiceclaw-openclaw-asr",
-      kind: "json-fragment",
-      agent: "openclaw",
-      target: "openclaw.json",
-      fragment: {
-        path: "tools.media.audio",
-        value: {
-          enabled: true,
-          models: [
-            {
-              provider: "nvidia",
-              model: "nvidia/parakeet-tdt-0.6b-v2",
-            },
-          ],
-        },
-      },
-    },
-    {
-      id: "voiceclaw-openclaw-nvidia-auth",
-      kind: "json-fragment",
-      agent: "openclaw",
-      target: "openclaw.json",
-      fragment: {
-        path: "models.providers.nvidia.apiKey",
-        value: "{{credential.nvidiaApiKey.placeholder}}",
-      },
-    },
   ],
   runtime: {
     openclaw: {
@@ -238,7 +231,7 @@ export const voiceclawManifest = {
       visibility: {
         configKeys: [],
         pluginConfigKeys: ["voice-call"],
-        logPatterns: ["voice-call", "twilio"],
+        logPatterns: ["voice-call", "telnyx"],
       },
       nodePreloads: [
         {
@@ -246,21 +239,19 @@ export const voiceclawManifest = {
           injectInto: ["boot", "connect"],
           // The packaged preload is required. Its exact-version source hooks
           // fail open with a bounded warning if the pinned OpenClaw artifact
-          // changes before this POC monkey patch is removed.
+          // changes before this MVP compatibility patch is removed.
           optional: false,
-          installMessage:
-            "[channels] Installing VoiceClaw NVIDIA batch ASR and TTS compatibility patch",
+          installMessage: "[channels] Installing VoiceClaw NVIDIA TTS compatibility patch",
           installedMessage:
-            "[channels] VoiceClaw NVIDIA batch ASR and TTS compatibility patch installed (NODE_OPTIONS updated)",
+            "[channels] VoiceClaw NVIDIA TTS compatibility patch installed (NODE_OPTIONS updated)",
         },
         {
-          module: "openclaw-voicecall-gather-tts",
+          module: "openclaw-voicecall-telnyx-tts",
           injectInto: ["boot", "connect"],
           optional: false,
-          installMessage:
-            "[channels] Installing VoiceClaw Twilio Gather NVIDIA TTS compatibility patch",
+          installMessage: "[channels] Installing VoiceClaw Telnyx NVIDIA TTS compatibility patch",
           installedMessage:
-            "[channels] VoiceClaw Twilio Gather NVIDIA TTS compatibility patch installed (NODE_OPTIONS updated)",
+            "[channels] VoiceClaw Telnyx NVIDIA TTS compatibility patch installed (NODE_OPTIONS updated)",
         },
       ],
     },
@@ -289,6 +280,11 @@ export const voiceclawManifest = {
       handler: "common.tokenPaste",
       outputs: [
         {
+          id: "telnyxApiKey",
+          kind: "secret",
+          required: true,
+        },
+        {
           id: "nvidiaApiKey",
           kind: "secret",
           required: true,
@@ -301,10 +297,10 @@ export const voiceclawManifest = {
       phase: "enroll",
       handler: "common.configPrompt",
       outputs: [
-        { id: "twilioAccountSid", kind: "config", required: true },
-        { id: "twilioAuthToken", kind: "config", required: true },
-        { id: "twilioFromNumber", kind: "config", required: true },
-        { id: "twilioToNumber", kind: "config" },
+        { id: "telnyxConnectionId", kind: "config", required: true },
+        { id: "telnyxPublicKey", kind: "config", required: true },
+        { id: "telnyxFromNumber", kind: "config", required: true },
+        { id: "telnyxToNumber", kind: "config", required: true },
         { id: "publicUrl", kind: "config", required: true },
       ],
       onFailure: "skip-channel",

@@ -43,14 +43,11 @@ afterEach(() => {
 });
 
 describe("VoiceClaw OpenClaw NVIDIA speech preload", () => {
-  it("adds PR 112078 ASR and TTS registration to the reviewed entrypoint (#6387)", () => {
+  it("adds NVIDIA TTS registration to the reviewed entrypoint (#6387)", () => {
     const patched = patchNvidiaIndexSource(INDEX_FIXTURE, REVIEWED_NVIDIA_INDEX_SHA256);
 
-    expect(patched).toContain('from "./voiceclaw-nvidia-audio-transcription-provider.js"');
     expect(patched).toContain('from "./voiceclaw-nvidia-speech-provider.js"');
-    expect(patched).toContain(
-      "api.registerMediaUnderstandingProvider(nvidiaMediaUnderstandingProvider)",
-    );
+    expect(patched).not.toContain("registerMediaUnderstandingProvider");
     expect(patched).toContain("api.registerSpeechProvider(buildNvidiaSpeechProvider())");
   });
 
@@ -60,7 +57,6 @@ describe("VoiceClaw OpenClaw NVIDIA speech preload", () => {
 
   it("serves channel-owned provider modules through synchronous module hooks (#6387)", () => {
     const virtualSources = {
-      "voiceclaw-nvidia-audio-transcription-provider.js": "export const asr = true;",
       "voiceclaw-nvidia-speech-config.js": "export const config = true;",
       "voiceclaw-nvidia-speech-http.runtime.js": "export const http = true;",
       "voiceclaw-nvidia-speech-provider.js": "export const tts = true;",
@@ -109,15 +105,7 @@ describe("VoiceClaw OpenClaw NVIDIA speech preload", () => {
 
     expect(patched).toMatchObject({
       contracts: {
-        mediaUnderstandingProviders: ["nvidia"],
         speechProviders: ["nvidia"],
-      },
-      mediaUnderstandingProviderMetadata: {
-        nvidia: {
-          capabilities: ["audio"],
-          defaultModels: { audio: "nvidia/parakeet-tdt-0.6b-v2" },
-          autoPriority: { audio: 55 },
-        },
       },
     });
     expect(fs.readFileSync(manifestPath, "utf8")).toBe(MANIFEST_FIXTURE);

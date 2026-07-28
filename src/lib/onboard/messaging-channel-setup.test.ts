@@ -33,7 +33,6 @@ vi.mock("../messaging/channels/slack/hooks/credential-validation", () => ({
 }));
 
 const ORIGINAL_ENV = { ...process.env };
-const TEST_TWILIO_ACCOUNT_SID = `AC${"0123456789abcdef".repeat(2)}`;
 const manifestRegistry = createBuiltInChannelManifestRegistry();
 const BLANK_WHATSAPP_SEED_CASES = [
   { label: "unset", environment: {} },
@@ -804,15 +803,17 @@ describe("detectMessagingChannelsFromEnv", () => {
   });
 
   it("detects VoiceClaw only from its explicit non-interactive selector", () => {
-    process.env.VOICECLAW_TWILIO_ACCOUNT_SID = TEST_TWILIO_ACCOUNT_SID;
+    process.env.VOICECLAW_TELNYX_CONNECTION_ID = "1234567890123456789";
     expect(detectMessagingChannelsFromEnv({ name: "openclaw" } as never)).not.toContain(
       "voiceclaw",
     );
 
     process.env.VOICECLAW_ENABLED = "1";
-    process.env.VOICECLAW_TWILIO_AUTH_TOKEN = "test-token";
+    process.env.TELNYX_API_KEY = "test-telnyx-api-key";
+    process.env.VOICECLAW_TELNYX_PUBLIC_KEY = `${"A".repeat(43)}=`;
     process.env.NVIDIA_API_KEY = "nvapi-test-speech-key";
-    process.env.VOICECLAW_TWILIO_FROM_NUMBER = "+15550001234";
+    process.env.VOICECLAW_TELNYX_FROM_NUMBER = "+15550001234";
+    process.env.VOICECLAW_TELNYX_TO_NUMBER = "+15550005678";
     process.env.VOICECLAW_PUBLIC_URL = "https://voice.example.test/voice/webhook";
     expect(detectMessagingChannelsFromEnv({ name: "openclaw" } as never)).toContain("voiceclaw");
     expect(detectMessagingChannelsFromEnv({ name: "hermes" } as never)).not.toContain("voiceclaw");

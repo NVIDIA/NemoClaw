@@ -7,8 +7,6 @@ import type { MessagingHookContext, MessagingHookResult } from "../../../hooks/t
 import type { ChannelHealthReport } from "../../channel-health";
 import { buildVoiceClawProbeNodeScript, createVoiceClawStatusHealthHook } from "./status-health";
 
-const TEST_TWILIO_ACCOUNT_SID = `AC${"0123456789abcdef".repeat(2)}`;
-
 const BASE_INPUTS = {
   currentSandbox: "voice-agent",
   agent: "openclaw",
@@ -21,9 +19,8 @@ const BASE_INPUTS = {
 const READY_PROBE = {
   configReadable: true,
   pluginEnabled: true,
-  twilioConfigured: true,
+  telnyxConfigured: true,
   webhookConfigured: true,
-  nvidiaAsrConfigured: true,
   nvidiaTtsConfigured: true,
 };
 
@@ -62,11 +59,12 @@ describe("voiceclaw.statusHealth", () => {
                 enabled: true,
                 config: {
                   enabled: true,
-                  provider: "twilio",
+                  provider: "telnyx",
                   fromNumber: "+15550001234",
-                  twilio: {
-                    accountSid: TEST_TWILIO_ACCOUNT_SID,
-                    authToken: "test-twilio-auth-token",
+                  telnyx: {
+                    apiKey: "openshell:resolve:env:TELNYX_API_KEY",
+                    connectionId: "123456789",
+                    publicKey: "test-ed25519-public-key",
                   },
                   serve: { bind: "0.0.0.0", port: 3334, path: "/voice/webhook" },
                   publicUrl: "https://voice.example.test/voice/webhook",
@@ -76,14 +74,6 @@ describe("voiceclaw.statusHealth", () => {
             },
           },
           messages: { tts: { provider: "nvidia" } },
-          tools: {
-            media: {
-              audio: {
-                enabled: true,
-                models: [{ provider: "nvidia" }],
-              },
-            },
-          },
         }),
     }));
 
@@ -96,7 +86,7 @@ describe("voiceclaw.statusHealth", () => {
     expect(JSON.parse(writes.join(""))).toEqual(READY_PROBE);
   });
 
-  it("reports ready when config, plugin, policy, Twilio, and speech checks pass (#6387)", () => {
+  it("reports ready when config, plugin, policy, Telnyx, and TTS checks pass (#6387)", () => {
     const execute = vi.fn(() => ({ status: 0, stdout: probeOutput(READY_PROBE), stderr: "" }));
     const report = reportOf(
       createVoiceClawStatusHealthHook({ executeSandboxCommand: execute })(context()),
@@ -112,7 +102,7 @@ describe("voiceclaw.statusHealth", () => {
     ]);
     expect(execute).toHaveBeenCalledWith(
       "voice-agent",
-      expect.stringContaining("plugins inspect voice-call"),
+      expect.stringContaining("env HOME=/sandbox openclaw plugins inspect voice-call"),
       8000,
     );
   });
@@ -133,10 +123,10 @@ describe("voiceclaw.statusHealth", () => {
     );
   });
 
-  it("reports Twilio and policy failures without exposing credentials (#6387)", () => {
+  it("reports Telnyx and policy failures without exposing credentials (#6387)", () => {
     const execute = vi.fn(() => ({
       status: 0,
-      stdout: probeOutput({ ...READY_PROBE, twilioConfigured: false }),
+      stdout: probeOutput({ ...READY_PROBE, telnyxConfigured: false }),
       stderr: "",
     }));
     const report = reportOf(
@@ -149,10 +139,10 @@ describe("voiceclaw.statusHealth", () => {
     expect(report?.signals).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Policy coverage", severity: "fail" }),
-        expect.objectContaining({ label: "Twilio setup", severity: "fail" }),
+        expect.objectContaining({ label: "Telnyx setup", severity: "fail" }),
       ]),
     );
-    expect(JSON.stringify(report)).not.toContain("test-twilio-auth-token");
+    expect(JSON.stringify(report)).not.toContain("TELNYX_API_KEY");
   });
 
   it("reports probe failure for malformed or unreachable sandbox output (#6387)", () => {

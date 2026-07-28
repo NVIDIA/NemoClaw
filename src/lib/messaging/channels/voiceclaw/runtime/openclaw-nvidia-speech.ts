@@ -8,7 +8,7 @@
 // memory; the OpenClaw installation remains read-only.
 //
 // Removal criterion: delete this preload and its VoiceClaw manifest entry once
-// the pinned OpenClaw release includes NVIDIA batch HTTP ASR and TTS providers.
+// the pinned OpenClaw release includes an NVIDIA TTS provider.
 
 var fs = require("node:fs");
 var Module = require("node:module");
@@ -23,23 +23,13 @@ var NVIDIA_INDEX_SUFFIX = "/dist/extensions/nvidia/index.js";
 var NVIDIA_MANIFEST_SUFFIX = "/dist/extensions/nvidia/openclaw.plugin.json";
 var PRELOAD_ROOT = "/usr/local/lib/nemoclaw/preloads";
 var VIRTUAL_ASSETS = {
-  "voiceclaw-nvidia-audio-transcription-provider.js":
-    "voiceclaw-nvidia-audio-transcription-provider.mjs",
   "voiceclaw-nvidia-speech-config.js": "voiceclaw-nvidia-speech-config.mjs",
   "voiceclaw-nvidia-speech-http.runtime.js": "voiceclaw-nvidia-speech-http.runtime.mjs",
   "voiceclaw-nvidia-speech-provider.js": "voiceclaw-nvidia-speech-provider.mjs",
   "voiceclaw-wave-audio.js": "voiceclaw-wave-audio.mjs",
 };
 var PATCHED_CONTRACTS = {
-  mediaUnderstandingProviders: ["nvidia"],
   speechProviders: ["nvidia"],
-};
-var PATCHED_MEDIA_METADATA = {
-  nvidia: {
-    capabilities: ["audio"],
-    defaultModels: { audio: "nvidia/parakeet-tdt-0.6b-v2" },
-    autoPriority: { audio: 55 },
-  },
 };
 
 function sha256Hex(source) {
@@ -89,14 +79,11 @@ function patchNvidiaIndexSource(source, integrity = sha256Hex(source)) {
   var closeIndex = source.lastIndexOf(closeAnchor);
   if (source.indexOf(importAnchor) === -1 || closeIndex === -1) return source;
 
-  var imports = [
-    'import { nvidiaMediaUnderstandingProvider } from "./voiceclaw-nvidia-audio-transcription-provider.js";',
-    'import { buildNvidiaSpeechProvider } from "./voiceclaw-nvidia-speech-provider.js";',
-  ].join("\n");
+  var imports =
+    'import { buildNvidiaSpeechProvider } from "./voiceclaw-nvidia-speech-provider.js";';
   var registered = [
     "\t},",
     "\tregister(api) {",
-    "\t\tapi.registerMediaUnderstandingProvider(nvidiaMediaUnderstandingProvider);",
     "\t\tapi.registerSpeechProvider(buildNvidiaSpeechProvider());",
     "\t}",
     "});",
@@ -119,7 +106,6 @@ function patchNvidiaManifestSource(source, integrity = sha256Hex(source)) {
   }
   if (!manifest || manifest.id !== "nvidia") return source;
   manifest.contracts = PATCHED_CONTRACTS;
-  manifest.mediaUnderstandingProviderMetadata = PATCHED_MEDIA_METADATA;
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 

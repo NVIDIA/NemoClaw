@@ -276,7 +276,7 @@ function normalizePersistedInputs(
       .map((input) => [input.inputId as string, input] as const),
   );
   const fromManifest = (manifest?.inputs ?? []).map((input) =>
-    inputReferenceFromManifest(channel.channelId, input, persistedById.get(input.id)),
+    inputReferenceFromManifest(channel.channelId, input, persistedById),
   );
   const manifestInputIds = new Set((manifest?.inputs ?? []).map((input) => input.id));
   const unknownInputs = [...persistedById.values()].flatMap((input) => {
@@ -309,8 +309,16 @@ function normalizeFullInputs(
 function inputReferenceFromManifest(
   channelId: string,
   input: ChannelInputSpec,
-  persisted: Partial<SandboxMessagingInputReference> | undefined,
+  persistedById: ReadonlyMap<string, Partial<SandboxMessagingInputReference>>,
 ): SandboxMessagingInputReference {
+  const persisted = persistedById.get(input.id);
+  const defaultValue =
+    input.kind === "config" &&
+    persisted?.value === undefined &&
+    (!input.promptWhenInput || persistedById.get(input.promptWhenInput)?.value !== undefined)
+      ? normalizePersistedDefaultValue(input.defaultValue)
+      : undefined;
+
   return {
     channelId,
     inputId: input.id,
@@ -321,8 +329,17 @@ function inputReferenceFromManifest(
     ...(persisted?.credentialAvailable !== undefined
       ? { credentialAvailable: persisted.credentialAvailable }
       : {}),
-    ...(persisted?.value !== undefined ? { value: persisted.value } : {}),
+    ...(persisted?.value !== undefined
+      ? { value: persisted.value }
+      : defaultValue !== undefined
+        ? { value: defaultValue }
+        : {}),
   };
+}
+
+function normalizePersistedDefaultValue(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
 }
 
 function normalizeUnknownInput(

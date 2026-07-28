@@ -33,7 +33,7 @@ describe("VoiceClaw NVIDIA speech provider", () => {
     });
   });
 
-  it("rejects audio that Twilio telephony conversion cannot consume (#6387)", () => {
+  it("rejects audio that telephony conversion cannot consume (#6387)", () => {
     const stereo = createPcmWav(Buffer.from([0x01, 0x02]));
     stereo.writeUInt16LE(2, 22);
 
