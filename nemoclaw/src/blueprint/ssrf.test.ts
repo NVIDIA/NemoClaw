@@ -407,6 +407,7 @@ describe("validateEndpointUrl – URL parsing edge cases", () => {
   });
 
   it("rejects URL with userinfo/basic auth credentials", async () => {
+    mockLookup.mockClear();
     const cases = [
       {
         url: "https://alice:s3cret-token@api.example.com/v1",
@@ -440,5 +441,6 @@ describe("validateEndpointUrl – URL parsing edge cases", () => {
         expect(message).not.toContain(secret);
       }
     }
+    expect(mockLookup).not.toHaveBeenCalled();
   });
 });

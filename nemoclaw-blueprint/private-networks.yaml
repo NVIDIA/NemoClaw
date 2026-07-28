@@ -111,6 +111,9 @@ ipv6:
   - address: "100::"
     prefix: 64
     purpose: Discard prefix
+  - address: "100:0:0:1::"
+    prefix: 64
+    purpose: Dummy IPv6 Prefix (IANA non-forwardable)
   - address: "2001::"
     prefix: 23
     purpose: IETF protocol assignments (Teredo, benchmarking, ORCHID, and related special-purpose space)
