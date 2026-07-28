@@ -235,6 +235,23 @@ describe("resolveSkillPaths", () => {
     expect(paths.isOpenClaw).toBe(false);
   });
 
+  it("mirrors Deep Agents skills into the agent skills dir dcode loads (#7634)", () => {
+    // dcode's user skill dir is ~/.deepagents/{agent}/skills (HOME=/sandbox,
+    // DEFAULT_AGENT_NAME="agent"); it never scans ~/.deepagents/skills, so the
+    // upload dir alone leaves the skill installed but unloadable.
+    const agent = {
+      name: "langchain-deepagents-code",
+      configPaths: {
+        dir: "/sandbox/.deepagents",
+      },
+    };
+    const paths = resolveSkillPaths(agent, "note-summarizer");
+    expect(paths.uploadDir).toBe("/sandbox/.deepagents/skills/note-summarizer");
+    expect(paths.mirrorDir).toBe("/sandbox/.deepagents/agent/skills/note-summarizer");
+    expect(paths.sessionFile).toBeNull();
+    expect(paths.isOpenClaw).toBe(false);
+  });
+
   it("returns generic paths for a hypothetical future agent", () => {
     const agent = {
       name: "future-agent",
@@ -249,6 +266,11 @@ describe("resolveSkillPaths", () => {
     expect(paths.isOpenClaw).toBe(false);
   });
 });
+
+const DEEPAGENTS_AGENT = {
+  name: "langchain-deepagents-code",
+  configPaths: { dir: "/sandbox/.deepagents" },
+};
 
 describe("postInstall", () => {
   it("refreshes OpenClaw sessions after installing an updated skill", () => {
@@ -334,6 +356,43 @@ describe("postInstall", () => {
       rmSync(skillDir, { recursive: true, force: true });
     }
   });
+
+  it("mirrors a Deep Agents skill into agent/skills instead of hinting a restart (#7634)", () => {
+    // Deep Agents Code is a terminal runtime with no gateway to restart; the
+    // only way the skill becomes loadable is the agent/skills mirror.
+    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-dcode-"));
+    const commands: string[] = [];
+    try {
+      writeFileSync(skillDir + "/SKILL.md", "---\nname: note-summarizer\n---\n# Notes\n");
+      const paths = resolveSkillPaths(DEEPAGENTS_AGENT, "note-summarizer");
+      const result = postInstall(
+        { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
+        paths,
+        skillDir,
+        {
+          sshExecImpl: (_ctx, command) => {
+            commands.push(command);
+            return { status: 0, stdout: "", stderr: "" };
+          },
+        },
+      );
+
+      expect(result).toEqual({ success: true, messages: [] });
+      const mirrorCmd = commands.find(
+        (c) =>
+          c.includes(paths.uploadDir) &&
+          c.includes('"/sandbox/.deepagents/agent/skills/note-summarizer"'),
+      );
+      expect(
+        mirrorCmd,
+        "postInstall should mirror the skill into /sandbox/.deepagents/agent/skills",
+      ).toBeDefined();
+      // No sessions.json exists for a terminal runtime, so nothing may clear one.
+      expect(commands.some((c) => c.includes("sessions.json"))).toBe(false);
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("verifyInstall", () => {
@@ -366,5 +425,24 @@ describe("verifyInstall", () => {
     });
 
     expect(ok).toBe(false);
+  });
+
+  it("requires SKILL.md in the Deep Agents agent/skills mirror (#7634)", () => {
+    // Verifying only the upload dir is what let `skill install` report success
+    // for a skill dcode could never load.
+    const paths = resolveSkillPaths(DEEPAGENTS_AGENT, "note-summarizer");
+    const commands: string[] = [];
+    verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "EXISTS", stderr: "" };
+      },
+    });
+
+    expect(
+      commands.some((c) =>
+        c.includes('"/sandbox/.deepagents/agent/skills/note-summarizer/SKILL.md"'),
+      ),
+    ).toBe(true);
   });
 });

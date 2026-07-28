@@ -84,6 +84,54 @@ describe("removeSkill (unit — no SSH)", () => {
       "printf '{}' > '/sandbox/.openclaw/agents/main/sessions/sessions.json'",
     ]);
   });
+
+  it("does not treat an agent-authored Deep Agents skill as installed (#7634)", () => {
+    // dcode's own skill-creator writes user skills into agent/skills (#5753),
+    // so a directory there can exist without NemoClaw ever installing it.
+    // checkExisting gates `skill remove`; probing the shared mirror here would
+    // let remove delete a skill the user created in-sandbox.
+    const ctx = { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" };
+    const paths = resolveSkillPaths(
+      { name: "langchain-deepagents-code", configPaths: { dir: "/sandbox/.deepagents" } },
+      "user-authored",
+    );
+    const commands: string[] = [];
+    checkExisting(ctx, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "ABSENT", stderr: "" };
+      },
+    });
+
+    expect(paths.mirrorSharedWithAgent).toBe(true);
+    expect(commands[0]).toContain("/sandbox/.deepagents/skills/user-authored");
+    expect(commands[0]).not.toContain("agent/skills/user-authored");
+  });
+
+  it("removes the Deep Agents agent/skills mirror so the skill stops loading (#7634)", () => {
+    // Install now populates agent/skills; remove must delete it or dcode keeps
+    // loading a skill the user removed.
+    const ctx = { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" };
+    const paths = resolveSkillPaths(
+      { name: "langchain-deepagents-code", configPaths: { dir: "/sandbox/.deepagents" } },
+      "test-skill",
+    );
+    const commands: string[] = [];
+    const result = removeSkill(ctx, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.removedMirrorDir).toBe(true);
+    expect(result.clearedSessions).toBe(false);
+    expect(commands).toEqual([
+      "rm -rf '/sandbox/.deepagents/skills/test-skill'",
+      'rm -rf "/sandbox/.deepagents/agent/skills/test-skill"',
+    ]);
+  });
 });
 
 describe("verifyRemove (unit — no SSH)", () => {

@@ -2315,6 +2315,7 @@ To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-san
 For OpenClaw, the command uploads the skill to the OpenClaw state directory and mirrors it into `$HOME/.openclaw/skills/<name>` when the agent home directory differs from the state directory.
 That mirror makes skills listed by `openclaw skills list` available at session startup.
 If mirror creation fails, NemoClaw prints a warning so you can reinstall or inspect the home directory permissions.
+OpenClaw caches skill content per session, so the command also refreshes the OpenClaw session index after every install and update to avoid stale `SKILL.md` data.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2325,8 +2326,10 @@ Hermes plugins are different from NemoClaw skills.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents, the command uploads skills under `/sandbox/.deepagents/skills/<name>` and mirrors agent-facing skills under `/sandbox/.deepagents/agent/skills/<name>` when the manifest requires that view.
-The managed `dcode` launchers discover those skills on the next session without accepting executable hook configuration.
+For Deep Agents, the command uploads skills under `/sandbox/.deepagents/skills/<name>` and then mirrors them into `/sandbox/.deepagents/agent/skills/<name>`.
+The mirror is required: Deep Agents Code loads user skills from `~/.deepagents/<agent>/skills`, so a skill that exists only in the upload directory is never discovered.
+Verification fails when the mirror is missing, so the command does not report success for a skill the agent cannot load.
+The managed `dcode` launchers discover mirrored skills on the next session without accepting executable hook configuration.
 
 </AgentOnly>
 
@@ -2337,16 +2340,16 @@ Files with names starting with `.` (dotfiles) are skipped and listed in the outp
 Files with unsafe path characters are rejected to prevent shell injection.
 
 If the skill already exists on the sandbox, the command updates it in place and preserves chat history.
-For new installs, the agent session index is refreshed so the agent discovers the skill on the next session.
+In both cases the agent discovers the change on its next session, using the per-agent mechanism described above.
 
 ### `$$nemoclaw <name> skill remove <skill>`
 
 Remove an installed skill from a running sandbox by skill name.
-The command validates the skill name, removes the sandbox upload directory, and refreshes the agent session index so the remaining skills are rediscovered on the next session.
+The command validates the skill name and removes the sandbox upload directory, so the remaining skills are rediscovered on the next session.
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw, the command also removes the OpenClaw home-directory mirror when present.
+For OpenClaw, the command also removes the OpenClaw home-directory mirror when present and refreshes the OpenClaw session index.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2356,7 +2359,8 @@ Run `$$nemoclaw <name> gateway restart` if prompted so the removal takes effect.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents, the command removes the uploaded skill from the managed `/sandbox/.deepagents` skill paths and refreshes the session index for future `dcode` sessions.
+For Deep Agents, the command removes the uploaded skill from `/sandbox/.deepagents/skills/<name>` and its mirror at `/sandbox/.deepagents/agent/skills/<name>`.
+Removing the mirror is what makes the skill stop loading, because Deep Agents Code reads its skills from that directory at session start; the next `dcode` session no longer lists it.
 It does not enable project hooks or unmanaged MCP files.
 
 </AgentOnly>

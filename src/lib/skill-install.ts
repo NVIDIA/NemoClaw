@@ -96,13 +96,49 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 export interface SkillPaths {
   /** Upload target directory for the skill */
   uploadDir: string;
-  /** OpenClaw-only mirror directory under the remote home dir, or null */
+  /** Directory the agent actually loads skills from, or null when it equals uploadDir */
   mirrorDir: string | null;
+  /**
+   * Whether the agent's own tooling also writes into mirrorDir. When true the
+   * mirror is NOT proof that NemoClaw installed a skill, so it must not be used
+   * as the existence gate for `skill remove`.
+   */
+  mirrorSharedWithAgent: boolean;
   /** OpenClaw-only: session index to clear, or null */
   sessionFile: string | null;
   /** Whether the agent is OpenClaw (drives refresh behavior) */
   isOpenClaw: boolean;
 }
+
+/**
+ * Agents whose loader reads skills from somewhere other than `uploadDir`.
+ *
+ * NemoClaw uploads to `uploadDir`, which the agent manifest declares as durable
+ * `state_dirs`, but the agent scans its own directory at session start. Where
+ * those diverge, an upload without a mirror leaves the skill on disk and
+ * unregistered — absent from the agent's skill list (#4819 for OpenClaw, #7634
+ * for Deep Agents Code, whose user skill dir is `~/.deepagents/{agent}/skills`).
+ *
+ * `sharedWithAgent` marks a mirror the agent's own tooling also writes into:
+ * Deep Agents Code's skill-creator authors user skills straight into
+ * `agent/skills` (#5753), so a directory there is not proof NemoClaw installed
+ * it. `checkExisting()` depends on that distinction.
+ *
+ * Remove an entry when its agent starts loading skills from `uploadDir`.
+ */
+const AGENT_SKILL_MIRRORS: Record<
+  string,
+  { dir: (dir: string, skillName: string) => string; sharedWithAgent: boolean }
+> = {
+  openclaw: {
+    dir: (_dir, skillName) => `$HOME/.openclaw/skills/${skillName}`,
+    sharedWithAgent: false,
+  },
+  "langchain-deepagents-code": {
+    dir: (dir, skillName) => `${dir}/agent/skills/${skillName}`,
+    sharedWithAgent: true,
+  },
+};
 
 /**
  * Resolve skill install paths from the agent definition.
@@ -119,10 +155,12 @@ export function resolveSkillPaths(
   const dir = agent ? agent.configPaths.dir : "/sandbox/.openclaw";
 
   const uploadDir = `${dir}/skills/${skillName}`;
+  const mirror = AGENT_SKILL_MIRRORS[agent ? agent.name : "openclaw"];
 
   return {
     uploadDir,
-    mirrorDir: isOpenClaw ? `$HOME/.openclaw/skills/${skillName}` : null,
+    mirrorDir: mirror ? mirror.dir(dir, skillName) : null,
+    mirrorSharedWithAgent: mirror ? mirror.sharedWithAgent : false,
     sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
     isOpenClaw,
   };
@@ -226,8 +264,8 @@ export function uploadDirectory(
 }
 
 /**
- * Run post-install steps: session refresh for OpenClaw, or
- * non-OpenClaw restart hint.
+ * Run post-install steps: skill-load mirror for every agent that needs one,
+ * session refresh for OpenClaw, and a restart hint when neither applies.
  */
 export function postInstall(
   ctx: SshContext,
@@ -241,44 +279,40 @@ export function postInstall(
   const messages: string[] = [];
   const runSsh = opts.sshExecImpl ?? sshExec;
 
-  if (paths.isOpenClaw) {
-    // Mirror the uploaded skill into the agent's home dir
-    // ($HOME/.openclaw/skills/<name>). The skill is uploaded to the OpenClaw
-    // state dir (uploadDir), which `openclaw skills list` reads, but the agent
-    // loads skills from $HOME/.openclaw/skills at session start. On sandboxes
-    // where the agent's $HOME differs from the state dir these paths diverge,
-    // so without this mirror the skill is listed but never invoked (#4819).
-    // `skill remove` already deletes this mirror, so install must create it to
-    // stay symmetric. The copy is skipped when both paths resolve to the same
-    // directory (the common case where $HOME is the state dir's parent), so it
-    // is a safe no-op there.
-    if (paths.mirrorDir) {
-      const src = shellQuote(paths.uploadDir);
-      // mirrorDir contains $HOME, which must expand on the remote shell, so we
-      // use double quotes (not shellQuote). Safe because skill names are
-      // restricted to [A-Za-z0-9._-] by parseFrontmatter / the name regex.
-      const dst = `"${paths.mirrorDir}"`;
-      const mirrorParent = `"${paths.mirrorDir.slice(0, paths.mirrorDir.lastIndexOf("/"))}"`;
-      const mirrorResult = runSsh(
-        ctx,
-        `[ ${src} -ef ${dst} ] || { mkdir -p ${mirrorParent} && rm -rf ${dst} && cp -a ${src} ${dst}; }`,
+  // Copy the skill into the directory the agent's loader actually reads; see
+  // AGENT_SKILL_MIRRORS for which agents need this and why. Without it the
+  // upload never registers as a skill. `skill remove` deletes the mirror, so
+  // install must create it to stay symmetric. The copy is skipped when both
+  // paths resolve to the same directory, so it is a no-op for agents whose
+  // loader reads uploadDir directly.
+  if (paths.mirrorDir) {
+    const src = shellQuote(paths.uploadDir);
+    // mirrorDir may contain $HOME, which must expand on the remote shell, so we
+    // use double quotes (not shellQuote). Safe because skill names are
+    // restricted to [A-Za-z0-9._-] by parseFrontmatter / the name regex.
+    const dst = `"${paths.mirrorDir}"`;
+    const mirrorParent = `"${paths.mirrorDir.slice(0, paths.mirrorDir.lastIndexOf("/"))}"`;
+    const mirrorResult = runSsh(
+      ctx,
+      `[ ${src} -ef ${dst} ] || { mkdir -p ${mirrorParent} && rm -rf ${dst} && cp -a ${src} ${dst}; }`,
+    );
+    if (!mirrorResult || mirrorResult.status !== 0) {
+      messages.push(
+        `Warning: failed to mirror skill into ${paths.mirrorDir} (agent may not load it)`,
       );
-      if (!mirrorResult || mirrorResult.status !== 0) {
-        messages.push(
-          `Warning: failed to mirror skill into ${paths.mirrorDir} (agent may not load it)`,
-        );
-      }
     }
+  }
 
-    // Clear sessions.json so OpenClaw re-discovers skills on the next
-    // session even after an in-place skill update.
-    if (paths.sessionFile && !opts.skipRefresh) {
-      const refreshResult = runSsh(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
-      if (!refreshResult || refreshResult.status !== 0) {
-        messages.push("Warning: failed to clear sessions (agent may need manual restart)");
-      }
+  // Clear sessions.json so OpenClaw re-discovers skills on the next
+  // session even after an in-place skill update.
+  if (paths.sessionFile && !opts.skipRefresh) {
+    const refreshResult = runSsh(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
+    if (!refreshResult || refreshResult.status !== 0) {
+      messages.push("Warning: failed to clear sessions (agent may need manual restart)");
     }
-  } else {
+  }
+
+  if (!paths.mirrorDir && !paths.sessionFile) {
     messages.push("Restart the agent gateway to pick up the new skill.");
   }
 
@@ -288,11 +322,12 @@ export function postInstall(
 /**
  * Verify the SKILL.md file exists on the sandbox.
  *
- * For OpenClaw the home mirror ($HOME/.openclaw/skills/<name>) must also exist:
- * that is the path the agent loads skills from at session start (#4819), so a
- * successful upload whose mirror copy failed must NOT verify as installed —
- * otherwise the CLI reports success while the skill stays invisible to the
- * agent. This mirrors verifyRemove(), which already checks both paths.
+ * When the agent has a mirror directory it must also exist: that is the path
+ * the agent loads skills from at session start (#4819 for OpenClaw, #7634 for
+ * Deep Agents Code), so a successful upload whose mirror copy failed must NOT
+ * verify as installed — otherwise the CLI reports success while the skill stays
+ * invisible to the agent. This mirrors verifyRemove(), which already checks
+ * both paths.
  */
 export function verifyInstall(
   ctx: SshContext,
@@ -300,8 +335,8 @@ export function verifyInstall(
   opts: { sshExecImpl?: typeof sshExec } = {},
 ): boolean {
   const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
-  if (paths.isOpenClaw && paths.mirrorDir) {
-    // mirrorDir contains $HOME, which must expand on the remote shell, so we
+  if (paths.mirrorDir) {
+    // mirrorDir may contain $HOME, which must expand on the remote shell, so we
     // use double quotes (not shellQuote) — safe because skill names are
     // restricted to [A-Za-z0-9._-].
     checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);

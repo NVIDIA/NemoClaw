@@ -41,6 +41,7 @@ import { installSandboxSkill, removeSandboxSkill } from "./skill-install";
 const paths = {
   uploadDir: "/sandbox/.openclaw/skills/demo-skill",
   mirrorDir: "$HOME/.openclaw/skills/demo-skill",
+  mirrorSharedWithAgent: false,
   sessionFile: "/sandbox/.openclaw/agents/main/sessions/sessions.json",
   isOpenClaw: true,
 };
