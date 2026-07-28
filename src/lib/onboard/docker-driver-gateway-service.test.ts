@@ -183,7 +183,28 @@ describe("docker-driver-gateway-service", () => {
               : spawnResult(),
         ),
       }),
-    ).toThrow("launchd service homebrew.mxcl.openshell is loaded");
+    ).toThrow("its launchd service homebrew.mxcl.openshell is loaded");
+  });
+
+  it.each([
+    ["cannot run", { error: new Error("spawn launchctl ENOENT"), status: null }],
+    ["reports no exit status", { status: null }],
+  ])("aborts instead of falling back when the launchd probe %s (#7707)", (_case, launchdResult) => {
+    const refusal =
+      "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
+    expect(() =>
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        platform: "darwin",
+        spawnSyncImpl: vi.fn((command: string, args: string[]) =>
+          command === "launchctl"
+            ? launchdResult
+            : args[0] === "info"
+              ? spawnResult(1, refusal)
+              : spawnResult(),
+        ),
+      }),
+    ).toThrow("could not determine whether its launchd service homebrew.mxcl.openshell is loaded");
   });
 
   it.each([
@@ -195,6 +216,14 @@ describe("docker-driver-gateway-service", () => {
     [
       "a refusal naming a tap that only starts with the pinned name",
       "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell-fork.",
+    ],
+    [
+      "a refusal naming a dot-separated neighbor of the pinned tap",
+      "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.fork.",
+    ],
+    [
+      "a refusal naming another formula from the pinned tap",
+      "Error: Refusing to load formula nvidia/openshell/openshell-extra from untrusted tap nvidia/openshell.",
     ],
   ])("keeps %s fatal during the formula identity check (#7707)", (_case, reason) => {
     expect(() =>

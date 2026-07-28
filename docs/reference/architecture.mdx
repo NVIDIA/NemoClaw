@@ -91,8 +91,9 @@ On Apple Silicon macOS, Homebrew makes the official OpenShell formula authoritat
 The installer stages the formula and onboarding starts its `openshell` service.
 When Homebrew is present, a missing formula, a formula from another tap, a service-start failure, or a health failure stops onboarding.
 Homebrew 6.x refuses to load formulae from taps it has not marked trusted, so it can fail to confirm the official formula's identity.
-When that happens and no `openshell` launchd service is loaded, onboarding warns and uses the standalone macOS gateway fallback.
+When that happens, onboarding falls back to the standalone macOS gateway only after `launchctl` reports the `homebrew.mxcl.openshell` service is not loaded.
 A loaded launchd service keeps its lifecycle authority, so onboarding stops until the service is stopped.
+An unanswered `launchctl` probe also stops onboarding, because it does not establish that the service is stopped.
 A host without Homebrew also uses the standalone macOS gateway fallback.
 NemoClaw-managed gateways on custom ports remain detached and separate from the default service.
 An externally supervised gateway can use any matching configured port; its declared supervisor retains lifecycle authority.
