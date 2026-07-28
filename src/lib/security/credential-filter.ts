@@ -295,9 +295,12 @@ export function stripCredentials(obj: ConfigValue): ConfigValue {
   const result: ConfigObject = {};
   for (const [key, value] of Object.entries(obj)) {
     if (isCredentialField(key)) {
-      // Preserve non-secret references (OpenShell resolve placeholders, the
-      // `unused` sentinel); scrub anything else that looks like a raw secret.
-      result[key] = isSafeCredentialPlaceholder(value) ? value : CREDENTIAL_PLACEHOLDER;
+      // Preserve unset credential fields and non-secret references (OpenShell
+      // resolve placeholders, the `unused` sentinel); scrub raw secrets.
+      result[key] =
+        value === null || value === undefined || isSafeCredentialPlaceholder(value)
+          ? value
+          : CREDENTIAL_PLACEHOLDER;
     } else {
       result[key] = scrubConfigValue(value);
     }
@@ -421,21 +424,22 @@ function toConfigValue(value: unknown): ConfigValue | undefined {
  * Removes the "gateway" section when present (auth tokens — regenerated
  * at startup), matching JSON sanitization.
  */
-export function sanitizeYamlConfigFile(configPath: string): void {
+export function sanitizeYamlConfigFile(configPath: string): boolean {
   const rawConfig = readRegularFileNoFollow(configPath);
-  if (rawConfig === null) return;
+  if (rawConfig === null) return false;
   let parsed: unknown;
   try {
     parsed = parseYaml(rawConfig);
   } catch {
-    return;
+    return false;
   }
   const configValue = toConfigValue(parsed);
-  if (!isConfigObject(configValue)) return;
+  if (!isConfigObject(configValue)) return false;
 
   const { gateway: _gateway, ...config } = configValue;
   const sanitized = stripCredentials(config);
   writeFileAtomically(configPath, stringifyYaml(sanitized));
+  return true;
 }
 
 /**
@@ -443,26 +447,29 @@ export function sanitizeYamlConfigFile(configPath: string): void {
  * Removes the "gateway" section (contains auth tokens — regenerated at startup).
  * JSON is preferred when the file parses as JSON; otherwise YAML is tried
  * so Hermes `config.yaml` secrets are scrubbed from rebuild backups.
+ * Returns false when a YAML/YML target cannot be sanitized so callers can
+ * fail closed instead of retaining the raw file.
  */
-export function sanitizeConfigFile(configPath: string): void {
+export function sanitizeConfigFile(configPath: string): boolean {
   const rawConfig = readRegularFileNoFollow(configPath);
-  if (rawConfig === null) return;
+  if (rawConfig === null) return false;
 
   try {
     const parsed = parseJson<ConfigValue>(rawConfig);
-    if (!isConfigObject(parsed)) return;
+    if (!isConfigObject(parsed)) return false;
     const { gateway: _gateway, ...config } = parsed;
     const sanitized = stripCredentials(config);
     writeFileAtomically(configPath, JSON.stringify(sanitized, null, 2));
-    return;
+    return true;
   } catch {
     // Fall through to YAML for Hermes and other non-JSON configs.
   }
 
   const normalized = basename(configPath).toLowerCase();
   if (normalized.endsWith(".yaml") || normalized.endsWith(".yml")) {
-    sanitizeYamlConfigFile(configPath);
+    return sanitizeYamlConfigFile(configPath);
   }
+  return false;
 }
 
 /**

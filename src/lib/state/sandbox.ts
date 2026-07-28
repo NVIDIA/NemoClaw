@@ -637,20 +637,25 @@ function sanitizeBackupDirectory(dirPath: string): void {
       if (entry.isDirectory()) {
         walk(fullPath);
       } else if (entry.isFile()) {
+        const name = entry.name.toLowerCase();
         if (isSensitiveFile(entry.name)) {
           try {
             require("node:fs").unlinkSync(fullPath);
           } catch {
             /* best effort */
           }
-        } else if (
-          entry.name.endsWith(".json") ||
-          entry.name.endsWith(".yaml") ||
-          entry.name.endsWith(".yml")
-        ) {
+        } else if (name.endsWith(".json") || name.endsWith(".yaml") || name.endsWith(".yml")) {
           // JSON (OpenClaw) and YAML (Hermes config.yaml) both carry secrets.
-          sanitizeConfigFile(fullPath);
-        } else if (entry.name === ".env" || entry.name.endsWith(".env")) {
+          // Fail closed for YAML: omit the artifact when sanitization cannot run.
+          const sanitized = sanitizeConfigFile(fullPath);
+          if (!sanitized && (name.endsWith(".yaml") || name.endsWith(".yml"))) {
+            try {
+              require("node:fs").unlinkSync(fullPath);
+            } catch {
+              /* best effort */
+            }
+          }
+        } else if (name === ".env" || name.endsWith(".env")) {
           // Hermes stores API keys in .env alongside config.yaml.
           try {
             sanitizeEnvFile(fullPath);
