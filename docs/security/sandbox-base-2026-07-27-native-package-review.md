@@ -49,10 +49,11 @@ Every managed base image:
 1. installs both native packages;
 2. verifies their exact dpkg versions;
 3. verifies the fixed HTMLParser file hash;
-4. verifies 20,000 empty `feed()` calls leave no pending entries and exercises incremental HTML comment parsing across 20,000 input chunks;
-5. loads `libssh2.so.1` and verifies the 1.11.1 runtime identity;
-6. records both packages in the root-owned, read-only security inventory; and
-7. removes the temporary package artifacts.
+4. verifies that `html.parser` resolves to the exact hashed file;
+5. verifies 20,000 empty `feed()` calls leave no pending entries and exercises incremental HTML comment parsing across 20,000 input chunks;
+6. loads `libssh2.so.1` and verifies the 1.11.1 runtime identity;
+7. records both packages in the root-owned, read-only security inventory; and
+8. removes the temporary package artifacts.
 
 The completed production images repeat the inventory, package, file, and runtime checks and require an empty `dpkg --audit` result.
 

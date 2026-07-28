@@ -172,7 +172,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '  [[ "$#" -eq 2 && "$1" == "-c" ]] || return 64',
       '  case "$2" in',
       "    \"import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION\") ;;",
-      "    \"from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''\") ;;",
+      "    \"from pathlib import Path; import html.parser; assert Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve(); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''\") ;;",
       "    \"import ctypes; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; assert lib.libssh2_version(0) == b'1.11.1'\") ;;",
       "    *) return 64 ;;",
       "  esac",

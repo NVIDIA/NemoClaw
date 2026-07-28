@@ -8,8 +8,9 @@ import path from "node:path";
 export const FIXED_PARSER_SHA256 =
   "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7";
 
-export const HTML_PARSER_SECURITY_PROBE =
-  "from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''";
+export function htmlParserSecurityProbe(parserPath: string): string {
+  return `from pathlib import Path; import html.parser; assert Path(html.parser.__file__).resolve() == Path('${parserPath}').resolve(); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''`;
+}
 
 const PYEXPAT_PROBE =
   "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION";
@@ -47,7 +48,7 @@ export function stageFixedParser(tmp: string): {
       "from importlib.machinery import SourceFileLoader",
       "import sys",
       `parser_path = ${JSON.stringify(fixedParser)}`,
-      `html_probe = ${JSON.stringify(HTML_PARSER_SECURITY_PROBE)}`,
+      `html_probe = ${JSON.stringify(htmlParserSecurityProbe(fixedParser))}`,
       `accepted_noop_probes = {${JSON.stringify(PYEXPAT_PROBE)}, ${JSON.stringify(LIBSSH2_PROBE)}}`,
       "if len(sys.argv) != 3 or sys.argv[1] != '-c':",
       "    raise SystemExit(64)",
@@ -63,6 +64,7 @@ export function stageFixedParser(tmp: string): {
       "module = importlib.util.module_from_spec(spec)",
       "sys.modules[loader.name] = module",
       "loader.exec_module(module)",
+      "html.parser = module",
       "exec(code, {})",
       "",
     ].join("\n"),
