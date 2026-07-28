@@ -260,7 +260,6 @@ const credentialProviderRegistration: typeof import("./onboard/credential-provid
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
 const setupInferenceFactory: typeof import("./onboard/setup-inference") =
   require("./onboard/setup-inference");
-const resumeProviderShim = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
 const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
 const hermesAuth: typeof import("./onboard/hermes-auth") = require("./onboard/hermes-auth");
@@ -983,6 +982,8 @@ const { upsertMessagingProviders, providerMatchesGatewayCredential } =
   registeredCredentialProviders;
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const resumeProviderShim = require("./onboard/resume-provider-shim").createResumeProviderShim({ isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility, preflightGatewayRouteDiscovery } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
@@ -4773,5 +4774,4 @@ module.exports = {
   getProbeAuthMode,
   getValidationProbeCurlArgs,
   verifyCompatibleEndpointSandboxSmoke,
-  resumeProviderShimDeps: { isRoutedInferenceProvider, replaceNamedCredential },
 };

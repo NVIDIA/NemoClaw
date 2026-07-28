@@ -1,10 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { detectNvidiaPlatform, type NvidiaPlatform } from "../inference/nim.js";
+import {
+  detectGpu,
+  detectNvidiaPlatform,
+  type GpuDetection,
+  type NvidiaPlatform,
+} from "../inference/nim.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
 import { redactFull } from "../security/redact.js";
+import {
+  type CollectPlatformIdentityOptions,
+  collectPlatformIdentity,
+  type PlatformIdentity,
+  projectPlatformQualification,
+} from "./platform-qualification.js";
 import {
   type EvidenceScalar,
   type FindingSeverity,
@@ -46,6 +57,7 @@ export interface HostObservations {
   cdiNvidiaGpuSpecMissing: boolean;
   cdiNvidiaGpuSpecStale?: boolean;
   cdiNvidiaGpuSpecNeedsRepair?: boolean;
+  platformIdentity?: PlatformIdentity;
 }
 
 export interface HostObservationSnapshot {
@@ -58,7 +70,11 @@ export interface HostObservationSnapshot {
 export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
+  detectGpu?: () => Pick<GpuDetection, "wslDockerDesktopGpuProofPassed"> | null;
   detectHostGpuPlatform?: () => NvidiaPlatform;
+  wslDockerDesktopGpuProofPassed?: boolean;
+  collectPlatformIdentity?: () => PlatformIdentity;
+  platformIdentityOptions?: CollectPlatformIdentityOptions;
   now?: () => Date;
 }
 
@@ -77,6 +93,8 @@ function adaptHostAssessment(
   host: Readonly<HostAssessment>,
   architecture: string,
   hostGpuPlatform?: NvidiaPlatform,
+  platformIdentity?: PlatformIdentity,
+  wslDockerDesktopGpuProofPassed?: boolean,
 ): HostObservations {
   return {
     platform: host.platform,
@@ -104,6 +122,9 @@ function adaptHostAssessment(
     cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
     cdiNvidiaGpuSpecStale: host.cdiNvidiaGpuSpecStale,
     cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair,
+    platformIdentity: platformIdentity
+      ? { ...platformIdentity, wslDockerDesktopGpuProofPassed }
+      : { wslDockerDesktopGpuProofPassed },
   };
 }
 
@@ -113,6 +134,14 @@ export function collectHostObservations(
   const observedAt = (options.now ?? (() => new Date()))().toISOString();
   try {
     const assessment = (options.assess ?? assessHost)();
+    const wslDockerDesktopGpuProofPassed =
+      options.wslDockerDesktopGpuProofPassed ??
+      (assessment.isWsl &&
+      assessment.runtime === "docker-desktop" &&
+      assessment.dockerReachable &&
+      assessment.hasNvidiaGpu
+        ? (options.detectGpu ?? detectGpu)()?.wslDockerDesktopGpuProofPassed
+        : undefined);
     return {
       observedAt,
       observations: adaptHostAssessment(
@@ -121,6 +150,11 @@ export function collectHostObservations(
         assessment.hasNvidiaGpu
           ? (options.detectHostGpuPlatform ?? detectNvidiaPlatform)()
           : undefined,
+        (
+          options.collectPlatformIdentity ??
+          (() => collectPlatformIdentity(options.platformIdentityOptions))
+        )(),
+        wslDockerDesktopGpuProofPassed,
       ),
       reusable: false,
     };
@@ -194,6 +228,15 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.gpu.nvidia_available",
     "host.gpu.container_toolkit_available",
     "host.gpu.cdi_healthy",
+    "host.platform.supported",
+    "host.platform.linux_supported",
+    "host.platform.macos_apple_silicon",
+    "host.platform.wsl_docker_desktop",
+    "host.platform.wsl_native_docker",
+    "host.platform.wsl_runtime_available",
+    "host.platform.wsl_gpu_passthrough",
+    "host.platform.dgx_spark",
+    "host.platform.dgx_station",
   ];
   return {
     observations: observationIds.map((id) => ({ id, state: "unknown", evidenceIds })),
@@ -231,6 +274,7 @@ export function projectHostReadiness(
 
   let observations: ReadinessObservation[];
   let capabilities: ReadinessCapability[];
+  let qualifications: SystemReadinessReport["qualifications"] = [];
   let findings: ReadinessFinding[];
   const host = snapshot.observations;
   if (!host || snapshot.failure || unsafeReuse) {
@@ -287,7 +331,20 @@ export function projectHostReadiness(
       observation("host.gpu.cdi", cdiApplies ? cdiHealthy : false),
       observation("host.gpu.cdi_stale", cdiApplies ? host.cdiNvidiaGpuSpecStale : false),
     ];
+    const platform = projectPlatformQualification({
+      platform: host.platform,
+      architecture: host.architecture,
+      isWsl: host.isWsl,
+      dockerInstalled: host.dockerInstalled,
+      dockerReachable: host.dockerReachable,
+      runtime: host.runtime,
+      hasNvidiaGpu: host.hasNvidiaGpu,
+      ...host.platformIdentity,
+    });
+    evidence.push(...platform.evidence);
+    qualifications = platform.qualifications;
     capabilities = [
+      ...platform.capabilities,
       capability("host.docker.available", stateOf(host.dockerInstalled)),
       capability(
         "host.docker.daemon_reachable",
@@ -314,7 +371,7 @@ export function projectHostReadiness(
       ),
       capability("host.gpu.cdi_healthy", cdiApplies ? stateOf(cdiHealthy) : "present"),
     ];
-    findings = [];
+    findings = [...platform.findings];
     if (!host.dockerInstalled)
       findings.push(
         finding("host.docker.unavailable", "blocking", "Docker is not installed.", [
@@ -397,7 +454,7 @@ export function projectHostReadiness(
     },
     observations,
     capabilities,
-    qualifications: [],
+    qualifications,
     findings,
     evidence,
   };

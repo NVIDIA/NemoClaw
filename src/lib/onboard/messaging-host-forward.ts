@@ -6,8 +6,8 @@ import {
   MessagingHostStateApplier,
   type SandboxMessagingPlan,
 } from "../messaging";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
-import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
 
