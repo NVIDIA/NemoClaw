@@ -36,6 +36,12 @@ function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult 
   return { status, stderr, stdout };
 }
 
+const TEST_UID = 501;
+const LAUNCHCTL_MISSING_OPENSHELL_SERVICE = [
+  "Bad request.",
+  `Could not find service "homebrew.mxcl.openshell" in domain for user gui: ${TEST_UID}`,
+].join("\n");
+
 function trustedShowOutput(
   fragmentPath = "/lib/systemd/user/openshell-gateway.service",
   execPath = "/usr/bin/openshell-gateway",
@@ -152,10 +158,11 @@ describe("docker-driver-gateway-service", () => {
       "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
     const options = {
       commandExists: () => true,
+      getuid: () => TEST_UID,
       platform: "darwin" as NodeJS.Platform,
       spawnSyncImpl: vi.fn((command: string, args: string[]) =>
         command === "launchctl"
-          ? spawnResult(1, "Could not find service")
+          ? spawnResult(113, LAUNCHCTL_MISSING_OPENSHELL_SERVICE)
           : args[0] === "info"
             ? spawnResult(1, refusal)
             : spawnResult(),
@@ -164,6 +171,11 @@ describe("docker-driver-gateway-service", () => {
 
     expect(hasOpenShellGatewayUserService(options)).toBe(false);
     expect(hasOpenShellGatewayUserService(options)).toBe(false);
+    expect(options.spawnSyncImpl).toHaveBeenCalledWith(
+      "launchctl",
+      ["print", `gui/${TEST_UID}/homebrew.mxcl.openshell`],
+      expect.any(Object),
+    );
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining(refusal));
   });
@@ -174,6 +186,7 @@ describe("docker-driver-gateway-service", () => {
     expect(() =>
       hasOpenShellGatewayUserService({
         commandExists: () => true,
+        getuid: () => TEST_UID,
         platform: "darwin",
         spawnSyncImpl: vi.fn((command: string, args: string[]) =>
           command === "launchctl"
@@ -187,6 +200,14 @@ describe("docker-driver-gateway-service", () => {
   });
 
   it.each([
+    ["returns a generic nonzero result", spawnResult(1, "Operation not permitted")],
+    [
+      "reports a different missing unit",
+      spawnResult(
+        113,
+        'Bad request.\nCould not find service "homebrew.mxcl.other" in domain for user gui: 501',
+      ),
+    ],
     ["cannot run", { error: new Error("spawn launchctl ENOENT"), status: null }],
     ["reports no exit status", { status: null }],
   ])("aborts instead of falling back when the launchd probe %s (#7707)", (_case, launchdResult) => {
@@ -195,6 +216,7 @@ describe("docker-driver-gateway-service", () => {
     expect(() =>
       hasOpenShellGatewayUserService({
         commandExists: () => true,
+        getuid: () => TEST_UID,
         platform: "darwin",
         spawnSyncImpl: vi.fn((command: string, args: string[]) =>
           command === "launchctl"
@@ -262,10 +284,11 @@ describe("docker-driver-gateway-service", () => {
       hasOpenShellGatewayUserService: () =>
         hasOpenShellGatewayUserService({
           commandExists: () => true,
+          getuid: () => TEST_UID,
           platform: "darwin",
           spawnSyncImpl: (command: string, args: string[]) =>
             command === "launchctl"
-              ? spawnResult(1, "Could not find service")
+              ? spawnResult(113, LAUNCHCTL_MISSING_OPENSHELL_SERVICE)
               : args[0] === "info"
                 ? spawnResult(1, refusal)
                 : spawnResult(),

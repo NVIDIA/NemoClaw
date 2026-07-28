@@ -23,7 +23,12 @@ vi.mock("node:child_process", async (importOriginal) => {
             stdout: "",
           }
         : command === "launchctl"
-          ? { status: 1, stderr: "Could not find service", stdout: "" }
+          ? {
+              status: 113,
+              stderr:
+                'Bad request.\nCould not find service "homebrew.mxcl.openshell" in domain for user gui: 501',
+              stdout: "",
+            }
           : { status: 0, stderr: "", stdout: "" },
     ),
   };
@@ -33,6 +38,7 @@ const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
   vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+  vi.spyOn(process, "getuid").mockReturnValue(501);
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 

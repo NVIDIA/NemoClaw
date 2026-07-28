@@ -27,6 +27,7 @@ export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
+  getuid?: () => number;
   home?: string;
   lstatSync?: typeof fs.lstatSync;
   platform?: NodeJS.Platform;
@@ -272,19 +273,29 @@ function isPinnedTapLoadRefusal(reason: string): boolean {
 // run that completed and reported the unit missing proves it is safe to fall
 // back; a probe that could not run proves nothing and must not degrade.
 function readHomebrewGatewayLaunchdUnitState(
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
+    Pick<OpenShellGatewayUserServiceOptions, "getuid">,
 ): "loaded" | "not-loaded" | "unknown" {
-  const result = opts.spawnSyncImpl(
-    "launchctl",
-    ["list", `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`],
-    {
-      encoding: "utf-8",
-      env: opts.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    } satisfies SpawnSyncOptions,
-  );
+  const getuid = opts.getuid ?? process.getuid;
+  const uid = getuid?.();
+  if (!Number.isSafeInteger(uid) || Number(uid) < 0) return "unknown";
+  const unit = `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
+  const result = opts.spawnSyncImpl("launchctl", ["print", `gui/${String(uid)}/${unit}`], {
+    encoding: "utf-8",
+    env: opts.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  } satisfies SpawnSyncOptions);
   if (result.error || typeof result.status !== "number") return "unknown";
-  return result.status === 0 ? "loaded" : "not-loaded";
+  if (result.status === 0) return "loaded";
+  const missingUnitError = [
+    "Bad request.",
+    `Could not find service "${unit}" in domain for user gui: ${String(uid)}`,
+  ].join("\n");
+  return result.status === 113 &&
+    text(result.stdout).trim() === "" &&
+    text(result.stderr).trim() === missingUnitError
+    ? "not-loaded"
+    : "unknown";
 }
 
 function warnHomebrewIdentityCheckUnavailable(reason: string): void {
@@ -298,7 +309,7 @@ function warnHomebrewIdentityCheckUnavailable(reason: string): void {
 function hasOfficialHomebrewFormula(
   opts: Pick<
     OpenShellGatewayUserServiceOptions,
-    "commandExists" | "env" | "platform" | "spawnSyncImpl"
+    "commandExists" | "env" | "getuid" | "platform" | "spawnSyncImpl"
   >,
 ): boolean {
   if ((opts.platform ?? process.platform) !== "darwin") return false;
@@ -320,7 +331,11 @@ function hasOfficialHomebrewFormula(
     if (!isPinnedTapLoadRefusal(reason)) {
       throw new Error(`OpenShell Homebrew formula identity check failed: ${reason}`);
     }
-    const launchdState = readHomebrewGatewayLaunchdUnitState({ env, spawnSyncImpl });
+    const launchdState = readHomebrewGatewayLaunchdUnitState({
+      env,
+      getuid: opts.getuid,
+      spawnSyncImpl,
+    });
     if (launchdState !== "not-loaded") {
       const unit = `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
       const situation =
