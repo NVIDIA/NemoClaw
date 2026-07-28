@@ -1,0 +1,370 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Publish complete managed images from exact base-image contracts. A later
+# onboarding slice will apply runtime profiles and consume their public release
+# aliases or exact digests. The initial platform is Linux x86_64; the OCI image
+# contract remains neutral across Podman, Docker, and future compute drivers.
+
+name: Images / Managed Images
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-validate-and-promote:
+    name: Build, validate, and promote ${{ matrix.display_name }} managed image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: openclaw
+            display_name: OpenClaw
+            dockerfile: Dockerfile
+            base_image: nvidia/nemoclaw/sandbox-base
+            image: nvidia/nemoclaw/openclaw-sandbox
+            platform: linux/amd64
+            artifact_platform: linux-amd64
+            required_binary: /usr/local/bin/openclaw
+          - agent: hermes
+            display_name: Hermes
+            dockerfile: agents/hermes/Dockerfile
+            base_image: nvidia/nemoclaw/hermes-sandbox-base
+            image: nvidia/nemoclaw/hermes-sandbox
+            platform: linux/amd64
+            artifact_platform: linux-amd64
+            required_binary: /usr/local/bin/hermes
+          - agent: langchain-deepagents-code
+            display_name: Deep Agents Code
+            dockerfile: agents/langchain-deepagents-code/Dockerfile
+            base_image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
+            image: nvidia/nemoclaw/langchain-deepagents-code-sandbox
+            platform: linux/amd64
+            artifact_platform: linux-amd64
+            required_binary: /usr/local/bin/dcode
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download exact base image contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-base-${{ matrix.agent }}
+          path: ${{ runner.temp }}/managed-base-contract
+
+      - name: Validate exact base image contract
+        id: base
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          BASE_IMAGE: ${{ env.REGISTRY }}/${{ matrix.base_image }}
+          CONTRACT: ${{ runner.temp }}/managed-base-contract/contract.json
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$CONTRACT" ] || [ -L "$CONTRACT" ]; then
+            echo "ERROR: exact base image contract is missing or is a symlink." >&2
+            exit 1
+          fi
+          if ! jq -e \
+            --arg agent "$AGENT" \
+            --arg image "$BASE_IMAGE" \
+            --arg platform "$PLATFORM" \
+            --arg revision "$GITHUB_SHA" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '
+              (keys | sort) == [
+                "agent",
+                "contractVersion",
+                "digest",
+                "image",
+                "platforms",
+                "reference",
+                "run",
+                "sourceRevision"
+              ]
+              and .contractVersion == 1
+              and .agent == $agent
+              and .image == $image
+              and (.digest | test("^sha256:[0-9a-f]{64}$"))
+              and .reference == (.image + "@" + .digest)
+              and (.platforms | index($platform)) != null
+              and .sourceRevision == $revision
+              and .run == {id: $runId, attempt: $runAttempt}
+            ' "$CONTRACT" >/dev/null
+          then
+            echo "ERROR: exact base image contract failed closed validation." >&2
+            exit 1
+          fi
+          printf 'ref=%s\n' "$(jq -r '.reference' "$CONTRACT")" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate production build args
+        env:
+          BASE_IMAGE: ${{ steps.base.outputs.ref }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          build_args=(-f "$DOCKERFILE" --build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+
+      # Push only the canonical digest. Consumer aliases do not exist until the
+      # exact image has passed anonymous-pull and runtime-contract validation.
+      - name: Build and push managed image by digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.nvidia.nemoclaw.agent=${{ matrix.agent }}
+            io.nvidia.nemoclaw.managed-image.contract=1
+            io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
+          build-args: BASE_IMAGE=${{ steps.base.outputs.ref }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Validate exact managed image before promotion
+        id: validate
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+          PLATFORM: ${{ matrix.platform }}
+          REQUIRED_BINARY: ${{ matrix.required_binary }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: managed image build did not return a valid digest: $DIGEST" >&2
+            exit 1
+          fi
+          reference="${IMAGE}@${DIGEST}"
+          docker buildx imagetools inspect "$reference" >/dev/null
+
+          anonymous_config="$(mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX")"
+          chmod 0700 "$anonymous_config"
+          if ! DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"; then
+            echo "::error::Anonymous exact-digest pull failed for ${reference}. Before aliases can be promoted, bootstrap the GHCR package ${IMAGE} with public visibility, then rerun this workflow."
+            exit 1
+          fi
+
+          entrypoint="$(docker image inspect --format '{{json .Config.Entrypoint}}' "$reference")"
+          command="$(docker image inspect --format '{{json .Config.Cmd}}' "$reference")"
+          if [ "$entrypoint" != '["/usr/local/bin/nemoclaw-start"]' ]; then
+            echo "ERROR: managed image has unexpected entrypoint: $entrypoint" >&2
+            exit 1
+          fi
+          if [ "$command" != '["/bin/bash"]' ]; then
+            echo "ERROR: managed image has unexpected command: $command" >&2
+            exit 1
+          fi
+
+          agent_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.agent"}}' \
+              "$reference"
+          )"
+          contract_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.contract"}}' \
+              "$reference"
+          )"
+          platform_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.platform"}}' \
+              "$reference"
+          )"
+          revision_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+              "$reference"
+          )"
+          if [ "$agent_label" != "$AGENT" ] ||
+             [ "$contract_label" != "1" ] ||
+             [ "$platform_label" != "$PLATFORM" ] ||
+             [ "$revision_label" != "$GITHUB_SHA" ]; then
+            echo "ERROR: managed image contract labels do not match the build identity." >&2
+            exit 1
+          fi
+
+          DOCKER_CONFIG="$anonymous_config" docker run --rm -i \
+            --network none \
+            --env "REQUIRED_BINARY=$REQUIRED_BINARY" \
+            --entrypoint /bin/sh \
+            "$reference" -eu -s <<'VALIDATE_FILESYSTEM'
+          test -x /usr/local/bin/nemoclaw-start
+          test -x "$REQUIRED_BINARY"
+          test -r /opt/nemoclaw-blueprint/blueprint.yaml
+          test -r /usr/local/share/nemoclaw/node-tar-inventory.json
+          test ! -e /usr/local/share/nemoclaw/corporate-ca.pem
+          test ! -L /usr/local/share/nemoclaw/corporate-ca.pem
+          node <<'VALIDATE_NODE_TAR'
+          const fs = require("node:fs");
+          const scan = JSON.parse(
+            fs.readFileSync("/usr/local/share/nemoclaw/node-tar-inventory.json", "utf8"),
+          );
+          if (
+            scan.schema !== 1 ||
+            !Number.isInteger(scan.packageCount) ||
+            scan.packageCount < 1 ||
+            !Array.isArray(scan.packages) ||
+            scan.packages.length !== scan.packageCount ||
+            scan.packages.some((entry) => entry.status !== "fixed")
+          ) {
+            throw new Error("completed node-tar scan is missing or unsafe");
+          }
+          VALIDATE_NODE_TAR
+          VALIDATE_FILESYSTEM
+
+          version_output="$(
+            DOCKER_CONFIG="$anonymous_config" docker run --rm \
+              --network none \
+              --entrypoint "$REQUIRED_BINARY" \
+              "$reference" --version 2>&1
+          )"
+          if [ -z "$version_output" ]; then
+            echo "ERROR: required agent binary returned an empty version." >&2
+            exit 1
+          fi
+          printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Promote validated managed image aliases
+        id: promote
+        shell: bash
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+          REFERENCE: ${{ steps.validate.outputs.reference }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: source revision must be a full 40-character SHA." >&2
+            exit 1
+          fi
+          aliases=("${IMAGE}:${GITHUB_SHA}")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            release_tag="${GITHUB_REF#refs/tags/}"
+            if [[ ! "$release_tag" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "ERROR: release tag is not a supported version alias: $release_tag" >&2
+              exit 1
+            fi
+            aliases+=("${IMAGE}:${release_tag}")
+          elif [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "ERROR: managed images may only be promoted from main or a v* release tag." >&2
+            exit 1
+          fi
+
+          tag_args=()
+          for alias in "${aliases[@]}"; do
+            tag_args+=(--tag "$alias")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "$REFERENCE"
+
+          exact_raw="$RUNNER_TEMP/managed-image-exact.raw"
+          docker buildx imagetools inspect "$REFERENCE" --raw > "$exact_raw"
+          for alias in "${aliases[@]}"; do
+            alias_raw="$RUNNER_TEMP/managed-image-alias-${alias##*:}.raw"
+            docker buildx imagetools inspect "$alias" --raw > "$alias_raw"
+            if ! cmp -s "$exact_raw" "$alias_raw"; then
+              echo "ERROR: promoted alias does not resolve to the validated raw manifest: $alias" >&2
+              exit 1
+            fi
+          done
+
+          aliases_file="$RUNNER_TEMP/managed-image-aliases.json"
+          printf '%s\n' "${aliases[@]}" | jq -R . | jq -s . > "$aliases_file"
+          printf 'aliases_file=%s\n' "$aliases_file" >> "$GITHUB_OUTPUT"
+
+      - name: Export managed image contract
+        env:
+          AGENT: ${{ matrix.agent }}
+          ALIASES_FILE: ${{ steps.promote.outputs.aliases_file }}
+          BASE_REFERENCE: ${{ steps.base.outputs.ref }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+          PLATFORM: ${{ matrix.platform }}
+          REFERENCE: ${{ steps.validate.outputs.reference }}
+        run: |
+          set -euo pipefail
+          contract_dir="$RUNNER_TEMP/managed-image-contract"
+          mkdir -p "$contract_dir"
+          jq -n \
+            --arg agent "$AGENT" \
+            --arg baseReference "$BASE_REFERENCE" \
+            --arg digest "$DIGEST" \
+            --arg image "$IMAGE" \
+            --arg platform "$PLATFORM" \
+            --arg reference "$REFERENCE" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg revision "$GITHUB_SHA" \
+            --argjson aliases "$(cat "$ALIASES_FILE")" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '{
+              contractVersion: 1,
+              agent: $agent,
+              image: $image,
+              digest: $digest,
+              reference: $reference,
+              baseReference: $baseReference,
+              platform: $platform,
+              source: {
+                repository: $repository,
+                revision: $revision
+              },
+              run: {
+                id: $runId,
+                attempt: $runAttempt
+              },
+              aliases: $aliases
+            }' > "$contract_dir/contract.json"
+          jq -e \
+            --arg revision "$GITHUB_SHA" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '.contractVersion == 1
+             and (.digest | test("^sha256:[0-9a-f]{64}$"))
+             and .reference == (.image + "@" + .digest)
+             and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
+             and .source.revision == $revision
+             and .run == {id: $runId, attempt: $runAttempt}
+             and (
+               (.image + ":" + $revision) as $revisionAlias
+               | (.aliases | index($revisionAlias)) != null
+             )' \
+            "$contract_dir/contract.json" >/dev/null
+
+      - name: Upload managed image contract
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-${{ matrix.agent }}-${{ matrix.artifact_platform }}
+          path: ${{ runner.temp }}/managed-image-contract/contract.json
+          if-no-files-found: error
+          retention-days: 90

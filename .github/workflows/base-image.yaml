@@ -1,15 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Build and push the sandbox base images to GHCR.
+# Build and push sandbox base images, then publish validated managed images.
 #
 # Triggers:
-#   - Push to main when a base-image workflow input changes
+#   - Push to main when a base- or managed-image input changes
 #   - Manual dispatch for ad-hoc rebuilds
 #
-# The base image contains the expensive, rarely-changing layers (apt, gosu,
-# user setup, openclaw CLI). The production Dockerfile layers PR-specific
-# code on top via: FROM ghcr.io/nvidia/nemoclaw/sandbox-base:<tag>
+# Base images contain the expensive, rarely-changing layers. Complete image
+# publication consumes exact base digests from the same trusted workflow run.
 
 name: Images / Base Images
 
@@ -22,6 +21,20 @@ on:
       # Re-run when this workflow gains or changes a publisher so the new path
       # takes effect immediately after merge instead of waiting for another tag.
       - ".github/workflows/base-image.yaml"
+      - ".github/workflows/managed-images.yaml"
+      - ".dockerignore"
+      # Complete managed-image inputs. Keep these reviewed families synchronized
+      # with tools/e2e/base-image-publication.mts.
+      - "Dockerfile"
+      - "agents/**"
+      - "nemoclaw/**"
+      - "nemoclaw-blueprint/**"
+      - "scripts/**"
+      - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
+      - "src/lib/messaging/**"
+      - "src/lib/tool-disclosure.ts"
+      - "tools/mcp-tool-discovery-runtime/**"
+      - "tsconfig.runtime-preloads.json"
       - "Dockerfile.base"
       - "agents/openclaw/openclaw-runtime/package.json"
       - "agents/openclaw/openclaw-runtime/package-lock.json"
@@ -57,8 +70,8 @@ permissions:
   packages: write
 
 concurrency:
-  group: base-image
-  cancel-in-progress: true
+  group: base-image-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 env:
   REGISTRY: ghcr.io
@@ -256,6 +269,7 @@ jobs:
           printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -267,6 +281,59 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache,mode=max
           build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
+
+      - name: Export managed base image contract
+        env:
+          AGENT: ${{ matrix.agent }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: base image build did not return a valid digest: $DIGEST" >&2
+            exit 1
+          fi
+          reference="${IMAGE}@${DIGEST}"
+          docker buildx imagetools inspect "$reference" >/dev/null
+
+          contract_dir="$RUNNER_TEMP/managed-base-contract"
+          mkdir -p "$contract_dir"
+          jq -n \
+            --arg agent "$AGENT" \
+            --arg digest "$DIGEST" \
+            --arg image "$IMAGE" \
+            --arg reference "$reference" \
+            --arg revision "$GITHUB_SHA" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '{
+              contractVersion: 1,
+              agent: $agent,
+              image: $image,
+              digest: $digest,
+              reference: $reference,
+              platforms: ["linux/amd64", "linux/arm64"],
+              sourceRevision: $revision,
+              run: {
+                id: $runId,
+                attempt: $runAttempt
+              }
+            }' > "$contract_dir/contract.json"
+          jq -e \
+            '.contractVersion == 1
+             and (.sourceRevision | test("^[0-9a-f]{40}$"))
+             and (.digest | test("^sha256:[0-9a-f]{64}$"))
+             and .reference == (.image + "@" + .digest)
+             and .platforms == ["linux/amd64", "linux/arm64"]' \
+            "$contract_dir/contract.json" >/dev/null
+
+      - name: Upload managed base image contract
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-base-${{ matrix.agent }}
+          path: ${{ runner.temp }}/managed-base-contract/contract.json
+          if-no-files-found: error
+          retention-days: 1
 
   # Preserve the established required-check name while making tag publication
   # contingent on both native platform builds succeeding.
@@ -307,6 +374,7 @@ jobs:
             type=sha,prefix=,format=short
 
       - name: Create and verify multi-platform manifest
+        id: manifest
         env:
           IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base
           TAGS: ${{ steps.meta.outputs.tags }}
@@ -353,3 +421,83 @@ jobs:
             echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
+          manifest_inspect="$(docker buildx imagetools inspect "$first_tag")"
+          mapfile -t manifest_digests < <(
+            printf '%s\n' "$manifest_inspect" \
+              | sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
+          )
+          if [ "${#manifest_digests[@]}" -ne 1 ]; then
+            echo "ERROR: expected one published OpenClaw base digest." >&2
+            exit 1
+          fi
+          digest="${manifest_digests[0]}"
+          docker buildx imagetools inspect "$IMAGE@$digest" >/dev/null
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Export managed base image contract
+        env:
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: OpenClaw base manifest did not return a valid digest: $DIGEST" >&2
+            exit 1
+          fi
+          reference="${IMAGE}@${DIGEST}"
+          docker buildx imagetools inspect "$reference" >/dev/null
+
+          contract_dir="$RUNNER_TEMP/managed-base-contract"
+          mkdir -p "$contract_dir"
+          jq -n \
+            --arg digest "$DIGEST" \
+            --arg image "$IMAGE" \
+            --arg reference "$reference" \
+            --arg revision "$GITHUB_SHA" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '{
+              contractVersion: 1,
+              agent: "openclaw",
+              image: $image,
+              digest: $digest,
+              reference: $reference,
+              platforms: ["linux/amd64", "linux/arm64"],
+              sourceRevision: $revision,
+              run: {
+                id: $runId,
+                attempt: $runAttempt
+              }
+            }' > "$contract_dir/contract.json"
+          jq -e \
+            '.contractVersion == 1
+             and .agent == "openclaw"
+             and (.sourceRevision | test("^[0-9a-f]{40}$"))
+             and (.digest | test("^sha256:[0-9a-f]{64}$"))
+             and .reference == (.image + "@" + .digest)
+             and .platforms == ["linux/amd64", "linux/arm64"]' \
+            "$contract_dir/contract.json" >/dev/null
+
+      - name: Upload managed base image contract
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-base-openclaw
+          path: ${{ runner.temp }}/managed-base-contract/contract.json
+          if-no-files-found: error
+          retention-days: 1
+
+  # The managed-image publisher consumes exact base digest contracts from the
+  # jobs above. Keep it in the same run so a release cannot race its bases.
+  publish-managed-images:
+    name: Publish complete managed images
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      (github.event_name != 'workflow_dispatch' || inputs.openclaw_version == '')
+    needs:
+      - build-and-push
+      - build-and-push-openclaw
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/managed-images.yaml
