@@ -283,13 +283,20 @@ function fileSha256(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
-/** Hash the sorted regular-file path and byte set used by a skill archive. */
+function normalizedSkillFileMode(filePath: string): "644" | "755" {
+  return (fs.lstatSync(filePath).mode & 0o111) === 0 ? "644" : "755";
+}
+
+/** Hash the sorted regular-file path, normalized mode, and byte set used by a skill archive. */
 export function computeSkillContentDigest(localDir: string, files?: string[]): string {
   const selected = files ?? collectFiles(localDir).files;
   const manifest = selected
     .slice()
     .sort()
-    .map((rel) => `${fileSha256(path.join(localDir, rel))}  ${rel}\n`)
+    .map((rel) => {
+      const filePath = path.join(localDir, rel);
+      return `${normalizedSkillFileMode(filePath)} ${fileSha256(filePath)}  ${rel}\n`;
+    })
     .join("");
   return createHash("sha256").update(manifest).digest("hex");
 }
@@ -399,11 +406,14 @@ function buildFreshSharedInstallScript(paths: SkillPaths, expectedDigest: string
     'cleanup() { if exists "$workspace"; then rm -rf -- "$workspace"; fi; }',
     "trap cleanup EXIT HUP INT TERM",
     'mkdir -- "$payload"',
-    'tar --no-same-owner --no-same-permissions -xf - -C "$payload"',
+    'tar --no-same-owner -xf - -C "$payload"',
     '[ -z "$(find "$payload" -mindepth 1 ! -type d ! -type f -print -quit)" ]',
+    'find "$payload" -type d -exec chmod 755 {} +',
+    'find "$payload" -type f -perm /111 -exec chmod 755 {} +',
+    'find "$payload" -type f ! -perm /111 -exec chmod 644 {} +',
     'find "$payload" -type f -printf "%P\\n" | LC_ALL=C sort > "$workspace/files"',
     ': > "$workspace/manifest"',
-    'while IFS= read -r rel; do safe_rel "$rel"; hash="$(sha256sum "$payload/$rel" | cut -d " " -f 1)"; printf "%s  %s\\n" "$hash" "$rel" >> "$workspace/manifest"; done < "$workspace/files"',
+    'while IFS= read -r rel; do safe_rel "$rel"; mode="$(stat -c "%a" "$payload/$rel")"; hash="$(sha256sum "$payload/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$workspace/manifest"; done < "$workspace/files"',
     'staged="$(sha256sum "$workspace/manifest" | cut -d " " -f 1)"',
     '[ "$staged" = "$expected" ]',
     'if exists "$leaf"; then echo EXISTS; exit 2; fi',
