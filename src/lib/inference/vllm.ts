@@ -894,7 +894,12 @@ export type PersistConfiguredDualStationVllmRuntimeResult =
  */
 export async function persistConfiguredDualStationVllmRuntimeReceipt(): Promise<PersistConfiguredDualStationVllmRuntimeResult> {
   const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
-  if (!configuredPeer) return { ok: true, persisted: false };
+  if (!configuredPeer) {
+    return {
+      ok: false,
+      reason: "the managed dual-Station peer configuration is missing",
+    };
+  }
 
   const capability = probeDualStationVllmCapability();
   if (capability.kind !== "ready") {

@@ -42,7 +42,7 @@ function deps(overrides: Partial<SetupNimVllmDeps> = {}): SetupNimVllmDeps {
     isNemoClawManagedVllmRunning: () => false,
     persistConfiguredDualStationVllmRuntimeReceipt: async () => ({
       ok: true,
-      persisted: false,
+      persisted: true,
     }),
     exitProcess: (code) => {
       throw new Error(`exit ${code}`);
@@ -182,7 +182,7 @@ describe("setupNim vLLM route containment", () => {
 
   it("persists cleanup ownership after validating a managed dual endpoint", async () => {
     const persistConfiguredDualStationVllmRuntimeReceipt = vi.fn(async () => ({
-      ok: true,
+      ok: true as const,
       persisted: true,
     }));
     const handler = createSetupNimVllmHandler(
@@ -218,6 +218,27 @@ describe("setupNim vLLM route containment", () => {
     await expect(handler(state(null))).rejects.toThrow("exit 1");
     expect(console.error).toHaveBeenCalledWith(
       "  Managed dual-Station cleanup ownership could not be persisted: pair identity changed",
+    );
+  });
+
+  it("fails closed when a managed endpoint is accepted without writing cleanup ownership", async () => {
+    const handler = createSetupNimVllmHandler(
+      deps({
+        getManagedVllmProviderBinding: () => ({
+          baseUrl: "http://10.40.0.1:8000/v1",
+          apiKey: "a".repeat(64),
+        }),
+        queryVllmModels: () => JSON.stringify({ data: [{ id: "served/model" }] }),
+        persistConfiguredDualStationVllmRuntimeReceipt: async () => ({
+          ok: true,
+          persisted: false,
+        }),
+      }),
+    );
+
+    await expect(handler(state(null))).rejects.toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(
+      "  Managed dual-Station cleanup ownership could not be persisted: the managed dual-Station cleanup receipt was not written",
     );
   });
 

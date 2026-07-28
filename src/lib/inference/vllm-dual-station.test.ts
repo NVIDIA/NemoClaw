@@ -327,6 +327,17 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
     });
     expect(mocks.persistRuntimeReceipt).not.toHaveBeenCalled();
   });
+
+  it("fails closed when the managed peer configuration is missing", async () => {
+    delete process.env.NEMOCLAW_DGX_STATION_PEER;
+
+    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+      ok: false,
+      reason: "the managed dual-Station peer configuration is missing",
+    });
+    expect(mocks.probeCapability).not.toHaveBeenCalled();
+    expect(mocks.persistRuntimeReceipt).not.toHaveBeenCalled();
+  });
 });
 
 describe("dual DGX Station vLLM install orchestration", () => {

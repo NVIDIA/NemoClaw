@@ -50,10 +50,16 @@ export interface SetupNimVllmDeps {
   applyVllmRuntimeContextWindow(models: VllmModels, model: string): void;
   isDgxSparkHost?: () => boolean;
   isNemoClawManagedVllmRunning?: () => boolean;
-  persistConfiguredDualStationVllmRuntimeReceipt(): Promise<{
-    ok: boolean;
-    reason?: string;
-  }>;
+  persistConfiguredDualStationVllmRuntimeReceipt(): Promise<
+    | {
+        ok: true;
+        persisted: boolean;
+      }
+    | {
+        ok: false;
+        reason: string;
+      }
+  >;
   exitProcess(code: number): never;
 }
 
@@ -359,10 +365,11 @@ export function createSetupNimVllmHandler(
 
     if (managedDualEndpoint) {
       const receipt = await deps.persistConfiguredDualStationVllmRuntimeReceipt();
-      if (!receipt.ok) {
-        console.error(
-          `  Managed dual-Station cleanup ownership could not be persisted: ${receipt.reason ?? "unknown error"}`,
-        );
+      if (!receipt.ok || !receipt.persisted) {
+        const reason = receipt.ok
+          ? "the managed dual-Station cleanup receipt was not written"
+          : receipt.reason;
+        console.error(`  Managed dual-Station cleanup ownership could not be persisted: ${reason}`);
         deps.exitProcess(1);
       }
     }
