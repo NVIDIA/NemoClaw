@@ -55,6 +55,48 @@ interface PairingFixtureRuntime {
   armStateDrift(file: string, value: unknown): void;
 }
 
+interface CliFixtureRuntime {
+  gatewayCalls: Array<Record<string, unknown>>;
+  setPairingLists(local: Record<string, unknown>, live?: Record<string, unknown>): void;
+  setPairedTokenEnvironment(token?: string, password?: string): void;
+  setGatewayListFailure(error: Error): void;
+  setApprovalFailures(errors: Error[]): void;
+  pairingStats(): { localPairingReadCount: number; localApprovalCount: number };
+  approvePairingWithFallback(opts: Record<string, unknown>, requestId: string): Promise<unknown>;
+}
+
+function openPatchedCliFixture(): { runtime: CliFixtureRuntime; tmp: string } {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-runtime-"));
+  const dist = path.join(tmp, "dist");
+  fs.mkdirSync(dist);
+  writeFixtureDist(dist);
+  const apply = runPatch(dist);
+  expect(apply.status, "OpenClaw CLI fixture patch failed").toBe(0);
+  const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+  const runtime = runFixture<CliFixtureRuntime>(
+    source,
+    `({
+      gatewayCalls,
+      setPairingLists,
+      setPairedTokenEnvironment,
+      setGatewayListFailure,
+      setApprovalFailures,
+      pairingStats,
+      approvePairingWithFallback
+    })`,
+  );
+  return { runtime, tmp };
+}
+
+function clonePairedTokenRecord(token: string, overrides: Record<string, unknown> = {}) {
+  return validPaired({
+    tokens: {
+      operator: { token, role: "operator", scopes: ["operator.pairing"] },
+    },
+    ...overrides,
+  });
+}
+
 function openPatchedPairingFixture(): {
   runtime: PairingFixtureRuntime;
   source: string;
@@ -412,6 +454,222 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           requiredStoredDeviceAuthScopes: ["operator.pairing"],
         });
       }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the exact clone paired token for one matching pre-convergence approval", async () => {
+    const { runtime, tmp } = openPatchedCliFixture();
+    try {
+      const token = "clone-paired-token";
+      const pending = validPending({ isRepair: false });
+      runtime.setPairingLists(
+        { pending: [pending], paired: [clonePairedTokenRecord(token)] },
+        { pending: [pending], paired: [validPaired({ approvedScopes: undefined })] },
+      );
+      runtime.setPairedTokenEnvironment(token);
+
+      await expect(
+        runtime.approvePairingWithFallback({ json: true }, "request-1"),
+      ).resolves.toEqual({ requestId: "request-1", approved: true });
+      expect(runtime.gatewayCalls.map((call) => call.method)).toEqual([
+        "device.pair.list",
+        "device.pair.approve",
+      ]);
+      for (const call of runtime.gatewayCalls) {
+        expect(call).toMatchObject({
+          scopes: ["operator.pairing"],
+          credentialSource: "environment",
+          signedIdentityForced: true,
+        });
+        expect(call.token).toBeUndefined();
+        expect(call.password).toBeUndefined();
+        expect(call).not.toHaveProperty("useStoredDeviceAuth");
+        expect(call).not.toHaveProperty("requiredStoredDeviceAuthScopes");
+      }
+      expect(runtime.pairingStats()).toEqual({
+        localPairingReadCount: 1,
+        localApprovalCount: 0,
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "no explicit environment token",
+      undefined,
+      undefined,
+      validPending({ isRepair: false }),
+      {},
+      { json: true },
+    ],
+    [
+      "a mismatched environment token",
+      "wrong-token",
+      undefined,
+      validPending({ isRepair: false }),
+      {},
+      { json: true },
+    ],
+    ["a repair request", "clone-paired-token", undefined, validPending(), {}, { json: true }],
+    [
+      "a non-pairing-only paired baseline",
+      "clone-paired-token",
+      undefined,
+      validPending({ isRepair: false }),
+      {
+        scopes: ["operator.pairing", "operator.read"],
+        approvedScopes: ["operator.pairing", "operator.read"],
+        tokens: {
+          operator: {
+            token: "clone-paired-token",
+            role: "operator",
+            scopes: ["operator.pairing", "operator.read"],
+          },
+        },
+      },
+      { json: true },
+    ],
+    [
+      "an environment password",
+      "clone-paired-token",
+      "unexpected-password",
+      validPending({ isRepair: false }),
+      {},
+      { json: true },
+    ],
+    [
+      "an explicit CLI token override",
+      "clone-paired-token",
+      undefined,
+      validPending({ isRepair: false }),
+      {},
+      { json: true, token: "clone-paired-token" },
+    ],
+    [
+      "an explicit CLI URL override",
+      "clone-paired-token",
+      undefined,
+      validPending({ isRepair: false }),
+      {},
+      { json: true, url: "ws://127.0.0.1:28789" },
+    ],
+  ] as const)("rejects a paired-token request with %s before reaching the gateway", async (_label, envToken, envPassword, pending, pairedOverrides, approvalOpts) => {
+    const { runtime, tmp } = openPatchedCliFixture();
+    try {
+      runtime.setPairingLists({
+        pending: [pending],
+        paired: [clonePairedTokenRecord("clone-paired-token", pairedOverrides)],
+      });
+      runtime.setPairedTokenEnvironment(envToken, envPassword);
+
+      await expect(runtime.approvePairingWithFallback(approvalOpts, "request-1")).rejects.toThrow(
+        "bounded same-device approval context changed before gateway approval",
+      );
+      expect(runtime.gatewayCalls).toEqual([]);
+      expect(runtime.pairingStats()).toEqual({
+        localPairingReadCount: 1,
+        localApprovalCount: 0,
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects live pairing drift after one direct bounded list and before approval", async () => {
+    const { runtime, tmp } = openPatchedCliFixture();
+    try {
+      const token = "clone-paired-token";
+      runtime.setPairingLists(
+        {
+          pending: [validPending({ isRepair: false })],
+          paired: [clonePairedTokenRecord(token)],
+        },
+        {
+          pending: [validPending({ isRepair: false, publicKey: "changed-public-key" })],
+          paired: [validPaired({ approvedScopes: undefined })],
+        },
+      );
+      runtime.setPairedTokenEnvironment(token);
+
+      await expect(runtime.approvePairingWithFallback({ json: true }, "request-1")).rejects.toThrow(
+        "bounded same-device approval context changed before gateway approval",
+      );
+      expect(runtime.gatewayCalls).toHaveLength(1);
+      expect(runtime.gatewayCalls[0]).toMatchObject({
+        method: "device.pair.list",
+        scopes: ["operator.pairing"],
+        credentialSource: "environment",
+        signedIdentityForced: true,
+      });
+      expect(runtime.pairingStats()).toEqual({
+        localPairingReadCount: 1,
+        localApprovalCount: 0,
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the direct paired-token list cannot reach the gateway", async () => {
+    const { runtime, tmp } = openPatchedCliFixture();
+    try {
+      const token = "clone-paired-token";
+      const pending = validPending({ isRepair: false });
+      runtime.setPairingLists({
+        pending: [pending],
+        paired: [clonePairedTokenRecord(token)],
+      });
+      runtime.setPairedTokenEnvironment(token);
+      runtime.setGatewayListFailure(new Error("scope-upgrade-pending raw fixture output"));
+
+      await expect(runtime.approvePairingWithFallback({ json: true }, "request-1")).rejects.toThrow(
+        "bounded same-device approval context changed before gateway approval",
+      );
+      expect(runtime.gatewayCalls).toHaveLength(1);
+      expect(runtime.gatewayCalls[0]).toMatchObject({
+        method: "device.pair.list",
+        scopes: ["operator.pairing"],
+      });
+      expect(runtime.pairingStats()).toEqual({
+        localPairingReadCount: 1,
+        localApprovalCount: 0,
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["the administrator retry", "device pairing approval denied"],
+    ["unknown-request success", "unknown requestId"],
+    ["the local state fallback", "scope-upgrade-pending"],
+  ])("fails closed before %s after a paired-token approval error", async (_label, message) => {
+    const { runtime, tmp } = openPatchedCliFixture();
+    try {
+      const token = "clone-paired-token";
+      const pending = validPending({ isRepair: false });
+      runtime.setPairingLists(
+        { pending: [pending], paired: [clonePairedTokenRecord(token)] },
+        { pending: [pending], paired: [validPaired({ approvedScopes: undefined })] },
+      );
+      runtime.setPairedTokenEnvironment(token);
+      runtime.setApprovalFailures([new Error(message)]);
+
+      await expect(runtime.approvePairingWithFallback({ json: true }, "request-1")).rejects.toThrow(
+        message,
+      );
+      expect(runtime.gatewayCalls.map((call) => call.method)).toEqual([
+        "device.pair.list",
+        "device.pair.approve",
+      ]);
+      expect(runtime.pairingStats()).toEqual({
+        localPairingReadCount: 1,
+        localApprovalCount: 0,
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -19,10 +19,14 @@
  * OpenClaw create a canonical pending scope-upgrade request. Keep the entire
  * approval in OpenClaw instead: for the exact bounded CLI mismatch, continue
  * only into OpenClaw's pairing gate. For the resulting same-device scope
- * transition, including an operator.write request created before paired-state
- * convergence, explicitly use OpenClaw's stored device credential with
- * operator.pairing. Then let the gateway's canonical approveDevicePairing path
- * reload, lock, rotate the token, persist, broadcast, and respond.
+ * transition, use OpenClaw's stored device credential with operator.pairing.
+ * A restored clone whose paired server state exists before its client-auth
+ * store converges instead opts into one narrower path: its exact pairing-only
+ * device token must match the explicit environment token, its signed identity
+ * remains attached, and a direct live pairing list must exactly match the
+ * clone-local preflight before one canonical approval can run. Then let the
+ * gateway's canonical approveDevicePairing path reload, lock, rotate the token,
+ * persist, broadcast, and respond.
  * The ordinary patch tests and pinned real-dist proof cover this paired
  * pre-convergence transition separately from a cold clone, which has no paired
  * record and must not select stored device authentication.
@@ -44,8 +48,9 @@ const CLI_MARKER = "nemoclaw: forward stored device auth for bounded same-device
 const CLI_APPROVE_MARKER =
   "nemoclaw: select stored device auth for bounded same-device scope approval";
 const CLI_SCOPE_MARKER = "nemoclaw: reach gateway for bounded same-device scope approval";
-const CLI_RETRY_MARKER = "nemoclaw: keep bounded stored device auth fail closed";
+const CLI_RETRY_MARKER = "nemoclaw: keep bounded device auth fail closed";
 const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before live pairing list";
+const CLI_PAIRED_TOKEN_MARKER = "nemoclaw: preflight bounded paired token before live pairing list";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
   "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement";
@@ -55,6 +60,7 @@ const CLI_APPLIED_MARKERS = [
   CLI_SCOPE_MARKER,
   CLI_RETRY_MARKER,
   CLI_LIST_MARKER,
+  CLI_PAIRED_TOKEN_MARKER,
 ] as const;
 const AUTH_SCOPE_UPGRADE_MARKER =
   "nemoclaw: route bounded CLI device-token scope upgrade into pairing";
@@ -176,14 +182,24 @@ const CLI_TARGET = [
 
 const CLI_HELPER_ANCHOR = "function resolveApprovePairingScopesForRequest(request, paired) {";
 const CLI_HELPER = [
-  "function resolveNemoClawSelfRepairPairingContext(request, paired) {",
+  "function resolveNemoClawExactScopes(rawScopes) {",
+  "\tif (!Array.isArray(rawScopes) || rawScopes.length === 0) return null;",
+  '\tconst normalized = rawScopes.map((scope) => typeof scope === "string" ? scope.trim() : "");',
+  "\tif (normalized.some((scope) => !scope) || normalized.length !== new Set(normalized).size) return null;",
+  "\treturn normalized.toSorted();",
+  "}",
+  "",
+  "function resolveNemoClawSelfRepairPairingContext(request, paired, nemoclawAllowRedactedPaired = false) {",
   "\tconst nemoclawRawScopes = request.scopes;",
   "\tconst nemoclawRoles = normalizeDeviceRoles(request);",
   "\tconst nemoclawPairedTokens = paired?.tokens;",
   '\tconst nemoclawPairedView = nemoclawPairedTokens && typeof nemoclawPairedTokens === "object" && !Array.isArray(nemoclawPairedTokens) ? { ...paired, tokens: Object.values(nemoclawPairedTokens) } : paired;',
+  "\tconst nemoclawPairedTokenList = Array.isArray(nemoclawPairedView?.tokens) ? nemoclawPairedView.tokens : [];",
+  '\tconst nemoclawPairedOperatorTokens = nemoclawPairedTokenList.filter((token) => token && typeof token === "object" && normalizeOptionalString(token.role) === OPERATOR_ROLE && !token.revokedAtMs);',
+  "\tconst nemoclawPairedOperatorToken = nemoclawPairedOperatorTokens.length === 1 && nemoclawPairedTokenList.length === 1 ? nemoclawPairedOperatorTokens[0] : null;",
   "\tconst nemoclawPairedScopes = resolvePairedOperatorScopes(nemoclawPairedView);",
   "\tconst nemoclawPairingBaselineVisible = nemoclawPairedScopes.length > 0;",
-  '\tconst nemoclawNormalizedRawScopes = Array.isArray(nemoclawRawScopes) ? nemoclawRawScopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
+  "\tconst nemoclawNormalizedRawScopes = resolveNemoClawExactScopes(nemoclawRawScopes) ?? [];",
   "\tconst nemoclawNonRepairWriteTransition =",
   "\t\trequest.isRepair === false &&",
   '\t\tnemoclawNormalizedRawScopes.includes("operator.write") &&',
@@ -203,6 +219,46 @@ const CLI_HELPER = [
   "\tconst nemoclawPairedDeviceId = normalizeOptionalString(nemoclawPairedView?.deviceId);",
   "\tconst nemoclawRequestPublicKey = normalizeOptionalString(request.publicKey);",
   "\tconst nemoclawPairedPublicKey = normalizeOptionalString(nemoclawPairedView?.publicKey);",
+  "\tconst nemoclawPairedRoles = normalizeDeviceRoles(nemoclawPairedView ?? {});",
+  "\tconst nemoclawPairedRawScopes = resolveNemoClawExactScopes(nemoclawPairedView?.scopes);",
+  "\tconst nemoclawPairedApprovedScopes = resolveNemoClawExactScopes(nemoclawPairedView?.approvedScopes);",
+  "\tconst nemoclawPairedTokenScopes = resolveNemoClawExactScopes(nemoclawPairedOperatorToken?.scopes);",
+  "\tconst nemoclawRequestId = normalizeOptionalString(request.requestId);",
+  "\tconst nemoclawPairedApprovedScopesMatch =",
+  "\t\t(nemoclawPairedApprovedScopes?.length === 1 && nemoclawPairedApprovedScopes[0] === PAIRING_SCOPE) ||",
+  "\t\t(nemoclawAllowRedactedPaired && nemoclawPairedView?.approvedScopes === void 0);",
+  "\tconst nemoclawPairedTokenPreconvergence =",
+  "\t\trequest.isRepair === false &&",
+  '\t\tnemoclawNormalizedRawScopes.includes("operator.write") &&',
+  "\t\tnemoclawNormalizedRawScopes.every((scope) => nemoclawStoredAuthAllowedScopes.has(scope)) &&",
+  "\t\tnemoclawRoles.length === 1 &&",
+  "\t\tnemoclawRoles[0] === OPERATOR_ROLE &&",
+  "\t\tnemoclawPairedRoles.length === 1 &&",
+  "\t\tnemoclawPairedRoles[0] === OPERATOR_ROLE &&",
+  "\t\tnemoclawPairedRawScopes?.length === 1 &&",
+  "\t\tnemoclawPairedRawScopes[0] === PAIRING_SCOPE &&",
+  "\t\tnemoclawPairedApprovedScopesMatch &&",
+  "\t\tnemoclawPairedTokenScopes?.length === 1 &&",
+  "\t\tnemoclawPairedTokenScopes[0] === PAIRING_SCOPE &&",
+  "\t\tBoolean(nemoclawRequestId) &&",
+  "\t\tBoolean(nemoclawRequestDeviceId) &&",
+  "\t\tnemoclawRequestDeviceId === nemoclawPairedDeviceId &&",
+  "\t\tBoolean(nemoclawRequestPublicKey) &&",
+  "\t\tnemoclawRequestPublicKey === nemoclawPairedPublicKey &&",
+  "\t\trequest.clientId === GATEWAY_CLIENT_NAMES.CLI &&",
+  "\t\trequest.clientMode === GATEWAY_CLIENT_MODES.CLI;",
+  "\tconst nemoclawPairedTokenContext = nemoclawPairedTokenPreconvergence ? JSON.stringify([",
+  "\t\tnemoclawRequestId,",
+  "\t\tnemoclawRequestDeviceId,",
+  "\t\tnemoclawRequestPublicKey,",
+  "\t\trequest.clientId,",
+  "\t\trequest.clientMode,",
+  "\t\tnemoclawRoles,",
+  "\t\tnemoclawNormalizedRawScopes,",
+  "\t\tnemoclawPairedRoles,",
+  "\t\tnemoclawPairedRawScopes,",
+  "\t\tnemoclawPairedTokenScopes",
+  "\t]) : null;",
   "\treturn {",
   "\t\tusePairingTransport: nemoclawUsePairingTransport,",
   "\t\tuseStoredDeviceAuth:",
@@ -213,7 +269,9 @@ const CLI_HELPER = [
   "\t\t\tBoolean(nemoclawRequestDeviceId) &&",
   "\t\t\tnemoclawRequestDeviceId === nemoclawPairedDeviceId &&",
   "\t\t\tBoolean(nemoclawRequestPublicKey) &&",
-  "\t\t\tnemoclawRequestPublicKey === nemoclawPairedPublicKey",
+  "\t\t\tnemoclawRequestPublicKey === nemoclawPairedPublicKey,",
+  "\t\tpairedTokenContext: nemoclawPairedTokenContext,",
+  "\t\tpairedDeviceToken: nemoclawPairedTokenContext ? normalizeOptionalString(nemoclawPairedOperatorToken?.token) : void 0",
   "\t};",
   "}",
   "",
@@ -276,44 +334,66 @@ const CLI_CONTEXT_TARGET = [
 ].join("\n");
 const CLI_CONTEXT_REPLACEMENT = [
   "async function resolveApprovePairingGatewayContext(opts, requestId) {",
+  '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";',
   "\tlet nemoclawLocalStoredAuthCandidate = false;",
+  "\tlet nemoclawLocalPairedTokenContext = null;",
   "\ttry {",
   "\t\tconst nemoclawLocalList = await listDevicePairing();",
   "\t\tconst nemoclawLocalRequest = findPendingRequestById(nemoclawLocalList.pending, requestId);",
   "\t\tif (nemoclawLocalRequest) {",
   "\t\t\tconst nemoclawLocalPaired = lookupPairedDevice(indexPairedDevices(nemoclawLocalList.paired), nemoclawLocalRequest);",
-  "\t\t\tnemoclawLocalStoredAuthCandidate = resolveNemoClawSelfRepairPairingContext(nemoclawLocalRequest, nemoclawLocalPaired).useStoredDeviceAuth;",
+  "\t\t\tconst nemoclawLocalContext = resolveNemoClawSelfRepairPairingContext(nemoclawLocalRequest, nemoclawLocalPaired);",
+  "\t\t\tnemoclawLocalStoredAuthCandidate = !nemoclawPairedTokenRequested && nemoclawLocalContext.useStoredDeviceAuth;",
+  "\t\t\tconst nemoclawExplicitEnvToken = normalizeOptionalString(process.env.OPENCLAW_GATEWAY_TOKEN);",
+  "\t\t\tconst nemoclawHasTransportOrCredentialOverride = Boolean(normalizeOptionalString(opts.url) || normalizeOptionalString(opts.token) || normalizeOptionalString(opts.password) || normalizeOptionalString(process.env.OPENCLAW_GATEWAY_URL) || normalizeOptionalString(process.env.OPENCLAW_GATEWAY_PORT) || normalizeOptionalString(process.env.OPENCLAW_GATEWAY_PASSWORD));",
+  "\t\t\tif (",
+  "\t\t\t\tnemoclawPairedTokenRequested &&",
+  "\t\t\t\t!nemoclawHasTransportOrCredentialOverride &&",
+  "\t\t\t\tnemoclawExplicitEnvToken &&",
+  "\t\t\t\tnemoclawExplicitEnvToken === nemoclawLocalContext.pairedDeviceToken",
+  "\t\t\t) nemoclawLocalPairedTokenContext = nemoclawLocalContext.pairedTokenContext;",
   "\t\t}",
   "\t} catch {}",
+  "\tif (nemoclawPairedTokenRequested && !nemoclawLocalPairedTokenContext) return {",
+  "\t\toriginalRequest: null,",
+  "\t\tscopes: void 0,",
+  "\t\tnemoclawUseStoredDeviceAuth: false,",
+  "\t\tnemoclawUsePairedToken: false,",
+  "\t\tnemoclawRefuseUnsafeApproval: true",
+  "\t};",
   "\ttry {",
   "\t\tconst nemoclawListCallOpts = nemoclawLocalStoredAuthCandidate ? {",
   "\t\t\tscopes: [PAIRING_SCOPE],",
   "\t\t\tuseStoredDeviceAuth: true,",
   "\t\t\trequiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
   "\t\t} : void 0;",
-  "\t\tconst list = await listPairingWithFallback(opts, nemoclawListCallOpts);",
+  '\t\tconst list = nemoclawPairedTokenRequested ? parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}, { scopes: [PAIRING_SCOPE] })) : await listPairingWithFallback(opts, nemoclawListCallOpts); // nemoclaw: preflight bounded paired token before live pairing list (#4462)',
   "\t\tconst request = findPendingRequestById(list.pending, requestId);",
   "\t\tif (!request) return {",
   "\t\t\toriginalRequest: null,",
   "\t\t\tscopes: void 0,",
   "\t\t\tnemoclawUseStoredDeviceAuth: false,",
-  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawLocalStoredAuthCandidate",
+  "\t\t\tnemoclawUsePairedToken: false,",
+  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawPairedTokenRequested || nemoclawLocalStoredAuthCandidate",
   "\t\t};",
   "\t\tconst paired = lookupPairedDevice(indexPairedDevices(list.paired), request);",
-  "\t\tconst nemoclawSelfRepairContext = resolveNemoClawSelfRepairPairingContext(request, paired);",
+  "\t\tconst nemoclawSelfRepairContext = resolveNemoClawSelfRepairPairingContext(request, paired, nemoclawPairedTokenRequested);",
   "\t\tconst nemoclawUseStoredDeviceAuth = nemoclawLocalStoredAuthCandidate && nemoclawSelfRepairContext.useStoredDeviceAuth;",
+  "\t\tconst nemoclawUsePairedToken = nemoclawPairedTokenRequested && nemoclawLocalPairedTokenContext === nemoclawSelfRepairContext.pairedTokenContext;",
   "\t\treturn {",
   "\t\t\toriginalRequest: request,",
   "\t\t\tscopes: resolveApprovePairingScopesForRequest(request, paired),",
   "\t\t\tnemoclawUseStoredDeviceAuth,",
-  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawLocalStoredAuthCandidate && !nemoclawUseStoredDeviceAuth",
+  "\t\t\tnemoclawUsePairedToken,",
+  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawPairedTokenRequested ? !nemoclawUsePairedToken : nemoclawLocalStoredAuthCandidate && !nemoclawUseStoredDeviceAuth",
   "\t\t};",
   "\t} catch {",
   "\t\treturn {",
   "\t\t\toriginalRequest: null,",
   "\t\t\tscopes: void 0,",
   "\t\t\tnemoclawUseStoredDeviceAuth: false,",
-  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawLocalStoredAuthCandidate",
+  "\t\t\tnemoclawUsePairedToken: false,",
+  "\t\t\tnemoclawRefuseUnsafeApproval: nemoclawPairedTokenRequested || nemoclawLocalStoredAuthCandidate",
   "\t\t};",
   "\t}",
   "}",
@@ -322,11 +402,11 @@ const CLI_CONTEXT_REPLACEMENT = [
 const CLI_APPROVE_HEADER_TARGET =
   "\tconst { scopes, originalRequest } = await resolveApprovePairingGatewayContext(opts, requestId);";
 const CLI_APPROVE_HEADER_REPLACEMENT =
-  '\tconst { scopes, originalRequest, nemoclawUseStoredDeviceAuth, nemoclawRefuseUnsafeApproval } = await resolveApprovePairingGatewayContext(opts, requestId);\n\tif (nemoclawRefuseUnsafeApproval) throw new Error("bounded same-device approval context changed before gateway approval");';
+  '\tconst { scopes, originalRequest, nemoclawUseStoredDeviceAuth, nemoclawUsePairedToken, nemoclawRefuseUnsafeApproval } = await resolveApprovePairingGatewayContext(opts, requestId);\n\tif (nemoclawRefuseUnsafeApproval) throw new Error("bounded same-device approval context changed before gateway approval");';
 const CLI_APPROVE_CALL_TARGET =
   '\t\treturn await callGatewayCli("device.pair.approve", opts, { requestId }, scopes ? { scopes } : void 0);';
 const CLI_APPROVE_CALL_REPLACEMENT = [
-  '\t\treturn await callGatewayCli("device.pair.approve", opts, { requestId }, nemoclawUseStoredDeviceAuth ? {',
+  '\t\treturn await callGatewayCli("device.pair.approve", opts, { requestId }, nemoclawUsePairedToken ? { scopes: [PAIRING_SCOPE] } : nemoclawUseStoredDeviceAuth ? {',
   "\t\t\tscopes,",
   "\t\t\tuseStoredDeviceAuth: true, // nemoclaw: select stored device auth for bounded same-device scope approval (#4462)",
   "\t\t\trequiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
@@ -337,11 +417,11 @@ const CLI_ADMIN_RETRY_TARGET =
 const CLI_ADMIN_RETRY_TARGET_2026_7_1 =
   '\t\tif (isDevicePairingApprovalDenied(error) && !scopes?.includes("operator.admin")) try {';
 const CLI_ADMIN_RETRY_REPLACEMENT = [
-  "\t\tif (nemoclawUseStoredDeviceAuth) throw error; // nemoclaw: keep bounded stored device auth fail closed (#4462)",
+  "\t\tif (nemoclawUseStoredDeviceAuth || nemoclawUsePairedToken) throw error; // nemoclaw: keep bounded device auth fail closed (#4462)",
   CLI_ADMIN_RETRY_TARGET,
 ].join("\n");
 const CLI_ADMIN_RETRY_REPLACEMENT_2026_7_1 = [
-  "\t\tif (nemoclawUseStoredDeviceAuth) throw error; // nemoclaw: keep bounded stored device auth fail closed (#4462)",
+  "\t\tif (nemoclawUseStoredDeviceAuth || nemoclawUsePairedToken) throw error; // nemoclaw: keep bounded device auth fail closed (#4462)",
   CLI_ADMIN_RETRY_TARGET_2026_7_1,
 ].join("\n");
 

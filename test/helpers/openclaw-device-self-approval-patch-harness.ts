@@ -43,6 +43,7 @@ function setStoredOperatorDeviceAuthToken(value) { storedOperatorDeviceAuthToken
 
 function cliFixture(): string {
   return compiledIndent(`
+const process = { env: {} };
 const ADMIN_SCOPE = "operator.admin";
 const PAIRING_SCOPE = "operator.pairing";
 const OPERATOR_ROLE = "operator";
@@ -53,15 +54,35 @@ const gatewayCalls = [];
 let pairingList = { pending: [], paired: [] };
 let localPairingList = { pending: [], paired: [] };
 let approvalFailures = [];
+let gatewayListFailure = null;
+let localPairingReadCount = 0;
+let localApprovalCount = 0;
 function setPairingLists(localList, liveList = localList) {
   localPairingList = localList;
   pairingList = liveList;
 }
+function setPairedTokenEnvironment(token, password) {
+  process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING = "1";
+  if (token === undefined) delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  else process.env.OPENCLAW_GATEWAY_TOKEN = token;
+  if (password === undefined) delete process.env.OPENCLAW_GATEWAY_PASSWORD;
+  else process.env.OPENCLAW_GATEWAY_PASSWORD = password;
+}
+function setGatewayListFailure(error) { gatewayListFailure = error; }
+function setApprovalFailures(errors) { approvalFailures = [...errors]; }
+function pairingStats() { return { localPairingReadCount, localApprovalCount }; }
 function withProgress(_options, callback) { return callback(); }
 function parseTimeoutMsWithFallback(value, fallback) { return value ?? fallback; }
 async function callGateway(options) {
-  gatewayCalls.push(options);
-  if (options.method === "device.pair.list") return pairingList;
+  gatewayCalls.push({
+    ...options,
+    credentialSource: options.token ? "option" : process.env.OPENCLAW_GATEWAY_TOKEN ? "environment" : "none",
+    signedIdentityForced: process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1"
+  });
+  if (options.method === "device.pair.list") {
+    if (gatewayListFailure) throw gatewayListFailure;
+    return pairingList;
+  }
   if (options.method === "device.pair.approve" && approvalFailures.length > 0) {
     throw approvalFailures.shift();
   }
@@ -132,13 +153,14 @@ function lookupPairedDevice(pairedByDeviceId, request) {
   return pairedByDeviceId.get(normalizeOptionalString(request.deviceId));
 }
 async function listDevicePairing() {
+  localPairingReadCount += 1;
   return localPairingList;
 }
 async function listPairingWithFallback(opts) {
   try {
     return parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));
-  } catch (error) {
-    throw error;
+  } catch {
+    return parseDevicePairingList(await listDevicePairing());
   }
 }
 function resolveApprovePairingScopesForRequest(request, paired) {
@@ -174,13 +196,33 @@ async function resolveApprovePairingGatewayContext(opts, requestId) {
 function isDevicePairingApprovalDenied(error) {
   return String(error?.message ?? error).toLowerCase().includes("device pairing approval denied");
 }
+function isUnknownRequestIdError(error) {
+  return String(error?.message ?? error).toLowerCase().includes("unknown requestid");
+}
+function resolveLocalPairingFallback(_opts, error) {
+  return String(error?.message ?? error).toLowerCase().includes("scope-upgrade-pending") ? {} : null;
+}
+async function approveDevicePairing(requestId) {
+  localApprovalCount += 1;
+  return { status: "approved", requestId, device: { deviceId: "device-1" } };
+}
 async function approvePairingWithFallback(opts, requestId) {
   const { scopes, originalRequest } = await resolveApprovePairingGatewayContext(opts, requestId);
   try {
     return await callGatewayCli("device.pair.approve", opts, { requestId }, scopes ? { scopes } : void 0);
   } catch (error) {
-    if (isDevicePairingApprovalDenied(error) && !scopes?.includes("operator.admin")) return await callGatewayCli("device.pair.approve", opts, { requestId }, { scopes: [ADMIN_SCOPE] });
-    throw error;
+    if (isDevicePairingApprovalDenied(error) && !scopes?.includes("operator.admin")) try {
+      return await callGatewayCli("device.pair.approve", opts, { requestId }, { scopes: [ADMIN_SCOPE] });
+    } catch (adminError) {
+      if (isUnknownRequestIdError(adminError)) return null;
+      throw adminError;
+    }
+    const fallback = resolveLocalPairingFallback(opts, error);
+    if (!fallback) {
+      if (isUnknownRequestIdError(error)) return null;
+      throw error;
+    }
+    return await approveDevicePairing(originalRequest?.requestId ?? requestId);
   }
 }
 `);
