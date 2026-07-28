@@ -26,6 +26,7 @@ import { type McpBridgeShard, resolveMcpBridgeShard } from "./mcp-bridge-agent-s
 import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
+  assertHermesManagedAddSurvivesLockedGatewayRestart,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import { buildMcpBridgeExactMainEnv, buildMcpBridgeOnboardEnv } from "./mcp-bridge-onboard-env.ts";
@@ -1242,6 +1243,13 @@ mcpBridgeShardTest("hermes")(
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
     });
+    progress.phase("restore Hermes shields and restart the gateway");
+    await assertHermesManagedAddSurvivesLockedGatewayRestart(
+      host,
+      sandbox,
+      HERMES_SANDBOX_NAME,
+      mcpUrl,
+    );
     progress.phase("exercise lifecycle and confirm Hermes bridge removal");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",

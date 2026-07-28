@@ -33,7 +33,7 @@ function runPython(source: string, args: string[] = []) {
 
 describe("Hermes managed MCP integrity through restart", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "keeps an unprivileged MCP transaction current through shields relock and gateway restart recovery (#7499)",
+    "keeps an unprivileged MCP transaction current through shields relock and restart sealing (#7499)",
     () => {
       const fixture = createRestartFixture();
 
@@ -94,8 +94,8 @@ print(json.dumps({
           fs.readFileSync(fixture.compatHashPath, "utf8"),
         );
 
-        // Exercise the same seal/unseal recovery boundary used around a managed
-        // gateway restart after shields have returned to their locked posture.
+        // Exercise the seal/unseal boundary used around a managed gateway
+        // restart; the live MCP workflow performs the real supervisor restart.
         const sealed = runGuard("seal-restart", fixture);
         expect(sealed.status, `${sealed.stdout}\n${sealed.stderr}`).toBe(0);
         expect(sealed.stdout).toContain("original_locked=1");
