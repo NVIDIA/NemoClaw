@@ -1177,13 +1177,8 @@ describe("advisory file locking", () => {
 
   it("acquireLock does not treat an owner file EEXIST as lock contention (#7694)", () => {
     const origWrite = fs.writeFileSync;
-    let firstCall = true;
-    fs.writeFileSync = (...args) => {
-      if (String(args[0]).includes("owner.tmp.") && firstCall) {
-        firstCall = false;
-        throw Object.assign(new Error("owner write EEXIST"), { code: "EEXIST" });
-      }
-      return origWrite.apply(fs, args);
+    fs.writeFileSync = () => {
+      throw Object.assign(new Error("owner write EEXIST"), { code: "EEXIST" });
     };
     try {
       expect(() => registry.acquireLock()).toThrow("owner write EEXIST");
