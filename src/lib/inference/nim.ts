@@ -23,6 +23,7 @@ import { VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
+import { isDgxStationGb300Product } from "./dgx-station-identity";
 import {
   type Arm64WslDockerDesktopGpuProver,
   isDenylistedNvidiaGpuName,
@@ -297,13 +298,7 @@ function detectTegraHostGpu(): { name: string; platform: NvidiaPlatform } | null
 export function detectNvidiaPlatform(): NvidiaPlatform {
   const model = readPlatformModel();
   if (/DGX[_\s-]+Spark/i.test(model)) return "spark";
-  if (
-    /(?<![A-Za-z0-9])P3830(?![A-Za-z0-9])/i.test(model) ||
-    /DGX[_\s-]+Station/i.test(model) ||
-    (/Station/i.test(model) && /GB300/i.test(model))
-  ) {
-    return "station";
-  }
+  if (isDgxStationGb300Product(model)) return "station";
   if (/Jetson|Tegra|Thor|Orin|Xavier/i.test(model) || hasTegraDeviceNodeSignal()) {
     return "jetson";
   }

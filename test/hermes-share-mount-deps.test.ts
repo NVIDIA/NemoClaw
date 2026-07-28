@@ -7,14 +7,21 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
+import { stageFixedParser, useRealPatchedParser } from "./helpers/python-parser-security-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
 
 function extractAptInstallCommand(dockerfile: string): string {
-  const match = dockerfile.match(
-    /RUN\s+apt-get update\s*&&\s*apt-get install -y --no-install-recommends[\s\S]*?&&\s*rm -rf \/var\/lib\/apt\/lists\/\*/m,
+  const runtimeStage = dockerfile.lastIndexOf(
+    "FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c",
   );
+  expect(runtimeStage).toBeGreaterThanOrEqual(0);
+  const match = dockerfile
+    .slice(runtimeStage)
+    .match(
+      /RUN\s+apt-get update\s*&&\s*apt-get install -y --no-install-recommends[\s\S]*?&&\s*rm -rf \/var\/lib\/apt\/lists\/\*/m,
+    );
   expect(match).not.toBeNull();
   return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
 }
@@ -64,7 +71,7 @@ function runLoggedShell(command: string, tmp: string, functionDefs: string[] = [
     command,
   ].join("\n");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 15000 });
   const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
   return { result, calls };
 }
@@ -191,21 +198,32 @@ describe("Hermes share mount package parity (#2947)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-share-apt-"));
     const lists = path.join(tmp, "apt-lists");
-    const securityDebs = path.join(tmp, "security-debs");
+    const debianSecurityDebs = path.join(tmp, "debian-security-debs");
+    const nativeSecurityDebs = path.join(tmp, "native-security-debs");
     const inventoryDirectory = path.join(tmp, "security-inventory");
     const inventory = path.join(inventoryDirectory, "security-packages.txt");
+    const { fixedParser, pythonShim } = stageFixedParser(tmp);
     fs.mkdirSync(lists);
+    fs.mkdirSync(debianSecurityDebs);
+    fs.mkdirSync(nativeSecurityDebs);
+    fs.writeFileSync(path.join(nativeSecurityDebs, "libssh2-1t64.deb"), "fixed libssh2");
+    fs.writeFileSync(
+      path.join(nativeSecurityDebs, "nemoclaw-python3.13-htmlparser-fix.deb"),
+      "fixed parser package",
+    );
 
     try {
       const command = extractAptInstallCommand(dockerfile)
         .replaceAll("/var/lib/apt/lists", lists)
-        .replaceAll("/tmp/nemoclaw-debian-security", securityDebs)
+        .replaceAll("/tmp/nemoclaw-debian-security", debianSecurityDebs)
+        .replaceAll("/tmp/nemoclaw-native-security", nativeSecurityDebs)
         .replaceAll("/usr/local/share/nemoclaw/security-packages.txt", inventory)
-        .replaceAll("/usr/local/share/nemoclaw", inventoryDirectory);
+        .replaceAll("/usr/local/share/nemoclaw", inventoryDirectory)
+        .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
       const { result, calls } = runLoggedShell(command, tmp, [
         'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
         'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-        ...BASE_APT_SECURITY_FUNCTIONS,
+        ...useRealPatchedParser(BASE_APT_SECURITY_FUNCTIONS, pythonShim),
       ]);
 
       expect(result.status).toBe(0);
@@ -214,6 +232,8 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls).toContain("procps=2:4.0.4-9");
       expect(calls).toContain("e2fsprogs=1.47.2-3+b11");
       expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
+      expect(fs.existsSync(debianSecurityDebs)).toBe(false);
+      expect(fs.existsSync(nativeSecurityDebs)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

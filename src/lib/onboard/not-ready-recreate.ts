@@ -112,15 +112,15 @@ export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInp
   //   invalid state         = registry/gateway inconsistency (a registry entry
   //                           exists while the gateway still reports the sandbox
   //                           live, or the registry has no entry at all).
-  //   source boundary       = pruneStaleSandboxEntry is best-effort and the
-  //                           gateway may be mid-recreate, so the two stores can
-  //                           disagree at this point.
-  //   source-fix constraint = a real fix needs atomic registry/gateway sync,
-  //                           which is out of scope for this PR.
+  //   source boundary       = this selector can run before the resumed recreate
+  //                           journal starts or from a non-journaled caller.
+  //   source-fix constraint = the resumed recreate journal owns later deletion,
+  //                           but this selector has no bound journal observation.
   //   regression test       = selectPreUpgradeBackupForCreate returns null when
   //                           liveExists=true and when hasExistingRegistryEntry=false
   //                           (see not-ready-recreate.test.ts).
-  //   removal condition     = drop these guards once registry/gateway sync is atomic.
+  //   removal condition     = drop these guards when every caller supplies a
+  //                           journal-bound registry and OpenShell observation.
   if (input.liveExists) {
     console.debug(
       `  Registry entry exists for '${input.sandboxName}' but gateway reports sandbox live — skipping pre-upgrade backup select.`,

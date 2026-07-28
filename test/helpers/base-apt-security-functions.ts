@@ -50,7 +50,7 @@ export function runLoggedDockerShell(command: string, tmp: string, functionDefs:
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   return spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
-    timeout: 5000,
+    timeout: 15000,
   });
 }
 
@@ -85,9 +85,9 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       `    printf "${architecture}\\n"`,
       '  elif [[ "$#" -eq 1 && "$1" == "--audit" ]]; then',
       "    return 0",
-      '  elif [[ "$#" -eq 7 && "$1" == "-i" && "${2##*/}" == "libexpat1.deb" && "${3##*/}" == "libonig5.deb" && "${4##*/}" == "libjq1.deb" && "${5##*/}" == "jq.deb" && "${6##*/}" == "vim-common.deb" && "${7##*/}" == "vim-tiny.deb" ]]; then',
+      '  elif [[ "$#" -eq 9 && "$1" == "-i" && "${2##*/}" == "libexpat1.deb" && "${3##*/}" == "libonig5.deb" && "${4##*/}" == "libjq1.deb" && "${5##*/}" == "jq.deb" && "${6##*/}" == "vim-common.deb" && "${7##*/}" == "vim-tiny.deb" && "${8##*/}" == "libssh2-1t64.deb" && "${9##*/}" == "nemoclaw-python3.13-htmlparser-fix.deb" ]]; then',
       '    printf "dpkg-install\\n" >> "$call_log"',
-      '    [[ -f "$2" && -f "$3" && -f "$4" && -f "$5" && -f "$6" && -f "$7" ]]',
+      '    [[ -f "$2" && -f "$3" && -f "$4" && -f "$5" && -f "$6" && -f "$7" && -f "$8" && -f "$9" ]]',
       "  else",
       "    return 64",
       "  fi",
@@ -102,6 +102,8 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '    libjq1|jq) printf "1.8.2-1" ;;',
       '    perl) printf "5.40.1-6" ;;',
       '    vim-common|vim-tiny) printf "2:9.2.0782-1" ;;',
+      '    libssh2-1t64) printf "1.11.1-1+deb13u1+nemoclaw1" ;;',
+      '    nemoclaw-python3.13-htmlparser-fix) printf "3.13.5-2+deb13u4+nemoclaw1" ;;',
       "    *) return 64 ;;",
       "  esac",
       "}",
@@ -127,7 +129,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
     [
       "sha256sum() {",
       '  [[ "$#" -eq 2 && "$1" == "-c" && "$2" == "-" ]] || return 64',
-      "  local line path count=0",
+      "  local line path count=0 parser_count=0",
       "  while IFS= read -r line; do",
       '    path="${line#*  }"',
       '    [[ -f "$path" ]] || return 1',
@@ -138,11 +140,12 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       `      "${hashes.jq}  "*/jq.deb) ;;`,
       '      "6b063038246492c4a20e0a212c896dde4d5aa9f59d6fb43ff33d10080bc53a39  "*/vim-common.deb) ;;',
       `      "${hashes.vimTiny}  "*/vim-tiny.deb) ;;`,
+      '      "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7  "*/python3.13/html/parser.py) (( parser_count += 1 )) ;;',
       "      *) return 1 ;;",
       "    esac",
       "    (( count += 1 ))",
       "  done",
-      '  [[ "$count" -eq 6 ]]',
+      '  [[ "$count" -eq 6 || ( "$count" -eq 1 && "$parser_count" -eq 1 ) ]]',
       "}",
     ].join("\n"),
     [
@@ -166,7 +169,13 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
     ].join("\n"),
     [
       "python3() {",
-      '  [[ "$#" -eq 2 && "$1" == "-c" && "$2" == "import pyexpat; assert pyexpat.EXPAT_VERSION == \'expat_2.8.2\', pyexpat.EXPAT_VERSION" ]]',
+      '  [[ "$#" -eq 2 && "$1" == "-c" ]] || return 64',
+      '  case "$2" in',
+      "    \"import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION\") ;;",
+      "    \"import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')\") ;;",
+      "    \"import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')\") ;;",
+      "    *) return 64 ;;",
+      "  esac",
       "}",
     ].join("\n"),
     [

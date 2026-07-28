@@ -24,6 +24,8 @@ Share redacted diagnostics only.
 
 ## Files
 
+In the table, `<selected-state-root>` is `~/.nemoclaw/` for the default gateway or `~/.nemoclaw/gateways/<port>/` for a non-default gateway.
+
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/config.json` | Host-level CLI configuration and defaults created by onboarding or config commands. | Only if you want NemoClaw to forget host defaults and rebuild them on the next setup. |
@@ -32,6 +34,8 @@ Share redacted diagnostics only.
 | `~/.nemoclaw/onboard-session.json` | Resume marker for an onboarding attempt that failed before completion. | Yes, when you intentionally want to discard the failed session and start over. Prefer `$$nemoclaw onboard --fresh` when available. |
 | `~/.nemoclaw/usage-notice.json` | Records the third-party software notice version in `acceptedVersion` and the acceptance time in `acceptedAt`. Install, onboarding, and rebuild flows consult this file and prompt again when its recorded version differs from the current notice or the file is absent. | Yes; deleting it makes the next applicable install, onboarding, or rebuild flow prompt for acceptance again. |
 | `~/.nemoclaw/ollama-proxy-token` | Local auth token used by the host-side Ollama auth proxy. | Yes, but re-run onboarding afterward so NemoClaw recreates and registers the proxy token. |
+| `<selected-state-root>/dual-station-vllm-runtime.json` | Owner-only managed dual-Station cleanup receipt. It contains no serving API key and binds the peer, cluster, and GPU identities used to revalidate and remove both managed vLLM containers during full uninstall. | No while the managed pair exists. A full `$$nemoclaw uninstall` removes the receipt after both exact containers are removed; gateway-scoped uninstall preserves it. |
+| `<selected-state-root>/dual-station-vllm-runtime.json.ssh-binding/` | Owner-only copied SSH host-key and Docker-command binding needed to reach the recorded worker during full uninstall. | No while the managed pair exists. Full uninstall removes it with the cleanup receipt after pair cleanup succeeds; gateway-scoped uninstall preserves it. |
 
 `sandboxes.json` is the current registry file name.
 If you see `registry.json` in older tests, notes, or discussions, treat it as legacy wording for the sandbox registry unless a specific release note says otherwise.
