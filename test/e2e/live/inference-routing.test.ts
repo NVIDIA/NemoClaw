@@ -848,7 +848,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     timeoutMs: 30_000,
   });
   expect(providerAfterRollback.exitCode).not.toBe(0);
-  const reusedSandboxAfterRollback = await sandbox.status(sandboxName, {
+  const reusedSandboxAfterRollback = await sandbox.openshell(["sandbox", "get", sandboxName], {
     artifactName: "tc-inf-12-reused-sandbox-after-rollback",
     env: openshellEnv,
     timeoutMs: 30_000,
