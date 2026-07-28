@@ -1209,6 +1209,16 @@ class SandboxStateFlow<
       state.session?.checkpoint,
       this.options.gatewayName,
     );
+    if (
+      existing &&
+      (!gateway ||
+        existing.gatewayName !== gateway.gatewayName ||
+        existing.gatewayPort !== gateway.gatewayPort)
+    ) {
+      throw new Error(
+        `Cannot resume sandbox '${existing.sandboxName}' recreation: journaled gateway '${existing.gatewayName}:${String(existing.gatewayPort)}' does not match the selected gateway authority.`,
+      );
+    }
     if (!gateway) return null;
     const sourceEntry = this.deps.getSandboxRegistryEntry(sandboxName);
     if (!existing && !sourceEntry) return null;
