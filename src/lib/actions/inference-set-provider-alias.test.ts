@@ -24,7 +24,11 @@ import {
   normalizeInferenceSetProvider,
   runInferenceSet,
 } from "./inference-set";
-import { baseSession, createDeps } from "./inference-set.test-support";
+import {
+  baseSession,
+  createDeps,
+  createExistingCompatibleProviderCapture,
+} from "./inference-set.test-support";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -348,6 +352,12 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     // onboarding. DNS re-resolution is not required for that exact identity.
     const guard = ssrfGuard();
     const adapterGuard = httpsPinAdapterGuard();
+    const captureOpenshell = createExistingCompatibleProviderCapture({
+      name: "compatible-anthropic-endpoint",
+      type: "anthropic",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "ANTHROPIC_BASE_URL",
+    });
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/anthropic/model-a" } } } },
       entry: {
@@ -362,6 +372,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
       },
       rewriteConfigUrlsWithDnsPinning: guard,
       ensureHttpsPinRuntimeAdapter: adapterGuard,
+      captureOpenshell,
     });
     await expect(
       runInferenceSet(
@@ -385,6 +396,12 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
   it("accepts the same onboard-provenanced internal endpoint after canonicalization (#6321)", async () => {
     const guard = ssrfGuard();
     const adapterGuard = httpsPinAdapterGuard();
+    const captureOpenshell = createExistingCompatibleProviderCapture({
+      name: "compatible-endpoint",
+      type: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      configKey: "OPENAI_BASE_URL",
+    });
     const deps = createDeps({
       config: {
         agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
@@ -402,6 +419,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
       },
       rewriteConfigUrlsWithDnsPinning: guard,
       ensureHttpsPinRuntimeAdapter: adapterGuard,
+      captureOpenshell,
     });
 
     await expect(
