@@ -12,6 +12,7 @@ readonly PYTHON_DEBIAN_VERSION="3.13.5-2+deb13u4"
 readonly PYTHON_FIX_VERSION="${PYTHON_DEBIAN_VERSION}+nemoclaw1"
 readonly PYTHON_PARSER_SHA256="f91ec3de6331206bbe2ec3e54a05f646bd23d3c61a18d4a01b25164e070bacc9"
 readonly PYTHON_PARSER_FIXED_SHA256="4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7"
+readonly DEBIAN_SNAPSHOT_URL="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly script_dir
@@ -58,6 +59,89 @@ refresh_md5sums() {
   ) >"${package_root}/DEBIAN/md5sums"
 }
 
+read_make_list() {
+  local makefile="$1"
+  local variable="$2"
+
+  awk -v variable="${variable}" '
+    $0 ~ "^" variable "[[:space:]]*=" {
+      capture = 1
+      sub("^[^=]*=[[:space:]]*", "")
+    }
+    capture {
+      continued = sub(/[[:space:]]*\\[[:space:]]*$/, "")
+      for (field = 1; field <= NF; field++) {
+        print "./" $field
+      }
+      if (!continued) {
+        exit
+      }
+    }
+  ' "${makefile}"
+}
+
+run_libssh2_tests() {
+  local source_dir="$1"
+  local test_output
+  local test_user="libssh2"
+  local -a docker_tests
+  local -a sshd_tests
+  local -a full_tests
+
+  mapfile -t docker_tests < <(
+    read_make_list "${source_dir}/tests/Makefile.inc" DOCKER_TESTS
+  )
+  mapfile -t sshd_tests < <(
+    read_make_list "${source_dir}/tests/Makefile.inc" SSHD_TESTS
+  )
+  test "${#docker_tests[@]}" -eq 22
+  test "${#sshd_tests[@]}" -eq 2
+  test "$(wc -l <"${source_dir}/tests/test_read_algos.txt")" -eq 18
+  full_tests=(
+    "${docker_tests[@]}"
+    "${sshd_tests[@]}"
+    ./test_read_algos.test
+  )
+
+  # sshd reads AuthorizedKeysFile after dropping privileges to the fixture
+  # user, so the mktemp parent must be traversable during the test run.
+  chmod o+x "$(dirname -- "${source_dir}")"
+  if ! id "${test_user}" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash "${test_user}"
+  fi
+  printf '%s\n' "${test_user}:my test password" | chpasswd
+  install -d -o "${test_user}" -g "${test_user}" \
+    "/home/${test_user}/.ssh" \
+    "/home/${test_user}/sandbox"
+  install -o "${test_user}" -g "${test_user}" -m 0600 \
+    "${source_dir}/tests/openssh_server/authorized_keys" \
+    "/home/${test_user}/.ssh/authorized_keys"
+  sed -i \
+    's/session[[:space:]]*required[[:space:]]*pam_loginuid.so/session optional pam_loginuid.so/' \
+    /etc/pam.d/sshd
+
+  (
+    cd "${source_dir}"
+    make check
+  )
+
+  if ! test_output="$(
+    cd "${source_dir}/tests"
+    USER="${test_user}" \
+      LOGNAME="${test_user}" \
+      SSHD_FLAGS="-o UsePAM=yes -o KbdInteractiveAuthentication=yes -o PasswordAuthentication=yes -o PerSourcePenalties=no" \
+      ./test_sshd.test "${full_tests[@]}" 2>&1
+  )"; then
+    printf '%s\n' "${test_output}" >&2
+    return 1
+  fi
+  printf '%s\n' "${test_output}"
+  if grep -Eq '^not ok([[:space:]]|$)' <<<"${test_output}"; then
+    printf 'A nested libssh2 TAP test reported a failure.\n' >&2
+    return 1
+  fi
+}
+
 build_libssh2_package() {
   local architecture="$1"
   local original_sha256
@@ -97,10 +181,12 @@ build_libssh2_package() {
     ./configure \
       --prefix=/usr \
       --disable-static \
+      --disable-docker-tests \
+      --disable-sshd-tests \
       --with-crypto=openssl \
       --with-libz
     make -j"$(nproc)"
-    make check
+    run_libssh2_tests "${source_dir}"
     make DESTDIR="${install_root}" install
   )
 
@@ -109,7 +195,7 @@ build_libssh2_package() {
   test -f "${install_root}/usr/lib/libssh2.so.1.0.1"
 
   download \
-    "https://deb.debian.org/debian-security/pool/updates/main/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
+    "${DEBIAN_SNAPSHOT_URL}/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -R "${original_deb}" "${package_root}"
@@ -170,7 +256,7 @@ build_python_fix_package() {
   esac
 
   download \
-    "https://deb.debian.org/debian/pool/main/p/python3.13/libpython3.13-stdlib_${PYTHON_DEBIAN_VERSION}_${architecture}.deb" \
+    "${DEBIAN_SNAPSHOT_URL}/p/python3.13/libpython3.13-stdlib_${PYTHON_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -x "${original_deb}" "${original_root}"
@@ -211,7 +297,15 @@ build_python_fix_package() {
     "${PYTHON_FIX_VERSION}"
 }
 
-mkdir -p "${output_dir}"
-architecture="$(dpkg --print-architecture)"
-build_libssh2_package "${architecture}"
-build_python_fix_package "${architecture}"
+main() {
+  local architecture
+
+  mkdir -p "${output_dir}"
+  architecture="$(dpkg --print-architecture)"
+  build_libssh2_package "${architecture}"
+  build_python_fix_package "${architecture}"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main
+fi

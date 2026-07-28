@@ -13,7 +13,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
 
 function extractAptInstallCommand(dockerfile: string): string {
-  const runtimeStage = dockerfile.indexOf(
+  const runtimeStage = dockerfile.lastIndexOf(
     "FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c",
   );
   expect(runtimeStage).toBeGreaterThanOrEqual(0);

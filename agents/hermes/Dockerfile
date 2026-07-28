@@ -781,8 +781,8 @@ RUN set -eu; \
         "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7" \
         /usr/lib/python3.13/html/parser.py \
         | sha256sum -c -; \
-    python3 -c "from pathlib import Path; import html.parser; assert Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve(); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''"; \
-    python3 -c "import ctypes; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; assert lib.libssh2_version(0) == b'1.11.1'"; \
+    python3 -c "import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')"; \
+    python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')"; \
     vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.

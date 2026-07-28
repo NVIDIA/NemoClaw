@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -28,10 +29,115 @@ const BASE_DOCKERFILES = [
   path.join(ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
 ] as const;
 
+function runLibssh2Harness(nestedFailure = false) {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-libssh2-harness-"));
+  const testsDir = path.join(fixture, "tests");
+  const harnessLog = path.join(fixture, "harness-log");
+  fs.mkdirSync(path.join(testsDir, "openssh_server"), { recursive: true });
+  fs.mkdirSync(harnessLog);
+  fs.writeFileSync(
+    path.join(testsDir, "Makefile.inc"),
+    [
+      `DOCKER_TESTS = ${Array.from({ length: 22 }, (_, index) => `docker-${index + 1}`).join(" ")}`,
+      "SSHD_TESTS = sshd-1 sshd-2",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(
+    path.join(testsDir, "test_read_algos.txt"),
+    `${Array.from({ length: 18 }, (_, index) => `algorithm-${index + 1}`).join("\n")}\n`,
+  );
+  fs.writeFileSync(path.join(testsDir, "openssh_server", "authorized_keys"), "fixture-key\n");
+  fs.writeFileSync(
+    path.join(testsDir, "test_sshd.test"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'printf "%s\\n" "$USER|$LOGNAME|$SSHD_FLAGS" >"$HARNESS_LOG/environment"',
+      'printf "%s\\n" "$@" >"$HARNESS_LOG/arguments"',
+      'printf "1..25\\n"',
+      'if [[ "${NESTED_FAILURE:-0}" == "1" ]]; then',
+      '  printf "not ok 7 - nested algorithm\\n"',
+      "else",
+      '  printf "ok 25 - all upstream cases\\n"',
+      "fi",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      [
+        "set -euo pipefail",
+        'source "$1"',
+        'calls="$HARNESS_LOG/calls"',
+        'mapfile() { local target="$2" line; eval "$target=()"; while IFS= read -r line; do eval "$target+=(\\"\\$line\\")"; done; }',
+        'chmod() { printf "chmod %s\\n" "$*" >>"$calls"; }',
+        "id() { return 0; }",
+        'useradd() { printf "useradd %s\\n" "$*" >>"$calls"; }',
+        'chpasswd() { cat >/dev/null; printf "chpasswd\\n" >>"$calls"; }',
+        'install() { printf "install %s\\n" "$*" >>"$calls"; }',
+        'sed() { printf "sed %s\\n" "$*" >>"$calls"; }',
+        'make() { printf "make %s\\n" "$*" >>"$calls"; }',
+        'run_libssh2_tests "$2"',
+      ].join("\n"),
+      "libssh2-harness",
+      BUILD_SCRIPT,
+      fixture,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HARNESS_LOG: harnessLog,
+        NESTED_FAILURE: nestedFailure ? "1" : "0",
+      },
+    },
+  );
+  return { fixture, harnessLog, result };
+}
+
 describe("native security package remediation", () => {
   it("keeps the package builder syntactically valid", () => {
     const result = spawnSync("bash", ["-n", BUILD_SCRIPT], { encoding: "utf-8" });
     expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+  });
+
+  it("runs every upstream libssh2 case against the local OpenSSH fixture", () => {
+    const { fixture, harnessLog, result } = runLibssh2Harness();
+    try {
+      expect({ status: result.status, stderr: result.stderr }).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      expect(result.stdout).toContain("ok 25 - all upstream cases");
+      expect(fs.readFileSync(path.join(harnessLog, "calls"), "utf-8")).toContain("make check");
+      const argumentsList = fs
+        .readFileSync(path.join(harnessLog, "arguments"), "utf-8")
+        .trim()
+        .split("\n");
+      expect(argumentsList).toHaveLength(25);
+      expect(argumentsList.at(0)).toBe("./docker-1");
+      expect(argumentsList.at(-1)).toBe("./test_read_algos.test");
+      expect(fs.readFileSync(path.join(harnessLog, "environment"), "utf-8")).toContain(
+        "PerSourcePenalties=no",
+      );
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a nested libssh2 TAP failure", () => {
+    const { fixture, result } = runLibssh2Harness(true);
+    try {
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("A nested libssh2 TAP test reported a failure.");
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it("records every reviewed upstream fix at the patch boundary", () => {
@@ -78,6 +184,9 @@ describe("native security package remediation", () => {
     expect(content).toContain("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1");
     expect(content).toContain("4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7");
     expect(content).toContain("[p.feed('') for _ in range(20000)]");
-    expect(content).toContain("lib.libssh2_version(0) == b'1.11.1'");
+    expect(content).toContain("or sys.exit('empty feeds accumulated pending entries')");
+    expect(content).toContain(
+      "lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')",
+    );
   });
 });

@@ -9,13 +9,13 @@ export const FIXED_PARSER_SHA256 =
   "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7";
 
 export function htmlParserSecurityProbe(parserPath: string): string {
-  return `from pathlib import Path; import html.parser; assert Path(html.parser.__file__).resolve() == Path('${parserPath}').resolve(); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; assert p._pending == []; p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); assert p.rawdata == ''`;
+  return `import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('${parserPath}').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')`;
 }
 
 const PYEXPAT_PROBE =
   "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION";
 const LIBSSH2_PROBE =
-  "import ctypes; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; assert lib.libssh2_version(0) == b'1.11.1'";
+  "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')";
 const FIXED_PARSER_FIXTURE = path.resolve(
   import.meta.dirname,
   "..",

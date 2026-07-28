@@ -23,6 +23,7 @@ The changes preserve the existing image behavior and do not create a new integra
 | Python HTMLParser | `libpython3.13-stdlib=3.13.5-2+deb13u4` | `nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1` | `7933f4bf7131aa4140750f9404f5de0aa2969ced` |
 
 The libssh2 source archive is bound to SHA-256 `9954cb54c4f548198a7cbebad248bdc87dd64bd26185708a294b2b50771e3769`.
+The original Debian packages are downloaded from the immutable `20260724T000000Z` Debian snapshot.
 The original Debian package SHA-256 values are:
 
 | Package | amd64 | arm64 |
@@ -37,7 +38,9 @@ The file contains the reviewed upstream batching fix plus an empty-input guard s
 ## Package contracts
 
 The shared builder applies the reviewed patches only after verifying the source artifacts.
-It builds libssh2 with OpenSSL and zlib support, runs the upstream `make check` suite, verifies the `libssh2.so.1` soname, and rejects a build that removes any exported symbol from the original Debian library.
+It builds libssh2 with OpenSSL and zlib support and runs all 43 upstream test cases against a local OpenSSH fixture.
+The builder disables only libssh2's nested Docker orchestration, which is unavailable during an image build, and executes those same cases against the fixture directly.
+It then verifies the `libssh2.so.1` soname and rejects a build that removes any exported symbol from the original Debian library.
 It then replaces only the shared library in the original Debian runtime package and records the NemoClaw package revision.
 
 The Python fix package owns only `/usr/lib/python3.13/html/parser.py`.
