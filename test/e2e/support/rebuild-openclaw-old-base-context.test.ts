@@ -181,7 +181,7 @@ describe("rebuild-openclaw old-base build context", () => {
     fs.writeFileSync(parentRelativeDockerfilePath, "COPY ../outside /tmp/outside\n", "utf8");
     fs.writeFileSync(
       absoluteDockerfilePath,
-      "COPY scripts/lib/sandbox-rlimits.sh /etc/passwd /tmp/passwd\n",
+      ["COPY scripts/lib/sandbox-rlimits.sh \\", "  /etc/passwd \\", "  /tmp/passwd"].join("\n"),
       "utf8",
     );
 
