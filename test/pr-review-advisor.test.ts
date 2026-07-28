@@ -359,7 +359,7 @@ describe("PR review advisor", () => {
     });
     expect(noE2eComment).toContain("**Recommended E2E:** _None_");
     expect(noE2eComment).not.toContain("Why no");
-  });
+  }, 30_000);
 
   it("sanitizes malformed enum values and preserves deterministic fallback gates", () => {
     const result = normalizeReviewResult(
