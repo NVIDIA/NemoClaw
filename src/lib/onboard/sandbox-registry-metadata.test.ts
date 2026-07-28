@@ -17,7 +17,7 @@ async function makeHelpers(driverName: string) {
   // resolve from TS source. Same pattern as `vm-dns-monkeypatch.test.ts`.
   const metadata = await import("./sandbox-registry-metadata");
   return metadata.createSandboxRegistryMetadataHelpers({
-    openShellComputeDriverName: driverName,
+    getOpenShellComputeDriverName: () => driverName,
     getInstalledOpenshellVersion: () => "0.0.42",
     runCaptureOpenshell: () => null,
   });
@@ -88,7 +88,7 @@ describe("sandbox registry metadata", () => {
     });
 
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      openShellComputeDriverName: "docker",
+      getOpenShellComputeDriverName: () => "docker",
       getInstalledOpenshellVersion: () => "0.0.44",
       runCaptureOpenshell: () => "openshell 0.0.44",
     });
@@ -137,7 +137,7 @@ describe("sandbox registry metadata", () => {
     const dashboardPorts = await import("./dashboard-port");
     const gatewayRegistry = await import("../state/gateway-registry");
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      openShellComputeDriverName: "docker",
+      getOpenShellComputeDriverName: () => "docker",
       getInstalledOpenshellVersion: () => "0.0.44",
       runCaptureOpenshell: () => "openshell 0.0.44",
     });
@@ -197,5 +197,19 @@ describe("getSandboxRuntimeRegistryFields openshellDriver", () => {
     const fields = helpers.getSandboxRuntimeRegistryFields(GPU_OFF);
 
     expect(fields.openshellDriver).toBe(driverName);
+  });
+
+  it("resolves driver identity when metadata is recorded rather than at module load (#7744)", async () => {
+    const metadata = await import("./sandbox-registry-metadata");
+    let driverName = "docker";
+    const helpers = metadata.createSandboxRegistryMetadataHelpers({
+      getOpenShellComputeDriverName: () => driverName,
+      getInstalledOpenshellVersion: () => "0.0.42",
+      runCaptureOpenshell: () => null,
+    });
+
+    driverName = "kubernetes";
+
+    expect(helpers.getSandboxRuntimeRegistryFields(GPU_OFF).openshellDriver).toBe("kubernetes");
   });
 });

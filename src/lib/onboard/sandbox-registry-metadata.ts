@@ -8,7 +8,7 @@ import { getSandboxAgentRegistryFields } from "./sandbox-agent";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 export interface SandboxRegistryMetadataDeps {
-  openShellComputeDriverName: string;
+  getOpenShellComputeDriverName(): string;
   getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
 }
@@ -66,7 +66,7 @@ export function createSandboxRegistryMetadataHelpers(
       ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
       // Driver identity comes from the resolved compute plan, not the host
       // gateway launcher; those layers may differ (#7744).
-      openshellDriver: deps.openShellComputeDriverName,
+      openshellDriver: deps.getOpenShellComputeDriverName(),
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
       ),
