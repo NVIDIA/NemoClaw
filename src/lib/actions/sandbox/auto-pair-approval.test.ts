@@ -225,6 +225,18 @@ process.exit(2);
         budget: { maxApprovals: 1 },
       },
     );
+    const timeoutScript = buildAutoPairApprovalScript(
+      Buffer.from(policy as string, "utf-8").toString("base64"),
+      {
+        emitSummary: true,
+        emitReceipt: true,
+        localDeviceOnly: true,
+        // Keep production's 10s cap unchanged. This executable fixture only
+        // needs enough time to publish its synchronous canonical state before
+        // proving the generated TimeoutExpired branch.
+        budget: { maxApprovals: 1, approveTimeoutS: 0.25 },
+      },
+    );
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restored-clone-pair-"));
     try {
       const stateDir = path.join(tmpDir, "openclaw-state");
@@ -387,7 +399,7 @@ process.exit(2);
         invalidWatcherState = false,
         timeoutAfterCommit = false,
       ) =>
-        spawnSync("sh", ["-c", script], {
+        spawnSync("sh", ["-c", timeoutAfterCommit ? timeoutScript : script], {
           encoding: "utf-8",
           env: {
             ...process.env,
