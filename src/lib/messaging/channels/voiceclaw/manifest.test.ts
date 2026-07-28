@@ -111,6 +111,7 @@ describe("VoiceClaw channel manifest", () => {
               inboundPolicy: "allowlist",
               allowFrom: ["+15550005678"],
               ringTimeoutMs: 120_000,
+              responseModel: "inference/nvidia/nemotron-3-super-120b-a12b",
               publicUrl: "https://voice.example.test/voice/webhook",
               serve: { bind: "0.0.0.0", port: 3334, path: "/voice/webhook" },
               telnyx: {

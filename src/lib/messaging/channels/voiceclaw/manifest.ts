@@ -183,6 +183,7 @@ export const voiceclawManifest = {
             inboundPolicy: "allowlist",
             allowFrom: ["{{voiceclaw.telnyxToNumber}}"],
             ringTimeoutMs: 120_000,
+            responseModel: "inference/nvidia/nemotron-3-super-120b-a12b",
             outbound: {
               defaultMode: "conversation",
             },
