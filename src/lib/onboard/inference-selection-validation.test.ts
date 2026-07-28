@@ -10,6 +10,45 @@ import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
 
 describe("inference selection validation", () => {
+  it("uses an explicit managed key without forwarding it as a probe option", async () => {
+    const apiKey = "f".repeat(64);
+    const getCredential = vi.fn(() => "ambient-key");
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+      label: "Chat Completions API",
+    }));
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential,
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(
+      helpers.validateOpenAiLikeSelection(
+        "Local vLLM",
+        "http://10.40.0.1:8000/v1",
+        "served/model",
+        null,
+        undefined,
+        undefined,
+        { apiKey, pinnedAddresses: [] },
+      ),
+    ).resolves.toEqual({ ok: true, api: "openai-completions" });
+    expect(getCredential).not.toHaveBeenCalled();
+    expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+      "http://10.40.0.1:8000/v1",
+      "served/model",
+      apiKey,
+      { pinnedAddresses: [], calibrateTimeouts: true },
+    );
+    expect(log.mock.calls.flat().join("\n")).not.toContain(apiKey);
+    log.mockRestore();
+  });
+
   it("records a completed Chat Completions selection for the matching smoke check", async () => {
     const capabilityCache = new OnboardInferenceCapabilityCache();
     const helpers = createInferenceSelectionValidationHelpers({

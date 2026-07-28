@@ -1068,7 +1068,7 @@ describe("createSetupNim", () => {
       }),
     );
 
-    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on localhost:8000");
+    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on this host");
 
     expect(error).toHaveBeenCalledWith(expect.stringContaining("Select Local vLLM"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
