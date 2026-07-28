@@ -4,12 +4,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential, prompt, saveCredential } from "../credentials/store";
-import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../messaging";
+import {
+  createBuiltInChannelManifestRegistry,
+  MessagingSetupApplier,
+  type SandboxMessagingPlan,
+} from "../messaging";
+import { resolveMessagingPlanAuthority } from "../messaging/plan-authority";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
+import * as registry from "../state/registry";
 import {
   detectMessagingChannelsFromEnv,
+  getRegistrySandboxMessagingAuthority,
   setupMessagingChannels,
   setupSelectedMessagingChannels,
 } from "./messaging-channel-setup";
@@ -68,6 +75,65 @@ function stubTelegramReachability(): void {
     })),
   );
 }
+
+function messagingPlan(
+  sandboxName: string,
+  workflow: SandboxMessagingPlan["workflow"],
+): SandboxMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent: "openclaw",
+    workflow,
+    channels: [],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
+describe("getRegistrySandboxMessagingAuthority", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps staged intent authoritative for a pending registry reservation", () => {
+    const entry = { name: "alpha", pendingRouteReservation: true } as const;
+    const registryPlan = messagingPlan("alpha", "rebuild");
+    const stagedPlan = messagingPlan("alpha", "onboard");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+
+    expect(
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: getRegistrySandboxMessagingAuthority("alpha"),
+        stagedPlan,
+        sessionPlan: null,
+      }),
+    ).toEqual({ source: "staged", plan: stagedPlan });
+  });
+
+  it("uses registry intent for a registered sandbox", () => {
+    const entry = { name: "alpha" };
+    const registryPlan = messagingPlan("alpha", "rebuild");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+
+    expect(
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: getRegistrySandboxMessagingAuthority("alpha"),
+        stagedPlan: messagingPlan("alpha", "onboard"),
+        sessionPlan: null,
+      }),
+    ).toEqual({ source: "registry", plan: registryPlan });
+  });
+});
 
 describe("setupSelectedMessagingChannels", () => {
   beforeEach(() => {
