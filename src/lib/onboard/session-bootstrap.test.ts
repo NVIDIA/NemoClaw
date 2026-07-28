@@ -385,6 +385,7 @@ describe("prepareOnboardSession", () => {
       gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
+      sandboxRecreate: null,
     };
     session.checkpoint = checkpoint;
     const { deps } = createDeps(session, {
@@ -436,6 +437,7 @@ describe("prepareOnboardSession", () => {
       gatewayAuthority: decisionUnset(),
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
+      sandboxRecreate: null,
     };
     const { deps } = createDeps(session);
 

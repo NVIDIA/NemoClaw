@@ -19,6 +19,8 @@ const MAX_CAPABILITIES = 256;
 const MAX_QUALIFICATIONS = 128;
 const MAX_FINDINGS = 256;
 const MAX_EVIDENCE = 256;
+const MAX_CAPABILITY_REFERENCES = 64;
+const MAX_EVIDENCE_REFERENCES = 32;
 const SOURCE_REVISION_PATTERN = /^[0-9a-f]{40,64}$/;
 const ENVIRONMENT_DETAIL_KEYS = new Set([
   "env",
@@ -41,42 +43,87 @@ function scalar(value: EvidenceScalar): EvidenceScalar {
 }
 
 function isEnvironmentDetail(key: string): boolean {
-  const segments = key.split(/[._-]/).filter(Boolean);
+  const segments = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1.$2")
+    .replace(/([A-Za-z])([0-9])/g, "$1.$2")
+    .replace(/([0-9])([A-Za-z])/g, "$1.$2")
+    .split(/[._-]/)
+    .filter(Boolean);
   return segments.some((segment) => ENVIRONMENT_DETAIL_KEYS.has(segment.toLowerCase()));
 }
 
+function boundedReferences(
+  references: readonly string[] | undefined,
+  maxReferences: number,
+  referenceName: string,
+): readonly string[] | undefined {
+  if (!references) return undefined;
+  if (references.length > maxReferences) {
+    throw new Error(`Readiness report exceeds the public boundary for ${referenceName}.`);
+  }
+  if (new Set(references).size !== references.length) {
+    throw new Error(`Readiness report contains duplicate ${referenceName}.`);
+  }
+  return [...references];
+}
+
 function observation(entry: ReadinessObservation): ReadinessObservation {
+  const evidenceIds = boundedReferences(
+    entry.evidenceIds,
+    MAX_EVIDENCE_REFERENCES,
+    "observation evidence references",
+  );
   return {
     id: entry.id,
     state: entry.state,
     ...(entry.value !== undefined ? { value: scalar(entry.value) } : {}),
-    ...(entry.evidenceIds ? { evidenceIds: [...entry.evidenceIds] } : {}),
+    ...(evidenceIds ? { evidenceIds } : {}),
   };
 }
 
 function capability(entry: ReadinessCapability): ReadinessCapability {
+  const evidenceIds = boundedReferences(
+    entry.evidenceIds,
+    MAX_EVIDENCE_REFERENCES,
+    "capability evidence references",
+  );
   return {
     id: entry.id,
     state: entry.state,
-    ...(entry.evidenceIds ? { evidenceIds: [...entry.evidenceIds] } : {}),
+    ...(evidenceIds ? { evidenceIds } : {}),
   };
 }
 
 function qualification(entry: ReadinessQualification): ReadinessQualification {
+  const capabilityIds = boundedReferences(
+    entry.capabilityIds,
+    MAX_CAPABILITY_REFERENCES,
+    "qualification capability references",
+  );
   return {
     id: entry.id,
     status: entry.status,
-    ...(entry.capabilityIds ? { capabilityIds: [...entry.capabilityIds] } : {}),
+    ...(capabilityIds ? { capabilityIds } : {}),
   };
 }
 
 function finding(entry: ReadinessFinding): ReadinessFinding {
+  const capabilityIds = boundedReferences(
+    entry.capabilityIds,
+    MAX_CAPABILITY_REFERENCES,
+    "finding capability references",
+  );
+  const evidenceIds = boundedReferences(
+    entry.evidenceIds,
+    MAX_EVIDENCE_REFERENCES,
+    "finding evidence references",
+  );
   return {
     id: entry.id,
     severity: entry.severity,
     summary: bounded(entry.summary, MAX_SUMMARY_LENGTH),
-    ...(entry.capabilityIds ? { capabilityIds: [...entry.capabilityIds] } : {}),
-    ...(entry.evidenceIds ? { evidenceIds: [...entry.evidenceIds] } : {}),
+    ...(capabilityIds ? { capabilityIds } : {}),
+    ...(evidenceIds ? { evidenceIds } : {}),
   };
 }
 
@@ -98,6 +145,19 @@ function boundedFindings(entries: readonly ReadinessFinding[]): readonly Readine
 
 function addReferences(target: Set<string>, references: readonly string[] | undefined): void {
   for (const id of references ?? []) target.add(id);
+}
+
+function assertUniqueIds<T extends { readonly id: string }>(
+  entries: readonly T[],
+  entityName: string,
+): void {
+  const ids = new Set<string>();
+  for (const entry of entries) {
+    if (ids.has(entry.id)) {
+      throw new Error(`Readiness report contains duplicate ${entityName} IDs.`);
+    }
+    ids.add(entry.id);
+  }
 }
 
 function boundedReferencedEntries<T extends { readonly id: string }>(
@@ -152,6 +212,12 @@ export function createPublicReadinessReport(
   if (report.mutated !== false) {
     throw new Error("Readiness reports must be observation-only.");
   }
+  assertUniqueIds(report.observations, "observation");
+  assertUniqueIds(report.capabilities, "capability");
+  assertUniqueIds(report.qualifications, "qualification");
+  assertUniqueIds(report.findings, "finding");
+  assertUniqueIds(report.evidence, "evidence");
+  // Keep these branches so TypeScript preserves the correlation between status and exitCode.
   const outcome =
     report.status === "supported"
       ? ({ status: report.status, exitCode: report.exitCode } as const)

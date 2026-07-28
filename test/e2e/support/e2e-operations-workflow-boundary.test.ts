@@ -240,7 +240,7 @@ describe("E2E operations workflow boundary", () => {
           CORRELATION_ID: "123e4567-e89b-42d3-a456-426614174000",
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
           GITHUB_TOKEN: "unused",
-          JOBS: "credential-sanitization",
+          JOBS: "cloud-inference",
           PLAN_HASH: "c".repeat(64),
           PR_NUMBER: "42",
           RUN_ATTEMPT: "1",
@@ -273,7 +273,7 @@ describe("E2E operations workflow boundary", () => {
       conclusion: null,
       details_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
       output: {
-        summary: `Risk plan ${planHash} selected jobs: credential-sanitization; targets: none. Child run: https://github.com/NVIDIA/NemoClaw/actions/runs/23.`,
+        summary: `Risk plan ${planHash} selected jobs: cloud-inference; targets: none. Child run: https://github.com/NVIDIA/NemoClaw/actions/runs/23.`,
       },
     });
     const result = spawnSync(
@@ -299,7 +299,7 @@ describe("E2E operations workflow boundary", () => {
           FAKE_CHECK: check,
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
           GITHUB_TOKEN: "unused",
-          JOBS: "credential-sanitization",
+          JOBS: "cloud-inference",
           PLAN_HASH: planHash,
           PR_NUMBER: "42",
           RUN_ATTEMPT: "1",

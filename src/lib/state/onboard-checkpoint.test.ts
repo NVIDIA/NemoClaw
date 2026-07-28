@@ -14,7 +14,11 @@ import {
   isDecisionSelected,
   isDecisionUnset,
 } from "./onboard-checkpoint-decision";
-import { CHECKPOINT_SCHEMA_VERSION, type OnboardCheckpoint } from "./onboard-checkpoint-types";
+import {
+  CHECKPOINT_SCHEMA_VERSION,
+  type CheckpointSandboxRecreateTransaction,
+  type OnboardCheckpoint,
+} from "./onboard-checkpoint-types";
 
 const ISO = "2026-01-01T00:00:00.000Z";
 
@@ -36,8 +40,46 @@ function baseCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardChec
         { name: "web-search-p", type: "brave", credentialEnv: "BRAVE_API_KEY" },
       ],
     },
+    sandboxRecreate: null,
     ...overrides,
   };
+}
+
+function recreateTransaction(): CheckpointSandboxRecreateTransaction {
+  return {
+    version: 1,
+    id: "11111111-1111-4111-8111-111111111111",
+    revision: 2,
+    sandboxName: "my-sandbox",
+    gatewayName: "nemoclaw-31818",
+    gatewayPort: 31818,
+    sourceRegistryFingerprint: "a".repeat(64),
+    sourceLiveIdentityFingerprint: "b".repeat(64),
+    targetIntentFingerprint: "c".repeat(64),
+    targetGeneration: "22222222-2222-4222-8222-222222222222",
+    targetLiveIdentityFingerprint: null,
+    phase: "creating",
+    startedAt: ISO,
+    updatedAt: ISO,
+  };
+}
+
+function serializedRecreateCheckpoint(): Record<string, unknown> {
+  return serializeCheckpoint(
+    baseCheckpoint({
+      gatewayAuthority: decisionSelected({
+        gatewayName: "nemoclaw-31818",
+        gatewayPort: 31818,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+      sandboxRecreate: recreateTransaction(),
+    }),
+  );
 }
 
 describe("checkpoint decision tri-state", () => {
@@ -93,10 +135,21 @@ describe("checkpoint schema inspection", () => {
     });
   });
 
-  it("loads and round-trips a valid v2 checkpoint", () => {
+  it("loads and round-trips a valid current checkpoint", () => {
     const checkpoint = baseCheckpoint();
     const result = inspectCheckpoint(serializeCheckpoint(checkpoint));
     expect(result).toEqual({ status: "loaded", checkpoint });
+  });
+
+  it("migrates a valid v2 checkpoint with no recreate journal", () => {
+    const serialized = serializeCheckpoint(baseCheckpoint());
+    serialized.schemaVersion = 2;
+    delete serialized.sandboxRecreate;
+
+    const result = inspectCheckpoint(serialized);
+
+    expect(result).toMatchObject({ status: "migrated", fromVersion: 2 });
+    expect(result.status === "migrated" && result.checkpoint.sandboxRecreate).toBeNull();
   });
 
   it("migrates a valid v1 checkpoint with an unset gateway authority", () => {
@@ -134,6 +187,73 @@ describe("checkpoint schema inspection", () => {
       status: "loaded",
       checkpoint,
     });
+  });
+
+  it("round-trips a journal bound to the selected sandbox and non-default gateway", () => {
+    const checkpoint = baseCheckpoint({
+      gatewayAuthority: decisionSelected({
+        gatewayName: "nemoclaw-31818",
+        gatewayPort: 31818,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+      sandboxRecreate: recreateTransaction(),
+    });
+
+    expect(inspectCheckpoint(serializeCheckpoint(checkpoint))).toEqual({
+      status: "loaded",
+      checkpoint,
+    });
+  });
+
+  it.each([
+    {
+      label: "sandbox",
+      mutate: (serialized: Record<string, unknown>) => {
+        serialized.sandboxIdentity = decisionSelected({ name: "other", agent: "openclaw" });
+      },
+    },
+    {
+      label: "gateway",
+      mutate: (serialized: Record<string, unknown>) => {
+        serialized.gatewayAuthority = decisionSelected({
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        });
+      },
+    },
+  ])("rejects a recreate journal copied under a different $label binding", ({ mutate }) => {
+    const serialized = serializedRecreateCheckpoint();
+    mutate(serialized);
+
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+  });
+
+  it("rejects malformed recreate journal fingerprints", () => {
+    const serialized = serializedRecreateCheckpoint();
+    (serialized.sandboxRecreate as Record<string, unknown>).targetIntentFingerprint = "bad";
+
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+  });
+
+  it.each([
+    "sourceLiveIdentityFingerprint",
+    "targetLiveIdentityFingerprint",
+  ])("rejects a malformed nullable recreate journal field: %s", (field) => {
+    const serialized = serializedRecreateCheckpoint();
+    (serialized.sandboxRecreate as Record<string, unknown>)[field] = 42;
+
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
   });
 
   it("rejects a checkpoint whose external authority targets a different port", () => {

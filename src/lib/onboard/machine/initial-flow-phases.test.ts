@@ -194,7 +194,7 @@ describe("initial onboard flow phases", () => {
     );
   });
 
-  it("records each phase result on the resume compatibility path", async () => {
+  it("records each phase result when a resume snapshot is already at gateway", async () => {
     const recorded: string[] = [];
     const phases: readonly OnboardSequencePhase<Context>[] = [
       {
@@ -209,7 +209,16 @@ describe("initial onboard flow phases", () => {
 
     await runInitialOnboardFlowSlice({
       context: context({ resume: true }),
-      runtime: runtime(),
+      runtime: runtime(
+        createSession({
+          machine: {
+            version: 1,
+            state: "gateway",
+            stateEnteredAt: "2026-06-09T00:00:00.000Z",
+            revision: 2,
+          },
+        }),
+      ),
       phases,
       resume: true,
       recordStateResult: async (result) => {
@@ -221,21 +230,21 @@ describe("initial onboard flow phases", () => {
     expect(recorded).toEqual(["gateway", "provider_selection"]);
   });
 
-  it("returns the runtime session after resume compatibility state recording", async () => {
+  it("returns the runtime session after ahead-state compatibility recording", async () => {
     const phaseSession = createSession({
       machine: {
         version: 1,
-        state: "preflight",
+        state: "gateway",
         stateEnteredAt: "2026-06-09T00:00:00.000Z",
-        revision: 0,
+        revision: 2,
       },
     });
     let runtimeSession = createSession({
       machine: {
         version: 1,
-        state: "preflight",
+        state: "gateway",
         stateEnteredAt: "2026-06-09T00:00:00.000Z",
-        revision: 0,
+        revision: 2,
       },
     });
     const phases: readonly OnboardSequencePhase<Context>[] = [
@@ -244,6 +253,13 @@ describe("initial onboard flow phases", () => {
         run: (ctx) => ({
           context: { ...ctx, session: phaseSession },
           result: advanceTo("gateway"),
+        }),
+      },
+      {
+        state: "gateway",
+        run: (ctx) => ({
+          context: { ...ctx, session: phaseSession },
+          result: advanceTo("provider_selection"),
         }),
       },
     ];
@@ -275,7 +291,7 @@ describe("initial onboard flow phases", () => {
 
     expect(result.context.session).toBe(phaseSession);
     expect(result.session).toBe(runtimeSession);
-    expect(result.session.machine.state).toBe("gateway");
+    expect(result.session.machine.state).toBe("provider_selection");
   });
 
   it("runs resume preflight and gateway backstops when saved machine state is already ahead", async () => {
@@ -560,7 +576,10 @@ describe("initial onboard flow phases", () => {
     expect(phase.run).not.toHaveBeenCalled();
   });
 
-  it("uses the strict runner for fresh preflight sessions", async () => {
+  it.each([
+    { runKind: "fresh", resume: false },
+    { runKind: "resumed", resume: true },
+  ])("uses the strict runner for $runKind preflight sessions", async ({ resume }) => {
     const order: string[] = [];
     const applied: string[] = [];
     const session = createSession({
@@ -589,7 +608,7 @@ describe("initial onboard flow phases", () => {
     ];
 
     const result = await runInitialOnboardFlowSlice({
-      context: context(),
+      context: context({ resume, session }),
       runtime: {
         session: async () => session,
         applyResult: async (stateResult) => {
@@ -604,12 +623,12 @@ describe("initial onboard flow phases", () => {
         },
       },
       phases,
-      resume: false,
+      resume,
       recordStateResult: async () => {
         throw new Error("compatibility recorder should not run");
       },
       recordInvalidatedStateResult: async () => {
-        throw new Error("invalidation recorder should not run on fresh strict runner path");
+        throw new Error("invalidation recorder should not run on the strict runner path");
       },
     });
 
@@ -618,8 +637,12 @@ describe("initial onboard flow phases", () => {
     expect(result.session.machine.state).toBe("provider_selection");
   });
 
-  it("uses the strict runner for fresh init sessions", async () => {
+  it.each([
+    { runKind: "fresh", resume: false },
+    { runKind: "resumed", resume: true },
+  ])("uses the strict runner for $runKind init sessions", async ({ resume }) => {
     const order: string[] = [];
+    const applied: string[] = [];
     const session = createSession();
     const phases: readonly OnboardSequencePhase<Context>[] = [
       {
@@ -639,11 +662,12 @@ describe("initial onboard flow phases", () => {
     ];
 
     const result = await runInitialOnboardFlowSlice({
-      context: context(),
+      context: context({ resume, session }),
       runtime: {
         session: async () => session,
         applyResult: async (stateResult) => {
           if (stateResult.type === "transition") {
+            applied.push(stateResult.next);
             session.machine = {
               ...session.machine,
               state: stateResult.next,
@@ -654,16 +678,17 @@ describe("initial onboard flow phases", () => {
         },
       },
       phases,
-      resume: false,
+      resume,
       recordStateResult: async () => {
         throw new Error("compatibility recorder should not run");
       },
       recordInvalidatedStateResult: async () => {
-        throw new Error("invalidation recorder should not run on fresh strict runner path");
+        throw new Error("invalidation recorder should not run on the strict runner path");
       },
     });
 
     expect(order).toEqual(["preflight", "gateway"]);
+    expect(applied).toEqual(["preflight", "gateway", "provider_selection"]);
     expect(result.session.machine.state).toBe("provider_selection");
   });
 });

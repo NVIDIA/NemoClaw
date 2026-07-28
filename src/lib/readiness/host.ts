@@ -29,7 +29,7 @@ import {
 } from "./types.js";
 
 const DEFAULT_MAX_AGE_MS = 30_000;
-const MAX_EVIDENCE_LENGTH = 1024;
+const MAX_REPORT_TEXT_LENGTH = 1024;
 
 export interface HostObservations {
   platform: string;
@@ -85,8 +85,8 @@ export interface CreateHostReadinessReportOptions {
   maxObservationAgeMs?: number;
 }
 
-function safeEvidence(value: string): string {
-  return redactFull(value).slice(0, MAX_EVIDENCE_LENGTH);
+function safeReportText(value: string): string {
+  return redactFull(value).slice(0, MAX_REPORT_TEXT_LENGTH);
 }
 
 function adaptHostAssessment(
@@ -158,7 +158,7 @@ export function collectHostObservations(
   } catch (error) {
     return {
       observedAt,
-      failure: safeEvidence(error instanceof Error ? error.message : String(error)),
+      failure: safeReportText(error instanceof Error ? error.message : String(error)),
       reusable: false,
     };
   }
@@ -167,6 +167,7 @@ export function collectHostObservations(
 function observation(id: string, value: EvidenceScalar | undefined): ReadinessObservation {
   if (value === undefined || value === null || value === "unknown") return { id, state: "unknown" };
   if (typeof value === "boolean") return { id, state: value ? "present" : "absent", value };
+  if (typeof value === "string") return { id, state: "present", value: safeReportText(value) };
   return { id, state: "present", value };
 }
 
@@ -259,7 +260,7 @@ export function projectHostReadiness(
   const unsafeReuse = stale && snapshot.reusable !== true;
   const evidence: ReadinessEvidence[] = [];
   if (snapshot.failure) {
-    evidence.push({ id: "host.probe.failure", summary: safeEvidence(snapshot.failure) });
+    evidence.push({ id: "host.probe.failure", summary: safeReportText(snapshot.failure) });
   }
   if (unsafeReuse) {
     evidence.push({
@@ -284,7 +285,10 @@ export function projectHostReadiness(
       host.hostGpuPlatform !== "jetson" &&
       !(host.isWsl && host.runtime === "docker-desktop");
     const cdiHealthy =
-      !cdiApplies || (!host.cdiNvidiaGpuSpecMissing && !host.cdiNvidiaGpuSpecNeedsRepair);
+      !cdiApplies ||
+      (!host.cdiNvidiaGpuSpecMissing &&
+        !host.cdiNvidiaGpuSpecStale &&
+        !host.cdiNvidiaGpuSpecNeedsRepair);
     observations = [
       observation("host.os.platform", host.platform),
       observation("host.os.architecture", host.architecture),
@@ -393,6 +397,15 @@ export function projectHostReadiness(
           "warning",
           "The detected container runtime is unsupported.",
           ["host.docker.runtime_supported"],
+        ),
+      );
+    if (host.hasNestedOverlayConflict)
+      findings.push(
+        finding(
+          "host.docker.storage_incompatible",
+          "blocking",
+          "The Docker storage configuration cannot support nested overlay mounts.",
+          ["host.docker.storage_compatible"],
         ),
       );
     if (host.hasNvidiaGpu && !host.nvidiaContainerToolkitInstalled)

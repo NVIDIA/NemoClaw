@@ -134,6 +134,26 @@ describe("public readiness presentation (#7412)", () => {
     expect(String(publicReport.evidence[0]?.details?.stderr).length).toBeLessThanOrEqual(1024);
   });
 
+  it("excludes camel-cased and suffixed process environment keys", () => {
+    const publicReport = createPublicReadinessReport(
+      report({
+        evidence: [
+          {
+            id: "host.probe.output",
+            summary: "Probe output",
+            details: {
+              processEnvironmentVariables: "HOME=/private/home PATH=/private/bin",
+              processEnvDumpV2: "USER=private-user",
+              stderr: "Docker is unavailable.",
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(publicReport.evidence[0]?.details).toEqual({ stderr: "Docker is unavailable." });
+  });
+
   it("retains a final required finding at the public boundary", () => {
     const warnings = Array.from({ length: 256 }, (_, index) => ({
       id: `host.boundary.${index}`,
@@ -208,5 +228,98 @@ describe("public readiness presentation (#7412)", () => {
         report({ findings: blockers }, { status: "incompatible", exitCode: 2 }),
       ),
     ).toThrow("Readiness report exceeds the public boundary for required findings.");
+  });
+
+  it("fails closed when a finding exceeds its capability-reference boundary", () => {
+    const capabilities = Array.from({ length: 65 }, (_, index) => ({
+      id: `host.capability.${index}`,
+      state: "present" as const,
+    }));
+    const blocker = {
+      id: "host.boundary.blocker",
+      severity: "blocking" as const,
+      summary: "A blocker with too many capability references.",
+      capabilityIds: capabilities.map(({ id }) => id),
+    };
+
+    expect(() =>
+      createPublicReadinessReport(
+        report({ capabilities, findings: [blocker] }, { status: "incompatible", exitCode: 2 }),
+      ),
+    ).toThrow("Readiness report exceeds the public boundary for finding capability references.");
+  });
+
+  it("fails closed when an observation exceeds its evidence-reference boundary", () => {
+    const evidence = Array.from({ length: 33 }, (_, index) => ({
+      id: `host.evidence.${index}`,
+      summary: `Evidence ${index}`,
+    }));
+    const observation = {
+      id: "host.observation",
+      state: "present" as const,
+      evidenceIds: evidence.map(({ id }) => id),
+    };
+
+    expect(() =>
+      createPublicReadinessReport(report({ evidence, observations: [observation] })),
+    ).toThrow("Readiness report exceeds the public boundary for observation evidence references.");
+  });
+
+  it("fails closed when a retained reference array contains duplicate IDs", () => {
+    const evidence = [{ id: "host.evidence", summary: "Evidence" }];
+    const observation = {
+      id: "host.observation",
+      state: "present" as const,
+      evidenceIds: [evidence[0].id, evidence[0].id],
+    };
+
+    expect(() =>
+      createPublicReadinessReport(report({ evidence, observations: [observation] })),
+    ).toThrow("Readiness report contains duplicate observation evidence references.");
+  });
+
+  it("fails closed when required capability references exceed the collection boundary", () => {
+    const capabilities = Array.from({ length: 257 }, (_, index) => ({
+      id: `host.capability.${index}`,
+      state: "present" as const,
+    }));
+    const blockers = Array.from({ length: 5 }, (_, index) => ({
+      id: `host.boundary.blocker.${index}`,
+      severity: "blocking" as const,
+      summary: "A blocker with required capabilities.",
+      capabilityIds: capabilities.slice(index * 64, (index + 1) * 64).map(({ id }) => id),
+    }));
+
+    expect(() =>
+      createPublicReadinessReport(
+        report({ capabilities, findings: blockers }, { status: "incompatible", exitCode: 2 }),
+      ),
+    ).toThrow("Readiness report exceeds the public boundary for referenced capability entries.");
+  });
+
+  it("fails closed when a required capability reference does not resolve", () => {
+    const blocker = {
+      id: "host.boundary.blocker",
+      severity: "blocking" as const,
+      summary: "A blocker with a missing capability.",
+      capabilityIds: ["host.capability.missing"],
+    };
+
+    expect(() =>
+      createPublicReadinessReport(
+        report({ findings: [blocker] }, { status: "incompatible", exitCode: 2 }),
+      ),
+    ).toThrow("Readiness report contains unresolved capability references.");
+  });
+
+  it("rejects conflicting capabilities that use the same stable ID", () => {
+    const capabilities = [
+      { id: "host.capability", state: "present" as const },
+      { id: "host.capability", state: "absent" as const },
+    ];
+
+    expect(() => createPublicReadinessReport(report({ capabilities }))).toThrow(
+      "Readiness report contains duplicate capability IDs.",
+    );
   });
 });

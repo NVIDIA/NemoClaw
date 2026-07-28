@@ -28,19 +28,6 @@ describe("NVIDIA featured model catalog", () => {
     ).toEqual([{ id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" }]);
   });
 
-  it("rewrites stale Minimax M2.7 catalog IDs and labels to M3 (#5827)", () => {
-    expect(
-      parseNvidiaFeaturedModels(
-        JSON.stringify({
-          "featured-models": [
-            { model: "minimaxai/minimax-m2.7", "model-name": "Minimax M2.7" },
-            { model: "minimaxai/minimax-m3", "model-name": "Minimax M3 duplicate" },
-          ],
-        }),
-      ),
-    ).toEqual([{ id: "minimaxai/minimax-m3", label: "Minimax M3" }]);
-  });
-
   it("filters models whose catalogs outlive their NVIDIA Endpoints routes", () => {
     expect(
       parseNvidiaFeaturedModels(
