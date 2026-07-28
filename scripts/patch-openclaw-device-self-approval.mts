@@ -263,6 +263,7 @@ const CLI_HELPER = [
   "\t\tusePairingTransport: nemoclawUsePairingTransport,",
   "\t\tuseStoredDeviceAuth:",
   "\t\t\tnemoclawUsePairingTransport &&",
+  "\t\t\tnemoclawNormalizedRawScopes.length > 0 &&",
   "\t\t\tnemoclawNormalizedRawScopes.length === new Set(nemoclawNormalizedRawScopes).size &&",
   "\t\t\tnemoclawNormalizedRawScopes.every((scope) => nemoclawStoredAuthAllowedScopes.has(scope)) &&",
   "\t\t\tnemoclawPairedScopes.includes(PAIRING_SCOPE) &&",
