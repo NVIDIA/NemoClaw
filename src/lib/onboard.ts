@@ -141,7 +141,7 @@ const {
   readMessagingPlanFromEnv,
   writePlanToEnv,
   clearPlanEnv,
-  getRegistrySandboxMessagingPlan,
+  getRegistrySandboxMessagingAuthority,
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const { applySessionRecovery } =
@@ -4411,7 +4411,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         readMessagingPlanFromEnv,
         writePlanToEnv,
         clearPlanEnv,
-        getRegistrySandboxMessagingPlan,
+        getRegistrySandboxMessagingAuthority,
         providerMatchesGatewayCredential,
         stageSandboxCredentialProviders,
         promptValidatedSandboxName,

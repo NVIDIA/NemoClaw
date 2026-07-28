@@ -19,6 +19,7 @@ import {
   toMessagingAgentId,
 } from "../messaging";
 import * as registry from "../state/registry";
+import type { RegistryMessagingAuthority } from "./messaging-plan-authority";
 
 export { MessagingHostStateApplier };
 
@@ -381,8 +382,14 @@ export function clearPlanEnv(): void {
   MessagingSetupApplier.clearPlanEnv();
 }
 
-export function getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null {
-  return registry.getHydratedMessagingPlanFromEntry(registry.getSandbox(sandboxName));
+export function getRegistrySandboxMessagingAuthority(
+  sandboxName: string,
+): RegistryMessagingAuthority {
+  const entry = registry.getSandbox(sandboxName);
+  return {
+    authoritative: Boolean(entry && entry.pendingRouteReservation !== true),
+    plan: registry.getHydratedMessagingPlanFromEntry(entry),
+  };
 }
 
 function resolveMessagingSetupSandboxName(options: SetupSelectedMessagingChannelsOptions): string {

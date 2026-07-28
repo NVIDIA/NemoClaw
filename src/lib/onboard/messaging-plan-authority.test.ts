@@ -1,0 +1,88 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import type { SandboxMessagingPlan } from "../messaging/manifest";
+import { resolveMessagingPlanAuthority } from "./messaging-plan-authority";
+
+function plan(
+  sandboxName: string,
+  workflow: SandboxMessagingPlan["workflow"],
+): SandboxMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent: "openclaw",
+    workflow,
+    channels: [],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
+describe("messaging plan authority", () => {
+  it.each([
+    "onboard",
+    "resume",
+    "rebuild",
+    "channel mutation",
+  ])("uses the registry plan for an existing sandbox during %s", () => {
+    const registryPlan = plan("alpha", "rebuild");
+
+    expect(
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: { authoritative: true, plan: registryPlan },
+        stagedPlan: plan("alpha", "onboard"),
+        sessionPlan: plan("alpha", "onboard"),
+      }),
+    ).toEqual({ source: "registry", plan: registryPlan });
+  });
+
+  it("treats an empty registry plan as authoritative for an existing sandbox", () => {
+    expect(
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: { authoritative: true, plan: null },
+        stagedPlan: plan("alpha", "onboard"),
+        sessionPlan: plan("alpha", "onboard"),
+      }),
+    ).toEqual({ source: "registry", plan: null });
+  });
+
+  it("uses staged then matching-session intent for a new target", () => {
+    const staged = plan("alpha", "onboard");
+    const session = plan("alpha", "onboard");
+    const base = {
+      sandboxName: "alpha",
+      registry: { authoritative: false, plan: null },
+      sessionPlan: session,
+    } as const;
+
+    expect(resolveMessagingPlanAuthority({ ...base, stagedPlan: staged })).toEqual({
+      source: "staged",
+      plan: staged,
+    });
+    expect(resolveMessagingPlanAuthority({ ...base, stagedPlan: null })).toEqual({
+      source: "session",
+      plan: session,
+    });
+  });
+
+  it("rejects a registry plan that targets another sandbox", () => {
+    expect(() =>
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: { authoritative: true, plan: plan("beta", "rebuild") },
+        stagedPlan: null,
+        sessionPlan: null,
+      }),
+    ).toThrow("Registry messaging plan targets 'beta', not 'alpha'.");
+  });
+});

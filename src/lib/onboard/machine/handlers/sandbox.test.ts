@@ -1191,7 +1191,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => null,
-      getRegistrySandboxMessagingPlan: () => registryPlan,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
 
     await handleSandboxState({
@@ -1203,7 +1203,7 @@ describe("handleSandboxState", () => {
     expect(writePlanToEnv).toHaveBeenCalledWith(registryPlan);
   });
 
-  it("prefers env-staged plan over registry plan on non-interactive resume (rebuild path)", async () => {
+  it("prefers registry plan over env-staged plan for an existing sandbox", async () => {
     const registryPlan = makeMinimalPlan("my-assistant");
     const rebuiltPlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"], ["telegram"]);
     const session = createSession({ sandboxName: "my-assistant", messagingPlan: registryPlan });
@@ -1213,7 +1213,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => rebuiltPlan,
-      getRegistrySandboxMessagingPlan: () => registryPlan,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
 
     await handleSandboxState({
@@ -1222,14 +1222,8 @@ describe("handleSandboxState", () => {
       sandboxName: "my-assistant",
     });
 
-    expect(writePlanToEnv).not.toHaveBeenCalled();
-    expect(getSession().messagingPlan).toEqual(rebuiltPlan);
-    expect(getSession().messagingPlan?.disabledChannels).toEqual(["telegram"]);
-    expect(getSession().messagingPlan?.channels[0]).toMatchObject({
-      channelId: "telegram",
-      active: false,
-      disabled: true,
-    });
+    expect(writePlanToEnv).toHaveBeenCalledWith(registryPlan);
+    expect(getSession().messagingPlan).toEqual(registryPlan);
   });
 
   it("refreshes credential hashes when reusing an env-staged rebuild plan", async () => {
@@ -1246,7 +1240,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => rebuiltPlan,
-      getRegistrySandboxMessagingPlan: () => null,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: false, plan: null }),
     });
 
     await withEnv("TELEGRAM_BOT_TOKEN", "telegram-token-b", async () => {
@@ -1285,7 +1279,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => null,
-      getRegistrySandboxMessagingPlan: () => registryPlan,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
 
     await withEnv("TELEGRAM_BOT_TOKEN", "telegram-token-b", async () => {
@@ -1319,7 +1313,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => emptyRebuildPlan,
-      getRegistrySandboxMessagingPlan: () => emptyRebuildPlan,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: emptyRebuildPlan }),
     });
 
     const result = await handleSandboxState({
@@ -1329,7 +1323,7 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.setupMessaging).not.toHaveBeenCalled();
-    expect(writePlanToEnv).not.toHaveBeenCalled();
+    expect(writePlanToEnv).toHaveBeenCalledWith(emptyRebuildPlan);
     expect(result.selectedMessagingChannels).toEqual([]);
     const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
     expect(createSandboxCall[6]).toEqual([]);
@@ -1370,7 +1364,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => null,
-      getRegistrySandboxMessagingPlan: () => registryPlan,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
 
     await handleSandboxState({
@@ -1413,7 +1407,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume: vi.fn(() => null),
       writePlanToEnv,
       readMessagingPlanFromEnv,
-      getRegistrySandboxMessagingPlan: () => registryPlan,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
     // Fake-token rejection disables Telegram, so no channel survives setup.
     calls.setupMessaging.mockResolvedValue([]);
@@ -1445,7 +1439,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume: vi.fn(() => null),
       writePlanToEnv,
       readMessagingPlanFromEnv: () => null,
-      getRegistrySandboxMessagingPlan: () => registryPlan,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
 
     const result = await handleSandboxState({
@@ -1469,7 +1463,7 @@ describe("handleSandboxState", () => {
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => null,
-      getRegistrySandboxMessagingPlan: () => null,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: false, plan: null }),
     });
 
     await handleSandboxState({

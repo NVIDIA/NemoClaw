@@ -73,6 +73,7 @@ import {
   managedSandboxFeatureNeedsSessionUpdate,
   resolveManagedSandboxFeature,
 } from "../../managed-sandbox-feature";
+import { resolveMessagingPlanAuthority } from "../../messaging-plan-authority";
 import {
   DCODE_OBSERVABILITY_FEATURE,
   hasDcodeObservabilityDrift,
@@ -224,7 +225,9 @@ export interface SandboxStateOptions<
     readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
     writePlanToEnv(plan: SandboxMessagingPlan): void;
     clearPlanEnv(): void;
-    getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
+    getRegistrySandboxMessagingAuthority(
+      sandboxName: string,
+    ): import("../../messaging-plan-authority").RegistryMessagingAuthority;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
@@ -830,8 +833,16 @@ class SandboxStateFlow<
           `  [resume] Reusing ${webSearchLabelFor(provider)} configuration already baked into the sandbox.`,
         );
       }
+      const messagingAuthority = resolveMessagingPlanAuthority({
+        sandboxName: state.sandboxName ?? "",
+        registry: state.sandboxName
+          ? this.deps.getRegistrySandboxMessagingAuthority(state.sandboxName)
+          : { authoritative: false, plan: null },
+        stagedPlan: this.deps.readMessagingPlanFromEnv(),
+        sessionPlan: state.session?.messagingPlan ?? null,
+      });
       const messaging = reconcileReusedSandboxMessaging(
-        state.session?.messagingPlan ?? null,
+        messagingAuthority.plan,
         this.options.agent,
         this.deps,
       );

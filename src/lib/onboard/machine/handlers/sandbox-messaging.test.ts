@@ -201,7 +201,12 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
       .mockReturnValue(plans[1] ?? plans[0] ?? null),
     writePlanToEnv: vi.fn(),
     clearPlanEnv: vi.fn(),
-    getRegistrySandboxMessagingPlan: vi.fn(() => null),
+    getRegistrySandboxMessagingAuthority: vi.fn(
+      (): { authoritative: boolean; plan: SandboxMessagingPlan | null } => ({
+        authoritative: false,
+        plan: null,
+      }),
+    ),
     providerMatchesGatewayCredential: vi.fn(() => false),
   };
 }
@@ -255,6 +260,28 @@ describe("reconcileReusedSandboxMessaging", () => {
       stateUpdates: ["telegram"],
       healthChecks: ["telegram"],
     });
+  });
+});
+
+describe("reconcileSandboxMessaging plan authority", () => {
+  it("uses registry intent for an existing sandbox before staged intent", async () => {
+    const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const deps = reconcileDeps([mixedChannelPlan()]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValueOnce({
+      authoritative: true,
+      plan: registryPlan,
+    });
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
   });
 });
 
