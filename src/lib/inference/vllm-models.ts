@@ -27,6 +27,8 @@
  * envelope, and tool-call behaviour validated.
  */
 
+import net from "node:net";
+
 export type VllmPlatform = "spark" | "station" | "linux";
 
 export interface VllmRuntimeOverride {
@@ -47,6 +49,15 @@ export const NEMOTRON_ULTRA_STATION_IMAGE = {
   arm64: {
     ref: "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
     downloadSizeBytes: 10_670_087_425,
+  },
+} as const;
+
+/** Runtime pinned from the published dual-DGX-Station playbook. */
+export const NEMOTRON_ULTRA_DUAL_STATION_IMAGE = {
+  tag: "vllm/vllm-openai:v0.25.1-aarch64",
+  arm64: {
+    ref: "vllm/vllm-openai@sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37",
+    downloadSizeBytes: 10_238_912_364,
   },
 } as const;
 
@@ -263,8 +274,9 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       imageDownloadSizeBytes: NEMOTRON_ULTRA_STATION_IMAGE.arm64.downloadSizeBytes,
       modelDownloadSizeBytes: 352_381_245_521,
       loadTimeoutSec: 3600,
-      // Keep NemoClaw's bridge-networked local-inference boundary instead of
-      // importing the playbook's host-network setting.
+      // The single-host runtime keeps NemoClaw's bridge-networked local-
+      // inference boundary. The qualified dual-Station lifecycle intentionally
+      // builds a separate host-networked launch contract for NCCL/RDMA.
       dockerRunArgs: ["--shm-size", "16g", "--ulimit", "memlock=-1", "--ulimit", "stack=67108864"],
     },
     // The digest-pinned vLLM image already contains the serving package, and
@@ -478,6 +490,168 @@ const SHARED_VLLM_ARGS: readonly string[] = [
 function shellQuote(value: string): string {
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function rewriteVllmArgs(
+  args: readonly string[],
+  overrides: Readonly<Record<string, string>>,
+  omittedFlags: ReadonlySet<string> = new Set(),
+): string[] {
+  const result: string[] = [];
+  const remainingOverrides = new Set(Object.keys(overrides));
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (omittedFlags.has(arg)) {
+      if (index === args.length - 1) throw new Error(`Missing value for vLLM argument '${arg}'.`);
+      index += 1;
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(overrides, arg)) {
+      if (index === args.length - 1) throw new Error(`Missing value for vLLM argument '${arg}'.`);
+      result.push(arg, overrides[arg]);
+      remainingOverrides.delete(arg);
+      index += 1;
+      continue;
+    }
+    result.push(arg);
+  }
+  if (remainingOverrides.size > 0) {
+    throw new Error(`Cannot override missing vLLM argument '${[...remainingOverrides][0]}'.`);
+  }
+  return result;
+}
+
+export interface NemotronUltraDistributedServeOptions {
+  /** Ray role: rank 0 owns the API and rank 1 is the worker. */
+  nodeRank: 0 | 1;
+  /** Routable head address used by both nodes for the Ray control plane. */
+  masterAddr: string;
+  /** Routable Ray head port. */
+  masterPort: number;
+  /** Routable address of the node running this command. */
+  nodeAddr?: string;
+}
+
+/**
+ * Build one side of the published two-Station Nemotron Ultra vLLM v0.25.1
+ * Ray pipeline-parallel launch. Existing callers keep the single-node
+ * registry command unless they opt into this role/address/port API.
+ */
+export function buildNemotronUltraDistributedServeCommand(
+  options: NemotronUltraDistributedServeOptions,
+): string {
+  if (options.nodeRank !== 0 && options.nodeRank !== 1) {
+    throw new Error("Nemotron Ultra distributed nodeRank must be 0 or 1.");
+  }
+  const masterAddr = options.masterAddr.trim();
+  if (net.isIP(masterAddr) !== 4) {
+    throw new Error("Nemotron Ultra distributed masterAddr must be a canonical IPv4 address.");
+  }
+  if (
+    !Number.isInteger(options.masterPort) ||
+    options.masterPort < 1 ||
+    options.masterPort > 65535
+  ) {
+    throw new Error("Nemotron Ultra distributed masterPort must be an integer from 1 to 65535.");
+  }
+  const nodeAddr = (options.nodeAddr ?? masterAddr).trim();
+  if (net.isIP(nodeAddr) !== 4) {
+    throw new Error("Nemotron Ultra distributed nodeAddr must be a canonical IPv4 address.");
+  }
+  if (options.nodeRank === 0 && nodeAddr !== masterAddr) {
+    throw new Error("Nemotron Ultra Ray head nodeAddr must match masterAddr.");
+  }
+
+  const model = VLLM_MODELS.find(
+    (candidate) => candidate.envValue === "nemotron-3-ultra-550b-a55b",
+  );
+  if (!model?.revision || !model.servedModelId) {
+    throw new Error(
+      "Nemotron Ultra distributed serving requires a pinned revision and served model id.",
+    );
+  }
+
+  const sharedArgs = rewriteVllmArgs(SHARED_VLLM_ARGS, {
+    "--tensor-parallel-size": "1",
+    "--pipeline-parallel-size": "2",
+  });
+  const modelArgs = rewriteVllmArgs(
+    model.modelArgs,
+    {
+      // Rank 0 binds only to the selected direct-attach RoCE address. This
+      // keeps the API off the management network while still giving the
+      // OpenShell route a host-reachable endpoint. The lifecycle also enables
+      // vLLM bearer authentication. The Ray worker exposes no API.
+      "--host": masterAddr,
+      "--max-num-seqs": "256",
+      "--gpu-memory-utilization": "0.9",
+    },
+    new Set([
+      "--cpu-offload-gb",
+      "--cpu-offload-params",
+      "--kernel_config",
+      "--speculative-config",
+      "--default-chat-template-kwargs",
+    ]),
+  );
+  const args = [
+    ...sharedArgs,
+    "--distributed-executor-backend",
+    "ray",
+    "--kv-cache-dtype",
+    "fp8",
+    "--max-model-len",
+    "262144",
+    "--distributed-timeout-seconds",
+    "7200",
+    "--enable-prefix-caching",
+    "--revision",
+    model.revision,
+    "--served-model-name",
+    "nemotron-ultra",
+    ...modelArgs,
+  ];
+  const bootstrap = [
+    "set -euo pipefail",
+    'export PATH="$HOME/.local/bin:$PATH"',
+    'python3 -m pip install --user --no-cache-dir "ray==2.56.0"',
+  ];
+  if (options.nodeRank === 1) {
+    return [
+      ...bootstrap,
+      "python3 - <<'PY'",
+      "import socket",
+      "import time",
+      `address = (${JSON.stringify(masterAddr)}, ${String(options.masterPort)})`,
+      "deadline = time.time() + 3600",
+      "while True:",
+      "    try:",
+      "        with socket.create_connection(address, timeout=5):",
+      "            break",
+      "    except OSError:",
+      "        if time.time() >= deadline:",
+      '            raise TimeoutError("Ray head did not become reachable within 3600 seconds")',
+      "        time.sleep(5)",
+      "PY",
+      `exec ray start --address=${shellQuote(`${masterAddr}:${String(options.masterPort)}`)} --node-ip-address=${shellQuote(nodeAddr)} --num-gpus=1 --block`,
+    ].join("\n");
+  }
+  return [
+    ...bootstrap,
+    `ray start --head --node-ip-address=${shellQuote(masterAddr)} --port=${String(options.masterPort)} --num-gpus=1`,
+    "python3 - <<'PY'",
+    "import time",
+    "import ray",
+    'ray.init(address="auto")',
+    "deadline = time.time() + 3600",
+    'while ray.cluster_resources().get("GPU", 0) < 2:',
+    "    if time.time() >= deadline:",
+    '        raise TimeoutError("peer DGX Station GPU did not join Ray within 3600 seconds")',
+    "    time.sleep(5)",
+    "print(ray.cluster_resources())",
+    "PY",
+    `exec vllm serve ${model.id} ${args.join(" ")}`,
+  ].join("\n");
 }
 
 /**
