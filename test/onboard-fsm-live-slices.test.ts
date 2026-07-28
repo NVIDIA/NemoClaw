@@ -208,16 +208,20 @@ const called = [];
 const sentinel = new Error("slice-called");
 
 if (scenario.mode.endsWith("policy-tier") || scenario.mode.endsWith("provenance-resolver")) {
-  coreFlowPhases.createCoreOnboardFlowPhases = (options) => {
-    const detail = scenario.mode.endsWith("provenance-resolver")
+  const readsProvenance = scenario.mode.endsWith("provenance-resolver");
+  const factoryName = readsProvenance
+    ? "createProviderInferenceOnboardFlowPhase"
+    : "createSandboxOnboardFlowPhase";
+  coreFlowPhases[factoryName] = (options) => {
+    const detail = readsProvenance
       ? (() => {
-          const entry = options.sandboxDeps.getSandboxRegistryEntry("fsm-sandbox");
+          const entry = options.endpointProvenance.getSandboxRegistryEntry("fsm-sandbox");
           return ["registry-provenance", entry?.provider, entry?.endpointUrl, entry?.endpointSource].join(":");
         })()
       : "authoritative-policy-tier:" +
-        (options.sandbox.authoritativePolicyTier === undefined
+        (options.authoritativePolicyTier === undefined
           ? "undefined"
-          : String(options.sandbox.authoritativePolicyTier));
+          : String(options.authoritativePolicyTier));
     called.push(detail);
     throw sentinel;
   };

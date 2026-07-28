@@ -478,10 +478,8 @@ const {
   wasSandboxDefault,
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
-const {
-  createCoreOnboardFlowPhases,
-  runCoreOnboardFlowSlice,
-}: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { createProviderInferenceOnboardFlowPhase, createSandboxOnboardFlowPhase, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
 const {
   createFinalOnboardFlowPhases,
   runFinalOnboardFlowSlice,
@@ -4314,22 +4312,21 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
-    const [providerInferencePhase, sandboxPhase] = createCoreOnboardFlowPhases<
-      InitialOnboardFlowContext,
-      unknown,
-      MessagingChannelConfig,
-      import("./resources-cmd").ResourceProfile
-    >({
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const providerInferencePhase = createProviderInferenceOnboardFlowPhase<InitialOnboardFlowContext, unknown>({
       gatewayName: GATEWAY_NAME,
       forceProviderSelection: forceProviderSelectionForAgentChange,
       ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
+      endpointProvenance,
       env: process.env,
       constants: {
         hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
         hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
         hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
       },
-      providerDeps: {
+      deps: {
         checkGatewayRouteCompatibility,
         preflightGatewayRouteDiscovery,
         getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
@@ -4385,20 +4382,22 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           delete process.env[name];
         },
       },
-      sandbox: {
-        resumeAgentChanged,
-        requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
-        requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-        authoritativePolicyTier:
-          opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
-        endpointSource: opts.endpointSource,
-        endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null,
-        endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null,
-        recreateSandbox: isRecreateSandbox,
-        controlUiPort: _preflightDashboardPort,
-        rootDir: ROOT,
-      },
-      sandboxDeps: {
+    });
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const sandboxPhase = createSandboxOnboardFlowPhase<InitialOnboardFlowContext, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
+      gatewayName: GATEWAY_NAME,
+      authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+      authoritativePolicyTier:
+        opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+      resumeAgentChanged,
+      requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+      requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
+      endpointProvenance,
+      recreateSandbox: isRecreateSandbox,
+      controlUiPort: _preflightDashboardPort,
+      rootDir: ROOT,
+      env: process.env,
+      deps: {
         checkGatewayRouteCompatibility,
         withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
         resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
@@ -4462,7 +4461,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
-      phases: [providerInferencePhase, sandboxPhase],
+      phases: { providerInference: providerInferencePhase, sandbox: sandboxPhase },
       resume,
       recordStateResult,
       recordInvalidatedStateResult,

@@ -6,9 +6,13 @@ import { describe, expect, it, vi } from "vitest";
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
 import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
 import {
-  type CoreOnboardFlowPhaseOptions,
-  createCoreOnboardFlowPhases,
+  type CoreOnboardFlowPhases,
+  createProviderInferenceOnboardFlowPhase,
+  createSandboxOnboardFlowPhase,
+  type EndpointProvenanceOptions,
+  type ProviderInferenceOnboardFlowPhaseOptions,
   runCoreOnboardFlowSlice,
+  type SandboxOnboardFlowPhaseOptions,
 } from "./core-flow-phases";
 import type { OnboardFlowContext } from "./flow-context";
 import type { OnboardStateResult } from "./result";
@@ -20,7 +24,8 @@ type Gpu = { platform: string };
 type SandboxGpuConfig = { mode: string };
 type CoreContext = OnboardFlowContext<Agent, Gpu, SandboxGpuConfig>;
 type TestHost = { memoryGb: number };
-type CoreOptions = CoreOnboardFlowPhaseOptions<CoreContext, TestHost>;
+type ProviderOptions = ProviderInferenceOnboardFlowPhaseOptions<CoreContext, TestHost>;
+type SandboxOptions = SandboxOnboardFlowPhaseOptions<CoreContext>;
 
 function context(
   patch: Partial<OnboardFlowContext<Agent, Gpu, SandboxGpuConfig>> = {},
@@ -71,20 +76,37 @@ function completeStep(): Session["steps"][string] {
 
 function createPhases(
   overrides: {
-    providerDeps?: Partial<CoreOptions["providerDeps"]>;
-    sandboxDeps?: Partial<CoreOptions["sandboxDeps"]>;
+    endpointProvenance?: Partial<EndpointProvenanceOptions>;
+    providerDeps?: Partial<ProviderOptions["deps"]>;
+    sandboxDeps?: Partial<SandboxOptions["deps"]>;
   } = {},
-) {
-  return createCoreOnboardFlowPhases<CoreContext, TestHost>({
+): CoreOnboardFlowPhases<CoreContext> {
+  const getSandboxRegistryEntry = () => ({
+    name: "my-sandbox",
+    provider: "nim",
+    model: "nvidia/test",
+    endpointUrl: "https://example.test/v1",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    preferredInferenceApi: "chat",
+    gatewayName: "nemoclaw",
+    gpuEnabled: false,
+    policies: [],
+  });
+  const endpointProvenance = {
+    getSandboxRegistryEntry,
+    ...overrides.endpointProvenance,
+  };
+  const providerInference = createProviderInferenceOnboardFlowPhase<CoreContext, TestHost>({
     gatewayName: "nemoclaw",
     forceProviderSelection: false,
+    endpointProvenance,
     env: {},
     constants: {
       hermesProviderName: "hermes",
       hermesApiKeyAuthMethod: "api_key",
       hermesApiKeyCredentialEnv: "HERMES_API_KEY",
     },
-    providerDeps: {
+    deps: {
       checkGatewayRouteCompatibility: () => ({ ok: true }),
       preflightGatewayRouteDiscovery: () => ({
         ok: true,
@@ -160,13 +182,16 @@ function createPhases(
       deleteEnv: vi.fn(),
       ...overrides.providerDeps,
     },
-    sandbox: {
-      resumeAgentChanged: false,
-      recreateSandbox: () => false,
-      controlUiPort: null,
-      rootDir: "/repo",
-    },
-    sandboxDeps: {
+  });
+  const sandbox = createSandboxOnboardFlowPhase<CoreContext>({
+    gatewayName: "nemoclaw",
+    resumeAgentChanged: false,
+    endpointProvenance,
+    recreateSandbox: () => false,
+    controlUiPort: null,
+    rootDir: "/repo",
+    env: {},
+    deps: {
       resolvePath: (value) => value,
       agentSupportsWebSearch: () => true,
       note: vi.fn(),
@@ -178,17 +203,7 @@ function createPhases(
       getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
-      getSandboxRegistryEntry: () => ({
-        name: "my-sandbox",
-        provider: "nim",
-        model: "nvidia/test",
-        endpointUrl: "https://example.test/v1",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-        preferredInferenceApi: "chat",
-        gatewayName: "nemoclaw",
-        gpuEnabled: false,
-        policies: [],
-      }),
+      getSandboxRegistryEntry,
       normalizeHermesToolGatewaySelections: (value) => (Array.isArray(value) ? value : []),
       stringSetsEqual: (left, right) =>
         left.length === right.length && left.every((item) => right.includes(item)),
@@ -265,13 +280,14 @@ function createPhases(
         (async <T>(_gatewayName: string, operation: () => Promise<T> | T) => await operation()),
     },
   });
+  return { providerInference, sandbox };
 }
 
 describe("core onboard flow phases", () => {
   it("carries provider selection output into sandbox setup", async () => {
     const updateSandboxRegistry = vi.fn();
     const createSandbox = vi.fn(async () => "created-sandbox");
-    const [providerPhase, sandboxPhase] = createPhases({
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
       sandboxDeps: {
         createSandbox,
         planRegisteredExtraProviders: vi.fn(() => ({
@@ -342,7 +358,7 @@ describe("core onboard flow phases", () => {
       compatibleEndpointReasoning: null,
       nimContainer: null,
     }));
-    const [providerPhase] = createPhases({ providerDeps: { setupNim } });
+    const { providerInference: providerPhase } = createPhases({ providerDeps: { setupNim } });
 
     await providerPhase.run(context({ fresh: true }));
 
@@ -360,7 +376,7 @@ describe("core onboard flow phases", () => {
 
   it("uses normalized context Hermes tool gateways for provider inference resume", async () => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
-    const [providerPhase, sandboxPhase] = createPhases({
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
       providerDeps: {
         ensureResumeProviderReady: vi.fn(async (_gatewayName, _provider, _credentialEnv) => ({
           forceInferenceSetup: false,
@@ -455,6 +471,7 @@ describe("core onboard flow phases", () => {
     ["provider-mismatched", "nvidia-prod", "https://persisted.example.test/v1", null, null, false],
   ] as const)("binds %s persisted onboard provenance to its exact provider endpoint", async (_label, registeredProvider, registeredEndpointUrl, expectedSource, expectedOnboardEndpointUrl, expectTrustedUrl) => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
+    const updateSandboxRegistry = vi.fn();
     const getSandboxRegistryEntry = vi.fn((_sandboxName: string) => ({
       name: "my-sandbox",
       provider: registeredProvider,
@@ -467,14 +484,15 @@ describe("core onboard flow phases", () => {
       gpuEnabled: false,
       policies: [],
     }));
-    const [providerPhase] = createPhases({
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
       providerDeps: {
         setupInference,
         hydrateCredentialEnv: vi.fn(() => "host-key"),
       },
-      sandboxDeps: {
+      endpointProvenance: {
         getSandboxRegistryEntry,
       },
+      sandboxDeps: { updateSandboxRegistry },
     });
     const session = createSession({
       provider: "compatible-endpoint",
@@ -506,6 +524,13 @@ describe("core onboard flow phases", () => {
     expect(result.context.endpointSource).toBe(expectedSource);
     expect(result.context.onboardEndpointUrl ?? null).toBe(expectedOnboardEndpointUrl);
     expect(getSandboxRegistryEntry).toHaveBeenCalledWith("my-sandbox");
+
+    await sandboxPhase.run(result.context);
+
+    expect(updateSandboxRegistry).toHaveBeenCalledWith(
+      "created-sandbox",
+      expect.objectContaining({ endpointSource: expectedSource }),
+    );
   });
 
   it("uses the strict runner for fresh provider selection sessions", async () => {
@@ -519,8 +544,8 @@ describe("core onboard flow phases", () => {
         revision: 1,
       },
     });
-    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
-      {
+    const phases: CoreOnboardFlowPhases<CoreContext> = {
+      providerInference: {
         state: "provider_selection",
         run: (ctx) => {
           calls.push("provider_selection");
@@ -533,7 +558,7 @@ describe("core onboard flow phases", () => {
           };
         },
       },
-      {
+      sandbox: {
         state: "sandbox",
         run: (ctx) => {
           calls.push("sandbox");
@@ -543,7 +568,7 @@ describe("core onboard flow phases", () => {
           };
         },
       },
-    ];
+    };
 
     const result = await runCoreOnboardFlowSlice({
       context: context({ model: "nvidia/test", provider: "nim" }),
@@ -579,44 +604,74 @@ describe("core onboard flow phases", () => {
     expect(result.session.machine.state).toBe("openclaw");
   });
 
-  it("records each phase result on the resume compatibility path", async () => {
+  it("keeps resumed provider selection and sandbox effects under one compatibility decision", async () => {
+    const calls: string[] = [];
     const recorded: string[] = [];
-    const phases: readonly OnboardSequencePhase<
-      OnboardFlowContext<Agent, Gpu, SandboxGpuConfig>
-    >[] = [
-      {
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
         state: "provider_selection",
-        run: (ctx) => ({ context: ctx, result: advanceTo("sandbox") }),
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 1,
       },
-      {
+    });
+    const phases: CoreOnboardFlowPhases<CoreContext> = {
+      providerInference: {
+        state: "provider_selection",
+        run: (ctx) => {
+          calls.push("provider_selection");
+          return {
+            context: ctx,
+            result: [
+              advanceTo("inference", { metadata: { state: "provider_selection" } }),
+              advanceTo("sandbox", { metadata: { state: "inference" } }),
+            ],
+          };
+        },
+      },
+      sandbox: {
         state: "sandbox",
-        run: (ctx) => ({ context: ctx, result: advanceTo("openclaw") }),
+        run: (ctx) => {
+          calls.push("sandbox");
+          return {
+            context: ctx,
+            result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
+          };
+        },
       },
-    ];
+    };
 
     await runCoreOnboardFlowSlice({
       context: context({ resume: true }),
       runtime: {
-        session: async () =>
-          createSession({
-            machine: {
-              version: 1,
-              state: "provider_selection",
-              stateEnteredAt: "2026-06-09T00:00:00.000Z",
-              revision: 1,
-            },
-          }),
-        applyResult: async () => createSession(),
+        session: async () => runtimeSession,
+        applyResult: async () => {
+          throw new Error("strict runner should not run during resumed core compatibility");
+        },
       },
       phases,
       resume: true,
       recordStateResult: async (result) => {
-        if (result.type === "transition") recorded.push(result.next);
+        const next = (result as ReturnType<typeof advanceTo>).next;
+        recorded.push(next);
+        runtimeSession = createSession({
+          machine: {
+            version: 1,
+            state: next,
+            stateEnteredAt: "2026-06-09T00:01:00.000Z",
+            revision: runtimeSession.machine.revision + 1,
+          },
+        });
+        return runtimeSession;
       },
-      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
+      recordInvalidatedStateResult: async () => {
+        throw new Error("exact compatibility transitions should not be invalidated");
+      },
     });
 
-    expect(recorded).toEqual(["sandbox", "openclaw"]);
+    expect(calls).toEqual(["provider_selection", "sandbox"]);
+    expect(recorded).toEqual(["inference", "sandbox", "openclaw"]);
+    expect(runtimeSession.machine.state).toBe("openclaw");
   });
 
   it.each([
@@ -625,16 +680,16 @@ describe("core onboard flow phases", () => {
     "post_verify",
   ] as const)("lets resume sessions at %s pass through core compatibility", async (state) => {
     const recorded: string[] = [];
-    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
-      {
+    const phases: CoreOnboardFlowPhases<CoreContext> = {
+      providerInference: {
         state: "provider_selection",
         run: (ctx) => ({ context: ctx, result: advanceTo("sandbox") }),
       },
-      {
+      sandbox: {
         state: "sandbox",
         run: (ctx) => ({ context: ctx, result: advanceTo("openclaw") }),
       },
-    ];
+    };
 
     await runCoreOnboardFlowSlice({
       context: context({ resume: true }),
@@ -669,6 +724,10 @@ describe("core onboard flow phases", () => {
       state: "provider_selection",
       run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("sandbox") })),
     };
+    const sandboxPhase: OnboardSequencePhase<CoreContext> = {
+      state: "sandbox",
+      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("openclaw") })),
+    };
 
     await expect(
       runCoreOnboardFlowSlice({
@@ -685,13 +744,14 @@ describe("core onboard flow phases", () => {
             }),
           applyResult: async () => createSession(),
         },
-        phases: [phase],
+        phases: { providerInference: phase, sandbox: sandboxPhase },
         resume: true,
         recordStateResult: async () => undefined,
         recordInvalidatedStateResult: recordInvalidatedTargets([]),
       }),
     ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
     expect(phase.run).not.toHaveBeenCalled();
+    expect(sandboxPhase.run).not.toHaveBeenCalled();
   });
 
   it("keeps non-resume ahead-state sessions on the compatibility path", async () => {
@@ -706,8 +766,8 @@ describe("core onboard flow phases", () => {
         revision: 7,
       },
     });
-    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
-      {
+    const phases: CoreOnboardFlowPhases<CoreContext> = {
+      providerInference: {
         state: "provider_selection",
         run: (ctx) => {
           calls.push("provider_selection");
@@ -724,7 +784,7 @@ describe("core onboard flow phases", () => {
           };
         },
       },
-      {
+      sandbox: {
         state: "sandbox",
         run: (ctx) => {
           calls.push("sandbox");
@@ -734,7 +794,7 @@ describe("core onboard flow phases", () => {
           };
         },
       },
-    ];
+    };
 
     const result = await runCoreOnboardFlowSlice({
       context: context(),
