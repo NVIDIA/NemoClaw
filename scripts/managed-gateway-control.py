@@ -89,6 +89,10 @@ EXPECTED_EXIT_LOCK_NAME = "managed-gateway-expected-exit.lock"
 NONCE_RE = re.compile(r"[0-9a-f]{64}\Z")
 ENV_KEY_RE = re.compile(rb"[A-Za-z_][A-Za-z0-9_]*\Z")
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+HERMES_MCP_STATE_RE = re.compile(
+    r"# nemoclaw-hermes-mcp-state-v1 "
+    r"intended=[0-9a-f]{64} applied=[0-9a-f]{64}\Z"
+)
 CONTROL_STAGES = frozenset(
     {
         "detect-agent",
@@ -1340,6 +1344,29 @@ def _read_regular(path: str, limit: int) -> tuple[bytes, os.stat_result]:
         os.close(fd)
 
 
+def _parse_locked_hermes_hash(strict: bytes) -> dict[str, str]:
+    records: dict[str, str] = {}
+    mcp_state_seen = False
+    try:
+        lines = strict.decode("ascii").splitlines()
+        for line in lines:
+            if line.startswith("#"):
+                if mcp_state_seen or HERMES_MCP_STATE_RE.fullmatch(line) is None:
+                    raise ValueError("invalid Hermes MCP state metadata")
+                mcp_state_seen = True
+                continue
+            if mcp_state_seen:
+                raise ValueError("Hermes MCP state metadata must be terminal")
+            digest, pathname = line.split(maxsplit=1)
+            canonical_path = pathname.strip()
+            if canonical_path in records:
+                raise ValueError("duplicate Hermes config hash path")
+            records[canonical_path] = digest.lower()
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ControlError("GATEWAY_CONFIG_HASH_MISMATCH") from exc
+    return records
+
+
 def _verify_locked_hermes_hash() -> None:
     config_path = _system_path("/sandbox/.hermes/config.yaml")
     env_path = _system_path("/sandbox/.hermes/.env")
@@ -1361,13 +1388,7 @@ def _verify_locked_hermes_hash() -> None:
     strict, strict_stat = _read_regular(hash_path, MAX_HASH_BYTES)
     if strict_stat.st_uid != 0 or stat.S_IMODE(strict_stat.st_mode) & 0o022:
         raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
-    try:
-        records = {}
-        for line in strict.decode("ascii").splitlines():
-            digest, pathname = line.split(maxsplit=1)
-            records[pathname.strip()] = digest.lower()
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise ControlError("GATEWAY_CONFIG_HASH_MISMATCH") from exc
+    records = _parse_locked_hermes_hash(strict)
     expected_paths = {
         "/sandbox/.hermes/config.yaml": hashlib.sha256(config).hexdigest(),
         "/sandbox/.hermes/.env": hashlib.sha256(environment).hexdigest(),

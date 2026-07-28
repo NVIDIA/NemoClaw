@@ -63,6 +63,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     "install-reviewed-runtime.sh",
     "build-runtime.ts",
     "mcp-tool-discovery.ts",
+    "streamable-http-client.test.ts",
     "tool-discovery-core.ts",
   ]) {
     fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
