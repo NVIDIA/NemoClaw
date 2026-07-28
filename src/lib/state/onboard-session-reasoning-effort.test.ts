@@ -19,10 +19,7 @@ function requireLoadedSession(
   loaded: ReturnType<OnboardSessionModule["loadSession"]>,
 ): LoadedSession {
   expect(loaded).not.toBeNull();
-  if (!loaded) {
-    throw new Error("Expected onboard session to be present");
-  }
-  return loaded;
+  return loaded as LoadedSession;
 }
 
 beforeEach(async () => {

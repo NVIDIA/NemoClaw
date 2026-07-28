@@ -12,10 +12,8 @@ const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
 function extractShellFunction(name: string): string {
   const match = src.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) {
-    throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-  }
-  return `${name}() {${match[1]}\n}`;
+  expect(match, `Expected ${name} in scripts/nemoclaw-start.sh`).not.toBeNull();
+  return `${name}() {${match?.[1] ?? ""}\n}`;
 }
 
 function runApplyModelOverride(

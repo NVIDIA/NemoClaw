@@ -250,6 +250,26 @@ describe("inference set reasoning effort (#7659)", () => {
 
   it("clears the matching session effort when switching to an unsupported API", async () => {
     let providerVersion = 1;
+    const captureOpenshell = vi.fn((args: string[]) => {
+      switch (`${args[0]}:${args[1]}`) {
+        case "provider:get": {
+          const output = [
+            "Name: compatible-endpoint",
+            "Id: 11111111-2222-4333-8444-555555555555",
+            "Type: openai",
+            `Resource version: ${providerVersion}`,
+            "Credential keys: COMPATIBLE_API_KEY",
+            "Config keys: OPENAI_BASE_URL",
+          ].join("\n");
+          return { status: 0, output, stdout: output, stderr: "" };
+        }
+        case "provider:update":
+          providerVersion += 1;
+          return { status: 0, output: "", stdout: "", stderr: "" };
+        default:
+          return { status: 0, output: "", stdout: "", stderr: "" };
+      }
+    });
     const deps = createDeps({
       config: compatibleEndpointConfig(),
       entry: {
@@ -270,23 +290,7 @@ describe("inference set reasoning effort (#7659)", () => {
         preferredInferenceApi: "openai-completions",
         compatibleEndpointReasoningEffort: "low",
       }),
-      captureOpenshell: (args) => {
-        if (args[0] === "provider" && args[1] === "get") {
-          const output = [
-            "Name: compatible-endpoint",
-            "Id: 11111111-2222-4333-8444-555555555555",
-            "Type: openai",
-            `Resource version: ${providerVersion}`,
-            "Credential keys: COMPATIBLE_API_KEY",
-            "Config keys: OPENAI_BASE_URL",
-          ].join("\n");
-          return { status: 0, output, stdout: output, stderr: "" };
-        }
-        if (args[0] === "provider" && args[1] === "update") {
-          providerVersion += 1;
-        }
-        return { status: 0, output: "", stdout: "", stderr: "" };
-      },
+      captureOpenshell,
     });
 
     await runInferenceSet(
