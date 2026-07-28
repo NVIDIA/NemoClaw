@@ -35,6 +35,7 @@ const resumeConfig: RebuildResumeConfig = {
   credentialEnv: "NVIDIA_API_KEY",
   preferredInferenceApi: null,
   compatibleEndpointReasoning: null,
+  compatibleEndpointReasoningEffort: null,
   pinEndpoint: true,
   endpointUrl: "https://integrate.api.nvidia.com/v1",
   registryInferenceRoute: null,

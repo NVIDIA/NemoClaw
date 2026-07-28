@@ -149,6 +149,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.credentialEnv = rebuildCredentialEnv;
     s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
     s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
+    s.compatibleEndpointReasoningEffort = resumeConfig.compatibleEndpointReasoningEffort;
     s.endpointUrl = resumeConfig.endpointUrl;
     s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
     s.observabilityEnabled = recreateOptions.observabilityEnabled;

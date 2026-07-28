@@ -170,6 +170,7 @@ export interface SetupNimFlowDeps {
     preferredInferenceApi: string | null,
   ): string | null;
   clearCompatibleEndpointReasoning(): null;
+  clearCompatibleEndpointReasoningEffort?(): null;
   maybePromptForInferenceInputCapability(model: string | null): Promise<void>;
 }
 
@@ -205,6 +206,25 @@ function clearReasoningUnlessCompatible(
 ): string | null {
   if (provider === "compatible-endpoint") return current;
   return deps.clearCompatibleEndpointReasoning();
+}
+
+function readSelectionReasoningState(state: SetupNimSelectionState): {
+  reasoning: string | null;
+  effort: string | null;
+} {
+  return {
+    reasoning: state.compatibleEndpointReasoning ?? null,
+    effort: state.compatibleEndpointReasoningEffort ?? null,
+  };
+}
+
+function clearReasoningEffortUnlessCompatible(
+  provider: string,
+  current: string | null,
+  deps: Pick<SetupNimFlowDeps, "clearCompatibleEndpointReasoningEffort">,
+): string | null {
+  if (provider === "compatible-endpoint") return current;
+  return deps.clearCompatibleEndpointReasoningEffort?.() ?? null;
 }
 
 function applyGatewayRouteDiscoveryConstraints(
@@ -253,6 +273,7 @@ export function createSetupNim(
     let hermesToolGateways: string[] = [];
     let preferredInferenceApi: string | null = null;
     let compatibleEndpointReasoning: string | null = null;
+    let compatibleEndpointReasoningEffort: string | null = null;
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
     let endpointPinnedAddresses: string[] | undefined;
@@ -274,6 +295,7 @@ export function createSetupNim(
         hermesToolGateways,
         preferredInferenceApi,
         compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
         nimContainer,
         allowToolsIncompatible,
         ollamaContextWindowFloor: getOllamaContextWindowFloorForAgent(agent?.name ?? null),
@@ -472,7 +494,9 @@ export function createSetupNim(
             endpointPinnedAddresses,
             endpointTrustedPrivateCapability,
           } = state);
-          compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
+          const reasoningState = readSelectionReasoningState(state);
+          compatibleEndpointReasoning = reasoningState.reasoning;
+          compatibleEndpointReasoningEffort = reasoningState.effort;
           reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
           if (result === "retry-selection") continue selectionLoop;
           break;
@@ -643,6 +667,11 @@ export function createSetupNim(
       compatibleEndpointReasoning,
       deps,
     );
+    compatibleEndpointReasoningEffort = clearReasoningEffortUnlessCompatible(
+      provider,
+      compatibleEndpointReasoningEffort,
+      deps,
+    );
     const selectedModel = isBackToSelection(model) ? null : model;
     const recoveredRegistryRouteMatches =
       recoveredRegistryRoute?.provider === provider &&
@@ -667,6 +696,7 @@ export function createSetupNim(
         deps.coerceAgentInferenceApi(agent, preferredInferenceApi),
       ),
       compatibleEndpointReasoning,
+      compatibleEndpointReasoningEffort,
       nimContainer,
       allowToolsIncompatible,
       skipHostInferenceSmoke: reuseGatewayCredential,
