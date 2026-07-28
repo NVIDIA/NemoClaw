@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { isPrivateHostname } from "../src/lib/private-networks";
 import { isBlockedMcpUrlTargetHost } from "../src/lib/security/mcp-url-target";
 
 describe("MCP URL target special-use filtering", () => {
@@ -33,5 +34,26 @@ describe("MCP URL target special-use filtering", () => {
     "2606:4700:4700::1111",
   ])("keeps globally routable address %s eligible", (address) => {
     expect(isBlockedMcpUrlTargetHost(address)).toBe(false);
+  });
+});
+
+describe("MCP and private-networks.yaml SSRF denylist parity", () => {
+  it.each([
+    "192.31.196.1",
+    "192.52.193.1",
+    "192.88.99.1",
+    "192.175.48.1",
+    "::7f00:1",
+    "2001:2::1",
+    "2001:20::1",
+    "2620:4f:8000::1",
+    "3fff::1",
+    "5f00::1",
+    "fec0::1",
+    "metadata",
+    "foo.metadata",
+  ])("blocks MCP-denied target %s in shared private-networks rules", (address) => {
+    expect(isBlockedMcpUrlTargetHost(address)).toBe(true);
+    expect(isPrivateHostname(address)).toBe(true);
   });
 });

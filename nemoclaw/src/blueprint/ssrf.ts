@@ -60,6 +60,11 @@ export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoin
   if (!hostname) {
     throw new Error(`No hostname found in URL: ${url}`);
   }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error(
+      "Endpoint URL must not contain credentials. Remove the username and password from the URL.",
+    );
+  }
   if (isPrivateHostname(hostname)) {
     throw new Error(
       `Endpoint URL points to private/internal address ${hostname}. ` +

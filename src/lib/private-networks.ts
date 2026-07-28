@@ -158,7 +158,7 @@ export function resetCache(): void {
  *
  * IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) are auto-matched against
  * IPv4 rules by node:net BlockList, so no explicit handling is needed.
- * NAT64, 6to4, and Teredo prefixes are blocked by prefix in the YAML
+ * NAT64, 6to4, and IETF special-purpose prefixes are blocked by prefix in the YAML
  * because BlockList does not extract embedded IPv4 from those forms.
  */
 export function isPrivateIp(address: string): boolean {
