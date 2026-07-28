@@ -502,6 +502,7 @@ describe("effective built-in policy contracts", () => {
     );
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "api.anthropic.com",
+      "platform.claude.com",
       "sentry.io",
       "statsig.anthropic.com",
     ]);
@@ -517,5 +518,17 @@ describe("effective built-in policy contracts", () => {
     expect(binaries(claude)).toContain(
       "/tmp/npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
     );
+  });
+
+  it("allows the Claude Code browser login to exchange its authorization code on the OAuth paths only (#7637)", () => {
+    const effective = composePresets(["claude-code"]);
+    const claude = requireNetworkPolicy(effective, "claude_code");
+    const login = requireEndpoint(claude, "platform.claude.com");
+
+    expect(login).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
+    expect(rules(login)).toEqual([
+      { method: "GET", path: "/v1/oauth/**" },
+      { method: "POST", path: "/v1/oauth/**" },
+    ]);
   });
 });
