@@ -21,7 +21,8 @@
 //   - NEMOCLAW_COMPAT_MODEL / NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL
 //                           → src/lib/onboard/providers.ts (hosted model aliases)
 //   - NEMOCLAW_PREFERRED_API → src/lib/onboard/setup-nim-selection.ts
-//   - NEMOCLAW_REASONING    → src/lib/onboard/reasoning-mode.ts
+//   - NEMOCLAW_REASONING / NEMOCLAW_REASONING_EFFORT
+//                           → src/lib/onboard/reasoning-mode.ts
 //   - NEMOCLAW_VLLM_MODEL / NEMOCLAW_VLLM_EXTRA_ARGS_JSON
 //                           → src/lib/onboard/setup-nim-vllm.ts
 //   - NEMOCLAW_FROM_DOCKERFILE → src/lib/onboard/entry-options.ts
@@ -47,6 +48,7 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_REASONING",
+  "NEMOCLAW_REASONING_EFFORT",
   "NEMOCLAW_VLLM_MODEL",
   "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
   "NEMOCLAW_FROM_DOCKERFILE",
