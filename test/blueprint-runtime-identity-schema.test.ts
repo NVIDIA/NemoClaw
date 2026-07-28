@@ -29,6 +29,19 @@ const runtimeIdentity = {
   client_secret_env: "OKTA_CLIENT_SECRET",
 };
 
+const oboRuntimeIdentity = {
+  profile_path: "provider-profiles/okta-obo-v1.yaml",
+  provider_type: "okta-obo-v1",
+  provider_name: "acme-okta-obo",
+  credential_key: "OKTA_OBO_ACCESS_TOKEN",
+  client_id_env: "OKTA_CLIENT_ID",
+  client_secret_env: "OKTA_CLIENT_SECRET",
+  subject_token_env: "OKTA_SUBJECT_TOKEN",
+  token_url: "https://example.okta.com/oauth2/default/v1/token",
+  audience: "api://orders",
+  scopes: ["orders.read"],
+};
+
 function blueprintWithIdentity(identity: object): object {
   return {
     ...baseBlueprint,
@@ -42,6 +55,14 @@ describe("blueprint runtime identity schema", () => {
       true,
     );
     expect(isRuntimeIdentityConfig(runtimeIdentity)).toBe(true);
+  });
+
+  it("accepts the host-managed Okta OBO contract", () => {
+    expect(
+      validate(blueprintWithIdentity(oboRuntimeIdentity)),
+      JSON.stringify(validate.errors),
+    ).toBe(true);
+    expect(isRuntimeIdentityConfig(oboRuntimeIdentity)).toBe(true);
   });
 
   it("rejects an identity-provider discriminator", () => {
@@ -81,5 +102,16 @@ describe("blueprint runtime identity schema", () => {
     };
     expect(validate(blueprintWithIdentity(unsupportedIdentity))).toBe(false);
     expect(isRuntimeIdentityConfig(unsupportedIdentity)).toBe(false);
+  });
+
+  it("rejects a token-exchange config that mixes the refresh flow", () => {
+    expect(
+      validate(
+        blueprintWithIdentity({
+          ...oboRuntimeIdentity,
+          refresh_token_env: "OKTA_REFRESH_TOKEN",
+        }),
+      ),
+    ).toBe(false);
   });
 });

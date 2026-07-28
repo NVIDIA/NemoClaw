@@ -21,6 +21,7 @@ import {
 interface FakeOpenShellCall {
   args: string[];
   hasClientSecret: boolean;
+  hasOboAccessToken: boolean;
   hasRefreshToken: boolean;
 }
 
@@ -49,6 +50,19 @@ const CONFIG = {
   client_secret_env: "OKTA_CLIENT_SECRET",
 } as const;
 
+const OBO_CONFIG = {
+  profile_path: "provider-profiles/okta-obo-v1.yaml",
+  provider_type: "okta-obo-v1",
+  provider_name: "e2e-okta-obo",
+  credential_key: "OKTA_OBO_ACCESS_TOKEN",
+  client_id_env: "OKTA_CLIENT_ID",
+  client_secret_env: "OKTA_CLIENT_SECRET",
+  subject_token_env: "OKTA_SUBJECT_TOKEN",
+  token_url: "https://example.okta.com/oauth2/default/v1/token",
+  audience: "api://orders",
+  scopes: ["orders.read"],
+} as const;
+
 const INITIAL_STATE: FakeOpenShellState = {
   attachments: {},
   calls: [],
@@ -72,6 +86,7 @@ if (args[0] === "__test-state") {
 state.calls.push({
   args,
   hasClientSecret: Boolean(process.env.OKTA_CLIENT_SECRET),
+  hasOboAccessToken: Boolean(process.env.OKTA_OBO_ACCESS_TOKEN),
   hasRefreshToken: Boolean(process.env.OKTA_REFRESH_TOKEN),
 });
 
@@ -114,9 +129,10 @@ if (args.join(" ").startsWith("provider profile import --file ")) {
 if (args[0] === "provider" && args[1] === "create") {
   const name = args[args.indexOf("--name") + 1];
   const type = args[args.indexOf("--type") + 1];
+  const credentialFlag = args.indexOf("--credential");
   state.providers[name] = {
     configured: false,
-    credentialKey: "OKTA_ACCESS_TOKEN",
+    credentialKey: credentialFlag === -1 ? "OKTA_ACCESS_TOKEN" : args[credentialFlag + 1],
     rotated: false,
     type,
   };
@@ -270,5 +286,81 @@ describe("blueprint runtime identity lifecycle integration", () => {
     expect(state.attachments).toEqual({});
     expect(state.providers).toEqual({});
     expect(state.profiles).toEqual(["okta-runtime-v1"]);
+  });
+
+  it("passes an exchanged OBO token only to provider creation through the command boundary", async () => {
+    const profileDir = path.join(root, "provider-profiles");
+    const profilePath = path.join(profileDir, "okta-obo-v1.yaml");
+    const statePath = path.join(root, "openshell-state.json");
+    const fakeOpenShell = path.join(root, "openshell");
+    mkdirSync(profileDir);
+    copyFileSync(
+      path.resolve("nemoclaw-blueprint/provider-profiles/okta-obo-v1.yaml"),
+      profilePath,
+    );
+    writeFileSync(statePath, JSON.stringify(INITIAL_STATE, null, 2));
+    writeFakeOpenShell(fakeOpenShell, statePath);
+
+    const environment = {
+      OKTA_CLIENT_ID: "integration-client-id",
+      OKTA_CLIENT_SECRET: "integration-client-secret",
+      OKTA_SUBJECT_TOKEN: "integration-subject-token",
+    };
+    const run = async (
+      args: string[],
+      options?: RuntimeIdentityCommandOptions,
+    ): Promise<RuntimeIdentityCommandResult> => {
+      const result = await execa(fakeOpenShell, args.slice(1), {
+        env: { PATH: process.env.PATH ?? "", ...(options?.env ?? {}) },
+        extendEnv: false,
+        reject: false,
+      });
+      return { exitCode: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr };
+    };
+    const deps: RuntimeIdentityDeps = {
+      blueprintPath: root,
+      env: environment,
+      formatError: (output, secrets = []) =>
+        secrets.reduce((redacted, secret) => redacted.replaceAll(secret, "<redacted>"), output),
+      persistReceipt: () => undefined,
+      run,
+      exchangeToken: async () => "integration-delegated-token",
+      validateEndpointUrl: async () => ({ dnsResolved: false }),
+    };
+
+    const receipt = await prepareRuntimeIdentity(OBO_CONFIG, deps);
+    const state = await readState(fakeOpenShell);
+    expect(receipt).toMatchObject({
+      provider_type: "okta-obo-v1",
+      credential_key: "OKTA_OBO_ACCESS_TOKEN",
+      provider_created: true,
+    });
+    expect(state.providers["e2e-okta-obo"]).toMatchObject({
+      configured: false,
+      credentialKey: "OKTA_OBO_ACCESS_TOKEN",
+      type: "okta-obo-v1",
+    });
+    expect(
+      state.calls.filter(({ hasOboAccessToken }) => hasOboAccessToken).map(({ args }) => args),
+    ).toEqual([
+      [
+        "provider",
+        "create",
+        "--name",
+        "e2e-okta-obo",
+        "--type",
+        "okta-obo-v1",
+        "--credential",
+        "OKTA_OBO_ACCESS_TOKEN",
+      ],
+    ]);
+    expect(
+      state.calls
+        .filter(({ args }) => !(args[0] === "provider" && args[1] === "create"))
+        .every(({ hasClientSecret, hasOboAccessToken }) => !hasClientSecret && !hasOboAccessToken),
+    ).toBe(true);
+    expect(JSON.stringify(state.calls)).not.toContain("integration-delegated-token");
+    expect(JSON.stringify(state.calls)).not.toContain(environment.OKTA_CLIENT_SECRET);
+    expect(JSON.stringify(state.calls)).not.toContain(environment.OKTA_SUBJECT_TOKEN);
   });
 });

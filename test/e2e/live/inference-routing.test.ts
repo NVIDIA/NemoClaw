@@ -490,6 +490,7 @@ async function runRuntimeIdentityE2EScenario(
   const runtimeIdentityProfilePolicy = {
     providerType,
     clientIdEnvironmentName: scenario.clientIdEnvironmentName,
+    flow: "oauth2-refresh-token" as const,
     dnsResolution: "identity-platform-controlled",
     tokenIssuer: {
       trustedHostnames: [endpoint.hostname],
@@ -498,6 +499,7 @@ async function runRuntimeIdentityE2EScenario(
     credentialDelivery: {
       method: "GET",
       path: scenario.reviewedResourcePath,
+      hostPolicy: "reviewed" as const,
       trustedHostnames: [endpoint.hostname],
       trustedHostSuffixes: [],
     },

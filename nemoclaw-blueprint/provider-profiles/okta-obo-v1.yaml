@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Data-only profile for the experimental host-managed Okta OBO reference.
+# NemoClaw exchanges the user subject token before this provider is created.
+# OpenShell stores the resulting short-lived token and injects it only for an
+# admitted request; the sandbox receives an opaque placeholder instead.
+id: okta-obo-v1
+display_name: Okta OBO Runtime Credentials v1
+description: Short-lived Okta delegated access token for an attached sandbox
+category: agent
+credentials:
+  - name: OKTA_OBO_ACCESS_TOKEN
+    description: Short-lived Okta delegated access token
+    env_vars:
+      - OKTA_OBO_ACCESS_TOKEN
+    required: true
+    auth_style: bearer
+    header_name: authorization
+endpoints:
+  - host: api.example.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/**" }
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: false

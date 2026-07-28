@@ -14,12 +14,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
   compensateRuntimeIdentityApply,
+  exchangeOktaOboToken,
   isRuntimeIdentityConfig,
   isRuntimeIdentityReceipt,
   parseRuntimeIdentityProviderMetadata,
@@ -125,6 +126,48 @@ const entraConfig: RuntimeIdentityConfig = {
   client_secret_env: "ENTRA_CLIENT_SECRET",
 };
 
+const oboProfileDocument = [
+  "id: okta-obo-v1",
+  "display_name: Okta OBO Runtime Credentials v1",
+  "description: Short-lived Okta delegated access token for an attached sandbox",
+  "category: agent",
+  "credentials:",
+  "  - name: OKTA_OBO_ACCESS_TOKEN",
+  "    description: Short-lived Okta delegated access token",
+  "    env_vars:",
+  "      - OKTA_OBO_ACCESS_TOKEN",
+  "    required: true",
+  "    auth_style: bearer",
+  "    header_name: authorization",
+  "endpoints:",
+  "  - host: api.example.com",
+  "    port: 443",
+  "    protocol: rest",
+  "    enforcement: enforce",
+  "    rules:",
+  '      - allow: { method: GET, path: "/**" }',
+  "binaries:",
+  "  - /usr/local/bin/node",
+  "  - /usr/bin/node",
+  "  - /usr/local/bin/curl",
+  "  - /usr/bin/curl",
+  "inference_capable: false",
+  "",
+].join("\n");
+
+const oboConfig: RuntimeIdentityConfig = {
+  profile_path: "provider-profiles/okta-obo-v1.yaml",
+  provider_type: "okta-obo-v1",
+  provider_name: "acme-okta-obo",
+  credential_key: "OKTA_OBO_ACCESS_TOKEN",
+  client_id_env: "OKTA_CLIENT_ID",
+  subject_token_env: "OKTA_SUBJECT_TOKEN",
+  client_secret_env: "OKTA_CLIENT_SECRET",
+  token_url: "https://nvidia-partner.oktapreview.com/oauth2/default/v1/token",
+  audience: "api://orders",
+  scopes: ["orders.read"],
+};
+
 const createdReceipt: RuntimeIdentityReceipt = {
   provider_type: config.provider_type,
   provider_name: config.provider_name,
@@ -213,6 +256,16 @@ describe("runtime identity contract", () => {
     expect(JSON.stringify(buildRuntimeIdentityPlan(config))).not.toContain("OKTA_CLIENT");
   });
 
+  it("accepts an Okta OBO config without placing exchange material in the plan", () => {
+    expect(isRuntimeIdentityConfig(oboConfig)).toBe(true);
+    expect(buildRuntimeIdentityPlan(oboConfig)).toEqual({
+      provider_type: "okta-obo-v1",
+      provider_name: "acme-okta-obo",
+      credential_key: "OKTA_OBO_ACCESS_TOKEN",
+    });
+    expect(JSON.stringify(buildRuntimeIdentityPlan(oboConfig))).not.toContain("subject");
+  });
+
   it.each([
     null,
     {},
@@ -231,6 +284,12 @@ describe("runtime identity contract", () => {
     { ...config, client_id_env: "XDG_CLIENT_ID" },
     { ...config, refresh_token_env: "MYTOKEN" },
     { ...config, client_secret_env: "OPENSHELL_CONFIG" },
+    { ...oboConfig, refresh_token_env: "OKTA_REFRESH_TOKEN" },
+    { ...oboConfig, subject_token_env: "OKTA_CLIENT_ID" },
+    { ...oboConfig, client_secret_env: undefined },
+    { ...oboConfig, token_url: "" },
+    { ...oboConfig, scopes: [] },
+    { ...oboConfig, scopes: ["orders read"] },
   ])("rejects an invalid provider-neutral config: %j", (value) => {
     expect(isRuntimeIdentityConfig(value)).toBe(false);
   });
@@ -337,6 +396,122 @@ describe("runtime identity contract", () => {
     expect(importedProfileSources).toEqual([profileDocument]);
     expect(importedProfilePaths[0]).not.toBe(profilePath);
     expect(existsSync(importedProfilePaths[0])).toBe(false);
+  });
+
+  it("exchanges an Okta subject token on the host and creates a static injected provider", async () => {
+    writeFileSync(join(root, oboConfig.profile_path), oboProfileDocument);
+    environment.OKTA_SUBJECT_TOKEN = "user-subject-token";
+    let exchangeRequest: unknown;
+    deps.exchangeToken = async (request) => {
+      exchangeRequest = request;
+      return "delegated-access-token";
+    };
+    responses.set("provider get acme-okta-obo", [missingProvider]);
+
+    await expect(prepareRuntimeIdentity(oboConfig, deps)).resolves.toEqual({
+      provider_type: "okta-obo-v1",
+      provider_name: "acme-okta-obo",
+      credential_key: "OKTA_OBO_ACCESS_TOKEN",
+      provider_created: true,
+      attachment_created: false,
+    });
+
+    expect(exchangeRequest).toEqual({
+      tokenUrl: "https://nvidia-partner.oktapreview.com/oauth2/default/v1/token",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      subjectToken: "user-subject-token",
+      audience: "api://orders",
+      scopes: ["orders.read"],
+    });
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
+      "provider get acme-okta-obo",
+      "provider profile import --file",
+      "provider create --name acme-okta-obo --type okta-obo-v1 --credential OKTA_OBO_ACCESS_TOKEN",
+    ]);
+    expect(calls.flatMap(({ args }) => args)).not.toContain("delegated-access-token");
+    expect(calls.at(-1)?.env).toEqual({ OKTA_OBO_ACCESS_TOKEN: "delegated-access-token" });
+    expect(validatedDestinations).toEqual([
+      "https://api.example.com/",
+      "https://nvidia-partner.oktapreview.com/oauth2/default/v1/token",
+    ]);
+  });
+
+  it("rejects an untrusted token issuer before it mutates OpenShell state", async () => {
+    writeFileSync(join(root, oboConfig.profile_path), oboProfileDocument);
+    environment.OKTA_SUBJECT_TOKEN = "user-subject-token";
+
+    await expect(
+      prepareRuntimeIdentity(
+        {
+          ...oboConfig,
+          token_url: "https://nvidia-partner.oktapreview.com.attacker.example/token",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/outside the trusted destination policy/);
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects an unsafe public OBO resource before it mutates OpenShell state", async () => {
+    writeFileSync(join(root, oboConfig.profile_path), oboProfileDocument);
+    environment.OKTA_SUBJECT_TOKEN = "user-subject-token";
+    deps.validateEndpointUrl = async (url) =>
+      url.includes("api.example.com")
+        ? Promise.reject(new Error("private destination rejected"))
+        : Promise.resolve({ dnsResolved: false });
+
+    await expect(prepareRuntimeIdentity(oboConfig, deps)).rejects.toThrow(
+      /private destination rejected/,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("uses RFC 8693 with client authentication and does not disclose an error response", async () => {
+    const fetchImpl = vi.fn(
+      async (_url: string, _options: RequestInit) =>
+        new Response(JSON.stringify({ access_token: "delegated-access-token" }), { status: 200 }),
+    );
+    await expect(
+      exchangeOktaOboToken(
+        {
+          tokenUrl: "https://example.okta.com/oauth2/default/v1/token",
+          clientId: "client-id",
+          clientSecret: "client-secret",
+          subjectToken: "user-subject-token",
+          audience: "api://orders",
+          scopes: ["orders.read"],
+        },
+        fetchImpl,
+      ),
+    ).resolves.toBe("delegated-access-token");
+
+    const [url, options] = fetchImpl.mock.calls[0] ?? [];
+    expect(url).toBe("https://example.okta.com/oauth2/default/v1/token");
+    expect(options).toMatchObject({ method: "POST", redirect: "error" });
+    const headers = options?.headers as Record<string, string>;
+    expect(headers["cache-control"]).toBe("no-store");
+    expect(headers.authorization).toBe(
+      `Basic ${Buffer.from("client-id:client-secret").toString("base64")}`,
+    );
+    const form = new URLSearchParams(options?.body?.toString());
+    expect(form.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:token-exchange");
+    expect(form.get("subject_token")).toBe("user-subject-token");
+
+    await expect(
+      exchangeOktaOboToken(
+        {
+          tokenUrl: "https://example.okta.com/oauth2/default/v1/token",
+          clientId: "client-id",
+          clientSecret: "client-secret",
+          subjectToken: "user-subject-token",
+          audience: "api://orders",
+          scopes: ["orders.read"],
+        },
+        async () => new Response("server echoed a secret", { status: 400 }),
+      ),
+    ).rejects.toThrow("Okta token exchange failed with HTTP 400");
   });
 
   it("fails before identity mutation when provider-derived policy is disabled", async () => {
@@ -557,6 +732,7 @@ describe("runtime identity contract", () => {
         profilePolicy: {
           providerType: "okta-runtime-v1",
           clientIdEnvironmentName: "OKTA_CLIENT_ID",
+          flow: "oauth2-refresh-token",
           dnsResolution: "reject",
           tokenIssuer: {
             trustedHostnames: [],
@@ -565,6 +741,7 @@ describe("runtime identity contract", () => {
           credentialDelivery: {
             method: "GET",
             path: "/**",
+            hostPolicy: "reviewed",
             trustedHostnames: [],
             trustedHostSuffixes: ["okta.com"],
           },
@@ -616,6 +793,7 @@ describe("runtime identity contract", () => {
         profilePolicy: {
           providerType: "oauth2-runtime-conformance-v1",
           clientIdEnvironmentName: "E2E_CLIENT_ID",
+          flow: "oauth2-refresh-token",
           dnsResolution: "identity-platform-controlled",
           tokenIssuer: {
             trustedHostnames: ["identity-fixture.trycloudflare.com"],
@@ -624,6 +802,7 @@ describe("runtime identity contract", () => {
           credentialDelivery: {
             method: "GET",
             path: "/**",
+            hostPolicy: "reviewed",
             trustedHostnames: ["identity-fixture.trycloudflare.com"],
             trustedHostSuffixes: [],
           },
