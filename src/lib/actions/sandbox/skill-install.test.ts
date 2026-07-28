@@ -248,6 +248,63 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
   });
 
+  it("refuses a SKILL.md symlink before parsing or contacting the sandbox", async () => {
+    const skillDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-action-skill-link-"));
+    const target = path.join(skillDir, "target.md");
+    fs.writeFileSync(target, "---\nname: demo-skill\n---\n# Demo\n");
+    fs.symlinkSync(target, path.join(skillDir, "SKILL.md"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit ${code}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(
+        installSandboxSkill("alpha", { command: "install", path: skillDir }),
+      ).rejects.toThrow("process.exit 1");
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("must be a regular file"));
+    expect(skillInstall.parseFrontmatter).not.toHaveBeenCalled();
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("fails closed when SKILL.md is replaced between path validation and descriptor open", async () => {
+    const skillDir = makeSkillDir();
+    const skillMdPath = path.join(skillDir, "SKILL.md");
+    const replacement = path.join(skillDir, "replacement.md");
+    fs.writeFileSync(replacement, "---\nname: attacker\n---\n# Replacement\n");
+    let openedFlags = 0;
+    vi.spyOn(fs, "openSync").mockImplementationOnce((_candidatePath, flags) => {
+      openedFlags = flags as number;
+      fs.rmSync(skillMdPath);
+      fs.symlinkSync(replacement, skillMdPath);
+      throw Object.assign(new Error("symbolic link refused"), { code: "ELOOP" });
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit ${code}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(
+        installSandboxSkill("alpha", { command: "install", path: skillDir }),
+      ).rejects.toThrow("process.exit 1");
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(openedFlags & fs.constants.O_NOFOLLOW).toBe(fs.constants.O_NOFOLLOW);
+    expect(openedFlags & fs.constants.O_NONBLOCK).toBe(fs.constants.O_NONBLOCK);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("must be a regular file"));
+    expect(skillInstall.parseFrontmatter).not.toHaveBeenCalled();
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("continues skill install when the existence probe is unknown because upload plus verify are authoritative", async () => {
     const skillDir = makeSkillDir();
     let tempConfig = "";
