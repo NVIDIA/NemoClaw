@@ -64,6 +64,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/claude-code\.yaml$/,
+    testsToRun: runTests("test/effective-policy-contracts.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/(?:mcp-config-transaction|runtime-config-guard)\.py$/,
     testsToRun: runTests("src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts"),
   },
