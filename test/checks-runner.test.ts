@@ -4,7 +4,7 @@
 import type { SpawnSyncOptions } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
-import { buildCheckSpawnInvocation, runChecks } from "../scripts/checks/run.mts";
+import { buildCheckSpawnInvocation, CHECKS, runChecks } from "../scripts/checks/run.mts";
 
 const sampleCheck = {
   name: "sample",
@@ -17,6 +17,14 @@ function successfulSpawn(): { status: number | null } {
 }
 
 describe("checks runner", () => {
+  it("registers the source architecture check", () => {
+    expect(CHECKS).toContainEqual({
+      name: "source-architecture",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/source-architecture.mts"],
+    });
+  });
+
   it("runs Windows command shims through cmd.exe", () => {
     expect(
       buildCheckSpawnInvocation(sampleCheck, "win32", {
