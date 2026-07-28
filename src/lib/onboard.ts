@@ -1039,7 +1039,7 @@ const { validateSelectedRemoteModel } = createRemoteModelValidator({
   shouldRequireResponsesToolCalling,
   shouldSkipResponsesProbe,
   getProbeAuthMode,
-  configureCompatibleEndpointReasoning: reasoningMode.configureCompatibleEndpointReasoning,
+  ...reasoningMode.compatibleEndpointReasoningConfigureDeps,
 });
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
@@ -3575,7 +3575,7 @@ function getSetupNimDeps(): SetupNimDeps {
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
     resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi,
-    clearCompatibleEndpointReasoning: reasoningMode.clearCompatibleEndpointReasoning,
+    ...reasoningMode.compatibleEndpointReasoningClearDeps,
     maybePromptForInferenceInputCapability: (model) =>
       inferenceInputCapability.maybePromptForInferenceInputCapability(model, {
         isNonInteractive,
@@ -4185,7 +4185,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       hermesAuthMethod: normalizeHermesAuthMethod(session?.hermesAuthMethod),
       hermesToolGateways: normalizeHermesToolGatewaySelections(session?.hermesToolGateways),
       preferredInferenceApi: session?.preferredInferenceApi || null,
-      compatibleEndpointReasoning: session?.compatibleEndpointReasoning || null,
+      ...reasoningMode.getCompatibleEndpointReasoningSessionState(session),
       nimContainer: session?.nimContainer || null,
       webSearchConfig: session?.webSearchConfig || null,
       webSearchSupported: false,
@@ -4335,8 +4335,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         recordStateSkipped,
         recordRepairEvent,
         hydrateCredentialEnv,
-        configureCompatibleEndpointReasoning: reasoningMode.configureCompatibleEndpointReasoning,
-        clearCompatibleEndpointReasoning: reasoningMode.clearCompatibleEndpointReasoning,
+        ...reasoningMode.compatibleEndpointReasoningConfigureDeps,
+        ...reasoningMode.compatibleEndpointReasoningClearDeps,
         repairLocalInferenceSystemdOverrideOrExit,
         isNonInteractive,
         getOpenshellBinary,

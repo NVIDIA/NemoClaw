@@ -86,6 +86,7 @@ describe("handleProviderInferenceState", () => {
       provider: "nvidia-prod",
       preferredInferenceApi: "openai-responses",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
     });
     expect(result.stateResult).toEqual({
       type: "transition",
@@ -251,6 +252,7 @@ describe("handleProviderInferenceState", () => {
       const setupNim = vi.fn(async () => ({
         ...baseSelection,
         compatibleEndpointReasoning: "true",
+        compatibleEndpointReasoningEffort: null,
         provider: "compatible-endpoint",
         credentialEnv: "COMPATIBLE_API_KEY",
       }));
@@ -263,6 +265,7 @@ describe("handleProviderInferenceState", () => {
 
       expect(result).toMatchObject({
         compatibleEndpointReasoning: "true",
+        compatibleEndpointReasoningEffort: null,
         provider: "compatible-endpoint",
       });
     });
@@ -276,6 +279,7 @@ describe("handleProviderInferenceState", () => {
         provider: "nvidia-prod",
         model: "nvidia/test",
         compatibleEndpointReasoning: "true",
+        compatibleEndpointReasoningEffort: null,
       });
       session.steps.provider_selection.status = "complete";
       const setupInference = vi.fn(async () => {
