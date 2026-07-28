@@ -9,6 +9,64 @@ export interface SnapshotInferenceFixture {
   model: string;
 }
 
+export type SnapshotGatewayProbeClassification =
+  | "authenticated"
+  | "command-failure"
+  | "empty-output"
+  | "embedded-fallback"
+  | "gateway-connect-failure"
+  | "scope-upgrade-pending"
+  | "device-pairing-required";
+export type SnapshotRestoreResultClassification =
+  | "restored"
+  | "command-failure"
+  | "missing-restored-marker";
+
+const SNAPSHOT_GATEWAY_PROBE_REJECTIONS: ReadonlyArray<{
+  pattern: RegExp;
+  classification: SnapshotGatewayProbeClassification;
+}> = [
+  {
+    pattern: /scope upgrade pending approval|pairing required: device is asking for more scopes/i,
+    classification: "scope-upgrade-pending",
+  },
+  {
+    pattern: /device pairing required|pairing required/i,
+    classification: "device-pairing-required",
+  },
+  {
+    pattern: /gateway connect failed/i,
+    classification: "gateway-connect-failure",
+  },
+  {
+    pattern: /EMBEDDED FALLBACK|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
+    classification: "embedded-fallback",
+  },
+];
+
+export function classifySnapshotGatewayProbe(result: {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}): SnapshotGatewayProbeClassification {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const rejection = SNAPSHOT_GATEWAY_PROBE_REJECTIONS.find(({ pattern }) => pattern.test(output));
+  if (rejection) return rejection.classification;
+  if (result.exitCode !== 0) return "command-failure";
+  if (!output.trim()) return "empty-output";
+  return "authenticated";
+}
+export function classifySnapshotRestoreResult(result: {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}): SnapshotRestoreResultClassification {
+  if (result.exitCode !== 0) return "command-failure";
+  return /\bRestored\b/.test(`${result.stdout}\n${result.stderr}`)
+    ? "restored"
+    : "missing-restored-marker";
+}
+
 /**
  * Builds the child env for the snapshot-commands live target.
  *

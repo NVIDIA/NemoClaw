@@ -342,10 +342,14 @@ describe("getSandboxInferenceConfig", () => {
 
   it("maps NVIDIA Endpoints to the routed inference provider", () => {
     expect(
-      getSandboxInferenceConfig("qwen/qwen3.5-397b-a17b", "nvidia-prod", "openai-completions"),
+      getSandboxInferenceConfig(
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "openai-completions",
+      ),
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
-      primaryModelRef: `${MANAGED_PROVIDER_ID}/qwen/qwen3.5-397b-a17b`,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
       inferenceBaseUrl: INFERENCE_ROUTE_URL,
       inferenceApi: "openai-completions",
       inferenceCompat: null,
