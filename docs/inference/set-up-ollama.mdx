@@ -71,6 +71,8 @@ $$nemoclaw onboard
 Select the Ollama entry for your host.
 The menu identifies a reachable daemon as running and labels an installed but stopped daemon **Start local Ollama**.
 NemoClaw lists installed models or offers starter models when none are installed.
+For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
+The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
 
 The starter list includes `qwen3.6:35b` and selects it by default when current GPU memory can accommodate it.
 When another GPU workload consumes most of the available memory, NemoClaw selects the largest starter model that still fits.
@@ -139,7 +141,7 @@ The wizard manages the proxy lifecycle:
 - It removes stale matching proxy processes from previous runs.
 - It probes the sandbox Docker network path before saving the inference route.
 - It stops matching proxy processes during uninstall.
-- It reuses the persisted token after a host reboot.
+- It reuses the persisted token after a host reboot and during re-onboarding for the committed local Ollama route.
 
 All proxy endpoints require the token, including `GET /api/tags`.
 The host-side proxy liveness check treats any HTTP response, including `401`, as evidence that the proxy answered.
