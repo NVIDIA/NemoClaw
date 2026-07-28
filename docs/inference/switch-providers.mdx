@@ -97,9 +97,9 @@ $$nemoclaw inference set \
 ```
 
 NemoClaw validates the endpoint before it changes the route.
-For an HTTPS IP-literal or DNS-pinned HTTP endpoint, OpenShell can report the provider as absent on the first route attempt.
-NemoClaw then registers and verifies the provider and retries the switch.
-If that retry fails, NemoClaw removes the new provider and leaves the inference selection unchanged.
+For an HTTPS IP-literal or DNS-pinned HTTP endpoint, NemoClaw registers and verifies an absent provider before selecting the route.
+If OpenShell still reports the provider as absent, NemoClaw retries the switch once.
+If route selection fails, NemoClaw removes a newly created provider and leaves the inference selection unchanged.
 For a DNS-backed HTTPS endpoint, NemoClaw registers the HTTPS Pin Runtime provider before the first route attempt.
 
 Supported API-family values are `openai-completions`, `anthropic-messages`, and `openai-responses`.

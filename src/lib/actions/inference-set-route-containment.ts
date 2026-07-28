@@ -419,6 +419,7 @@ export async function finalizeInferenceSetRoute(options: {
   onboardEndpointUrl: string | null;
   getSandboxes: () => SandboxEntry[];
   rewriteUrlWithDnsPinning: RewriteConfigUrlsWithDnsPinning;
+  resolveCredentialValue: (credentialEnv: string) => string;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   effectiveInferenceApi?: string | null;
 }): Promise<{
@@ -438,11 +439,12 @@ export async function finalizeInferenceSetRoute(options: {
   }
   // Bound once per finalize call: the credential env var name is fixed per
   // provider (normalizeExplicitCredentialEnv already enforced this), and the
-  // real credential value is read directly from the host process environment
-  // at invocation time. Direct routes return it only in the invocation-local
-  // provider binding consumed below; no registry or sandbox field receives it.
+  // real credential value is resolved once at invocation time through the
+  // injected credential resolver. Direct routes return it only in the
+  // invocation-local provider binding consumed below; no registry or sandbox
+  // field receives it.
   const httpsPinCredentialEnv = CUSTOM_COMPATIBLE_CREDENTIAL_ENV[options.provider];
-  const credentialValue = process.env[httpsPinCredentialEnv] ?? "";
+  const credentialValue = options.resolveCredentialValue(httpsPinCredentialEnv);
   const providerType: HttpsPinCredentialProviderType =
     (options.effectiveInferenceApi ??
       prepared.preliminaryExplicitMetadata.preferredInferenceApi) === "anthropic-messages"

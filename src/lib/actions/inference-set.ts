@@ -147,6 +147,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
   isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
+  resolveCredentialValue: (credentialEnv: string) => string;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute: (routeId: string) => Promise<boolean>;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
@@ -250,6 +251,7 @@ function defaultDeps(): InferenceSetDeps {
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
+    resolveCredentialValue: (credentialEnv) => process.env[credentialEnv] ?? "",
     ensureHttpsPinRuntimeAdapter,
     revokeHttpsPinRuntimeAdapterRoute,
     withGatewayRouteMutationLock,
@@ -791,6 +793,7 @@ async function runInferenceSetWithoutHostLock(
         : null,
     getSandboxes: () => deps.listSandboxes().sandboxes,
     rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
+    resolveCredentialValue: deps.resolveCredentialValue,
     ensureHttpsPinRuntimeAdapter: deps.ensureHttpsPinRuntimeAdapter,
     effectiveInferenceApi: preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
   });
@@ -855,17 +858,18 @@ async function runInferenceSetWithoutHostLock(
   let restoredSelectionAfterProviderFailure = false;
   let providerMutation: ReturnType<typeof prepareInferenceSetProviderBinding> | null = null;
   try {
-    if (httpsPinProviderBinding) {
+    const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
+    if (providerBinding) {
       providerMutation = prepareInferenceSetProviderBinding({
         gatewayName: preparedRoute.gatewayName,
         providerName: provider,
-        binding: httpsPinProviderBinding,
+        binding: providerBinding,
         captureOpenshell: deps.captureOpenshell,
       });
       appliedProvider = providerMutation.action === "create";
       if (providerMutation.action === "update" && (!previousProvider || !previousModel)) {
         throw new InferenceSetError(
-          `Cannot update existing HTTPS-pinned provider '${provider}' because sandbox '${sandboxName}' ` +
+          `Cannot update existing ${httpsPinProviderBinding ? "HTTPS-pinned " : ""}provider '${provider}' because sandbox '${sandboxName}' ` +
             `does not record the previous provider and model needed to restore its inference selection.`,
           2,
         );
@@ -896,20 +900,6 @@ async function runInferenceSetWithoutHostLock(
         provider,
       )
     ) {
-      providerMutation = prepareInferenceSetProviderBinding({
-        gatewayName: preparedRoute.gatewayName,
-        providerName: provider,
-        binding: directProviderBinding,
-        captureOpenshell: deps.captureOpenshell,
-      });
-      appliedProvider = providerMutation.action === "create";
-      if (providerMutation.action === "update" && (!previousProvider || !previousModel)) {
-        throw new InferenceSetError(
-          `Cannot update existing provider '${provider}' because sandbox '${sandboxName}' ` +
-            `does not record the previous provider and model needed to restore its inference selection.`,
-          2,
-        );
-      }
       setResult = setInferenceRoute();
     }
     if (setResult.status !== 0) {
