@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
+import ts from "typescript";
 import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 
@@ -49,8 +50,6 @@ const GENERIC_ISSUE_REST_MUTATION =
 const GENERIC_ISSUE_GRAPHQL_MUTATION =
   /github\.graphql\s*\(\s*["'`]\s*mutation\b[\s\S]*?\b(?:addComment|closeIssue|createIssue|reopenIssue|updateIssue)\b/u;
 const NEEDS_INTERPOLATION = /\$\{\{\s*toJSON\s*\(\s*needs\s*\)\s*\}\}/iu;
-const NEEDS_ENV_PARSE =
-  /\bJSON\.parse\(\s*process\.env\.NEEDS_JSON\s*\|\|\s*["']\{\}["']\s*\)/u;
 
 type WorkflowStep = {
   "continue-on-error"?: boolean;
@@ -125,6 +124,64 @@ function executableSource(job: WorkflowJob): string {
     .join("\n");
 }
 
+function isNeedsEnvironmentAccess(expression: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(expression) || expression.name.text !== "NEEDS_JSON") {
+    return false;
+  }
+  const environment = expression.expression;
+  return (
+    ts.isPropertyAccessExpression(environment) &&
+    environment.name.text === "env" &&
+    ts.isIdentifier(environment.expression) &&
+    environment.expression.text === "process"
+  );
+}
+
+function isNeedsEnvironmentParse(expression: ts.Expression): boolean {
+  if (!ts.isCallExpression(expression) || expression.arguments.length !== 1) {
+    return false;
+  }
+  const parser = expression.expression;
+  const input = expression.arguments[0];
+  return (
+    ts.isPropertyAccessExpression(parser) &&
+    ts.isIdentifier(parser.expression) &&
+    parser.expression.text === "JSON" &&
+    parser.name.text === "parse" &&
+    ts.isBinaryExpression(input) &&
+    input.operatorToken.kind === ts.SyntaxKind.BarBarToken &&
+    isNeedsEnvironmentAccess(input.left) &&
+    ts.isStringLiteral(input.right) &&
+    input.right.text === "{}"
+  );
+}
+
+function assignsNeedsFromEnvironment(script: string): boolean {
+  const source = ts.createSourceFile(
+    "github-script.js",
+    script,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "needs" &&
+      node.initializer !== undefined &&
+      isNeedsEnvironmentParse(node.initializer)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
 function requirePinnedAction(errors: string[], step: WorkflowStep, owner: string): void {
   if (!FULL_SHA_ACTION.test(step.uses ?? "")) {
     errors.push(`${owner} must pin its action to a full SHA`);
@@ -143,7 +200,7 @@ function passesNeedsAsEnvironmentData(step: WorkflowStep): boolean {
   return (
     step.env?.NEEDS_JSON === "${{ toJSON(needs) }}" &&
     !NEEDS_INTERPOLATION.test(script) &&
-    NEEDS_ENV_PARSE.test(script)
+    assignsNeedsFromEnvironment(script)
   );
 }
 

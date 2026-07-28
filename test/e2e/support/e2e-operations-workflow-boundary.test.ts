@@ -65,54 +65,86 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
-  it("passes needs through the environment without GitHub Script interpolation", () => {
+  it("rejects missing NEEDS_JSON environment data (#6952)", () => {
     const workflow = readE2eOperationsWorkflow();
     const report = workflow.jobs["report-to-pr"].steps!.find(
       (step) => step.name === "Post E2E target results to PR",
     )!;
-    const scorecard = workflow.jobs.scorecard.steps!.find(
-      (step) => step.name === "Generate E2E scorecard",
-    )!;
     delete report.env?.NEEDS_JSON;
-    delete scorecard.env?.NEEDS_JSON;
-    report.with!.script = String(report.with!.script).replace(
-      "JSON.parse(process.env.NEEDS_JSON || '{}')",
-      "${{ toJSON(needs) }}",
-    );
-    scorecard.with!.script = String(scorecard.with!.script).replace(
-      "JSON.parse(process.env.NEEDS_JSON || '{}')",
-      "${{ toJSON(needs) }}",
-    );
 
-    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "report-to-pr must pass needs as environment data without script interpolation",
-        "scorecard generator must pass needs as environment data without script interpolation",
-      ]),
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must pass needs as environment data without script interpolation",
     );
   });
 
-  it("rejects lookalike needs variables and whitespace-obscured script interpolation", () => {
+  it("rejects malformed NEEDS_JSON environment data (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const scorecard = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Generate E2E scorecard",
+    )!;
+    scorecard.env!.NEEDS_JSON = "${{ toJSON(needs.generate-matrix) }}";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard generator must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects needs interpolation in GitHub Script source (#6952)", () => {
     const workflow = readE2eOperationsWorkflow();
     const report = workflow.jobs["report-to-pr"].steps!.find(
       (step) => step.name === "Post E2E target results to PR",
     )!;
+    report.with!.script = `${String(report.with!.script)}
+const interpolatedNeeds = \${{   toJSON ( needs )   }};
+`;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects a commented NEEDS_JSON assignment (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    report.with!.script = String(report.with!.script).replace(
+      "const needs = JSON.parse(process.env.NEEDS_JSON || '{}');",
+      "// const needs = JSON.parse(process.env.NEEDS_JSON || '{}');\nconst needs = {};",
+    );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects NEEDS_JSON parsing assigned to an unrelated variable (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
     const scorecard = workflow.jobs.scorecard.steps!.find(
       (step) => step.name === "Generate E2E scorecard",
+    )!;
+    scorecard.with!.script = String(scorecard.with!.script).replace(
+      "const needs = JSON.parse(process.env.NEEDS_JSON || '{}');",
+      "const scorecardNeeds = JSON.parse(process.env.NEEDS_JSON || '{}');",
+    );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard generator must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects a lookalike NEEDS_JSON variable (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
     )!;
     report.with!.script = String(report.with!.script).replace(
       "process.env.NEEDS_JSON",
       "process.env.NEEDS_JSON_BAD",
     );
-    scorecard.with!.script = `${String(scorecard.with!.script)}
-const interpolatedNeeds = \${{   toJSON ( needs )   }};
-`;
 
-    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "report-to-pr must pass needs as environment data without script interpolation",
-        "scorecard generator must pass needs as environment data without script interpolation",
-      ]),
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must pass needs as environment data without script interpolation",
     );
   });
 
