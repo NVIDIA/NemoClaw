@@ -142,6 +142,7 @@ describe("dashboard-url command helpers", () => {
         fetchToken,
         getSandbox: () => ({ agent: "hermes", dashboardPort: 18790 }),
         getAgentDashboardAuth: () => "session",
+        cliName: "nemohermes",
         env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
         log: sinks.log,
         error: sinks.error,
@@ -153,7 +154,7 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toContain("  http://127.0.0.1:18790/");
     expect(sinks.out).toContain("  Remote access (SSH session detected):");
     expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@<host>");
-    expect(sinks.out).toContain("    nemoclaw hermes connect");
+    expect(sinks.out).toContain("    nemohermes hermes connect");
     expect(sinks.out).toContain("  Manage later");
     expect(sinks.out.join("\n")).not.toContain("openclaw tui");
     expect(sinks.out.join("\n")).not.toContain("#token=");

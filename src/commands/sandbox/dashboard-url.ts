@@ -100,6 +100,7 @@ export default class DashboardUrlCliCommand extends NemoClawCommand {
           fetchToken: runtime.fetchGatewayAuthTokenFromSandbox,
           getSandbox: runtime.getSandbox,
           getAccessUrl: runtime.getAccessUrl,
+          cliName: this.config.bin,
         },
       );
       this.setExitCode(0);

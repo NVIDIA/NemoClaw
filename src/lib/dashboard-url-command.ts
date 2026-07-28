@@ -7,7 +7,6 @@
  * authenticated token fragment, while session-auth dashboards return a plain URL.
  */
 
-import { getAgentBranding } from "./cli/branding";
 import { DASHBOARD_PORT } from "./core/ports";
 import { buildSshForwardHintLines } from "./onboard/ssh-forward-hint";
 import type { SandboxEntry } from "./state/registry";
@@ -31,6 +30,8 @@ export interface DashboardUrlCommandDeps {
   log?: (message: string) => void;
   /** Optional stderr sink -- defaults to console.error. */
   error?: (message: string) => void;
+  /** CLI binary name used in follow-up commands. */
+  cliName?: string;
   /** Environment used to detect an SSH session for the port-forward hint. */
   env?: NodeJS.ProcessEnv;
 }
@@ -69,9 +70,9 @@ function resolveDashboardPort(sandbox: Pick<SandboxEntry, "dashboardPort"> | nul
 function printSandboxGuidance(
   sandboxName: string,
   agentName: string | null,
+  cliName: string,
   log: (message: string) => void,
 ): void {
-  const cliName = getAgentBranding(agentName).cli;
   log("");
   log("  Terminal:");
   log(`    ${cliName} ${sandboxName} connect`);
@@ -204,7 +205,7 @@ export function runDashboardUrlCommand(
     log("  Dashboard URL:");
     log(`  ${url}`);
     printSshForwardHint(port, accessUrl);
-    printSandboxGuidance(sandboxName, agent, log);
+    printSandboxGuidance(sandboxName, agent, deps.cliName ?? "nemoclaw", log);
     return;
   }
 
@@ -234,5 +235,5 @@ export function runDashboardUrlCommand(
   log(`  ${url}`);
   error(SECURITY_WARNING);
   printSshForwardHint(port, accessUrl);
-  printSandboxGuidance(sandboxName, agent, log);
+  printSandboxGuidance(sandboxName, agent, deps.cliName ?? "nemoclaw", log);
 }
