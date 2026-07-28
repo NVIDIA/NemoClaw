@@ -7,8 +7,8 @@ import type { ConfigObject } from "../security/credential-filter";
 import { InferenceSetError, runInferenceSet } from "./inference-set";
 import {
   baseSession,
+  createCompatibleProviderCapture,
   createDeps,
-  createExistingCompatibleProviderCapture,
 } from "./inference-set.test-support";
 
 describe("runInferenceSet degraded state handling", () => {
@@ -134,11 +134,12 @@ describe("runInferenceSet degraded state handling", () => {
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
       }),
-      captureOpenshell: createExistingCompatibleProviderCapture({
+      captureOpenshell: createCompatibleProviderCapture({
         name: "compatible-endpoint",
         type: "openai",
         credentialEnv: "COMPATIBLE_API_KEY",
         configKey: "OPENAI_BASE_URL",
+        initiallyPresent: false,
       }),
     });
     deps.calls.readSandboxConfig.mockImplementation(() => structuredClone(persistedConfig));
