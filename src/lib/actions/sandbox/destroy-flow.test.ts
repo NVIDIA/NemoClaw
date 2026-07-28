@@ -7,7 +7,8 @@ import {
   expectAbsentSandboxMcpFinalize,
   expectActiveTimerDestroyOrder,
   expectFailedDeletePreservesHostState,
-  expectFailedHardeningStopsDelete,
+  expectFailedHardeningAllowsDelete,
+  expectFailedHardeningMcpRestore,
   expectFailedMcpFinalizePreservesRegistry,
   expectFailedMcpRestorePreservesDestroyFailure,
   expectMcpFinalizeAfterDelete,
@@ -199,17 +200,29 @@ describe("destroySandbox flow", () => {
     expectActiveTimerDestroyOrder(harness);
   });
 
-  it("does not delete when active-window hardening fails after the wipe", async () => {
+  it("deletes when active-window hardening fails after the wipe", async () => {
     const harness = createDestroyHarness({
       activeTimer: true,
       shieldsUpError: new Error("injected hardening failure"),
     });
 
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-      "injected hardening failure",
-    );
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expectFailedHardeningStopsDelete(harness);
+    expectFailedHardeningAllowsDelete(harness);
+  });
+
+  it("restores MCP runtime state when sandbox delete fails after hardening fails", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      deleteStatus: 7,
+      deleteOutput: "delete failed",
+      mcpServers: ["github"],
+      shieldsUpError: new Error("injected hardening failure"),
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
+
+    expectFailedHardeningMcpRestore(harness);
   });
 
   it("detaches MCP providers before delete and finalizes them only after delete succeeds", async () => {

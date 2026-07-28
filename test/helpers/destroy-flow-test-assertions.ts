@@ -112,11 +112,26 @@ export function expectActiveTimerDestroyOrder(harness: DestroyHarness): void {
   expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
 }
 
-export function expectFailedHardeningStopsDelete(harness: DestroyHarness): void {
-  expect(harness.events).toContain("wipe");
-  expect(harness.events).toContain("harden");
-  expect(harness.events).not.toContain("delete");
-  expect(harness.killTimerSpy).not.toHaveBeenCalled();
+export function expectFailedHardeningAllowsDelete(harness: DestroyHarness): void {
+  expect(harness.events).toEqual(
+    expect.arrayContaining(["wipe", "harden", "delete"]),
+  );
+  expect(harness.events.indexOf("wipe")).toBeLessThan(harness.events.indexOf("harden"));
+  expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
+}
+
+export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {
+  expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledWith(
+    "alpha",
+    expect.objectContaining({ entries: [{ server: "github" }] }),
+  );
+  expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
+  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  // We expect only one harden event (the failed one in wipeAndHardenLiveSandbox)
+  // because we don't open the shieldsDown rollback window.
+  expect(harness.events.filter((event) => event === "harden")).toHaveLength(1);
+  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("mcp-restore"));
+  expect(harness.shieldsDownSpy).not.toHaveBeenCalled();
 }
 
 export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
