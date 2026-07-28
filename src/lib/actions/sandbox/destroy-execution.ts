@@ -99,11 +99,19 @@ function wipeAndHardenLiveSandbox(
     ? timerMarker.processToken
     : undefined;
   const { shieldsUp } = require("../../shields") as typeof import("../../shields");
-  shieldsUp(sandboxName, {
-    throwOnError: true,
-    allowLegacyHermesProtocol: true,
-  });
-  return { hardenedForDelete: true, timerProcessToken };
+  try {
+    shieldsUp(sandboxName, {
+      throwOnError: true,
+      allowLegacyHermesProtocol: true,
+    });
+    return { hardenedForDelete: true, timerProcessToken };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `  ${YW}⚠${R} Sandbox '${sandboxName}' could not be hardened before destruction: ${detail}`,
+    );
+    return { hardenedForDelete: false, timerProcessToken };
+  }
 }
 
 async function restoreMcpAfterDeleteAbort(
