@@ -21,17 +21,17 @@ import {
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../inference/https-pin-runtime-adapter";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
+import {
+  inferenceSelectionRegistryFields,
+  type ReasoningEffortRequest,
+  resolveReasoningEffortRequest,
+} from "../inference/selection";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import {
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
 } from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
-import {
-  type ReasoningEffortRequest,
-  resolveReasoningEffortRequest,
-} from "../onboard/reasoning-mode";
 import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,

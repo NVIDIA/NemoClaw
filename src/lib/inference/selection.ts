@@ -3,6 +3,11 @@
 
 import { normalizeReasoningEffort, type ReasoningEffort } from "../onboard/reasoning-mode";
 
+export {
+  type ReasoningEffortRequest,
+  resolveReasoningEffortRequest,
+} from "../onboard/reasoning-mode";
+
 export type InferenceEndpointSource = "onboard" | "inference-set";
 
 export interface InferenceSelection {

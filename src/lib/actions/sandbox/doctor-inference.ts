@@ -3,7 +3,10 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
-import type { EffectiveReasoningEffort } from "../../inference/selection";
+import {
+  type EffectiveReasoningEffort,
+  getEffectiveReasoningEffort,
+} from "../../inference/selection";
 import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
 import type { DoctorCheck } from "./doctor-report";
 import { probeSandboxInferenceGatewayHealth } from "./inference-route-health";
@@ -20,6 +23,12 @@ type DoctorInferenceDeps = {
   /** False for terminal agents that do not have a long-running gateway serving process. */
   includeServingProcessCheck?: boolean;
 };
+
+export function resolveDoctorReasoningEffort(
+  input: Parameters<typeof getEffectiveReasoningEffort>[0],
+): EffectiveReasoningEffort | null {
+  return getEffectiveReasoningEffort(input);
+}
 
 function pushInferenceHealthCheck(
   checks: DoctorCheck[],

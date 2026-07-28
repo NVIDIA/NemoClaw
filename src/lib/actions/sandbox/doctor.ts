@@ -16,7 +16,6 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
-import { getEffectiveReasoningEffort } from "../../inference/selection";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
@@ -34,7 +33,11 @@ import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import { captureHostCommand } from "./doctor-host-command";
-import { collectInferenceChecks, type DoctorInferenceRoute } from "./doctor-inference";
+import {
+  collectInferenceChecks,
+  type DoctorInferenceRoute,
+  resolveDoctorReasoningEffort,
+} from "./doctor-inference";
 import { buildLifecycleRegistrationCheck } from "./doctor-lifecycle-registration";
 import { collectMessagingDoctorChecks } from "./doctor-messaging";
 import {
@@ -298,7 +301,7 @@ function resolveInferenceRoute(
   return {
     model: live?.model || sb?.model || "unknown",
     provider: live?.provider || sb?.provider || "unknown",
-    effectiveReasoningEffort: getEffectiveReasoningEffort(sb),
+    effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
   };
 }
 
