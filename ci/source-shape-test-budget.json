@@ -358,7 +358,7 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "keeps the authoritative local-build allowance tied to same-head PR evidence",
+      "test": "keeps the authoritative local-build allowance tied to exact PR evidence",
       "category": "compatibility"
     },
     {

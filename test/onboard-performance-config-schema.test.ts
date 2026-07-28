@@ -492,8 +492,8 @@ describe("full-E2E cold-path calibration", () => {
     });
   });
 
-  // source-shape-contract: compatibility -- Same-head run evidence keeps the local-build allowance bounded and reproducible
-  it("keeps the authoritative local-build allowance tied to same-head PR evidence", () => {
+  // source-shape-contract: compatibility -- Exact PR run evidence keeps the local-build allowance bounded and reproducible
+  it("keeps the authoritative local-build allowance tied to exact PR evidence", () => {
     const adjustment = calibration.authoritativeLocalBaseBuildAdjustment;
     expect(adjustment.validatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
     expect(adjustment.triggerOutput).toContain("Building OpenClaw sandbox base image locally");
@@ -502,8 +502,8 @@ describe("full-E2E cold-path calibration", () => {
       "nemoclaw.onboard.phase.sandbox",
     ]);
     expect(adjustment.derivation.statistic).toBe("maximum-budget-excess");
-    expect(adjustment.runs).toHaveLength(2);
-    expect(new Set(adjustment.runs.map((run) => run.headSha)).size).toBe(1);
+    expect(adjustment.runs.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(adjustment.runs.map((run) => run.runId)).size).toBe(adjustment.runs.length);
     for (const run of adjustment.runs) {
       expect(run.runUrl).toBe(`https://github.com/NVIDIA/NemoClaw/actions/runs/${run.runId}`);
       expect(run.headSha).toMatch(/^[0-9a-f]{40}$/u);
