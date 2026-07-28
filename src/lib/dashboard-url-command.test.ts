@@ -68,8 +68,9 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual(["http://172.22.1.1:19000/#token=secret-token"]);
   });
 
-  it("prints a human label and warning outside quiet mode", () => {
+  it("prints the dashboard URL, connection guidance, and warning outside quiet mode (#7473)", () => {
     const sinks = makeSinks();
+    const events: string[] = [];
     runDashboardUrlCommand(
       "alpha",
       { quiet: false },
@@ -77,13 +78,39 @@ describe("dashboard-url command helpers", () => {
         fetchToken: () => "secret-token",
         getSandbox: () => ({ agent: null, dashboardPort: 18789 }),
         env: {},
-        log: sinks.log,
-        error: sinks.error,
+        log: (message) => {
+          events.push(`stdout:${message}`);
+          sinks.log(message);
+        },
+        error: (message) => {
+          events.push(`stderr:${message}`);
+          sinks.error(message);
+        },
       },
     );
 
-    expect(sinks.out).toEqual(["  Dashboard URL:", "  http://127.0.0.1:18789/#token=secret-token"]);
+    expect(sinks.out).toEqual([
+      "  Dashboard URL:",
+      "  http://127.0.0.1:18789/#token=secret-token",
+      "",
+      "  Terminal:",
+      "    nemoclaw alpha connect",
+      "    then run: openclaw tui",
+      "",
+      "  Manage later",
+      "",
+      "    Status:      nemoclaw alpha status",
+      "    Logs:        nemoclaw alpha logs --follow",
+      "    Model:       nemoclaw inference set --model <model> --provider <provider> --sandbox alpha",
+      "    Policies:    nemoclaw alpha policy add",
+      "    Credentials: nemoclaw credentials reset <KEY> && nemoclaw onboard",
+    ]);
     expect(sinks.err.join("\n")).toContain("Treat this URL like a password");
+    expect(events.slice(0, 3)).toEqual([
+      "stdout:  Dashboard URL:",
+      "stdout:  http://127.0.0.1:18789/#token=secret-token",
+      "stderr:Treat this URL like a password -- do not log, share, or commit it.",
+    ]);
   });
 
   it("appends an SSH port-forward hint when run over SSH (#5925)", () => {
@@ -126,6 +153,9 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toContain("  http://127.0.0.1:18790/");
     expect(sinks.out).toContain("  Remote access (SSH session detected):");
     expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@<host>");
+    expect(sinks.out).toContain("    nemoclaw hermes connect");
+    expect(sinks.out).toContain("  Manage later");
+    expect(sinks.out.join("\n")).not.toContain("openclaw tui");
   });
 
   it("omits the SSH port-forward hint outside an SSH session", () => {

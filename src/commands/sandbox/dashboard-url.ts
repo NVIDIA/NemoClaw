@@ -57,7 +57,8 @@ export default class DashboardUrlCliCommand extends NemoClawCommand {
   static id = "sandbox:dashboard-url";
   static strict = true;
   static summary = "Print the dashboard URL";
-  static description = "Print the browser-facing dashboard URL for a running sandbox.";
+  static description =
+    "Print the browser-facing dashboard URL and connection guidance for a running sandbox.";
   static usage = ["<name> [--quiet|-q]"];
   static examples = [
     "<%= config.bin %> sandbox dashboard-url alpha",

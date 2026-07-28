@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `nemoclaw <name> dashboard-url` -- print the browser-facing dashboard URL.
- * OpenClaw sandboxes still receive an authenticated token fragment, while
- * session-auth agent dashboards can return the plain URL.
+ * `nemoclaw <name> dashboard-url` prints the browser-facing URL and connection
+ * guidance. Quiet mode prints only the URL. OpenClaw URLs include an
+ * authenticated token fragment, while session-auth dashboards return a plain URL.
  */
 
+import { getAgentBranding } from "./cli/branding";
 import { DASHBOARD_PORT } from "./core/ports";
 import { buildSshForwardHintLines } from "./onboard/ssh-forward-hint";
 import type { SandboxEntry } from "./state/registry";
@@ -63,6 +64,30 @@ function resolveDashboardPort(sandbox: Pick<SandboxEntry, "dashboardPort"> | nul
   return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535
     ? port
     : DASHBOARD_PORT;
+}
+
+function printSandboxGuidance(
+  sandboxName: string,
+  agentName: string | null,
+  log: (message: string) => void,
+): void {
+  const cliName = getAgentBranding(agentName).cli;
+  log("");
+  log("  Terminal:");
+  log(`    ${cliName} ${sandboxName} connect`);
+  if (!agentName || agentName === "openclaw") {
+    log("    then run: openclaw tui");
+  }
+  log("");
+  log("  Manage later");
+  log("");
+  log(`    Status:      ${cliName} ${sandboxName} status`);
+  log(`    Logs:        ${cliName} ${sandboxName} logs --follow`);
+  log(
+    `    Model:       ${cliName} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
+  );
+  log(`    Policies:    ${cliName} ${sandboxName} policy add`);
+  log(`    Credentials: ${cliName} credentials reset <KEY> && ${cliName} onboard`);
 }
 
 export function buildDashboardUrl(
@@ -179,6 +204,7 @@ export function runDashboardUrlCommand(
     log("  Dashboard URL:");
     log(`  ${url}`);
     printSshForwardHint(port, accessUrl);
+    printSandboxGuidance(sandboxName, agent, log);
     return;
   }
 
@@ -206,6 +232,7 @@ export function runDashboardUrlCommand(
 
   log("  Dashboard URL:");
   log(`  ${url}`);
-  printSshForwardHint(port, accessUrl);
   error(SECURITY_WARNING);
+  printSshForwardHint(port, accessUrl);
+  printSandboxGuidance(sandboxName, agent, log);
 }

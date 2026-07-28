@@ -182,15 +182,6 @@ function printWslFallback(fallbackDashboardUrls: string[], indent: string): void
   }
 }
 
-let boundOnboardDashboardHelpers: OnboardDashboardHelpers | null = null;
-
-export function getOnboardDashboardHelpers(): OnboardDashboardHelpers {
-  if (!boundOnboardDashboardHelpers) {
-    throw new Error("Onboard dashboard helpers have not been initialised.");
-  }
-  return boundOnboardDashboardHelpers;
-}
-
 export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): OnboardDashboardHelpers {
   const runCapture = deps.runCapture ?? defaultRunCapture;
 
@@ -565,7 +556,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     console.log("");
   }
 
-  const helpers: OnboardDashboardHelpers = {
+  return {
     buildChain,
     buildControlUiUrls,
     buildOrphanedSandboxRollbackMessage,
@@ -580,6 +571,4 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     printDashboard,
     stopAllDashboardForwards,
   };
-  boundOnboardDashboardHelpers = helpers;
-  return helpers;
 }
