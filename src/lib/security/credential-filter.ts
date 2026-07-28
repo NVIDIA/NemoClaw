@@ -372,7 +372,9 @@ export function sanitizeEnvFileContent(content: string): string {
       if (trimmed === "" || trimmed.startsWith("#")) return line;
       const eq = line.indexOf("=");
       if (eq <= 0) return line;
-      const key = line.slice(0, eq).trim();
+      const rawKey = line.slice(0, eq).trim();
+      // Shell-sourced .env files often use `export KEY=value`.
+      const key = rawKey.replace(/^export\s+/i, "").trim();
       if (!key || !isCredentialField(key)) return line;
       const value = line.slice(eq + 1);
       if (isSafeCredentialPlaceholder(value)) return line;
