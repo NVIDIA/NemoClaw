@@ -84,10 +84,21 @@ jobs:
       - name: Install ShellCheck
         if: steps.converter.outputs.present == 'true'
         run: |
-          if command -v shellcheck >/dev/null 2>&1; then
-            echo "Using preinstalled ShellCheck $(shellcheck --version | grep '^version:' || true)"
+          set -euo pipefail
+          probe="$RUNNER_TEMP/shellcheck-json1-probe.sh"
+          printf '#!/bin/sh\ntrue\n' > "$probe"
+          if command -v shellcheck >/dev/null 2>&1 &&
+            shellcheck --format=json1 "$probe" >/dev/null 2>&1; then
+            echo "Using preinstalled ShellCheck"
+            shellcheck --version
           else
             sudo apt-get update && sudo apt-get install -y shellcheck
+            if ! shellcheck --format=json1 "$probe" >/dev/null 2>&1; then
+              echo "Installed ShellCheck does not support --format=json1" >&2
+              exit 1
+            fi
+            echo "Using installed ShellCheck"
+            shellcheck --version
           fi
 
       - name: Collect shell files

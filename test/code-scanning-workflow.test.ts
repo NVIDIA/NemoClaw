@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readYaml, type Workflow } from "./helpers/e2e-workflow-contract";
 
@@ -27,6 +31,58 @@ function stepIndex(name: string) {
   const index = shellcheckSteps.findIndex((candidate) => candidate.name === name);
   assert(index >= 0, `ShellCheck workflow is missing step: ${name}`);
   return index;
+}
+
+function writeExecutable(file: string, content: string) {
+  fs.writeFileSync(file, content, { mode: 0o755 });
+}
+
+function runShellCheckInstall(preinstalledSupportsJson1: boolean) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shellcheck-install-"));
+  const bin = path.join(root, "bin");
+  const trace = path.join(root, "trace");
+  const installedMarker = path.join(root, "installed");
+  fs.mkdirSync(bin);
+  writeExecutable(
+    path.join(bin, "shellcheck"),
+    `#!/bin/sh
+printf 'shellcheck:%s\\n' "$*" >> "$TRACE"
+case "$*" in
+  *--format=json1*)
+    [ "$PREINSTALLED_SUPPORTS_JSON1" = "true" ] || [ -f "$INSTALLED_MARKER" ]
+    ;;
+  --version)
+    printf 'version: 0.11.0\\n'
+    ;;
+esac
+`,
+  );
+  writeExecutable(
+    path.join(bin, "sudo"),
+    `#!/bin/sh
+printf 'sudo:%s\\n' "$*" >> "$TRACE"
+case "$*" in
+  "apt-get install -y shellcheck")
+    : > "$INSTALLED_MARKER"
+    ;;
+esac
+`,
+  );
+  const install = requiredStep("Install ShellCheck");
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", install.run ?? ""], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      INSTALLED_MARKER: installedMarker,
+      PREINSTALLED_SUPPORTS_JSON1: String(preinstalledSupportsJson1),
+      RUNNER_TEMP: root,
+      TRACE: trace,
+    },
+  });
+  const calls = fs.readFileSync(trace, "utf8").trim().split("\n");
+  fs.rmSync(root, { recursive: true, force: true });
+  return { calls, result };
 }
 
 describe("Code scanning workflow dependency updates", () => {
@@ -94,7 +150,7 @@ describe("ShellCheck SARIF workflow boundary", () => {
 
     const install = requiredStep("Install ShellCheck");
     expect(install.if).toBe("steps.converter.outputs.present == 'true'");
-    expect(install.run).toContain("command -v shellcheck");
+    expect(install.run).toContain("shellcheck --format=json1");
     expect(install.run).toContain("sudo apt-get update && sudo apt-get install -y shellcheck");
 
     const collect = requiredStep("Collect shell files");
@@ -151,5 +207,28 @@ describe("ShellCheck SARIF workflow boundary", () => {
       stepIndex("Upload ShellCheck SARIF"),
     ];
     expect(orderedSteps).toEqual([...orderedSteps].sort((left, right) => left - right));
+  });
+
+  it("keeps a preinstalled ShellCheck only when its json1 formatter works (#7684)", () => {
+    const { calls, result } = runShellCheckInstall(true);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(calls).toEqual([
+      expect.stringContaining("shellcheck:--format=json1"),
+      "shellcheck:--version",
+    ]);
+  });
+
+  it("installs and validates ShellCheck when the preinstalled binary lacks json1 (#7684)", () => {
+    const { calls, result } = runShellCheckInstall(false);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(calls).toEqual([
+      expect.stringContaining("shellcheck:--format=json1"),
+      "sudo:apt-get update",
+      "sudo:apt-get install -y shellcheck",
+      expect.stringContaining("shellcheck:--format=json1"),
+      "shellcheck:--version",
+    ]);
   });
 });
