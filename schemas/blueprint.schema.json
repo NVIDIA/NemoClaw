@@ -174,29 +174,45 @@
       }
     },
     "runtimeIdentity": {
-      "type": "object",
-      "required": [
-        "profile_path",
-        "provider_type",
-        "provider_name",
-        "credential_key",
-        "client_id_env",
-        "refresh_token_env"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "profile_path": { "type": "string", "minLength": 1 },
-        "provider_type": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{0,63}$" },
-        "provider_name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$" },
-        "credential_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,255}$" },
-        "client_id_env": { "$ref": "#/$defs/runtimeIdentityClientIdEnvName" },
-        "refresh_token_env": {
-          "$ref": "#/$defs/runtimeIdentitySecretEnvName"
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["profile_path", "provider_type", "provider_name", "credential_key", "client_id_env", "refresh_token_env"],
+          "additionalProperties": false,
+          "properties": {
+            "profile_path": { "type": "string", "minLength": 1 },
+            "provider_type": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{0,63}$" },
+            "provider_name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$" },
+            "credential_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,255}$" },
+            "client_id_env": { "$ref": "#/$defs/runtimeIdentityClientIdEnvName" },
+            "refresh_token_env": { "$ref": "#/$defs/runtimeIdentitySecretEnvName" },
+            "client_secret_env": { "$ref": "#/$defs/runtimeIdentitySecretEnvName" }
+          }
         },
-        "client_secret_env": {
-          "$ref": "#/$defs/runtimeIdentitySecretEnvName"
+        {
+          "type": "object",
+          "required": ["profile_path", "provider_type", "provider_name", "credential_key", "client_id_env", "subject_token_env", "client_secret_env", "token_url", "audience", "scopes"],
+          "additionalProperties": false,
+          "properties": {
+            "profile_path": { "type": "string", "minLength": 1 },
+            "provider_type": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{0,63}$" },
+            "provider_name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$" },
+            "credential_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,255}$" },
+            "client_id_env": { "$ref": "#/$defs/runtimeIdentityClientIdEnvName" },
+            "subject_token_env": { "$ref": "#/$defs/runtimeIdentitySecretEnvName" },
+            "client_secret_env": { "$ref": "#/$defs/runtimeIdentitySecretEnvName" },
+            "token_url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+            "audience": { "type": "string", "minLength": 1, "maxLength": 1024 },
+            "scopes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9:._/-]+$" }
+            }
+          }
         }
-      }
+      ]
     },
     "runtimeIdentityEnvName": {
       "type": "string",

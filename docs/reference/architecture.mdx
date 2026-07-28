@@ -348,7 +348,7 @@ Each successful apply therefore creates and owns the provider whose refresh stat
 The persisted run plan records whether that apply created the runtime identity provider, its sandbox attachment, the inference provider, and the sandbox itself.
 The runner writes that ownership receipt as each identity resource is acquired, so `status` and a later `rollback` retain a recovery path if automatic compensation fails.
 If a later apply step fails, the runner detaches the runtime identity provider when that apply attached it, deletes each provider when that apply created it, and removes a sandbox created by that apply.
-The runner never places the refresh token or optional client secret in command arguments or persisted plans.
+The refresh-token path never places the refresh token or optional client secret in command arguments or persisted plans.
 It passes those values to `openshell provider refresh configure` through a scoped subprocess environment, and OpenShell stores the resulting credential material in the gateway credential store.
 All other runner subprocesses receive the allowlisted environment without the identity material.
 Each sandbox child launch receives an opaque `OKTA_ACCESS_TOKEN` placeholder, and the OpenShell L7 proxy substitutes its corresponding access token only for admitted HTTPS requests.
@@ -370,7 +370,38 @@ Rollback stops without mutating a same-name provider when the binding no longer 
 
 Runtime identity does not add a generic blueprint middleware surface in this slice.
 Configure any deployment-specific pre-credential policy through separately supported OpenShell tooling.
-This reference does not package an OAuth bootstrap application, an on-behalf-of exchange, or a production identity middleware service.
+The refresh-token reference does not package an OAuth bootstrap application or a production identity middleware service.
+
+#### Experimental Okta OBO Reference
+
+The optional `okta-obo-v1` profile is a separate experimental reference for a short-lived, delegated Okta access token.
+It does not require an OpenShell token-exchange refresh strategy.
+Instead, the NemoClaw host performs one RFC 8693 token exchange, creates a normal OpenShell provider with the returned access token, and attaches that provider to the sandbox.
+OpenShell still stores and injects the delegated token only for the reviewed profile endpoints; the sandbox receives only the `OKTA_OBO_ACCESS_TOKEN` placeholder.
+
+Copy `nemoclaw-blueprint/provider-profiles/okta-obo-v1.yaml` into the blueprint as `provider-profiles/acme-okta-obo.yaml`.
+Set the profile endpoint to the protected Okta API that should receive the delegated bearer. This initial reference accepts only `okta.com` hostnames and subdomains, not custom resource hosts or custom Okta domains.
+Then configure the identity component:
+
+```yaml
+identity:
+  profile_path: provider-profiles/acme-okta-obo.yaml
+  provider_type: okta-obo-v1
+  provider_name: acme-okta-obo
+  credential_key: OKTA_OBO_ACCESS_TOKEN
+  client_id_env: OKTA_CLIENT_ID
+  client_secret_env: OKTA_CLIENT_SECRET
+  subject_token_env: OKTA_SUBJECT_TOKEN
+  token_url: https://example.okta.com/oauth2/default/v1/token
+  audience: api://orders
+  scopes:
+    - orders.read
+```
+
+`OKTA_SUBJECT_TOKEN` is an access token for the signed-in user. The named client ID, client secret, and subject token must be supplied by the trusted host process, never by the sandbox. The runner sends the standard RFC 8693 form to the reviewed HTTPS Okta token endpoint with confidential-client authentication. It does not follow redirects, logs no response body, and rejects token endpoints outside `okta.com` and its subdomains.
+The returned delegated token is never placed in a command argument, plan, or NemoClaw state file. It is passed only through the environment of the one `openshell provider create` subprocess that stores it in the gateway provider.
+
+This is deliberately a per-apply reference, not automatic OBO renewal. The host application remains responsible for obtaining a current user subject token. When the delegated token expires, roll back the identity provider and apply again with a new subject token. Long-running or multi-user OBO needs a dedicated broker or future OpenShell support for user-credential lifecycle; do not treat this profile as that solution.
 
 ## Sandbox Environment
 

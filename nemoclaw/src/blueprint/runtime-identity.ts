@@ -75,14 +75,26 @@ const RUNTIME_IDENTITY_ENDPOINT_KEYS = Object.freeze([
   "rules",
 ]);
 
+const OBO_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange";
+const OBO_ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token";
+const MAX_OBO_AUDIENCE_LENGTH = 1024;
+const MAX_OBO_SCOPES = 32;
+const MAX_OBO_SCOPE_LENGTH = 256;
+const MAX_OBO_ACCESS_TOKEN_LENGTH = 16 * 1024;
+const OBO_SCOPE_PATTERN = /^[A-Za-z0-9:._/-]+$/;
+
 export interface RuntimeIdentityConfig {
   profile_path: string;
   provider_type: string;
   provider_name: string;
   credential_key: string;
   client_id_env: string;
-  refresh_token_env: string;
+  refresh_token_env?: string;
+  subject_token_env?: string;
   client_secret_env?: string;
+  token_url?: string;
+  audience?: string;
+  scopes?: readonly string[];
 }
 
 export interface RuntimeIdentityPlan {
@@ -123,6 +135,7 @@ export interface RuntimeIdentityValidatedDestination {
 export interface RuntimeIdentityProfilePolicy {
   providerType: string;
   clientIdEnvironmentName: string;
+  flow?: "oauth2-refresh-token" | "oauth2-token-exchange";
   dnsResolution: "reject" | "identity-platform-controlled";
   trustedHostnames: readonly string[];
   trustedHostSuffixes: readonly string[];
@@ -134,6 +147,16 @@ const RUNTIME_IDENTITY_PROFILE_POLICIES: Readonly<Record<string, RuntimeIdentity
     "okta-runtime-v1": Object.freeze({
       providerType: "okta-runtime-v1",
       clientIdEnvironmentName: "OKTA_CLIENT_ID",
+      flow: "oauth2-refresh-token",
+      dnsResolution: "identity-platform-controlled",
+      trustedHostnames: Object.freeze([]),
+      trustedHostSuffixes: Object.freeze(["okta.com"]),
+      trustedBinaries: OKTA_RUNTIME_BINARIES,
+    }),
+    "okta-obo-v1": Object.freeze({
+      providerType: "okta-obo-v1",
+      clientIdEnvironmentName: "OKTA_CLIENT_ID",
+      flow: "oauth2-token-exchange",
       dnsResolution: "identity-platform-controlled",
       trustedHostnames: Object.freeze([]),
       trustedHostSuffixes: Object.freeze(["okta.com"]),
@@ -141,9 +164,21 @@ const RUNTIME_IDENTITY_PROFILE_POLICIES: Readonly<Record<string, RuntimeIdentity
     }),
   });
 
+export interface RuntimeIdentityTokenExchangeRequest {
+  tokenUrl: string;
+  clientId: string;
+  clientSecret: string;
+  subjectToken: string;
+  audience: string;
+  scopes: readonly string[];
+}
+
+export type RuntimeIdentityFetch = (url: string, init: RequestInit) => Promise<Response>;
+
 export interface RuntimeIdentityDeps extends RuntimeIdentityCommandDeps {
   validateEndpointUrl(url: string): Promise<RuntimeIdentityValidatedDestination>;
   persistReceipt(receipt: RuntimeIdentityReceipt): void;
+  exchangeToken?(request: RuntimeIdentityTokenExchangeRequest): Promise<string>;
   profilePolicy?: RuntimeIdentityProfilePolicy;
 }
 
@@ -372,22 +407,39 @@ function parseRuntimeIdentityProfile(
     throw new Error(`${label} credential presentation policy is not supported`);
   }
   const refresh = credentials[0].refresh;
-  if (
-    !isPlainObject(refresh) ||
-    !hasOnlyKeys(refresh, RUNTIME_IDENTITY_REFRESH_KEYS) ||
-    refresh.strategy !== "oauth2_refresh_token" ||
-    typeof refresh.token_url !== "string" ||
-    !Number.isInteger(refresh.refresh_before_seconds) ||
-    (refresh.refresh_before_seconds as number) < 60 ||
-    (refresh.refresh_before_seconds as number) > 3600 ||
-    !Number.isInteger(refresh.max_lifetime_seconds) ||
-    (refresh.max_lifetime_seconds as number) <= (refresh.refresh_before_seconds as number) ||
-    (refresh.max_lifetime_seconds as number) > 86400
-  ) {
-    throw new Error(`${label} must declare a refresh token_url`);
+  let canonicalRefresh: Record<string, unknown> | undefined;
+  let refreshDestination: string | undefined;
+  if ((policy.flow ?? "oauth2-refresh-token") === "oauth2-refresh-token") {
+    if (
+      !isPlainObject(refresh) ||
+      !hasOnlyKeys(refresh, RUNTIME_IDENTITY_REFRESH_KEYS) ||
+      refresh.strategy !== "oauth2_refresh_token" ||
+      typeof refresh.token_url !== "string" ||
+      !Number.isInteger(refresh.refresh_before_seconds) ||
+      (refresh.refresh_before_seconds as number) < 60 ||
+      (refresh.refresh_before_seconds as number) > 3600 ||
+      !Number.isInteger(refresh.max_lifetime_seconds) ||
+      (refresh.max_lifetime_seconds as number) <= (refresh.refresh_before_seconds as number) ||
+      (refresh.max_lifetime_seconds as number) > 86400
+    ) {
+      throw new Error(`${label} must declare a refresh token_url`);
+    }
+    const material = requireExactRefreshMaterial(refresh.material, `${label} refresh material`);
+    refreshDestination = requireHttpsDestination(
+      refresh.token_url,
+      policy,
+      `${label} refresh token_url`,
+    );
+    canonicalRefresh = {
+      strategy: "oauth2_refresh_token",
+      token_url: refreshDestination,
+      refresh_before_seconds: refresh.refresh_before_seconds,
+      max_lifetime_seconds: refresh.max_lifetime_seconds,
+      material,
+    };
+  } else if (refresh !== undefined) {
+    throw new Error(`${label} must not declare OpenShell-managed refresh for token exchange`);
   }
-  const material = requireExactRefreshMaterial(refresh.material, `${label} refresh material`);
-  const tokenUrl = requireHttpsDestination(refresh.token_url, policy, `${label} refresh token_url`);
   const endpoints = parsed.endpoints;
   if (
     !Array.isArray(endpoints) ||
@@ -416,20 +468,17 @@ function parseRuntimeIdentityProfile(
           required: true,
           auth_style: "bearer",
           header_name: "authorization",
-          refresh: {
-            strategy: "oauth2_refresh_token",
-            token_url: tokenUrl,
-            refresh_before_seconds: refresh.refresh_before_seconds,
-            max_lifetime_seconds: refresh.max_lifetime_seconds,
-            material,
-          },
+          ...(canonicalRefresh === undefined ? {} : { refresh: canonicalRefresh }),
         },
       ],
       endpoints: parsedEndpoints.map(({ document }) => document),
       binaries,
       inference_capable: false,
     },
-    destinations: [tokenUrl, ...parsedEndpoints.map(({ destination }) => destination)],
+    destinations: [
+      ...(refreshDestination === undefined ? [] : [refreshDestination]),
+      ...parsedEndpoints.map(({ destination }) => destination),
+    ],
   };
 }
 
@@ -501,26 +550,42 @@ export function parseRuntimeIdentityProviderMetadata(
 }
 
 export function isRuntimeIdentityConfig(value: unknown): value is RuntimeIdentityConfig {
-  if (
-    !isPlainObject(value) ||
-    !hasOnlyKeys(value, [
-      "profile_path",
-      "provider_type",
-      "provider_name",
-      "credential_key",
-      "client_id_env",
-      "refresh_token_env",
-      "client_secret_env",
-    ])
-  ) {
+  if (!isPlainObject(value)) {
     return false;
   }
+  const isRefreshFlow = typeof value.refresh_token_env === "string";
+  const isTokenExchangeFlow = typeof value.subject_token_env === "string";
+  const allowedKeys = isRefreshFlow
+    ? [
+        "profile_path",
+        "provider_type",
+        "provider_name",
+        "credential_key",
+        "client_id_env",
+        "refresh_token_env",
+        "client_secret_env",
+      ]
+    : [
+        "profile_path",
+        "provider_type",
+        "provider_name",
+        "credential_key",
+        "client_id_env",
+        "subject_token_env",
+        "client_secret_env",
+        "token_url",
+        "audience",
+        "scopes",
+      ];
+  if (!hasOnlyKeys(value, allowedKeys) || isRefreshFlow === isTokenExchangeFlow) return false;
+
   const credentialEnvironmentNames = [
     value.client_id_env,
     value.refresh_token_env,
+    value.subject_token_env,
     value.client_secret_env,
   ].filter((name): name is string => typeof name === "string");
-  return (
+  const commonValid =
     typeof value.profile_path === "string" &&
     value.profile_path.trim().length > 0 &&
     typeof value.provider_type === "string" &&
@@ -532,15 +597,43 @@ export function isRuntimeIdentityConfig(value: unknown): value is RuntimeIdentit
     typeof value.client_id_env === "string" &&
     ENV_NAME_PATTERN.test(value.client_id_env) &&
     CLIENT_ID_ENV_PATTERN.test(value.client_id_env) &&
-    typeof value.refresh_token_env === "string" &&
-    ENV_NAME_PATTERN.test(value.refresh_token_env) &&
-    SECRET_MATERIAL_ENV_PATTERN.test(value.refresh_token_env) &&
     (value.client_secret_env === undefined ||
       (typeof value.client_secret_env === "string" &&
         ENV_NAME_PATTERN.test(value.client_secret_env) &&
         SECRET_MATERIAL_ENV_PATTERN.test(value.client_secret_env))) &&
     new Set(credentialEnvironmentNames).size === credentialEnvironmentNames.length &&
-    credentialEnvironmentNames.every((name) => !isSubprocessEnvNameAllowed(name))
+    credentialEnvironmentNames.every((name) => !isSubprocessEnvNameAllowed(name));
+  if (!commonValid) return false;
+
+  if (isRefreshFlow) {
+    return (
+      typeof value.refresh_token_env === "string" &&
+      ENV_NAME_PATTERN.test(value.refresh_token_env) &&
+      SECRET_MATERIAL_ENV_PATTERN.test(value.refresh_token_env)
+    );
+  }
+
+  return (
+    typeof value.subject_token_env === "string" &&
+    ENV_NAME_PATTERN.test(value.subject_token_env) &&
+    SECRET_MATERIAL_ENV_PATTERN.test(value.subject_token_env) &&
+    typeof value.client_secret_env === "string" &&
+    typeof value.token_url === "string" &&
+    value.token_url.length > 0 &&
+    typeof value.audience === "string" &&
+    value.audience.trim().length > 0 &&
+    value.audience.length <= MAX_OBO_AUDIENCE_LENGTH &&
+    !UNSAFE_CONTROL_PATTERN.test(value.audience) &&
+    Array.isArray(value.scopes) &&
+    value.scopes.length > 0 &&
+    value.scopes.length <= MAX_OBO_SCOPES &&
+    value.scopes.every(
+      (scope) =>
+        typeof scope === "string" &&
+        scope.length <= MAX_OBO_SCOPE_LENGTH &&
+        OBO_SCOPE_PATTERN.test(scope),
+    ) &&
+    new Set(value.scopes).size === value.scopes.length
   );
 }
 
@@ -621,6 +714,84 @@ async function requireProviderDerivedPolicy(deps: RuntimeIdentityCommandDeps): P
         "so the attached provider's enforced network policy and credential injection are active",
     );
   }
+}
+
+function requireOktaOBOConfig(
+  config: RuntimeIdentityConfig,
+  policy: RuntimeIdentityProfilePolicy,
+  deps: RuntimeIdentityDeps,
+): Promise<string> {
+  if (
+    policy.flow !== "oauth2-token-exchange" ||
+    typeof config.token_url !== "string" ||
+    typeof config.audience !== "string" ||
+    !Array.isArray(config.scopes)
+  ) {
+    throw new Error("Runtime identity token exchange configuration is invalid");
+  }
+  const tokenUrl = requireHttpsDestination(
+    config.token_url,
+    policy,
+    "Runtime identity token exchange token_url",
+  );
+  return deps.validateEndpointUrl(tokenUrl).then((validated) => {
+    if (validated.dnsResolved && policy.dnsResolution !== "identity-platform-controlled") {
+      throw new Error(
+        `DNS-backed runtime identity destination '${tokenUrl}' is outside the reviewed ` +
+          `DNS policy for '${policy.providerType}'`,
+      );
+    }
+    return tokenUrl;
+  });
+}
+
+export async function exchangeOktaOboToken(
+  request: RuntimeIdentityTokenExchangeRequest,
+  fetchImpl: RuntimeIdentityFetch = fetch,
+): Promise<string> {
+  const form = new URLSearchParams({
+    grant_type: OBO_GRANT_TYPE,
+    subject_token: request.subjectToken,
+    subject_token_type: OBO_ACCESS_TOKEN_TYPE,
+    requested_token_type: OBO_ACCESS_TOKEN_TYPE,
+    audience: request.audience,
+    scope: request.scopes.join(" "),
+  });
+  let response: Response;
+  try {
+    response = await fetchImpl(request.tokenUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${request.clientId}:${request.clientSecret}`).toString("base64")}`,
+        "content-type": "application/x-www-form-urlencoded",
+        "cache-control": "no-store",
+      },
+      body: form,
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new Error("Okta token exchange request failed");
+  }
+  if (!response.ok) {
+    throw new Error(`Okta token exchange failed with HTTP ${String(response.status)}`);
+  }
+  let document: unknown;
+  try {
+    document = await response.json();
+  } catch {
+    throw new Error("Okta token exchange response was not valid JSON");
+  }
+  if (
+    !isPlainObject(document) ||
+    typeof document.access_token !== "string" ||
+    document.access_token.length === 0 ||
+    document.access_token.length > MAX_OBO_ACCESS_TOKEN_LENGTH ||
+    UNSAFE_CONTROL_PATTERN.test(document.access_token)
+  ) {
+    throw new Error("Okta token exchange response did not contain a safe access token");
+  }
+  return document.access_token;
 }
 
 export function resolveRuntimeIdentityProfilePath(
@@ -773,7 +944,11 @@ export async function prepareRuntimeIdentity(
   );
   await validateProfileDestinations(requestedProfile, profilePolicy, deps);
   const clientId = requiredEnvironmentValue(config, config.client_id_env, env);
-  const refreshToken = requiredEnvironmentValue(config, config.refresh_token_env, env);
+  const isRefreshFlow = (profilePolicy.flow ?? "oauth2-refresh-token") === "oauth2-refresh-token";
+  const refreshToken =
+    isRefreshFlow && config.refresh_token_env
+      ? requiredEnvironmentValue(config, config.refresh_token_env, env)
+      : undefined;
   const clientSecret = config.client_secret_env
     ? requiredEnvironmentValue(config, config.client_secret_env, env)
     : undefined;
@@ -828,6 +1003,26 @@ export async function prepareRuntimeIdentity(
     }
   }
 
+  let oboAccessToken: string | undefined;
+  if (!isRefreshFlow) {
+    const subjectToken =
+      config.subject_token_env === undefined
+        ? undefined
+        : requiredEnvironmentValue(config, config.subject_token_env, env);
+    const tokenUrl = await requireOktaOBOConfig(config, profilePolicy, deps);
+    if (!subjectToken || !clientSecret || !config.audience || !config.scopes) {
+      throw new Error("Runtime identity token exchange configuration is invalid");
+    }
+    oboAccessToken = await (deps.exchangeToken ?? exchangeOktaOboToken)({
+      tokenUrl,
+      clientId,
+      clientSecret,
+      subjectToken,
+      audience: config.audience,
+      scopes: config.scopes,
+    });
+  }
+
   const receipt: RuntimeIdentityReceipt = {
     ...plan,
     provider_created: true,
@@ -835,66 +1030,73 @@ export async function prepareRuntimeIdentity(
   };
   let providerAcquired = false;
   try {
-    const providerCreate = await deps.run([
-      "openshell",
-      "provider",
-      "create",
-      "--name",
-      config.provider_name,
-      "--type",
-      config.provider_type,
-      "--runtime-credentials",
-    ]);
+    const providerCreate = await deps.run(
+      [
+        "openshell",
+        "provider",
+        "create",
+        "--name",
+        config.provider_name,
+        "--type",
+        config.provider_type,
+        ...(isRefreshFlow ? ["--runtime-credentials"] : ["--credential", config.credential_key]),
+      ],
+      oboAccessToken === undefined
+        ? undefined
+        : { env: { [config.credential_key]: oboAccessToken } },
+    );
     if (providerCreate.exitCode !== 0) {
       throw new Error(
-        `Failed to create runtime identity provider '${config.provider_name}': ${deps.formatError(commandOutput(providerCreate))}`,
+        `Failed to create runtime identity provider '${config.provider_name}': ${deps.formatError(commandOutput(providerCreate), [oboAccessToken ?? ""])}`,
       );
     }
     providerAcquired = true;
     deps.persistReceipt(receipt);
 
-    const refreshArgs = [
-      "openshell",
-      "provider",
-      "refresh",
-      "configure",
-      config.provider_name,
-      "--credential-key",
-      config.credential_key,
-      "--strategy",
-      "oauth2-refresh-token",
-      "--material",
-      `client_id=${clientId}`,
-      "--secret-material-env",
-      `refresh_token=${config.refresh_token_env}`,
-    ];
-    const refreshEnv: Record<string, string> = {
-      [config.refresh_token_env]: refreshToken,
-    };
-    if (config.client_secret_env && clientSecret) {
-      refreshArgs.push("--secret-material-env", `client_secret=${config.client_secret_env}`);
-      refreshEnv[config.client_secret_env] = clientSecret;
-    }
-    const refreshResult = await deps.run(refreshArgs, { env: refreshEnv });
-    if (refreshResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to configure runtime identity credential refresh: ${deps.formatError(commandOutput(refreshResult), [clientId, refreshToken, clientSecret ?? ""])}`,
-      );
-    }
+    if (isRefreshFlow && config.refresh_token_env && refreshToken) {
+      const refreshArgs = [
+        "openshell",
+        "provider",
+        "refresh",
+        "configure",
+        config.provider_name,
+        "--credential-key",
+        config.credential_key,
+        "--strategy",
+        "oauth2-refresh-token",
+        "--material",
+        `client_id=${clientId}`,
+        "--secret-material-env",
+        `refresh_token=${config.refresh_token_env}`,
+      ];
+      const refreshEnv: Record<string, string> = {
+        [config.refresh_token_env]: refreshToken,
+      };
+      if (config.client_secret_env && clientSecret) {
+        refreshArgs.push("--secret-material-env", `client_secret=${config.client_secret_env}`);
+        refreshEnv[config.client_secret_env] = clientSecret;
+      }
+      const refreshResult = await deps.run(refreshArgs, { env: refreshEnv });
+      if (refreshResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to configure runtime identity credential refresh: ${deps.formatError(commandOutput(refreshResult), [clientId, refreshToken, clientSecret ?? ""])}`,
+        );
+      }
 
-    const rotate = await deps.run([
-      "openshell",
-      "provider",
-      "refresh",
-      "rotate",
-      config.provider_name,
-      "--credential-key",
-      config.credential_key,
-    ]);
-    if (rotate.exitCode !== 0) {
-      throw new Error(
-        `Failed to mint runtime identity credential: ${deps.formatError(commandOutput(rotate))}`,
-      );
+      const rotate = await deps.run([
+        "openshell",
+        "provider",
+        "refresh",
+        "rotate",
+        config.provider_name,
+        "--credential-key",
+        config.credential_key,
+      ]);
+      if (rotate.exitCode !== 0) {
+        throw new Error(
+          `Failed to mint runtime identity credential: ${deps.formatError(commandOutput(rotate))}`,
+        );
+      }
     }
   } catch (error) {
     if (providerAcquired) {
