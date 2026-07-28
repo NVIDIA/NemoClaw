@@ -15,8 +15,10 @@ import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import {
   type RegistryMessagingAuthority,
   resolveMessagingPlanAuthority,
-} from "../../messaging-plan-authority";
+} from "../../../messaging/plan-authority";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
+
+export { resolveMessagingPlanAuthority };
 
 function sameChannelSet(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;

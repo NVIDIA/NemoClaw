@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
-import { resolveMessagingPlanAuthority } from "./messaging-plan-authority";
+import { resolveMessagingPlanAuthority } from "./plan-authority";
 
 function plan(
   sandboxName: string,

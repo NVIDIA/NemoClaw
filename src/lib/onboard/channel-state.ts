@@ -9,7 +9,7 @@ import {
 import {
   type RegistryMessagingAuthority,
   resolveMessagingPlanAuthority,
-} from "./messaging-plan-authority";
+} from "../messaging/plan-authority";
 import { getDisabledChannelsFromPlan } from "./messaging-plan-session";
 
 type DisabledChannelsSession = Pick<onboardSession.Session, "messagingPlan" | "sandboxName">;
