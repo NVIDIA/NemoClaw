@@ -56,11 +56,16 @@ function createDeps(): GatewayHostRuntimeDeps {
 
 describe("gateway host runtime on Homebrew 6.x untrusted tap", () => {
   it("resolves a standalone owner instead of aborting when brew refuses the pinned tap (#7707)", () => {
-    expect(createGatewayHostRuntime(createDeps()).getGatewayOwner()).toMatchObject({
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runtime = createGatewayHostRuntime(createDeps());
+
+    expect(runtime.getGatewayOwner()).toMatchObject({
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       mode: "nemoclaw-managed",
       source: "standalone",
     });
+    expect(runtime.getGatewayOwner()).toMatchObject({ source: "standalone" });
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

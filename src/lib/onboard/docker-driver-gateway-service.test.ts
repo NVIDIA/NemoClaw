@@ -164,6 +164,59 @@ describe("docker-driver-gateway-service", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining(refusal));
   });
 
+  it.each([
+    ["a generic brew info failure", "Error: Permission denied"],
+    [
+      "a refused foreign-tap formula",
+      "Error: Refusing to load formula other/tap/openshell from untrusted tap other/tap.",
+    ],
+  ])("keeps %s fatal during the formula identity check (#7707)", (_case, reason) => {
+    expect(() =>
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        platform: "darwin",
+        spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
+          args[0] === "info" ? spawnResult(1, reason) : spawnResult(),
+        ),
+      }),
+    ).toThrow(`OpenShell Homebrew formula identity check failed: ${reason}`);
+  });
+
+  it("still reports a missing formula when brew list is blocked by the untrusted-tap refusal (#7707)", () => {
+    const refusal =
+      "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
+    expect(() =>
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        platform: "darwin",
+        spawnSyncImpl: () => spawnResult(1, refusal),
+      }),
+    ).toThrow("official OpenShell Homebrew formula is not installed");
+  });
+
+  it("skips the Homebrew-managed start when the formula identity is unconfirmed (#7707)", async () => {
+    const refusal =
+      "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
+    const started = await startPackageManagedDockerDriverGateway({
+      clearDockerDriverGatewayRuntimeFiles: () => {},
+      exitOnFailure: false,
+      gatewayName: "nemoclaw",
+      hasOpenShellGatewayUserService: () =>
+        hasOpenShellGatewayUserService({
+          commandExists: () => true,
+          platform: "darwin",
+          spawnSyncImpl: (_command: string, args: string[]) =>
+            args[0] === "info" ? spawnResult(1, refusal) : spawnResult(),
+        }),
+      registerDockerDriverGatewayEndpoint: () => true,
+      runCaptureOpenshell: () => "",
+      skipSandboxBridgeReachability: true,
+      verifySandboxBridgeGatewayReachableOrExit: async () => {},
+    });
+
+    expect(started).toBe(false);
+  });
+
   it("rejects a missing Homebrew formula when Homebrew is available (#6903)", () => {
     expect(() =>
       hasOpenShellGatewayUserService({

@@ -241,16 +241,24 @@ function hasUpstreamOpenShellGatewayUserService(
 
 const warnedHomebrewIdentityCheckReasons = new Set<string>();
 
-// Homebrew can refuse to load the pinned formula (for example when Homebrew
-// 6.x marks the nvidia/openshell tap untrusted), which leaves the identity
-// unconfirmed without being evidence of a wrong formula. Managing the service
-// through brew would fail the same way, so continue on the standalone gateway
-// instead of aborting (#7707).
+// Homebrew 6.x refuses to load formulae from taps it has not marked trusted.
+// For the pinned official formula that refusal names the right tap, so it is
+// not evidence of a wrong formula, and managing the service through brew would
+// fail the same way. Continue on the standalone gateway fallback instead of
+// aborting; any other brew failure keeps the fail-closed abort (#7707).
+function isPinnedTapLoadRefusal(reason: string): boolean {
+  return reason
+    .replace(/\s+/g, " ")
+    .includes(
+      `Refusing to load formula ${OPENSHELL_GATEWAY_HOMEBREW_TAP}/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE} from untrusted tap ${OPENSHELL_GATEWAY_HOMEBREW_TAP}`,
+    );
+}
+
 function warnHomebrewIdentityCheckUnavailable(reason: string): void {
   if (warnedHomebrewIdentityCheckReasons.has(reason)) return;
   warnedHomebrewIdentityCheckReasons.add(reason);
   console.warn(
-    `  Homebrew could not confirm the OpenShell formula identity; continuing without the Homebrew-managed gateway service.\n  ${reason}`,
+    `  Homebrew could not confirm the OpenShell formula identity; continuing on the standalone gateway fallback.\n  ${reason}`,
   );
 }
 
@@ -275,8 +283,12 @@ function hasOfficialHomebrewFormula(
     spawnSyncImpl,
   });
   if (!info.ok) {
-    warnHomebrewIdentityCheckUnavailable(info.reason ?? "brew info failed");
-    return false;
+    const reason = info.reason ?? "brew info failed";
+    if (isPinnedTapLoadRefusal(reason)) {
+      warnHomebrewIdentityCheckUnavailable(reason);
+      return false;
+    }
+    throw new Error(`OpenShell Homebrew formula identity check failed: ${reason}`);
   }
   try {
     const parsed = JSON.parse(info.stdout ?? "") as {
