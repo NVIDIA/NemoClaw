@@ -266,6 +266,22 @@ describe("sanitizeEnvFileContent", () => {
     expect(result).toContain("PASSPHRASE=[STRIPPED_BY_MIGRATION]");
     expect(result).toContain("# comment");
   });
+
+  it("strips credential keys that use a leading export prefix", () => {
+    const input = [
+      "export DB_PASS=super-secret",
+      "export NODE_ENV=production",
+      "  export  GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+      "",
+    ].join("\n");
+
+    const result = sanitizeEnvFileContent(input);
+    expect(result).toContain("export DB_PASS=[STRIPPED_BY_MIGRATION]");
+    expect(result).toContain("export NODE_ENV=production");
+    expect(result).toContain("export  GITHUB_TOKEN=[STRIPPED_BY_MIGRATION]");
+    expect(result).not.toContain("super-secret");
+    expect(result).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+  });
 });
 
 describe("sanitizeEnvFile", () => {
