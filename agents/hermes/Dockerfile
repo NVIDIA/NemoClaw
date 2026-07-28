@@ -716,6 +716,12 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 # container and retains evidence keyed to the final image ID.
 COPY --from=hermes-scan-payload / /
 
+# These executables are git-tracked 0755 but check out group-writable (0775)
+# under umask 002, and COPY carries that source mode into the image. Normalize
+# before the check_metadata gate below asserts root:root 755. A RUN chmod is
+# builder-independent; COPY --chmod requires BuildKit.
+RUN chmod 755 /usr/local/lib/nemoclaw/hermes-wrapper.py /scripts/checks/node-tar-image-scan.mts
+
 RUN check_metadata() { \
         path="$1"; \
         expected="$2"; \

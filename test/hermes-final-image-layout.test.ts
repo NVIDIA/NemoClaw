@@ -204,6 +204,10 @@ describe("Hermes final image layout", () => {
       'RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]',
     );
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
+    const modeNormalize = indexOfRequired(
+      finalStage,
+      "RUN chmod 755 /usr/local/lib/nemoclaw/hermes-wrapper.py /scripts/checks/node-tar-image-scan.mts",
+    );
     const imageScan = indexOfRequired(
       finalStage,
       "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
@@ -218,6 +222,8 @@ describe("Hermes final image layout", () => {
     expect(wrapper).toBeLessThan(pythonCheck);
     expect(scan).toBeGreaterThan(darwinCompatibility);
     expect(scan).toBeLessThan(metadataCheck);
+    expect(modeNormalize).toBeGreaterThan(scan);
+    expect(modeNormalize).toBeLessThan(metadataCheck);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",

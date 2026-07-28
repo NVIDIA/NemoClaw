@@ -259,18 +259,30 @@ resolve_nemoclaw_gateway_port() {
   printf "%s" "$port"
 }
 
-nemoclaw_state_dir() {
-  local port
-  port="$(resolve_nemoclaw_gateway_port)" || return 1
-  if [ "$port" -eq 8080 ]; then
-    printf "%s/.nemoclaw" "$HOME"
+nemoclaw_state_root() {
+  local home="${HOME%/}"
+  [ -n "$home" ] || home="/"
+  if [ "$home" = "/" ]; then
+    printf "/.nemoclaw"
   else
-    printf "%s/.nemoclaw/gateways/%s" "$HOME" "$port"
+    printf "%s/.nemoclaw" "$home"
+  fi
+}
+
+nemoclaw_state_dir() {
+  local port root
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  root="$(nemoclaw_state_root)" || return 1
+  if [ "$port" -eq 8080 ]; then
+    printf "%s" "$root"
+  else
+    printf "%s/gateways/%s" "$root" "$port"
   fi
 }
 
 assert_nemoclaw_state_path_safe() {
-  local target="$1" root="${HOME}/.nemoclaw" current relative component
+  local target="$1" root current relative component
+  root="$(nemoclaw_state_root)" || return 1
   case "$target" in
     "$root" | "$root"/*) ;;
     *) error "Refusing NemoClaw state path outside ${root}: ${target}" ;;
@@ -296,7 +308,7 @@ assert_nemoclaw_state_path_safe() {
 ensure_nemoclaw_state_dir() {
   local state_dir root gateways_dir
   state_dir="$(nemoclaw_state_dir)" || return 1
-  root="${HOME}/.nemoclaw"
+  root="$(nemoclaw_state_root)" || return 1
   gateways_dir="${root}/gateways"
   assert_nemoclaw_state_path_safe "$state_dir"
   (umask 077 && mkdir -p "$state_dir") || error "Could not create NemoClaw state directory: ${state_dir}"
@@ -3353,10 +3365,16 @@ validate_express_platform_boundary() {
 
 STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
 STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
+STATION_ULTRA_DUAL_SERVED_MODEL="nemotron-ultra"
+STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416"
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
 _STATION_EXPRESS_RESUME_REVISION=""
+_STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
+_STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
+_STATION_EXPRESS_MIGRATING_LEGACY_HEAD=0
+_STATION_INSTALL_MODE=""
 _STATION_EXPRESS_RESUME_LOADED=""
 _STATION_EXPRESS_RESUME_GENERATION=""
 _STATION_EXPRESS_RESUME_GATEWAY_PORT=""
@@ -3479,18 +3497,32 @@ preflight_explicit_express_flags() {
 configure_station_express_model() {
   local selected_model
   selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
+  _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
   if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+    _STATION_EXPRESS_MODEL_WAS_EXPLICIT=1
     NEMOCLAW_VLLM_MODEL="$STATION_DEEPSEEK_VLLM_MODEL"
     NEMOCLAW_MODEL="$STATION_DEEPSEEK_SERVED_MODEL"
   elif [ -z "$selected_model" ]; then
-    NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
-    NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+    if [ "${_STATION_INSTALL_MODE:-}" = "express" ] || [ -n "${NEMOCLAW_DGX_STATION_PEER:-}" ]; then
+      # Station Express keeps its single-host Ultra default. Pair qualification
+      # changes only the serving topology. An explicit peer also selects Ultra
+      # for a provider-driven, non-interactive pair setup.
+      NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
+      NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+    else
+      # A direct provider selection outside Express keeps the Station profile
+      # default unless the operator selects a model or peer.
+      unset NEMOCLAW_VLLM_MODEL
+    fi
   else
+    [ "$selected_model" != "auto" ] \
+      || error "NEMOCLAW_VLLM_MODEL=auto is reserved for DGX Station reboot-resume state. Unset NEMOCLAW_VLLM_MODEL to request automatic selection."
+    _STATION_EXPRESS_MODEL_WAS_EXPLICIT=1
     case "$selected_model" in
       "$STATION_ULTRA_VLLM_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
         NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
         ;;
-      "$STATION_ULTRA_SERVED_MODEL")
+      "$STATION_ULTRA_SERVED_MODEL" | "$STATION_ULTRA_DUAL_SERVED_MODEL")
         # The served alias is useful in route output but is not a Hugging Face
         # repository ID. Normalize it to the registered model slug before the
         # existing managed-vLLM selector consumes it.
@@ -3502,10 +3534,28 @@ configure_station_express_model() {
         ;;
     esac
   fi
-  export NEMOCLAW_VLLM_MODEL
+  if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+    export NEMOCLAW_VLLM_MODEL
+  fi
   if [ -n "${NEMOCLAW_MODEL:-}" ]; then
     export NEMOCLAW_MODEL
   fi
+}
+
+station_dual_model_requested() {
+  local selected_model
+  selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
+  case "$selected_model" in
+    "$STATION_ULTRA_VLLM_MODEL" | "$STATION_ULTRA_SERVED_MODEL" | "$STATION_ULTRA_DUAL_SERVED_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
+      return 0
+      ;;
+    "")
+      [ "${_STATION_INSTALL_MODE:-}" = "express" ] || [ -n "${NEMOCLAW_DGX_STATION_PEER:-}" ]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 station_express_resume_file() {
@@ -3541,6 +3591,10 @@ validate_station_express_resume_policy_tier() {
 
 validate_station_express_resume_revision() {
   [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]
+}
+
+validate_station_install_mode() {
+  [[ "${1:-}" == "express" || "${1:-}" == "provider" ]]
 }
 
 validate_station_express_resume_generation() {
@@ -3581,11 +3635,20 @@ validate_station_express_resume_ports_distinct() {
 
 station_express_resume_generation() {
   local generation
-  [[ -r /proc/sys/kernel/random/uuid ]] \
-    || error "Could not generate a DGX Station express resume receipt identity."
-  IFS= read -r generation </proc/sys/kernel/random/uuid \
-    || error "Could not generate a DGX Station express resume receipt identity."
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    IFS= read -r generation </proc/sys/kernel/random/uuid \
+      || error "Could not generate a DGX Station express resume receipt identity."
+  elif command_exists uuidgen; then
+    generation="$(uuidgen)" \
+      || error "Could not generate a DGX Station express resume receipt identity."
+  elif command_exists openssl; then
+    generation="$(openssl rand -hex 16)" \
+      || error "Could not generate a DGX Station express resume receipt identity."
+  else
+    error "Could not generate a DGX Station express resume receipt identity."
+  fi
   generation="${generation//-/}"
+  generation="$(printf '%s' "$generation" | tr '[:upper:]' '[:lower:]')"
   validate_station_express_resume_generation "$generation" \
     || error "Generated DGX Station express resume receipt identity is invalid."
   printf '%s' "$generation"
@@ -3616,7 +3679,8 @@ assert_station_express_resume_file_safe() {
 }
 
 assert_station_express_resume_directory_safe() {
-  local state_dir=$1 root="${HOME}/.nemoclaw" current relative component mode
+  local state_dir=$1 root current relative component mode
+  root="$(nemoclaw_state_root)" || return 1
   assert_nemoclaw_state_path_safe "$state_dir"
   current="$root"
   relative="${state_dir#"$root"}"
@@ -3641,9 +3705,11 @@ assert_station_express_resume_directory_safe() {
 
 load_station_express_resume() {
   local state_file revision_line model_line generation_line agent_line sandbox_line policy_tier_line
-  local gateway_port_line dashboard_port_line vllm_port_line
-  local line_count saved_revision current_revision saved_agent saved_sandbox saved_policy_tier current_agent
+  local gateway_port_line dashboard_port_line vllm_port_line mode_line
+  local line_count saved_revision saved_model saved_mode current_revision
+  local saved_agent saved_sandbox saved_policy_tier current_agent
   local saved_gateway_port saved_dashboard_port saved_vllm_port current_gateway_port
+  local requested_model="${NEMOCLAW_VLLM_MODEL:-}" requested_mode="${_STATION_INSTALL_MODE:-}"
   state_file="$(station_express_resume_file)" || return 1
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" ]] || return 1
@@ -3658,41 +3724,60 @@ load_station_express_resume() {
   gateway_port_line="$(sed -n '7p' "$state_file")"
   dashboard_port_line="$(sed -n '8p' "$state_file")"
   vllm_port_line="$(sed -n '9p' "$state_file")"
+  mode_line="$(sed -n '10p' "$state_file")"
   saved_revision="${revision_line#revision=}"
-  NEMOCLAW_VLLM_MODEL="${model_line#model=}"
-  _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
-  if [[ "$line_count" == "3" ]]; then
+  saved_model="${model_line#model=}"
+  if [[ "$line_count" == "3" && "$generation_line" == mode=* ]]; then
+    # Compatibility with the pre-receipt dual-Station draft state.
+    saved_mode="${generation_line#mode=}"
+    _STATION_EXPRESS_RESUME_GENERATION="$(station_express_resume_generation)"
+    saved_agent=openclaw
+    saved_sandbox=my-assistant
+    saved_policy_tier=balanced
+  elif [[ "$line_count" == "3" ]]; then
+    _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
+    saved_mode=express
     saved_agent=openclaw
     saved_sandbox=my-assistant
     saved_policy_tier=balanced
   elif [[ "$line_count" == "6" ]]; then
+    _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
+    saved_mode=express
     saved_agent="${agent_line#agent=}"
     saved_sandbox="${sandbox_line#sandbox=}"
     saved_policy_tier="${policy_tier_line#policy_tier=}"
-  elif [[ "$line_count" == "9" ]]; then
+  elif [[ "$line_count" == "9" || "$line_count" == "10" ]]; then
+    _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
+    saved_mode=express
     saved_agent="${agent_line#agent=}"
     saved_sandbox="${sandbox_line#sandbox=}"
     saved_policy_tier="${policy_tier_line#policy_tier=}"
     saved_gateway_port="${gateway_port_line#gateway_port=}"
     saved_dashboard_port="${dashboard_port_line#dashboard_port=}"
     saved_vllm_port="${vllm_port_line#vllm_port=}"
+    if [[ "$line_count" == "10" ]]; then
+      saved_mode="${mode_line#mode=}"
+    fi
   else
     error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
-  if [[ "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" || "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]] \
+  if [[ "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${saved_model}" ]] \
+    || { [[ "$generation_line" != mode=* ]] && [[ "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]]; } \
     || { [[ "$line_count" != "3" ]] && [[ "$agent_line" != "agent=${saved_agent}" || "$sandbox_line" != "sandbox=${saved_sandbox}" || "$policy_tier_line" != "policy_tier=${saved_policy_tier}" ]]; } \
-    || { [[ "$line_count" == "9" ]] && [[ "$gateway_port_line" != "gateway_port=${saved_gateway_port}" || "$dashboard_port_line" != "dashboard_port=${saved_dashboard_port}" || "$vllm_port_line" != "vllm_port=${saved_vllm_port}" ]]; } \
+    || { [[ "$line_count" == "9" || "$line_count" == "10" ]] && [[ "$gateway_port_line" != "gateway_port=${saved_gateway_port}" || "$dashboard_port_line" != "dashboard_port=${saved_dashboard_port}" || "$vllm_port_line" != "vllm_port=${saved_vllm_port}" ]]; } \
+    || { [[ "$line_count" == "10" ]] && [[ "$mode_line" != "mode=${saved_mode}" ]]; } \
     || ! validate_station_express_resume_revision "$saved_revision" \
-    || ! validate_station_express_resume_model "$NEMOCLAW_VLLM_MODEL" \
+    || ! validate_station_express_resume_model "$saved_model" \
     || ! validate_station_express_resume_generation "$_STATION_EXPRESS_RESUME_GENERATION" \
     || ! validate_station_express_resume_agent "$saved_agent" \
     || ! validate_station_express_resume_sandbox "$saved_sandbox" \
     || ! validate_station_express_resume_policy_tier "$saved_policy_tier" \
-    || { [[ "$line_count" == "9" ]] && { ! validate_station_express_resume_port "$saved_gateway_port" || ! validate_station_express_resume_port "$saved_dashboard_port" || ! validate_station_express_resume_port "$saved_vllm_port"; }; }; then
+    || ! validate_station_install_mode "$saved_mode" \
+    || { [[ "$line_count" == "9" || "$line_count" == "10" ]] && { ! validate_station_express_resume_port "$saved_gateway_port" || ! validate_station_express_resume_port "$saved_dashboard_port" || ! validate_station_express_resume_port "$saved_vllm_port"; }; }; then
     error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
   current_gateway_port="$(resolve_nemoclaw_gateway_port)"
-  if [[ "$line_count" != "9" ]]; then
+  if [[ "$line_count" != "9" && "$line_count" != "10" ]]; then
     saved_gateway_port="$current_gateway_port"
     saved_dashboard_port="$(station_express_resume_port_value NEMOCLAW_DASHBOARD_PORT 18789)"
     saved_vllm_port="$(station_express_resume_port_value NEMOCLAW_VLLM_PORT 8000)"
@@ -3710,11 +3795,15 @@ load_station_express_resume() {
   if [[ "$current_revision" != "$saved_revision" ]]; then
     error "DGX Station Express resume requires NemoClaw revision ${saved_revision}, but this installer is ${current_revision}. Rerun with: $(station_express_resume_command)"
   fi
+  if [ -n "$requested_mode" ] && [ "$requested_mode" != "$saved_mode" ]; then
+    error "DGX Station resume state was accepted in ${saved_mode} mode; refusing to resume it in ${requested_mode} mode. Rerun the exact accepted installer command."
+  fi
+  _STATION_INSTALL_MODE="$saved_mode"
   current_agent="${NEMOCLAW_AGENT:-openclaw}"
   if [[ "$current_agent" != "$saved_agent" ]]; then
     error "DGX Station express resume requires NEMOCLAW_AGENT=${saved_agent}. Rerun the exact command printed after host preparation."
   fi
-  if [[ "$line_count" == "9" ]]; then
+  if [[ "$line_count" == "9" || "$line_count" == "10" ]]; then
     if [[ "$current_gateway_port" != "$saved_gateway_port" ]]; then
       error "DGX Station express resume requires NEMOCLAW_GATEWAY_PORT=${saved_gateway_port}. Rerun the exact command printed after host preparation."
     fi
@@ -3733,24 +3822,36 @@ load_station_express_resume() {
   NEMOCLAW_DASHBOARD_PORT="$saved_dashboard_port"
   NEMOCLAW_VLLM_PORT="$saved_vllm_port"
   _STATION_EXPRESS_RESUME_LOADED=1
-  export NEMOCLAW_VLLM_MODEL
   export NEMOCLAW_SANDBOX_NAME
   export NEMOCLAW_POLICY_TIER
   export NEMOCLAW_GATEWAY_PORT
   export NEMOCLAW_DASHBOARD_PORT
   export NEMOCLAW_VLLM_PORT
   export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$_STATION_EXPRESS_RESUME_GENERATION"
+  if [ -n "$(normalize_station_vllm_model "$requested_model")" ]; then
+    NEMOCLAW_VLLM_MODEL="$requested_model"
+    export NEMOCLAW_VLLM_MODEL
+    if station_dual_pair_resume_pending && ! station_dual_model_requested; then
+      error "A dual-DGX Station pair resume is pending; refusing to replace its model with '${requested_model}' before the exact pair is revalidated. Rerun with the accepted dual-Station model or remove the override."
+    fi
+  elif [ "$saved_model" = "auto" ]; then
+    unset NEMOCLAW_VLLM_MODEL
+  else
+    NEMOCLAW_VLLM_MODEL="$saved_model"
+    export NEMOCLAW_VLLM_MODEL
+  fi
 }
 
 save_station_express_resume() {
   local state_file state_dir temp_file revision generation
-  local model="${NEMOCLAW_VLLM_MODEL:-}" agent="${NEMOCLAW_AGENT:-openclaw}"
+  local model="${NEMOCLAW_VLLM_MODEL:-auto}" agent="${NEMOCLAW_AGENT:-openclaw}"
   local sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}" policy_tier="${NEMOCLAW_POLICY_TIER:-balanced}"
-  local gateway_port dashboard_port vllm_port
+  local gateway_port dashboard_port vllm_port mode="${_STATION_INSTALL_MODE:-express}"
   validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
   validate_station_express_resume_agent "$agent" || error "Cannot save an invalid DGX Station express agent."
   validate_station_express_resume_sandbox "$sandbox" || error "Cannot save an invalid DGX Station express sandbox name."
   validate_station_express_resume_policy_tier "$policy_tier" || error "Cannot save an invalid DGX Station express policy tier."
+  validate_station_install_mode "$mode" || error "Cannot save an invalid DGX Station installer resume mode."
   gateway_port="$(resolve_nemoclaw_gateway_port)"
   dashboard_port="$(station_express_resume_port_value NEMOCLAW_DASHBOARD_PORT 18789)"
   vllm_port="$(station_express_resume_port_value NEMOCLAW_VLLM_PORT 8000)"
@@ -3774,9 +3875,9 @@ save_station_express_resume() {
     rm -f "$temp_file"
     error "Could not secure DGX Station express resume state under ${state_dir}."
   }
-  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\nagent=%s\nsandbox=%s\npolicy_tier=%s\ngateway_port=%s\ndashboard_port=%s\nvllm_port=%s\n' \
+  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\nagent=%s\nsandbox=%s\npolicy_tier=%s\ngateway_port=%s\ndashboard_port=%s\nvllm_port=%s\nmode=%s\n' \
     "$revision" "$model" "$generation" "$agent" "$sandbox" "$policy_tier" \
-    "$gateway_port" "$dashboard_port" "$vllm_port" >"$temp_file"; then
+    "$gateway_port" "$dashboard_port" "$vllm_port" "$mode" >"$temp_file"; then
     rm -f "$temp_file"
     error "Could not write DGX Station express resume state under ${state_dir}."
   fi
@@ -3793,11 +3894,16 @@ save_station_express_resume() {
   _STATION_EXPRESS_RESUME_GATEWAY_PORT="$gateway_port"
   _STATION_EXPRESS_RESUME_DASHBOARD_PORT="$dashboard_port"
   _STATION_EXPRESS_RESUME_VLLM_PORT="$vllm_port"
+  _STATION_INSTALL_MODE="$mode"
 }
 
 station_express_resume_command() {
-  printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s NEMOCLAW_AGENT=%s NEMOCLAW_SANDBOX_NAME=%s NEMOCLAW_POLICY_TIER=%s NEMOCLAW_GATEWAY_PORT=%s NEMOCLAW_DASHBOARD_PORT=%s NEMOCLAW_VLLM_PORT=%s bash' \
-    "$_STATION_EXPRESS_RESUME_REVISION" "$_STATION_EXPRESS_RESUME_AGENT" \
+  local provider_assignment=""
+  if [ "${_STATION_INSTALL_MODE:-express}" = "provider" ]; then
+    provider_assignment="NEMOCLAW_PROVIDER=install-vllm "
+  fi
+  printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | %sNEMOCLAW_INSTALL_TAG=%s NEMOCLAW_AGENT=%s NEMOCLAW_SANDBOX_NAME=%s NEMOCLAW_POLICY_TIER=%s NEMOCLAW_GATEWAY_PORT=%s NEMOCLAW_DASHBOARD_PORT=%s NEMOCLAW_VLLM_PORT=%s bash' \
+    "$provider_assignment" "$_STATION_EXPRESS_RESUME_REVISION" "$_STATION_EXPRESS_RESUME_AGENT" \
     "$_STATION_EXPRESS_RESUME_SANDBOX" "$_STATION_EXPRESS_RESUME_POLICY_TIER" \
     "$_STATION_EXPRESS_RESUME_GATEWAY_PORT" "$_STATION_EXPRESS_RESUME_DASHBOARD_PORT" \
     "$_STATION_EXPRESS_RESUME_VLLM_PORT"
@@ -3945,6 +4051,9 @@ express_wsl_can_use_windows_host_ollama() {
 activate_express_install() {
   local platform="$1"
   _SELECTED_EXPRESS_PLATFORM="$platform"
+  if [ "$platform" = "DGX Station" ]; then
+    _STATION_INSTALL_MODE="express"
+  fi
   NON_INTERACTIVE=1
   export NEMOCLAW_NON_INTERACTIVE=1
   export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
@@ -3980,6 +4089,19 @@ activate_express_install() {
   esac
 }
 
+resume_loaded_station_install() {
+  local platform="$1"
+  if [ "$_STATION_INSTALL_MODE" = "provider" ]; then
+    _SELECTED_EXPRESS_PLATFORM="$platform"
+    export NEMOCLAW_PROVIDER=install-vllm
+    configure_station_express_model
+    info "Detected DGX Station. Resuming the accepted managed-vLLM provider setup after host preparation."
+  else
+    info "Detected DGX Station. Resuming the accepted express install after host preparation."
+    activate_express_install "$platform"
+  fi
+}
+
 run_station_host_preparation() {
   # Public curl|bash starts in the root bootstrap, which clones the complete
   # selected ref before executing this payload. Keep the sibling lookup and
@@ -4011,8 +4133,80 @@ filter_station_host_preparation_output() {
   done
 }
 
+station_local_default_docker() {
+  (
+    unset DOCKER_HOST DOCKER_CONTEXT
+    docker --context default "$@"
+  )
+}
+
+station_managed_dual_head_running() {
+  command_exists docker || return 1
+
+  local inspection name running managed role schema cluster launch_contract api_fingerprint transaction
+  inspection="$(
+    station_local_default_docker container inspect --format \
+      '{{.Name}} {{.State.Running}} {{index .Config.Labels "com.nvidia.nemoclaw.managed-vllm"}} {{index .Config.Labels "com.nvidia.nemoclaw.vllm-role"}} {{index .Config.Labels "com.nvidia.nemoclaw.vllm-launch-schema"}} {{index .Config.Labels "com.nvidia.nemoclaw.vllm-cluster"}} {{index .Config.Labels "com.nvidia.nemoclaw.vllm-launch-contract"}} {{index .Config.Labels "com.nvidia.nemoclaw.vllm-api-key-fingerprint"}} {{index .Config.Labels "com.nvidia.nemoclaw.vllm-transaction"}}' \
+      nemoclaw-vllm 2>/dev/null
+  )" || return 1
+  read -r name running managed role schema cluster launch_contract api_fingerprint transaction <<<"$inspection"
+  [[ "$name" == "/nemoclaw-vllm" &&
+    "$running" == "true" &&
+    "$managed" == "true" &&
+    "$role" == "head" &&
+    "$schema" == "2" &&
+    "$cluster" =~ ^[a-f0-9]{64}$ &&
+    "$launch_contract" =~ ^[a-f0-9]{64}$ &&
+    "$api_fingerprint" =~ ^[a-f0-9]{64}$ &&
+    "$transaction" =~ ^[a-f0-9]{32}$ ]]
+}
+
+station_migratable_legacy_single_head_running() {
+  command_exists docker || return 1
+
+  local inspection name running image managed role endpoint cluster gpu schema launch_contract api_fingerprint transaction
+  inspection="$(
+    station_local_default_docker container inspect --format \
+      '{{.Name}}|{{.State.Running}}|{{.Config.Image}}|{{with index .Config.Labels "com.nvidia.nemoclaw.managed-vllm"}}{{.}}{{else}}-{{end}}|{{with index .Config.Labels "com.nvidia.nemoclaw.vllm-role"}}{{.}}{{else}}-{{end}}|{{with index .Config.Labels "com.nvidia.nemoclaw.vllm-endpoint"}}{{.}}{{else}}-{{end}}|{{with index .Config.Labels "com.nvidia.nemoclaw.vllm-cluster"}}{{.}}{{else}}-{{end}}|{{with index .Config.Labels "com.nvidia.nemoclaw.vllm-gpu"}}{{.}}{{else}}-{{end}}|{{with index .Config.Labels "com.nvidia.nemoclaw.vllm-launch-schema"}}{{.}}{{else}}-{{end}}|{{with index .Config.Labels "com.nvidia.nemoclaw.vllm-launch-contract"}}{{.}}{{else}}-{{end}}|{{with index .Config.Labels "com.nvidia.nemoclaw.vllm-api-key-fingerprint"}}{{.}}{{else}}-{{end}}|{{with index .Config.Labels "com.nvidia.nemoclaw.vllm-transaction"}}{{.}}{{else}}-{{end}}' \
+      nemoclaw-vllm 2>/dev/null
+  )" || return 1
+  IFS='|' read -r name running image managed role endpoint cluster gpu schema launch_contract api_fingerprint transaction <<<"$inspection"
+  [[ "$name" == "/nemoclaw-vllm" &&
+    "$running" == "true" &&
+    "$image" == "$STATION_ULTRA_LEGACY_VLLM_IMAGE" &&
+    "$managed" == "true" &&
+    "$role" == "-" &&
+    "$endpoint" == "-" &&
+    "$cluster" == "-" &&
+    "$gpu" == "-" &&
+    "$schema" == "-" &&
+    "$launch_contract" == "-" &&
+    "$api_fingerprint" == "-" &&
+    "$transaction" == "-" ]]
+}
+
 ensure_station_express_host() {
   [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
+
+  _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
+  _STATION_EXPRESS_MIGRATING_LEGACY_HEAD=0
+  if station_dual_model_requested && station_managed_dual_head_running; then
+    # The host-preparation helper intentionally refuses active workloads. Only
+    # this complete dual-head ownership contract may defer local preparation;
+    # the post-Node coordinator revalidates the reciprocal physical pair before
+    # the existing lifecycle is allowed to reuse it.
+    _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=1
+    info "Found a complete running NemoClaw-managed dual-Station head candidate; deferring host preparation until reciprocal pair and lifecycle validation."
+    return 0
+  fi
+  if station_dual_model_requested && station_migratable_legacy_single_head_running; then
+    # This exact frozen legacy head is the only single-host workload that the
+    # dual lifecycle can migrate. Bind its controller without running the
+    # workload-rejecting host probes, then prepare the newly qualified peer.
+    _STATION_EXPRESS_MIGRATING_LEGACY_HEAD=1
+    info "Found the exact running legacy single-Station Ultra head; deferring workload-safe controller binding and reciprocal peer preparation."
+    return 0
+  fi
 
   # Publish the accepted, secret-free recipe before the helper can mutate the
   # host. The same receipt then binds reboot/login continuation and onboarding
@@ -4066,8 +4260,222 @@ ensure_station_express_host() {
   esac
 }
 
+station_dual_pair_resume_file() {
+  local state_dir
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  printf '%s/station-dual-pair-resume.json' "$state_dir"
+}
+
+station_dual_pair_resume_pending() {
+  local state_file
+  state_file="$(station_dual_pair_resume_file)" || return 1
+  [[ -e "$state_file" || -L "$state_file" ]] || return 1
+  assert_nemoclaw_state_path_safe "$state_file"
+  return 0
+}
+
+validate_station_pair_selection() {
+  [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
+  station_dual_model_requested && return 0
+  [ -z "${NEMOCLAW_DGX_STATION_PEER:-}" ] \
+    || error "NEMOCLAW_DGX_STATION_PEER requires the DGX Station dual-serving model. Unset NEMOCLAW_VLLM_MODEL or select ${STATION_ULTRA_VLLM_MODEL}; the explicit model override remains authoritative."
+  station_dual_pair_resume_pending \
+    && error "A dual-DGX Station pair resume is pending; refusing to bypass exact pair revalidation with model '${NEMOCLAW_VLLM_MODEL:-}'."
+  return 0
+}
+
+parse_station_dual_pair_result() {
+  # The single-quoted payload is JavaScript, not shell interpolation.
+  # shellcheck disable=SC2016
+  node -e '
+    const fs = require("node:fs");
+    const net = require("node:net");
+    const path = require("node:path");
+    const fail = () => process.exit(2);
+    try {
+      const raw = fs.readFileSync(0, "utf8");
+      const value = JSON.parse(raw);
+      if (!value || typeof value !== "object" || Array.isArray(value)) fail();
+      if (value.kind === "single-station") {
+        if (typeof value.reason !== "string" || value.reason.length === 0 || value.reason.length > 4096) fail();
+        process.stdout.write("single-station\n");
+        process.exit(0);
+      }
+      if (value.kind !== "ready" && value.kind !== "reboot-required") fail();
+      const peer = value.peerTarget;
+      if (typeof peer !== "string" || peer.length === 0 || peer.length > 286 || peer !== peer.trim()) fail();
+      const parts = peer.split("@");
+      if (parts.length > 2) fail();
+      const user = parts.length === 2 ? parts[0] : "";
+      const host = parts[parts.length - 1];
+      const safeUser = /^[A-Za-z_][A-Za-z0-9._-]*$/;
+      const safeHost = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+      const numericHost = /^[0-9.]+$/.test(host);
+      if ((user && !safeUser.test(user)) || (net.isIP(host) !== 4 && (numericHost || !safeHost.test(host)))) fail();
+      const identity = value.identity;
+      if (!identity || typeof identity !== "object" || Array.isArray(identity)) fail();
+      if (identity.peerTarget !== peer || !/^[a-f0-9]{64}$/.test(identity.hostKeyDigest)) fail();
+      if (!/^GPU-[A-Za-z0-9-]+$/.test(identity.localGpuUuid) || !/^GPU-[A-Za-z0-9-]+$/.test(identity.peerGpuUuid)) fail();
+      if (!Array.isArray(identity.rails) || identity.rails.length !== 2) fail();
+      const mac = /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/;
+      for (const rail of identity.rails) {
+        if (!rail || typeof rail !== "object" || Array.isArray(rail)) fail();
+        if (net.isIP(rail.localAddress) !== 4 || net.isIP(rail.peerAddress) !== 4) fail();
+        if (!mac.test(rail.localMac) || !mac.test(rail.peerMac)) fail();
+      }
+      const token = value.sshBinding;
+      if (typeof token !== "string" || token.length === 0 || token.length > 8192 || !/^[A-Za-z0-9_-]+$/.test(token)) fail();
+      let handoff;
+      try {
+        const decoded = Buffer.from(token, "base64url");
+        if (decoded.toString("base64url") !== token) fail();
+        handoff = JSON.parse(decoded.toString("utf8"));
+      } catch {
+        fail();
+      }
+      if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) fail();
+      if (JSON.stringify(Object.keys(handoff).sort()) !== JSON.stringify(["bindingFile", "hostKeyDigest"])) fail();
+      const bindingFile = handoff.bindingFile;
+      if (typeof bindingFile !== "string" || bindingFile.length === 0 || bindingFile.length > 4096 || bindingFile !== bindingFile.trim() || /[\u0000-\u001f\u007f]/.test(bindingFile)) fail();
+      if (!path.isAbsolute(bindingFile) || path.normalize(bindingFile) !== bindingFile) fail();
+      if (handoff.hostKeyDigest !== identity.hostKeyDigest) fail();
+      process.stdout.write(`${value.kind}\n${peer}\n${token}\n`);
+    } catch {
+      fail();
+    }
+  '
+}
+
+ensure_station_express_pair() {
+  [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
+  validate_station_pair_selection
+  if ! station_dual_model_requested; then
+    return 0
+  fi
+
+  local coordinator="${SCRIPT_DIR}/prepare-dual-dgx-station.mts"
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$coordinator" ]] || error "Dual DGX Station preparation coordinator is missing: ${coordinator}"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+
+  local state_dir state_file revision output parsed kind peer_target ssh_binding status=0
+  state_dir="$(ensure_nemoclaw_state_dir)" || error "Could not prepare owner-only NemoClaw state for dual DGX Station discovery."
+  state_file="${state_dir}/station-dual-pair-resume.json"
+  assert_nemoclaw_state_path_safe "$state_file"
+  revision="$(station_installer_revision)"
+
+  local -a pair_command=(
+    node --no-warnings --experimental-strip-types "$coordinator"
+    --helper "$helper"
+    --state "$state_file"
+    --revision "$revision"
+  )
+  if [ -n "${NEMOCLAW_DGX_STATION_PEER:-}" ]; then
+    pair_command+=(--explicit-peer "$NEMOCLAW_DGX_STATION_PEER")
+  fi
+  if [ "${_STATION_EXPRESS_DEFERRED_MANAGED_PAIR:-0}" = "1" ]; then
+    pair_command+=(--reuse-existing-managed-pair)
+  fi
+  if [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" = "1" ]; then
+    pair_command+=(--migrate-legacy-single-head)
+  fi
+
+  info "Checking for one pretrusted reciprocal dual-DGX Station peer on the two direct /30 rail counterparts."
+  # Publish the companion mode/model state before the coordinator can persist
+  # pair identity and mutate the remote host. A crash, mismatch, or later
+  # onboarding failure must resume this exact accepted setup without returning
+  # to a prompt or silently falling back.
+  save_station_express_resume
+  output="$("${pair_command[@]}")" || status=$?
+  case "$status" in
+    0 | 10) ;;
+    *)
+      if ! station_dual_pair_resume_pending; then
+        clear_station_express_resume
+      fi
+      error "Dual DGX Station preparation failed. No serving-model or vLLM-image pull was started; review the station-pair diagnostics above and rerun the same revision."
+      ;;
+  esac
+  if ! parsed="$(printf '%s' "$output" | parse_station_dual_pair_result)"; then
+    if ! station_dual_pair_resume_pending; then
+      clear_station_express_resume
+    fi
+    error "Dual DGX Station preparation returned invalid result data; refusing to continue."
+  fi
+  kind="$(printf '%s\n' "$parsed" | sed -n '1p')"
+  peer_target="$(printf '%s\n' "$parsed" | sed -n '2p')"
+  ssh_binding="$(printf '%s\n' "$parsed" | sed -n '3p')"
+
+  case "$kind" in
+    single-station)
+      [ "$status" -eq 0 ] \
+        || error "Dual DGX Station preparation returned an inconsistent reboot result; refusing to continue."
+      [ "${_STATION_EXPRESS_DEFERRED_MANAGED_PAIR:-0}" != "1" ] \
+        || error "The running managed dual-Station head could not be matched to its trusted reciprocal peer; refusing single-Station fallback."
+      [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" != "1" ] \
+        || error "The running legacy single-Station head could not be matched to a trusted reciprocal peer; refusing migration and single-Station fallback."
+      [ -z "${NEMOCLAW_DGX_STATION_PEER:-}" ] \
+        || error "The explicit DGX Station peer could not be qualified; refusing single-Station fallback."
+      station_dual_pair_resume_pending \
+        && error "Dual DGX Station preparation returned a single-Station result while exact pair resume state is pending; refusing to discard it."
+      clear_station_express_resume
+      if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
+        NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
+        NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+        export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
+      fi
+      unset NEMOCLAW_DGX_STATION_SSH_BINDING
+      info "No trusted reciprocal dual-DGX Station pair was detected; using the existing single-Station Ultra recipe."
+      ;;
+    ready)
+      [ "$status" -eq 0 ] \
+        || error "Dual DGX Station preparation returned an inconsistent ready result; refusing to continue."
+      station_dual_pair_resume_pending \
+        || error "Dual DGX Station preparation returned ready without exact pair resume state; refusing to continue."
+      NEMOCLAW_DGX_STATION_PEER="$peer_target"
+      NEMOCLAW_DGX_STATION_SSH_BINDING="$ssh_binding"
+      export NEMOCLAW_DGX_STATION_PEER NEMOCLAW_DGX_STATION_SSH_BINDING
+      NEMOCLAW_MODEL="$STATION_ULTRA_DUAL_SERVED_MODEL"
+      export NEMOCLAW_MODEL
+      if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
+        NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
+        export NEMOCLAW_VLLM_MODEL
+      fi
+      ok "Trusted reciprocal dual-DGX Station pair is ready (${peer_target})"
+      ;;
+    reboot-required)
+      [ "$status" -eq 10 ] \
+        || error "Dual DGX Station preparation returned an inconsistent reboot result; refusing to continue."
+      station_dual_pair_resume_pending \
+        || error "Dual DGX Station preparation requested a reboot without exact pair resume state; refusing to continue."
+      save_station_express_resume
+      warn "Peer DGX Station ${peer_target} was prepared and requires a manual reboot."
+      info "On peer ${peer_target}, run: sudo reboot"
+      info "After the peer is back online, rerun the accepted revision on this Station:"
+      info "$(station_express_resume_command)"
+      exit 10
+      ;;
+    *)
+      error "Dual DGX Station preparation returned an unsupported result; refusing to continue."
+      ;;
+  esac
+}
+
+clear_station_dual_pair_resume() {
+  local state_file coordinator="${SCRIPT_DIR}/prepare-dual-dgx-station.mts"
+  state_file="$(station_dual_pair_resume_file)" || return 0
+  assert_nemoclaw_state_path_safe "$state_file"
+  [[ -e "$state_file" || -L "$state_file" || -e "${state_file}.ssh-binding" || -L "${state_file}.ssh-binding" ]] || return 0
+  [[ -f "$coordinator" ]] || error "Dual DGX Station preparation coordinator is missing: ${coordinator}"
+  node --no-warnings --experimental-strip-types "$coordinator" --state "$state_file" --clear-state >/dev/null \
+    || error "Could not safely clear completed dual DGX Station resume state: ${state_file}"
+}
+
 prepare_installer_host() {
   maybe_offer_express_install
+  # Reject conflicting explicit Station selections and pending-pair bypasses
+  # before the local host-preparation helper can mutate packages or Docker.
+  validate_station_pair_selection
   if [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
     # Station qualification is deliberately scoped to the local factory
     # runtime. Normalize the Docker target before any preparation probe so an
@@ -4120,8 +4528,8 @@ describe_express_install() {
         esac
       else
         show_hf_authentication="1"
-        inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
-        inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
+        inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B and automatic Station topology selection"
+        inference_disclosure="A pretrusted reciprocal dual-Station pair selects distributed serving; otherwise NemoClaw uses the existing single-Station Ultra recipe. The pinned image and approximately 352 GB model are pulled only after topology qualification."
       fi
       case "$(classify_dgx_station_release)" in
         supported-dgx-os)
@@ -4211,6 +4619,25 @@ maybe_offer_express_install() {
   validate_express_platform_boundary "$platform"
   validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
+
+  # Pair state is written before remote mutation. It therefore outranks every
+  # prompt/skip path and must recover the companion exact-revision mode/model
+  # state before any generic or single-Station setup can continue.
+  if station_dual_pair_resume_pending; then
+    [ "$platform" = "DGX Station" ] \
+      || error "A dual-DGX Station pair resume is pending, but this host no longer satisfies the DGX Station preparation boundary. Refusing to continue without exact pair revalidation."
+    [ "${NEMOCLAW_NO_EXPRESS:-}" != "1" ] \
+      || error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before disabling Station setup."
+    case "${NEMOCLAW_PROVIDER:-}" in
+      "") ;;
+      install-vllm) _STATION_INSTALL_MODE="provider" ;;
+      *) error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before changing providers." ;;
+    esac
+    load_station_express_resume \
+      || error "Dual-DGX Station pair state exists without its required installer resume state. Refusing to prompt, fall back, or continue; restore the owner-only state from the accepted revision."
+    resume_loaded_station_install "$platform"
+    return 0
+  fi
   # Not on a platform we have an express recipe for — say nothing.
   if [ -z "$platform" ]; then
     return 0
@@ -4218,18 +4645,36 @@ maybe_offer_express_install() {
   # On a supported platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
-    if [ "$platform" = "DGX Station" ]; then clear_station_express_resume; fi
+    if [ "$platform" = "DGX Station" ]; then
+      station_dual_pair_resume_pending \
+        && error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before disabling Station setup."
+      clear_station_express_resume
+    fi
     info "Detected ${platform}. Skipping express prompt (NEMOCLAW_NO_EXPRESS=1)."
     return 0
   fi
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
-    if [ "$platform" = "DGX Station" ]; then clear_station_express_resume; fi
+    if [ "$platform" = "DGX Station" ] && [ "$NEMOCLAW_PROVIDER" = "install-vllm" ]; then
+      # An explicit managed-vLLM provider selects the same Station host/pair
+      # preparation boundary without forcing the rest of the express policy.
+      # Honor an existing exact-revision reboot resume before configuration.
+      _STATION_INSTALL_MODE="provider"
+      load_station_express_resume || true
+      _SELECTED_EXPRESS_PLATFORM="$platform"
+      configure_station_express_model
+      info "Detected ${platform}. Using Station preparation for the explicitly selected managed-vLLM provider."
+      return 0
+    fi
+    if [ "$platform" = "DGX Station" ]; then
+      station_dual_pair_resume_pending \
+        && error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before changing providers."
+      clear_station_express_resume
+    fi
     info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
     return 0
   fi
   if [ "$platform" = "DGX Station" ] && load_station_express_resume; then
-    info "Detected DGX Station. Resuming the accepted express install after host preparation."
-    activate_express_install "$platform"
+    resume_loaded_station_install "$platform"
     return 0
   fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
@@ -4392,6 +4837,7 @@ main() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
+  ensure_station_express_pair
 
   step 2 "${_CLI_DISPLAY} CLI"
   # Ollama and vLLM install/upgrade and model pulls are owned by
@@ -4436,7 +4882,8 @@ main() {
         if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
-        elif [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
+        elif [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
+          || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
           info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
           run_onboard || error "Onboarding did not complete successfully."
@@ -4459,6 +4906,14 @@ main() {
   fi
 
   finalize_install
+  clear_station_resume_after_completed_onboarding
+}
+
+clear_station_resume_after_completed_onboarding() {
+  [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
+  [[ "${ONBOARD_RAN:-false}" == true ]] || return 0
+  clear_station_dual_pair_resume
+  clear_station_express_resume
 }
 
 # Print the completion summary, then propagate a fatal/non-zero result when the
