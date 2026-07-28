@@ -17,7 +17,7 @@ export const RUNTIME_CONFIG_GUARD = path.join(
   "runtime-config-guard.py",
 );
 
-const HERMES_GUARD_TIMEOUT_MS = 90_000;
+export const HERMES_GUARD_TIMEOUT_MS = 90_000;
 
 export interface RestartFixture {
   root: string;

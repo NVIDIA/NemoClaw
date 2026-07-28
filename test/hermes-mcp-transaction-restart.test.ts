@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -9,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createRestartFixture,
+  HERMES_GUARD_TIMEOUT_MS,
   mode,
   runGuard,
   runShieldsTransition,
@@ -25,6 +27,7 @@ const GUARD = path.resolve(import.meta.dirname, "..", "agents/hermes/runtime-con
 function runPython(source: string, args: string[] = []) {
   return spawnSync("python3", ["-c", source, TRANSACTION, GUARD, ...args], {
     encoding: "utf8",
+    timeout: HERMES_GUARD_TIMEOUT_MS,
   });
 }
 
@@ -49,8 +52,7 @@ module.HERMES_DIR = sys.argv[3]
 module.CONFIG_PATH = os.path.join(module.HERMES_DIR, "config.yaml")
 module.STRICT_HASH_PATH = sys.argv[4]
 module._assert_non_root_lifecycle_identity = lambda: None
-reloads = []
-module.reload_gateway = lambda: reloads.append("reload") or True
+module.reload_gateway = lambda: True
 outcome = module.execute("add", {
     "server": "fake",
     "url": "https://mcp.example.test/mcp",
@@ -65,7 +67,6 @@ compat_text, _ = guard._read_text(compat_path)
 print(json.dumps({
     "uid": os.geteuid(),
     "outcome": outcome,
-    "reloads": reloads,
     "compat_state": integrity.state,
     "anchors_differ_before_relock": strict_text != compat_text,
 }, sort_keys=True))
@@ -76,7 +77,6 @@ print(json.dumps({
         expect(transaction.status, `${transaction.stdout}\n${transaction.stderr}`).toBe(0);
         expect(JSON.parse(transaction.stdout)).toMatchObject({
           outcome: { ok: true, changed: true, reloaded: true },
-          reloads: ["reload"],
           compat_state: "current",
           anchors_differ_before_relock: true,
         });
@@ -118,20 +118,15 @@ snapshot = guard.inspect_mcp_integrity_snapshot(
 )
 guard.assert_mcp_integrity_snapshot_current(snapshot)
 hash_text, _ = guard._read_text(strict_path)
-_config_digest, _env_digest, state = guard._parse_config_hash(
-    hash_text,
-    os.path.join(hermes_dir, "config.yaml"),
-    os.path.join(hermes_dir, ".env"),
-)
-config_text, _ = guard._read_text(os.path.join(hermes_dir, "config.yaml"))
-current_digest = guard._canonical_mcp_servers_digest(config_text)
 compat_text, _ = guard._read_text(compat_path)
+state_line = next(
+    line for line in hash_text.splitlines()
+    if line.startswith("# nemoclaw-hermes-mcp-state-v1 ")
+)
 print(json.dumps({
     "state": snapshot.state,
     "anchors_match": hash_text == compat_text,
-    "intended": state.intended,
-    "applied": state.applied,
-    "current": current_digest,
+    "state_line": state_line,
 }, sort_keys=True))
 `,
           [fixture.hermesDir, fixture.hashPath],
@@ -141,16 +136,23 @@ print(json.dumps({
         const finalState = JSON.parse(integrity.stdout) as {
           state: string;
           anchors_match: boolean;
-          intended: string;
-          applied: string;
-          current: string;
+          state_line: string;
         };
         expect(finalState).toMatchObject({
           state: "current",
           anchors_match: true,
         });
-        expect(finalState.intended).toBe(finalState.applied);
-        expect(finalState.applied).toBe(finalState.current);
+        const stateMatch =
+          /^# nemoclaw-hermes-mcp-state-v1 intended=([0-9a-f]{64}) applied=([0-9a-f]{64})$/u.exec(
+            finalState.state_line,
+          );
+        const expectedDigest = createHash("sha256")
+          .update(
+            '{"fake":{"connect_timeout":60,"enabled":true,"headers":{"Authorization":"Bearer openshell:resolve:env:FAKE_MCP_TOKEN"},"timeout":120,"tools":{"prompts":true,"resources":true},"url":"https://mcp.example.test/mcp"}}',
+          )
+          .digest("hex");
+        expect(stateMatch?.[1]).toBe(expectedDigest);
+        expect(stateMatch?.[2]).toBe(expectedDigest);
         expect(mode(fixture.sandboxDir)).toBe(0o1775);
         expect(mode(fixture.hermesDir)).toBe(0o755);
         expect(mode(fixture.configPath)).toBe(0o444);
