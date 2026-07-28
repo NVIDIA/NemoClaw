@@ -119,11 +119,14 @@ describe("native security package remediation", () => {
         .readFileSync(path.join(harnessLog, "arguments"), "utf-8")
         .trim()
         .split("\n");
-      expect(argumentsList).toHaveLength(25);
-      expect(argumentsList.at(0)).toBe("./docker-1");
-      expect(argumentsList.at(-1)).toBe("./test_read_algos.test");
-      expect(fs.readFileSync(path.join(harnessLog, "environment"), "utf-8")).toContain(
-        "PerSourcePenalties=no",
+      expect(argumentsList).toEqual([
+        ...Array.from({ length: 22 }, (_, index) => `./docker-${index + 1}`),
+        "./sshd-1",
+        "./sshd-2",
+        "./test_read_algos.test",
+      ]);
+      expect(fs.readFileSync(path.join(harnessLog, "environment"), "utf-8").trim()).toBe(
+        "libssh2|libssh2|-o UsePAM=yes -o KbdInteractiveAuthentication=yes -o PasswordAuthentication=yes -o PerSourcePenalties=no",
       );
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
