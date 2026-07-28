@@ -625,6 +625,59 @@ describe("core onboard flow phases", () => {
     expect(result.session.machine.state).toBe("openclaw");
   });
 
+  it("runs the sandbox effect once at exact sandbox entry", async () => {
+    const createSandbox = vi.fn(async () => "created-sandbox");
+    const phases = createPhases({ sandboxDeps: { createSandbox } });
+    const appliedTransitions: string[] = [];
+    const repairEvents: string[] = [];
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state: "sandbox",
+        stateEnteredAt: "2026-06-09T00:02:00.000Z",
+        revision: 7,
+      },
+    });
+
+    const result = await runCoreOnboardFlowSlice({
+      context: context({
+        resume: true,
+        model: "nvidia/test",
+        provider: "nim",
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async (stateResult) => {
+          const transition = stateResult as ReturnType<typeof branchTo>;
+          appliedTransitions.push(`${transition.transitionKind}:${transition.next}`);
+          runtimeSession = createSession({
+            machine: {
+              version: 1,
+              state: transition.next,
+              stateEnteredAt: "2026-06-09T00:03:00.000Z",
+              revision: runtimeSession.machine.revision + 1,
+            },
+          });
+          return runtimeSession;
+        },
+      },
+      phases,
+      resume: true,
+      recordRepairEvent: repairRecorder(repairEvents),
+    });
+
+    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(appliedTransitions).toEqual(["branch:agent_setup"]);
+    expect(repairEvents).toEqual([
+      "state.repair.started:provider_selection",
+      "state.repair.completed:provider_selection",
+    ]);
+    expect(result.context.sandboxName).toBe("created-sandbox");
+    expect(result.session.machine.state).toBe("agent_setup");
+  });
+
   it.each([
     ["inference", true, ["advance:sandbox", "branch:openclaw"]],
     ["sandbox", true, ["branch:openclaw"]],
