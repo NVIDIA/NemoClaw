@@ -34,18 +34,25 @@ if (AGENT !== "openclaw" && AGENT !== "hermes") {
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-channels-stop-start-${AGENT}`;
 assertChannelsStopStartSandboxName(SANDBOX_NAME);
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
-// Bridge channels that need a live public tunnel and a valid service-account key
-// (googlechat) are intentionally excluded from this fake-token matrix; their
-// add/stop/start/remove lifecycle is covered by
-// test/channels-add-bridge-lifecycle.test.ts. teams (#5585) is a separate,
-// pre-existing gap and is out of scope for this channel's PR.
-const CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
+// googlechat is OpenClaw-only, so it joins the matrix on that arm alone. teams
+// (#5585) stays excluded — a separate, pre-existing gap out of scope here.
+const BASE_CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
+const CHANNELS: readonly string[] =
+  AGENT === "openclaw" ? [...BASE_CHANNELS, "googlechat"] : BASE_CHANNELS;
+const GOOGLECHAT_ENABLED = CHANNELS.includes("googlechat");
 const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
   telegram: (sandbox) => [`${sandbox}-telegram-bridge`],
   discord: (sandbox) => [`${sandbox}-discord-bridge`],
   wechat: (sandbox) => [`${sandbox}-wechat-bridge`],
   slack: (sandbox) => [`${sandbox}-slack-bridge`, `${sandbox}-slack-app`],
   whatsapp: () => [],
+  googlechat: (sandbox) => [`${sandbox}-googlechat-bridge`],
+};
+// Channels that emit no credentialBinding, each for its own reason. Independent oracle —
+// hardcoded on purpose, not derived from the manifest under test (that would be circular).
+const CHANNELS_WITHOUT_CREDENTIAL_BINDING: Record<string, string> = {
+  whatsapp: "in-sandbox pairing — no host credential",
+  googlechat: "gateway bridge-refresh material — not a per-channel binding",
 };
 export const LIVE_TIMEOUT_MS = 80 * 60_000;
 
@@ -57,6 +64,7 @@ type Phase6Tokens = {
   slackBot: string;
   slackApp: string;
   wechat: string;
+  googlechat: string;
 };
 
 function phase6Tokens(suffix: string): Phase6Tokens {
@@ -66,6 +74,12 @@ function phase6Tokens(suffix: string): Phase6Tokens {
     slackBot: process.env.SLACK_BOT_TOKEN ?? `xoxb-fake-slack-token-${suffix}`,
     slackApp: process.env.SLACK_APP_TOKEN ?? `xapp-fake-slack-token-${suffix}`,
     wechat: process.env.WECHAT_BOT_TOKEN ?? `test-fake-wechat-token-${suffix}`,
+    googlechat:
+      process.env.GOOGLECHAT_SERVICE_ACCOUNT ??
+      JSON.stringify({
+        client_email: `e2e-fake-${suffix}@e2e-fake.iam.gserviceaccount.com`,
+        private_key: "fake-e2e-not-a-real-private-key",
+      }),
   };
 }
 
@@ -99,6 +113,18 @@ function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
     /^(xoxb|xapp)-(fake|test)-/.test(tokens.slackApp)
   ) {
     env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
+  }
+  // Google Chat only runs on the OpenClaw arm (its sole supported agent). Supply the
+  // bridge service-account JSON plus the pre-derived audience/appPrincipal/allowlist,
+  // and set NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL=1 so the enroll gate accepts the audience
+  // without a live cloudflared tunnel or the Google Cloud Console prompt.
+  if (GOOGLECHAT_ENABLED) {
+    env.GOOGLECHAT_SERVICE_ACCOUNT = tokens.googlechat;
+    env.GOOGLECHAT_AUDIENCE =
+      process.env.GOOGLECHAT_AUDIENCE ?? "https://e2e-fake.trycloudflare.com/googlechat";
+    env.GOOGLECHAT_APP_PRINCIPAL = process.env.GOOGLECHAT_APP_PRINCIPAL ?? "123456789012345678901";
+    env.GOOGLECHAT_ALLOWED_USERS = process.env.GOOGLECHAT_ALLOWED_USERS ?? "users/1234567890";
+    env.NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL = "1";
   }
   return env;
 }
@@ -187,7 +213,7 @@ function expectPlanChannelState(channelId: string, expected: ChannelState): void
     `${channelId} policy entry`,
   ).toBe(true);
   const credentialBindings = arrayRecords(plan.credentialBindings);
-  if (channelId !== "whatsapp") {
+  if (!Object.hasOwn(CHANNELS_WITHOUT_CREDENTIAL_BINDING, channelId)) {
     expect(
       credentialBindings.some((entry) => entry.channelId === channelId),
       `${channelId} credential binding`,
@@ -225,6 +251,11 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
     },
     whatsapp: { allowedIds: requireEnvValue(env, "WHATSAPP_ALLOWED_IDS") },
   };
+  if (GOOGLECHAT_ENABLED) {
+    // Google Chat's audience is derived by the enroll gate, but appPrincipal is a
+    // plain config input that must round-trip from env into the persisted plan.
+    expected.googlechat = { appPrincipal: requireEnvValue(env, "GOOGLECHAT_APP_PRINCIPAL") };
+  }
   for (const [channelId, inputs] of Object.entries(expected)) {
     const channel = planChannel(channelId);
     const planInputs = arrayRecords(channel?.inputs);

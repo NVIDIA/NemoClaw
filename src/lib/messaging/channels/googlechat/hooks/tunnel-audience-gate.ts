@@ -93,6 +93,7 @@ export function createGooglechatTunnelAudienceGateHook(
 
     const env = options.env ?? process.env;
     const log = options.log ?? ((message: string) => console.log(message));
+    const audienceType = readString(context.inputs?.audienceType) || "app-url";
 
     // Non-interactive mode: always skip Google Chat. Enrollment needs manual,
     // out-of-band steps that no environment variable can satisfy — the operator
@@ -102,7 +103,23 @@ export function createGooglechatTunnelAudienceGateHook(
     // we skip rather than enroll a half-configured channel that silently 404s on
     // inbound webhooks. A pre-supplied GOOGLECHAT_AUDIENCE does NOT bypass this —
     // the Console/appPrincipal steps still require a human.
+    //
+    // Exception (test/automation opt-in): when NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL=1
+    // AND the audience is supplied up front, the operator asserts the Console
+    // endpoint is already configured out-of-band, so accept that audience and skip
+    // only the live-tunnel derivation + Console confirmation. The flag is never set
+    // in normal onboarding, so the default contract above is unchanged; it exists
+    // so the live E2E fake-token matrix can drive Google Chat headless. The audience
+    // is still shape-validated below, so this narrows — it does not disable — the gate.
     if (context.isInteractive === false) {
+      const presetAudience =
+        readString(context.inputs?.audience) || readString(env.GOOGLECHAT_AUDIENCE);
+      if (env.NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL === "1" && presetAudience) {
+        const audience =
+          audienceType === "app-url" ? requireAppUrlAudience(presetAudience) : presetAudience;
+        log(`  ✓ Google Chat webhook audience (non-interactive, pre-supplied): ${audience}`);
+        return audienceOutput(audience);
+      }
       log(
         "  Skipped googlechat (interactive setup required: Google Cloud Console endpoint URL + appPrincipal)",
       );
@@ -110,8 +127,6 @@ export function createGooglechatTunnelAudienceGateHook(
         "Skipping Google Chat: interactive enrollment required (Cloud Console endpoint URL + appPrincipal cannot be supplied non-interactively).",
       );
     }
-
-    const audienceType = readString(context.inputs?.audienceType) || "app-url";
 
     // An audience supplied up front (env, prior paste, or a named tunnel) wins;
     // never touch the cloudflared tunnel in that case. Also covers project-number.

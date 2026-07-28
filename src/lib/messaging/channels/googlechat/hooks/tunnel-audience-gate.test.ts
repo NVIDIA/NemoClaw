@@ -204,4 +204,62 @@ describe("googlechat tunnel/audience gate hook", () => {
     expect(startTunnel).not.toHaveBeenCalled();
     expect(stopTunnel).not.toHaveBeenCalled();
   });
+
+  it("enrolls non-interactively when NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL=1 and an audience is supplied", async () => {
+    const startTunnel = vi.fn(async () => {});
+    const stopTunnel = vi.fn();
+    const hook = createGooglechatTunnelAudienceGateHook(
+      baseOptions({ env: { NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL: "1" }, startTunnel, stopTunnel }),
+    );
+
+    const result = await hook(
+      gateContext({ audience: "https://e2e-fake.trycloudflare.com/googlechat" }, false),
+    );
+
+    expect(result).toEqual({
+      outputs: {
+        audience: { kind: "config", value: "https://e2e-fake.trycloudflare.com/googlechat" },
+      },
+    });
+    // The opt-in stands in for the live tunnel + Console confirmation, so neither runs.
+    expect(startTunnel).not.toHaveBeenCalled();
+    expect(stopTunnel).not.toHaveBeenCalled();
+  });
+
+  it("reads the pre-supplied audience from GOOGLECHAT_AUDIENCE under the skip flag", async () => {
+    const hook = createGooglechatTunnelAudienceGateHook(
+      baseOptions({
+        env: {
+          NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL: "1",
+          GOOGLECHAT_AUDIENCE: "https://e2e-fake.trycloudflare.com/googlechat",
+        },
+      }),
+    );
+
+    const result = await hook(gateContext({}, false));
+
+    expect(result).toEqual({
+      outputs: {
+        audience: { kind: "config", value: "https://e2e-fake.trycloudflare.com/googlechat" },
+      },
+    });
+  });
+
+  it("still validates the pre-supplied audience shape under the skip flag", async () => {
+    const hook = createGooglechatTunnelAudienceGateHook(
+      baseOptions({ env: { NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL: "1" } }),
+    );
+
+    await expect(
+      hook(gateContext({ audience: "https://e2e-fake.trycloudflare.com/other" }, false)),
+    ).rejects.toThrow(/valid HTTPS URL ending in \/googlechat/);
+  });
+
+  it("still skips non-interactively when the skip flag is set but no audience is supplied", async () => {
+    const hook = createGooglechatTunnelAudienceGateHook(
+      baseOptions({ env: { NEMOCLAW_SKIP_GOOGLECHAT_TUNNEL: "1" } }),
+    );
+
+    await expect(hook(gateContext({}, false))).rejects.toThrow(/interactive enrollment required/);
+  });
 });
