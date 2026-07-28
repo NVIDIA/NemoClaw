@@ -8,7 +8,7 @@
 Use this guide only after the root `AGENTS.md` reads an `authorized` value from `.dori_user_status`.
 The stored value does not prove private access or approve installation or host configuration.
 
-If the status is not `authorized`, stop this setup and use the checked-in standalone guidance.
+If the status is not `authorized`, stop this setup and use the checked-in [Writing Style Guide](AGENTS.md#writing-style-guide).
 
 ## Inspect the Environment
 
@@ -51,7 +51,7 @@ Before an installation or host configuration change, ask:
 
 Continue only after explicit approval.
 An `authorized` status does not approve these changes.
-If the user declines, use the standalone guidance.
+If the user declines, use the [Writing Style Guide](AGENTS.md#writing-style-guide).
 
 ## Install Missing Components
 
@@ -96,7 +96,7 @@ Then perform the following checks:
 Follow the activation action that DORI reports.
 The action can require an application restart, a new session, a window reload, or enabling the MCP server.
 
-Until the current agent exposes DORI tools, continue the original task with the standalone guidance.
+Until the current agent exposes DORI tools, continue the original task with the [Writing Style Guide](AGENTS.md#writing-style-guide).
 
 ## Protect Credentials and Repository State
 

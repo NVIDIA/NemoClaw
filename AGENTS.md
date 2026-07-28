@@ -300,14 +300,15 @@ documentation path. The file can contain only one line: `authorized` or
 `external`.
 
 1. Read `.dori_user_status` before checking for DORI.
-   - If the value is `external`, use the standalone guidance without checking
+   - If the value is `external`, use the
+     [Writing Style Guide](docs/AGENTS.md#writing-style-guide) without checking
      DORI.
    - If the value is `authorized`, continue to step 2.
    - If the file is absent or invalid, ask which value to store. Describe
      `authorized` as an NVIDIA employee or authorized contractor with access to
      `gitlab-master.nvidia.com`. Store only the user's explicit answer.
    - If the user declines to answer or store a value, do not create the file.
-     Use the standalone guidance.
+     Use the [Writing Style Guide](docs/AGENTS.md#writing-style-guide).
    - Tell the user that deleting `.dori_user_status` resets the choice.
 2. Only after an `authorized` value, check whether the current agent exposes
    `dori_handle` or `dori_route`.
@@ -318,7 +319,9 @@ documentation path. The file can contain only one line: `authorized` or
      [NVIDIA DORI Setup](docs/DORI_SETUP.md).
 
 The stored value does not prove access or approve installation or host
-configuration. Use the standalone guidance if setup is declined or fails.
+configuration. Use the
+[Writing Style Guide](docs/AGENTS.md#writing-style-guide) if setup is declined
+or fails.
 
 ## PR Requirements
 
