@@ -10,6 +10,7 @@ import {
 } from "../state/onboard-checkpoint-types";
 import {
   checkpointSandboxIdentityMatches,
+  observeProviderEffectFingerprint,
   planEffectGroupReplay,
   planSandboxCreateReplay,
 } from "./checkpoint-replay";
@@ -67,14 +68,14 @@ describe("checkpointSandboxIdentityMatches", () => {
 
 describe("planEffectGroupReplay", () => {
   it("runs an unrecorded effect group", () => {
-    expect(planEffectGroupReplay(checkpoint(), "messaging_providers", true).action).toBe("run");
+    expect(planEffectGroupReplay(checkpoint(), "messaging_providers", "fp").action).toBe("run");
   });
 
   it("re-runs a recorded group whose postcondition no longer holds (never blind skip)", () => {
     const cp = checkpoint({
       effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "fp" } },
     });
-    const decision = planEffectGroupReplay(cp, "messaging_providers", false);
+    const decision = planEffectGroupReplay(cp, "messaging_providers", null);
     expect(decision).toEqual({
       group: "messaging_providers",
       action: "run",
@@ -86,7 +87,68 @@ describe("planEffectGroupReplay", () => {
     const cp = checkpoint({
       effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "fp" } },
     });
-    expect(planEffectGroupReplay(cp, "messaging_providers", true).action).toBe("skip");
+    expect(planEffectGroupReplay(cp, "messaging_providers", "fp").action).toBe("skip");
+  });
+
+  it("re-runs a live effect group when its fingerprint differs", () => {
+    const cp = checkpoint({
+      effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "recorded" } },
+    });
+    expect(planEffectGroupReplay(cp, "messaging_providers", "observed")).toEqual({
+      group: "messaging_providers",
+      action: "run",
+      reason: "fingerprint_mismatch",
+    });
+  });
+});
+
+describe("observeProviderEffectFingerprint", () => {
+  it("revalidates only the providers named by the selected group receipt", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        web_search_provider: { completedAt: ISO, fingerprint: "web" },
+        messaging_providers: { completedAt: ISO, fingerprint: "chat" },
+      },
+      bindings: {
+        credentialEnvs: ["WEB_KEY", "CHAT_KEY"],
+        registeredProviders: [
+          { name: "web", type: "brave", credentialEnv: "WEB_KEY" },
+          { name: "chat", type: "generic", credentialEnv: "CHAT_KEY" },
+        ],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "web_search_provider",
+        (binding) => binding.name === "web",
+      ),
+    ).toBe("web");
+  });
+
+  it("fails revalidation when a recorded provider binding is missing or does not match", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        messaging_providers: { completedAt: ISO, fingerprint: "chat,missing" },
+      },
+      bindings: {
+        credentialEnvs: ["CHAT_KEY"],
+        registeredProviders: [{ name: "chat", type: "generic", credentialEnv: "CHAT_KEY" }],
+      },
+    });
+
+    expect(observeProviderEffectFingerprint(cp, "messaging_providers", () => true)).toBeNull();
+    expect(
+      observeProviderEffectFingerprint(
+        checkpoint({
+          effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "chat" } },
+          bindings: cp.bindings,
+        }),
+        "messaging_providers",
+        () => false,
+      ),
+    ).toBeNull();
   });
 });
 

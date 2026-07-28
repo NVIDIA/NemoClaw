@@ -54,6 +54,7 @@ import {
 } from "../../checkpoint-record";
 import {
   checkpointProvesSandboxStepComplete,
+  observeProviderEffectFingerprint,
   planEffectGroupReplay,
   planSandboxCreateReplay,
 } from "../../checkpoint-replay";
@@ -688,13 +689,6 @@ class SandboxStateFlow<
     return this.deps.exitProcess(1);
   }
 
-  private providerBindingsLive(checkpoint: OnboardCheckpoint): boolean {
-    if (checkpoint.bindings.registeredProviders.length === 0) return false;
-    return checkpoint.bindings.registeredProviders.every((binding) =>
-      this.deps.providerMatchesGatewayCredential(binding.name, binding.type, binding.credentialEnv),
-    );
-  }
-
   private checkpointBindingAvailability(checkpoint: OnboardCheckpoint): {
     availableCredentialEnvs: ReadonlySet<string>;
     liveRegisteredProviders: ReadonlySet<string>;
@@ -1090,8 +1084,17 @@ class SandboxStateFlow<
     if (!this.resumesSandboxPrompts || (!webSearchConfig && enabledChannels.length === 0)) return;
     if (
       checkpoint &&
-      planEffectGroupReplay(checkpoint, group, this.providerBindingsLive(checkpoint)).action ===
-        "skip"
+      planEffectGroupReplay(
+        checkpoint,
+        group,
+        observeProviderEffectFingerprint(checkpoint, group, (binding) =>
+          this.deps.providerMatchesGatewayCredential(
+            binding.name,
+            binding.type,
+            binding.credentialEnv,
+          ),
+        ),
+      ).action === "skip"
     ) {
       return;
     }
