@@ -247,13 +247,29 @@ const warnedHomebrewIdentityCheckReasons = new Set<string>();
 // fail the same way. Continue on the standalone gateway fallback instead of
 // aborting; any other brew failure keeps the fail-closed abort (#7707).
 // The match is against Homebrew's literal refusal text: if Homebrew rewords
-// it, this case reverts to the fail-closed abort, not to a bypass.
+// it, this case reverts to the fail-closed abort, not to a bypass. Remove this
+// branch when supported Homebrew versions can verify the pinned formula
+// identity again.
+const PINNED_TAP_LOAD_REFUSAL_PATTERN = new RegExp(
+  `Refusing to load formula ${OPENSHELL_GATEWAY_HOMEBREW_TAP}/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE} from untrusted tap ${OPENSHELL_GATEWAY_HOMEBREW_TAP}(?![\\w/-])`,
+);
+
 function isPinnedTapLoadRefusal(reason: string): boolean {
-  return reason
-    .replace(/\s+/g, " ")
-    .includes(
-      `Refusing to load formula ${OPENSHELL_GATEWAY_HOMEBREW_TAP}/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE} from untrusted tap ${OPENSHELL_GATEWAY_HOMEBREW_TAP}`,
-    );
+  return PINNED_TAP_LOAD_REFUSAL_PATTERN.test(reason.replace(/\s+/g, " "));
+}
+
+// A loaded launchd unit means launchd still owns the service lifecycle even
+// when Homebrew refuses to load the formula: the standalone cutover path could
+// adopt that process or kill one launchd would restart. launchctl answers
+// without loading the formula, so probe it before degrading.
+function isHomebrewGatewayLaunchdUnitLoaded(
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
+): boolean {
+  return runCommand(
+    "launchctl",
+    ["list", `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`],
+    opts,
+  ).ok;
 }
 
 function warnHomebrewIdentityCheckUnavailable(reason: string): void {
@@ -286,11 +302,18 @@ function hasOfficialHomebrewFormula(
   });
   if (!info.ok) {
     const reason = info.reason ?? "brew info failed";
-    if (isPinnedTapLoadRefusal(reason)) {
-      warnHomebrewIdentityCheckUnavailable(reason);
-      return false;
+    if (!isPinnedTapLoadRefusal(reason)) {
+      throw new Error(`OpenShell Homebrew formula identity check failed: ${reason}`);
     }
-    throw new Error(`OpenShell Homebrew formula identity check failed: ${reason}`);
+    if (isHomebrewGatewayLaunchdUnitLoaded({ env, spawnSyncImpl })) {
+      throw new Error(
+        `Homebrew refused to load the pinned OpenShell formula while its launchd service homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE} is loaded. ` +
+          `NemoClaw cannot manage or safely replace that service. Stop it (launchctl bootout gui/<uid>/homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}) and rerun onboarding. ` +
+          `Homebrew reported: ${reason}`,
+      );
+    }
+    warnHomebrewIdentityCheckUnavailable(reason);
+    return false;
   }
   try {
     const parsed = JSON.parse(info.stdout ?? "") as {

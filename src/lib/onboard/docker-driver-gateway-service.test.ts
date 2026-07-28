@@ -153,8 +153,12 @@ describe("docker-driver-gateway-service", () => {
     const options = {
       commandExists: () => true,
       platform: "darwin" as NodeJS.Platform,
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-        args[0] === "info" ? spawnResult(1, refusal) : spawnResult(),
+      spawnSyncImpl: vi.fn((command: string, args: string[]) =>
+        command === "launchctl"
+          ? spawnResult(1, "Could not find service")
+          : args[0] === "info"
+            ? spawnResult(1, refusal)
+            : spawnResult(),
       ),
     };
 
@@ -164,11 +168,33 @@ describe("docker-driver-gateway-service", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining(refusal));
   });
 
+  it("aborts instead of falling back while the Homebrew launchd service is loaded (#7707)", () => {
+    const refusal =
+      "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
+    expect(() =>
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        platform: "darwin",
+        spawnSyncImpl: vi.fn((command: string, args: string[]) =>
+          command === "launchctl"
+            ? spawnResult(0, "", '{"PID" = 4242;}')
+            : args[0] === "info"
+              ? spawnResult(1, refusal)
+              : spawnResult(),
+        ),
+      }),
+    ).toThrow("launchd service homebrew.mxcl.openshell is loaded");
+  });
+
   it.each([
     ["a generic brew info failure", "Error: Permission denied"],
     [
       "a refused foreign-tap formula",
       "Error: Refusing to load formula other/tap/openshell from untrusted tap other/tap.",
+    ],
+    [
+      "a refusal naming a tap that only starts with the pinned name",
+      "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell-fork.",
     ],
   ])("keeps %s fatal during the formula identity check (#7707)", (_case, reason) => {
     expect(() =>
@@ -197,6 +223,9 @@ describe("docker-driver-gateway-service", () => {
   it("skips the Homebrew-managed start when the formula identity is unconfirmed (#7707)", async () => {
     const refusal =
       "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
+    const startService = vi.fn(() => {
+      throw new Error("managed start must not run");
+    });
     const started = await startPackageManagedDockerDriverGateway({
       clearDockerDriverGatewayRuntimeFiles: () => {},
       exitOnFailure: false,
@@ -205,16 +234,22 @@ describe("docker-driver-gateway-service", () => {
         hasOpenShellGatewayUserService({
           commandExists: () => true,
           platform: "darwin",
-          spawnSyncImpl: (_command: string, args: string[]) =>
-            args[0] === "info" ? spawnResult(1, refusal) : spawnResult(),
+          spawnSyncImpl: (command: string, args: string[]) =>
+            command === "launchctl"
+              ? spawnResult(1, "Could not find service")
+              : args[0] === "info"
+                ? spawnResult(1, refusal)
+                : spawnResult(),
         }),
       registerDockerDriverGatewayEndpoint: () => true,
       runCaptureOpenshell: () => "",
       skipSandboxBridgeReachability: true,
+      startOpenShellGatewayUserService: startService,
       verifySandboxBridgeGatewayReachableOrExit: async () => {},
     });
 
     expect(started).toBe(false);
+    expect(startService).not.toHaveBeenCalled();
   });
 
   it("rejects a missing Homebrew formula when Homebrew is available (#6903)", () => {

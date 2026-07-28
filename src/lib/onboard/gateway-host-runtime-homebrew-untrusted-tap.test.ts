@@ -22,7 +22,9 @@ vi.mock("node:child_process", async (importOriginal) => {
               "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.",
             stdout: "",
           }
-        : { status: 0, stderr: "", stdout: "" },
+        : command === "launchctl"
+          ? { status: 1, stderr: "Could not find service", stdout: "" }
+          : { status: 0, stderr: "", stdout: "" },
     ),
   };
 });
