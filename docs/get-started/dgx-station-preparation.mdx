@@ -162,6 +162,41 @@ The AI Developer Tools path can also leave the packaged CDI refresh units enable
 
 For the current support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
 
+## Prepare a Two-Station Pair
+
+Complete NVIDIA's [two-Station CX8 fabric playbook](https://build.nvidia.com/station/connect-two-stations/instructions) before running NemoClaw pair preparation.
+The published [dual-Station Nemotron Ultra playbook](https://build.nvidia.com/station/nemoclaw/dual-nodes) is the runtime recipe tracked by this managed path.
+
+When no peer or model is selected explicitly, Station Express selects `nemotron-3-ultra-550b-a55b` and checks for one trusted reciprocal peer at the deterministic counterpart address on each of two configured private `/30` ConnectX-8 rails.
+If both Stations pass reciprocal identity, GPU, route, neighbor, and jumbo-frame checks, NemoClaw uses the distributed Ultra recipe.
+If no trusted pair qualifies, Express retains the existing single-Station Ultra recipe.
+An explicit `NEMOCLAW_VLLM_MODEL` remains authoritative.
+When `NEMOCLAW_DGX_STATION_PEER` is set, that exact peer must qualify or setup stops instead of falling back.
+
+Configure both Stations before installation with exactly two active 400 Gbit/s Ethernet rails, MTU 9000, and one usable private `/30` address per rail.
+The reciprocal addresses must use direct-link routes, the expected peer MAC neighbors, and jumbo-frame connectivity in both directions.
+The SSH target must already have usable host-key trust and non-interactive authentication, and the selected peer account must have passwordless `sudo` for remote preparation.
+NemoClaw checks only the two deterministic `/30` counterpart addresses; it does not scan other addresses, configure the rails, enroll SSH trust, or accept a shared `/24` as equivalent evidence.
+
+Station preparation binds the preparing non-root account's UID in root-owned `/etc/nemoclaw/dual-station-controller-uid`.
+Rebinding requires an administrator to remove that file before preparation is rerun as the replacement account.
+If either Station requires a reboot, the installer stops with status `10` and names the host to reboot manually.
+The initial local-host receipt preserves the accepted NemoClaw revision and Express selections.
+After reciprocal peer qualification begins, owner-only pair state additionally binds the preparation helper, SSH host key, GPU identities, and reciprocal rails.
+The installer never reboots either host automatically.
+
+<Warning title="Trusted Pair Boundary">
+The dual-Station runtime uses unauthenticated Ray, NCCL, and vLLM coordination traffic, including the Ray head on TCP port `6379` and Ray's worker traffic.
+Treat both Stations and every host that can reach either private rail as mutually trusted.
+The operator owns physical rail isolation, host firewalling, SSH trust, and reboot control.
+Do not use the pair path on a shared or routed network without separately reviewed isolation evidence.
+</Warning>
+
+<Warning title="DGX Station Support Status">
+The dual-Station path is a Deferred evaluation.
+It does not change the single-Station support status.
+</Warning>
+
 ## Next Step
 
 After your host passes preparation or validation, continue with the [Quickstart](../quickstart).
