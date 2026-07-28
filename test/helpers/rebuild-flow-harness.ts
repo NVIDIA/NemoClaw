@@ -35,6 +35,7 @@ const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependenci
 const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
 const onboardSession = requireDist("../../state/onboard-session.js");
 const registry = requireDist("../../state/registry.js");
+const registryPersistence = requireDist("../../state/registry/persistence.js");
 const sandboxState = requireDist("../../state/sandbox.js");
 const sandboxSession = requireDist("../../state/sandbox-session.js");
 const sandboxVersion = requireDist("../../sandbox/version.js");
@@ -77,6 +78,16 @@ export type RebuildFlowOverrides = {
   agentName?: string;
   sessionAgentName?: string | null;
   applyPreset?: (presetName: string) => boolean;
+  captureOpenshell?: (
+    args: string[],
+    options?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    output?: string;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
+  };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
@@ -162,6 +173,7 @@ export type RebuildFlowHarness = {
   restoreSandboxEntrySpy: MockInstance;
   restoreRegistryEntryIfMissingSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
+  captureOpenshellSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
   prepareMcpBridgesForRebuildSpy: MockInstance;
@@ -278,9 +290,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   const agentName = overrides.agentName ?? "openclaw";
-  const agentBaseImageRef = `nemoclaw-${agentName}-base:test`;
+  const agentDisplayName =
+    agentName === "langchain-deepagents-code"
+      ? "Deep Agents Code"
+      : agentName === "hermes"
+        ? "Hermes Agent"
+        : "OpenClaw";
+  const agentBaseImageId = `sha256:${"a".repeat(64)}`;
+  const agentBaseImageRef = `nemoclaw-${agentName}-sandbox-base-local:image-${agentBaseImageId.slice("sha256:".length)}`;
   const agentDef = {
     name: agentName,
+    displayName: agentDisplayName,
     expectedVersion: "0.2.0",
     dockerfileBasePath: "/tmp/Dockerfile.base",
     runtime: { kind: "terminal" },
@@ -297,7 +317,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ok: true,
     imageTag: null,
   });
-  const agentBaseImageId = `sha256:${"a".repeat(64)}`;
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],
@@ -336,7 +355,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureAgentBaseImageSpy = vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
     imageTag: agentBaseImageRef,
     built: true,
-    ...(agentName === "langchain-deepagents-code" ? { trustedLocalOverride } : {}),
+    trustedLocalOverride,
   });
   const restoreTrustedAgentBaseImageOverrideSpy = vi.fn();
   const pinTrustedAgentBaseImageOverrideForOperationSpy = vi
@@ -349,13 +368,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       ? null
       : ({ name: sessionAgentName } as never),
   );
-  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(
-    agentName === "langchain-deepagents-code"
-      ? "Deep Agents Code"
-      : agentName === "hermes"
-        ? "Hermes Agent"
-        : "OpenClaw",
-  );
+  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(agentDisplayName);
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
     async (...args: unknown[]) => {
       const gatewayName =
@@ -414,7 +427,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ) as never;
   });
   let registryLoadCount = 0;
-  vi.spyOn(registry, "load").mockImplementation(() => {
+  vi.spyOn(registryPersistence, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;
     registryLoadCount++;
     return {
@@ -524,9 +537,25 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           failedFiles: [],
         })),
     );
+  const captureOpenshellSpy = vi
+    .spyOn(openshellRuntime, "captureOpenshell")
+    .mockImplementation((args: unknown, options?: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      return overrides.captureOpenshell
+        ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
+        : {
+            status: 1,
+            output: "",
+            stdout: "",
+            stderr: "Error: sandbox alpha not found",
+          };
+    });
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
-    if (argv.join(" ") === "sandbox get alpha") {
+    if (
+      argv.join(" ") === "sandbox get alpha" ||
+      argv.join(" ") === "sandbox get -g nemoclaw alpha"
+    ) {
       return {
         status: 1,
         output: "sandbox alpha not found",
@@ -725,6 +754,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreSandboxEntrySpy,
     restoreRegistryEntryIfMissingSpy,
     restoreSandboxStateSpy,
+    captureOpenshellSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
     prepareMcpBridgesForRebuildSpy,

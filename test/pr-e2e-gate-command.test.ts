@@ -64,7 +64,7 @@ describe("PR E2E controller commands", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish",
+      "--mode must be seed, start, start-control-plane, start-approved-control-plane, start-approved-fork, finish",
     );
     expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
   });
@@ -287,35 +287,43 @@ describe("PR E2E controller commands", () => {
     });
   });
 
-  it("parses a fork credentialed E2E skip resolution", () => {
-    expect(
-      parseControllerCommand([
-        "--mode",
-        "record-fork-e2e-skip",
-        "--pr",
-        "42",
-        "--head",
-        HEAD_SHA,
-        "--base",
-        BASE_SHA,
-        "--workflow-sha",
-        WORKFLOW_SHA,
-        "--maintainer",
-        "maintainer",
-        "--reason",
-        "Reviewed exact fork revision",
-        "--evidence-url",
-        "https://github.com/NVIDIA/NemoClaw/actions/runs/123",
-      ]),
-    ).toEqual({
-      mode: "record-fork-e2e-skip",
-      prNumber: 42,
-      headSha: HEAD_SHA,
-      baseSha: BASE_SHA,
-      workflowSha: WORKFLOW_SHA,
-      maintainer: "maintainer",
-      reason: "Reviewed exact fork revision",
-      evidenceUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/123",
+  it("parses an approved fork E2E run", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "start-approved-fork",
+          "--pr",
+          "42",
+          "--head",
+          HEAD_SHA,
+          "--base",
+          BASE_SHA,
+          "--workflow-sha",
+          WORKFLOW_SHA,
+          "--approval-run-id",
+          "101",
+          "--approval-run-attempt",
+          "1",
+          "--gate-run-id",
+          "102",
+          "--workflow-run-attempt",
+          "1",
+          "--work-dir",
+          workDir,
+        ]),
+      ).toMatchObject({
+        mode: "start-approved-fork",
+        prNumber: 42,
+        headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
+        workflowSha: WORKFLOW_SHA,
+        approvalRunId: 101,
+        approvalRunAttempt: 1,
+        gateRunId: 102,
+        workflowRunAttempt: 1,
+        planPath: path.join(workDir, "risk-plan.json"),
+      });
     });
   });
 

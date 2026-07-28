@@ -1,35 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-import { isErrnoException } from "../core/errno";
-import { isObjectRecord } from "../core/json-types";
-import { GATEWAY_PORT } from "../core/ports";
+import { isDeepStrictEqual } from "node:util";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
 import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
-import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
   applyAddExtraProvider,
   applyRemoveExtraProvider,
   isValidExtraProviderName,
-  normalizeExtraProviders,
   readExtraProviders,
 } from "./extra-providers";
 import type { OpenClawImagePluginInstall } from "./openclaw-plugin-restore";
-import {
-  normalizeSandboxMcpState,
-  type SandboxMcpState,
-  serializeSandboxMcpStateForDisk,
-} from "./registry-mcp";
+import { normalizeSandboxMcpState, type SandboxMcpState } from "./registry-mcp";
 import type { SandboxMessagingState } from "./registry-messaging";
-import { parseSandboxRegistryEntries, retainedDefaultSandbox } from "./registry-normalization";
+import {
+  normalizeBaselineExclusions,
+  normalizeBaselineExclusionTransition,
+  retainedDefaultSandbox,
+} from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
-import { nemoclawStateRoot } from "./state-root";
+import { withLock } from "./registry/lock";
+import { load, save } from "./registry/persistence";
 
 export {
   getSandboxEntryDisplayInference,
@@ -47,11 +42,25 @@ import {
   cloneSandboxMessagingState,
   getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
   getDisabledChannels as getRegistryDisabledChannels,
-  serializeSandboxMessagingStateForDisk,
   setChannelDisabled as setRegistryChannelDisabled,
 } from "./registry-messaging";
 
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
+
+export {
+  acquireLock,
+  classifyExistingLock,
+  LOCK_DIR,
+  LOCK_MAX_RETRIES,
+  LOCK_OWNER,
+  LOCK_RETRY_MS,
+  LOCK_STALE_MS,
+  releaseLock,
+  type RegistryLockDecision,
+  withLock,
+} from "./registry/lock";
+
+export { load, REGISTRY_FILE, save } from "./registry/persistence";
 
 export {
   getConfiguredMessagingChannelsFromEntry,
@@ -68,6 +77,37 @@ export interface CustomPolicyEntry {
   pendingContent?: string;
   sourcePath?: string;
   appliedAt?: string;
+}
+
+export interface BaselineExclusionEntry {
+  /** Persistence schema version for this reviewed exclusion intent. */
+  version: 1;
+  /** Agent baseline that supplied the reviewed entry. */
+  agent: string;
+  /** Exact baseline network policy key excluded, e.g. "nous_research". */
+  key: string;
+  /** Digest of the reviewed baseline entry content the approval was bound to. */
+  digest: string;
+  /** When the exclusion was acknowledged. */
+  acknowledgedAt?: string;
+  /** Agent build/version recorded when the exclusion was last applied. */
+  appliedAgentVersion?: string | null;
+}
+
+export type BaselineExclusionTransitionOperation = "exclude" | "restore";
+
+/**
+ * Durable journal for the one cross-system baseline mutation that is in flight.
+ * `baselineExclusions` remains the last committed operator intent until this
+ * transaction is published after the live OpenShell mutation succeeds.
+ */
+export interface BaselineExclusionTransition {
+  id: string;
+  operation: BaselineExclusionTransitionOperation;
+  exclusion: BaselineExclusionEntry;
+  /** Exact live-entry digest that completes the transition; null means absent. */
+  targetLiveDigest: string | null;
+  startedAt: string;
 }
 
 // Outcome of the last live sandbox GPU proof run during onboarding/recovery.
@@ -106,6 +146,10 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   openshellVersion?: string | null;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
+  /** Operator exclusions from the agent baseline policy, replayed on rebuild. */
+  baselineExclusions?: BaselineExclusionEntry[];
+  /** Crash-recoverable journal for an exclusion/restore live-policy mutation. */
+  baselineExclusionTransition?: BaselineExclusionTransition;
   policyTier?: string | null;
   // True once the onboard policy step has fully completed and reconciled the
   // effective preset selection (set by the post-policy registry write). Absent
@@ -146,6 +190,10 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   dashboardPort?: number | null;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;
+  /** Generation proving which durable same-name recreate registered this row. */
+  lifecycleGeneration?: string;
+  /** Hashed OpenShell identity paired with lifecycleGeneration for exact recovery. */
+  lifecycleLiveIdentityFingerprint?: string;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
   // instead of the process-global `nemoclaw` singleton — a second sandbox on a
@@ -162,310 +210,6 @@ export interface SandboxRegistry {
 }
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
-
-export const REGISTRY_FILE = path.join(
-  nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
-  "sandboxes.json",
-);
-export const LOCK_DIR = `${REGISTRY_FILE}.lock`;
-export const LOCK_OWNER = path.join(LOCK_DIR, "owner");
-export const LOCK_STALE_MS = 10_000;
-export const LOCK_RETRY_MS = 100;
-export const LOCK_MAX_RETRIES = 120;
-/** kill(pid, 0) liveness probe. EPERM means the pid exists but is owned by
- * another user, which still counts as alive. */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
-  }
-}
-
-/** Wall-clock start time (ms since epoch) of `pid` from /proc, or null when it
- * cannot be read (process gone, or a non-Linux host without /proc). Mirrors the
- * onboard-session lock's recycle check. */
-function readProcessStartMs(pid: number): number | null {
-  try {
-    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const btimeLine = fs
-      .readFileSync("/proc/stat", "utf8")
-      .split("\n")
-      .find((line) => line.startsWith("btime "));
-    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
-    const closeParen = statText.lastIndexOf(")");
-    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
-    const fieldsAfterComm = statText
-      .slice(closeParen + 2)
-      .trim()
-      .split(/\s+/);
-    const startTicks = Number(fieldsAfterComm[19]);
-    if (!Number.isFinite(startTicks)) return null;
-    // /proc/<pid>/stat starttime is in USER_HZ ticks (100 on supported hosts).
-    const clockTicksPerSecond = 100;
-    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
-  } catch {
-    return null;
-  }
-}
-
-export type RegistryLockDecision = "break" | "wait";
-
-/**
- * Decide whether an existing registry lock should be broken (stale) or waited
- * on. Exported for tests.
- *
- * The PID-recycle wedge this guards against: a holder that crashes without
- * releasing leaves `LOCK_DIR` + the owner pid behind. If that pid is later
- * reused by an unrelated live process, `kill(pid, 0)` succeeds, so a
- * liveness-only check treats the lock as held forever and every registry write
- * wedges (retries exhausted -> "Failed to acquire lock"). When the owner looks
- * alive we therefore also confirm it started BEFORE it took the lock: a process
- * whose /proc start time is after the lock's mtime is a recycled pid, so the
- * lock is stale. When the owner pid or its start time cannot be read (missing
- * owner file, non-Linux host), fall back to breaking the lock once it is older
- * than a registry op could legitimately take.
- */
-export function classifyExistingLock(opts: {
-  ownerPid: number | null;
-  ownerAlive: boolean;
-  processStartMs: number | null;
-  lockMtimeMs: number;
-  nowMs: number;
-  staleMs: number;
-}): RegistryLockDecision {
-  const ageMs = opts.nowMs - opts.lockMtimeMs;
-  if (opts.ownerPid === null) {
-    // Owner file missing or unreadable: decide on age alone.
-    return ageMs > opts.staleMs ? "break" : "wait";
-  }
-  if (!opts.ownerAlive) {
-    return "break";
-  }
-  if (opts.processStartMs !== null && opts.processStartMs > opts.lockMtimeMs + 1000) {
-    // Live pid that started after the lock was taken -> the pid was recycled.
-    return "break";
-  }
-  // Live original holder (or start time unknown): only break once the lock is
-  // clearly older than a registry op could take, which also covers hosts where
-  // recycle cannot be detected directly.
-  return ageMs > opts.staleMs ? "break" : "wait";
-}
-
-/** Acquire an advisory lock using mkdir (atomic on POSIX). */
-export function acquireLock(): void {
-  ensureConfigDir(path.dirname(REGISTRY_FILE));
-  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
-  for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
-    try {
-      fs.mkdirSync(LOCK_DIR);
-      const ownerTmp = `${LOCK_OWNER}.tmp.${process.pid}`;
-      try {
-        fs.writeFileSync(ownerTmp, String(process.pid), { mode: 0o600 });
-        fs.renameSync(ownerTmp, LOCK_OWNER);
-      } catch (ownerErr) {
-        try {
-          fs.unlinkSync(ownerTmp);
-        } catch {
-          /* best effort */
-        }
-        try {
-          fs.unlinkSync(LOCK_OWNER);
-        } catch {
-          /* best effort */
-        }
-        try {
-          fs.rmdirSync(LOCK_DIR);
-        } catch {
-          /* best effort */
-        }
-        throw ownerErr;
-      }
-      return;
-    } catch (error) {
-      if (!isErrnoException(error) || error.code !== "EEXIST") {
-        throw error;
-      }
-      let lockStat: fs.Stats;
-      try {
-        lockStat = fs.statSync(LOCK_DIR);
-      } catch {
-        // Lock dir vanished between the failed mkdir and this stat: another
-        // waiter released it, so retry immediately.
-        continue;
-      }
-      let ownerPid: number | null = null;
-      try {
-        const parsed = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
-        ownerPid = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-      } catch {
-        ownerPid = null;
-      }
-      const ownerAlive = ownerPid !== null ? isProcessAlive(ownerPid) : false;
-      const processStartMs = ownerPid !== null && ownerAlive ? readProcessStartMs(ownerPid) : null;
-      const decision = classifyExistingLock({
-        ownerPid,
-        ownerAlive,
-        processStartMs,
-        lockMtimeMs: lockStat.mtimeMs,
-        nowMs: Date.now(),
-        staleMs: LOCK_STALE_MS,
-      });
-      if (decision === "break") {
-        // Only break the lock if it is provably the same one we classified.
-        // Re-stat LOCK_DIR and require the inode + mtime to be unchanged (a
-        // replacement lock is a fresh mkdir, hence a new inode) and, when the
-        // owner pid was readable, that it still matches. Any stat/read failure
-        // means the identity cannot be proven, so the lock is left alone rather
-        // than risk clobbering an in-flight replacement that exists as LOCK_DIR
-        // before its owner file has been written.
-        let stillSameLock = false;
-        try {
-          const currentStat = fs.statSync(LOCK_DIR);
-          stillSameLock =
-            currentStat.ino === lockStat.ino && currentStat.mtimeMs === lockStat.mtimeMs;
-          if (stillSameLock && ownerPid !== null) {
-            const recheck = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
-            stillSameLock = recheck === ownerPid;
-          }
-        } catch {
-          stillSameLock = false;
-        }
-        if (stillSameLock) {
-          fs.rmSync(LOCK_DIR, { recursive: true, force: true });
-          continue;
-        }
-      }
-      Atomics.wait(sleepBuf, 0, 0, LOCK_RETRY_MS);
-    }
-  }
-  throw new Error(`Failed to acquire lock on ${REGISTRY_FILE} after ${LOCK_MAX_RETRIES} retries`);
-}
-
-export function releaseLock(): void {
-  try {
-    fs.unlinkSync(LOCK_OWNER);
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "ENOENT") {
-      throw error;
-    }
-  }
-  try {
-    fs.rmSync(LOCK_DIR, { recursive: true, force: true });
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "ENOENT") {
-      throw error;
-    }
-  }
-}
-
-export function withLock<T>(fn: () => T): T {
-  acquireLock();
-  try {
-    return fn();
-  } finally {
-    releaseLock();
-  }
-}
-
-export function load(): SandboxRegistry {
-  return normalizeRegistry(
-    readConfigFile<unknown>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
-  );
-}
-
-export function save(data: SandboxRegistry): void {
-  writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
-}
-
-function normalizeRegistry(value: unknown): SandboxRegistry {
-  const data = isObjectRecord(value) ? value : {};
-  const extraProviders = normalizeExtraProviders(data.extraProviders);
-  const sandboxes = Object.fromEntries(
-    parseSandboxRegistryEntries(data.sandboxes).map(([name, entry]) => [
-      name,
-      normalizeSandboxEntryForRuntime(entry),
-    ]),
-  );
-  const base: SandboxRegistry = {
-    // Preserve a stale string pointer at read time so diagnostics can explain
-    // which sandbox disappeared. Mutation paths repair it before persistence.
-    defaultSandbox: typeof data.defaultSandbox === "string" ? data.defaultSandbox : null,
-    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
-      data.defaultSelectionRevision,
-    ),
-    sandboxes,
-  };
-  if (extraProviders) base.extraProviders = extraProviders;
-  return base;
-}
-
-function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
-  const extraProviders = normalizeExtraProviders(data.extraProviders);
-  const sandboxes = Object.fromEntries(
-    Object.entries(data.sandboxes).map(([name, entry]) => [
-      name,
-      serializeSandboxEntryForDisk(entry),
-    ]),
-  );
-  const defaultSandbox = retainedDefaultSandbox(data.defaultSandbox, sandboxes);
-  const currentDefaultSelectionRevision = reversibleRemoval.normalizeDefaultSelectionRevision(
-    data.defaultSelectionRevision,
-  );
-  const base: SandboxRegistry = {
-    defaultSandbox,
-    defaultSelectionRevision:
-      defaultSandbox === data.defaultSandbox
-        ? currentDefaultSelectionRevision
-        : reversibleRemoval.incrementDefaultSelectionRevision(currentDefaultSelectionRevision),
-    sandboxes,
-  };
-  if (extraProviders) base.extraProviders = extraProviders;
-  return base;
-}
-
-function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
-  const messaging = cloneSandboxMessagingState(entry.messaging);
-  const mcp = normalizeSandboxMcpState(entry.mcp);
-  const { messaging: _messaging, mcp: _mcp, ...rest } = entry;
-  return {
-    ...rest,
-    ...(messaging ? { messaging } : {}),
-    ...(mcp ? { mcp } : {}),
-  };
-}
-
-/**
- * Prepare a sandbox entry for persistence: canonicalize a no-dashboard port to
- * null, normalize messaging state, and drop transient #5714 display-only
- * markers plus legacy provider credential hashes that must never reach
- * sandboxes.json.
- */
-function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
-  // Defensively drop non-durable recovery markers and legacy
-  // providerCredentialHashes so they can never reach sandboxes.json even if a
-  // caller force-passed them through updateSandbox().
-  const {
-    recoveredFromGateway: _recovered,
-    livePhase: _phase,
-    providerCredentialHashes: _legacyProviderCredentialHashes,
-    ...durable
-  } = entry as SandboxEntry & {
-    recoveredFromGateway?: boolean;
-    livePhase?: string | null;
-    providerCredentialHashes?: unknown;
-  };
-  const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
-  const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
-  const { messaging: _messaging, mcp: _mcp, ...rest } = durable;
-  return {
-    ...rest,
-    ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
-    ...(messaging ? { messaging } : {}),
-    ...(mcp ? { mcp } : {}),
-  };
-}
 
 export function getSandbox(name: string): SandboxEntry | null {
   const data = load();
@@ -506,6 +250,10 @@ export function registerSandbox(entry: SandboxEntry): void {
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
+      baselineExclusions: normalizeBaselineExclusions(entry.baselineExclusions),
+      baselineExclusionTransition: normalizeBaselineExclusionTransition(
+        entry.baselineExclusionTransition,
+      ),
       policyTier: entry.policyTier || null,
       webSearchEnabled:
         typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
@@ -605,8 +353,17 @@ export function reserveSandboxInferenceRoute(
   });
 }
 
-/** True only for an inference route reserved before sandbox registration. */
-export function isRouteOnlySandboxReservation(entry: SandboxEntry): boolean {
+/**
+ * True only for an inference route reserved before sandbox registration.
+ *
+ * Structural parameter (only the two fields it reads) so display-layer entry
+ * types that omit the rest of the durable registry shape can reuse this single
+ * source of truth instead of re-deriving the predicate (#7609).
+ */
+export function isRouteOnlySandboxReservation(entry: {
+  pendingRouteReservation?: true;
+  createdAt?: string;
+}): boolean {
   return entry.pendingRouteReservation === true && entry.createdAt === undefined;
 }
 
@@ -750,6 +507,111 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
     const next = list.filter((p) => p.name !== presetName);
     if (next.length === list.length) return false;
     sandbox.customPolicies = next.length > 0 ? next : undefined;
+    save(data);
+    return true;
+  });
+}
+
+/** Return the baseline exclusions recorded for a sandbox (never null). */
+export function getBaselineExclusions(name: string): BaselineExclusionEntry[] {
+  const data = load();
+  return data.sandboxes[name]?.baselineExclusions ?? [];
+}
+
+/** Upsert a baseline exclusion by key. Replaces any existing entry for the key. */
+export function addBaselineExclusion(name: string, entry: BaselineExclusionEntry): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox || sandbox.baselineExclusionTransition) return false;
+    const list = (sandbox.baselineExclusions ?? []).filter((e) => e.key !== entry.key);
+    list.push({ ...entry, acknowledgedAt: entry.acknowledgedAt ?? new Date().toISOString() });
+    sandbox.baselineExclusions = list;
+    save(data);
+    return true;
+  });
+}
+
+/** Remove a baseline exclusion by key. Returns true if an entry was removed. */
+export function removeBaselineExclusion(name: string, key: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox || sandbox.baselineExclusionTransition) return false;
+    const list = sandbox.baselineExclusions ?? [];
+    const next = list.filter((e) => e.key !== key);
+    if (next.length === list.length) return false;
+    sandbox.baselineExclusions = next.length > 0 ? next : undefined;
+    save(data);
+    return true;
+  });
+}
+
+/** Return the one in-flight baseline policy transaction for a sandbox. */
+export function getBaselineExclusionTransition(name: string): BaselineExclusionTransition | null {
+  const data = load();
+  return data.sandboxes[name]?.baselineExclusionTransition ?? null;
+}
+
+/**
+ * Persist a new cross-system transaction before changing the live policy.
+ * Refuses to overwrite another pending transaction, even for the same key.
+ */
+export function beginBaselineExclusionTransition(
+  name: string,
+  transition: BaselineExclusionTransition,
+): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox || sandbox.baselineExclusionTransition) return false;
+    sandbox.baselineExclusionTransition = normalizeBaselineExclusionTransition(transition);
+    save(data);
+    return true;
+  });
+}
+
+/**
+ * Publish the durable intent represented by a completed live mutation and
+ * clear its journal in the same registry-file replacement.
+ */
+export function commitBaselineExclusionTransition(name: string, id: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    const transition = sandbox?.baselineExclusionTransition;
+    if (!sandbox || !transition || transition.id !== id) return false;
+    if (transition.operation === "exclude") {
+      const list = (sandbox.baselineExclusions ?? []).filter(
+        (entry) => entry.key !== transition.exclusion.key,
+      );
+      list.push({
+        ...transition.exclusion,
+        acknowledgedAt: transition.exclusion.acknowledgedAt ?? new Date().toISOString(),
+      });
+      sandbox.baselineExclusions = list;
+    } else {
+      const list = sandbox.baselineExclusions ?? [];
+      const committed = list.find((entry) => entry.key === transition.exclusion.key);
+      // A restore may finalize only the exact durable exclusion it staged
+      // against. Preserve the journal if another writer changed the record.
+      if (!committed || !isDeepStrictEqual(committed, transition.exclusion)) return false;
+      const next = list.filter((entry) => entry.key !== transition.exclusion.key);
+      sandbox.baselineExclusions = next.length > 0 ? next : undefined;
+    }
+    sandbox.baselineExclusionTransition = undefined;
+    save(data);
+    return true;
+  });
+}
+
+/** Roll back only the exact pending transaction, preserving committed intent. */
+export function clearBaselineExclusionTransition(name: string, id: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const sandbox = data.sandboxes[name];
+    if (!sandbox || sandbox.baselineExclusionTransition?.id !== id) return false;
+    sandbox.baselineExclusionTransition = undefined;
     save(data);
     return true;
   });

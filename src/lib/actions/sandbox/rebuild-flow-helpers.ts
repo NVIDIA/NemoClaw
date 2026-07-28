@@ -8,6 +8,7 @@ import {
 } from "../../adapters/openshell/gateway-drift";
 import { loadAgent } from "../../agent/defs";
 import {
+  bindLocalAgentBaseImageHandoffToResolution,
   bindLocalAgentBaseImageToPinnedProvenance,
   ensureAgentBaseImage,
   getAgentSandboxBaseImageEnvVar,
@@ -32,9 +33,14 @@ import {
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
-import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
+import {
+  parseContentAddressedSandboxBaseImageId,
+  type SandboxBaseImageResolutionMetadata,
+  type TrustedLocalBaseImageOverride,
+} from "../../sandbox-base-image";
 import * as shields from "../../shields";
-import * as registry from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
@@ -44,11 +50,11 @@ import {
 } from "./gateway-state";
 import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
 
-export type RebuildSandboxEntry = registry.SandboxEntry & { agents?: unknown[] };
+export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
 export type RebuildLiveState = {
   staleRecovery: boolean;
-  staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
+  staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
 };
 
 export type RebuildAgentBaseImageOptions = {
@@ -62,7 +68,7 @@ export type RebuildAgentBaseImagePreflight = {
   overrideEnvVar: string | null;
   resolutionMetadata?: SandboxBaseImageResolutionMetadata;
   disposeImageRef?: () => boolean;
-  trustedLocalOverride?: import("../../sandbox-base-image").TrustedLocalBaseImageOverride;
+  trustedLocalOverride?: TrustedLocalBaseImageOverride;
   trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
 };
 
@@ -219,7 +225,7 @@ export async function resolveRebuildLiveState(
     );
     return {
       staleRecovery: true,
-      staleRegistrySnapshot: JSON.parse(JSON.stringify(registry.load())),
+      staleRegistrySnapshot: JSON.parse(JSON.stringify(loadRegistry())),
     };
   }
 
@@ -299,6 +305,21 @@ export function ensureRebuildAgentBaseImage(
     } finally {
       restoreExplicitOverrideTrust();
     }
+    const reusedLocalResolution =
+      result.resolutionMetadata?.source === "local" &&
+      result.reusedResolutionHint === result.resolutionMetadata;
+    if (
+      !hasExplicitOverride &&
+      result.imageTag &&
+      result.resolutionMetadata?.source === "local" &&
+      !result.trustedLocalOverride &&
+      !reusedLocalResolution
+    ) {
+      // A stale persisted hint may fall through to a fresh local fallback. Its
+      // public provenance label is not authority. Rebuild once so the build
+      // call returns a fresh in-memory lease bound to the canonical image ID.
+      result = ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
+    }
     const needsTemporaryHandoff =
       result.imageTag !== null &&
       !isCanonicalLocalBaseImageRef(agentDef.name, result.imageTag) &&
@@ -314,6 +335,38 @@ export function ensureRebuildAgentBaseImage(
       needsTemporaryHandoff && imageRef && imageRef !== result.imageTag
         ? createTemporaryBaseImageHandoffDisposer(imageRef)
         : undefined;
+    const inheritedTrustedOverride =
+      result.trustedLocalOverride?.ref === imageRef ? result.trustedLocalOverride : null;
+    let handoffTrustedOverride: TrustedLocalBaseImageOverride | null = null;
+    if (
+      imageRef &&
+      result.imageTag &&
+      !inheritedTrustedOverride &&
+      result.resolutionMetadata &&
+      result.reusedResolutionHint === result.resolutionMetadata
+    ) {
+      handoffTrustedOverride = bindLocalAgentBaseImageHandoffToResolution(
+        agentDef,
+        result.imageTag,
+        imageRef,
+        result.resolutionMetadata,
+        result.reusedResolutionHint,
+      );
+    }
+    const localImageName = `nemoclaw-${agentDef.name}-sandbox-base-local`;
+    const localHandoff =
+      imageRef && parseContentAddressedSandboxBaseImageId(localImageName, imageRef) !== null;
+    if (
+      imageRef &&
+      (needsTemporaryHandoff || localHandoff || result.resolutionMetadata?.source === "local") &&
+      !inheritedTrustedOverride &&
+      !handoffTrustedOverride
+    ) {
+      disposeImageRef?.();
+      throw new Error(
+        `Resolved ${agentDef.displayName} local base image could not be bound to its rebuild handoff`,
+      );
+    }
     const resolutionMetadata =
       result.resolutionMetadata ??
       explicitOverrideResolution ??
@@ -326,7 +379,11 @@ export function ensureRebuildAgentBaseImage(
       overrideEnvVar,
       ...(resolutionMetadata ? { resolutionMetadata } : {}),
       ...(disposeImageRef ? { disposeImageRef } : {}),
-      ...(result.trustedLocalOverride ? { trustedLocalOverride: result.trustedLocalOverride } : {}),
+      ...(inheritedTrustedOverride
+        ? { trustedLocalOverride: inheritedTrustedOverride }
+        : handoffTrustedOverride
+          ? { trustedLocalOverride: handoffTrustedOverride }
+          : {}),
       ...(imageRef && resolutionMetadata && isImmutableRemoteBaseImageRef(imageRef)
         ? { trustedRemoteOverride: { ref: imageRef, resolutionMetadata } }
         : {}),

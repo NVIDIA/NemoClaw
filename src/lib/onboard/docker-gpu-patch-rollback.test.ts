@@ -71,7 +71,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "supervisor unreachable" }));
-    const runCaptureOpenshell = vi.fn(() => "");
+    const runCaptureOpenshell = vi.fn(() => "alpha Error\n");
 
     expect(() =>
       recreateOpenShellDockerSandboxWithGpu(
@@ -309,7 +309,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "supervisor unreachable" }));
-    const runCaptureOpenshell = vi.fn(() => "");
+    const runCaptureOpenshell = vi.fn(() => "alpha Error\n");
 
     expect(() =>
       recreateOpenShellDockerSandboxWithGpu(
@@ -348,7 +348,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     const dockerStart = vi.fn(() => ({ status: 1, stderr: "container start failed" }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "supervisor unreachable" }));
-    const runCaptureOpenshell = vi.fn(() => "");
+    const runCaptureOpenshell = vi.fn(() => "alpha Error\n");
 
     expect(() =>
       recreateOpenShellDockerSandboxWithGpu(

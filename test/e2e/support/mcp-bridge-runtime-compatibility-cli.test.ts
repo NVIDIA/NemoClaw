@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,10 +10,32 @@ import { describe, expect, it } from "vitest";
 
 import { MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION } from "../../../src/lib/actions/sandbox/mcp-bridge-validation";
 import { MCP_BRIDGE_RUNTIME_COMPATIBILITY_ARTIFACT } from "../../../tools/e2e/mcp-bridge-runtime-compatibility.mts";
+import { RISK_SIGNAL_FILE } from "../../../tools/e2e/risk-signal.ts";
 
 const COMPATIBILITY_TOOL = path.resolve("tools/e2e/mcp-bridge-runtime-compatibility.mts");
+const PLAN_HASH = "b".repeat(64);
+const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 
-function runCompatibilityCli(versionStdout: string, versionStderr = "") {
+function gatedEnvironment(): Record<string, string> {
+  const expectedSha = execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  }).trim();
+  return {
+    E2E_TARGET_ID: "mcp-bridge-dev",
+    GITHUB_WORKSPACE: process.cwd(),
+    NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
+    NEMOCLAW_E2E_EXPECTED_SHA: expectedSha,
+    NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
+    NEMOCLAW_E2E_SHARD: "openclaw",
+  };
+}
+
+function runCompatibilityCli(
+  versionStdout: string,
+  versionStderr = "",
+  extraEnv: Record<string, string> = {},
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-compat-cli-"));
   const artifactDirectory = path.join(root, "artifacts");
   const githubOutputPath = path.join(root, "github-output.txt");
@@ -51,6 +73,7 @@ function runCompatibilityCli(versionStdout: string, versionStderr = "") {
         E2E_ARTIFACT_DIR: artifactDirectory,
         GITHUB_OUTPUT: githubOutputPath,
         GITHUB_STEP_SUMMARY: githubSummaryPath,
+        ...extraEnv,
       },
       killSignal: "SIGKILL",
       timeout: 30_000,
@@ -110,6 +133,54 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
       );
       expect(summary).not.toContain("0.0.78-dev.6+ga7271169");
       expect(summary).not.toContain(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION);
+      expect(fs.existsSync(path.join(run.artifactDirectory, RISK_SIGNAL_FILE))).toBe(false);
+    } finally {
+      fs.rmSync(run.root, { force: true, recursive: true });
+    }
+  });
+
+  it("emits exact-bound gate evidence for a rejected dev runtime (#6426)", () => {
+    const gateEnv = gatedEnvironment();
+    const run = runCompatibilityCli("openshell 0.0.78-dev.6+ga7271169\n", "", gateEnv);
+    try {
+      expect(run.result.error).toBeUndefined();
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(run.artifactDirectory, RISK_SIGNAL_FILE), "utf8")),
+      ).toEqual({
+        version: 1,
+        jobId: "mcp-bridge-dev",
+        shardId: "openclaw",
+        expectedSha: gateEnv.NEMOCLAW_E2E_EXPECTED_SHA,
+        testedSha: gateEnv.NEMOCLAW_E2E_EXPECTED_SHA,
+        planHash: PLAN_HASH,
+        correlationId: CORRELATION_ID,
+        passed: 1,
+        failed: 0,
+        skipped: 0,
+        pending: 0,
+        unhandledErrors: 0,
+        runReason: "passed",
+      });
+      expect(fs.statSync(path.join(run.artifactDirectory, RISK_SIGNAL_FILE)).mode & 0o777).toBe(
+        0o600,
+      );
+    } finally {
+      fs.rmSync(run.root, { force: true, recursive: true });
+    }
+  });
+
+  it("leaves aligned gate evidence to the credentialed lifecycle (#6426)", () => {
+    const run = runCompatibilityCli(
+      `openshell ${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}\n`,
+      "",
+      gatedEnvironment(),
+    );
+    try {
+      expect(run.result.error).toBeUndefined();
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(fs.readFileSync(run.githubOutputPath, "utf8")).toContain("mode=full-lifecycle\n");
+      expect(fs.existsSync(path.join(run.artifactDirectory, RISK_SIGNAL_FILE))).toBe(false);
     } finally {
       fs.rmSync(run.root, { force: true, recursive: true });
     }
@@ -117,7 +188,7 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
 
   it("keeps malformed probe output fatal and out of shared evidence (#6426)", () => {
     const secret = "MCP_TEST_TOKEN=fixture-credential-do-not-log-6426";
-    const run = runCompatibilityCli("openshell 0.0.72\n", `${secret}\n`);
+    const run = runCompatibilityCli("openshell 0.0.72\n", `${secret}\n`, gatedEnvironment());
     try {
       expect(run.result.error).toBeUndefined();
       expect(run.result.signal).toBeNull();

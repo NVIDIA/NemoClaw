@@ -391,78 +391,6 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
-  it("applies the initial preflight transition on fresh onboarding", async () => {
-    const harness = createRuntimeHarness();
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordInitialPreflightTransition(false);
-
-    expect(harness.events.map((event) => event.type)).toEqual(["state.exited", "state.entered"]);
-    expect(harness.events.at(-1)).toMatchObject({ state: "preflight" });
-  });
-
-  it("invalidates the initial preflight transition when resume already stands at preflight (#6227)", async () => {
-    const harness = createRuntimeHarness({
-      machine: {
-        version: 1,
-        state: "preflight",
-        stateEnteredAt: "2026-06-09T00:00:00.000Z",
-        revision: 3,
-      },
-    });
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordInitialPreflightTransition(true);
-
-    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
-    expect(harness.events[0]).toMatchObject({
-      type: "state.result.invalidated",
-      metadata: {
-        reason: "already_at_target",
-        currentState: "preflight",
-        sourceState: "init",
-        targetState: "preflight",
-      },
-    });
-  });
-
-  it("invalidates the initial preflight transition when resume already advanced past init (#6227)", async () => {
-    const harness = createRuntimeHarness({
-      machine: {
-        version: 1,
-        state: "gateway",
-        stateEnteredAt: "2026-06-09T00:00:00.000Z",
-        revision: 5,
-      },
-    });
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordInitialPreflightTransition(true);
-
-    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
-    expect(harness.events[0]).toMatchObject({
-      type: "state.result.invalidated",
-      metadata: {
-        reason: "source_state_mismatch",
-        currentState: "gateway",
-        sourceState: "init",
-        targetState: "preflight",
-      },
-    });
-  });
-
   it("rejects skipped transition results that carry context updates", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
@@ -577,11 +505,13 @@ describe("OnboardRuntimeBoundary", () => {
       advanceTo("finalizing", { metadata: { state: "policies" } }),
     );
 
-    await boundary.recordPostVerifyStarted();
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+    );
     const completed = await boundary.recordStateResultWithStepCompatibility(
       completeOnboardMachine(
         { sandboxName: "openclaw-sb", provider: "nvidia", model: "nemotron" },
-        { state: "finalizing" },
+        { state: "post_verify" },
       ),
     );
 

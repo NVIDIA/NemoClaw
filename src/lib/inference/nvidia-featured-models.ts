@@ -65,14 +65,6 @@ export type FeaturedModelFetchResult =
 /** Normalizes NVIDIA featured-model catalog IDs into endpoint model IDs. */
 function normalizeFeaturedModelId(model: string): string {
   const trimmed = model.trim();
-  // Minimax rollout contract (#5827): the external feed has emitted the stale
-  // M2.7 ID/label while CLOUD_MODEL_OPTIONS and the task-fit docs define M3 as
-  // the NVIDIA Endpoints choice. This is an upstream-lag bridge; remove this ID
-  // rewrite together with the label rewrite and fixture only once the feed no
-  // longer emits M2.7 and publishes M3 directly.
-  if (trimmed === "minimaxai/minimax-m2.7") {
-    return "minimaxai/minimax-m3";
-  }
   // Nemotron namespace contract (#5827): the external feed has emitted bare
   // nemotron-3-* IDs, while CLOUD_MODEL_OPTIONS and the matching OpenClaw
   // model-specific setup manifest use the canonical nvidia/ endpoint namespace.
@@ -92,16 +84,6 @@ function sanitizeFeaturedCatalogText(value: string, maxLength: number): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLength);
-}
-
-/** Normalizes NVIDIA featured-model labels for known catalog lag cases. */
-function normalizeFeaturedModelLabel(id: string, label: string): string {
-  const sanitized = sanitizeFeaturedCatalogText(label, MAX_NVIDIA_FEATURED_MODEL_LABEL_LENGTH);
-  // Keep the display label coupled to the Minimax rollout contract above.
-  if (id === "minimaxai/minimax-m3" && /^minimax m2\.7$/i.test(sanitized)) {
-    return "Minimax M3";
-  }
-  return sanitized;
 }
 
 function isRetiredFeaturedModelId(
@@ -136,7 +118,7 @@ export function parseNvidiaFeaturedModels(
     const idKey = id.toLowerCase();
     const label =
       typeof item?.["model-name"] === "string"
-        ? normalizeFeaturedModelLabel(id, item["model-name"])
+        ? sanitizeFeaturedCatalogText(item["model-name"], MAX_NVIDIA_FEATURED_MODEL_LABEL_LENGTH)
         : "";
     if (
       !id ||

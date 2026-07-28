@@ -10,6 +10,7 @@ import {
   getSandboxReadyErrorDebouncePolls,
   SANDBOX_READY_ERROR_DEBOUNCE_ENV,
   waitForCreatedSandboxReadyWithTrace,
+  waitForDashboardReadyWithTrace,
   waitForSandboxReadyWithTrace,
 } from "./sandbox-readiness-tracing";
 
@@ -23,7 +24,7 @@ function replay(outputs: readonly string[]) {
 }
 
 describe("createSandboxReadyWaiter", () => {
-  it("uses the bounded Docker-driver polling defaults without a final delay", () => {
+  it("uses the legacy Docker-driver poll settings as an adaptive deadline budget", () => {
     const runCaptureOpenshell = vi.fn(() => `${NAME}   Provisioning`);
     const sleep = vi.fn();
     const waitForSandboxReady = createSandboxReadyWaiter({
@@ -34,12 +35,14 @@ describe("createSandboxReadyWaiter", () => {
     });
 
     expect(waitForSandboxReady(NAME, 2, 3)).toBe(false);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledOnce();
-    expect(sleep).toHaveBeenCalledWith(3);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(7);
+    expect(sleep).toHaveBeenCalledTimes(7);
+    expect(sleep).toHaveBeenNthCalledWith(1, 0.25);
+    expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(6, 2);
+    expect(Math.max(...sleep.mock.calls.map(([seconds]) => seconds))).toBeLessThanOrEqual(3);
   });
 
-  it("preserves the legacy Kubernetes pod fallback and final delay", () => {
+  it("uses the same deadline for the legacy Kubernetes pod fallback", () => {
     const runCaptureOpenshell = vi
       .fn()
       .mockReturnValueOnce(`${NAME}   Provisioning`)
@@ -53,13 +56,13 @@ describe("createSandboxReadyWaiter", () => {
     });
 
     expect(waitForSandboxReady(NAME, 1, 2)).toBe(false);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(8);
     expect(runCaptureOpenshell.mock.calls[1]?.[0]).toContain("kubectl");
-    expect(sleep).toHaveBeenCalledOnce();
-    expect(sleep).toHaveBeenCalledWith(2);
+    expect(sleep).toHaveBeenCalledTimes(4);
+    expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(2, 2);
   });
 
-  it("keeps the traced waiter free of the legacy final delay", () => {
+  it("keeps the traced waiter within its deadline without an extra final delay", () => {
     const runCaptureOpenshell = vi
       .fn()
       .mockReturnValueOnce(`${NAME}   Provisioning`)
@@ -77,11 +80,27 @@ describe("createSandboxReadyWaiter", () => {
         sleep,
       }),
     ).toBe(false);
-    expect(sleep).not.toHaveBeenCalled();
+    expect(sleep).toHaveBeenCalledTimes(4);
+    expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(2, 2);
   });
 });
 
 describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
+  it("does not probe when the readiness deadline is zero (#3768)", () => {
+    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
+
+    expect(
+      waitForCreatedSandboxReadyWithTrace({
+        sandboxName: NAME,
+        timeoutSecs: 0,
+        runCaptureOpenshell,
+        isSandboxReady,
+        sleep,
+      }),
+    ).toEqual({ ready: false, reason: "timeout", failurePhase: null });
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+  });
+
   it("fast-fails on the first Error poll when the debounce is opted out (K=1)", () => {
     const { runCaptureOpenshell, sleep } = replay([
       `${NAME}   Provisioning   1s ago`,
@@ -274,6 +293,88 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     });
 
     expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
+  });
+});
+
+describe("waitForDashboardReadyWithTrace", () => {
+  it("traces a zero-budget deadline without probing", () => {
+    const runCaptureOpenshell = vi.fn(() => "200");
+    const sleep = vi.fn();
+    const trace = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(
+      waitForDashboardReadyWithTrace({
+        sandboxName: NAME,
+        port: 18789,
+        runCaptureOpenshell,
+        sleep,
+        timeoutSecs: 0,
+        trace,
+      }),
+    ).toBe(false);
+    expect(trace).toHaveBeenCalledWith("not_ready", { attempts: 0, deadline_ms: 0 });
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("0ms deadline"));
+  });
+
+  it("returns immediately when the dashboard is ready", () => {
+    const runCaptureOpenshell = vi.fn(() => "200");
+    const sleep = vi.fn();
+
+    expect(
+      waitForDashboardReadyWithTrace({
+        sandboxName: NAME,
+        port: 18789,
+        runCaptureOpenshell,
+        sleep,
+      }),
+    ).toBe(true);
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("retries with fast polling and accepts an authenticated dashboard", () => {
+    let nowMs = 1_000;
+    const runCaptureOpenshell = vi.fn().mockReturnValueOnce("503").mockReturnValue("401");
+    const sleep = vi.fn((seconds: number) => {
+      nowMs += seconds * 1000;
+    });
+
+    expect(
+      waitForDashboardReadyWithTrace({
+        sandboxName: NAME,
+        port: 18789,
+        runCaptureOpenshell,
+        sleep,
+        now: () => nowMs,
+      }),
+    ).toBe(true);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(0.25);
+  });
+
+  it("reports the actual short deadline on timeout", () => {
+    let nowMs = 1_000;
+    const runCaptureOpenshell = vi.fn(() => "503");
+    const sleep = vi.fn((seconds: number) => {
+      nowMs += seconds * 1000;
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(
+      waitForDashboardReadyWithTrace({
+        sandboxName: NAME,
+        port: 18789,
+        runCaptureOpenshell,
+        sleep,
+        timeoutSecs: 0.1,
+        now: () => nowMs,
+      }),
+    ).toBe(false);
+    expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBe(0.1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("100ms deadline"));
   });
 });
 

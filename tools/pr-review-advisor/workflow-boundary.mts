@@ -9,13 +9,40 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const DEFAULT_PACKAGE_LOCK_PATH = join(REPO_ROOT, "package-lock.json");
+const DEFAULT_OPENSHELL_POLICY_PATH = join(
+  REPO_ROOT,
+  "tools",
+  "pr-review-advisor",
+  "openshell-policy.yaml",
+);
+const CANONICAL_ADVISOR_DIR = "${{ github.workspace }}/advisor";
+const CANONICAL_DEFAULT_WORKDIR_IF =
+  "${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}";
+const CANONICAL_DEFAULT_WORKDIR =
+  'echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"';
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
 const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
 const PINNED_SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const CANONICAL_PREPARE_TARGET_PR = `node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"`;
-const CANONICAL_RUN_ANALYSIS = `cd "$ADVISOR_WORKDIR"
-node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"`;
+const CANONICAL_PREPARE_SANDBOX = `node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" prepare`;
+const CANONICAL_INSTALL_OPENSHELL =
+  'env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY NEMOCLAW_NON_INTERACTIVE=1 bash "$ADVISOR_DIR/scripts/install-openshell.sh"';
+const CANONICAL_RUN_ANALYSIS_SELECTOR =
+  "${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}";
+const CANONICAL_ANALYSIS_ENABLED_IF = "${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '1' }}";
+const CANONICAL_UNAVAILABLE_IF =
+  "${{ always() && steps.configure-openshell.outcome != 'success' }}";
+const CANONICAL_UNAVAILABLE_REASON =
+  "${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '0' && 'PR_REVIEW_ADVISOR_RUN_ANALYSIS=0' || 'OpenShell inference configuration failed or the advisor credential is unavailable' }}";
+const CANONICAL_CONFIGURE_OPENSHELL = `node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" configure`;
+const CANONICAL_UNAVAILABLE_ANALYSIS = `node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" unavailable`;
+const CANONICAL_CREATE_SANDBOX = `node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" create`;
+const CANONICAL_RUN_ANALYSIS = `node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" run`;
+const CANONICAL_DOWNLOAD_ARTIFACTS = `node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" download`;
+const CANONICAL_DELETE_SANDBOX = `node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/openshell.mts" delete`;
 const CANONICAL_VALIDATE_ARTIFACTS = `node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts"`;
+const PINNED_PI_IMAGE =
+  "ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd";
 const FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS = [
   "run-id",
   "github-token",
@@ -26,6 +53,7 @@ const FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS = [
 const ADVISOR_RUNTIME_PACKAGE_PINS = [
   { packageName: "@earendil-works/pi-coding-agent", envName: "PI_SDK_VERSION", version: "0.80.6" },
   { packageName: "typebox", envName: "TYPEBOX_VERSION", version: "1.1.38" },
+  { packageName: "undici", envName: "UNDICI_VERSION", version: "8.5.0" },
   { packageName: "yaml", envName: "YAML_VERSION", version: "2.8.3" },
   { packageName: "vitest", envName: "VITEST_VERSION", version: "4.1.9" },
 ] as const;
@@ -56,6 +84,31 @@ function stringValue(value: unknown): string {
 
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function containsStringMatching(value: unknown, pattern: RegExp): boolean {
+  if (typeof value === "string") return pattern.test(value);
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsStringMatching(entry, pattern));
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value).some((entry) => containsStringMatching(entry, pattern));
+  }
+  return false;
+}
+
+function containsSecretExpression(value: unknown): boolean {
+  return containsStringMatching(value, /\$\{\{\s*secrets(?:\.|\s*\[)/u);
+}
+
+function containsGitHubTokenExpression(value: unknown): boolean {
+  return containsStringMatching(value, /\$\{\{\s*github(?:\.token|\s*\[\s*["']token["']\s*\])/u);
 }
 
 function namedStep(steps: readonly WorkflowStep[], name: string): WorkflowStep | undefined {
@@ -211,6 +264,69 @@ function checkAdvisorRuntimePackageLock(errors: string[], packageLockPath: strin
   }
 }
 
+function checkOpenShellPolicy(errors: string[], policyPath: string): void {
+  let policy: WorkflowRecord;
+  try {
+    policy = asRecord(YAML.parse(readFileSync(policyPath, "utf8")));
+  } catch {
+    errors.push(`failed to read or parse advisor OpenShell policy: ${policyPath}`);
+    return;
+  }
+  if (policy.version !== 1) {
+    errors.push("advisor OpenShell policy version must remain 1");
+  }
+
+  const filesystem = asRecord(policy.filesystem_policy);
+  if (booleanValue(filesystem.include_workdir) !== false) {
+    errors.push("advisor OpenShell policy must not include the default workdir");
+  }
+  const readOnly = stringArray(filesystem.read_only);
+  const allowedReadOnlyPaths = [
+    "/usr/bin",
+    "/usr/lib",
+    "/usr/share/git-core",
+    "/etc",
+    "/advisor",
+    "/pr-workdir",
+    "/pr-review-advisor-context",
+    "/pr-review-advisor-tools",
+  ];
+  for (const requiredPath of allowedReadOnlyPaths) {
+    if (!readOnly.includes(requiredPath)) {
+      errors.push(`advisor OpenShell policy must grant read-only access to ${requiredPath}`);
+    }
+  }
+  for (const readOnlyPath of readOnly) {
+    if (!allowedReadOnlyPaths.includes(readOnlyPath)) {
+      errors.push(`advisor OpenShell policy must not grant read access to ${readOnlyPath}`);
+    }
+  }
+  const readWrite = stringArray(filesystem.read_write);
+  if (!readWrite.includes("/dev")) {
+    errors.push("advisor OpenShell policy must retain writable device access");
+  }
+  if (!readWrite.includes("/sandbox/pr-review-advisor-runtime")) {
+    errors.push("advisor OpenShell policy must retain only its writable runtime subtree");
+  }
+  for (const writablePath of readWrite) {
+    if (!["/dev", "/sandbox/pr-review-advisor-runtime"].includes(writablePath)) {
+      errors.push(`advisor OpenShell policy must not grant write access to ${writablePath}`);
+    }
+  }
+
+  if (asRecord(policy.landlock).compatibility !== "hard_requirement") {
+    errors.push("advisor OpenShell policy must fail closed when Landlock is unavailable");
+  }
+  const processPolicy = asRecord(policy.process);
+  if (processPolicy.run_as_user !== "sandbox" || processPolicy.run_as_group !== "sandbox") {
+    errors.push("advisor OpenShell policy must run as the sandbox user and group");
+  }
+  const networkPolicies = asRecord(policy.network_policies);
+  if (networkPolicies !== policy.network_policies || Object.keys(networkPolicies).length !== 0) {
+    errors.push("advisor OpenShell policy must not allow direct network egress");
+  }
+}
+
 function requireActionPins(
   errors: string[],
   jobName: string,
@@ -311,6 +427,20 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   if (stringValue(reviewJob["continue-on-error"]) !== "${{ !matrix.advisor.publish_comment }}") {
     errors.push("review job failures must be non-blocking only for non-publishing advisor lanes");
   }
+  const reviewEnv = asRecord(reviewJob.env);
+  const forbiddenJobCredentials = [
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "OPENAI_API_KEY",
+    "PR_REVIEW_ADVISOR_API_KEY",
+  ];
+  if (
+    forbiddenJobCredentials.some((name) => Object.hasOwn(reviewEnv, name)) ||
+    containsSecretExpression(reviewEnv) ||
+    containsGitHubTokenExpression(reviewEnv)
+  ) {
+    errors.push("review job-level environment must not expose GitHub or model credentials");
+  }
 
   const entries = advisorMatrixEntries(errors, reviewJob);
   for (const [index, entry] of entries.entries()) {
@@ -324,6 +454,11 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   for (const field of ["model", "artifact_dir", "artifact_name"]) {
     requireUniqueMatrixField(errors, entries, field);
   }
+  for (const [index, entry] of entries.entries()) {
+    if (!/^[a-z0-9][a-z0-9-]*$/u.test(stringValue(entry.artifact_dir))) {
+      errors.push(`advisor matrix entry ${index + 1} artifact_dir must be a simple directory name`);
+    }
+  }
 
   requireEnv(
     errors,
@@ -332,6 +467,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     "PR_REVIEW_ADVISOR_MODEL",
     "${{ matrix.advisor.model }}",
   );
+  requireEnv(errors, "review job", reviewJob, "ADVISOR_DIR", CANONICAL_ADVISOR_DIR);
   requireEnv(errors, "review job", reviewJob, "FD_FIND_VERSION", "9.0.0-1");
   requireEnv(errors, "review job", reviewJob, "RIPGREP_VERSION", "14.1.0-1");
   for (const { envName, version } of ADVISOR_RUNTIME_PACKAGE_PINS) {
@@ -348,10 +484,47 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     errors,
     "review job",
     reviewJob,
+    "PR_REVIEW_ADVISOR_RUN_ANALYSIS",
+    CANONICAL_RUN_ANALYSIS_SELECTOR,
+  );
+  requireEnv(
+    errors,
+    "review job",
+    reviewJob,
+    "TARGET_REPO",
+    "${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo || github.repository }}",
+  );
+  requireEnv(
+    errors,
+    "review job",
+    reviewJob,
+    "PR_NUMBER",
+    "${{ github.event.pull_request.number || inputs.target_pr }}",
+  );
+  requireEnv(
+    errors,
+    "review job",
+    reviewJob,
     "PR_REVIEW_ADVISOR_WORKFLOW_NAME",
     "PR Review / Advisor",
   );
   requireEnv(errors, "review job", reviewJob, "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW", "false");
+  requireEnv(
+    errors,
+    "review job",
+    reviewJob,
+    "OPENSHELL_GATEWAY_ENDPOINT",
+    "http://127.0.0.1:8080",
+  );
+  requireEnv(errors, "review job", reviewJob, "PI_IMAGE", PINNED_PI_IMAGE);
+  requireEnv(errors, "review job", reviewJob, "PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS", "2100");
+  requireEnv(
+    errors,
+    "review job",
+    reviewJob,
+    "SANDBOX_NAME",
+    "pr-advisor-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.advisor.id }}",
+  );
 
   const steps = asSteps(reviewJob.steps);
   if (steps.length === 0) errors.push("review job must declare steps");
@@ -384,10 +557,26 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   requireWith(errors, dispatchCheckout, "lfs", false);
   requireWith(errors, dispatchCheckout, "submodules", false);
 
+  const defaultWorkdir = requireStep(errors, steps, "Set default advisor workdir");
+  if (defaultWorkdir && stringValue(defaultWorkdir.if) !== CANONICAL_DEFAULT_WORKDIR_IF) {
+    errors.push("Set default advisor workdir must use the canonical dispatch-only condition");
+  }
+  requireCanonicalRun(
+    errors,
+    defaultWorkdir,
+    CANONICAL_DEFAULT_WORKDIR,
+    "Set default advisor workdir must bind ADVISOR_WORKDIR to the fixed pr-workdir checkout",
+  );
+
   const prepare = requireStep(errors, steps, "Prepare isolated analysis workspace");
   const prepareEnv = asRecord(prepare?.env);
   if (prepareEnv.GIT_LFS_SKIP_SMUDGE !== "1") {
     errors.push("Prepare isolated analysis workspace must disable LFS smudging");
+  }
+  if (prepareEnv.TARGET_DIR !== "${{ github.workspace }}/pr-workdir") {
+    errors.push(
+      "Prepare isolated analysis workspace must use the fixed pr-workdir upload directory",
+    );
   }
   // The fetch/validate/checkout logic lives in the trusted, unit-tested helper
   // (prepare-target-pr.mts); the workflow must invoke it from the pinned advisor
@@ -467,6 +656,98 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   );
   requireRunOrder(errors, install, 'cd "$ADVISOR_DIR"', CANONICAL_ADVISOR_NPM_CI);
 
+  const prepareSandbox = requireStep(errors, steps, "Prepare advisor sandbox inputs");
+  requireCanonicalRun(
+    errors,
+    prepareSandbox,
+    CANONICAL_PREPARE_SANDBOX,
+    "step 'Prepare advisor sandbox inputs' must use the canonical trusted OpenShell helper command",
+  );
+  const prepareSandboxEnv = asRecord(prepareSandbox?.env);
+  if (
+    prepareSandboxEnv.GH_TOKEN !== "${{ github.token }}" ||
+    Object.keys(prepareSandboxEnv).length !== 1
+  ) {
+    errors.push("Prepare advisor sandbox inputs must receive only github.token");
+  }
+
+  const installOpenShell = requireStep(errors, steps, "Install OpenShell");
+  requireCanonicalRun(
+    errors,
+    installOpenShell,
+    CANONICAL_INSTALL_OPENSHELL,
+    "step 'Install OpenShell' must use the canonical credential-free trusted installer command",
+  );
+  if (stringValue(installOpenShell?.if) !== CANONICAL_ANALYSIS_ENABLED_IF) {
+    errors.push("Install OpenShell must run only when advisor analysis is requested");
+  }
+
+  const configureOpenShell = requireStep(errors, steps, "Configure OpenShell inference");
+  requireCanonicalRun(
+    errors,
+    configureOpenShell,
+    CANONICAL_CONFIGURE_OPENSHELL,
+    "step 'Configure OpenShell inference' must use the canonical trusted OpenShell helper command",
+  );
+  const configureEnv = asRecord(configureOpenShell?.env);
+  if (
+    configureEnv.OPENAI_API_KEY !== "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}" ||
+    Object.keys(configureEnv).length !== 1
+  ) {
+    errors.push(
+      "Configure OpenShell inference must receive only secrets.PR_REVIEW_ADVISOR_API_KEY as OPENAI_API_KEY",
+    );
+  }
+  if (stringValue(configureOpenShell?.id) !== "configure-openshell") {
+    errors.push("Configure OpenShell inference id must be configure-openshell");
+  }
+  if (stringValue(configureOpenShell?.if) !== CANONICAL_ANALYSIS_ENABLED_IF) {
+    errors.push("Configure OpenShell inference must run only when advisor analysis is requested");
+  }
+  if (configureOpenShell && booleanValue(configureOpenShell["continue-on-error"]) !== true) {
+    errors.push(
+      "Configure OpenShell inference must continue-on-error until unavailable artifacts are written",
+    );
+  }
+
+  const unavailable = requireStep(errors, steps, "Write unavailable advisor artifacts");
+  if (stringValue(unavailable?.id) !== "unavailable-analysis") {
+    errors.push("Write unavailable advisor artifacts id must be unavailable-analysis");
+  }
+  if (stringValue(unavailable?.if) !== CANONICAL_UNAVAILABLE_IF) {
+    errors.push(
+      "Write unavailable advisor artifacts must run after skipped or failed configuration",
+    );
+  }
+  requireCanonicalRun(
+    errors,
+    unavailable,
+    CANONICAL_UNAVAILABLE_ANALYSIS,
+    "step 'Write unavailable advisor artifacts' must use the canonical trusted fallback command",
+  );
+  const unavailableEnv = asRecord(unavailable?.env);
+  if (
+    unavailableEnv.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON !== CANONICAL_UNAVAILABLE_REASON ||
+    !Object.hasOwn(unavailableEnv, "BASE_REF") ||
+    !Object.hasOwn(unavailableEnv, "HEAD_REF") ||
+    Object.keys(unavailableEnv).length !== 3
+  ) {
+    errors.push(
+      "Write unavailable advisor artifacts must receive only refs and the canonical unavailable reason",
+    );
+  }
+
+  const createSandbox = requireStep(errors, steps, "Create credential-free advisor sandbox");
+  requireCanonicalRun(
+    errors,
+    createSandbox,
+    CANONICAL_CREATE_SANDBOX,
+    "step 'Create credential-free advisor sandbox' must use the canonical trusted OpenShell helper command",
+  );
+  if (stringValue(createSandbox?.if) !== "${{ steps.configure-openshell.outcome == 'success' }}") {
+    errors.push("Create credential-free advisor sandbox must require successful configuration");
+  }
+
   const analyze = requireStep(errors, steps, "Run PR review advisor");
   requireCanonicalRun(
     errors,
@@ -474,21 +755,83 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
     CANONICAL_RUN_ANALYSIS,
     "step 'Run PR review advisor' must use the canonical trusted analysis command",
   );
+  if (stringValue(analyze?.if) !== "${{ steps.configure-openshell.outcome == 'success' }}") {
+    errors.push("Run PR review advisor must require successful configuration");
+  }
   if (analyze && booleanValue(analyze["continue-on-error"]) !== true) {
     errors.push("Run PR review advisor must continue-on-error until artifacts are uploaded");
   }
+  if (
+    containsSecretExpression(analyze) ||
+    Object.hasOwn(asRecord(analyze?.env), "OPENAI_API_KEY")
+  ) {
+    errors.push("Run PR review advisor must not receive the upstream model credential");
+  }
   const analyzeEnv = asRecord(analyze?.env);
-  if (analyzeEnv.PR_REVIEW_ADVISOR_API_KEY !== "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}") {
-    errors.push("Run PR review advisor must receive only secrets.PR_REVIEW_ADVISOR_API_KEY");
+  if (
+    unavailableEnv.BASE_REF !== analyzeEnv.BASE_REF ||
+    unavailableEnv.HEAD_REF !== analyzeEnv.HEAD_REF
+  ) {
+    errors.push("Write unavailable advisor artifacts must use the same refs as sandbox analysis");
   }
-  if (Object.hasOwn(analyzeEnv, "OPENAI_API_KEY")) {
-    errors.push("Run PR review advisor must not receive OPENAI_API_KEY");
+
+  const download = requireStep(errors, steps, "Download advisor artifacts from sandbox");
+  if (stringValue(download?.id) !== "download-analysis") {
+    errors.push("Download advisor artifacts from sandbox id must be download-analysis");
   }
-  const modelSecretSteps = steps.filter((step) =>
-    JSON.stringify(step).includes("PR_REVIEW_ADVISOR_API_KEY"),
+  if (
+    stringValue(download?.if) !==
+    "${{ always() && steps.configure-openshell.outcome == 'success' }}"
+  ) {
+    errors.push(
+      "Download advisor artifacts from sandbox must run after every configured sandbox analysis",
+    );
+  }
+  if (download && booleanValue(download["continue-on-error"]) !== true) {
+    errors.push(
+      "Download advisor artifacts from sandbox must continue-on-error until artifacts are uploaded",
+    );
+  }
+  requireCanonicalRun(
+    errors,
+    download,
+    CANONICAL_DOWNLOAD_ARTIFACTS,
+    "step 'Download advisor artifacts from sandbox' must use the canonical trusted OpenShell helper command",
   );
-  if (modelSecretSteps.length !== 1 || modelSecretSteps[0] !== analyze) {
-    errors.push("only the analysis step may receive the advisor model credential");
+
+  const deleteSandbox = requireStep(errors, steps, "Delete advisor sandbox");
+  if (stringValue(deleteSandbox?.if) !== "always()") {
+    errors.push("Delete advisor sandbox must run always");
+  }
+  requireCanonicalRun(
+    errors,
+    deleteSandbox,
+    CANONICAL_DELETE_SANDBOX,
+    "step 'Delete advisor sandbox' must use the canonical trusted OpenShell helper command",
+  );
+
+  const modelSecretSteps = steps.filter((step) => containsSecretExpression(step));
+  if (modelSecretSteps.length !== 1 || modelSecretSteps[0] !== configureOpenShell) {
+    errors.push("only OpenShell provider configuration may receive the advisor model credential");
+  }
+  const githubTokenSteps = steps.filter((step) => containsGitHubTokenExpression(step));
+  if (githubTokenSteps.length !== 1 || githubTokenSteps[0] !== prepareSandbox) {
+    errors.push("only advisor sandbox input preparation may receive github.token");
+  }
+  for (const step of [unavailable, createSandbox, analyze, download, deleteSandbox]) {
+    const stepEnv = asRecord(step?.env);
+    if (
+      step &&
+      (["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "PR_REVIEW_ADVISOR_API_KEY"].some((name) =>
+        Object.hasOwn(stepEnv, name),
+      ) ||
+        containsGitHubTokenExpression(step) ||
+        containsSecretExpression(step))
+    ) {
+      errors.push(
+        `step '${step.name ?? "<unnamed>"}' must remain credential-free after OpenShell configuration`,
+      );
+    }
   }
 
   const symlinkIndex = steps.findIndex(
@@ -508,14 +851,50 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
       }
     }
   }
+  const prepareSandboxIndex = steps.findIndex(
+    (step) => step.name === "Prepare advisor sandbox inputs",
+  );
+  const installOpenShellIndex = steps.findIndex((step) => step.name === "Install OpenShell");
+  const configureIndex = steps.findIndex((step) => step.name === "Configure OpenShell inference");
+  const unavailableIndex = steps.findIndex(
+    (step) => step.name === "Write unavailable advisor artifacts",
+  );
+  const createIndex = steps.findIndex(
+    (step) => step.name === "Create credential-free advisor sandbox",
+  );
   const analyzeIndex = steps.findIndex((step) => step.name === "Run PR review advisor");
+  const downloadIndex = steps.findIndex(
+    (step) => step.name === "Download advisor artifacts from sandbox",
+  );
+  const deleteIndex = steps.findIndex((step) => step.name === "Delete advisor sandbox");
   const installIndex = steps.findIndex((step) => step.name === "Install Pi SDK");
-  if (installIndex < 0 || analyzeIndex < 0 || installIndex > analyzeIndex) {
+  if (installIndex < 0 || configureIndex < 0 || installIndex > configureIndex) {
     errors.push("pinned advisor tools must be installed before the model credential is exposed");
   }
-  if (symlinkIndex < 0 || analyzeIndex < 0 || symlinkIndex > analyzeIndex) {
+  if (symlinkIndex < 0 || configureIndex < 0 || symlinkIndex > configureIndex) {
     errors.push(
       "analysis workspace symlinks must be removed before the model credential is exposed",
+    );
+  }
+  if (
+    prepareSandboxIndex < 0 ||
+    installOpenShellIndex < 0 ||
+    configureIndex < 0 ||
+    unavailableIndex < 0 ||
+    createIndex < 0 ||
+    analyzeIndex < 0 ||
+    downloadIndex < 0 ||
+    deleteIndex < 0 ||
+    prepareSandboxIndex > configureIndex ||
+    installOpenShellIndex > configureIndex ||
+    configureIndex > unavailableIndex ||
+    unavailableIndex > createIndex ||
+    createIndex > analyzeIndex ||
+    analyzeIndex > downloadIndex ||
+    downloadIndex > deleteIndex
+  ) {
+    errors.push(
+      "advisor inputs, OpenShell, sandbox execution, artifact download, and cleanup must run in the canonical order",
     );
   }
   if (steps.some((step) => step.name === "Post PR review advisor comment")) {
@@ -529,7 +908,26 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   if (outcome && booleanValue(outcome["continue-on-error"]) === true) {
     errors.push("Verify advisor analysis outcome must not continue on error");
   }
+  requireRunContains(errors, outcome, 'if [ "$CONFIGURE_OUTCOME" != "success" ]');
+  requireRunContains(errors, outcome, 'if [ "$UNAVAILABLE_OUTCOME" != "success" ]');
+  requireRunContains(errors, outcome, 'if [ "$ANALYSIS_REQUESTED" = "0" ]');
   requireRunContains(errors, outcome, 'if [ "$ANALYSIS_OUTCOME" != "success" ]');
+  requireRunContains(errors, outcome, 'if [ "$DOWNLOAD_OUTCOME" != "success" ]');
+  if (asRecord(outcome?.env).ANALYSIS_OUTCOME !== "${{ steps.analysis.outcome }}") {
+    errors.push("Verify advisor analysis outcome must use the trusted analysis step outcome");
+  }
+  if (asRecord(outcome?.env).ANALYSIS_REQUESTED !== "${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS }}") {
+    errors.push("Verify advisor analysis outcome must use the trusted analysis request selector");
+  }
+  if (asRecord(outcome?.env).DOWNLOAD_OUTCOME !== "${{ steps.download-analysis.outcome }}") {
+    errors.push("Verify advisor analysis outcome must use the trusted sandbox download outcome");
+  }
+  if (asRecord(outcome?.env).CONFIGURE_OUTCOME !== "${{ steps.configure-openshell.outcome }}") {
+    errors.push("Verify advisor analysis outcome must use the trusted configuration step outcome");
+  }
+  if (asRecord(outcome?.env).UNAVAILABLE_OUTCOME !== "${{ steps.unavailable-analysis.outcome }}") {
+    errors.push("Verify advisor analysis outcome must use the trusted unavailable step outcome");
+  }
   const uploadIndex = steps.findIndex((step) => step.name === "Upload advisor artifacts");
   const outcomeIndex = steps.findIndex((step) => step.name === "Verify advisor analysis outcome");
   if (uploadIndex >= 0 && outcomeIndex >= 0 && outcomeIndex < uploadIndex) {
@@ -547,6 +945,7 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
     errors.push("publish job must run best-effort only for pull_request_target events");
   }
   for (const [key, expected] of Object.entries({
+    ADVISOR_DIR: CANONICAL_ADVISOR_DIR,
     PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor",
     PR_REVIEW_ADVISOR_WORKFLOW_PATH: ".github/workflows/pr-review-advisor.yaml",
     PR_REVIEW_ADVISOR_EVENT_NAME: "${{ github.event_name }}",
@@ -730,6 +1129,7 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
 export function validatePrReviewAdvisorWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
   packageLockPath = DEFAULT_PACKAGE_LOCK_PATH,
+  openshellPolicyPath = DEFAULT_OPENSHELL_POLICY_PATH,
 ): string[] {
   const errors: string[] = [];
   let workflow: WorkflowRecord;
@@ -743,6 +1143,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("workflow name must remain PR Review / Advisor");
   }
   checkAdvisorRuntimePackageLock(errors, packageLockPath);
+  checkOpenShellPolicy(errors, openshellPolicyPath);
   checkTargetTriggers(errors, workflow);
   const concurrencyGroup = stringValue(asRecord(workflow.concurrency).group);
   if (!concurrencyGroup.includes("github.event_name")) {

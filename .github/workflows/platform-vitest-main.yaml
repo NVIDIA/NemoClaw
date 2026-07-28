@@ -37,12 +37,12 @@ jobs:
           rm -rf /var/lib/apt/lists/*
 
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
@@ -79,22 +79,26 @@ jobs:
 
   macos-vitest:
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
 
       - name: Setup Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
           cache: pip
@@ -130,6 +134,11 @@ jobs:
           stat --version | head -n 1
           awk --version | head -n 1
 
+      - name: Install pinned OpenShell
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
       - name: Install dependencies
         run: |
           npm ci --ignore-scripts
@@ -143,11 +152,15 @@ jobs:
           npm run build
 
       - name: Run full Vitest suite on macOS
-        run: npx vitest run --testTimeout 60000
+        run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
 
   wsl-vitest:
     runs-on: windows-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       WSL_DISTRO: Ubuntu
       WSL_TEST_USER: nemoclaw-ci
@@ -157,7 +170,7 @@ jobs:
         run: git config --global core.autocrlf false
 
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -243,8 +256,36 @@ jobs:
         run: |
           $script = @'
           set -euo pipefail
-          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-          apt-get install -y nodejs
+          node_version="22.23.1"
+          case "$(uname -m)" in
+            x86_64)
+              node_arch="x64"
+              node_sha256="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"
+              ;;
+            aarch64 | arm64)
+              node_arch="arm64"
+              node_sha256="0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1"
+              ;;
+            *)
+              echo "Unsupported Node.js architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          node_url="https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz"
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          archive="$temp_dir/node.tar.xz"
+          curl --fail --show-error --silent --location \
+            --proto '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 180 \
+            --retry 3 --retry-delay 2 --retry-max-time 240 --retry-all-errors \
+            --output "$archive" "$node_url"
+          printf '%s  %s\n' "$node_sha256" "$archive" | sha256sum --check --status || {
+            echo "Node.js archive checksum verification failed" >&2
+            exit 1
+          }
+          tar --extract --xz --file "$archive" --directory /usr/local --strip-components=1
+          test "$(node --version)" = "v${node_version}"
           node --version
           npm --version
           '@
@@ -305,7 +346,7 @@ jobs:
           cd '$env:WSL_WORKDIR'
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
-          npx vitest run --testTimeout 60000
+          npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
           "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
@@ -313,6 +354,7 @@ jobs:
           wsl -d $env:WSL_DISTRO --user $env:WSL_TEST_USER -- bash -l $wslTmp
 
       - name: Run root-required Vitest contracts in WSL
+        if: ${{ matrix.shard == 1 }}
         shell: powershell
         run: |
           $script = @"

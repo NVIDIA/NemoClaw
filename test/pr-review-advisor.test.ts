@@ -291,7 +291,7 @@ describe("PR review advisor", () => {
           e2e: {
             coverage: {
               requiredTests: [],
-              optionalTests: [{ id: "docs-validation", reason: "Documentation changed." }],
+              optionalTests: [{ id: "vllm-docker-storage", reason: "Documentation changed." }],
               confidence: "low",
             },
             targets: { required, optional: [], confidence: "low" },
@@ -300,21 +300,21 @@ describe("PR review advisor", () => {
         metadata({ changedFiles: [] }),
       ).e2e;
     const optional = normalize();
-    expect(optional.coverage.optionalTests.map(({ id }) => id)).toEqual(["docs-validation"]);
+    expect(optional.coverage.optionalTests.map(({ id }) => id)).toEqual(["vllm-docker-storage"]);
     expect(optional.targets.optional).toEqual([
-      expect.objectContaining({ id: "docs-validation", selectorType: "job", required: false }),
+      expect.objectContaining({ id: "vllm-docker-storage", selectorType: "job", required: false }),
     ]);
     const required = normalize([
       {
-        id: "docs-validation",
+        id: "vllm-docker-storage",
         workflow: "e2e.yaml",
         selectorType: "job",
         reason: "The live documentation check is required.",
       },
     ]);
-    expect(required.coverage.requiredTests.map(({ id }) => id)).toEqual(["docs-validation"]);
+    expect(required.coverage.requiredTests.map(({ id }) => id)).toEqual(["vllm-docker-storage"]);
     expect(required.targets.required).toEqual([
-      expect.objectContaining({ id: "docs-validation", selectorType: "job", required: true }),
+      expect.objectContaining({ id: "vllm-docker-storage", selectorType: "job", required: true }),
     ]);
     expect([required.coverage.optionalTests, required.targets.optional]).toEqual([[], []]);
   });
@@ -443,6 +443,13 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(prompt).toContain(
       "Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status",
     );
+    expect(prompt).toContain(
+      "merge_as_is means a completed, non-low-confidence review has no open findings",
+    );
+    expect(prompt).toContain(
+      "info_only is reserved for skipped, unavailable, incomplete, or low-confidence review evidence",
+    );
+    expect(prompt).toContain("merge_as_is never approves the PR or replaces required human review");
     expect(prompt).toContain(
       "compare it with the current diff and decide whether prior code-review findings were addressed",
     );
@@ -1358,7 +1365,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     const summary = renderSummary(result);
     const comment = buildComment({ summary, result });
 
-    expect(result.summary.recommendation).toBe("info_only");
+    expect(result.summary.recommendation).toBe("merge_as_is");
     expect(comment).toContain("No advisor follow-up needed");
     expect(comment).not.toContain("PRA-T");
     expect(comment).not.toContain("probe");

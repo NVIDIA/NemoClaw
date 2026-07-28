@@ -12,6 +12,7 @@ import {
   createDoctorTestSetup,
   runWithEnv,
   testTimeoutOptions,
+  writeDoctorSandboxRegistry,
   writeSandboxRegistry,
 } from "./helpers";
 
@@ -145,7 +146,7 @@ describe("CLI dispatch", () => {
         "esac",
       ]);
       // Docker-driver sandbox: no legacy `openshell-cluster-*` container exists.
-      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "docker" });
+      writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "docker" });
       // Record docker argv and make `docker inspect` fail like an absent legacy
       // container would. The doctor must not even attempt the inspect, so this
       // should never produce a failure — and we assert the call was skipped, not
@@ -208,7 +209,7 @@ describe("CLI dispatch", () => {
       '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
       "esac",
     ]);
-    writeSandboxRegistry(setup.home, "alpha", {
+    writeDoctorSandboxRegistry(setup.home, "alpha", {
       gatewayName: "nemoclaw-8090",
       gatewayPort: 8090,
       openshellDriver: "docker",
@@ -245,7 +246,7 @@ describe("CLI dispatch", () => {
         '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
-      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+      writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
 
       const r = setup.runDoctor("alpha doctor --json");
 
@@ -275,7 +276,7 @@ describe("CLI dispatch", () => {
         '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
-      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+      writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
 
       const hostCalls = path.join(setup.home, "host-calls");
       writeDockerInspectFailureStub(setup, hostCalls);
@@ -328,7 +329,7 @@ describe("CLI dispatch", () => {
           "esac",
         ],
       );
-      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+      writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
       const hostCalls = path.join(setup.home, "host-calls");
       writeDockerInspectFailureStub(setup, hostCalls);
       writeLocalGatewayProbeStubs(setup, hostCalls);
@@ -369,7 +370,7 @@ describe("CLI dispatch", () => {
           "esac",
         ],
       );
-      writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+      writeDoctorSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
       const hostCalls = path.join(setup.home, "host-calls");
       writeDockerInspectFailureStub(setup, hostCalls);
       writeLocalGatewayProbeStubs(setup, hostCalls, {

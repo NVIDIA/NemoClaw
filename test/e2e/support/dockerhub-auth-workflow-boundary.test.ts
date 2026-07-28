@@ -16,11 +16,7 @@ import {
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
-const NO_IMAGE_E2E_JOBS = [
-  "gateway-health-honest",
-  "staging-brev-launchable",
-  "shared-e2e",
-] as const;
+const NO_IMAGE_E2E_JOBS = ["staging-brev-launchable", "shared-e2e"] as const;
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
 const CLEANUP_STEP_NAME = "Clean up Docker auth";
 const CLEANUP_HELPER_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
@@ -179,11 +175,11 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   it("rejects alias, ordering, and no-image exemption drift", () => {
     const errors = validateMutation((workflow) => {
       const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
-      const diagnosticsSteps = workflow.jobs.diagnostics.steps!;
-      const diagnosticsAuthIndex = diagnosticsSteps.indexOf(
-        namedStep(workflow.jobs.diagnostics, AUTH_STEP_NAME)!,
+      const cloudInferenceSteps = workflow.jobs["cloud-inference"].steps!;
+      const cloudInferenceAuthIndex = cloudInferenceSteps.indexOf(
+        namedStep(workflow.jobs["cloud-inference"], AUTH_STEP_NAME)!,
       );
-      diagnosticsSteps[diagnosticsAuthIndex] = {
+      cloudInferenceSteps[cloudInferenceAuthIndex] = {
         ...canonicalAuth,
         env: { ...canonicalAuth.env },
       };
@@ -200,7 +196,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "diagnostics Docker Hub auth must reuse the canonical workflow alias",
+        "cloud-inference Docker Hub auth must reuse the canonical workflow alias",
         "messaging-compatible-endpoint Docker Hub auth must run immediately after checkout",
         "shared-e2e no-image job must not receive Docker Hub authentication",
       ]),

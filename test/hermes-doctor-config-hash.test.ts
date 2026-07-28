@@ -67,6 +67,10 @@ describe("Hermes doctor and config hash boundary", () => {
     const preloadsDir = path.join(libDir, "preloads");
     const buildMcpDigestPath = path.join(libDir, "build-hermes-mcp-digest.py");
     const mcpConfigTransactionPath = path.join(libDir, "hermes-mcp-config-transaction.py");
+    const langfuseCredentialPatcherPath = path.join(
+      libDir,
+      "patch-hermes-langfuse-credentials.mts",
+    );
     const mcpCredentialBoundaryPath = path.join(
       libDir,
       "openshell-child-visible-credentials.v0.0.85.json",
@@ -88,6 +92,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "patch-hermes-session-list-preview.py"),
+        langfuseCredentialPatcherPath,
         path.join(libDir, "seed-hermes-dashboard-config.py"),
         path.join(libDir, "hermes-runtime-config-guard.py"),
         path.join(libDir, "finalize-tirith-marker.py"),
@@ -135,6 +140,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(path.join(binDir, "nemoclaw-gateway-control"))).toBe("700");
       expect(mode(path.join(libDir, "finalize-tirith-marker.py"))).toBe("755");
       expect(mode(mcpConfigTransactionPath)).toBe("755");
+      expect(mode(langfuseCredentialPatcherPath)).toBe("444");
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(buildMcpDigestPath)).toBe("444");
       expect(mode(path.join(libDir, "gateway-supervisor.sh"))).toBe("444");

@@ -1,0 +1,94 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Change the Baseline Network Policy"
+sidebar-title: "Change the Baseline Policy"
+description: "Edit the policy that NemoClaw applies when it creates a sandbox."
+description-agent: "Changes the baseline sandbox network policy. Use when adding durable endpoints to every future sandbox."
+keywords: ["nemoclaw baseline network policy", "sandbox policy yaml"]
+content:
+  type: "how_to"
+skill:
+  priority: 10
+---
+Change the baseline policy when every future sandbox needs the same durable endpoint access.
+NemoClaw reads the policy from the host when it creates the sandbox.
+
+## Prerequisites
+
+- Use a NemoClaw source checkout on the host.
+- Keep the OpenShell CLI on your `PATH`.
+
+<Warning>
+Make policy file changes on the host.
+The sandbox discards changes made only inside the sandbox when it is recreated.
+</Warning>
+
+## Edit the Policy File
+
+<AgentOnly variant="openclaw">
+Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Open `agents/hermes/policy-additions.yaml` and add or modify endpoint entries.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Open `agents/langchain-deepagents-code/policy-additions.yaml` and add or modify endpoint entries.
+</AgentOnly>
+
+Edit YAML manually when a maintained preset does not cover the required host, such as a reviewed public partner API.
+Each entry in the `network_policies` section defines an endpoint group with these fields:
+
+`endpoints`
+: Host and port pairs that the sandbox can reach.
+
+`binaries`
+: Executables allowed to use the endpoint.
+
+`rules`
+: HTTP methods and paths that the endpoint permits.
+
+`allow_encoded_slash`
+: Allows percent-encoded slashes such as `%2F` in request paths.
+Leave this field disabled unless the service uses encoded slashes in its documented route format, such as ClawHub scoped package names.
+
+To include a maintained preset in the baseline policy, merge its `network_policies` entries into the applicable baseline file.
+Use [Apply Policy Presets](apply-policy-presets) when you need to add a preset to one running sandbox.
+
+<AgentOnly variant="openclaw">
+
+## Add Blueprint Policy Additions
+
+If you maintain a custom blueprint, add extra policy entries under `components.policy.additions` in `nemoclaw-blueprint/blueprint.yaml`.
+NemoClaw validates those entries with the same policy schema used by preset files.
+During sandbox creation, it fetches the live policy, merges the additions into `network_policies`, and applies the merged policy through OpenShell.
+The run metadata records the applied additions so you can audit the blueprint-level entries that were active.
+
+</AgentOnly>
+
+## Re-Run Onboarding
+
+Apply the updated baseline by running onboarding again:
+
+```bash
+$$nemoclaw onboard
+```
+
+The wizard reads the modified policy file and applies it to the sandbox.
+
+## Verify the Policy
+
+Check that the sandbox is running with the updated policy:
+
+```bash
+$$nemoclaw <name> status
+```
+
+Use `$$nemoclaw <name> policy list` to inspect the tracked preset state.
+Use `openshell policy get <name>` when you need to inspect the effective OpenShell policy.
+
+## Related Topics
+
+- [Customize the Network Policy](../customize-network-policy) helps you choose the correct policy workflow.
+- [Create Custom Policy Presets](create-custom-policy-presets) adds durable access for one sandbox without changing the baseline.
+- [Network Policies](../../reference/network-policies) explains the baseline policy schema and tiers.

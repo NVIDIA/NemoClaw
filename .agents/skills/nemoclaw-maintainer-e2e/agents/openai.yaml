@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw Maintainer E2E"
+  short_description: "Run trusted release-candidate E2E"
+  default_prompt: "Use $nemoclaw-maintainer-e2e to run the full E2E suite for the selected release candidate."

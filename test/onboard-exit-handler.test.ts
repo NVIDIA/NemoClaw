@@ -21,6 +21,7 @@ type OnboardModule = typeof import("../src/lib/onboard") & {
 const require = createRequire(import.meta.url);
 const onboard = require("../src/lib/onboard.js") as OnboardModule;
 const onboardSession = onboard.onboardSession;
+const ONBOARD_FIXTURE_PATH = ["/usr/bin", "/bin"].join(path.delimiter);
 const originalHome = process.env.HOME;
 const restoreOriginalHome =
   originalHome === undefined
@@ -175,6 +176,7 @@ const { onboard } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        PATH: ONBOARD_FIXTURE_PATH,
         TMPDIR: tmpDir,
         NEMOCLAW_TEST_NO_SLEEP: "1",
       },
@@ -240,6 +242,7 @@ process.exit = function exit(code) {
 };
 
 initialPhases.runInitialOnboardFlowSlice = async ({ context, runtime }) => {
+  await runtime.applyResult(advanceTo("preflight", { metadata: { state: "init" } }));
   await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
   await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
   const session = await runtime.session();
@@ -330,6 +333,7 @@ const { onboard } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        PATH: ONBOARD_FIXTURE_PATH,
         TMPDIR: tmpDir,
         NEMOCLAW_TEST_NO_SLEEP: "1",
         NEMOCLAW_OPENSHELL_BIN: openshellPath,

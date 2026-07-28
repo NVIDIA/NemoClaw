@@ -74,6 +74,7 @@ const dockerGpuRoute: typeof import("./onboard/docker-gpu-route") = require("./o
 const sandboxGpuCreateFlow: typeof import("./onboard/sandbox-gpu-create-flow") = require("./onboard/sandbox-gpu-create-flow");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
+const gatewayService: typeof import("./onboard/docker-driver-gateway-service") = require("./onboard/docker-driver-gateway-service");
 const dockerDriverGatewayCutover: typeof import("./onboard/docker-driver-gateway-cutover") = require("./onboard/docker-driver-gateway-cutover");
 const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExceptOrFail } =
   require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
@@ -120,6 +121,7 @@ const {
   finalizeCreatedSandbox,
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
+const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
 const {
   isLinuxDockerDriverGatewayEnabled,
 }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
@@ -249,7 +251,7 @@ const {
   switchToWindowsOllamaHost,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
-const { installVllm, isNemoClawManagedVllmRunning } = require("./inference/vllm");
+const vllmInference = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
@@ -258,7 +260,6 @@ const credentialProviderRegistration: typeof import("./onboard/credential-provid
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
 const setupInferenceFactory: typeof import("./onboard/setup-inference") =
   require("./onboard/setup-inference");
-const resumeProviderShim = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
 const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
 const hermesAuth: typeof import("./onboard/hermes-auth") = require("./onboard/hermes-auth");
@@ -330,8 +331,13 @@ const {
   rejectUnsupportedWindowsHostOllama,
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
-const { waitForGatewayHealth }: typeof import("./onboard/gateway-health-wait") =
-  require("./onboard/gateway-health-wait");
+const {
+  formatGatewayHealthWaitLimit,
+  waitForGatewayHealth,
+}: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
+const {
+  waitForStandaloneDockerDriverGateway,
+}: typeof import("./onboard/docker-driver-gateway-readiness") = require("./onboard/docker-driver-gateway-readiness");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
@@ -433,6 +439,8 @@ const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboar
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
 const sandboxRegistryMetadata: typeof import("./onboard/sandbox-registry-metadata") = require("./onboard/sandbox-registry-metadata");
 const sandboxReuse: typeof import("./onboard/sandbox-reuse") = require("./onboard/sandbox-reuse");
+const sandboxRecreateTransaction: typeof import("./onboard/sandbox-recreate-transaction") =
+  require("./onboard/sandbox-recreate-transaction");
 const sandboxRegistration: typeof import("./onboard/sandbox-registration") =
   require("./onboard/sandbox-registration");
 const {
@@ -471,10 +479,8 @@ const {
   wasSandboxDefault,
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
-const {
-  createCoreOnboardFlowPhases,
-  runCoreOnboardFlowSlice,
-}: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { createProviderInferenceOnboardFlowPhase, createSandboxOnboardFlowPhase, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
 const {
   createFinalOnboardFlowPhases,
   runFinalOnboardFlowSlice,
@@ -639,10 +645,11 @@ let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;
 let GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
 const {
   clearDockerDriverGatewayRuntimeFiles,
+  createGatewayServicePortOwnership,
   getDockerDriverGatewayEnv,
   getDockerDriverGatewayPid,
-  getDockerDriverGatewayPortListenerScan,
   getDockerDriverGatewayPortListenerPid,
+  getDockerDriverGatewayReuseDrift: getGatewayReuseDrift,
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   getDockerDriverGatewayStateDir,
@@ -778,12 +785,8 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
     cliDisplayName,
   });
 
-const { getSandboxReuseState, repairRecordedSandbox } = sandboxReuse.createSandboxReuseHelpers({
-  runCaptureOpenshell,
-  runOpenshell,
-  getSandboxStateFromOutputs,
-  note,
-});
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, runOpenshell, getSandboxStateFromOutputs, note });
 
 const {
   executeSandboxCommandForVerification,
@@ -979,6 +982,8 @@ const { upsertMessagingProviders, providerMatchesGatewayCredential } =
   registeredCredentialProviders;
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const resumeProviderShim = require("./onboard/resume-provider-shim").createResumeProviderShim({ isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility, preflightGatewayRouteDiscovery } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
@@ -1079,8 +1084,8 @@ const {
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const handleVllmSelection = createSetupNimVllmHandler({
   VLLM_PORT, runCapture, getLocalProviderBaseUrl, getLocalProviderValidationBaseUrl,
-  isSafeModelId, requireValue, validateOpenAiLikeSelection,
-  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning,
+  getManagedVllmProviderBinding: localInference.getManagedDualStationVllmProviderBinding, queryVllmModels: (baseUrl, apiKey) => { const result = localInference.probeVllmModels(baseUrl, apiKey); return result.ok ? result.body : ""; }, isSafeModelId, requireValue, validateOpenAiLikeSelection,
+  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning, persistConfiguredDualStationVllmRuntimeReceipt: vllmInference.persistConfiguredDualStationVllmRuntimeReceipt,
   exitProcess: (code) => process.exit(code),
 });
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
@@ -1265,9 +1270,10 @@ async function refreshDockerDriverGatewayReuseState(
   const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
   const driftBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
   const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+  const managedServicePid = gatewayService.getTrustedActiveOpenShellGatewayUserServicePid();
   const pid = getDockerDriverGatewayPid();
   if (pid !== null && isDockerDriverGatewayProcessAlive()) {
-    const drift = getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, driftBin);
+    const drift = getGatewayReuseDrift(pid, desiredEnv, driftBin, managedServicePid);
     if (drift) {
       console.log(
         `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
@@ -1282,8 +1288,8 @@ async function refreshDockerDriverGatewayReuseState(
     gatewayBin: identityBin,
   });
   if (dockerGatewayPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(dockerGatewayPid, desiredEnv, driftBin);
-    rememberDockerDriverGatewayPid(dockerGatewayPid);
+    const drift = getGatewayReuseDrift(dockerGatewayPid, desiredEnv, driftBin, managedServicePid);
+    if (dockerGatewayPid !== managedServicePid) rememberDockerDriverGatewayPid(dockerGatewayPid);
     if (drift) {
       console.log(
         `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
@@ -1830,7 +1836,8 @@ async function startGatewayWithOptions(
           return;
         }
 
-        throw new Error(`Gateway failed within ${healthWait.count * healthWait.interval}s.`);
+        const waitLimit = formatGatewayHealthWaitLimit(healthWait.count, healthWait.interval);
+        throw new Error(`Gateway failed within the configured ${waitLimit}.`);
       },
       {
         retries,
@@ -1930,16 +1937,31 @@ async function startDockerDriverGateway({
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+  const initialPortCheck = await checkGatewayPortAvailable();
+  const servicePortOwnership = createGatewayServicePortOwnership(initialPortCheck, {
+    exitOnFailure,
+    gatewayBin: identityGatewayBin,
+    preparePort: (extraPids) =>
+      reapHostGatewayBeforeLaunchOrFail({
+        stateDir,
+        gatewayBin: identityGatewayBin,
+        extraPids,
+        exitOnFailure,
+      }),
+  });
   if (
     await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
       clearDockerDriverGatewayRuntimeFiles,
       exitOnFailure,
       gatewayEnv: driftGatewayEnv,
       gatewayName: GATEWAY_NAME,
-      isDockerDriverGatewayReady: () => isDockerDriverGatewayHttpReady(),
+      isDockerDriverGatewayReady: () =>
+        isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
       registerDockerDriverGatewayEndpoint,
+      preparePortForOpenShellGatewayUserServiceStart: servicePortOwnership.preparePort,
       runCaptureOpenshell,
       skipSandboxBridgeReachability,
+      validatePortOwnerForOpenShellGatewayUserServiceStart: servicePortOwnership.validatePortOwner,
       verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
         verifySandboxBridgeGatewayReachableOrExit(fail, {
           ...options,
@@ -1948,18 +1970,9 @@ async function startDockerDriverGateway({
     })
   )
     return;
-
-  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-    ignoreError: true,
-  });
-  const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  // Port availability and listener enumeration are not atomic. The cutover
-  // rechecks health before adoption, reaps every observed duplicate, and
-  // requires a fresh strict bind proof after reaping before launch.
-  const portListenerScan = getDockerDriverGatewayPortListenerScan(
-    await checkGatewayPortAvailable(),
-    { gatewayBin: identityGatewayBin },
+  const initialHealth = dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
+    runCaptureOpenshell,
+    GATEWAY_NAME,
   );
   const cutover = await dockerDriverGatewayCutover.runDockerDriverGatewayCutover(
     {
@@ -1970,13 +1983,9 @@ async function startDockerDriverGateway({
       exitOnFailure,
       skipSandboxBridgeReachability,
       stateDir,
-      portListenerScan,
+      portListenerScan: servicePortOwnership.portListenerScan,
       pidFileGatewayPid: getDockerDriverGatewayPid(),
-      initialHealth: {
-        status: gatewayStatus,
-        namedInfo: gwInfo,
-        activeInfo: activeGatewayInfo,
-      },
+      initialHealth,
     },
     {
       isDockerDriverGatewayProcessAlive,
@@ -1984,7 +1993,8 @@ async function startDockerDriverGateway({
       getDockerDriverGatewayRuntimeDrift,
       logDockerDriverGatewayRestart,
       registerDockerDriverGatewayEndpoint,
-      isDockerDriverGatewayHttpReady,
+      isDockerDriverGatewayHttpReady: () =>
+        isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
       verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
         verifySandboxBridgeGatewayReachableOrExit(fail, {
           ...options,
@@ -2004,14 +2014,7 @@ async function startDockerDriverGateway({
         const probe = await checkGatewayPortAvailable();
         return probe.ok && !probe.warning;
       },
-      reportUntrustedGatewayPort: (message) => {
-        const detail =
-          `Refusing to start a second OpenShell gateway: ${message}. ` +
-          `Inspect port ${GATEWAY_PORT} and stop only its owning process before retrying.`;
-        console.error(`  ${detail}`);
-        if (exitOnFailure) process.exit(1);
-        throw new Error(detail);
-      },
+      reportUntrustedGatewayPort: servicePortOwnership.reportUntrustedGatewayPort,
       reportMissingGatewayBinary: () => {
         console.error("  OpenShell Docker-driver gateway binary not found.");
         console.error(
@@ -2057,40 +2060,36 @@ async function startDockerDriverGateway({
 
   const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  for (let i = 0; i < pollCount; i += 1) {
-    if (childExit.exited || !isPidAlive(childPid)) {
-      break;
-    }
-    if (!registerDockerDriverGatewayEndpoint()) {
-      if (i < pollCount - 1) sleepSeconds(pollInterval);
-      continue;
-    }
-    const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-      ignoreError: true,
-    });
-    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    // #4430: the status/gateway-info/TCP probes above take real wall-clock time; re-confirm
-    // childExit/isPidAlive *after* them so a gateway that drifts on schema and aborts during
-    // migration after accepting briefly can never print the misleading healthy line below.
-    if (
-      isGatewayHealthy(status, namedInfo, currentInfo) &&
-      (await isGatewayTcpReady()) &&
-      !childExit.exited &&
-      isPidAlive(childPid)
-    ) {
+  const gatewayStartup = await waitForStandaloneDockerDriverGateway({
+    childExited: () => childExit.exited,
+    childPid,
+    gatewayName: GATEWAY_NAME,
+    healthPollCount: pollCount,
+    healthPollIntervalSeconds: pollInterval,
+    isGatewayHealthy,
+    isGatewayTcpReady,
+    isPidAlive,
+    onHealthy: async () => {
       await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
         skip: skipSandboxBridgeReachability,
         port: GATEWAY_PORT,
       });
-      console.log("  ✓ Docker-driver gateway is healthy");
-      return;
-    }
-    if (i < pollCount - 1) sleepSeconds(pollInterval);
+    },
+    registerGatewayEndpoint: registerDockerDriverGatewayEndpoint,
+    runCaptureOpenshell,
+    sleepSeconds,
+  });
+  if (gatewayStartup === "healthy") {
+    console.log("  ✓ Docker-driver gateway is healthy");
+    return;
   }
 
   reportDockerDriverGatewayStartFailure(logPath, childExit, { exitOnFailure });
-  throw new Error("Docker-driver gateway failed to start");
+  if (gatewayStartup === "exited") {
+    throw new Error("Docker-driver gateway failed to start because the process exited");
+  }
+  const waitLimit = formatGatewayHealthWaitLimit(pollCount, pollInterval);
+  throw new Error(`Docker-driver gateway failed to start within ${waitLimit}`);
 }
 
 async function startGateway(
@@ -2185,28 +2184,25 @@ async function recoverGatewayRuntime() {
   const recoveryPollInterval = recoveryWait.extended
     ? recoveryWait.interval
     : envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  for (let i = 0; i < recoveryPollCount; i++) {
-    const repairResult = repairGatewayBootstrapSecrets();
-    if (repairResult.repaired) {
-      attachGatewayMetadataIfNeeded({ forceRefresh: true });
-    } else if (gatewayClusterHealthcheckPassed()) {
-      attachGatewayMetadataIfNeeded();
-    }
-    status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (status.includes("Connected") && isSelectedGateway(status) && (await isGatewayHttpReady())) {
-      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-      const runtime = getContainerRuntime();
-      if (shouldPatchCoredns(runtime)) {
-        run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], {
-          ignoreError: true,
-        });
-      }
-      return true;
-    }
-    if (i < recoveryPollCount - 1) sleepSeconds(recoveryPollInterval);
-  }
+  const healthy = await waitForGatewayHealth({
+    attachGatewayMetadataIfNeeded,
+    gatewayClusterHealthcheckPassed,
+    gatewayName: GATEWAY_NAME,
+    healthPollCount: recoveryPollCount,
+    healthPollIntervalSeconds: recoveryPollInterval,
+    isGatewayHealthy,
+    isGatewayHttpReady: (signal) => isGatewayHttpReady(undefined, undefined, undefined, signal),
+    repairGatewayBootstrapSecrets,
+    runCaptureOpenshell,
+    sleepSeconds,
+  });
+  if (!healthy) return false;
 
-  return false;
+  process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+  if (shouldPatchCoredns(getContainerRuntime())) {
+    run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], { ignoreError: true });
+  }
+  return true;
 }
 
 const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandboxMetadata } =
@@ -2250,7 +2246,7 @@ async function createSandboxWithBaseImageResolution(
     ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
     : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
+  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, baselineExclusions: sandboxRegistration.baselineExclusionsForCreate(sandboxName), ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
     {
       sandboxName,
@@ -2290,6 +2286,30 @@ async function createSandboxWithBaseImageResolution(
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const recreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
+  const restoreReusedSandboxDashboard = (selectionVerified: boolean): void => {
+    ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
+      sandboxName,
+      chatUiUrl,
+      env: process.env,
+      agent,
+      model,
+      provider,
+      selectionVerified,
+      sandboxGpuConfig: effectiveSandboxGpuConfig,
+      gatewayName: GATEWAY_NAME,
+      gatewayPort: GATEWAY_PORT,
+      manageDashboard,
+      ensureDashboardForward,
+      hermesDashboardForwarding,
+      updateReusedSandboxMetadata,
+    }));
+  };
+  if (recreateRuntime.acceptedTarget) {
+    restoreReusedSandboxDashboard(true);
+    return sandboxName;
+  }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -2436,22 +2456,7 @@ async function createSandboxWithBaseImageResolution(
                 "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
               );
             }
-            ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
-              sandboxName,
-              chatUiUrl,
-              env: process.env,
-              agent,
-              model,
-              provider,
-              selectionVerified: !selectionDrift.unknown,
-              sandboxGpuConfig: effectiveSandboxGpuConfig,
-              gatewayName: GATEWAY_NAME,
-              gatewayPort: GATEWAY_PORT,
-              manageDashboard,
-              ensureDashboardForward,
-              hermesDashboardForwarding,
-              updateReusedSandboxMetadata,
-            }));
+            restoreReusedSandboxDashboard(!selectionDrift.unknown);
             return sandboxName;
           }
         } else {
@@ -2481,22 +2486,7 @@ async function createSandboxWithBaseImageResolution(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
             upsertMessagingProviders(messagingTokenDefs);
-            ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
-              sandboxName,
-              chatUiUrl,
-              env: process.env,
-              agent,
-              model,
-              provider,
-              selectionVerified: !selectionDrift.unknown,
-              sandboxGpuConfig: effectiveSandboxGpuConfig,
-              gatewayName: GATEWAY_NAME,
-              gatewayPort: GATEWAY_PORT,
-              manageDashboard,
-              ensureDashboardForward,
-              hermesDashboardForwarding,
-              updateReusedSandboxMetadata,
-            }));
+            restoreReusedSandboxDashboard(!selectionDrift.unknown);
             return sandboxName;
           }
         }
@@ -2570,18 +2560,13 @@ async function createSandboxWithBaseImageResolution(
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
-    baseImageResolutionFlow.captureBaseResolution(
-      baseImageResolutionContext,
-      previousEntry?.imageTag,
-    );
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
-    if (
-      noRestorePending &&
-      !notReadyRecreateInProgress &&
-      !shouldSkipPreRecreateBackup(process.env)
-    ) {
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    if (noRestorePending && !notReadyRecreateInProgress && !shouldSkipPreRecreateBackup(process.env)) {
       note("  Backing up workspace state before recreating sandbox...");
       const result = recreateProtection.backup();
       if (!result.ok) {
@@ -2595,13 +2580,13 @@ async function createSandboxWithBaseImageResolution(
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
+    recreateRuntime.advance("deleting");
     runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+    recreateRuntime.confirmDeleted();
     if (previousEntry?.imageTag) {
-      const rmiResult = dockerRmi(previousEntry.imageTag, {
-        ignoreError: true,
-        suppressOutput: true,
-      });
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      const rmiResult = dockerRmi(previousEntry.imageTag, { ignoreError: true, suppressOutput: true });
       if (rmiResult.status !== 0) {
         console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
       }
@@ -2727,6 +2712,7 @@ async function createSandboxWithBaseImageResolution(
     });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
+  recreateRuntime.advance("creating");
   const {
     createResult,
     dockerGpuCreatePatch,
@@ -2822,6 +2808,7 @@ async function createSandboxWithBaseImageResolution(
     buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`) ??
     resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId);
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
+  recreateRuntime.recordCreated();
   finalizeCreatedSandbox(
     {
       sandboxName,
@@ -2862,12 +2849,13 @@ async function createSandboxWithBaseImageResolution(
           ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared),
+          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared, resolvedCreateIntent.policy.options.baselineExclusions),
           plannedMessagingState,
           preservedMcpState,
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
+          ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),
@@ -3399,10 +3387,10 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       _envModelRemote ||
       (recoveredFromSandbox && recoveredModel) ||
       remoteConfig.defaultModel;
-    const selectedCredentialEnv = requireValue(
-      state.credentialEnv,
-      `Missing credential env for ${remoteConfig.label}`,
-    );
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const selectedCredentialEnv = requireValue(state.credentialEnv, `Missing credential env for ${remoteConfig.label}`);
+    const compatibleNoAuth = selected.key === "custom" && Boolean(state.endpointUrl && compatibleEndpointGatewayRoute.gatewayReachableCompatibleEndpointUrl(state.provider, state.endpointUrl) !== state.endpointUrl);
+    const useNoAuth = compatibleNoAuth && (!isNonInteractive() || (process.env.NEMOCLAW_COMPATIBLE_AUTH_MODE || "").trim().toLowerCase() === "none");
     const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
       selectedKey: selected.key,
       endpointUrl: state.endpointUrl,
@@ -3433,23 +3421,20 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       state.model = defaultModel;
       state.assertRouteCompatible?.();
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
+      if (useNoAuth) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV; else recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
         { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
         { resolveProviderCredential, readRecordedInferenceRoute: (name) => readRecordedInferenceRoute(name, args.recoverySessionId), readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
       );
     } else {
-      const credentialResult = await credentialPrompt.ensureNamedCredential(
-        selectedCredentialEnv,
-        `${remoteConfig.label} API key`,
-        remoteConfig.helpUrl,
-        openrouterSelection.credentialValidatorForProvider(selected.key),
-      );
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      const credentialResult = await credentialPrompt.ensureNamedCredential(selectedCredentialEnv, compatibleNoAuth ? `${remoteConfig.label} API key (press Enter for no authentication)` : `${remoteConfig.label} API key`, remoteConfig.helpUrl, openrouterSelection.credentialValidatorForProvider(selected.key), compatibleNoAuth);
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
+      if (credentialResult === "") state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
     }
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
+    if (!useNoAuth) openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
     let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
     if (openrouterSelection.isOpenAiLikeRemoteProvider(selected.key)) {
       const modelAuthMode = getProbeAuthMode(state.provider);
@@ -3585,7 +3570,7 @@ function getSetupNimDeps(): SetupNimDeps {
     handleRunningOllamaSelection,
     handleWindowsHostOllamaSelection,
     handleInstallOllamaSelection,
-    installVllm,
+    installVllm: vllmInference.installVllm,
     handleVllmSelection,
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
@@ -3885,11 +3870,6 @@ const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
 const recordInvalidatedStateResult =
   onboardRuntimeBoundary.recordInvalidatedStateResult.bind(onboardRuntimeBoundary);
-const recordInitialPreflightTransition =
-  onboardRuntimeBoundary.recordInitialPreflightTransition.bind(onboardRuntimeBoundary);
-const recordPostVerifyStarted =
-  onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
-
 /** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
@@ -3914,6 +3894,7 @@ async function preflightAuthoritativeRebuildTarget(
     await authoritativeRebuildTarget.preflightAuthoritativeRebuildTarget(
       { ...opts, controlUiPort: opts.controlUiPort ?? null },
       {
+        resolveBaselinePolicy: (sandboxName) => policies.resolveSandboxBaselinePolicy(sandboxName),
         runFatalRuntimePreflight: () =>
           fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
             {
@@ -4115,7 +4096,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await recordInitialPreflightTransition(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
     // safe name in that state.
@@ -4323,22 +4303,21 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
-    const [providerInferencePhase, sandboxPhase] = createCoreOnboardFlowPhases<
-      InitialOnboardFlowContext,
-      unknown,
-      MessagingChannelConfig,
-      import("./resources-cmd").ResourceProfile
-    >({
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const providerInferencePhase = createProviderInferenceOnboardFlowPhase<InitialOnboardFlowContext, unknown>({
       gatewayName: GATEWAY_NAME,
       forceProviderSelection: forceProviderSelectionForAgentChange,
       ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
+      endpointProvenance,
       env: process.env,
       constants: {
         hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
         hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
         hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
       },
-      providerDeps: {
+      deps: {
         checkGatewayRouteCompatibility,
         preflightGatewayRouteDiscovery,
         getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
@@ -4361,9 +4340,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         repairLocalInferenceSystemdOverrideOrExit,
         isNonInteractive,
         getOpenshellBinary,
-        needsBedrockRuntimeAdapter: (providerName, url) =>
-          providerName === "compatible-anthropic-endpoint" &&
-          bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        needsBedrockRuntimeAdapter: (providerName, url) => providerName === "compatible-anthropic-endpoint" && bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
         isInferenceRouteReady,
         isRoutedInferenceProvider,
         reconcileModelRouter,
@@ -4395,20 +4373,22 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           delete process.env[name];
         },
       },
-      sandbox: {
-        resumeAgentChanged,
-        requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
-        requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-        authoritativePolicyTier:
-          opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
-        endpointSource: opts.endpointSource,
-        endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null,
-        endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null,
-        recreateSandbox: isRecreateSandbox,
-        controlUiPort: _preflightDashboardPort,
-        rootDir: ROOT,
-      },
-      sandboxDeps: {
+    });
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const sandboxPhase = createSandboxOnboardFlowPhase<InitialOnboardFlowContext, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
+      gatewayName: GATEWAY_NAME,
+      authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+      authoritativePolicyTier:
+        opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+      resumeAgentChanged,
+      requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+      requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
+      endpointProvenance,
+      recreateSandbox: isRecreateSandbox,
+      controlUiPort: _preflightDashboardPort,
+      rootDir: ROOT,
+      env: process.env,
+      deps: {
         checkGatewayRouteCompatibility,
         withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
         resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
@@ -4420,6 +4400,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         hydrateMessagingChannelConfig,
         messagingChannelConfigsEqual,
         getSandboxReuseState,
+        getSandboxRecreateObservation,
         getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
           getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
             runCaptureOpenshell,
@@ -4429,7 +4410,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         getSandboxRegistryEntry: registry.getSandbox,
         normalizeHermesToolGatewaySelections,
         stringSetsEqual,
-        removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
+        removeSandboxFromRegistry: registry.removeSandboxWithReceipt.bind(registry),
+        restoreSandboxRegistryEntryIfMissing: registry.restoreSandboxEntryIfMissing.bind(registry),
         repairRecordedSandbox,
         ensureValidatedWebSearchCredential,
         isBackToSelection,
@@ -4471,7 +4453,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
-      phases: [providerInferencePhase, sandboxPhase],
+      phases: { providerInference: providerInferencePhase, sandbox: sandboxPhase },
       resume,
       recordStateResult,
       recordInvalidatedStateResult,
@@ -4510,7 +4492,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
     let liveFinalFlowContext = finalFlowContext;
 
-    const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
+    const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
       import("./verify-deployment").VerifyDeploymentResult
@@ -4575,7 +4557,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
-        recordPostVerifyStarted,
         toSessionUpdates: (updates) =>
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
@@ -4627,11 +4608,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const finalFlowResult = await runFinalOnboardFlowSlice({
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
-      phases: [branchSetupPhase, policiesPhase, finalizationPhase],
-      resume,
-      recordStateResult,
-      recordInvalidatedStateResult,
-      afterPoliciesResultApplied: () => {
+      phases: finalFlowPhases,
+      recordRepairEvent,
+      afterPoliciesReady: () => {
         sandboxCancelRollback.disarm();
       },
       onContextUpdated: (context) => {
@@ -4795,5 +4774,4 @@ module.exports = {
   getProbeAuthMode,
   getValidationProbeCurlArgs,
   verifyCompatibleEndpointSandboxSmoke,
-  resumeProviderShimDeps: { isRoutedInferenceProvider, replaceNamedCredential },
 };

@@ -587,9 +587,11 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
 
 const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
 const OPENSHELL_SERVICE_UNAVAILABLE = "code: 'The service is currently unavailable'";
+const OPENSHELL_STATUS_UNAVAILABLE = "status: Unavailable";
 const OPENSHELL_RELAY_OPEN_TIMED_OUT = 'message: "relay open timed out"';
 const OPENSHELL_SUPERVISOR_RELAY_DEADLINE = "supervisor relay failed: status: DeadlineExceeded";
 const OPENSHELL_RELAY_CHANNEL_TIMED_OUT = "relay channel timed out";
+const OPENSHELL_RELAY_CHANNEL_DROPPED = 'message: "relay channel dropped"';
 const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (os error 2)"';
 const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
@@ -608,10 +610,19 @@ function hasRetryableOpenshellResultShape(result: ReturnType<typeof captureOpens
 
 function isRetryableOpenshellReRegistrationState(
   result: ReturnType<typeof captureOpenshell>,
+  sandboxName: string,
 ): boolean {
   if (!hasRetryableOpenshellResultShape(result)) return false;
   const error = normalizeOpenshellStructuredError(String(result.stderr));
   if (error === OPENSHELL_SANDBOX_NOT_READY) return true;
+  // OpenShell can publish Ready before replacement registration settles.
+  // Retry only if the readiness probe reports phase Error for this sandbox.
+  if (
+    error ===
+    `Error: sandbox '${sandboxName}' is not ready (phase: Error); wait for it to reach Ready state.`
+  ) {
+    return true;
+  }
 
   // OpenShell 0.0.85 can keep the recreated sandbox's cached phase at Ready
   // while its replacement supervisor session is still registering. The exec
@@ -633,6 +644,10 @@ function isRetryableOpenshellReRegistrationState(
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     error.includes(OPENSHELL_SUPERVISOR_RELAY_DEADLINE) &&
     error.includes(OPENSHELL_RELAY_CHANNEL_TIMED_OUT);
+  const relayChannelDropped =
+    (error.includes(OPENSHELL_SERVICE_UNAVAILABLE) ||
+      error.includes(OPENSHELL_STATUS_UNAVAILABLE)) &&
+    error.includes(OPENSHELL_RELAY_CHANNEL_DROPPED);
   const relayTargetUnavailable =
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     (error.includes(OPENSHELL_RELAY_TARGET_NOT_FOUND) ||
@@ -640,6 +655,7 @@ function isRetryableOpenshellReRegistrationState(
   return (
     sessionUnavailable ||
     relayChannelTimedOut ||
+    relayChannelDropped ||
     relayTargetUnavailable ||
     error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT)
   );
@@ -652,7 +668,11 @@ type RecreatedSandboxOpenShellReadinessFailure =
 
 type RecreatedSandboxOpenShellReadinessResult =
   | { ready: true }
-  | { failure: RecreatedSandboxOpenShellReadinessFailure; ready: false };
+  | {
+      failure: RecreatedSandboxOpenShellReadinessFailure;
+      openshellError?: string;
+      ready: false;
+    };
 
 type RecreatedSandboxOpenShellReadyOptions = {
   captureOpenshellImpl?: typeof captureOpenshell;
@@ -665,15 +685,19 @@ type RecreatedSandboxOpenShellReadyOptions = {
 
 function recreatedSandboxOpenShellReadinessFailureDetail(
   failure: RecreatedSandboxOpenShellReadinessFailure,
+  openshellError?: string,
 ): string {
-  switch (failure) {
-    case "managed-health-definitive-failure":
-      return "the recreated sandbox failed the managed health guard, so the primary dashboard/API host forward was not started";
-    case "managed-health-inconclusive-timeout":
-      return "the recreated sandbox managed health guard stayed inconclusive within the readiness deadline, so the primary dashboard/API host forward was not started";
-    case "openshell-readiness-failure":
-      return "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
-  }
+  const detail = (() => {
+    switch (failure) {
+      case "managed-health-definitive-failure":
+        return "the recreated sandbox failed the managed health guard, so the primary dashboard/API host forward was not started";
+      case "managed-health-inconclusive-timeout":
+        return "the recreated sandbox managed health guard stayed inconclusive within the readiness deadline, so the primary dashboard/API host forward was not started";
+      case "openshell-readiness-failure":
+        return "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
+    }
+  })();
+  return openshellError ? `${detail} Last OpenShell readiness error: ${openshellError}` : detail;
 }
 
 /**
@@ -704,6 +728,7 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     intervalSeconds > 0
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
+  let lastOpenshellError: string | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const preGuardRemainingMs = deadlineMs - now();
@@ -728,7 +753,11 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     }
     const remainingMs = deadlineMs - now();
     if (attempt > 1 && remainingMs <= 0) {
-      return { failure: "openshell-readiness-failure", ready: false };
+      return {
+        failure: "openshell-readiness-failure",
+        openshellError: lastOpenshellError,
+        ready: false,
+      };
     }
     const result = capture(["sandbox", "exec", "--name", sandboxName, "--", "true"], {
       ignoreError: true,
@@ -737,23 +766,44 @@ function waitForRecreatedSandboxOpenShellReadyResult(
       timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
     });
     if (result.status === 0 && !result.error) return { ready: true };
+    const openshellError = normalizeOpenshellStructuredError(String(result.stderr ?? ""));
+    if (openshellError) lastOpenshellError = openshellError;
     // This probe executes only `true`, so an OpenShell process timeout has no
     // mutation outcome to reconcile. Treat that exact timeout as inconclusive
     // and retry behind the pinned managed-health guard on the next iteration.
     // All other unexpected OpenShell failures remain definitive.
-    if (!isRetryableOpenshellReRegistrationState(result) && !isCommandTimeout(result)) {
-      return { failure: "openshell-readiness-failure", ready: false };
+    if (
+      !isRetryableOpenshellReRegistrationState(result, sandboxName) &&
+      !isCommandTimeout(result)
+    ) {
+      return {
+        failure: "openshell-readiness-failure",
+        openshellError: lastOpenshellError,
+        ready: false,
+      };
     }
     if (attempt === maxAttempts) {
-      return { failure: "openshell-readiness-failure", ready: false };
+      return {
+        failure: "openshell-readiness-failure",
+        openshellError: lastOpenshellError,
+        ready: false,
+      };
     }
     const postProbeRemainingMs = deadlineMs - now();
     if (postProbeRemainingMs <= 0) {
-      return { failure: "openshell-readiness-failure", ready: false };
+      return {
+        failure: "openshell-readiness-failure",
+        openshellError: lastOpenshellError,
+        ready: false,
+      };
     }
     sleep(Math.min(intervalSeconds * 1000, postProbeRemainingMs) / 1000);
   }
-  return { failure: "openshell-readiness-failure", ready: false };
+  return {
+    failure: "openshell-readiness-failure",
+    openshellError: lastOpenshellError,
+    ready: false,
+  };
 }
 
 export function waitForRecreatedSandboxOpenShellReady(
@@ -1255,7 +1305,10 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
                 : ({ failure: "openshell-readiness-failure", ready: false } as const);
           return readiness.ready
             ? null
-            : recreatedSandboxOpenShellReadinessFailureDetail(readiness.failure);
+            : recreatedSandboxOpenShellReadinessFailureDetail(
+                readiness.failure,
+                "openshellError" in readiness ? readiness.openshellError : undefined,
+              );
         })()
       : null;
     if (readinessFailureDetail) {

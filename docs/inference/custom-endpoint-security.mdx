@@ -9,7 +9,6 @@ keywords: ["nemoclaw endpoint security", "inference endpoint ssrf", "custom endp
 content:
   type: "concept"
 ---
-
 NemoClaw keeps provider credentials on the host and validates explicit custom endpoint URLs before saving them through security-sensitive configuration paths.
 
 ## Protect Provider Credentials
@@ -44,9 +43,37 @@ Legacy entries without a source, endpoints recorded by `inference set`, and diff
 
 For a public HTTP URL, NemoClaw stores the validated IP address so the downstream runtime cannot resolve the hostname again and reach another address.
 
-NemoClaw rejects DNS-backed HTTPS URLs in these paths because it cannot pin the downstream peer address while preserving TLS Server Name Indication and host validation across the OpenShell runtime boundary.
-Use an HTTPS IP-literal endpoint with a certificate valid for that address.
-Use a public HTTP endpoint only when your deployment permits unencrypted traffic.
+NemoClaw rejects DNS-backed HTTPS URLs for Hermes Provider setup, host-side `config set`, and a direct blueprint run because it cannot pin the downstream peer address while preserving TLS Server Name Indication and host validation across the OpenShell runtime boundary.
+For those paths, use an HTTPS IP-literal endpoint with a certificate valid for that address, or use a public HTTP endpoint if your deployment permits unencrypted traffic.
+
+<AgentOnly variant="openclaw,hermes">
+
+## Use a DNS-Backed HTTPS Endpoint with `inference set`
+
+`$$nemoclaw inference set --endpoint-url <url>` on an already-onboarded sandbox supports a DNS-backed HTTPS custom endpoint through the HTTPS Pin Runtime adapter.
+After SSRF validation passes, NemoClaw starts a local reverse-proxy adapter on the host that terminates a pinned, SNI-correct outbound TLS connection to the real upstream hostname, re-validating that the resolved peer IP is still public.
+The sandbox, its OpenShell provider configuration and network policy, and the persisted sandbox registry only ever see the opaque local base `http://host.openshell.internal:<port>/route/<id>`.
+The real upstream hostname and path never reach the sandbox or the persisted registry; host recovery state stores only the opaque route ID, provider type, a non-secret token generation value, and timestamps.
+Endpoint URLs containing userinfo, a query string, or a fragment are rejected rather than stripped or persisted.
+For an OpenAI-compatible endpoint entered as a bare origin, the adapter preserves the incoming `/v1` request path.
+For an endpoint with a path prefix, the adapter keeps forwarded requests beneath that prefix and rejects traversal-shaped paths.
+One 30-second total upstream deadline covers connection setup, TLS negotiation, and the complete response; the adapter closes a response that arrives after the deadline instead of relaying it.
+
+Each opaque route has its own sandbox-facing adapter credential, distinct from both the real upstream credential and the host-only control credential; a credential issued for one route cannot authorize another route.
+NemoClaw does not place upstream route credentials in the adapter child-process environment.
+After startup, the host CLI registers each route and its credential in adapter memory through an authenticated loopback-only control plane.
+Before starting or reusing the adapter, NemoClaw inspects the exact IPAM subnets assigned to the `openshell-docker` network.
+The adapter accepts route-forwarding and non-control health requests only from loopback or those inspected subnets and returns a not-found response to peers on other private or LAN networks.
+Authenticated control health and route-registration requests remain loopback-only.
+NemoClaw refuses to expose the adapter when it cannot discover a valid bridge subnet.
+Adapter reuse also requires an authenticated health proof for the same source-subnet policy, so a running process with a stale or different policy is replaced.
+After an adapter restart, routes other than the one that triggered recovery return a recovery-needed response until their original `inference set --endpoint-url` command is rerun.
+Switching away from a route or destroying its last sandbox reference revokes it; a scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
+
+This support is specific to `inference set` on an already-onboarded sandbox.
+Hermes Provider setup, host-side `config set`, and a direct blueprint run still reject DNS-backed HTTPS URLs as described above.
+
+</AgentOnly>
 
 ## Use the Sandbox Host Alias
 

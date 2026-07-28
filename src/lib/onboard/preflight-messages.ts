@@ -24,7 +24,7 @@ export function printDockerNotReachableError(): void {
 export function printUnsupportedRuntimeError(): void {
   console.error(failLine(`${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`));
   console.error(`    Podman is not supported for this ${cliDisplayName()} integration path.`);
-  console.error("    Switch to Docker Engine and rerun onboarding.");
+  console.error("    Switch to Docker Engine, Docker Desktop, or Colima, then rerun onboarding.");
 }
 
 export interface UnderProvisionedRuntimeWarning {

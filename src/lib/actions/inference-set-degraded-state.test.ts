@@ -94,6 +94,92 @@ describe("runInferenceSet degraded state handling", () => {
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
+  it("reconciles the provider marker when a config-write retry uses the registered provider", async () => {
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    };
+    let persistedConfig: ConfigObject = {
+      agents: {
+        defaults: { model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" } },
+      },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            api: "openai-completions",
+            headers: {
+              "X-NemoClaw-Upstream-Provider": "nvidia-prod",
+            },
+            models: [
+              {
+                id: "nvidia/nemotron-3-super-120b-a12b",
+                name: "inference/nvidia/nemotron-3-super-120b-a12b",
+              },
+            ],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config: structuredClone(persistedConfig),
+      entry,
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    });
+    deps.calls.readSandboxConfig.mockImplementation(() => structuredClone(persistedConfig));
+    deps.calls.updateSandbox.mockImplementation((_name, updates) => {
+      Object.assign(entry, updates);
+      return true;
+    });
+    deps.calls.writeSandboxConfig
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox exec crashed");
+      })
+      .mockImplementation((_name, _target, config) => {
+        persistedConfig = structuredClone(config);
+      });
+
+    const options = {
+      provider: "compatible-endpoint",
+      model: "openai/gpt-5.4-mini",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      inferenceApi: "openai-completions",
+      noVerify: true,
+    };
+
+    await expect(runInferenceSet(options, deps)).resolves.toMatchObject({
+      inSandboxConfigSynced: false,
+    });
+    expect(persistedConfig.models).toMatchObject({
+      providers: {
+        inference: {
+          headers: {
+            "X-NemoClaw-Upstream-Provider": "nvidia-prod",
+          },
+        },
+      },
+    });
+
+    await expect(runInferenceSet(options, deps)).resolves.toMatchObject({
+      inSandboxConfigSynced: true,
+    });
+    expect(persistedConfig.models).toMatchObject({
+      providers: {
+        inference: {
+          headers: {
+            "X-NemoClaw-Upstream-Provider": "compatible-endpoint",
+          },
+        },
+      },
+    });
+  });
+
   it("reports degraded (not synced) when the in-sandbox hash recompute fails (#3726)", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },

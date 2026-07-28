@@ -44,9 +44,13 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 let providerAttachmentState = "attached";
+let providerInspectionState = "present";
 let providerCredentialKey = "GITHUB_TOKEN";
 globalActions.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
+    if (providerInspectionState === "absent") {
+      return { status: 1, stdout: "", stderr: "provider not found" };
+    }
     return {
       status: 0,
       stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: " + providerCredentialKey + "\n",
@@ -86,6 +90,21 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
         "NEMOCLAW_MCP_CONTROL_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
         "NEMOCLAW_MCP_CONTROL_CURL_EXIT=" + resultMarker + ":0",
       ].join("\n"),
+      stderr: "",
+    };
+  }
+  if (command.includes("mcp-tool-discovery-runtime")) {
+    const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
+    if (!resultMarker) throw new Error("tool discovery result marker missing");
+    return {
+      status: 0,
+      stdout: resultMarker + "\n" + JSON.stringify({
+        protocol: 1,
+        ok: true,
+        count: 2,
+        tools: ["alpha", "zeta"],
+        truncated: false,
+      }),
       stderr: "",
     };
   }
@@ -363,6 +382,190 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     const payload = JSON.parse(stdout) as { errorLines: string[]; exitCode: number };
     expect(payload.exitCode).toBe(2);
     expect(payload.errorLines.join("\n")).toContain("at most one of --probe / --no-probe");
+  });
+
+  it("runs authenticated discovery without duplicating the implicit probe (#6901)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-single-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools", "--json"]);
+  const status = JSON.parse(logLines.join("\n"));
+  process.stdout.write(JSON.stringify({
+    status,
+    probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
+    discovered: executedSandboxCommands.some((c) => c.includes("mcp-tool-discovery-runtime")),
+  }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      status: {
+        provider: { credentialResolution?: unknown };
+        toolDiscovery: { ok: boolean; count: number; tools: string[]; truncated: boolean };
+      };
+      probed: boolean;
+      discovered: boolean;
+    };
+    expect(payload.probed).toBe(false);
+    expect(payload.discovered).toBe(true);
+    expect(payload.status.provider.credentialResolution).toBeUndefined();
+    expect(payload.status.toolDiscovery).toMatchObject({
+      ok: true,
+      count: 2,
+      tools: ["alpha", "zeta"],
+      truncated: false,
+    });
+  });
+
+  it("skips authenticated discovery until provider readiness is verified (#6901)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-provider-readiness-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  activePolicyState = "match";
+  const outcomes = [];
+  for (const attachmentState of ["absent", "unknown"]) {
+    providerInspectionState = "present";
+    providerAttachmentState = attachmentState;
+    providerCredentialKey = "GITHUB_TOKEN";
+    executedSandboxCommands.length = 0;
+    const [status] = await bridge.statusMcpBridge("alpha", "github", {
+      discoverTools: true,
+    });
+    outcomes.push({
+      case: "attachment:" + attachmentState,
+      discovery: status.toolDiscovery,
+      discoveryCommands: executedSandboxCommands.filter(
+        (command) => command.includes("mcp-tool-discovery-runtime"),
+      ).length,
+    });
+  }
+  providerAttachmentState = "attached";
+  providerInspectionState = "absent";
+  providerCredentialKey = "GITHUB_TOKEN";
+  executedSandboxCommands.length = 0;
+  const [absentProvider] = await bridge.statusMcpBridge("alpha", "github", {
+    discoverTools: true,
+  });
+  outcomes.push({
+    case: "provider:absent",
+    discovery: absentProvider.toolDiscovery,
+    discoveryCommands: executedSandboxCommands.filter(
+      (command) => command.includes("mcp-tool-discovery-runtime"),
+    ).length,
+  });
+  providerInspectionState = "present";
+  providerCredentialKey = "WRONG_TOKEN";
+  executedSandboxCommands.length = 0;
+  const [wrongProvider] = await bridge.statusMcpBridge("alpha", "github", {
+    discoverTools: true,
+  });
+  outcomes.push({
+    case: "provider:wrong-shape",
+    discovery: wrongProvider.toolDiscovery,
+    discoveryCommands: executedSandboxCommands.filter(
+      (command) => command.includes("mcp-tool-discovery-runtime"),
+    ).length,
+  });
+  process.stdout.write(JSON.stringify(outcomes));
+`,
+    );
+    expect(JSON.parse(stdout)).toEqual([
+      {
+        case: "attachment:absent",
+        discovery: {
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail: "tool discovery skipped: the credential provider is not attached to the sandbox",
+        },
+        discoveryCommands: 0,
+      },
+      {
+        case: "attachment:unknown",
+        discovery: {
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail: "tool discovery skipped: provider attachment could not be inspected",
+        },
+        discoveryCommands: 0,
+      },
+      {
+        case: "provider:absent",
+        discovery: {
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail: "tool discovery skipped: provider attachment could not be inspected",
+        },
+        discoveryCommands: 0,
+      },
+      {
+        case: "provider:wrong-shape",
+        discovery: {
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail:
+            "tool discovery skipped: the OpenShell provider is absent or does not match the recorded credential binding",
+        },
+        discoveryCommands: 0,
+      },
+    ]);
+  });
+
+  it("runs both diagnostics only when --probe is explicit with --tools (#6901)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-explicit-probe-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools", "--probe", "--json"]);
+  const status = JSON.parse(logLines.join("\n"));
+  process.stdout.write(JSON.stringify({
+    hasResolution: !!status.provider.credentialResolution,
+    hasDiscovery: !!status.toolDiscovery,
+    probeCommands: executedSandboxCommands.filter((c) => c.includes("NEMOCLAW_MCP_PROBE")).length,
+    discoveryCommands: executedSandboxCommands.filter((c) => c.includes("mcp-tool-discovery-runtime")).length,
+  }));
+`,
+    );
+    expect(JSON.parse(stdout)).toEqual({
+      hasResolution: true,
+      hasDiscovery: true,
+      probeCommands: 1,
+      discoveryCommands: 1,
+    });
+  });
+
+  it("requires a named server for --tools and renders the discovered names (#6901)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-validation-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "--tools"]);
+  const rejectedExitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  const rejection = [...errorLines];
+  errorLines.length = 0;
+  logLines.length = 0;
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools"]);
+  process.stdout.write(JSON.stringify({ rejectedExitCode, rejection, rendered: logLines }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      rejectedExitCode: number;
+      rejection: string[];
+      rendered: string[];
+    };
+    expect(payload.rejectedExitCode).toBe(2);
+    expect(payload.rejection.join("\n")).toContain("one MCP server name");
+    expect(payload.rendered.some((line) => line.includes("tool discovery: successful"))).toBe(true);
+    expect(payload.rendered.some((line) => line.includes("alpha"))).toBe(true);
   });
 });
 

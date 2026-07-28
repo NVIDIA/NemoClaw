@@ -55,8 +55,8 @@ NemoClaw refuses to create a snapshot when it detects an active `dcode` task or 
 Wait for active `dcode` work to finish before running `$$nemoclaw <name> snapshot create`.
 </AgentOnly>
 
-Snapshots preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`.
-When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk.
+Snapshots preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy add --from-file` or `policy add --from-dir` and baseline network policy entries excluded with `policy exclude`.
+When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk, and rebuild continues to apply the recorded baseline exclusions.
 
 The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
 NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
@@ -183,6 +183,14 @@ $$nemoclaw backup-all
 If a registered docker-driver sandbox's container is stopped, `backup-all` starts the container for the duration of the backup and returns it to its stopped state afterward.
 If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running.
 If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all`.
+
+When Shields are UP for an eligible sandbox, `backup-all` opens a 30-minute shields-down window before it creates that sandbox's snapshot.
+A sandbox that starts with Shields down remains down.
+An unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
+Because the timer does not defer to the backup process, it can restore lockdown when the 30-minute deadline expires.
+NemoClaw always attempts to restore Shields lockdown before it processes the next sandbox, including when the backup fails.
+If lockdown cannot be restored, `backup-all` stops and does not process the remaining sandboxes.
+Correct the reported issue, run the printed `$$nemoclaw <name> shields up` command, and rerun `$$nemoclaw backup-all`.
 
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.

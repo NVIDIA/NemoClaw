@@ -72,6 +72,42 @@ describe("recoverDockerDriverSandbox — running original (no-op)", () => {
   });
 });
 
+describe("recoverDockerDriverSandbox — paused original (unpause)", () => {
+  it("unpauses a paused container and reports via=unpaused-original (not started-running-original)", () => {
+    const start = vi.fn(fakeStart(0));
+    const unpause = vi.fn(fakeStart(0));
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x\tUp 3 hours (Paused)\n"),
+      dockerStart: start,
+      dockerUnpause: unpause,
+    });
+    expect(result).toEqual({
+      recovered: true,
+      via: "unpaused-original",
+      containerName: "openshell-e2e-x",
+    });
+    expect(unpause).toHaveBeenCalledTimes(1);
+    expect(unpause).toHaveBeenCalledWith(
+      "openshell-e2e-x",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("reports recovered=false with a detail when docker unpause fails", () => {
+    const unpause = vi.fn(fakeStart(1));
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x\tUp 3 hours (Paused)\n"),
+      dockerStart: vi.fn(fakeStart(0)),
+      dockerUnpause: unpause,
+    });
+    expect(result.recovered).toBe(false);
+    expect(result.via).toBeNull();
+    expect(result.detail).toContain("docker unpause");
+    expect(unpause).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("recoverDockerDriverSandbox — stopped original (start)", () => {
   it("starts the labeled container and reports started-stopped-original", () => {
     const start = vi.fn(fakeStart(0));

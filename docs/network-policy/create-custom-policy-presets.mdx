@@ -1,0 +1,203 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Create Custom Policy Presets"
+sidebar-title: "Create Custom Presets"
+description: "Author and apply a scoped network policy preset for an endpoint that NemoClaw does not include."
+description-agent: "Creates and applies custom policy presets. Use when adding a reviewed endpoint or applying preset files."
+keywords: ["nemoclaw custom policy preset", "policy add from-file"]
+content:
+  type: "how_to"
+skill:
+  priority: 10
+---
+Create a custom preset when a sandbox needs a reviewed endpoint that no maintained NemoClaw preset covers.
+Custom presets add scoped access to one sandbox without changing the baseline policy.
+
+<Warning>
+Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress.
+Review every host before applying a custom preset, especially when the file originates outside your team.
+</Warning>
+
+## Author a Preset
+
+Create a preset-format YAML file:
+
+```yaml
+preset:
+  name: my-service-api
+  description: "Reviewed external service"
+network_policies:
+  my-service-api:
+    name: my-service-api
+    endpoints:
+      - host: api.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /path/to/requesting-binary }
+```
+
+Replace `/path/to/requesting-binary` with the exact executable path reported for the blocked request in `openshell term`.
+<AgentOnly variant="deepagents">
+For Deep Agents Code, OpenShell commonly reports `/usr/local/bin/dcode` or `/opt/venv/bin/python3*`.
+Authorize only the process that needs the reviewed endpoint.
+</AgentOnly>
+
+The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens.
+It must not collide with a maintained preset name such as `slack` or `pypi`.
+Rename `preset.name` if NemoClaw reports a collision.
+
+Each endpoint must name a specific host or a scoped subdomain wildcard such as `*.example.com`.
+NemoClaw rejects catch-all destinations, including `*`, `0.0.0.0`, `0.0.0.0/0`, `::`, and `::/0`.
+Rule matchers must match the endpoint protocol.
+
+| Protocol | Rule fields |
+|----------|-------------|
+| REST | `method` and `path`; `method` accepts standard HTTP methods or `*` |
+| WebSocket | `method` and `path`; `method` accepts `GET`, `WEBSOCKET_TEXT`, or `*` |
+| JSON-RPC | `method` only |
+| MCP | `method` with optional `tool` or `params.name` |
+
+The same protocol-specific matcher shape applies to `deny_rules`.
+
+User-authored presets must not declare `allowed_ips` for ordinary endpoints.
+NemoClaw rejects that field in files passed through `--from-file` or `--from-dir` because it can widen the private ranges that OpenShell checks during SSRF protection.
+Use hostnames, ports, protocols, methods, paths, and binary restrictions instead.
+The only exception is the `host.openshell.internal` bridge endpoint for explicit sandbox-to-host service access.
+
+## Apply a Single File
+
+Preview the file before you apply it:
+
+```bash
+$$nemoclaw my-assistant policy add --from-file ./presets/my-service-api.yaml --dry-run
+$$nemoclaw my-assistant policy add --from-file ./presets/my-service-api.yaml --yes
+```
+
+NemoClaw records the complete YAML content with the sandbox.
+You can remove the preset later without keeping the original file.
+
+## Apply Every File in a Directory
+
+Apply preset files in lexicographic order:
+
+```bash
+$$nemoclaw my-assistant policy add --from-dir ./presets/ --yes
+```
+
+Processing stops at the first failure.
+NemoClaw does not remove presets that it already applied.
+Fix the failing file and run the command again to continue.
+
+## Add a Preset to the Source Catalog
+
+Save a maintained local preset under `nemoclaw-blueprint/policies/presets/`.
+The filename without `.yaml` must match `preset.name`.
+The preset catalog reads `preset.name`, while `policy add <name>` loads `presets/<name>.yaml`.
+A mismatch can list a preset that the named command cannot load.
+
+Apply the catalog preset by name:
+
+```bash
+$$nemoclaw my-assistant policy add my-service-api
+```
+
+Run the same command after editing the file.
+NemoClaw compares the preset with the live policy and applies changed content.
+
+## Remove a Custom Preset
+
+Remove the preset by its recorded name:
+
+```bash
+$$nemoclaw my-assistant policy remove my-service-api --yes
+```
+
+Run `$$nemoclaw <name> policy list` to see every maintained and custom preset recorded for the sandbox.
+
+<AgentOnly variant="openclaw,hermes">
+
+## Configure a URL-Based MCP Server
+
+Prefer the managed workflow in [Add an MCP Server](../../manage-sandboxes/mcp-servers/add-an-mcp-server) when the server uses authenticated HTTPS Streamable HTTP.
+Use this custom policy recipe only for an agent-native URL registration that is outside the managed workflow.
+Adding a URL such as `https://mcp.example.com/mcp` can cause a denied CONNECT tunnel.
+The proxy returns `HTTP 403 Forbidden` when the target host is not in the default allowlist.
+The related MCP client output contains this message:
+
+```text
+CONNECT tunnel failed, response 403
+```
+
+This recipe applies only when URL-based MCP traffic uses the sandbox proxy and fails with this CONNECT response.
+An OAuth MCP login failure such as `getaddrinfo EAI_AGAIN` is a different transport problem.
+A direct-DNS path that bypasses the proxy is also a different problem.
+Widening this allowlist does not fix either case.
+
+Add the MCP host, exact Streamable HTTP route, required methods, and only the binary that opens the connection:
+
+```yaml
+preset:
+  name: my-mcp
+  description: "Custom URL-based MCP server"
+network_policies:
+  my_mcp:
+    name: my_mcp
+    endpoints:
+      - host: mcp.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/mcp" }
+          - allow: { method: POST, path: "/mcp" }
+          - allow: { method: DELETE, path: "/mcp" }
+    binaries:
+      - { path: /usr/local/bin/node }
+```
+
+Streamable HTTP clients can use `DELETE` on the same endpoint to terminate a session.
+Keep that method scoped to the exact MCP route.
+Do not replace the route with `/**` unless the server contract requires every path.
+
+Save the file as `nemoclaw-blueprint/policies/presets/my-mcp.yaml`.
+Apply it by name:
+
+```bash
+$$nemoclaw my-assistant policy add my-mcp
+```
+
+NemoClaw previews the effective egress scope and prompts for confirmation before applying it.
+For a publicly routed host that passes SSRF checks, invoke the MCP tool again and confirm that the CONNECT tunnel succeeds.
+
+The `binaries` list must include only the process that opens the connection.
+The example assumes the Node runtime opens the MCP connection.
+Replace the example path with the requesting binary that OpenShell reports in `openshell term`.
+Shell-invoked clients need their own binary path, such as `/usr/bin/curl`.
+Confirm a candidate path inside the sandbox:
+
+```bash
+$$nemoclaw my-assistant exec -- which node
+```
+
+A preset with an endpoint but no matching binary authorizes no process, so requests still fail.
+OpenShell uses `protocol: rest` for this HTTP-based policy even though Streamable HTTP MCP carries JSON-RPC.
+
+An allowlist entry does not disable OpenShell SSRF protection or create host routes.
+If the hostname resolves to a private, loopback, or link-local address, establish the required host or VPN route.
+Then follow the approved private-destination configuration.
+Refer to [Agent cannot reach a host-side HTTP service](../../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service) for routing and private-destination diagnostics.
+
+</AgentOnly>
+
+## Related Topics
+
+- [Apply Policy Presets](apply-policy-presets) explains preset persistence and reapplication.
+<AgentOnly variant="openclaw,hermes">
+- [Configure Raw TLS Passthrough](configure-raw-tls-passthrough) covers endpoints that cannot use L7 inspection.
+</AgentOnly>
+- [Network Policies](../../reference/network-policies) describes the policy schema.

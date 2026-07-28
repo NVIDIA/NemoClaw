@@ -1,0 +1,69 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Verify Deep Agents Trace Export"
+sidebar-title: "Verify Trace Export"
+description: "Verify Deep Agents trace delivery and diagnose each export hop."
+description-agent: "Verifies Deep Agents trace export. Use when proving local and remote delivery or diagnosing OTLP failures."
+keywords: ["verify deep agents traces", "trace delivery diagnosis", "troubleshoot otlp collector"]
+content:
+  type: "how_to"
+---
+Verify the local collector and downstream backend independently.
+Deep Agents work continues when export fails, so the agent exit status is not delivery evidence.
+
+## Set the Sandbox Name
+
+Set the target sandbox in the host shell:
+
+```bash
+export SANDBOX_NAME=my-dcode
+```
+
+## Verify Traces End to End
+
+Run a short headless task to generate a managed trace:
+
+```bash
+nemo-deepagents "$SANDBOX_NAME" exec -- \
+  dcode -n "Reply with the single word traced."
+```
+
+Confirm that the collector received a trace batch and did not report a downstream exporter error:
+
+```bash
+docker logs --since 5m nemoclaw-otel-langsmith 2>&1 | tail -n 100
+```
+
+The basic debug exporter prints a trace count without printing the full payload.
+Open the project named by `$LANGSMITH_PROJECT` in the [LangSmith UI](https://smith.langchain.com/).
+Confirm that the new trace is present.
+Both checks are required because the debug exporter can succeed while the remote exporter fails.
+
+The LangSmith trace should include bounded model inputs and outputs.
+A representative tool task should also show bounded arguments and results on the tool span.
+LangGraph node scopes remain operation-only as described in [Understand Deep Agents Trace Export](understand-deepagents-trace-export).
+
+## Troubleshoot Trace Export
+
+Use these checks to isolate each hop.
+For additional collector diagnostics, refer to [Troubleshooting the OpenTelemetry Collector](https://opentelemetry.io/docs/collector/troubleshooting/).
+
+| Symptom | Check and action |
+| --- | --- |
+| Collector exits at startup | Run the validation command again, then inspect `docker logs nemoclaw-otel-langsmith`. Confirm that the image is the Contrib `0.155.0` image and that all four `LANGSMITH_*` variables were set when the container was created. |
+| Port `4318` is already allocated | Run `ss -ltnp 'sport = :4318'` and stop the conflicting listener. The managed sandbox endpoint is fixed, so changing the collector port does not work. |
+| Collector is healthy but logs no trace count | Run `policy list` and add `observability-otlp-local` if it is absent. Confirm that `docker port` shows the current `$OTLP_BIND_IP`. Run `nemo-deepagents <sandbox> rebuild --observability --yes` if the sandbox was started without the opt-in. |
+| Collector logs `401` | Replace an invalid or expired LangSmith API key, then recreate the collector. |
+| Collector logs `403` | Confirm that the service key can write to the target workspace and that `LANGSMITH_WORKSPACE_ID` matches that workspace. Organization-scoped service keys require `X-Tenant-Id`. |
+| Collector logs `404` | Confirm that `LANGSMITH_OTLP_TRACES_ENDPOINT` uses the correct US, EU, GCP-hosted APAC, AWS-hosted US, or self-hosted API base and ends in `/otel/v1/traces`. |
+| Collector logs `429` | Review LangSmith ingestion and plan limits, then allow the configured queue and retry policy to drain. |
+| Debug exporter logs traces but the LangSmith project is empty | Inspect the collector log for remote exporter errors. Verify the endpoint, project, workspace ID, and API key. |
+| Agent succeeds while every trace check fails | This is expected fail-open behavior. Check the policy, receiver bind, collector health, and remote exporter instead of using the agent exit status as delivery evidence. |
+
+## Related Topics
+
+- [Set Up Deep Agents Trace Export](set-up-deepagents-trace-export) configures the policy and collector.
+- [Manage Deep Agents Trace Export](manage-deepagents-trace-export) covers stop, disable, reconfiguration, and removal operations.
+- [Understand Deep Agents Trace Export](understand-deepagents-trace-export) explains privacy and trust boundaries.
+- [Troubleshooting](../reference/troubleshooting) covers broader sandbox and runtime failures.

@@ -14,6 +14,7 @@ import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 const sandboxGpuConfig: SandboxGpuCreateConfig = {
   sandboxGpuEnabled: true,
   sandboxGpuDevice: "nvidia.com/gpu=0",
+  hostGpuDetected: true,
 };
 
 afterEach(() => {
@@ -169,6 +170,16 @@ describe("resolveSandboxCreateIntent", () => {
       extraPlaceholderKeys: ["TELEGRAM_BOT_TOKEN_AGENT_A"],
       agentName: "hermes",
       policyTier: "balanced",
+      baselineExclusions: [
+        {
+          version: 1 as const,
+          agent: "hermes",
+          key: "nous_research",
+          digest: "abc",
+          acknowledgedAt: "2026-07-19T00:00:00.000Z",
+          appliedAgentVersion: null,
+        },
+      ],
     };
 
     const first = resolveSandboxCreateIntent(input);
@@ -190,9 +201,20 @@ describe("resolveSandboxCreateIntent", () => {
       activeMessagingChannels: ["telegram", "discord", "whatsapp"],
       options: {
         directGpu: true,
+        hostGpuAvailable: true,
         additionalPresets: ["github"],
         agentName: "hermes",
         policyTier: "balanced",
+        baselineExclusions: [
+          {
+            version: 1,
+            agent: "hermes",
+            key: "nous_research",
+            digest: "abc",
+            acknowledgedAt: "2026-07-19T00:00:00.000Z",
+            appliedAgentVersion: null,
+          },
+        ],
       },
     });
     expect(JSON.parse(JSON.stringify(first))).toEqual(first);
@@ -454,9 +476,11 @@ describe("prepareSandboxCreatePlan", () => {
       {
         directGpu: true,
         dockerGpuPatch: false,
+        hostGpuAvailable: true,
         additionalPresets: ["github"],
         agentName: "langchain-deepagents-code",
         policyTier: "restricted",
+        baselineExclusions: [],
       },
     );
     expect(result.policyTier).toBe("restricted");

@@ -348,9 +348,9 @@ Scope the host, port, method, path, and executable to the smallest required set.
 Save a reviewed preset as `./presets/internal-status.yaml`, preview it, then apply it without a prompt:
 
 ```bash
-$$nemoclaw headless-agent policy-add --from-file ./presets/internal-status.yaml --dry-run
-$$nemoclaw headless-agent policy-add --from-file ./presets/internal-status.yaml --yes
-$$nemoclaw headless-agent policy-list
+$$nemoclaw headless-agent policy add --from-file ./presets/internal-status.yaml --dry-run
+$$nemoclaw headless-agent policy add --from-file ./presets/internal-status.yaml --yes
+$$nemoclaw headless-agent policy list
 ```
 
 `--yes` skips the confirmation prompt but does not skip schema, destination, or SSRF validation.
@@ -383,7 +383,7 @@ Use `$$nemoclaw headless-agent rebuild` when you need the current agent image wh
 | Item | Same-container restart | Snapshot and restore | Rebuild or sandbox upgrade |
 |---|---|---|---|
 | Provider configuration | Preserved | Provider names are recorded, but raw credentials are not in the snapshot | Regenerated from registry and OpenShell provider state |
-| Custom preset YAML applied with `policy-add` | Preserved in registry | Stored content is included in snapshot metadata | Replayed from stored content |
+| Custom preset YAML applied with `policy add` | Preserved in registry | Stored content is included in snapshot metadata | Replayed from stored content |
 | Manifest-defined user and agent state | Preserved | Preserved | Preserved when backup and restore succeed |
 | Arbitrary files outside manifest state | Usually remain in the same writable layer | Not preserved | Not preserved |
 | Manually installed system or global packages | Usually remain in the same writable layer | Not preserved | Not preserved |
