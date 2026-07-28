@@ -17,6 +17,11 @@
       "category": "security"
     },
     {
+      "file": "src/lib/readiness/host.test.ts",
+      "test": "bounds and redacts successful probe text before schema validation",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
       "test": "matches the bundled local-inference host-gateway ports (#5744)",
       "category": "compatibility"
