@@ -51,6 +51,7 @@ const OPAQUE_INPUTS = [
   "agents/hermes/policy-additions.yaml",
   "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
   "nemoclaw-blueprint/policies/presets/local-inference.yaml",
+  "nemoclaw-blueprint/policies/presets/claude-code.yaml",
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
@@ -90,6 +91,9 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("nemoclaw-blueprint/policies/presets/local-inference.yaml")).toEqual([
       "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
+    ]);
+    expect(triggeredBy("nemoclaw-blueprint/policies/presets/claude-code.yaml")).toEqual([
+      "test/effective-policy-contracts.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/runtime-config-guard.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
