@@ -72,6 +72,8 @@ export type StatusFlowHarnessOptions = {
     dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
     baselineExclusions?: Array<{ version: 1; agent: string; key: string; digest: string }>;
     baselineExclusionTransition?: BaselineExclusionTransition;
+    preferredInferenceApi?: string | null;
+    compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
   };
   shieldsPosture?: {
     mode: "locked" | "mutable_default" | "mutable";

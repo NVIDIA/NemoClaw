@@ -103,6 +103,16 @@ function indexOfRequired(haystack: string, needle: string): number {
   return index;
 }
 
+function hasBuildKitRunMount(dockerfile: string): boolean {
+  return dockerfile
+    .replace(/\\\r?\n[ \t]*/gu, " ")
+    .split(/\r?\n/u)
+    .some((instruction) => {
+      const runOptionPrefix = instruction.match(/^\s*RUN((?:\s+--\S+)*)/iu)?.[1] ?? "";
+      return /(?:^|\s)--mount(?:=|$)/iu.test(runOptionPrefix);
+    });
+}
+
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -137,6 +147,14 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
+  it.each([
+    ["same-line", "RUN --network=none --mount=type=cache,target=/tmp true", true],
+    ["line-continuation", "RUN --security=sandbox \\\n  --mount=type=secret,id=token true", true],
+    ["shell-command argument", "RUN printf '%s' --mount=type=cache", false],
+  ] as const)("recognizes BuildKit mounts only in the RUN option prefix for %s form (#7611)", (_form, dockerfile, expected) => {
+    expect(hasBuildKitRunMount(dockerfile)).toBe(expected);
+  });
+
   // source-shape-contract: compatibility -- Legacy-compatible grouped payload copies preserve the measured Hermes layer budget without invalidating earlier build work
   it("uses grouped legacy-compatible payload layers at their cache boundaries (#7611)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
@@ -149,11 +167,60 @@ describe("Hermes final image layout", () => {
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
     const payloads = [
-      { stage: "hermes-npm-patch-payload", copies: 3 },
-      { stage: "hermes-agent-payload", copies: 7 },
-      { stage: "hermes-runtime-payload", copies: 19 },
-      { stage: "hermes-wrapper-payload", copies: 1 },
-      { stage: "hermes-scan-payload", copies: 1 },
+      {
+        stage: "hermes-npm-patch-payload",
+        copies: [
+          "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
+          "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
+          "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
+        ],
+      },
+      {
+        stage: "hermes-agent-payload",
+        copies: [
+          "COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/",
+          "COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts",
+          "COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/",
+          "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
+          "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
+          "COPY src/lib/messaging/ /src/lib/messaging/",
+          "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
+        ],
+      },
+      {
+        stage: "hermes-runtime-payload",
+        copies: [
+          "COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/",
+          "COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/",
+          "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh",
+          "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
+          "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
+          "COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start",
+          "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
+          "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
+          "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
+          "COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
+          "COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
+          "COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py",
+          "COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+          "COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py",
+          "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
+          "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
+          "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
+          "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
+          "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
+        ],
+      },
+      {
+        stage: "hermes-wrapper-payload",
+        copies: ["COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py"],
+      },
+      {
+        stage: "hermes-scan-payload",
+        copies: [
+          "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
+        ],
+      },
     ] as const;
     const npmPatchCopy = "COPY --from=hermes-npm-patch-payload / /";
     const agentCopy = "COPY --from=hermes-agent-payload / /";
@@ -162,10 +229,10 @@ describe("Hermes final image layout", () => {
     const scanCopy = "COPY --from=hermes-scan-payload / /";
 
     expect(finalStageIndex).toBe(stages.length - 1);
-    expect(dockerfile).not.toContain("RUN --mount");
+    expect(hasBuildKitRunMount(dockerfile)).toBe(false);
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
-      expect(stage?.match(/^COPY\b.*$/gmu)).toHaveLength(payload.copies);
+      expect(stage?.match(/^COPY\b.*$/gmu)).toEqual(payload.copies);
       expect(finalStage).toContain(`COPY --from=${payload.stage} / /`);
     }
     expect(finalStage.match(/^COPY\b.*$/gmu)).toEqual([
