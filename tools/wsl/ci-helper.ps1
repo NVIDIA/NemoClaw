@@ -364,6 +364,24 @@ function Get-WslCheckoutSyncScript {
         throw "Invalid WSL owner '$Owner'."
     }
 
+    $normalizedCheckout = $Checkout.TrimEnd('/')
+    $normalizedWorkdir = $Workdir.TrimEnd('/')
+    $unsafePathSegment = '(^|/)\.{1,2}(/|$)'
+    $workdirOverlapsCheckout = $normalizedCheckout -eq $normalizedWorkdir -or
+        $normalizedCheckout.StartsWith(
+            "$normalizedWorkdir/",
+            [StringComparison]::Ordinal
+        )
+    if (
+        [string]::IsNullOrWhiteSpace($normalizedWorkdir) -or
+        -not $normalizedWorkdir.StartsWith('/') -or
+        $normalizedWorkdir -eq '/' -or
+        $normalizedWorkdir -match $unsafePathSegment -or
+        $workdirOverlapsCheckout
+    ) {
+        throw "WSL sync workdir must be absolute and non-root, and must not be the checkout, its ancestor, or a traversal path: '$Workdir'."
+    }
+
     $workdirParent = $Workdir.Substring(0, $Workdir.LastIndexOf('/'))
     $checkoutLiteral = ConvertTo-BashLiteral -Value $Checkout
     $checkoutGitLiteral = ConvertTo-BashLiteral -Value "$Checkout/.git"
