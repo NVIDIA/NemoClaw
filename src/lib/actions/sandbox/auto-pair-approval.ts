@@ -212,12 +212,23 @@ def exit_with_receipt(receipt):
   const pendingRead = options.localDeviceOnly
     ? `
 # SOURCE_OF_TRUTH_REVIEW (restored-clone local pending selection):
-# Invalid state: a restored clone's first devices list can block on the same
-# pending pairing/scope transition that this one-shot pass must approve.
+# Invalid state: after snapshot restore restarts the clone gateway, the bounded
+# warm-up asks for operator.write while the clone's paired baseline still has
+# only operator.pairing. OpenClaw creates the pending transition, and that same
+# transition gates the devices list this one-shot approval pass would need.
+# Creation point: establishRestoredSandboxGatewayPairing runs
+# runSandboxScopeWarmupRun immediately before this approval. Restore preserves
+# the clone-owned identity and pairing-only server record, while its client-auth
+# store cannot converge on the rotated token until canonical approval finishes.
 # Source boundary: read only the clone-local pending map, validate one exact
 # request below, and delegate the write to OpenClaw's canonical devices approve
-# command. Remove this path when the pinned OpenClaw release exposes a
-# bootstrap/list API for an unpaired clone.
+# command. OpenClaw 2026.7.1 has no authenticated bootstrap/list API that can
+# return this pending request, and that upstream API cannot be added in this PR.
+# Regression proof: "adds local-device filtering only for restored-clone
+# approval" pins this local-read boundary, and the pinned real-dist proof creates
+# the transition before exercising one canonical approval and ordinary verifier.
+# Removal condition: delete this path when the pinned OpenClaw release exposes
+# that bootstrap/list API for an unpaired clone.
 import stat
 
 state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'

@@ -616,6 +616,41 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
+  it("rejects a different live request id for the same clone before approval", async () => {
+    const { runtime, tmp } = openPatchedCliFixture();
+    try {
+      const token = "clone-paired-token";
+      runtime.setPairingLists(
+        {
+          pending: [validPending({ isRepair: false })],
+          paired: [clonePairedTokenRecord(token)],
+        },
+        {
+          pending: [validPending({ isRepair: false, requestId: "request-2" })],
+          paired: [validPaired({ approvedScopes: undefined })],
+        },
+      );
+      runtime.setPairedTokenEnvironment(token);
+
+      await expect(runtime.approvePairingWithFallback({ json: true }, "request-1")).rejects.toThrow(
+        "bounded same-device approval context changed before gateway approval",
+      );
+      expect(runtime.gatewayCalls).toHaveLength(1);
+      expect(runtime.gatewayCalls[0]).toMatchObject({
+        method: "device.pair.list",
+        scopes: ["operator.pairing"],
+        credentialSource: "environment",
+        signedIdentityForced: true,
+      });
+      expect(runtime.pairingStats()).toEqual({
+        localPairingReadCount: 1,
+        localApprovalCount: 0,
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when the direct paired-token list cannot reach the gateway", async () => {
     const { runtime, tmp } = openPatchedCliFixture();
     try {
