@@ -24,9 +24,11 @@ export const finalizationHandlerDeps = {
   // CLI/webchat scope upgrades so onboard hands off without a stuck pairing
   // request (#4504). Never throws.
   autoPairScopeApproval(name: string): void {
-    const connect: typeof import("../actions/sandbox/connect") =
-      require("../actions/sandbox/connect");
-    connect.runConnectAutoPairApprovalPass(name);
+    const {
+      runConnectAutoPairApprovalPass,
+    }: typeof import("../actions/sandbox/auto-pair-approval") =
+      require("../actions/sandbox/auto-pair-approval");
+    runConnectAutoPairApprovalPass(name);
   },
   // Provoke the operator.write scope upgrade with a throwaway in-sandbox agent
   // run so the request is PENDING when the approval pass above clears it,

@@ -81,7 +81,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
 
   const runner = requireDist("../runner.js");
   const policy = requireDist("../policy/index.js");
-  const sandboxConfig = requireDist("../sandbox/config.js");
+  const agentConfig = requireDist("../sandbox/agent-config.js");
   const registry = requireDist("../state/registry.js");
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
@@ -102,7 +102,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     path.join(tmpDir, "permissive.yaml"),
   );
   fs.writeFileSync(path.join(tmpDir, "permissive.yaml"), "version: 1\nnetwork_policies: {}\n");
-  vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
+  vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
     agentName: "openclaw",
     configDir: "/sandbox/.openclaw",
     configFile: "openclaw.json",

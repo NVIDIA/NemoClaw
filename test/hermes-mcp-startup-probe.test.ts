@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   waitUntil: vi.fn(),
 }));
 
-vi.mock("../src/lib/actions/global", () => ({
+vi.mock("../src/lib/adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 

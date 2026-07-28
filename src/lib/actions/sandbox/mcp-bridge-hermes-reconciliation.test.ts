@@ -14,7 +14,7 @@ vi.mock("../../state/registry", () => ({
   getSandbox: mocks.getSandbox,
 }));
 
-vi.mock("../../actions/global", () => ({
+vi.mock("../../adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 

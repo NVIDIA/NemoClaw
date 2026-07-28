@@ -219,7 +219,7 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const expectedId = "11111111-2222-4333-8444-555555555555";
@@ -230,7 +230,7 @@ let policyState = "match";
 const events = [];
 const commands = [];
 state.ensureSandboxGatewaySelected = async () => {};
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   const command = args.join(" ");
   commands.push(command);
   if (args[0] === "provider" && args[1] === "get") {

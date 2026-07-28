@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
-import { forgetExtraProvider, runOpenshellProviderCommand } from "../../lib/actions/global";
+import { forgetExtraProvider } from "../../lib/actions/global";
+import { runOpenshellProviderCommand } from "../../lib/adapters/openshell/provider-command";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../lib/adapters/openshell/timeouts";
 import { CLI_NAME } from "../../lib/cli/branding";
 import { yesFlag } from "../../lib/cli/common-flags";

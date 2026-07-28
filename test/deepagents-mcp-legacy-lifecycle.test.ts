@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   runOpenshellProviderCommand: vi.fn(),
 }));
 
-vi.mock("../src/lib/actions/global", () => ({
+vi.mock("../src/lib/adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 

@@ -12,7 +12,7 @@
  * exposes provider CAS or immutable provider IDs as mutation targets.
  */
 
-import { runOpenshellProviderCommand } from "../../actions/global";
+import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";

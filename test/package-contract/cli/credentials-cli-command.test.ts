@@ -22,6 +22,14 @@ const COMMAND_PATHS = {
   action: path.join(REPO_ROOT, "dist", "lib", "actions", "credentials-add.js"),
 };
 const GLOBAL_ACTIONS_PATH = path.join(REPO_ROOT, "dist", "lib", "actions", "global.js");
+const PROVIDER_COMMAND_PATH = path.join(
+  REPO_ROOT,
+  "dist",
+  "lib",
+  "adapters",
+  "openshell",
+  "provider-command.js",
+);
 type CredentialsCommandClasses = {
   CredentialsCommand: typeof import("../../../src/commands/credentials.js").default;
   CredentialsAddCommand: typeof import("../../../src/commands/credentials/add.js").default;
@@ -76,9 +84,13 @@ function installRuntimeBridge(bridge: Partial<RuntimeBridge> = {}): OpenshellCal
     ...bridge,
   };
   const globalActions = require(GLOBAL_ACTIONS_PATH) as {
-    setGlobalCliActionRuntimeHooksForTest: (hooks: RuntimeBridge) => void;
+    setGlobalCliActionRuntimeHooksForTest: (hooks: Omit<RuntimeBridge, "runOpenshell">) => void;
+  };
+  const providerCommands = require(PROVIDER_COMMAND_PATH) as {
+    setProviderCommandRuntimeHooksForTest: (hooks: Pick<RuntimeBridge, "runOpenshell">) => void;
   };
   globalActions.setGlobalCliActionRuntimeHooksForTest(runtime);
+  providerCommands.setProviderCommandRuntimeHooksForTest({ runOpenshell: runtime.runOpenshell });
   return calls;
 }
 
@@ -142,6 +154,7 @@ afterEach(() => {
     delete require.cache[modulePath];
   }
   delete require.cache[GLOBAL_ACTIONS_PATH];
+  delete require.cache[PROVIDER_COMMAND_PATH];
 });
 
 describe("credentials oclif commands", () => {

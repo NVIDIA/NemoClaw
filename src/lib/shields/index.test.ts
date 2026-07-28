@@ -36,7 +36,7 @@ vi.mock("../policy", () => ({
   resolvePermissivePolicyPath: vi.fn(() => "/mock/permissive.yaml"),
 }));
 
-vi.mock("../sandbox/config", () => ({
+vi.mock("../sandbox/agent-config", () => ({
   resolveAgentConfig: vi.fn(() => ({
     agentName: "openclaw",
     configPath: "/sandbox/.openclaw/openclaw.json",
@@ -1124,10 +1124,10 @@ describe("NC-2227-05: shields timer marker behavior", () => {
 
   it("shieldsUp preserves recovery authority when shields state is corrupt", async () => {
     const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
-    const [{ shieldsUp }, runner, sandboxConfig, audit] = await Promise.all([
+    const [{ shieldsUp }, runner, agentConfig, audit] = await Promise.all([
       import(sourceModulePath),
       import("../runner"),
-      import("../sandbox/config"),
+      import("../sandbox/agent-config"),
       import("./audit"),
     ]);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
@@ -1175,7 +1175,7 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     expect(fs.readFileSync(statePath)).toEqual(corruptState);
     expect(fs.readFileSync(markerPath)).toEqual(marker);
     expect(fs.readFileSync(transitionPath)).toEqual(transition);
-    expect(vi.mocked(sandboxConfig.resolveAgentConfig)).not.toHaveBeenCalled();
+    expect(vi.mocked(agentConfig.resolveAgentConfig)).not.toHaveBeenCalled();
     expect(vi.mocked(runner.run)).not.toHaveBeenCalled();
     expect(vi.mocked(runner.runCapture)).not.toHaveBeenCalled();
     expect(vi.mocked(audit.appendAuditEntry)).not.toHaveBeenCalled();

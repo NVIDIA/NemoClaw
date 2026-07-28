@@ -42,6 +42,12 @@ import path from "node:path";
 
 import { shellQuote } from "../../core/shell-quote";
 import { ROOT } from "../../state/paths";
+import {
+  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+  CONNECT_AUTO_PAIR_MAX_APPROVALS,
+  CONNECT_AUTO_PAIR_TIMEOUT_MS,
+} from "./connect-autopair-budget";
 
 // Bound the in-sandbox work: 2s list + 1s × MAX_APPROVALS attempts plus
 // shell/python startup slack fits inside the outer spawnSync cap, so a wedged
@@ -52,6 +58,13 @@ export const AUTO_PAIR_APPROVAL_TIMEOUT_MS = 12_000;
 // Default per-call budgets (seconds) for the in-sandbox openclaw subcommands.
 const AUTO_PAIR_LIST_TIMEOUT_S = 2;
 const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
+
+const CONNECT_AUTO_PAIR_BUDGET = {
+  maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
+  listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+  approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+  timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+} as const;
 
 // Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
 // supply a tighter budget — a single realistic pending CLI/webchat scope
@@ -456,4 +469,9 @@ export function runSandboxAutoPairApprovalPass(
       receipt: emitReceipt ? "exec-failed" : null,
     };
   }
+}
+
+/** Run the approval pass with the shared connect, probe, and finalization budget. */
+export function runConnectAutoPairApprovalPass(sandboxName: string): void {
+  runSandboxAutoPairApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
 }
