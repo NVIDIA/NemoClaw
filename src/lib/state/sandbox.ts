@@ -42,7 +42,11 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
+import {
+  isSensitiveFile,
+  sanitizeConfigFile,
+  sanitizeEnvFile,
+} from "../security/credential-filter.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -639,24 +643,17 @@ function sanitizeBackupDirectory(dirPath: string): void {
           } catch {
             /* best effort */
           }
-        } else if (entry.name.endsWith(".json")) {
+        } else if (
+          entry.name.endsWith(".json") ||
+          entry.name.endsWith(".yaml") ||
+          entry.name.endsWith(".yml")
+        ) {
+          // JSON (OpenClaw) and YAML (Hermes config.yaml) both carry secrets.
           sanitizeConfigFile(fullPath);
         } else if (entry.name === ".env" || entry.name.endsWith(".env")) {
-          // Strip credential lines from .env files (KEY=value format).
           // Hermes stores API keys in .env alongside config.yaml.
           try {
-            const envContent = readFileSync(fullPath, "utf-8");
-            const filtered = envContent
-              .split("\n")
-              .map((line) => {
-                const key = line.split("=")[0]?.trim().toUpperCase() || "";
-                if (/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/.test(key)) {
-                  return `${line.split("=")[0]}=[STRIPPED_BY_MIGRATION]`;
-                }
-                return line;
-              })
-              .join("\n");
-            writeFileSync(fullPath, filtered);
+            sanitizeEnvFile(fullPath);
             chmodSync(fullPath, 0o600);
           } catch {
             /* best effort */

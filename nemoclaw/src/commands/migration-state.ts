@@ -20,6 +20,7 @@ import { create as createTar } from "tar";
 import { createHash } from "node:crypto";
 import JSON5 from "json5";
 import type { PluginLogger } from "../index.js";
+import { isSensitiveFile, stripCredentials } from "../security/credential-filter.js";
 import { isObjectRecord, type UnknownRecord } from "../shared/object-record.js";
 
 const SANDBOX_MIGRATION_DIR = "/sandbox/.nemoclaw/migration";
@@ -504,64 +505,8 @@ export function detectHostOpenClaw(env: NodeJS.ProcessEnv = process.env): HostOp
 }
 
 // ---------------------------------------------------------------------------
-// Credential sanitization
+// Credential sanitization (shared with nemoclaw/src/security/credential-filter)
 // ---------------------------------------------------------------------------
-
-/**
- * Basenames that MUST NOT be copied into snapshot bundles.
- * These files contain credential references or session tokens
- * that should never cross the sandbox boundary.
- */
-const CREDENTIAL_SENSITIVE_BASENAMES = new Set(["auth-profiles.json"]);
-
-/**
- * Credential field names that MUST be stripped from config files
- * before they enter the sandbox. Credentials should be injected
- * at runtime via OpenShell's provider credential mechanism.
- */
-const CREDENTIAL_FIELDS = new Set([
-  "apiKey",
-  "api_key",
-  "token",
-  "secret",
-  "password",
-  "resolvedKey",
-]);
-
-/**
- * Pattern-based detection for credential field names not covered by the
- * explicit set above. Matches common suffixes like accessToken, privateKey,
- * clientSecret, etc.
- */
-const CREDENTIAL_FIELD_PATTERN =
-  /(?:access|refresh|client|bearer|auth|api|private|public|signing|session)(?:Token|Key|Secret|Password)$/;
-
-function isCredentialField(key: string): boolean {
-  return CREDENTIAL_FIELDS.has(key) || CREDENTIAL_FIELD_PATTERN.test(key);
-}
-
-/**
- * Recursively strip credential fields from a JSON-like object.
- * Returns a new object with sensitive values replaced by a placeholder.
- */
-function stripCredentials(obj: unknown): unknown {
-  if (Array.isArray(obj)) return obj.map(stripCredentials);
-  if (!isObjectRecord(obj)) return obj;
-
-  return stripCredentialsFromRecord(obj);
-}
-
-function stripCredentialsFromRecord(obj: UnknownRecord): UnknownRecord {
-  const result: UnknownRecord = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (isCredentialField(key)) {
-      result[key] = "[STRIPPED_BY_MIGRATION]";
-    } else {
-      result[key] = stripCredentials(value);
-    }
-  }
-  return result;
-}
 
 /**
  * Strip credential fields from openclaw.json and remove the gateway
@@ -571,7 +516,7 @@ function sanitizeConfigFile(configPath: string): void {
   const config = loadConfigDocument(configPath);
   if (!config) return;
   delete config.gateway;
-  const sanitized = stripCredentialsFromRecord(config);
+  const sanitized = stripCredentials(config) as UnknownRecord;
   writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
   chmodSync(configPath, 0o600);
 }
@@ -593,7 +538,7 @@ function copyDirectory(
   cpSync(sourcePath, destinationPath, {
     recursive: true,
     filter: options?.stripCredentials
-      ? (source: string) => !CREDENTIAL_SENSITIVE_BASENAMES.has(path.basename(source).toLowerCase())
+      ? (source: string) => !isSensitiveFile(path.basename(source))
       : undefined,
   });
 }
