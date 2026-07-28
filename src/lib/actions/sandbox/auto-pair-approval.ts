@@ -209,6 +209,27 @@ def exit_with_receipt(receipt):
             approved_count += 1
 `
     : "";
+  const approveExceptionHandler = options.localDeviceOnly
+    ? `    except subprocess.TimeoutExpired:
+        if local_approval_auth_mode != 'paired-token':
+            ${failedApproveAction}
+        # The canonical gateway transition can finish while the paired-token
+        # CLI remains blocked behind the competing clone watcher. Do not retry
+        # or extend its timeout. Accept only the same exact published state used
+        # for a completed nonzero call, then synchronize the rotated credential.
+        previous_approval_token = local_paired_operator_token
+        approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        local_paired_operator_token = ''
+        if not sync_approved_clone_device_auth(device, previous_approval_token):
+            ${failedApproveAction}
+        approved_count += 1
+    except (FileNotFoundError, OSError):
+        ${failedApproveAction}
+`
+    : `    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        ${failedApproveAction}
+`;
   const pendingRead = options.localDeviceOnly
     ? `
 # SOURCE_OF_TRUTH_REVIEW (restored-clone local pending selection):
@@ -749,8 +770,7 @@ for device in pending:
         if approve_proc.returncode == 0:
 ${pairedTokenSuccess}
             approved_count += 1
-${pairedTokenConcurrentSuccess}${failedApproveBranch}    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        ${failedApproveAction}
+${pairedTokenConcurrentSuccess}${failedApproveBranch}${approveExceptionHandler}
 ${summaryLine}${receiptSuccessLine}PYAPPROVE
 exit 0
 `;

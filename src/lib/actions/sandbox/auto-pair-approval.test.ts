@@ -369,6 +369,10 @@ if (args[0] === "devices" && args[1] === "approve") {
       process.exit(1);
     }
   }
+  if (process.env.NEMOCLAW_APPROVE_TIMEOUT_AFTER_COMMIT === "1") {
+    process.stderr.write("raw timed-out approval output must stay private\\n");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
+  }
   process.stdout.write("{}\\n");
   process.exit(0);
 }
@@ -381,6 +385,7 @@ process.exit(2);
         gatewayToken = "secret-token",
         watcherRace = false,
         invalidWatcherState = false,
+        timeoutAfterCommit = false,
       ) =>
         spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
@@ -390,6 +395,7 @@ process.exit(2);
             NEMOCLAW_APPROVE_FAIL: failApproval ? "1" : "0",
             NEMOCLAW_APPROVE_WATCHER_RACE: watcherRace ? "1" : "0",
             NEMOCLAW_APPROVE_WATCHER_RACE_INVALID: invalidWatcherState ? "1" : "0",
+            NEMOCLAW_APPROVE_TIMEOUT_AFTER_COMMIT: timeoutAfterCommit ? "1" : "0",
             NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
@@ -403,6 +409,7 @@ process.exit(2);
         options: {
           failApproval?: boolean;
           invalidWatcherState?: boolean;
+          timeoutAfterCommit?: boolean;
           watcherRace?: boolean;
           gatewayToken?: string;
           pendingById?: Record<string, unknown>;
@@ -465,6 +472,7 @@ process.exit(2);
           options.gatewayToken === undefined ? "secret-token" : options.gatewayToken,
           options.watcherRace,
           options.invalidWatcherState,
+          options.timeoutAfterCommit,
         );
       };
       const readApprovals = () =>
@@ -698,9 +706,9 @@ process.exit(2);
       expect(parseAutoPairApprovalReceipt(watcherWon.stdout)).toBe("approved-one");
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n")).toHaveLength(1);
-      expect(`${watcherWon.stdout}${watcherWon.stderr}`).not.toContain(
-        "raw concurrent approval output",
-      );
+      expect(
+        `${watcherWon.stdout}${watcherWon.stderr}`.includes("raw concurrent approval output"),
+      ).toBe(false);
       expect(JSON.parse(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8"))).toEqual({
         [foreignRequest.requestId]: foreignRequest,
       });
@@ -724,6 +732,109 @@ process.exit(2);
       );
 
       resetLogs();
+      const timedOutWithoutPairedBaseline = run([localRequest], {
+        timeoutAfterCommit: true,
+      });
+      expect(parseAutoPairApprovalReceipt(timedOutWithoutPairedBaseline.stdout)).toBe(
+        "approve-failed",
+      );
+      expect(readApprovals()).toEqual(["clone-pairing"]);
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n")).toEqual([
+        `unset:unset:runtime-token:ordinary:${stateDir}:${primaryStateDir}`,
+      ]);
+      expect(
+        `${timedOutWithoutPairedBaseline.stdout}${timedOutWithoutPairedBaseline.stderr}`.includes(
+          "raw timed-out approval output",
+        ),
+      ).toBe(false);
+      expect(fs.existsSync(cloneAuthFile)).toBe(false);
+      expect(fs.readFileSync(primaryAuthFile, "utf-8")).toBe(primaryAuth);
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+        primaryPending,
+      );
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf-8")).toBe(
+        primaryPaired,
+      );
+
+      resetLogs();
+      const timedOutAfterCommit = run([foreignRequest, repairRequest], {
+        pairedById: { [deviceId]: pairedDevice },
+        timeoutAfterCommit: true,
+      });
+      expect(timedOutAfterCommit.status).toBe(0);
+      expect(parseAutoPairApprovalReceipt(timedOutAfterCommit.stdout)).toBe("approved-one");
+      expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n")).toEqual([
+        `unset:unset:clone-paired-token:forced:${stateDir}:${primaryStateDir}`,
+      ]);
+      expect(
+        `${timedOutAfterCommit.stdout}${timedOutAfterCommit.stderr}`.includes(
+          "raw timed-out approval output",
+        ),
+      ).toBe(false);
+      expect(
+        `${timedOutAfterCommit.stdout}${timedOutAfterCommit.stderr}`.includes(
+          repairRequest.requestId,
+        ),
+      ).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8"))).toEqual({
+        [foreignRequest.requestId]: foreignRequest,
+      });
+      expect(JSON.parse(fs.readFileSync(cloneAuthFile, "utf-8"))).toMatchObject({
+        version: 1,
+        deviceId,
+        tokens: {
+          operator: {
+            token: "rotated-clone-device-token",
+            role: "operator",
+            scopes: ["operator.pairing", "operator.read", "operator.write"],
+          },
+        },
+      });
+      expect(fs.readFileSync(primaryAuthFile, "utf-8")).toBe(primaryAuth);
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+        primaryPending,
+      );
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf-8")).toBe(
+        primaryPaired,
+      );
+
+      resetLogs();
+      const invalidTimedOutState = run([foreignRequest, repairRequest], {
+        invalidWatcherState: true,
+        pairedById: { [deviceId]: pairedDevice },
+        timeoutAfterCommit: true,
+      });
+      expect(parseAutoPairApprovalReceipt(invalidTimedOutState.stdout)).toBe("approve-failed");
+      expect(readApprovals()).toEqual(["clone-write-upgrade"]);
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n")).toHaveLength(1);
+      expect(
+        `${invalidTimedOutState.stdout}${invalidTimedOutState.stderr}`.includes(
+          "raw timed-out approval output",
+        ),
+      ).toBe(false);
+      expect(
+        `${invalidTimedOutState.stdout}${invalidTimedOutState.stderr}`.includes(
+          repairRequest.requestId,
+        ),
+      ).toBe(false);
+      expect(JSON.parse(fs.readFileSync(cloneAuthFile, "utf-8"))).toMatchObject({
+        tokens: {
+          operator: {
+            token: "clone-device-token",
+            scopes: ["operator.pairing"],
+          },
+        },
+      });
+      expect(fs.readFileSync(primaryAuthFile, "utf-8")).toBe(primaryAuth);
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
+        primaryPending,
+      );
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf-8")).toBe(
+        primaryPaired,
+      );
+
+      resetLogs();
       const invalidWatcherState = run([foreignRequest, repairRequest], {
         invalidWatcherState: true,
         pairedById: { [deviceId]: pairedDevice },
@@ -731,9 +842,11 @@ process.exit(2);
       });
       expect(parseAutoPairApprovalReceipt(invalidWatcherState.stdout)).toBe("approve-failed");
       expect(readApprovals()).toEqual(["clone-write-upgrade"]);
-      expect(`${invalidWatcherState.stdout}${invalidWatcherState.stderr}`).not.toContain(
-        "raw concurrent approval output",
-      );
+      expect(
+        `${invalidWatcherState.stdout}${invalidWatcherState.stderr}`.includes(
+          "raw concurrent approval output",
+        ),
+      ).toBe(false);
       expect(JSON.parse(fs.readFileSync(cloneAuthFile, "utf-8"))).toMatchObject({
         tokens: {
           operator: {
