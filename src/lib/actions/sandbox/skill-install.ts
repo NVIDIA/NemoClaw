@@ -342,7 +342,7 @@ export async function installSandboxSkill(
     } else {
       console.error(
         `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}` +
-          (paths.isOpenClaw && paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
+          (paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
       );
       process.exit(1);
     }
