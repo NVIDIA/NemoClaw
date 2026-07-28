@@ -89,6 +89,32 @@ describe("sandbox sessions admin RPCs on a non-OpenClaw agent (#7587)", () => {
     }
   });
 
+  it("rejects `--agent hermes` without invoking native delete or the gateway RPC (#7642)", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sessions-delete-hermes-agent-"),
+    );
+    try {
+      writeSandboxRegistry(home, "alpha", { agent: "hermes" });
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(home, openshellLog);
+
+      const result = runWithEnv(
+        "alpha sessions delete 20260727_130357_cb2b61 --agent hermes 2>&1",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.out).toContain("--agent hermes is OpenClaw-only");
+      expect(result.out).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+      expect(fs.existsSync(openshellLog)).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("propagates a nonzero native hermes delete exit code and makes no gateway RPC (#7642)", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sessions-delete-hermes-fail-"),

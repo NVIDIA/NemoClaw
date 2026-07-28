@@ -28,9 +28,8 @@ export default class SandboxSessionsDeleteCommand extends NemoClawCommand {
     "session entry is removed.",
     "",
     "On a Hermes sandbox this routes to the native `hermes sessions delete <id>",
-    "--yes` and takes a native Hermes session id from `sessions list`. It accepts",
-    "--agent hermes as a no-op alias and refuses every other --agent value plus",
-    "--keep-transcript, --json, and --verbose.",
+    "--yes` and takes a native Hermes session id from `sessions list`. It refuses",
+    "the OpenClaw-only --agent, --keep-transcript, --json, and --verbose flags.",
   ].join("\n");
   static usage = ["<name> <key> [--agent <id>] [--keep-transcript] [--json] [--verbose]"];
   static examples = [

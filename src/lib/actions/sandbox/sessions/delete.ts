@@ -113,12 +113,11 @@ export async function deleteSandboxSession(
   return { key: payload.key, removedTranscript, entry: payload.entry };
 }
 
-// The `--agent hermes` no-op alias mirrors `sessions export`; every other
-// OpenClaw-only flag is refused rather than silently ignored.
+// OpenClaw-only flags are refused rather than silently ignored.
 function rejectOpenClawOnlyDeleteOptions(opts: SessionsDeleteOptions): void {
-  if (opts.agent && opts.agent !== "hermes") {
+  if (opts.agent) {
     console.error(
-      `  Refusing to delete: --agent ${opts.agent} is OpenClaw-only and is not supported on a Hermes sandbox. Pass --agent hermes or omit the flag.`,
+      `  Refusing to delete: --agent ${opts.agent} is OpenClaw-only and is not supported on a Hermes sandbox. Omit the flag.`,
     );
     process.exit(1);
   }

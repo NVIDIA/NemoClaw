@@ -233,18 +233,15 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     );
   });
 
-  it("accepts --agent hermes as a no-op alias and still routes to the native command (#7642)", async () => {
+  it("rejects --agent hermes instead of silently ignoring the OpenClaw-only flag (#7642)", async () => {
     await expect(
       deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", agent: "hermes" }),
-    ).rejects.toThrow(/process\.exit:0/);
+    ).rejects.toThrow(/process\.exit:1/);
 
-    expect(execSandboxMock).toHaveBeenCalledWith("sb-h", [
-      "hermes",
-      "sessions",
-      "delete",
-      "20260727_130357_cb2b61",
-      "--yes",
-    ]);
+    expect(execSandboxMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
+      /--agent hermes.*OpenClaw-only.*not supported on a Hermes sandbox/,
+    );
   });
 
   it.each([
