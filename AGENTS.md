@@ -275,12 +275,149 @@ If the command trace contains no reviewer-request write, report the event as an 
 ## Documentation
 
 - Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
-- After completing code or documentation changes, run a documentation writer subagent before final handoff. Give it the changed files, change summary, and test or docs-build evidence. For documentation-only changes, ask it to verify the writing rules and documentation style.
+- Before completing a code change, determine whether it changes a user-visible surface.
+  This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.
+- When it does and the host supports subagents, start a documentation authoring subagent while the primary agent continues the implementation.
+  Direct it to read `docs/AGENTS.md`, update the affected docs, and run validation.
+  Give it the changed sources and user-visible impact.
+- Reconcile the authoring subagent's documentation changes and validation evidence before completing the implementation.
+  Include the required documentation in the same change.
+- If the host cannot run subagents, read `docs/AGENTS.md` in the primary task, complete the documentation work, and run its documented validation.
+  Do not omit required documentation because parallel execution is unavailable.
+- Before final handoff, a documentation writer subagent must independently review every completed code or documentation change.
+  Give it the changed files, change summary, and test or docs-build evidence.
+  For a documentation-only change, require review of the writing rules and documentation style.
+- If the current host cannot run this reviewer, hand the completed diff and validation evidence to a capable host.
+  If no capable host is available, record the review as `blocked` and do not complete final handoff.
 - After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, and agent surface. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
 - If any commit changes the pull-request head after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
-- For normal docs changes, include source pages under `docs/`.
-- Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
+
+### NVIDIA DORI Setup
+
+Use DORI as the primary documentation path for NVIDIA-authorized contributors.
+The checked-in repository guidance provides the fallback for contributors who
+cannot use DORI. Do not block the contributor's task when they are external,
+decline setup, lack private access, or encounter a setup failure. Installing
+DORI changes the user's tool environment, and host setup can change that
+host's user-level MCP configuration.
+
+Store the contributor's explicit authorization status in `.dori_user_status`
+at the repository root. This ignored file can contain only one line:
+`authorized` or `external`. A valid stored value applies to later sessions in
+the same checkout. It does not prove access or authorize installation or host
+changes.
+
+1. Resolve the contributor's authorization status before using private DORI
+   components.
+   - If `.dori_user_status` has exactly one line and it is `external`, use the
+     standalone fallback without asking again.
+   - If `.dori_user_status` has exactly one line and it is `authorized`,
+     continue to step 2. Do not treat the file as credential or access
+     evidence.
+   - If the file is absent or invalid, ask one direct question: "Which status
+     should I store in this checkout's ignored `.dori_user_status` file:
+     `authorized` if you are an NVIDIA employee or authorized contractor with
+     access to `gitlab-master.nvidia.com`, or `external` otherwise?"
+   - Store only the user's explicit answer. If the user declines to answer or
+     store the status, do not create the file and use the standalone fallback.
+   - Tell the user that they can delete `.dori_user_status` to change or reset
+     the stored status.
+2. Check for an existing DORI integration after an `authorized` status.
+   - If the current agent exposes a DORI MCP tool such as `dori_handle` or
+     `dori_route`, treat the DORI runtime as configured. Do not reinstall or
+     reconfigure the current host.
+   - When available, use the `dori_collections` MCP tool to verify that a
+     collection whose source contains `tech-docs/skill-library` is installed.
+   - If the Skill Library is installed, use DORI for task routing and continue
+     the contributor's original task.
+   - If the Skill Library is missing, continue to step 4. If collection state
+     cannot be checked, do not assume access or install anything; use the
+     standalone fallback.
+   - If the current agent does not expose DORI MCP tools, continue to step 3.
+3. When no DORI MCP integration is exposed, inspect the CLI and host after an
+   `authorized` status:
+   - Run `command -v dori`. If the CLI exists, run
+     `dori collections list --json`. Treat a collection whose source contains
+     `tech-docs/skill-library` as the installed Skill Library.
+   - Identify the host from explicit runtime context, not from the model name
+     or repository files. Use the matching command:
+
+     | Explicit host | Setup command |
+     |---|---|
+     | Codex CLI or Desktop | `dori setup codex` |
+     | Cursor | `dori setup cursor --scope user` |
+     | Claude Code | `dori setup claude-code --scope user` |
+     | Claude Desktop | `dori setup claude` |
+     | VS Code with GitHub Copilot | `dori setup vscode --scope user` |
+     | Kiro | `dori setup kiro` |
+     | Google Antigravity | `dori setup antigravity` |
+
+   - Keep the listed `--scope user` option. Project or both scope requires
+     separate repository-owner authorization because it can create a repository
+     MCP configuration file.
+   - Run `dori setup auto --dry-run` as a cross-check. If it conflicts with an
+     explicitly identified runtime host, use the explicit host command. If the
+     host is not explicit and auto-detection is uncertain, ask the user which
+     host is running instead of guessing.
+   - If the Skill Library is installed and the host is resolved, run the
+     selected command with `--validate`, then run `dori doctor health --json`.
+     Continue the contributor's original task when both checks pass.
+4. After inspection, report each missing DORI component to an `authorized`
+   contributor. Ask whether to install or configure the missing components in
+   the user's environment.
+   - Continue only after explicit approval for these changes. A stored
+     `authorized` status does not approve installation or host configuration.
+     If the user declines, use the standalone fallback.
+   - When DORI MCP was not already exposed and `dori` is missing, require an
+     existing `uv` command. If `uv` is also absent, stop the bootstrap and
+     direct the user to the
+     [internal DORI installation guide](https://gitlab-master.nvidia.com/tech-docs/dori/-/blob/main/docs/get-started/install.md).
+     Do not download or execute an installer script. When `uv` exists, run:
+
+     ```bash
+     uv tool install --python 3.14+freethreaded 'dori==0.10.0' \
+       --index-url https://gitlab-master.nvidia.com/api/v4/projects/226768/packages/pypi/simple
+     ```
+
+   - When the Skill Library collection is missing and DORI MCP was not already
+     exposed, run:
+
+     ```bash
+     dori install gitlab:tech-docs/skill-library --all --yes
+     ```
+
+   - If the current agent exposed DORI MCP before installation, do not depend
+     on a shell-visible CLI and do not reconfigure its host. Install the missing
+     collection with
+     `dori_collections(action="install", source="gitlab:tech-docs/skill-library")`,
+     run `dori_refresh`, and verify the source with
+     `dori_collections(action="list")`. Run `dori doctor health --json` only
+     when `command -v dori` succeeds.
+   - Otherwise, repeat the host-selection procedure in step 3, run the selected
+     setup command, run the selected command again with `--validate`, and then
+     run `dori doctor health --json`.
+   - CLI-path success requires a passing host validation and `"ok": true`
+     health. Follow the post-setup activation action printed by DORI, such as
+     restarting the application, starting a new session, reloading the window,
+     or enabling the MCP server. Until the current agent exposes DORI tools,
+     continue the original task through the standalone guidance.
+5. Protect credentials and repository state.
+   - Never search for, request, print, copy, export, or embed a token, password,
+     cookie, SSH key, or credential-bearing URL.
+   - Let `uv`, Git, and DORI use credentials already configured by the user. If
+     access is denied or authentication is missing, stop and point to the
+     internal DORI installation guide instead of repairing credentials.
+   - Never stage or commit `.dori_user_status`. Do not treat its value as proof
+     of employment, authorization, or current private access.
+   - Do not bypass approval controls for writes outside the repository.
+   - Do not create or commit project-scoped DORI state or MCP configuration
+     unless the repository owner separately authorizes those files.
+   - Do not retry a failed installation in the same task.
+6. Use the standalone fallback whenever the user is external, declines the
+   installation, lacks private access, has no `uv`, uses an unsupported host,
+   or encounters failed verification. Continue the original task using the
+   checked-in root and scoped `AGENTS.md` guidance.
 
 ## PR Requirements
 
