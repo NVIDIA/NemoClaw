@@ -480,7 +480,7 @@ const {
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { createProviderInferenceOnboardFlowPhase, createSandboxOnboardFlowPhase, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
+const { createProviderInferenceOnboardFlowPhase, createSandboxOnboardFlowPhase, prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
 const {
   createFinalOnboardFlowPhases,
   runFinalOnboardFlowSlice,
@@ -489,10 +489,6 @@ const {
   createInitialOnboardFlowPhases,
   runInitialOnboardFlowSlice,
 }: typeof import("./onboard/machine/initial-flow-phases") = require("./onboard/machine/initial-flow-phases");
-const {
-  prepareCoreOnboardFlowContext,
-  prepareFinalOnboardFlowContext,
-}: typeof import("./onboard/machine/flow-handoff") = require("./onboard/machine/flow-handoff");
 const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
   require("./onboard/skipped-step-message");
 const policies: typeof import("./policy") = require("./policy");

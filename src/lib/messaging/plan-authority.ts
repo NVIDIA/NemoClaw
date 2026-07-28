@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxMessagingPlan } from "../messaging/manifest";
+import type { SandboxMessagingPlan } from "./manifest";
 
 export interface RegistryMessagingAuthority {
   readonly authoritative: boolean;

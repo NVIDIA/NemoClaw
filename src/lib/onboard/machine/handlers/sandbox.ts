@@ -74,7 +74,6 @@ import {
   managedSandboxFeatureNeedsSessionUpdate,
   resolveManagedSandboxFeature,
 } from "../../managed-sandbox-feature";
-import { resolveMessagingPlanAuthority } from "../../messaging-plan-authority";
 import {
   DCODE_OBSERVABILITY_FEATURE,
   hasDcodeObservabilityDrift,
@@ -98,7 +97,11 @@ import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
-import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
+import {
+  reconcileReusedSandboxMessaging,
+  reconcileSandboxMessaging,
+  resolveMessagingPlanAuthority,
+} from "./sandbox-messaging";
 import {
   applySandboxResumeDecision,
   decideSandboxResume,
@@ -228,7 +231,7 @@ export interface SandboxStateOptions<
     clearPlanEnv(): void;
     getRegistrySandboxMessagingAuthority(
       sandboxName: string,
-    ): import("../../messaging-plan-authority").RegistryMessagingAuthority;
+    ): import("../../../messaging/plan-authority").RegistryMessagingAuthority;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;

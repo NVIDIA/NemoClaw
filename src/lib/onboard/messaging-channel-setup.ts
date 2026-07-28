@@ -19,7 +19,7 @@ import {
   toMessagingAgentId,
 } from "../messaging";
 import * as registry from "../state/registry";
-import type { RegistryMessagingAuthority } from "./messaging-plan-authority";
+import type { RegistryMessagingAuthority } from "../messaging/plan-authority";
 
 export { MessagingHostStateApplier };
 
