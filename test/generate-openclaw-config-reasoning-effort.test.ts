@@ -11,6 +11,7 @@ import { main } from "../scripts/generate-openclaw-config.mts";
 const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "nemotron-3-super",
   NEMOCLAW_PROVIDER_KEY: "inference",
+  NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
   NEMOCLAW_PRIMARY_MODEL_REF: "inference/nemotron-3-super",
   CHAT_UI_URL: "http://127.0.0.1:18789",
   NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
@@ -93,6 +94,30 @@ describe("compatible-endpoint reasoning effort in the built OpenClaw config (#76
     expect(primaryModel(config).params).toBeUndefined();
   });
 
+  it("omits the request-body override for a provider that cannot record it", () => {
+    const config = runConfigScript({
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
+      NEMOCLAW_REASONING_EFFORT: "high",
+    });
+
+    expect(primaryModel(config).params).toBeUndefined();
+  });
+
+  it("ignores an invalid stale value for a provider that cannot record it", () => {
+    const config = runConfigScript({
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
+      NEMOCLAW_REASONING_EFFORT: "extreme",
+    });
+
+    expect(primaryModel(config).params).toBeUndefined();
+  });
+
+  it("accepts default as an explicit request for no request-body override", () => {
+    const config = runConfigScript({ NEMOCLAW_REASONING_EFFORT: "default" });
+
+    expect(primaryModel(config).params).toBeUndefined();
+  });
+
   it("applies the effort to secondary agent models as well as the primary", () => {
     const config = runConfigScript({
       NEMOCLAW_REASONING_EFFORT: "low",
@@ -118,7 +143,7 @@ describe("compatible-endpoint reasoning effort in the built OpenClaw config (#76
 
   it("fails the build rather than dropping an unsupported effort", () => {
     expect(() => runConfigScript({ NEMOCLAW_REASONING_EFFORT: "extreme" })).toThrow(
-      /NEMOCLAW_REASONING_EFFORT must be one of: low, medium, high/,
+      /NEMOCLAW_REASONING_EFFORT must be one of: low, medium, high, default/,
     );
   });
 });

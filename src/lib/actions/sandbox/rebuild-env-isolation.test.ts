@@ -122,6 +122,7 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_COMPAT_MODEL: "some-compat-model",
       NEMOCLAW_PREFERRED_API: "openai-responses",
       NEMOCLAW_REASONING: "false",
+      NEMOCLAW_REASONING_EFFORT: "medium",
       NEMOCLAW_VLLM_MODEL: "ambient-vllm-model",
       NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '{"ambient":true}',
       NEMOCLAW_FROM_DOCKERFILE: "/tmp/unrelated.Dockerfile",
@@ -152,6 +153,7 @@ describe("isolateAmbientRecreateEnv", () => {
     expect(env.NEMOCLAW_COMPAT_MODEL).toBe("some-compat-model");
     expect(env.NEMOCLAW_PREFERRED_API).toBe("openai-responses");
     expect(env.NEMOCLAW_REASONING).toBe("false");
+    expect(env.NEMOCLAW_REASONING_EFFORT).toBe("medium");
     expect(env.NEMOCLAW_VLLM_MODEL).toBe("ambient-vllm-model");
     expect(env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON).toBe('{"ambient":true}');
     expect(env.NEMOCLAW_FROM_DOCKERFILE).toBe("/tmp/unrelated.Dockerfile");

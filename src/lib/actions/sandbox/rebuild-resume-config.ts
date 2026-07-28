@@ -12,8 +12,8 @@
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import { normalizeInferenceSelection } from "../../inference/selection";
-import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import type { ReasoningEffort } from "../../onboard/reasoning-mode";
+import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import * as onboardSession from "../../state/onboard-session";
 import type { AmbientRecreateEnvAssessment } from "./rebuild-env-isolation";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -99,6 +99,10 @@ export function prepareRebuildResumeConfig(
   const matchingSessionSelection = sessionMatchesSandbox
     ? normalizeInferenceSelection(session)
     : null;
+  const registryHasReasoningEffort = Object.prototype.hasOwnProperty.call(
+    sb,
+    "compatibleEndpointReasoningEffort",
+  );
   const sessionSelectionMatchesRegistry = Boolean(
     matchingSessionSelection &&
       (!registrySelection.provider ||
@@ -115,9 +119,9 @@ export function prepareRebuildResumeConfig(
       registrySelection.preferredInferenceApi ?? legacySelection?.preferredInferenceApi,
     compatibleEndpointReasoning:
       registrySelection.compatibleEndpointReasoning ?? legacySelection?.compatibleEndpointReasoning,
-    compatibleEndpointReasoningEffort:
-      registrySelection.compatibleEndpointReasoningEffort ??
-      legacySelection?.compatibleEndpointReasoningEffort,
+    compatibleEndpointReasoningEffort: registryHasReasoningEffort
+      ? registrySelection.compatibleEndpointReasoningEffort
+      : legacySelection?.compatibleEndpointReasoningEffort,
     nimContainer: registrySelection.nimContainer ?? legacySelection?.nimContainer,
   });
   if (!trustedSelection.provider || !trustedSelection.model) {

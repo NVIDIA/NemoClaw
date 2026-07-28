@@ -430,10 +430,12 @@ function applyReasoningEffortParams(
   route: SandboxInferenceConfig,
   request: ReasoningEffortRequest,
 ): void {
-  if (!request.explicit || provider !== "compatible-endpoint") return;
+  const canCarryReasoningEffort =
+    provider === "compatible-endpoint" && route.inferenceApi === "openai-completions";
+  if (!request.explicit && canCarryReasoningEffort) return;
   const params = isConfigObject(modelEntry.params) ? { ...modelEntry.params } : {};
   const extraBody = isConfigObject(params.extra_body) ? { ...params.extra_body } : {};
-  if (request.effort && route.inferenceApi === "openai-completions") {
+  if (request.effort && canCarryReasoningEffort) {
     extraBody.reasoning_effort = request.effort;
   } else {
     delete extraBody.reasoning_effort;
@@ -574,14 +576,24 @@ function updateMatchingOnboardSession(
       getProviderSelectionConfig(provider, model)?.credentialEnv ??
       current.credentialEnv;
     current.preferredInferenceApi = registryMetadata.preferredInferenceApi ?? route.inferenceApi;
-    if (reasoningEffort.explicit) {
-      current.compatibleEndpointReasoningEffort =
-        provider === "compatible-endpoint" ? reasoningEffort.effort : null;
+    if (provider !== "compatible-endpoint" || route.inferenceApi !== "openai-completions") {
+      current.compatibleEndpointReasoningEffort = null;
+    } else if (reasoningEffort.explicit) {
+      current.compatibleEndpointReasoningEffort = reasoningEffort.effort;
     }
     current.nimContainer = registryMetadata.nimContainer ?? null;
     return current;
   });
   return true;
+}
+
+function resolveScopedReasoningEffortRequest(
+  value: unknown,
+  provider: string,
+): ReasoningEffortRequest {
+  const cliRequest = resolveReasoningEffortRequest(value, {});
+  if (cliRequest.explicit || provider !== "compatible-endpoint") return cliRequest;
+  return resolveReasoningEffortRequest(null);
 }
 
 function openshellInferenceSetArgs(options: {
@@ -697,8 +709,17 @@ async function runInferenceSetWithoutHostLock(
   // normalizing to the OpenShell name before validation and all downstream use.
   const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
-  const reasoningEffortRequest = resolveReasoningEffortRequest(options.reasoningEffort);
+  const reasoningEffortRequest = resolveScopedReasoningEffortRequest(
+    options.reasoningEffort,
+    provider,
+  );
   assertSupportedProvider(provider, model);
+  if (reasoningEffortRequest.effort && provider !== "compatible-endpoint") {
+    throw new InferenceSetError(
+      "--reasoning-effort applies only to the compatible-endpoint provider.",
+      2,
+    );
+  }
   if (!isSafeModelId(model)) {
     throw new InferenceSetError(
       "Invalid model id. Model values may only contain letters, numbers, '.', '_', ':', '/', and '-'.",
@@ -980,9 +1001,12 @@ async function runInferenceSetWithoutHostLock(
         endpointSource: registryMetadata.endpointSource ?? null,
         credentialEnv: registryMetadata.credentialEnv ?? null,
         preferredInferenceApi,
-        compatibleEndpointReasoningEffort: reasoningEffortRequest.explicit
-          ? reasoningEffortRequest.effort
-          : (entry.compatibleEndpointReasoningEffort ?? null),
+        compatibleEndpointReasoningEffort:
+          provider === "compatible-endpoint" && preferredInferenceApi === "openai-completions"
+            ? reasoningEffortRequest.explicit
+              ? reasoningEffortRequest.effort
+              : (entry.compatibleEndpointReasoningEffort ?? null)
+            : null,
         nimContainer: registryMetadata.nimContainer ?? null,
       });
     if (
@@ -1195,7 +1219,8 @@ export async function runInferenceSet(
   deps: InferenceSetDeps = defaultDeps(),
 ): Promise<InferenceSetResult> {
   try {
-    resolveReasoningEffortRequest(options.reasoningEffort);
+    const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
+    resolveScopedReasoningEffortRequest(options.reasoningEffort, provider);
   } catch (error) {
     throw new InferenceSetError(error instanceof Error ? error.message : String(error), 2);
   }

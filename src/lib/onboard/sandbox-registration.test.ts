@@ -425,7 +425,7 @@ describe("selection", () => {
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       compatibleEndpointReasoning: "true",
-      compatibleEndpointReasoningEffort: null,
+      compatibleEndpointReasoningEffort: "high",
       nimContainer: "nim-right",
     });
 
@@ -439,7 +439,7 @@ describe("selection", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: "true",
-      compatibleEndpointReasoningEffort: null,
+      compatibleEndpointReasoningEffort: "high",
       nimContainer: "nim-right",
     });
   });

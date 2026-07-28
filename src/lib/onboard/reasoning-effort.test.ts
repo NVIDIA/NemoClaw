@@ -1,21 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  configureCompatibleEndpointReasoningEffort,
   clearCompatibleEndpointReasoningEffort,
+  compatibleEndpointReasoningClearDeps,
+  compatibleEndpointReasoningConfigureDeps,
+  configureCompatibleEndpointReasoningEffort,
   describeIgnoredReasoningEffortEnv,
+  getCompatibleEndpointReasoningSessionState,
   normalizeReasoningEffort,
   REASONING_EFFORT_ENV,
   resolveReasoningEffortRequest,
 } from "./reasoning-mode";
 
 describe("reasoning-effort input contract (#7659)", () => {
+  beforeEach(() => {
+    vi.stubEnv(REASONING_EFFORT_ENV, undefined);
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
-    delete process.env[REASONING_EFFORT_ENV];
   });
 
   it("accepts every supported effort regardless of surrounding case or spacing", () => {
@@ -59,6 +65,12 @@ describe("reasoning-effort input contract (#7659)", () => {
     expect(resolveReasoningEffortRequest("default")).toEqual({ effort: null, explicit: true });
   });
 
+  it("treats default from the environment as an explicit request for the unset state", () => {
+    vi.stubEnv(REASONING_EFFORT_ENV, "default");
+
+    expect(resolveReasoningEffortRequest(null)).toEqual({ effort: null, explicit: true });
+  });
+
   it("pins the recorded effort in the environment the config build reads", async () => {
     vi.stubEnv(REASONING_EFFORT_ENV, "low");
 
@@ -73,15 +85,53 @@ describe("reasoning-effort input contract (#7659)", () => {
     expect(process.env[REASONING_EFFORT_ENV]).toBe("medium");
   });
 
+  it("replays an explicit recorded default without adopting the request", async () => {
+    const env = { [REASONING_EFFORT_ENV]: "medium" };
+
+    await expect(configureCompatibleEndpointReasoningEffort(null, env, false)).resolves.toBeNull();
+    expect(env[REASONING_EFFORT_ENV]).toBeUndefined();
+  });
+
   it("removes the variable for a provider that does not carry the setting", () => {
     vi.stubEnv(REASONING_EFFORT_ENV, "high");
 
     expect(clearCompatibleEndpointReasoningEffort()).toBeNull();
     expect(process.env[REASONING_EFFORT_ENV]).toBeUndefined();
   });
+
+  it("bundles paired dependency wiring without changing either behavior", () => {
+    expect(compatibleEndpointReasoningConfigureDeps).toEqual({
+      configureCompatibleEndpointReasoning: expect.any(Function),
+      configureCompatibleEndpointReasoningEffort: expect.any(Function),
+    });
+    expect(compatibleEndpointReasoningClearDeps).toEqual({
+      clearCompatibleEndpointReasoning: expect.any(Function),
+      clearCompatibleEndpointReasoningEffort: expect.any(Function),
+    });
+  });
+
+  it("maps a recorded session into the paired flow context", () => {
+    expect(
+      getCompatibleEndpointReasoningSessionState({
+        compatibleEndpointReasoning: "true",
+        compatibleEndpointReasoningEffort: "medium",
+      }),
+    ).toEqual({
+      compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: "medium",
+    });
+    expect(getCompatibleEndpointReasoningSessionState(null)).toEqual({
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+    });
+  });
 });
 
 describe("resume conflict for a recorded reasoning effort (#7659)", () => {
+  beforeEach(() => {
+    vi.stubEnv(REASONING_EFFORT_ENV, undefined);
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });

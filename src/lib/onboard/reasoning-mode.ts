@@ -114,13 +114,16 @@ export function describeIgnoredReasoningEffortEnv(
 
 export async function configureCompatibleEndpointReasoningEffort(
   storedValue?: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+  allowRequestFallback = true,
 ): Promise<ReasoningEffort | null> {
   const configured =
-    normalizeReasoningEffort(storedValue) ?? resolveReasoningEffortRequest(null).effort;
+    normalizeReasoningEffort(storedValue) ??
+    (allowRequestFallback ? resolveReasoningEffortRequest(null, env).effort : null);
   if (configured) {
-    process.env[REASONING_EFFORT_ENV] = configured;
+    env[REASONING_EFFORT_ENV] = configured;
   } else {
-    delete process.env[REASONING_EFFORT_ENV];
+    delete env[REASONING_EFFORT_ENV];
   }
   return configured;
 }
@@ -137,4 +140,31 @@ export function applyReasoningEffortEnv(value: unknown): void {
   } else {
     delete process.env[REASONING_EFFORT_ENV];
   }
+}
+
+export const compatibleEndpointReasoningConfigureDeps = {
+  configureCompatibleEndpointReasoning,
+  configureCompatibleEndpointReasoningEffort,
+} as const;
+
+export const compatibleEndpointReasoningClearDeps = {
+  clearCompatibleEndpointReasoning,
+  clearCompatibleEndpointReasoningEffort,
+} as const;
+
+interface CompatibleEndpointReasoningSessionState {
+  readonly compatibleEndpointReasoning?: string | null;
+  readonly compatibleEndpointReasoningEffort?: ReasoningEffort | null;
+}
+
+export function getCompatibleEndpointReasoningSessionState(
+  session: CompatibleEndpointReasoningSessionState | null | undefined,
+): {
+  compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: ReasoningEffort | null;
+} {
+  return {
+    compatibleEndpointReasoning: session?.compatibleEndpointReasoning || null,
+    compatibleEndpointReasoningEffort: session?.compatibleEndpointReasoningEffort || null,
+  };
 }

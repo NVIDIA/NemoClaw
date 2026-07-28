@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
 import { REASONING_EFFORT_ENV } from "../../reasoning-mode";
@@ -20,25 +20,29 @@ function recordedSession(compatibleEndpointReasoningEffort: string | null) {
   });
 }
 
-function resumeOptions(session: ReturnType<typeof recordedSession>, deps: unknown) {
+function resumeOptions(
+  session: ReturnType<typeof recordedSession>,
+  deps: unknown,
+  env: NodeJS.ProcessEnv = {},
+) {
   return {
     ...baseOptions(deps as never, session),
     resume: true,
     authoritativeResumeConfig: true,
     sandboxName: "spark-assistant",
+    env,
   };
 }
 
 describe("resumed compatible-endpoint reasoning effort (#7659)", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   it("keeps the recorded effort and reports the request it ignores", async () => {
-    vi.stubEnv(REASONING_EFFORT_ENV, "high");
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
 
-    const result = await handleProviderInferenceState(resumeOptions(recordedSession("low"), deps));
+    const result = await handleProviderInferenceState(
+      resumeOptions(recordedSession("low"), deps, {
+        [REASONING_EFFORT_ENV]: "high",
+      }),
+    );
 
     expect(calls.log).toHaveBeenCalledWith(
       expect.stringContaining(`Ignoring ${REASONING_EFFORT_ENV}=high`),
@@ -50,22 +54,44 @@ describe("resumed compatible-endpoint reasoning effort (#7659)", () => {
   });
 
   it("stays quiet when the request matches the recorded effort", async () => {
-    vi.stubEnv(REASONING_EFFORT_ENV, "low");
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
 
-    await handleProviderInferenceState(resumeOptions(recordedSession("low"), deps));
+    await handleProviderInferenceState(
+      resumeOptions(recordedSession("low"), deps, {
+        [REASONING_EFFORT_ENV]: "low",
+      }),
+    );
 
     expect(calls.log).not.toHaveBeenCalledWith(
       expect.stringContaining(`Ignoring ${REASONING_EFFORT_ENV}`),
     );
   });
 
-  it("adopts the request when the sandbox has no recorded effort", async () => {
-    vi.stubEnv(REASONING_EFFORT_ENV, "medium");
-    const { deps } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+  it("replays the recorded default instead of adopting an ambient request", async () => {
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
 
-    const result = await handleProviderInferenceState(resumeOptions(recordedSession(null), deps));
+    const env = { [REASONING_EFFORT_ENV]: "medium" };
+    const result = await handleProviderInferenceState(
+      resumeOptions(recordedSession(null), deps, env),
+    );
 
-    expect(result.compatibleEndpointReasoningEffort).toBe("medium");
+    expect(calls.log).toHaveBeenCalledWith(
+      expect.stringContaining(`Ignoring ${REASONING_EFFORT_ENV}=medium`),
+    );
+    expect(result.compatibleEndpointReasoningEffort).toBeNull();
+    expect(env[REASONING_EFFORT_ENV]).toBeUndefined();
+  });
+
+  it("rejects an invalid injected request before provider effects", async () => {
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    await expect(
+      handleProviderInferenceState(
+        resumeOptions(recordedSession(null), deps, {
+          [REASONING_EFFORT_ENV]: "extreme",
+        }),
+      ),
+    ).rejects.toThrow(/must be one of/);
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 });

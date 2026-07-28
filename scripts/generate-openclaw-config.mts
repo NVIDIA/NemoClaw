@@ -639,15 +639,22 @@ function coerceCompatDict(value: unknown): JsonObject {
 }
 
 const REASONING_EFFORT_VALUES = ["low", "medium", "high"];
+const REASONING_EFFORT_DEFAULT = "default";
+const REASONING_EFFORT_PROVIDER = "compatible-endpoint";
 
 // OpenClaw merges params.extra_body into openai-completions request bodies, so
 // this is the config-level route to a reasoning_effort the endpoint receives.
 function buildReasoningEffortParams(env: Env): JsonObject {
   const raw = (env.NEMOCLAW_REASONING_EFFORT || "").trim().toLowerCase();
-  if (!raw) return {};
+  const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
+  if (!raw || raw === REASONING_EFFORT_DEFAULT) return {};
+  if (upstreamProvider !== REASONING_EFFORT_PROVIDER) return {};
   if (!REASONING_EFFORT_VALUES.includes(raw)) {
     throw new Error(
-      `NEMOCLAW_REASONING_EFFORT must be one of: ${REASONING_EFFORT_VALUES.join(", ")}`,
+      `NEMOCLAW_REASONING_EFFORT must be one of: ${[
+        ...REASONING_EFFORT_VALUES,
+        REASONING_EFFORT_DEFAULT,
+      ].join(", ")}`,
     );
   }
   if ((env.NEMOCLAW_INFERENCE_API as string) !== "openai-completions") return {};

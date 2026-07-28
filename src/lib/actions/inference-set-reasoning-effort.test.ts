@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { REASONING_EFFORT_ENV } from "../onboard/reasoning-mode";
 import type { ConfigObject } from "../security/credential-filter";
-import { patchOpenClawInferenceConfig } from "./inference-set";
+import { patchOpenClawInferenceConfig, runInferenceSet } from "./inference-set";
+import { baseSession, createDeps } from "./inference-set.test-support";
 
 function compatibleEndpointConfig(modelOverrides: ConfigObject = {}): ConfigObject {
   return {
@@ -38,6 +40,10 @@ function patchedModel(config: ConfigObject, providerKey: string): ConfigObject {
 }
 
 describe("inference set reasoning effort (#7659)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("writes the requested effort into the request body of the routed model", () => {
     const config = compatibleEndpointConfig();
 
@@ -128,7 +134,14 @@ describe("inference set reasoning effort (#7659)", () => {
   });
 
   it("does not write the effort for a provider whose registry row cannot record it", () => {
-    const config = compatibleEndpointConfig();
+    const config = compatibleEndpointConfig({
+      params: {
+        extra_body: {
+          reasoning_effort: "low",
+          preserve_me: true,
+        },
+      },
+    });
 
     const result = patchOpenClawInferenceConfig(
       config,
@@ -137,9 +150,160 @@ describe("inference set reasoning effort (#7659)", () => {
       "openai-completions",
       undefined,
       undefined,
-      { effort: "high", explicit: true },
     );
 
-    expect(patchedModel(config, result.route.providerKey).params).toBeUndefined();
+    expect(patchedModel(config, result.route.providerKey).params).toEqual({
+      extra_body: { preserve_me: true },
+    });
+  });
+
+  it("removes an inherited effort when the selected API family cannot carry it", () => {
+    const config = compatibleEndpointConfig({
+      params: {
+        extra_body: {
+          reasoning_effort: "low",
+          preserve_me: true,
+        },
+      },
+    });
+
+    const result = patchOpenClawInferenceConfig(
+      config,
+      "compatible-endpoint",
+      "nemotron-3-super",
+      "anthropic-messages",
+    );
+
+    expect(patchedModel(config, result.route.providerKey).params).toEqual({
+      extra_body: { preserve_me: true },
+    });
+  });
+
+  it("rejects a non-null effort for an unsupported provider before any mutation", async () => {
+    const deps = createDeps({ config: compatibleEndpointConfig() });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          reasoningEffort: "high",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/only to the compatible-endpoint provider/);
+
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("validates an explicit effort even when the provider cannot record it", async () => {
+    const deps = createDeps({ config: compatibleEndpointConfig() });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          reasoningEffort: "extreme",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/must be one of: low, medium, high, default/);
+
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("clears the matching session effort when switching to an unsupported provider", async () => {
+    vi.stubEnv(REASONING_EFFORT_ENV, "extreme");
+    const deps = createDeps({
+      config: compatibleEndpointConfig(),
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nemotron-3-super",
+        compatibleEndpointReasoningEffort: "low",
+      },
+      session: baseSession({
+        provider: "compatible-endpoint",
+        model: "nemotron-3-super",
+        compatibleEndpointReasoningEffort: "low",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      },
+      deps,
+    );
+
+    expect(deps.getSession()?.compatibleEndpointReasoningEffort).toBeNull();
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({ compatibleEndpointReasoningEffort: null }),
+    ]);
+  });
+
+  it("clears the matching session effort when switching to an unsupported API", async () => {
+    let providerVersion = 1;
+    const deps = createDeps({
+      config: compatibleEndpointConfig(),
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nemotron-3-super",
+        endpointUrl: "https://compatible.example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoningEffort: "low",
+      },
+      session: baseSession({
+        provider: "compatible-endpoint",
+        model: "nemotron-3-super",
+        endpointUrl: "https://compatible.example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoningEffort: "low",
+      }),
+      captureOpenshell: (args) => {
+        if (args[0] === "provider" && args[1] === "get") {
+          const output = [
+            "Name: compatible-endpoint",
+            "Id: 11111111-2222-4333-8444-555555555555",
+            "Type: openai",
+            `Resource version: ${providerVersion}`,
+            "Credential keys: COMPATIBLE_API_KEY",
+            "Config keys: OPENAI_BASE_URL",
+          ].join("\n");
+          return { status: 0, output, stdout: output, stderr: "" };
+        }
+        if (args[0] === "provider" && args[1] === "update") {
+          providerVersion += 1;
+        }
+        return { status: 0, output: "", stdout: "", stderr: "" };
+      },
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "nemotron-3-super",
+        endpointUrl: "https://compatible.example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-responses",
+      },
+      deps,
+    );
+
+    expect(deps.getSession()?.compatibleEndpointReasoningEffort).toBeNull();
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({ compatibleEndpointReasoningEffort: null }),
+    ]);
   });
 });

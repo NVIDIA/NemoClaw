@@ -1067,12 +1067,13 @@ ensure_mutable_openclaw_config_hash() {
 
 apply_model_override() {
   # Only explicit override env vars trigger a config patch. NEMOCLAW_CONTEXT_WINDOW,
-  # NEMOCLAW_MAX_TOKENS, and NEMOCLAW_REASONING are promoted from Dockerfile build
+  # NEMOCLAW_MAX_TOKENS and NEMOCLAW_REASONING are promoted from Dockerfile build
   # ARGs to ENV and are always set — they should only take effect when accompanied
-  # by an explicit model or API override. Without this guard the function runs on
-  # every container start even with no override requested. Ref: #2653
+  # by an explicit model, API, or reasoning-effort override. Without this guard the
+  # function runs on every container start even with no override requested. Ref: #2653
   [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
     || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
+    || [ -n "${NEMOCLAW_REASONING_EFFORT:-}" ] \
     || return 0
 
   # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
@@ -1128,6 +1129,11 @@ apply_model_override() {
   local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
   local reasoning="${NEMOCLAW_REASONING:-}"
   local reasoning_effort="${NEMOCLAW_REASONING_EFFORT:-}"
+  local upstream_provider="${NEMOCLAW_UPSTREAM_PROVIDER:-}"
+
+  # Only compatible-endpoint records and replays reasoning effort. Ignore any
+  # stale ambient value for other providers rather than validating or applying it.
+  [ "$upstream_provider" = "compatible-endpoint" ] || reasoning_effort=""
 
   # Validate supplemental override values before relaxing or writing config.
   if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[1-9][0-9]*$'; then
@@ -1149,9 +1155,9 @@ apply_model_override() {
   fi
   if [ -n "$reasoning_effort" ]; then
     case "$reasoning_effort" in
-      low | medium | high) ;;
+      low | medium | high | default) ;;
       *)
-        printf '[SECURITY] NEMOCLAW_REASONING_EFFORT must be "low", "medium", or "high", got "%s" — skipping override\n' "$reasoning_effort" >&2
+        printf '[SECURITY] NEMOCLAW_REASONING_EFFORT must be "low", "medium", "high", or "default", got "%s" — skipping override\n' "$reasoning_effort" >&2
         return 0
         ;;
     esac
@@ -1182,6 +1188,7 @@ context_window = os.environ.get("NEMOCLAW_CONTEXT_WINDOW", "")
 max_tokens = os.environ.get("NEMOCLAW_MAX_TOKENS", "")
 reasoning = os.environ.get("NEMOCLAW_REASONING", "")
 reasoning_effort = os.environ.get("NEMOCLAW_REASONING_EFFORT", "")
+upstream_provider = os.environ.get("NEMOCLAW_UPSTREAM_PROVIDER", "")
 
 with open(config_file) as f:
     cfg = json.load(f)
@@ -1192,6 +1199,11 @@ if model_override:
 
 # Patch model properties in provider config
 for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
+    # Apply the route override before deciding whether reasoning effort is
+    # valid for the resulting provider API.
+    if api_override:
+        pval["api"] = api_override
+    effective_api = pval.get("api")
     for m in pval.get("models", []):
         if model_override:
             m["id"] = model_override
@@ -1202,14 +1214,24 @@ for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
             m["maxTokens"] = int(max_tokens)
         if reasoning:
             m["reasoning"] = reasoning == "true"
-        if reasoning_effort and pval.get("api") == "openai-completions":
+        can_carry_reasoning_effort = (
+            upstream_provider == "compatible-endpoint"
+            and effective_api == "openai-completions"
+        )
+        if reasoning_effort and reasoning_effort != "default" and can_carry_reasoning_effort:
             params = m.setdefault("params", {})
             extra_body = params.setdefault("extra_body", {})
             extra_body["reasoning_effort"] = reasoning_effort
-
-    # Patch inference API type if overridden (cross-provider switch)
-    if api_override:
-        pval["api"] = api_override
+        elif reasoning_effort or not can_carry_reasoning_effort:
+            params = m.get("params")
+            if isinstance(params, dict):
+                extra_body = params.get("extra_body")
+                if isinstance(extra_body, dict):
+                    extra_body.pop("reasoning_effort", None)
+                    if not extra_body:
+                        params.pop("extra_body", None)
+                if not params:
+                    m.pop("params", None)
 
 with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)

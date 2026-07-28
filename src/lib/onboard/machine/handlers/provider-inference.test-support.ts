@@ -14,11 +14,15 @@ import type {
 } from "../../../inference/gateway-route-compatibility";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import {
+  normalizeReasoningEffort,
+  REASONING_EFFORT_ENV,
+  resolveReasoningEffortRequest,
+} from "../../reasoning-mode";
+import {
   createProviderRecoveryReceiptLedger,
   mintProviderRecoveryReceipt,
   type ProviderRecoveryReceipt,
 } from "../../rebuild-route-handoff";
-import { normalizeReasoningEffort, resolveReasoningEffortRequest } from "../../reasoning-mode";
 import type { ProviderInferenceStateOptions, ProviderSelectionResult } from "./provider-inference";
 
 export type Gpu = { type: string } | null;
@@ -163,8 +167,21 @@ export function createDeps(
       configureCompatibleEndpointReasoning: async (value?: string | null) =>
         value === "true" ? "true" : "false",
       clearCompatibleEndpointReasoning: () => null,
-      configureCompatibleEndpointReasoningEffort: async (value?: unknown) =>
-        normalizeReasoningEffort(value) ?? resolveReasoningEffortRequest(null).effort,
+      configureCompatibleEndpointReasoningEffort: async (
+        value?: unknown,
+        env: NodeJS.ProcessEnv = process.env,
+        allowRequestFallback = true,
+      ) => {
+        const configured =
+          normalizeReasoningEffort(value) ??
+          (allowRequestFallback ? resolveReasoningEffortRequest(null, env).effort : null);
+        if (configured) {
+          env[REASONING_EFFORT_ENV] = configured;
+        } else {
+          delete env[REASONING_EFFORT_ENV];
+        }
+        return configured;
+      },
       clearCompatibleEndpointReasoningEffort: () => null,
       repairLocalInferenceSystemdOverrideOrExit: calls.repair,
       isNonInteractive: () => true,

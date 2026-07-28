@@ -196,6 +196,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     clearCompatibleEndpointReasoning(): null;
     configureCompatibleEndpointReasoningEffort(
       storedValue?: unknown,
+      env?: NodeJS.ProcessEnv,
+      allowRequestFallback?: boolean,
     ): Promise<ReasoningEffort | null>;
     clearCompatibleEndpointReasoningEffort(): null;
     repairLocalInferenceSystemdOverrideOrExit(
@@ -514,6 +516,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         const ignoredReasoningEffort = describeIgnoredReasoningEffortEnv(
           compatibleEndpointReasoningEffort,
           deps.cliName(),
+          env,
         );
         if (ignoredReasoningEffort) deps.log(ignoredReasoningEffort);
         compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
@@ -521,6 +524,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         );
         compatibleEndpointReasoningEffort = await deps.configureCompatibleEndpointReasoningEffort(
           compatibleEndpointReasoningEffort,
+          env,
+          false,
         );
       } else {
         compatibleEndpointReasoning = deps.clearCompatibleEndpointReasoning();
