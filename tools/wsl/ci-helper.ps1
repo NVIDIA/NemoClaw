@@ -369,9 +369,13 @@ function Get-WslCheckoutSyncScript {
     $dedicatedWorkdirPattern = '^/tmp/nemoclaw-wsl-(?:workdir|vitest)/[1-9][0-9]*-[1-9][0-9]*$'
     $workdirUsesDedicatedRoot = $normalizedWorkdir -cmatch $dedicatedWorkdirPattern
     $unsafePathSegment = '(^|/)\.{1,2}(/|$)'
-    $workdirOverlapsCheckout = $normalizedCheckout -eq $normalizedWorkdir -or
+    $pathsOverlap = $normalizedCheckout -eq $normalizedWorkdir -or
         $normalizedCheckout.StartsWith(
             "$normalizedWorkdir/",
+            [StringComparison]::Ordinal
+        ) -or
+        $normalizedWorkdir.StartsWith(
+            "$normalizedCheckout/",
             [StringComparison]::Ordinal
         )
     if (
@@ -380,9 +384,9 @@ function Get-WslCheckoutSyncScript {
         $normalizedWorkdir -eq '/' -or
         -not $workdirUsesDedicatedRoot -or
         $normalizedWorkdir -match $unsafePathSegment -or
-        $workdirOverlapsCheckout
+        $pathsOverlap
     ) {
-        throw "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not be the checkout, its ancestor, or contain traversal: '$Workdir'."
+        throw "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal: '$Workdir'."
     }
 
     $workdirRoot = $normalizedWorkdir.Substring(0, $normalizedWorkdir.LastIndexOf('/'))
