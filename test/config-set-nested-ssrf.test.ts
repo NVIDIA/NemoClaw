@@ -445,15 +445,9 @@ describe("config set nested URL SSRF enforcement", () => {
       errorSpy.mockRestore();
       logSpy.mockRestore();
 
-      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
-      else delete requireCache[sandboxConfigPath];
-
-      if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
-      else delete requireCache[openshellPath];
-
-      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
-      else delete requireCache[shieldsAuditPath];
-
+      restoreCachedModule(sandboxConfigPath, priorSandboxConfig);
+      restoreCachedModule(openshellPath, priorOpenshell);
+      restoreCachedModule(shieldsAuditPath, priorShieldsAudit);
       restorePrivilegedExec();
     }
   });
