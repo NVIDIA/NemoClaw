@@ -33,6 +33,7 @@ function makeSkill(): string {
   writeFileSync(join(dir, "SKILL.md"), "---\nname: note-summarizer\n---\n# Notes\n");
   mkdirSync(join(dir, "scripts"));
   writeFileSync(join(dir, "scripts", "summarize.js"), "export default 'exact';\n");
+  chmodSync(join(dir, "scripts", "summarize.js"), 0o755);
   return dir;
 }
 
@@ -104,7 +105,11 @@ describe("fresh shared-agent skill install", () => {
       expect(paths.uploadDir).toBe("/sandbox/.deepagents/agent/skills/note-summarizer");
       expect(paths.mirrorDir).toBeNull();
       expect(paths.uploadDirSharedWithAgent).toBe(true);
-      expect(commands[0]).toContain("tar --no-same-owner --no-same-permissions -xf -");
+      expect(commands[0]).toContain("tar --no-same-owner -xf -");
+      expect(commands[0]).not.toContain("--no-same-permissions");
+      expect(commands[0]).toContain('find "$payload" -type f -perm /111 -exec chmod 755 {} +');
+      expect(commands[0]).toContain('find "$payload" -type f ! -perm /111 -exec chmod 644 {} +');
+      expect(commands[0]).toContain('mode="$(stat -c "%a" "$payload/$rel")"');
       expect(commands[0]).toContain("sha256sum");
       expect(commands[0]).toContain('mv -nT -- "$payload" "$leaf"');
       expect(commands[0]).toContain('exists "$payload"');
@@ -112,6 +117,18 @@ describe("fresh shared-agent skill install", () => {
       expect(commands[0]).not.toContain("$workspace/active.manifest");
       expect(commands[0]).not.toContain("/sandbox/.deepagents/skills/note-summarizer");
       expect(commands[0]).not.toContain('rm -rf -- "$leaf"');
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes normalized executable modes in the immutable content digest", () => {
+    const skillDir = makeSkill();
+    try {
+      const executableDigest = computeSkillContentDigest(skillDir);
+      chmodSync(join(skillDir, "scripts", "summarize.js"), 0o644);
+
+      expect(computeSkillContentDigest(skillDir)).not.toBe(executableDigest);
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
     }
@@ -183,6 +200,10 @@ describe("fresh shared-agent skill install", () => {
         expect(readFileSync(join(paths.uploadDir, "SKILL.md"), "utf8")).toContain("# Notes");
         expect(readFileSync(join(paths.uploadDir, "scripts", "summarize.js"), "utf8")).toBe(
           "export default 'exact';\n",
+        );
+        expect(lstatSync(join(paths.uploadDir, "SKILL.md")).mode & 0o777).toBe(0o644);
+        expect(lstatSync(join(paths.uploadDir, "scripts", "summarize.js")).mode & 0o777).toBe(
+          0o755,
         );
         expect(readFileSync(join(legacy, "legacy.txt"), "utf8")).toBe("preserve me\n");
       } finally {
