@@ -122,6 +122,16 @@ export async function removeSandboxSkill(
 
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const paths = skillInstall.resolveSkillPaths(agent, skillName);
+  if (paths.uploadDirSharedWithAgent) {
+    console.error(
+      "  Automatic removal is unavailable for Deep Agents skills because the destination is shared with agent-authored content.",
+    );
+    console.error(
+      "  Inspect and remove the skill with the agent's native or manual workflow after confirming ownership.",
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const sshConfigResult = captureSandboxSshConfig(sandboxName, {
     ignoreError: true,
@@ -221,6 +231,10 @@ export async function installSandboxSkill(
   }
 
   const resolvedPath = path.resolve(skillPath);
+  if (fs.existsSync(resolvedPath) && fs.lstatSync(resolvedPath).isSymbolicLink()) {
+    console.error(`  Skill path '${resolvedPath}' must not be a symbolic link.`);
+    process.exit(1);
+  }
 
   // Accept a directory containing SKILL.md, or a direct path to SKILL.md.
   let skillDir: string;
@@ -248,6 +262,11 @@ export async function installSandboxSkill(
     }
     process.exit(1);
   }
+  const skillMdStat = fs.lstatSync(skillMdPath);
+  if (!skillMdStat.isFile() || skillMdStat.isSymbolicLink()) {
+    console.error(`  SKILL.md at '${skillMdPath}' must be a regular file, not a symbolic link.`);
+    process.exit(1);
+  }
 
   // 1. Validate frontmatter
   let frontmatter;
@@ -265,6 +284,12 @@ export async function installSandboxSkill(
     console.error("  Skill directory contains files with unsafe characters:");
     for (const p of collected.unsafePaths) console.error(`    ${p}`);
     console.error("  File names must match [A-Za-z0-9._-/]. Rename or remove them.");
+    process.exit(1);
+  }
+  if (collected.unsupportedPaths.length > 0) {
+    console.error("  Skill directory contains unsupported non-regular paths:");
+    for (const p of collected.unsupportedPaths) console.error(`    ${p}`);
+    console.error("  Skills may contain only regular files and directories.");
     process.exit(1);
   }
   if (collected.skippedDotfiles.length > 0) {
@@ -296,6 +321,34 @@ export async function installSandboxSkill(
 
   try {
     const ctx = { configFile: tmpSshConfig.file, sandboxName };
+
+    if (paths.uploadDirSharedWithAgent) {
+      const fresh = skillInstall.installFreshSharedSkill(ctx, skillDir, paths);
+      if (!fresh.success || !fresh.contentDigest) {
+        if (fresh.reason === "destination_exists") {
+          console.error(
+            `  Refusing to replace '${frontmatter.name}': the Deep Agents skill destination already exists.`,
+          );
+          console.error(
+            "  Deep Agents skill install supports fresh names only because that directory also contains agent-authored skills.",
+          );
+        } else if (fresh.reason === "snapshot_failed") {
+          console.error("  Failed to create an exact regular-file snapshot of the local skill.");
+        } else {
+          console.error(
+            "  The remote install did not confirm whether the Deep Agents skill was committed.",
+          );
+          console.error(
+            `  Inspect ${paths.uploadDir} before retrying; NemoClaw will not replace or delete shared agent content.`,
+          );
+        }
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`  ${G}✓${R} Installed ${fresh.uploaded} file(s) into the agent skill directory`);
+      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed`);
+      return;
+    }
 
     // 5. Check if skill already exists (update vs fresh install). This probe is
     //    advisory for install only: stale SSH config files and transient remote

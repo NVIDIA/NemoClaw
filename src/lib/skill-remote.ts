@@ -78,12 +78,11 @@ export function checkExisting(
   paths: SkillPaths,
   opts: { sshExecImpl?: typeof sshExec } = {},
 ): boolean | null {
-  // Existence gate for `skill remove`, so it must answer "did NemoClaw install
-  // this skill?" — uploadDir is the ownership marker. A mirror the agent's own
-  // tooling writes into is not evidence of an install (#5753), and counting it
-  // would let `skill remove` delete a skill the user authored in-sandbox.
+  // Existence gate for `skill remove`. Shared agent destinations are probed
+  // only for user-facing diagnostics; removeSkill() still refuses to mutate
+  // them because their presence is not proof of NemoClaw ownership (#5753).
   const checks = [`test -e ${shellQuote(paths.uploadDir)}`];
-  if (paths.mirrorDir && !paths.mirrorSharedWithAgent) {
+  if (paths.mirrorDir) {
     checks.push(`test -e "${paths.mirrorDir}"`);
   }
   const runSsh = opts.sshExecImpl ?? sshExec;
@@ -119,6 +118,18 @@ export function removeSkill(
 ): RemoveResult {
   const messages: string[] = [];
   const runSsh = opts.sshExecImpl ?? sshExec;
+
+  if (paths.uploadDirSharedWithAgent) {
+    return {
+      success: false,
+      removedUploadDir: false,
+      removedMirrorDir: false,
+      clearedSessions: false,
+      messages: [
+        `Error: automatic removal is unavailable for the agent-owned skill directory ${paths.uploadDir}.`,
+      ],
+    };
+  }
 
   // 1. Remove the immutable upload directory (/sandbox/.openclaw/skills/<name>/)
   const uploadDir = shellQuote(paths.uploadDir);
@@ -176,6 +187,7 @@ export function verifyRemove(
   paths: SkillPaths,
   opts: { sshExecImpl?: typeof sshExec } = {},
 ): boolean {
+  if (paths.uploadDirSharedWithAgent) return false;
   const checks = [`test ! -e ${shellQuote(paths.uploadDir)}`];
   if (paths.mirrorDir) {
     checks.push(`test ! -e "${paths.mirrorDir}"`);
