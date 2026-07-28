@@ -83,7 +83,12 @@ jobs:
 
       - name: Install ShellCheck
         if: steps.converter.outputs.present == 'true'
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            echo "Using preinstalled ShellCheck $(shellcheck --version | grep '^version:' || true)"
+          else
+            sudo apt-get update && sudo apt-get install -y shellcheck
+          fi
 
       - name: Collect shell files
         id: shell-files
