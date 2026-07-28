@@ -28,7 +28,7 @@ Agent requests still use the streaming path, so confirm the endpoint's runtime b
 
 ## Configure Reasoning Effort
 
-Set `NEMOCLAW_REASONING_EFFORT` to `low`, `medium`, or `high` for a compatible OpenAI endpoint that accepts an explicit reasoning budget.
+Set `NEMOCLAW_REASONING_EFFORT` to `low`, `medium`, `high`, or `default` for a compatible OpenAI endpoint that accepts an explicit reasoning budget.
 The default is unset, which leaves the endpoint's own default in place.
 
 ```bash
@@ -38,13 +38,15 @@ nemoclaw onboard
 
 NemoClaw applies the variable only to the `compatible-endpoint` provider.
 Another provider clears it, even when that provider's route uses `openai-completions`.
+On the `compatible-endpoint` provider, a value outside `low`, `medium`, `high`, and `default` fails before NemoClaw touches the provider, policies, the sandbox, or the registry.
+Another provider clears the variable without reading it, so an invalid value neither applies nor fails.
+
+`default` names the unset state, which is useful to clear an effort that a sandbox already records.
 
 NemoClaw writes `params.extra_body.reasoning_effort` on the model entry in the built OpenClaw config, and OpenClaw merges it into the request body.
 A model on another API family gets no such entry, and NemoClaw omits the value from the built configuration.
 Reasoning effort is independent of `NEMOCLAW_REASONING`.
 `NEMOCLAW_REASONING` declares that the model reasons, and `NEMOCLAW_REASONING_EFFORT` declares how much.
-
-Any other value fails before NemoClaw touches the provider, policies, the sandbox, or the registry.
 
 ## Configure Image Input
 
