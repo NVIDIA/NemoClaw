@@ -25,9 +25,9 @@
 #   NEMOCLAW_CONTEXT_WINDOW        Override the model's context window size (e.g., "32768").
 #   NEMOCLAW_MAX_TOKENS            Override the model's max output tokens (e.g., "8192").
 #   NEMOCLAW_REASONING             Set to "true" to enable reasoning mode for the model.
-#   NEMOCLAW_REASONING_EFFORT     Reasoning effort ("low", "medium", or "high") sent to a
-#                                 compatible OpenAI endpoint in the request body.
-#                                 Required for reasoning models (o1, Claude with thinking).
+#   NEMOCLAW_REASONING_EFFORT     Build-time reasoning effort ("low", "medium", or "high")
+#                                 for a compatible OpenAI endpoint. Startup preserves the
+#                                 persisted value so `inference set` changes survive restarts.
 #   NEMOCLAW_CORS_ORIGIN           Add a browser origin to allowedOrigins at startup without
 #                                 rebuilding. Useful for custom domains/ports (e.g.,
 #                                 "https://my-server.example.com:8443").
@@ -1067,13 +1067,13 @@ ensure_mutable_openclaw_config_hash() {
 
 apply_model_override() {
   # Only explicit override env vars trigger a config patch. NEMOCLAW_CONTEXT_WINDOW,
-  # NEMOCLAW_MAX_TOKENS and NEMOCLAW_REASONING are promoted from Dockerfile build
-  # ARGs to ENV and are always set — they should only take effect when accompanied
-  # by an explicit model, API, or reasoning-effort override. Without this guard the
-  # function runs on every container start even with no override requested. Ref: #2653
+  # NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING, and NEMOCLAW_REASONING_EFFORT are
+  # promoted from Dockerfile build ARGs to ENV and are always set. They should only
+  # take effect when accompanied by an explicit model or API override. Reasoning
+  # effort is deliberately not replayed here: `inference set` owns the persisted
+  # runtime value, which must survive an ordinary container restart. Ref: #2653
   [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
     || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
-    || [ -n "${NEMOCLAW_REASONING_EFFORT:-}" ] \
     || return 0
 
   # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
@@ -1128,12 +1128,6 @@ apply_model_override() {
   local context_window="${NEMOCLAW_CONTEXT_WINDOW:-}"
   local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
   local reasoning="${NEMOCLAW_REASONING:-}"
-  local reasoning_effort="${NEMOCLAW_REASONING_EFFORT:-}"
-  local upstream_provider="${NEMOCLAW_UPSTREAM_PROVIDER:-}"
-
-  # Only compatible-endpoint records and replays reasoning effort. Ignore any
-  # stale ambient value for other providers rather than validating or applying it.
-  [ "$upstream_provider" = "compatible-endpoint" ] || reasoning_effort=""
 
   # Validate supplemental override values before relaxing or writing config.
   if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[1-9][0-9]*$'; then
@@ -1153,22 +1147,11 @@ apply_model_override() {
         ;;
     esac
   fi
-  if [ -n "$reasoning_effort" ]; then
-    case "$reasoning_effort" in
-      low | medium | high | default) ;;
-      *)
-        printf '[SECURITY] NEMOCLAW_REASONING_EFFORT must be "low", "medium", "high", or "default", got "%s" — skipping override\n' "$reasoning_effort" >&2
-        return 0
-        ;;
-    esac
-  fi
-
   [ -n "$model_override" ] && printf '[config] Applying model override: %s\n' "$model_override" >&2
   [ -n "$api_override" ] && printf '[config] Applying inference API override: %s\n' "$api_override" >&2
   [ -n "$context_window" ] && printf '[config] Applying context window override: %s\n' "$context_window" >&2
   [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
   [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
-  [ -n "$reasoning_effort" ] && printf '[config] Applying reasoning effort override: %s\n' "$reasoning_effort" >&2
 
   # Shields-up configs are root-owned and re-locked after writing; mutable
   # default configs are briefly root-owned so writes still work after
@@ -1179,7 +1162,6 @@ apply_model_override() {
   NEMOCLAW_CONTEXT_WINDOW="$context_window" \
     NEMOCLAW_MAX_TOKENS="$max_tokens" \
     NEMOCLAW_REASONING="$reasoning" \
-    NEMOCLAW_REASONING_EFFORT="$reasoning_effort" \
     python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE' || _write_rc=$?
 import json, os, sys
 
@@ -1187,8 +1169,6 @@ config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3
 context_window = os.environ.get("NEMOCLAW_CONTEXT_WINDOW", "")
 max_tokens = os.environ.get("NEMOCLAW_MAX_TOKENS", "")
 reasoning = os.environ.get("NEMOCLAW_REASONING", "")
-reasoning_effort = os.environ.get("NEMOCLAW_REASONING_EFFORT", "")
-upstream_provider = os.environ.get("NEMOCLAW_UPSTREAM_PROVIDER", "")
 
 with open(config_file) as f:
     cfg = json.load(f)
@@ -1214,15 +1194,12 @@ for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
             m["maxTokens"] = int(max_tokens)
         if reasoning:
             m["reasoning"] = reasoning == "true"
-        can_carry_reasoning_effort = (
-            upstream_provider == "compatible-endpoint"
-            and effective_api == "openai-completions"
-        )
-        if reasoning_effort and reasoning_effort != "default" and can_carry_reasoning_effort:
-            params = m.setdefault("params", {})
-            extra_body = params.setdefault("extra_body", {})
-            extra_body["reasoning_effort"] = reasoning_effort
-        elif reasoning_effort or not can_carry_reasoning_effort:
+        # The image-baked NEMOCLAW_REASONING_EFFORT is an onboarding input, not
+        # a startup override. Preserve the persisted model value so a runtime
+        # `inference set --reasoning-effort` mutation survives restart. An
+        # explicit API switch still clears an effort that the resulting API
+        # cannot carry.
+        if api_override and effective_api != "openai-completions":
             params = m.get("params")
             if isinstance(params, dict):
                 extra_body = params.get("extra_body")

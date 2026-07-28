@@ -19,6 +19,7 @@ function extractShellFunction(name: string): string {
 function runApplyModelOverride(
   env: Record<string, string> = {},
   initialApi = "openai-completions",
+  initialEffort: "low" | null = "low",
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reasoning-effort-override-"));
   const openclawDir = path.join(root, ".openclaw");
@@ -40,7 +41,7 @@ function runApplyModelOverride(
                 reasoning: false,
                 params: {
                   extra_body: {
-                    reasoning_effort: "low",
+                    ...(initialEffort ? { reasoning_effort: initialEffort } : {}),
                     preserve_me: true,
                   },
                 },
@@ -90,23 +91,59 @@ function runApplyModelOverride(
   return { result, config, hash };
 }
 
-describe("runtime reasoning-effort override (#7659)", () => {
-  it("applies reasoning effort only to the final compatible OpenAI route", () => {
-    const applied = runApplyModelOverride({
+describe("reasoning-effort restart persistence (#7659)", () => {
+  it("preserves a runtime effort instead of replaying the image-baked value", () => {
+    const { result, config, hash } = runApplyModelOverride({
       NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
       NEMOCLAW_REASONING_EFFORT: "high",
     });
-    expect(applied.result.status).toBe(0);
-    expect(applied.config.models.providers.inference.models[0].params).toEqual({
-      extra_body: { reasoning_effort: "high", preserve_me: true },
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(config.models.providers.inference.models[0].params).toEqual({
+      extra_body: { reasoning_effort: "low", preserve_me: true },
     });
+    expect(hash).toBe("oldhash\n");
+  });
 
+  it("preserves endpoint-default instead of restoring the image-baked value", () => {
+    const { result, config, hash } = runApplyModelOverride(
+      {
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_REASONING_EFFORT: "high",
+      },
+      "openai-completions",
+      null,
+    );
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(config.models.providers.inference.models[0].params).toEqual({
+      extra_body: { preserve_me: true },
+    });
+    expect(hash).toBe("oldhash\n");
+  });
+
+  it("preserves a runtime effort while applying an explicit model override", () => {
+    const { result, config } = runApplyModelOverride({
+      NEMOCLAW_MODEL_OVERRIDE: "new-model",
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_REASONING_EFFORT: "high",
+    });
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("new-model");
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      id: "new-model",
+      name: "new-model",
+      params: {
+        extra_body: { reasoning_effort: "low", preserve_me: true },
+      },
+    });
+  });
+
+  it("clears an effort only when an explicit API override cannot carry it", () => {
     const switched = runApplyModelOverride({
       NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
       NEMOCLAW_INFERENCE_API_OVERRIDE: "anthropic-messages",
       NEMOCLAW_REASONING_EFFORT: "high",
     });
-    expect(switched.result.status).toBe(0);
+    expect(switched.result.status, `${switched.result.stdout}${switched.result.stderr}`).toBe(0);
     expect(switched.config.models.providers.inference.api).toBe("anthropic-messages");
     expect(switched.config.models.providers.inference.models[0].params).toEqual({
       extra_body: { preserve_me: true },
@@ -119,42 +156,45 @@ describe("runtime reasoning-effort override (#7659)", () => {
         NEMOCLAW_REASONING_EFFORT: "high",
       },
       "anthropic-messages",
+      null,
     );
-    expect(switchedToOpenAi.result.status).toBe(0);
+    expect(
+      switchedToOpenAi.result.status,
+      `${switchedToOpenAi.result.stdout}${switchedToOpenAi.result.stderr}`,
+    ).toBe(0);
     expect(switchedToOpenAi.config.models.providers.inference.api).toBe("openai-completions");
     expect(switchedToOpenAi.config.models.providers.inference.models[0].params).toEqual({
-      extra_body: { reasoning_effort: "high", preserve_me: true },
-    });
-  });
-
-  it("accepts default as an explicit reasoning-effort clear", () => {
-    const { result, config } = runApplyModelOverride({
-      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
-      NEMOCLAW_REASONING_EFFORT: "default",
-    });
-
-    expect(result.status).toBe(0);
-    expect(config.models.providers.inference.models[0].params).toEqual({
       extra_body: { preserve_me: true },
     });
   });
 
-  it("treats an invalid effort as an atomic no-op", () => {
+  it("does not treat image-baked default as a startup clear", () => {
     const { result, config, hash } = runApplyModelOverride({
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_REASONING_EFFORT: "default",
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(config.models.providers.inference.models[0].params).toEqual({
+      extra_body: { reasoning_effort: "low", preserve_me: true },
+    });
+    expect(hash).toBe("oldhash\n");
+  });
+
+  it("ignores an invalid baked effort while applying an authorized model override", () => {
+    const { result, config } = runApplyModelOverride({
       NEMOCLAW_MODEL_OVERRIDE: "new-model",
       NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
       NEMOCLAW_REASONING_EFFORT: "extreme",
     });
 
-    expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain(
-      'must be "low", "medium", "high", or "default"',
-    );
-    expect(config.agents.defaults.model.primary).toBe("old-model");
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toContain("NEMOCLAW_REASONING_EFFORT");
+    expect(config.agents.defaults.model.primary).toBe("new-model");
     expect(config.models.providers.inference.api).toBe("openai-completions");
     expect(config.models.providers.inference.models[0]).toMatchObject({
-      id: "old-model",
-      name: "old-model",
+      id: "new-model",
+      name: "new-model",
       contextWindow: 1024,
       maxTokens: 128,
       reasoning: false,
@@ -165,6 +205,5 @@ describe("runtime reasoning-effort override (#7659)", () => {
         },
       },
     });
-    expect(hash).toBe("oldhash\n");
   });
 });

@@ -20,6 +20,16 @@ function recordedSession(compatibleEndpointReasoningEffort: ReasoningEffort | nu
   });
 }
 
+function recordedRoute(provider: string, preferredInferenceApi: string) {
+  return createSession({
+    provider,
+    model: "nemotron-3-super",
+    endpointUrl: "https://inference.example.test/v1",
+    credentialEnv: "INFERENCE_API_KEY",
+    preferredInferenceApi,
+  });
+}
+
 function resumeOptions(
   session: ReturnType<typeof recordedSession>,
   deps: unknown,
@@ -92,6 +102,44 @@ describe("resumed compatible-endpoint reasoning effort (#7659)", () => {
         }),
       ),
     ).rejects.toThrow(/must be one of/);
+    expect(calls.recoverProvider).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
     expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects an explicit effort for another provider before resume effects", async () => {
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    await expect(
+      handleProviderInferenceState(
+        resumeOptions(recordedRoute("nvidia-prod", "openai-responses"), deps, {
+          [REASONING_EFFORT_ENV]: "high",
+        }),
+      ),
+    ).rejects.toThrow(/only to the compatible-endpoint provider/);
+    expect(calls.recoverProvider).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects an explicit effort for another API before resume effects", async () => {
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    await expect(
+      handleProviderInferenceState(
+        resumeOptions(recordedRoute("compatible-endpoint", "anthropic-messages"), deps, {
+          [REASONING_EFFORT_ENV]: "default",
+        }),
+      ),
+    ).rejects.toThrow(/only to compatible-endpoint routes using openai-completions/);
+    expect(calls.recoverProvider).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
   });
 });

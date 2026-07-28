@@ -19,7 +19,10 @@ import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inf
 import {
   describeIgnoredReasoningEffortEnv,
   describeIgnoredReasoningEnv,
+  REASONING_EFFORT_ENV,
   type ReasoningEffort,
+  type ReasoningEffortRequest,
+  resolveReasoningEffortRequest,
 } from "../../reasoning-mode";
 import type {
   createProviderRecoveryReceiptLedger,
@@ -339,6 +342,22 @@ function shouldRefreshCompatibleEndpointRouteForMessaging(
   );
 }
 
+function assertOnboardReasoningEffortRoute(
+  request: ReasoningEffortRequest,
+  provider: string | null,
+  inferenceApi: string | null,
+): void {
+  if (!request.explicit) return;
+  if (provider !== "compatible-endpoint") {
+    throw new Error(`${REASONING_EFFORT_ENV} applies only to the compatible-endpoint provider.`);
+  }
+  if (inferenceApi !== "openai-completions") {
+    throw new Error(
+      `${REASONING_EFFORT_ENV} applies only to compatible-endpoint routes using openai-completions.`,
+    );
+  }
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -358,6 +377,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   constants,
   deps,
 }: ProviderInferenceStateOptions<Gpu, Agent, Host>): Promise<ProviderInferenceStateResult> {
+  // Parse the ambient request before provider selection, recovery, or route
+  // mutation. Every provider must reject malformed input even though only a
+  // compatible OpenAI Completions route can apply it.
+  const reasoningEffortRequest = resolveReasoningEffortRequest(null, env);
   let model = initial.model;
   let provider = initial.provider;
   let endpointUrl = initial.endpointUrl;
@@ -424,6 +447,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       typeof model === "string";
     let shouldRecordProviderSelection = false;
     if (resumeProviderSelection) {
+      assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
         provider,
         model,
@@ -637,6 +661,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       preferredInferenceApi,
     );
     if (!resumeProviderSelection) {
+      assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
         provider,
         model,

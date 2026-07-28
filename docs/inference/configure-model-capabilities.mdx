@@ -38,10 +38,9 @@ export NEMOCLAW_REASONING_EFFORT=high
 nemoclaw onboard
 ```
 
-During onboarding, NemoClaw applies the variable only to the `compatible-endpoint` provider.
-Onboarding with another provider clears it, even when that provider's route uses `openai-completions`.
-On the `compatible-endpoint` provider, a value outside `low`, `medium`, `high`, and `default` fails before NemoClaw touches the provider, policies, the sandbox, or the registry.
-Onboarding with another provider clears the variable without reading it, so an invalid value neither applies nor fails.
+During onboarding, NemoClaw parses every explicit value before provider recovery or selection.
+A value outside `low`, `medium`, `high`, and `default` fails before NemoClaw touches the provider, policies, the sandbox, or the registry.
+After provider selection, NemoClaw also rejects every explicit value, including `default`, unless the resulting route uses the `compatible-endpoint` provider with the `openai-completions` API.
 
 `default` names the unset state, which is useful to clear an effort that a sandbox already records.
 
@@ -93,6 +92,7 @@ nemoclaw <sandbox-name> inference set --provider compatible-endpoint --model <mo
 ```
 
 Pass `--reasoning-effort default` on a `compatible-endpoint` route that uses `openai-completions` to clear a recorded effort.
+An ordinary sandbox restart preserves this runtime value or endpoint-default state; startup does not reapply the image's original onboarding value.
 `--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`.
 When you omit the flag, `inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`.
 For either explicit input, `inference set` parses the value and resolves the provider and API before any mutation.
