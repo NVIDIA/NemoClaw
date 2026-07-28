@@ -72,6 +72,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/hosted-inference.test.ts"),
   },
   {
+    pattern: /(?:^|\/)scripts\/setup-jetson\.sh$/,
+    testsToRun: runTests("test/setup-jetson.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,
     testsToRun: runTests(
       "test/e2e/support/e2e-scorecard.test.ts",
