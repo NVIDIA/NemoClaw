@@ -100,6 +100,30 @@ describe("source architecture budget (#7692)", () => {
     ]);
   });
 
+  test("rejects transitional root-file growth above its limit", ({ resources }) => {
+    const root = resources.temporaryDirectory("nemoclaw-architecture-root-growth-");
+    writeModule(root, "src/feature/a.ts", "export {};\n");
+    writeModule(root, "src/feature/b.ts", "export {};\n");
+    const report = analyzeSourceArchitecture(root, {
+      scanRoots: ["src"],
+      rootFileDirectories: ["src/feature"],
+    });
+
+    expect(
+      evaluateSourceArchitectureBudget(report, budget({ maxRootFiles: { "src/feature": 1 } })),
+    ).toEqual([
+      {
+        kind: "root-file-limit",
+        directory: "src/feature",
+        actual: 2,
+        limit: 1,
+      },
+    ]);
+    expect(
+      evaluateSourceArchitectureBudget(report, budget({ maxRootFiles: { "src/feature": 2 } })),
+    ).toEqual([]);
+  });
+
   test("resolves checked JavaScript and TypeScript output specifiers", ({ resources }) => {
     const root = resources.temporaryDirectory("nemoclaw-architecture-languages-");
     writeModule(root, "bin/a.js", 'require("./b");\n');
