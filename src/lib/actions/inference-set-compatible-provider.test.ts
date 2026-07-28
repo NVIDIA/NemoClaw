@@ -368,23 +368,27 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
-  it("rejects endpoint replacement for an existing direct compatible provider (#7725)", async () => {
-    const captureOpenshell = vi.fn((args: string[]) => {
-      switch (`${args[0]}:${args[1]}`) {
-        case "provider:get": {
-          const output = [
-            "Name: compatible-endpoint",
-            "Id: 11111111-2222-4333-8444-555555555555",
-            "Type: openai",
-            "Resource version: 4",
-            "Credential keys: COMPATIBLE_API_KEY",
-            "Config keys: OPENAI_BASE_URL",
-          ].join("\n");
-          return { status: 0, output, stdout: output, stderr: "" };
-        }
-        default:
-          return { status: 0, output: "", stdout: "", stderr: "" };
-      }
+  it.each([
+    {
+      bindingPart: "endpoint URL",
+      recordedEndpointUrl: "http://198.51.100.9/v1",
+      recordedCredentialEnv: "COMPATIBLE_API_KEY",
+    },
+    {
+      bindingPart: "credential environment variable",
+      recordedEndpointUrl: "http://198.51.100.10/v1",
+      recordedCredentialEnv: "LEGACY_COMPATIBLE_API_KEY",
+    },
+  ])("rejects $bindingPart replacement for an existing direct provider (#7725)", async ({
+    bindingPart,
+    recordedEndpointUrl,
+    recordedCredentialEnv,
+  }) => {
+    const captureOpenshell = createCompatibleProviderCapture({
+      name: "compatible-endpoint",
+      type: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      configKey: "OPENAI_BASE_URL",
     });
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/old-model" } } } },
@@ -393,16 +397,16 @@ describe("runInferenceSet compatible providers", () => {
         agent: "openclaw",
         provider: "compatible-endpoint",
         model: "old-model",
-        endpointUrl: "http://198.51.100.9/v1",
+        endpointUrl: recordedEndpointUrl,
         endpointSource: "inference-set",
-        credentialEnv: "COMPATIBLE_API_KEY",
+        credentialEnv: recordedCredentialEnv,
         preferredInferenceApi: "openai-completions",
       },
       session: baseSession({
         provider: "compatible-endpoint",
         model: "old-model",
-        endpointUrl: "http://198.51.100.9/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
+        endpointUrl: recordedEndpointUrl,
+        credentialEnv: recordedCredentialEnv,
         preferredInferenceApi: "openai-completions",
       }),
       captureOpenshell,
@@ -421,7 +425,9 @@ describe("runInferenceSet compatible providers", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(/Cannot replace existing provider.*Re-run onboarding/);
+    ).rejects.toThrow(
+      new RegExp(`Cannot replace existing provider.*binding differs in: ${bindingPart}`),
+    );
     expect(
       captureOpenshell.mock.calls.some(
         ([args]) =>
