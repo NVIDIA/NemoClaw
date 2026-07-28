@@ -256,7 +256,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "apply and attach the runtime identity through OpenShell",
       "prove inference remains live after identity attachment",
       "call the protected resource with the injected bearer",
-      "rotate the credential without changing the placeholder",
+      "rotate the credential and relaunch with its new placeholder",
       "verify secret-safe status and deterministic rollback",
     ],
   },
@@ -342,6 +342,46 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     env: openshellEnv,
     timeoutMs: 30_000,
   });
+
+  const settingsBefore = await sandbox.openshell(["settings", "get", "--global", "--json"], {
+    artifactName: "tc-inf-12-provider-policy-setting-before",
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(settingsBefore.exitCode, resultText(settingsBefore)).toBe(0);
+  const settingsDocument = JSON.parse(settingsBefore.stdout) as {
+    settings?: Record<string, string>;
+  };
+  const priorProvidersV2Setting = settingsDocument.settings?.providers_v2_enabled;
+  const restoreSettingArgs = new Map<string, string[]>([
+    ["<unset>", ["settings", "delete", "--global", "--key", "providers_v2_enabled", "--yes"]],
+    [
+      "false",
+      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "false", "--yes"],
+    ],
+    [
+      "true",
+      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
+    ],
+  ]).get(priorProvidersV2Setting ?? "");
+  expect(restoreSettingArgs).toBeDefined();
+  cleanup.add("restore OpenShell provider-derived policy setting", async () => {
+    const restored = await sandbox.openshell(restoreSettingArgs!, {
+      artifactName: "tc-inf-12-provider-policy-setting-restore",
+      env: openshellEnv,
+      timeoutMs: 30_000,
+    });
+    expect(restored.exitCode, resultText(restored)).toBe(0);
+  });
+  const enableProviderPolicy = await sandbox.openshell(
+    ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
+    {
+      artifactName: "tc-inf-12-provider-policy-setting-enable",
+      env: openshellEnv,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(enableProviderPolicy.exitCode, resultText(enableProviderPolicy)).toBe(0);
 
   progress.phase("start the public OAuth issuer and protected resource");
   const oauth = await startRuntimeIdentityOAuthServer({
@@ -476,8 +516,8 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
       "the blueprint runner imports the profile, creates and attaches the provider through real OpenShell",
       "apply preserves the already-active provider and model route before attaching identity",
       "OpenShell exchanges the refresh token at a public HTTPS OAuth endpoint",
-      "a sandbox request carries only the stable placeholder and the protected resource receives the minted bearer",
-      "a second refresh uses the rotated refresh token and changes the upstream bearer without changing the placeholder",
+      "a sandbox request carries only its opaque revision-scoped placeholder and the protected resource receives the minted bearer",
+      "a second refresh uses the rotated refresh token, and a later child launch receives a new placeholder whose request carries the new bearer",
       "status, persisted state, command artifacts, and request ledgers contain no OAuth secret material",
       "rollback detaches and deletes the owned provider while preserving the reused sandbox",
     ],
@@ -636,26 +676,51 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
   expect(placeholder).toMatch(new RegExp(`^openshell:resolve:env:(?:v[0-9]+_)?${credentialKey}$`));
   for (const secret of redactionValues) expect(placeholder).not.toContain(secret);
 
-  const resourceV1 = await sandbox.exec(
-    sandboxName,
-    [
-      "/usr/bin/curl",
-      "-fsS",
-      "-H",
-      `Authorization: Bearer ${placeholder}`,
-      `${tunnel.origin}/resource`,
-    ],
-    {
-      artifactName: "tc-inf-12-protected-resource-v1",
-      env: openshellEnv,
-      timeoutMs: 60_000,
-    },
-  );
-  expect(resourceV1.exitCode, resultText(resourceV1)).toBe(0);
-  expect(JSON.parse(resourceV1.stdout)).toEqual({
-    authenticated: true,
-    access_token_version: 1,
-  });
+  const expectProtectedResourceVersion = async (
+    projectedPlaceholder: string,
+    expectedVersion: number,
+    artifactPrefix: string,
+  ): Promise<void> => {
+    let attempt = 0;
+    await expect
+      .poll(
+        async () => {
+          attempt += 1;
+          const resource = await sandbox.exec(
+            sandboxName,
+            [
+              "/usr/bin/curl",
+              "-fsS",
+              "-H",
+              `Authorization: Bearer ${projectedPlaceholder}`,
+              `${tunnel.origin}/resource`,
+            ],
+            {
+              artifactName: `${artifactPrefix}-${attempt}`,
+              env: openshellEnv,
+              timeoutMs: 60_000,
+            },
+          );
+          let response: unknown = null;
+          try {
+            response = JSON.parse(resource.stdout);
+          } catch {
+            response = null;
+          }
+          return { exitCode: resource.exitCode, response };
+        },
+        { interval: 2_000, timeout: 35_000 },
+      )
+      .toEqual({
+        exitCode: 0,
+        response: {
+          authenticated: true,
+          access_token_version: expectedVersion,
+        },
+      });
+  };
+
+  await expectProtectedResourceVersion(placeholder, 1, "tc-inf-12-protected-resource-v1");
   expect(oauth.resourceRequests()).toEqual([
     {
       method: "GET",
@@ -665,7 +730,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     },
   ]);
 
-  progress.phase("rotate the credential without changing the placeholder");
+  progress.phase("rotate the credential and relaunch with its new placeholder");
   const rotate = await sandbox.openshell(
     ["provider", "refresh", "rotate", providerName, "--credential-key", credentialKey],
     {
@@ -686,6 +751,7 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
     issuedVersion: 2,
   });
 
+  let placeholderAfterRotation = "";
   let rotationProbeAttempt = 0;
   await expect
     .poll(
@@ -700,44 +766,35 @@ test("TC-INF-12 runtime identity refreshes and injects a delegated bearer throug
             timeoutMs: 30_000,
           },
         );
-        const placeholderStayedStable =
-          placeholderAfter.exitCode === 0 && placeholderAfter.stdout.trim() === placeholder;
-        const resourceV2 = await sandbox.exec(
-          sandboxName,
-          [
-            "/usr/bin/curl",
-            "-fsS",
-            "-H",
-            `Authorization: Bearer ${placeholder}`,
-            `${tunnel.origin}/resource`,
-          ],
-          {
-            artifactName: `tc-inf-12-protected-resource-v2-${rotationProbeAttempt}`,
-            env: openshellEnv,
-            timeoutMs: 60_000,
-          },
-        );
-        try {
-          const response = JSON.parse(resourceV2.stdout);
-          return (
-            placeholderStayedStable &&
-            resourceV2.exitCode === 0 &&
-            response.authenticated === true &&
-            response.access_token_version === 2
-          );
-        } catch {
-          return false;
-        }
+        placeholderAfterRotation =
+          placeholderAfter.exitCode === 0 ? placeholderAfter.stdout.trim() : "";
+        return placeholderAfterRotation === placeholder ? "" : placeholderAfterRotation;
       },
       { interval: 2_000, timeout: 35_000 },
     )
-    .toBe(true);
-  expect(oauth.resourceRequests().at(-1)).toEqual({
-    method: "GET",
-    path: "/resource",
-    auth: "ok",
-    accessTokenVersion: 2,
-  });
+    .toMatch(new RegExp(`^openshell:resolve:env:v[0-9]+_${credentialKey}$`));
+  expect(placeholderAfterRotation).not.toBe(placeholder);
+  for (const secret of redactionValues) expect(placeholderAfterRotation).not.toContain(secret);
+
+  await expectProtectedResourceVersion(
+    placeholderAfterRotation,
+    2,
+    "tc-inf-12-protected-resource-v2",
+  );
+  expect(oauth.resourceRequests()).toEqual([
+    {
+      method: "GET",
+      path: "/resource",
+      auth: "ok",
+      accessTokenVersion: 1,
+    },
+    {
+      method: "GET",
+      path: "/resource",
+      auth: "ok",
+      accessTokenVersion: 2,
+    },
+  ]);
 
   progress.phase("verify secret-safe status and deterministic rollback");
   const status = await runRawCommand(

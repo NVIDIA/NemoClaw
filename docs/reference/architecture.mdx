@@ -282,7 +282,7 @@ The runner therefore validates the complete data-only profile before import, fai
 OpenShell remains responsible for credential custody, refresh, admitted-request enforcement, and bearer substitution; NemoClaw never exposes the minted bearer to the sandbox.
 
 The deterministic `TC-INF-12` protected E2E scenario is the conformance gate for this boundary.
-It runs the real blueprint runner against a real OpenShell gateway and sandbox, exchanges a refresh token through a public HTTPS OAuth endpoint, proves the sandbox sees only a stable placeholder, proves the protected resource receives successive versioned bearer tokens before and after rotation, checks secret-free plan, status, state, logs, and request ledgers, and verifies ownership-aware rollback.
+It runs the real blueprint runner against a real OpenShell gateway and sandbox, enables provider-derived policy for the test and restores its prior setting, exchanges a refresh token through a public HTTPS OAuth endpoint, proves the sandbox sees only opaque placeholders, proves a child launched after rotation receives a different revision-scoped placeholder, proves the protected resource receives the first and rotated bearers, checks secret-free plan, status, state, logs, and request ledgers, and verifies ownership-aware rollback.
 Focused runner and runtime-identity tests cover malformed profiles, endpoint and DNS rejection, subprocess scoping, same-name resource handling, partial-apply compensation, and retryable rollback receipts.
 The gateway refresh client's connect-time DNS-pinning limitation described above is the accepted residual boundary; expanding the trusted hostname policy requires upstream pinning and new conformance evidence.
 
@@ -291,6 +291,9 @@ Enable provider-derived policy on the target gateway before applying a blueprint
 ```bash
 openshell settings set --global --key providers_v2_enabled --value true --yes
 ```
+
+Apply reads the gateway-global setting before identity mutation and again immediately before attachment, and stops unless its JSON value is exactly `true`.
+This prevents a successful-looking attachment whose provider-derived network policy and credential injection are inactive.
 
 Copy `nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml` into the blueprint you operate as `provider-profiles/acme-okta-runtime.yaml`.
 You can choose another tenant-specific filename, but set `profile_path` below to that exact relative path.
@@ -348,7 +351,8 @@ If a later apply step fails, the runner detaches the runtime identity provider w
 The runner never places the refresh token or optional client secret in command arguments or persisted plans.
 It passes those values to `openshell provider refresh configure` through a scoped subprocess environment, and OpenShell stores the resulting credential material in the gateway credential store.
 All other runner subprocesses receive the allowlisted environment without the identity material.
-The sandbox receives an opaque `OKTA_ACCESS_TOKEN` placeholder, and the OpenShell L7 proxy substitutes the current access token only for admitted HTTPS requests.
+Each sandbox child launch receives an opaque `OKTA_ACCESS_TOKEN` placeholder, and the OpenShell L7 proxy substitutes its corresponding access token only for admitted HTTPS requests.
+After a credential rotation, launch a new child process to receive the new revision-scoped placeholder instead of expecting an earlier child launch to adopt the rotation.
 
 Check the gateway-side state without printing credential values:
 

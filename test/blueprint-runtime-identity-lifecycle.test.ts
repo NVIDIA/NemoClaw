@@ -82,6 +82,14 @@ function save(exitCode, stdout = "", stderr = "") {
   process.exit(exitCode);
 }
 
+if (args.join(" ") === "settings get --global --json") {
+  save(0, JSON.stringify({
+    scope: "global",
+    settings_revision: 1,
+    settings: { providers_v2_enabled: "true" },
+  }));
+}
+
 if (args[0] === "provider" && args[1] === "get") {
   const name = args[2];
   const provider = state.providers[name];

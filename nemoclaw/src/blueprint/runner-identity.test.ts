@@ -98,6 +98,15 @@ const matchingInferenceRoute = [
 ].join("\n");
 
 const success = { exitCode: 0, stdout: "", stderr: "" };
+const providersV2Enabled = {
+  exitCode: 0,
+  stdout: JSON.stringify({
+    scope: "global",
+    settings_revision: 1,
+    settings: { providers_v2_enabled: "true" },
+  }),
+  stderr: "",
+};
 
 function responseQueue(
   overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
@@ -113,6 +122,7 @@ function responseQueue(
       "sandbox get test-sandbox",
       { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" },
     ],
+    ["settings get --global --json", providersV2Enabled],
   ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
     const command = args.join(" ");
@@ -156,7 +166,9 @@ describe("blueprint identity wrapper", () => {
     store.clear();
     realpaths.clear();
     vi.clearAllMocks();
-    mockExeca.mockResolvedValue(success);
+    mockExeca.mockImplementation(async (_command: string, args: string[]) =>
+      args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
+    );
     process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";
     store.set("/blueprint", { type: "dir" });
     store.set("/blueprint/provider-profiles/okta-runtime-v1.yaml", {

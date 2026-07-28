@@ -33,6 +33,15 @@ import {
 } from "./runtime-identity.js";
 
 const success: RuntimeIdentityCommandResult = { exitCode: 0, stdout: "", stderr: "" };
+const providersV2Enabled: RuntimeIdentityCommandResult = {
+  exitCode: 0,
+  stdout: JSON.stringify({
+    scope: "global",
+    settings_revision: 1,
+    settings: { providers_v2_enabled: "true" },
+  }),
+  stderr: "",
+};
 const missingProvider: RuntimeIdentityCommandResult = {
   exitCode: 1,
   stdout: "",
@@ -138,6 +147,7 @@ describe("runtime identity contract", () => {
     profilePath = realpathSync(profilePath);
     calls = [];
     responses = new Map();
+    responses.set("settings get --global --json", [providersV2Enabled]);
     validatedDestinations = [];
     persistedReceipts = [];
     importedProfilePaths = [];
@@ -292,6 +302,7 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
 
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
       "provider get acme-okta-runtime",
       "provider profile import --file",
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
@@ -300,7 +311,9 @@ describe("runtime identity contract", () => {
     ]);
     expect(calls.flatMap(({ args }) => args)).not.toContain("refresh-secret");
     expect(calls.flatMap(({ args }) => args)).not.toContain("client-secret");
-    expect(calls[3].env).toEqual({
+    expect(
+      calls.find(({ args }) => commandKey(args).startsWith("provider refresh configure"))?.env,
+    ).toEqual({
       OKTA_REFRESH_TOKEN: "refresh-secret",
       OKTA_CLIENT_SECRET: "client-secret",
     });
@@ -313,13 +326,35 @@ describe("runtime identity contract", () => {
     expect(existsSync(importedProfilePaths[0])).toBe(false);
   });
 
+  it("fails before identity mutation when provider-derived policy is disabled", async () => {
+    responses.set("settings get --global --json", [
+      {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          scope: "global",
+          settings_revision: 0,
+          settings: { providers_v2_enabled: "<unset>" },
+        }),
+        stderr: "",
+      },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      /requires OpenShell global setting 'providers_v2_enabled=true'/,
+    );
+    expect(calls.map(({ args }) => commandKey(args))).toEqual(["settings get --global --json"]);
+  });
+
   it("rejects a matching pre-existing provider before any mutable refresh operation", async () => {
     responses.set("provider get acme-okta-runtime", [matchingProviderResult]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
       /cannot be safely reused.*prior refresh configuration cannot be restored/,
     );
-    expect(calls.map(({ args }) => commandKey(args))).toEqual(["provider get acme-okta-runtime"]);
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
+      "provider get acme-okta-runtime",
+    ]);
   });
 
   it("accepts an already imported profile", async () => {
@@ -639,6 +674,7 @@ describe("runtime identity contract", () => {
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/invalid profile/);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
       "provider get acme-okta-runtime",
       "provider profile import --file",
     ]);
@@ -705,7 +741,10 @@ describe("runtime identity contract", () => {
     responses.set("provider get acme-okta-runtime", [matchingProviderResult]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/cannot be safely reused/);
-    expect(calls.map(({ args }) => commandKey(args))).toEqual(["provider get acme-okta-runtime"]);
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
+      "provider get acme-okta-runtime",
+    ]);
   });
 
   it.each([
@@ -792,9 +831,29 @@ describe("runtime identity contract", () => {
 
     await expect(attachRuntimeIdentity(createdReceipt, "sandbox", deps)).resolves.toBe(true);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
       "provider get acme-okta-runtime",
       "sandbox provider attach sandbox acme-okta-runtime",
     ]);
+  });
+
+  it("fails before attachment when provider-derived policy was disabled after preparation", async () => {
+    responses.set("settings get --global --json", [
+      {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          scope: "global",
+          settings_revision: 2,
+          settings: { providers_v2_enabled: "false" },
+        }),
+        stderr: "",
+      },
+    ]);
+
+    await expect(attachRuntimeIdentity(createdReceipt, "sandbox", deps)).rejects.toThrow(
+      /requires OpenShell global setting 'providers_v2_enabled=true'/,
+    );
+    expect(calls.map(({ args }) => commandKey(args))).toEqual(["settings get --global --json"]);
   });
 
   it("treats an existing attachment as reused", async () => {

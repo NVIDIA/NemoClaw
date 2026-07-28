@@ -30,9 +30,11 @@ const ANSI_CSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/gu;
 const UNSAFE_CONTROL_PATTERN = /[\x00-\x08\x0A-\x1F\x7F-\x9F]/u;
 const MISSING_RESOURCE_PATTERN = /\b(?:not found|does not exist|unknown provider)\b/i;
 const MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024;
+const MAX_SETTINGS_OUTPUT_BYTES = 16 * 1024;
 const MAX_PROFILE_BYTES = 64 * 1024;
 const MAX_PROFILE_ENDPOINTS = 32;
 const MAX_DESTINATION_URL_LENGTH = 2048;
+const PROVIDERS_V2_SETTING = "providers_v2_enabled";
 const OKTA_RUNTIME_BINARIES = Object.freeze([
   "/usr/local/bin/node",
   "/usr/bin/node",
@@ -593,6 +595,34 @@ function requiredEnvironmentValue(
   return value;
 }
 
+async function requireProviderDerivedPolicy(deps: RuntimeIdentityCommandDeps): Promise<void> {
+  const result = await deps.run(["openshell", "settings", "get", "--global", "--json"]);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to inspect OpenShell provider-policy prerequisite: ${deps.formatError(commandOutput(result))}`,
+    );
+  }
+
+  let enabled = false;
+  if (Buffer.byteLength(result.stdout, "utf8") <= MAX_SETTINGS_OUTPUT_BYTES) {
+    try {
+      const document: unknown = JSON.parse(result.stdout);
+      enabled =
+        isPlainObject(document) &&
+        isPlainObject(document.settings) &&
+        document.settings[PROVIDERS_V2_SETTING] === "true";
+    } catch {
+      enabled = false;
+    }
+  }
+  if (!enabled) {
+    throw new Error(
+      "Runtime identity requires OpenShell global setting 'providers_v2_enabled=true' " +
+        "so the attached provider's enforced network policy and credential injection are active",
+    );
+  }
+}
+
 export function resolveRuntimeIdentityProfilePath(
   profilePath: string,
   blueprintPath: string,
@@ -747,6 +777,7 @@ export async function prepareRuntimeIdentity(
   const clientSecret = config.client_secret_env
     ? requiredEnvironmentValue(config, config.client_secret_env, env)
     : undefined;
+  await requireProviderDerivedPolicy(deps);
   const plan = buildRuntimeIdentityPlan(config);
   const providerState = await inspectProvider(plan, deps);
   if (providerState === "matching") {
@@ -880,6 +911,7 @@ export async function attachRuntimeIdentity(
   sandboxName: string,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<boolean> {
+  await requireProviderDerivedPolicy(deps);
   const state = await inspectProvider(receipt, deps);
   if (state === "absent") {
     throw new Error(
