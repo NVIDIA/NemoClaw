@@ -134,6 +134,22 @@ describe("snapshot restored-gateway probe classification", () => {
 describe("snapshot restore result classification", () => {
   it.each([
     [{ exitCode: 0, stdout: "Restored secret-output", stderr: "" }, "restored"],
+    [
+      {
+        exitCode: 1,
+        stdout: "State restored into 'clone', but gateway pairing could not be verified.",
+        stderr: "scope-upgrade-pending secret-output",
+      },
+      "restored-pairing-unverified",
+    ],
+    [
+      {
+        exitCode: null,
+        stdout: "State restored into 'clone', but gateway pairing could not be verified.",
+        stderr: "scope-upgrade-pending secret-output",
+      },
+      "command-failure",
+    ],
     [{ exitCode: 1, stdout: "Restored secret-output", stderr: "" }, "command-failure"],
     [{ exitCode: 0, stdout: "secret-output", stderr: "" }, "missing-restored-marker"],
   ] as const)("returns only fixed classification %#", (result, expected) => {

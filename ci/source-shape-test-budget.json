@@ -448,6 +448,11 @@
     },
     {
       "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "pins and verifies the Node.js archive in both WSL workflows",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
       "category": "security"
     },
