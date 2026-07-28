@@ -44,9 +44,13 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(ordinary).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
     expect(ordinary).not.toContain("load_clone_local_pending");
     expect(restoredClone).toContain("local_identity_public_key");
-    expect(restoredClone).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
+    expect(restoredClone).toContain(
+      "approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)",
+    );
     expect(restoredClone).not.toContain("'devices', 'list', '--json'");
     expect(restoredClone).toContain("'devices', 'pending.json'");
+    expect(restoredClone).toContain("'devices', 'paired.json'");
+    expect(restoredClone).toContain("local_approval_auth_mode == 'runtime'");
     expect(restoredClone).toContain("if not related_pending:");
     expect(restoredClone).toContain("len(related_pending) > 1");
     expect(restoredClone).toContain("pending = related_pending");
@@ -262,6 +266,23 @@ if (args[0] === "devices" && args[1] === "approve") {
     process.stderr.write("raw approval output must stay private\\n");
     process.exit(1);
   }
+  const stateDir = process.env.OPENCLAW_STATE_DIR;
+  const pending = JSON.parse(fs.readFileSync(stateDir + "/devices/pending.json", "utf8"));
+  const paired = JSON.parse(fs.readFileSync(stateDir + "/devices/paired.json", "utf8"));
+  const request = pending[args[2]];
+  const hasPairedBaseline = Boolean(request && paired[request.deviceId]);
+  const runtimeTokenOnly =
+    !process.env.OPENCLAW_GATEWAY_URL &&
+    !process.env.OPENCLAW_GATEWAY_PORT &&
+    process.env.OPENCLAW_GATEWAY_TOKEN === "secret-token";
+  const storedDeviceOnly =
+    !process.env.OPENCLAW_GATEWAY_URL &&
+    !process.env.OPENCLAW_GATEWAY_PORT &&
+    !process.env.OPENCLAW_GATEWAY_TOKEN;
+  if ((hasPairedBaseline && !storedDeviceOnly) || (!hasPairedBaseline && !runtimeTokenOnly)) {
+    process.stderr.write("raw clone auth-mode mismatch must stay private\\n");
+    process.exit(1);
+  }
   fs.appendFileSync(${JSON.stringify(approvalsFile)}, args[2] + "\\n");
   fs.appendFileSync(
     ${JSON.stringify(approveEnvFile)},
@@ -281,7 +302,7 @@ process.exit(2);
 `,
         { mode: 0o755 },
       );
-      const execute = (failApproval = false) =>
+      const execute = (failApproval = false, gatewayToken = "secret-token") =>
         spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
@@ -291,7 +312,7 @@ process.exit(2);
             NEMOCLAW_PRIMARY_STATE_DIR: primaryStateDir,
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
-            OPENCLAW_GATEWAY_TOKEN: "secret-token",
+            OPENCLAW_GATEWAY_TOKEN: gatewayToken,
             OPENCLAW_STATE_DIR: stateDir,
           },
           timeout: 10_000,
@@ -300,7 +321,9 @@ process.exit(2);
         pending: unknown[],
         options: {
           failApproval?: boolean;
+          gatewayToken?: string;
           pendingById?: Record<string, unknown>;
+          pairedById?: Record<string, unknown>;
         } = {},
       ) => {
         const pendingById =
@@ -312,7 +335,18 @@ process.exit(2);
             }),
           );
         fs.writeFileSync(path.join(devicesDir, "pending.json"), JSON.stringify(pendingById));
-        return execute(options.failApproval);
+        const pairedById =
+          options.pairedById ??
+          (Object.values(pendingById).some(
+            (device) => (device as { isRepair?: unknown } | null)?.isRepair === true,
+          )
+            ? { [deviceId]: pairedDevice }
+            : {});
+        fs.writeFileSync(path.join(devicesDir, "paired.json"), JSON.stringify(pairedById));
+        return execute(
+          options.failApproval,
+          options.gatewayToken === undefined ? "secret-token" : options.gatewayToken,
+        );
       };
       const readApprovals = () =>
         fs.existsSync(approvalsFile)
@@ -333,6 +367,23 @@ process.exit(2);
         roles: ["operator"],
         scopes: ["operator.pairing"],
       };
+      const pairedDevice = {
+        deviceId,
+        publicKey,
+        clientId: "cli",
+        clientMode: "cli",
+        role: "operator",
+        roles: ["operator"],
+        scopes: ["operator.pairing"],
+        approvedScopes: ["operator.pairing"],
+        tokens: {
+          operator: {
+            token: "clone-device-token",
+            role: "operator",
+            scopes: ["operator.pairing"],
+          },
+        },
+      };
       const foreignRequest = {
         ...localRequest,
         requestId: "primary-pairing",
@@ -348,6 +399,8 @@ process.exit(2);
         [primaryLocalRequest.requestId]: primaryLocalRequest,
       });
       fs.writeFileSync(path.join(primaryDevicesDir, "pending.json"), primaryPending);
+      const primaryPaired = JSON.stringify({ [deviceId]: pairedDevice });
+      fs.writeFileSync(path.join(primaryDevicesDir, "paired.json"), primaryPaired);
 
       const initial = run([foreignRequest, localRequest]);
       expect(initial.status).toBe(0);
@@ -355,8 +408,14 @@ process.exit(2);
       expect(parseAutoPairApprovalReceipt(initial.stdout)).toBe("approved-one");
       expect(readApprovals()).toEqual(["clone-pairing"]);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-        `unset:unset:unset:unset:${stateDir}:${primaryStateDir}`,
+        `unset:unset:secret-token:unset:${stateDir}:${primaryStateDir}`,
       );
+
+      resetLogs();
+      const missingCloneToken = run([localRequest], { gatewayToken: "" });
+      expect(parseAutoPairApprovalReceipt(missingCloneToken.stdout)).toBe("approve-failed");
+      expect(readApprovals()).toEqual([]);
+      expect(fs.existsSync(approveEnvFile)).toBe(false);
 
       resetLogs();
       const repairRequest = {
@@ -392,6 +451,16 @@ process.exit(2);
       expect(writeOnlyInitial.stdout.includes(`${SUMMARY_MARKER}=1`)).toBe(true);
       expect(readApprovals()).toEqual(["clone-write-only"]);
       resetLogs();
+      const pairedPreconvergence = run([foreignRequest, writeOnlyInitialRequest], {
+        pairedById: { [deviceId]: pairedDevice },
+      });
+      expect(pairedPreconvergence.status).toBe(0);
+      expect(parseAutoPairApprovalReceipt(pairedPreconvergence.stdout)).toBe("approved-one");
+      expect(readApprovals()).toEqual(["clone-write-only"]);
+      expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
+        `unset:unset:unset:unset:${stateDir}:${primaryStateDir}`,
+      );
+      resetLogs();
       const clonePendingById = {
         [foreignRequest.requestId]: foreignRequest,
         [writeOnlyInitialRequest.requestId]: writeOnlyInitialRequest,
@@ -411,9 +480,12 @@ process.exit(2);
       expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
         primaryPending,
       );
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf-8")).toBe(
+        primaryPaired,
+      );
       expect(fs.existsSync(listEnvFile)).toBe(false);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
-        `unset:unset:unset:unset:${stateDir}:${primaryStateDir}`,
+        `unset:unset:secret-token:unset:${stateDir}:${primaryStateDir}`,
       );
 
       const cloneScopePendingById = {
@@ -437,6 +509,9 @@ process.exit(2);
       );
       expect(fs.readFileSync(path.join(primaryDevicesDir, "pending.json"), "utf-8")).toBe(
         primaryPending,
+      );
+      expect(fs.readFileSync(path.join(primaryDevicesDir, "paired.json"), "utf-8")).toBe(
+        primaryPaired,
       );
       expect(fs.existsSync(listEnvFile)).toBe(false);
       expect(fs.readFileSync(approveEnvFile, "utf-8").trim()).toBe(
@@ -504,6 +579,17 @@ process.exit(2);
       expect(`${approveFailed.stdout}${approveFailed.stderr}`.includes("raw approval output")).toBe(
         false,
       );
+
+      for (const pairedById of [
+        { [deviceId]: { ...pairedDevice, publicKey: "mismatched-public-key" } },
+        { "wrong-device-map-key": pairedDevice },
+      ]) {
+        resetLogs();
+        const malformedPaired = run([repairRequest], { pairedById });
+        expect(parseAutoPairApprovalReceipt(malformedPaired.stdout)).toBe("request-rejected");
+        expect(readApprovals()).toEqual([]);
+        expect(fs.existsSync(approveEnvFile)).toBe(false);
+      }
 
       const { scopes: _ignoredScopes, ...repairWithoutScopes } = repairRequest;
       for (const rejected of [

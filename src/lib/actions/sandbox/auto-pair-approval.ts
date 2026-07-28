@@ -167,6 +167,18 @@ def exit_with_receipt(receipt):
     : (options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS);
   const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
   const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
+  const approveEnv = options.localDeviceOnly
+    ? `approve_env = gateway_approval_env(os.environ)
+    # A cold clone has no stored device credential yet. Keep only its trusted
+    # runtime token and force configured local-loopback resolution; upgrades
+    # continue to use the pinned stored-device-auth path.
+    if local_approval_auth_mode == 'runtime':
+        runtime_gateway_token = str(os.environ.get('OPENCLAW_GATEWAY_TOKEN', '') or '').strip()
+        if not runtime_gateway_token:
+            ${exitWithReceipt("approve-failed")}
+        approve_env['OPENCLAW_GATEWAY_TOKEN'] = runtime_gateway_token
+    approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)`
+    : "approve_env = gateway_approval_env(os.environ)";
   const pendingRead = options.localDeviceOnly
     ? `
 # SOURCE_OF_TRUTH_REVIEW (restored-clone local pending selection):
@@ -297,29 +309,71 @@ if (
 ):
     ${exitWithReceipt("request-rejected")}
 
-def is_local_pairing_transition(device):
+# Snapshot restore preserves this clone-owned runtime auth state instead of
+# copying the source sandbox's identity/devices directory. Use the clone's
+# paired record to choose auth: a paired upgrade must use stored device auth;
+# a cold transition has no such credential and may use only the clone runtime
+# token. The restored source config is never an approval credential.
+paired_path = os.path.join(state_dir, 'devices', 'paired.json')
+try:
+    with open(paired_path, encoding='utf-8') as handle:
+        local_paired_by_id = json.load(handle)
+except FileNotFoundError:
+    local_paired_by_id = {}
+except (OSError, ValueError):
+    ${exitWithReceipt("request-rejected")}
+if not isinstance(local_paired_by_id, dict):
+    ${exitWithReceipt("request-rejected")}
+related_paired = [
+    (map_key, device) for map_key, device in local_paired_by_id.items()
+    if map_key == local_device_id or (
+        isinstance(device, dict) and (
+            str(device.get('deviceId', '') or '').strip() == local_device_id
+            or str(device.get('publicKey', '') or '').strip() == local_public_key
+        )
+    )
+]
+if len(related_paired) > 1:
+    ${exitWithReceipt("request-rejected")}
+has_local_paired_baseline = len(related_paired) == 1
+if has_local_paired_baseline:
+    paired_map_key, paired_device = related_paired[0]
+    if (
+        paired_map_key != local_device_id
+        or not isinstance(paired_device, dict)
+        or str(paired_device.get('deviceId', '') or '').strip() != local_device_id
+        or str(paired_device.get('publicKey', '') or '').strip() != local_public_key
+        or normalized_roles(paired_device) != {'operator'}
+    ):
+        ${exitWithReceipt("request-rejected")}
+
+def local_pairing_transition_auth_mode(device):
     request_id = device.get('requestId')
     if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
-        return False
+        return None
     if str(device.get('deviceId', '') or '').strip() != local_device_id:
-        return False
+        return None
     if str(device.get('publicKey', '') or '').strip() != local_public_key:
-        return False
+        return None
     if str(device.get('clientId', '') or '').strip() != 'cli':
-        return False
+        return None
     if str(device.get('clientMode', '') or '').strip() != 'cli':
-        return False
+        return None
     if normalized_roles(device) != {'operator'}:
-        return False
+        return None
     scopes = consistent_scope_view(device)
     if scopes is None:
-        return False
+        return None
     is_repair = device.get('isRepair')
-    if is_repair is True:
-        return 'operator.write' in scopes
-    if is_repair not in (None, False):
-        return False
-    return scopes == {'operator.pairing'} or 'operator.write' in scopes
+    if not has_local_paired_baseline:
+        if scopes == {'operator.pairing'} and is_repair in (None, False):
+            return 'runtime'
+        if is_repair is False and 'operator.write' in scopes:
+            return 'runtime'
+        return None
+    if is_repair in (True, False) and 'operator.write' in scopes:
+        return 'stored'
+    return None
 
 related_pending = [
     device for device in pending
@@ -332,7 +386,8 @@ if not related_pending:
     ${exitWithReceipt("clone-no-match")}
 if len(related_pending) > 1:
     ${exitWithReceipt("clone-ambiguous")}
-if not is_local_pairing_transition(related_pending[0]):
+local_approval_auth_mode = local_pairing_transition_auth_mode(related_pending[0])
+if local_approval_auth_mode is None:
     ${exitWithReceipt("request-rejected")}
 local_request_id = related_pending[0].get('requestId')
 if sum(
@@ -389,7 +444,7 @@ for device in pending:
     if not decision['allowed']:
         ${rejectedRequestAction}
     seen_request_ids.add(request_id)
-    approve_env = gateway_approval_env(os.environ)
+    ${approveEnv}
     attempted_count += 1
     try:
         approve_proc = subprocess.run(
