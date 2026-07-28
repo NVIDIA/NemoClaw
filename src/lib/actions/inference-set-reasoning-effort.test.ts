@@ -126,4 +126,20 @@ describe("inference set reasoning effort (#7659)", () => {
 
     expect(patchedModel(config, result.route.providerKey).params).toBeUndefined();
   });
+
+  it("does not write the effort for a provider whose registry row cannot record it", () => {
+    const config = compatibleEndpointConfig();
+
+    const result = patchOpenClawInferenceConfig(
+      config,
+      "nvidia-prod",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "openai-completions",
+      undefined,
+      undefined,
+      { effort: "high", explicit: true },
+    );
+
+    expect(patchedModel(config, result.route.providerKey).params).toBeUndefined();
+  });
 });

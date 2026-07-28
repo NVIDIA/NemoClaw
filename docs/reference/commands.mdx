@@ -2660,7 +2660,7 @@ The command backs up workspace state, destroys the old sandbox (including its ho
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
-The replacement uses the recorded compatible-endpoint reasoning mode and web search selection instead of ambient shell values.
+The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values.
 Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector.
 It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run.
 A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
@@ -3168,8 +3168,14 @@ For a DNS-backed HTTPS URL, NemoClaw routes the endpoint through a local HTTPS P
 HTTPS IP-literal URLs remain supported and do not need the adapter.
 NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
 `--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
-`--reasoning-effort` accepts `low`, `medium`, `high`, or `default`, and sends the value as `reasoning_effort` in the request body of a model routed through `openai-completions`.
-Omit the flag to keep the recorded effort, or pass `default` to clear it and return the endpoint to its own default.
+
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+`--reasoning-effort` accepts `low`, `medium`, `high`, or `default`, and applies only to the `compatible-endpoint` provider.
+For a `low`, `medium`, or `high` value on an `openai-completions` route, NemoClaw writes `params.extra_body.reasoning_effort` on the model entry, and OpenClaw merges it into the request body.
+`--reasoning-effort` overrides `NEMOCLAW_REASONING_EFFORT`; when you omit the flag, `$$nemoclaw inference set` applies an exported `NEMOCLAW_REASONING_EFFORT`, and when neither is set the sandbox keeps the effort it already records.
+Pass `default` to clear a recorded effort and return the endpoint to its own default.
 NemoClaw rejects any other value before it changes the OpenShell route, the agent config, or the host registry.
 
 </AgentOnly>
@@ -3595,7 +3601,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
-| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Sends `reasoning_effort` in the request body of a model routed through `openai-completions`. Unset, or `default`, leaves the endpoint's own default in place. Any other value fails before NemoClaw touches the provider, policies, the sandbox, or the registry. |
+| `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, or `high` | Writes `params.extra_body.reasoning_effort` on the model entry in the built OpenClaw config, which OpenClaw merges into the request body of a route that uses `openai-completions`. Applies only to the `compatible-endpoint` provider; unset leaves the endpoint's own default in place. `default` is a `--reasoning-effort` value only; it is not a supported variable value. Any other value fails before NemoClaw touches the provider, policies, the sandbox, or the registry. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 

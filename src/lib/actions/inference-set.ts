@@ -422,12 +422,15 @@ function updatePrimaryAgentListModel(agents: ConfigObject, primaryModelRef: stri
   }
 }
 
+// Scoped to the provider whose registry row records the effort. Writing it for
+// any other provider would patch a config that the next rebuild silently drops.
 function applyReasoningEffortParams(
   modelEntry: ConfigObject,
+  provider: string,
   route: SandboxInferenceConfig,
   request: ReasoningEffortRequest,
 ): void {
-  if (!request.explicit) return;
+  if (!request.explicit || provider !== "compatible-endpoint") return;
   const params = isConfigObject(modelEntry.params) ? { ...modelEntry.params } : {};
   const extraBody = isConfigObject(params.extra_body) ? { ...params.extra_body } : {};
   if (request.effort && route.inferenceApi === "openai-completions") {
@@ -450,6 +453,7 @@ function applyReasoningEffortParams(
 function buildProviderConfig(
   existing: ConfigObject,
   model: string,
+  provider: string,
   route: SandboxInferenceConfig,
   contextWindow?: number,
   inheritedMaxTokens?: number,
@@ -473,7 +477,7 @@ function buildProviderConfig(
   if (route.inferenceCompat) {
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
   }
-  applyReasoningEffortParams(firstExistingModel, route, reasoningEffort);
+  applyReasoningEffortParams(firstExistingModel, provider, route, reasoningEffort);
 
   const providerConfig: ConfigObject = {
     ...existing,
@@ -509,6 +513,7 @@ export function patchOpenClawInferenceConfig(
   providers[route.providerKey] = buildProviderConfig(
     existingProvider,
     model,
+    provider,
     route,
     contextWindow,
     inheritedMaxTokens,
