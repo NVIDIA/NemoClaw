@@ -13,9 +13,8 @@ import {
 
 const candidateSha = "a".repeat(40);
 
-function preflight(input: { brevReady?: boolean; jetsonRunnerOnline?: "true" | "unknown" } = {}) {
+function preflight(input: { jetsonRunnerOnline?: "true" | "unknown" } = {}) {
   return buildReleaseE2ePreflight({
-    brevReady: input.brevReady ?? true,
     candidateSha,
     jetsonRunnerOnline: input.jetsonRunnerOnline ?? "true",
   });
@@ -43,6 +42,7 @@ function runEvidence(
   } = {},
 ): ReleaseE2eRunEvidence {
   const attempt = options.attempt ?? 1;
+  const runId = 1000 + attempt;
   const executions = plan.executions.filter(
     (execution) => execution.group === group && (options.only?.(execution) ?? true),
   );
@@ -59,37 +59,38 @@ function runEvidence(
       kind: "nemoclaw-e2e-dispatch-v1",
       targets: "",
       workflowRunAttempt: attempt,
-      workflowRunId: String(attempt),
+      workflowRunId: String(runId),
     },
     jobs: {
       jobs: executions.map((execution, index) => ({
         conclusion: options.conclusion?.(execution) ?? "success",
-        html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${attempt}/job/${index + 1}`,
+        html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${index + 1}`,
         name: execution.expectedName,
         run_attempt: attempt,
+        run_id: runId,
         status: options.status?.(execution) ?? "completed",
       })),
     },
     run: {
       event: "workflow_dispatch",
       head_branch: "main",
-      id: attempt,
+      id: runId,
       path: ".github/workflows/e2e.yaml",
       run_attempt: attempt,
       head_sha: options.sha ?? candidateSha,
-      html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${attempt}`,
+      html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
     },
   };
 }
 
 describe("release E2E evidence", () => {
-  it("derives concurrent, conditional, and qualification work from the workflow", () => {
-    const plan = preflight({ brevReady: false, jetsonRunnerOnline: "unknown" });
+  it("derives full, concurrent, conditional, and Launchable E2E work from the workflow", () => {
+    const plan = preflight({ jetsonRunnerOnline: "unknown" });
 
     expect(plan.dispatches.defaultSuite).toEqual({
-      includeStagingBrevLaunchable: false,
+      includeStagingBrevLaunchable: true,
       jobs: "",
-      mode: "ordinary",
+      mode: "full",
       targets: "",
     });
     const parallelExplicitJobs = plan.dispatches.parallelExplicit.jobs.split(",");
@@ -105,8 +106,8 @@ describe("release E2E evidence", () => {
     expect(plan.dispatches.conditional).toEqual([
       expect.objectContaining({ allowJetsonRunnerQueue: false, jobs: "jetson-nvmap-gpu" }),
     ]);
-    expect(plan.qualificationJobId).toBe("staging-brev-launchable");
-    expect(plan.exceptionsRequired).toEqual(["staging-brev-launchable", "jetson-nvmap-gpu"]);
+    expect(plan.launchableE2eJobId).toBe("staging-brev-launchable");
+    expect(plan.exceptionsRequired).toEqual(["jetson-nvmap-gpu"]);
   });
 
   it("keeps every static and dynamic matrix row as a distinct execution", () => {
@@ -202,6 +203,36 @@ describe("release E2E evidence", () => {
 
     expect(ledger.entries.find((entry) => entry.id === skippedId)).toMatchObject({
       attempts: [{ conclusion: "skipped", status: "completed" }],
+      status: "missing",
+    });
+  });
+
+  it("ignores job evidence from another workflow run", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    const ignoredId = plan.executions.find((execution) => execution.group === "default")!.id;
+    const jobs = evidence.jobs as { jobs: Array<Record<string, unknown>> };
+    jobs.jobs[0]!.run_id = 999;
+
+    const ledger = buildReleaseE2eLedger(plan, [evidence]);
+
+    expect(ledger.entries.find((entry) => entry.id === ignoredId)).toMatchObject({
+      attempts: [],
+      status: "missing",
+    });
+  });
+
+  it("ignores job evidence newer than the enclosing workflow run attempt", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default");
+    const ignoredId = plan.executions.find((execution) => execution.group === "default")!.id;
+    const jobs = evidence.jobs as { jobs: Array<Record<string, unknown>> };
+    jobs.jobs[0]!.run_attempt = 2;
+
+    const ledger = buildReleaseE2eLedger(plan, [evidence]);
+
+    expect(ledger.entries.find((entry) => entry.id === ignoredId)).toMatchObject({
+      attempts: [],
       status: "missing",
     });
   });

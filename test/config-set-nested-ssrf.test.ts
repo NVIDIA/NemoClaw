@@ -368,6 +368,90 @@ describe("config set nested URL SSRF enforcement", () => {
     }
   });
 
+  it("writes an OpenShell bridge URL in an OpenClaw provider baseUrl (#7453)", async () => {
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
+
+    const priorSandboxConfig = require.cache[sandboxConfigPath];
+    const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
+    const events: string[] = [];
+    const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath, [], events);
+
+    delete require.cache[sandboxConfigPath];
+    requireCache[openshellPath] = {
+      id: openshellPath,
+      filename: openshellPath,
+      loaded: true,
+      exports: {
+        captureOpenshellCommand: () => ({
+          status: 0,
+          output: JSON.stringify({
+            models: { providers: {} },
+            agents: { defaults: { memorySearch: { provider: "local" } } },
+          }),
+        }),
+        runOpenshellCommand: () => ({ status: 0 }),
+      },
+    } as any;
+    const appendAuditEntry = vi.fn();
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry },
+    } as any;
+
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`process.exit:${code ?? 0}`);
+      });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const { configSet } = require("../src/lib/sandbox/config");
+      const provider = {
+        api: "ollama",
+        baseUrl: "http://host.openshell.internal:11434",
+        apiKey: "x",
+        models: [{ id: "qwen3-embedding:4b", name: "Qwen3 embedding 4B" }],
+      };
+
+      await expect(
+        configSet("sandbox-ssrf-test", {
+          key: "models.providers.ollama-mem",
+          value: JSON.stringify(provider),
+          acceptNewPath: true,
+        }),
+      ).resolves.toBeUndefined();
+
+      const writtenBody = restorePrivilegedExec.guardSpy.mock.calls[0]?.[2].input;
+      expect(JSON.parse(writtenBody).models.providers["ollama-mem"]).toEqual(provider);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(events).toEqual(["validate", "lock-enter", "write", "lock-exit"]);
+      expect(appendAuditEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "config_set",
+          sandbox: "sandbox-ssrf-test",
+          reason: "config set openclaw:models.providers.ollama-mem",
+        }),
+      );
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+
+      restoreCachedModule(sandboxConfigPath, priorSandboxConfig);
+      restoreCachedModule(openshellPath, priorOpenshell);
+      restoreCachedModule(shieldsAuditPath, priorShieldsAudit);
+      restorePrivilegedExec();
+    }
+  });
+
   it("surfaces an OpenClaw schema rejection as clean SandboxConfigError lines", async () => {
     const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
     const openshellPath = require.resolve("../src/lib/adapters/openshell/client");

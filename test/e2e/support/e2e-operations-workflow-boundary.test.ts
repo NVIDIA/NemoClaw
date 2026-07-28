@@ -65,6 +65,89 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("rejects missing NEEDS_JSON environment data (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    delete report.env?.NEEDS_JSON;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects malformed NEEDS_JSON environment data (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const scorecard = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Generate E2E scorecard",
+    )!;
+    scorecard.env!.NEEDS_JSON = "${{ toJSON(needs.generate-matrix) }}";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard generator must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects needs interpolation in GitHub Script source (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    report.with!.script = `${String(report.with!.script)}
+const interpolatedNeeds = \${{   toJSON ( needs )   }};
+`;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects a commented NEEDS_JSON assignment (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    report.with!.script = String(report.with!.script).replace(
+      "const needs = JSON.parse(process.env.NEEDS_JSON || '{}');",
+      "// const needs = JSON.parse(process.env.NEEDS_JSON || '{}');\nconst needs = {};",
+    );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects NEEDS_JSON parsing assigned to an unrelated variable (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const scorecard = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Generate E2E scorecard",
+    )!;
+    scorecard.with!.script = String(scorecard.with!.script).replace(
+      "const needs = JSON.parse(process.env.NEEDS_JSON || '{}');",
+      "const scorecardNeeds = JSON.parse(process.env.NEEDS_JSON || '{}');",
+    );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard generator must pass needs as environment data without script interpolation",
+    );
+  });
+
+  it("rejects a lookalike NEEDS_JSON variable (#6952)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    report.with!.script = String(report.with!.script).replace(
+      "process.env.NEEDS_JSON",
+      "process.env.NEEDS_JSON_BAD",
+    );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must pass needs as environment data without script interpolation",
+    );
+  });
+
   it("pins the scorecard's current-run progress artifact action", () => {
     const workflow = readE2eOperationsWorkflow();
     const download = workflow.jobs.scorecard.steps!.find(
@@ -552,10 +635,7 @@ describe("E2E operations workflow boundary", () => {
   });
 
   it("executes the scorecard workflow body and emits advisory budget warnings", async () => {
-    const script = workflowScript("scorecard", "Generate E2E scorecard").replace(
-      "${{ toJSON(needs) }}",
-      JSON.stringify({ "generate-matrix": { result: "success" } }),
-    );
+    const script = workflowScript("scorecard", "Generate E2E scorecard");
     const warning = vi.fn();
     const setOutput = vi.fn();
     const summary = {
@@ -615,6 +695,7 @@ describe("E2E operations workflow boundary", () => {
         EXPLICIT_ONLY_JOBS: "",
         GITHUB_WORKSPACE: "/workspace",
         JOBS: "",
+        NEEDS_JSON: JSON.stringify({ "generate-matrix": { result: "success" } }),
         RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
         RUNTIME_SUMMARY_FILE: "/runner/e2e-runtime-summary.json",
         TARGETS: "",
@@ -675,10 +756,7 @@ describe("E2E operations workflow boundary", () => {
   });
 
   it("keeps scorecard outputs available when a progress artifact is invalid", async () => {
-    const script = workflowScript("scorecard", "Generate E2E scorecard").replace(
-      "${{ toJSON(needs) }}",
-      JSON.stringify({ "generate-matrix": { result: "success" } }),
-    );
+    const script = workflowScript("scorecard", "Generate E2E scorecard");
     const warning = vi.fn();
     const setOutput = vi.fn();
     const summary = {
@@ -733,6 +811,7 @@ describe("E2E operations workflow boundary", () => {
         EXPLICIT_ONLY_JOBS: "",
         GITHUB_WORKSPACE: "/workspace",
         JOBS: "",
+        NEEDS_JSON: JSON.stringify({ "generate-matrix": { result: "success" } }),
         RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
         RUNTIME_SUMMARY_FILE: "/runner/e2e-runtime-summary.json",
         TARGETS: "",

@@ -78,11 +78,16 @@ Hermes Provider setup, host-side `config set`, and a direct blueprint run still 
 ## Use the Sandbox Host Alias
 
 NemoClaw accepts `http://host.openshell.internal:<port>` only when the URL includes an explicit port from `1024` through `65535`.
-This narrow exception supports sandbox-to-host inference routes and is not a general bypass for private endpoints.
+This narrow exception supports NemoClaw-managed sandbox-to-host inference routes and host-side `config set` writes to supported provider `baseUrl` fields that already use the OpenShell host bridge, including OpenClaw memory-search embedding providers.
+Generic `config set` keys continue to reject the bridge host.
+Accepting this URL shape does not by itself make an arbitrary local service, embedding provider, config key, or network route a supported NemoClaw integration.
 
 For example, a containerized gateway can commonly reach a local server at `http://host.openshell.internal:8000/v1`.
 Because this name is a sandbox-internal alias, onboarding skips the host-side endpoint probe.
 Verify the runtime route after onboarding when you use it.
+
+The exception is intentionally exact: use HTTP, the literal `host.openshell.internal` name, and an explicit unprivileged port.
+NemoClaw still rejects HTTPS, privileged ports, subdomains, loopback names, private IP literals, userinfo, query strings, and fragments through this path.
 
 ## Related Topics
 

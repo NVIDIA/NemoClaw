@@ -1175,6 +1175,19 @@ describe("advisory file locking", () => {
     }
   });
 
+  it("acquireLock does not treat an owner file EEXIST as lock contention (#7694)", () => {
+    const origWrite = fs.writeFileSync;
+    fs.writeFileSync = () => {
+      throw Object.assign(new Error("owner write EEXIST"), { code: "EEXIST" });
+    };
+    try {
+      expect(() => registry.acquireLock()).toThrow("owner write EEXIST");
+      expect(fs.existsSync(lockDir)).toBe(false);
+    } finally {
+      fs.writeFileSync = origWrite;
+    }
+  });
+
   it("acquireLock removes stale lock owned by dead process", () => {
     // Create a lock with a PID that doesn't exist (99999999)
     fs.mkdirSync(lockDir, { recursive: true });
