@@ -65,6 +65,46 @@ describe("onboard flow handoffs", () => {
     expect(assertSandboxNameAllowed).toHaveBeenCalledWith("requested");
   });
 
+  it.each([
+    {
+      source: "recorded",
+      recordedSandboxName: "recorded",
+      requestedSandboxName: "requested",
+      checkpointedSandboxName: "checkpointed",
+    },
+    {
+      source: "requested",
+      recordedSandboxName: null,
+      requestedSandboxName: "requested",
+      checkpointedSandboxName: "checkpointed",
+    },
+    {
+      source: "checkpointed",
+      recordedSandboxName: null,
+      requestedSandboxName: null,
+      checkpointedSandboxName: "checkpointed",
+    },
+  ])("selects the $source sandbox name by precedence", ({
+    source,
+    recordedSandboxName,
+    requestedSandboxName,
+    checkpointedSandboxName,
+  }) => {
+    const assertSandboxNameAllowed = vi.fn();
+
+    const result = prepareCoreOnboardFlowContext({
+      initial: { context: context(), session: createSession() },
+      recordedSandboxName,
+      requestedSandboxName,
+      checkpointedSandboxName,
+      selectedMessagingChannels: [],
+      assertSandboxNameAllowed,
+    });
+
+    expect(result.sandboxName).toBe(source);
+    expect(assertSandboxNameAllowed).toHaveBeenCalledWith(source);
+  });
+
   it("rejects a missing preflight GPU configuration", () => {
     const initialContext = { ...context(), sandboxGpuConfig: null };
     const persisted = createSession();
