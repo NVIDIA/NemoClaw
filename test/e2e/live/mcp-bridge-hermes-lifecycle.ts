@@ -45,9 +45,10 @@ export async function assertHermesConfig(
 }
 
 /**
- * Exercise the supported post-mutation lifecycle while the managed server is
- * still present: explicitly restore shields, restart the real gateway, and
- * prove the locked files and transaction state remain current.
+ * Focused #7499 live regression after the supported managed add has executed
+ * the real unprivileged Hermes transaction: explicitly restore shields,
+ * restart the real gateway, and prove the locked files and transaction state
+ * remain current.
  */
 export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
   host: HostCliClient,

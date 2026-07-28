@@ -1237,12 +1237,6 @@ mcpBridgeShardTest("hermes")(
     await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
     await assertHermesInspectionRejectsUnmanagedFields(sandbox, HERMES_SANDBOX_NAME);
     await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
-    await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
-      adapter: "hermes-config",
-      artifactPrefix: "hermes",
-      sandboxName: HERMES_SANDBOX_NAME,
-      secretPaths: ["/sandbox/.hermes"],
-    });
     progress.phase("restore Hermes shields and restart the gateway");
     await assertHermesManagedAddSurvivesLockedGatewayRestart(
       host,
@@ -1258,6 +1252,12 @@ mcpBridgeShardTest("hermes")(
       "hermes-assert-secret-absent-after-add-gateway-restart",
     );
     progress.phase("exercise lifecycle and confirm Hermes bridge removal");
+    await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
+      adapter: "hermes-config",
+      artifactPrefix: "hermes",
+      sandboxName: HERMES_SANDBOX_NAME,
+      secretPaths: ["/sandbox/.hermes"],
+    });
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
