@@ -239,6 +239,21 @@ function hasUpstreamOpenShellGatewayUserService(
   return getOpenShellGatewayUserServicePaths().some(existsSync);
 }
 
+const warnedHomebrewIdentityCheckReasons = new Set<string>();
+
+// Homebrew can refuse to load the pinned formula (for example when Homebrew
+// 6.x marks the nvidia/openshell tap untrusted), which leaves the identity
+// unconfirmed without being evidence of a wrong formula. Managing the service
+// through brew would fail the same way, so continue on the standalone gateway
+// instead of aborting (#7707).
+function warnHomebrewIdentityCheckUnavailable(reason: string): void {
+  if (warnedHomebrewIdentityCheckReasons.has(reason)) return;
+  warnedHomebrewIdentityCheckReasons.add(reason);
+  console.warn(
+    `  Homebrew could not confirm the OpenShell formula identity; continuing without the Homebrew-managed gateway service.\n  ${reason}`,
+  );
+}
+
 function hasOfficialHomebrewFormula(
   opts: Pick<
     OpenShellGatewayUserServiceOptions,
@@ -259,7 +274,10 @@ function hasOfficialHomebrewFormula(
     env,
     spawnSyncImpl,
   });
-  if (!info.ok) throw new Error(`OpenShell Homebrew formula identity check failed: ${info.reason}`);
+  if (!info.ok) {
+    warnHomebrewIdentityCheckUnavailable(info.reason ?? "brew info failed");
+    return false;
+  }
   try {
     const parsed = JSON.parse(info.stdout ?? "") as {
       formulae?: Array<{ name?: string; tap?: string }>;

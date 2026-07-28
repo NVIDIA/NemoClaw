@@ -146,6 +146,24 @@ describe("docker-driver-gateway-service", () => {
     ).toThrow("must come from nvidia/openshell");
   });
 
+  it("continues without the Homebrew service when brew refuses to load the formula (#7707)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const refusal =
+      "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
+    const options = {
+      commandExists: () => true,
+      platform: "darwin" as NodeJS.Platform,
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
+        args[0] === "info" ? spawnResult(1, refusal) : spawnResult(),
+      ),
+    };
+
+    expect(hasOpenShellGatewayUserService(options)).toBe(false);
+    expect(hasOpenShellGatewayUserService(options)).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(refusal));
+  });
+
   it("rejects a missing Homebrew formula when Homebrew is available (#6903)", () => {
     expect(() =>
       hasOpenShellGatewayUserService({
