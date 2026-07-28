@@ -149,7 +149,6 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain(
       "Dispatch independent default-suite and unconditional explicit-only work concurrently",
     );
-    expect(policy).toContain("Do not serialize unrelated evidence behind that blocker");
     expect(policy).toContain("discard the ledger and its exceptions");
     expect(policy).toContain("actual selector inputs");
     expect(release).toContain('"dispatchJson"');
@@ -173,7 +172,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain(
       "Each missing test result requires its own itemized maintainer exception",
     );
-    expect(evening).toContain("Missing or invalid qualification requires a separate");
+    expect(evening).toContain("Missing or invalid Launchable E2E evidence requires a separate");
     expect(evening).toContain("Tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
     expect(dailyFlow).toContain("capture the candidate SHA and review every E2E test");
@@ -189,7 +188,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(e2e).toContain("include_staging_brev_launchable=true");
     expect(e2e).toContain("Exact staging Brev Launchable");
-    expect(e2e).toContain("qualification.json");
+    expect(e2e).toContain("launchable-e2e.json");
     expect(e2e).toContain("cleanup.json");
     expect(e2e).toContain("dispatch.json");
     expect(e2e).toContain("If the release candidate SHA changes");
@@ -205,19 +204,15 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain("cleanup evidence that reports the qualified workspace as `ABSENT`");
     expect(release).toContain("a separate itemized maintainer exception for each test");
     expect(release).toContain(
-      "a separate itemized maintainer exception for missing or invalid exact Brev Launchable qualification",
+      "a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence",
     );
     expect(release).toContain("when accepted full-mode exact Brev evidence exists");
     expect(release.indexOf("load `nemoclaw-maintainer-e2e` and dispatch full mode")).toBeLessThan(
       release.indexOf("Ask the maintainer to paste this phrase"),
     );
     expect(evening).toContain("load `nemoclaw-maintainer-e2e`");
-    expect(evening).toContain(
-      "When the protected qualification readiness variable is `true`, run full mode",
-    );
-    expect(evening).toContain(
-      "When readiness is disabled, run the ordinary default and unconditional explicit-only groups",
-    );
+    expect(evening).toContain("Run full mode if that SHA has no applicable exact Brev");
+    expect(evening).not.toContain("readiness variable");
     expect(policy).toContain(
       "For full-mode exact Brev evidence, require one workflow run for the candidate SHA",
     );
@@ -227,7 +222,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("trusted dispatch receipt");
     expect(policy).toContain("Each test without a successful execution requires its own");
     expect(policy).toContain(
-      "Missing or invalid exact Brev Launchable qualification requires a separate",
+      "Missing or invalid exact Brev Launchable E2E evidence requires a separate",
     );
     expect(policy).toContain("No release-note-only delta exception is currently defined");
     expect(skillsGuide).toContain("`nemoclaw-maintainer-e2e`");
