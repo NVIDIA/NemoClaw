@@ -1159,11 +1159,9 @@ ${persistentRaceNeedle}`,
         fs.existsSync(devicesRaceBackup) &&
         fs.existsSync(devicesDir) &&
         fs.lstatSync(devicesDir).isSymbolicLink();
-      if (persistentSwapOccurred) {
-        fs.unlinkSync(devicesDir);
-        fs.renameSync(devicesRaceBackup, devicesDir);
-      }
       expect(persistentSwapOccurred).toBe(true);
+      fs.unlinkSync(devicesDir);
+      fs.renameSync(devicesRaceBackup, devicesDir);
       expect(parseAutoPairApprovalReceipt(persistentDevicesRace.stdout)).toBe("list-failed");
       expect(persistentDevicesRace.stdout.trim().split(/\r?\n/).length).toBe(1);
       expect(persistentDevicesRace.stderr.length).toBe(0);
