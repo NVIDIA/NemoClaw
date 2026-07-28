@@ -71,16 +71,23 @@ export function baseSession(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-export function createExistingCompatibleProviderCapture(options: {
+export function createCompatibleProviderCapture(options: {
   name: string;
   type: "openai" | "anthropic";
   credentialEnv: string;
   configKey: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
-}): InferenceSetDeps["captureOpenshell"] {
-  let providerVersion = 1;
+  initiallyPresent?: boolean;
+}): InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn> {
+  let providerPresent = options.initiallyPresent ?? true;
+  let providerVersion = providerPresent ? 1 : 0;
   return vi.fn((args: string[]) => {
     switch (`${args[0]}:${args[1]}`) {
       case "provider:get": {
+        if (!providerPresent) {
+          const output =
+            "Error: code: 'Some requested entity was not found', message: \"provider not found\"";
+          return { status: 1, output, stdout: "", stderr: output };
+        }
         const output = [
           `Name: ${options.name}`,
           "Id: 11111111-2222-4333-8444-555555555555",
@@ -91,8 +98,15 @@ export function createExistingCompatibleProviderCapture(options: {
         ].join("\n");
         return { status: 0, output, stdout: output, stderr: "" };
       }
+      case "provider:create":
+        providerPresent = true;
+        providerVersion = 1;
+        return { status: 0, output: "", stdout: "", stderr: "" };
       case "provider:update":
         providerVersion += 1;
+        return { status: 0, output: "", stdout: "", stderr: "" };
+      case "provider:delete":
+        providerPresent = false;
         return { status: 0, output: "", stdout: "", stderr: "" };
       default:
         return { status: 0, output: "", stdout: "", stderr: "" };

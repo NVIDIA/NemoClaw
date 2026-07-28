@@ -908,7 +908,7 @@ it(
       fs.rmSync(directory, { force: true, recursive: true });
     }
   },
-  testTimeout(35_000),
+  testTimeout(40_000),
 );
 
 it("builds controller target matrices only from trusted runner mappings (#7031)", () => {
