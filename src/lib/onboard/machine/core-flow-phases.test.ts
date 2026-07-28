@@ -533,9 +533,13 @@ describe("core onboard flow phases", () => {
     );
   });
 
-  it("uses the strict runner for fresh provider selection sessions", async () => {
-    const calls: string[] = [];
-    const applied: string[] = [];
+  it.each([
+    ["fresh", false],
+    ["resumed", true],
+  ] as const)("uses the strict runner for %s provider selection sessions", async (_label, resume) => {
+    const phaseCalls: string[] = [];
+    const appliedTransitions: string[] = [];
+    const sandboxEffect = vi.fn();
     let runtimeSession = createSession({
       machine: {
         version: 1,
@@ -544,43 +548,57 @@ describe("core onboard flow phases", () => {
         revision: 1,
       },
     });
+    const runProviderInference = vi.fn((ctx: CoreContext) => {
+      phaseCalls.push("provider_selection");
+      return {
+        context: { ...ctx, endpointUrl: "https://example.test/v1" },
+        result: [
+          advanceTo("inference", { metadata: { state: "provider_selection" } }),
+          advanceTo("sandbox", { metadata: { state: "inference" } }),
+        ],
+      };
+    });
+    const runSandbox = vi.fn((ctx: CoreContext) => {
+      phaseCalls.push("sandbox");
+      sandboxEffect(ctx);
+      return {
+        context: { ...ctx, sandboxName: "created-sandbox" },
+        result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
+      };
+    });
     const phases: CoreOnboardFlowPhases<CoreContext> = {
       providerInference: {
         state: "provider_selection",
-        run: (ctx) => {
-          calls.push("provider_selection");
-          return {
-            context: ctx,
-            result: [
-              advanceTo("inference", { metadata: { state: "provider_selection" } }),
-              advanceTo("sandbox", { metadata: { state: "inference" } }),
-            ],
-          };
-        },
+        run: runProviderInference,
       },
       sandbox: {
         state: "sandbox",
-        run: (ctx) => {
-          calls.push("sandbox");
-          return {
-            context: { ...ctx, sandboxName: "created-sandbox" },
-            result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
-          };
-        },
+        run: runSandbox,
       },
     };
+    const recordStateResult = vi.fn(async () => {
+      throw new Error("compatibility recorder should not run");
+    });
+    const recordInvalidatedStateResult = vi.fn(async () => {
+      throw new Error("invalidation recorder should not run on the strict runner path");
+    });
 
     const result = await runCoreOnboardFlowSlice({
-      context: context({ model: "nvidia/test", provider: "nim" }),
+      context: context({
+        resume,
+        fresh: !resume,
+        model: "nvidia/test",
+        provider: "nim",
+      }),
       runtime: {
         session: async () => runtimeSession,
         applyResult: async (stateResult) => {
-          const next = (stateResult as ReturnType<typeof advanceTo>).next;
-          applied.push(next);
+          const transition = stateResult as ReturnType<typeof advanceTo>;
+          appliedTransitions.push(`${transition.transitionKind}:${transition.next}`);
           runtimeSession = createSession({
             machine: {
               version: 1,
-              state: next,
+              state: transition.next,
               stateEnteredAt: "2026-06-09T00:03:00.000Z",
               revision: runtimeSession.machine.revision + 1,
             },
@@ -589,97 +607,39 @@ describe("core onboard flow phases", () => {
         },
       },
       phases,
-      resume: false,
-      recordStateResult: async () => {
-        throw new Error("compatibility recorder should not run");
-      },
-      recordInvalidatedStateResult: async () => {
-        throw new Error("invalidation recorder should not run on fresh strict runner path");
-      },
+      resume,
+      recordStateResult,
+      recordInvalidatedStateResult,
     });
 
-    expect(calls).toEqual(["provider_selection", "sandbox"]);
-    expect(applied).toEqual(["inference", "sandbox", "openclaw"]);
+    expect(phaseCalls).toEqual(["provider_selection", "sandbox"]);
+    expect(runProviderInference).toHaveBeenCalledOnce();
+    expect(runSandbox).toHaveBeenCalledOnce();
+    expect(sandboxEffect).toHaveBeenCalledOnce();
+    expect(sandboxEffect).toHaveBeenCalledWith(
+      expect.objectContaining({ endpointUrl: "https://example.test/v1" }),
+    );
+    expect(appliedTransitions).toEqual(["advance:inference", "advance:sandbox", "branch:openclaw"]);
+    expect(recordStateResult).not.toHaveBeenCalled();
+    expect(recordInvalidatedStateResult).not.toHaveBeenCalled();
+    expect(result.context.endpointUrl).toBe("https://example.test/v1");
     expect(result.context.sandboxName).toBe("created-sandbox");
     expect(result.session.machine.state).toBe("openclaw");
   });
 
-  it("keeps resumed provider selection and sandbox effects under one compatibility decision", async () => {
-    const calls: string[] = [];
-    const recorded: string[] = [];
-    let runtimeSession = createSession({
-      machine: {
-        version: 1,
-        state: "provider_selection",
-        stateEnteredAt: "2026-06-09T00:00:00.000Z",
-        revision: 1,
-      },
-    });
-    const phases: CoreOnboardFlowPhases<CoreContext> = {
-      providerInference: {
-        state: "provider_selection",
-        run: (ctx) => {
-          calls.push("provider_selection");
-          return {
-            context: ctx,
-            result: [
-              advanceTo("inference", { metadata: { state: "provider_selection" } }),
-              advanceTo("sandbox", { metadata: { state: "inference" } }),
-            ],
-          };
-        },
-      },
-      sandbox: {
-        state: "sandbox",
-        run: (ctx) => {
-          calls.push("sandbox");
-          return {
-            context: ctx,
-            result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
-          };
-        },
-      },
-    };
-
-    await runCoreOnboardFlowSlice({
-      context: context({ resume: true }),
-      runtime: {
-        session: async () => runtimeSession,
-        applyResult: async () => {
-          throw new Error("strict runner should not run during resumed core compatibility");
-        },
-      },
-      phases,
-      resume: true,
-      recordStateResult: async (result) => {
-        const next = (result as ReturnType<typeof advanceTo>).next;
-        recorded.push(next);
-        runtimeSession = createSession({
-          machine: {
-            version: 1,
-            state: next,
-            stateEnteredAt: "2026-06-09T00:01:00.000Z",
-            revision: runtimeSession.machine.revision + 1,
-          },
-        });
-        return runtimeSession;
-      },
-      recordInvalidatedStateResult: async () => {
-        throw new Error("exact compatibility transitions should not be invalidated");
-      },
-    });
-
-    expect(calls).toEqual(["provider_selection", "sandbox"]);
-    expect(recorded).toEqual(["inference", "sandbox", "openclaw"]);
-    expect(runtimeSession.machine.state).toBe("openclaw");
-  });
-
   it.each([
+    "inference",
+    "sandbox",
+    "openclaw",
+    "agent_setup",
     "policies",
     "finalizing",
     "post_verify",
   ] as const)("lets resume sessions at %s pass through core compatibility", async (state) => {
     const recorded: string[] = [];
+    const applyResult = vi.fn(async () => {
+      throw new Error("downstream resume compatibility should not use the strict runner");
+    });
     const phases: CoreOnboardFlowPhases<CoreContext> = {
       providerInference: {
         state: "provider_selection",
@@ -703,7 +663,7 @@ describe("core onboard flow phases", () => {
               revision: 7,
             },
           }),
-        applyResult: async () => createSession(),
+        applyResult,
       },
       phases,
       resume: true,
@@ -714,6 +674,7 @@ describe("core onboard flow phases", () => {
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
+    expect(applyResult).not.toHaveBeenCalled();
   });
 
   it.each([

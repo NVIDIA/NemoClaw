@@ -259,37 +259,24 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
   recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // Recompute plan for live resume repair when durable machine snapshots
-  // are already downstream of this slice even though provider/sandbox
-  // repair/backstop checks must still re-run. Those ahead-state snapshots can
-  // come from legacy/test step mutation that explicitly opts into
-  // `updateMachine === true` or from repaired-resume replay of persisted
-  // sessions. Recomputed transition results are explicitly applied or
-  // invalidated by runLiveOnboardFlowSlice, so stale phase output cannot update
-  // context or silently advance state. This slice cannot eliminate that source
-  // locally because the repair/backstop checks are still modeled as imperative
-  // resume work rather than strict FSM recovery states. The tolerated downstream
-  // family includes sandbox branch states and the final slice handoff states:
-  // openclaw, agent_setup, policies, finalizing, and post_verify. Phase tests
-  // cover ahead-state resume and terminal-state rejection; remove this fallback
-  // once those checks are strict FSM recovery states and legacy machine step
-  // mutation is gone.
+  // Exact provider-selection entry is runner-owned for fresh and resumed flows.
+  // Recompute only when a durable snapshot is already downstream even though
+  // provider/sandbox repair and backstop checks must still re-run. Those
+  // ahead-state snapshots can come from legacy/test step mutation that
+  // explicitly opts into `updateMachine === true` or from repaired-resume replay
+  // of persisted sessions. Recomputed transition results are explicitly applied
+  // or invalidated by runLiveOnboardFlowSlice, so stale phase output cannot
+  // update context or silently advance state. The tolerated downstream family
+  // includes inference, sandbox branch states, and the final slice handoff
+  // states. Remove this fallback once those checks are strict FSM recovery states
+  // and legacy machine step mutation is gone.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: options.runtime,
     phases: [options.phases.providerInference, options.phases.sandbox],
     runWhenState: ["provider_selection"],
     compatibilityWhenState: options.resume
-      ? [
-          "provider_selection",
-          "inference",
-          "sandbox",
-          "openclaw",
-          "agent_setup",
-          "policies",
-          "finalizing",
-          "post_verify",
-        ]
+      ? ["inference", "sandbox", "openclaw", "agent_setup", "policies", "finalizing", "post_verify"]
       : ["inference", "sandbox", "openclaw", "agent_setup"],
     runSlice: runCoreOnboardFlowSequence,
     recordStateResult: options.recordStateResult,
