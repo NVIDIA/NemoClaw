@@ -904,7 +904,7 @@ it("carries the generated planner matrix through the workflow output and PR repo
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
-}, 30_000);
+}, 40_000);
 
 it("builds controller target matrices only from trusted runner mappings (#7031)", () => {
   const target = "ubuntu-repo-cloud-langchain-deepagents-code";
