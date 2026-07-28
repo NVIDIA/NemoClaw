@@ -372,7 +372,7 @@ describe("sandbox recreate recovery", () => {
     "created",
     "registry_committing",
     "completed",
-  ] as const)("accepts the ready target from %s when its generation matches", (phase) => {
+  ] as const)("accepts the ready target from %s when its generation and live identity match", (phase) => {
     expect(
       planSandboxRecreateRecovery(
         transactionAt(phase),

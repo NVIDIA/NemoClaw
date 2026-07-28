@@ -122,7 +122,7 @@ runtime mutation
 ## Durable resumed recreate journal
 
 A resumed same-name replacement writes a secret-free journal before the lower create path can delete the source sandbox.
-The journal binds the session, sandbox, selected gateway, source registry row, source OpenShell ID, target intent, target generation, and the replacement OpenShell ID after creation.
+The journal binds the session, sandbox, selected gateway, source registry row, source OpenShell ID fingerprint, target intent, target generation, and the replacement OpenShell ID fingerprint after creation.
 
 Recovery accepts only these states:
 
