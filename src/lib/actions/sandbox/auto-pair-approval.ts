@@ -472,6 +472,9 @@ export function runSandboxAutoPairApprovalPass(
 }
 
 /** Run the approval pass with the shared connect, probe, and finalization budget. */
-export function runConnectAutoPairApprovalPass(sandboxName: string): void {
-  runSandboxAutoPairApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
+export function runConnectAutoPairApprovalPass(
+  sandboxName: string,
+  runApprovalPass = runSandboxAutoPairApprovalPass,
+): void {
+  runApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
 }

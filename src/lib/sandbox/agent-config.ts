@@ -10,6 +10,13 @@ export interface AgentConfigTarget {
   sensitiveFiles?: string[];
 }
 
+export interface AgentConfigDependencies {
+  getSandbox: (name: string) => { agent?: string } | null;
+  loadAgent: (name: string) => {
+    configPaths: { dir: string; configFile: string; format?: string };
+  };
+}
+
 export const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   agentName: "openclaw",
   configPath: "/sandbox/.openclaw/openclaw.json",
@@ -19,29 +26,32 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
 };
 
-export function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
-  try {
-    const registry = require("../state/registry");
-    const entry = registry.getSandbox(sandboxName);
-    if (!entry || !entry.agent) return DEFAULT_AGENT_CONFIG;
+function defaultDependencies(): AgentConfigDependencies {
+  const registry = require("../state/registry");
+  const agentDefs = require("../agent/defs");
+  return { getSandbox: registry.getSandbox, loadAgent: agentDefs.loadAgent };
+}
 
-    const agentDefs = require("../agent/defs");
-    const agent = agentDefs.loadAgent(entry.agent);
-    const cfg = agent.configPaths;
+export function resolveAgentConfig(
+  sandboxName: string,
+  dependencies: AgentConfigDependencies = defaultDependencies(),
+): AgentConfigTarget {
+  const entry = dependencies.getSandbox(sandboxName);
+  if (!entry || !entry.agent) return DEFAULT_AGENT_CONFIG;
 
-    const dir = cfg.dir;
-    const sensitiveFiles = [`${dir}/.config-hash`];
-    if (entry.agent === "hermes") sensitiveFiles.push(`${dir}/.env`);
+  const agent = dependencies.loadAgent(entry.agent);
+  const cfg = agent.configPaths;
 
-    return {
-      agentName: entry.agent,
-      configPath: `${dir}/${cfg.configFile}`,
-      configDir: dir,
-      format: cfg.format || "json",
-      configFile: cfg.configFile,
-      sensitiveFiles,
-    };
-  } catch {
-    return DEFAULT_AGENT_CONFIG;
-  }
+  const dir = cfg.dir;
+  const sensitiveFiles = [`${dir}/.config-hash`];
+  if (entry.agent === "hermes") sensitiveFiles.push(`${dir}/.env`);
+
+  return {
+    agentName: entry.agent,
+    configPath: `${dir}/${cfg.configFile}`,
+    configDir: dir,
+    format: cfg.format || "json",
+    configFile: cfg.configFile,
+    sensitiveFiles,
+  };
 }

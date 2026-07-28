@@ -21,37 +21,23 @@ import {
   CONNECT_AUTO_PAIR_TIMEOUT_MS,
 } from "./connect-autopair-budget";
 
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, spawnSync: vi.fn(actual.spawnSync) };
-});
-
 const SUMMARY_MARKER = "__NEMOCLAW_AUTO_PAIR_APPROVED__";
 const RECEIPT_MARKER = "__NEMOCLAW_AUTO_PAIR_RECEIPT__";
 
 describe("connect auto-pair approval pass", () => {
   it("uses the shared connect approval budget", () => {
-    const spawnMock = vi.mocked(spawnSync);
-    spawnMock.mockReturnValueOnce({
-      pid: 1,
-      output: [null, "", ""],
-      stdout: "",
-      stderr: "",
-      status: 0,
-      signal: null,
-    } as ReturnType<typeof spawnSync>);
+    const runApprovalPass = vi.fn();
 
-    runConnectAutoPairApprovalPass("alpha");
+    runConnectAutoPairApprovalPass("alpha", runApprovalPass);
 
-    const call = spawnMock.mock.calls.at(-1);
-    expect(call?.[1]).toEqual(
-      expect.arrayContaining(["sandbox", "exec", "--name", "alpha", "--", "sh", "-c"]),
-    );
-    const script = String(call?.[1]?.at(-1));
-    expect(script).toContain(`MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}`);
-    expect(script).toContain(`text=True, timeout=${CONNECT_AUTO_PAIR_LIST_TIMEOUT_S},`);
-    expect(script).toContain(`text=True, timeout=${CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S},`);
-    expect(call?.[2]).toEqual(expect.objectContaining({ timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS }));
+    expect(runApprovalPass).toHaveBeenCalledWith("alpha", {
+      budget: {
+        maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
+        listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+        approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+        timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+      },
+    });
   });
 });
 

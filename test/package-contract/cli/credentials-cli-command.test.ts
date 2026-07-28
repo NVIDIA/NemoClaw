@@ -19,7 +19,9 @@ const COMMAND_PATHS = {
   add: path.join(REPO_ROOT, "dist", "commands", "credentials", "add.js"),
   list: path.join(REPO_ROOT, "dist", "commands", "credentials", "list.js"),
   reset: path.join(REPO_ROOT, "dist", "commands", "credentials", "reset.js"),
-  action: path.join(REPO_ROOT, "dist", "lib", "actions", "credentials-add.js"),
+  addAction: path.join(REPO_ROOT, "dist", "lib", "actions", "credentials-add.js"),
+  listAction: path.join(REPO_ROOT, "dist", "lib", "actions", "credentials", "list.js"),
+  resetAction: path.join(REPO_ROOT, "dist", "lib", "actions", "credentials", "reset.js"),
 };
 const GLOBAL_ACTIONS_PATH = path.join(REPO_ROOT, "dist", "lib", "actions", "global.js");
 const PROVIDER_COMMAND_PATH = path.join(
