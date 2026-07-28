@@ -191,8 +191,9 @@ $script:calls | ConvertTo-Json -Compress
     "propagates a nonzero WSL script exit code",
     `
 . ${JSON.stringify(WSL_CI_HELPER)}
-$env:RUNNER_TEMP = 'C:\\runner temp'
+$env:RUNNER_TEMP = [IO.Path]::GetTempPath()
 function Write-WslScriptFile { param([string]$Path, [string]$Content) }
+function ConvertTo-WslPath { param([string]$WindowsPath) return '/mnt/c/runner temp/nemoclaw-wsl-step.sh' }
 function Invoke-WslNative { param([string[]]$ArgumentList, [switch]$MergeError) return 23 }
 Invoke-WslScript -Distro Ubuntu -User root -Script 'exit 23'
 `,
