@@ -271,7 +271,8 @@ function isPinnedTapLoadRefusal(reason: string): boolean {
 // adopt that process or kill one launchd would restart. launchctl answers
 // without loading the formula, so probe it before degrading. Only a launchctl
 // run that completed and reported the unit missing proves it is safe to fall
-// back; a probe that could not run proves nothing and must not degrade.
+// back; a probe that could not run, or that failed for any other reason,
+// proves nothing and must not degrade.
 function readHomebrewGatewayLaunchdUnitState(
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
     Pick<OpenShellGatewayUserServiceOptions, "getuid">,
