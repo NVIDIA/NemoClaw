@@ -142,6 +142,6 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log(`Messaging manifest reapply failed: ${message}`);
-    console.log(`  ${D}Messaging manifest config reapply skipped (${message})${R}`);
+    console.log(`  ${D}Messaging manifest restore failed (${message})${R}`);
   }
 }

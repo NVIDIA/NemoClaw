@@ -161,6 +161,58 @@ describe("showSandboxChannelStatus channel config parsers", () => {
     });
   });
 
+  it("does not expose the VoiceClaw public webhook URL in status diagnostics (#6387)", async () => {
+    const publicUrl = "https://voice-secret.example.test/voice/webhook";
+    const { deps, out_lines } = makeDeps({
+      exec: () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          plugins: {
+            entries: {
+              "voice-call": {
+                enabled: true,
+                config: {
+                  enabled: true,
+                  provider: "telnyx",
+                  fromNumber: "+15550001234",
+                  publicUrl,
+                  telnyx: {
+                    connectionId: "1234567890123456789",
+                    publicKey: `${"A".repeat(43)}=`,
+                  },
+                },
+              },
+            },
+          },
+        }),
+        stderr: "",
+      }),
+      sandbox: entry(["voiceclaw"], [], {
+        voiceclaw: [
+          {
+            channelId: "voiceclaw",
+            inputId: "publicUrl",
+            kind: "config",
+            required: true,
+            sourceEnv: "VOICECLAW_PUBLIC_URL",
+            statePath: "voiceclaw.publicUrl",
+            value: publicUrl,
+          },
+        ],
+      }),
+      appliedPresets: ["voiceclaw"],
+    });
+
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "voiceclaw",
+      asJson: true,
+    });
+
+    expect(JSON.stringify(result)).not.toContain(publicUrl);
+    expect(out_lines.join("\n")).not.toContain(publicUrl);
+  });
+
   it("does not treat Slack wildcard channel policy as configured channel IDs", async () => {
     const { deps } = makeDeps({
       exec: () => ({

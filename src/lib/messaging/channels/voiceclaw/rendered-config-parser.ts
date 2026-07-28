@@ -34,13 +34,6 @@ export const voiceclawRenderedConfigParser: RenderedChannelConfigParser = {
         "config",
         "fromNumber",
       ]),
-      structuredConfigKey("publicUrl", "openclaw.json", [
-        "plugins",
-        "entries",
-        "voice-call",
-        "config",
-        "publicUrl",
-      ]),
     ];
   },
 
