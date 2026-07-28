@@ -288,13 +288,15 @@ function Install-WslUbuntuDependencies {
         [string]$TestUser
     )
 
-    $script = Get-WslUbuntuDependenciesScript -Packages $Packages
-    $scriptArguments = if ($TestUser) { @($TestUser) } else { @() }
-    Invoke-WslScript `
-        -Distro $Distro `
-        -User root `
-        -Script $script `
-        -ScriptArguments $scriptArguments
+    $invokeParameters = @{
+        Distro = $Distro
+        User = 'root'
+        Script = Get-WslUbuntuDependenciesScript -Packages $Packages
+    }
+    if ($TestUser) {
+        $invokeParameters.ScriptArguments = @($TestUser)
+    }
+    Invoke-WslScript @invokeParameters
 }
 
 function Get-WslNodeInstallScript {

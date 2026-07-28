@@ -110,6 +110,43 @@ Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/ne
   );
 
   itPowerShell(
+    "omits the optional test-user argument instead of forwarding an empty value",
+    `
+. ${JSON.stringify(WSL_CI_HELPER)}
+$script:calls = @()
+function Invoke-WslScript {
+  param(
+    [string]$Distro,
+    [string]$User,
+    [string]$Script,
+    [string[]]$ScriptArguments = @()
+  )
+  $script:calls += [pscustomobject]@{
+    hasScriptArguments = $PSBoundParameters.ContainsKey('ScriptArguments')
+    scriptArguments = @($ScriptArguments)
+  }
+}
+Install-WslUbuntuDependencies -Distro Ubuntu -Packages @('curl')
+Install-WslUbuntuDependencies -Distro Ubuntu -Packages @('curl') -TestUser nemoclaw-ci
+$script:calls | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout.trim())).toEqual([
+        {
+          hasScriptArguments: false,
+          scriptArguments: [],
+        },
+        {
+          hasScriptArguments: true,
+          scriptArguments: ["nemoclaw-ci"],
+        },
+      ]);
+    },
+  );
+
+  itPowerShell(
     "writes transferred scripts as LF-only UTF-8 without a byte-order mark",
     `
 . ${JSON.stringify(WSL_CI_HELPER)}
